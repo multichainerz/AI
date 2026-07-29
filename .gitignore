@@ -1,0 +1,17 @@
+node_modules/
+dist/
+coverage/
+*.log
+.DS_Store
+
+# Local bootstrap material must never be committed.
+.local/
+secrets/
+
+# Generated Prisma client.
+packages/database/src/generated/
+
+# Local IDE and tooling state.
+.idea/
+.vscode/
+.codex-work/

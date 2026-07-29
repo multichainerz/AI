@@ -1,0 +1,28 @@
+{
+  "name": "mpm-aihub",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.14.0",
+  "engines": {
+    "node": ">=24.0.0",
+    "pnpm": ">=10.0.0"
+  },
+  "scripts": {
+    "build": "pnpm -r --if-present build",
+    "dev": "concurrently --kill-others --names api,web \"pnpm --filter @aihub/api dev\" \"pnpm --filter @aihub/web dev\"",
+    "dev:worker": "pnpm --filter @aihub/worker dev",
+    "pretypecheck": "pnpm --filter @aihub/contracts --filter @aihub/database --filter @aihub/security build",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "pnpm -r --if-present test",
+    "db:generate": "pnpm --filter @aihub/database prisma:generate",
+    "db:validate": "pnpm --filter @aihub/database prisma:validate",
+    "jobs:migrate": "pnpm --filter @aihub/jobs migrate"
+  },
+  "devDependencies": {
+    "@types/node": "26.1.2",
+    "concurrently": "10.0.4",
+    "typescript": "7.0.2",
+    "vitest": "4.1.10"
+  }
+}

@@ -1,0 +1,169 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  runtime      = "nodejs"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum ServiceKind {
+  LITELLM
+  VLLM
+  SUPERMEMORY
+  SEAWEEDFS
+  OCR
+  MCP
+  OIDC
+  SIEM
+  NOTIFICATION
+  OTHER
+}
+
+enum DeploymentEnvironment {
+  DEVELOPMENT
+  STAGING
+  PRODUCTION
+}
+
+enum ConnectionStatus {
+  NOT_TESTED
+  HEALTHY
+  DEGRADED
+  UNREACHABLE
+  DISABLED
+}
+
+enum AuditActorType {
+  USER
+  SERVICE
+  SYSTEM
+}
+
+enum WorkerLifecycleStatus {
+  ONLINE
+  STOPPED
+}
+
+enum AdministratorRole {
+  PLATFORM_ADMIN
+  SECURITY_ADMIN
+  OPERATIONS_ADMIN
+  AUDITOR
+}
+
+model AdministratorSession {
+  id                String            @id @default(uuid()) @db.Uuid
+  tokenHash         Bytes             @unique
+  subject           String            @db.VarChar(160)
+  role              AdministratorRole
+  createdAt         DateTime          @default(now()) @db.Timestamptz(6)
+  lastSeenAt        DateTime          @db.Timestamptz(6)
+  idleExpiresAt     DateTime          @db.Timestamptz(6)
+  absoluteExpiresAt DateTime          @db.Timestamptz(6)
+  revokedAt         DateTime?         @db.Timestamptz(6)
+  sourceIp          String?           @db.Inet
+  userAgentHash     String?           @db.VarChar(64)
+
+  @@index([revokedAt, idleExpiresAt])
+  @@index([absoluteExpiresAt])
+  @@index([subject, createdAt])
+}
+
+model ServiceConnection {
+  id                     String                @id @default(uuid()) @db.Uuid
+  slug                   String                @unique @db.VarChar(64)
+  displayName            String                @db.VarChar(120)
+  kind                   ServiceKind
+  environment            DeploymentEnvironment
+  baseUrl                String?               @db.Text
+  enabled                Boolean               @default(false)
+  status                 ConnectionStatus      @default(NOT_TESTED)
+  configuration          Json                  @default("{}")
+  activeRevision         Int                   @default(1)
+  lastHealthcheckAt      DateTime?             @db.Timestamptz(6)
+  lastHealthcheckMessage String?               @db.Text
+  createdAt              DateTime              @default(now()) @db.Timestamptz(6)
+  updatedAt              DateTime              @updatedAt @db.Timestamptz(6)
+  secrets                SecretRecord[]
+  revisions              ConfigurationRevision[]
+
+  @@index([kind, environment])
+  @@index([enabled, status])
+}
+
+model SecretRecord {
+  id                  String            @id @default(uuid()) @db.Uuid
+  serviceConnectionId String            @db.Uuid
+  fieldName           String            @db.VarChar(120)
+  encryptedValue      Bytes
+  valueNonce          Bytes
+  valueAuthTag        Bytes
+  wrappedDataKey      Bytes
+  keyNonce            Bytes
+  keyAuthTag          Bytes
+  encryptionVersion   Int               @default(1)
+  masterKeyVersion    Int               @default(1)
+  active              Boolean           @default(true)
+  createdBy           String?           @db.Uuid
+  createdAt           DateTime          @default(now()) @db.Timestamptz(6)
+  retiredAt           DateTime?         @db.Timestamptz(6)
+  serviceConnection   ServiceConnection @relation(fields: [serviceConnectionId], references: [id], onDelete: Cascade)
+
+  @@index([serviceConnectionId, fieldName, active])
+  @@index([createdAt])
+}
+
+model ConfigurationRevision {
+  id                  String            @id @default(uuid()) @db.Uuid
+  serviceConnectionId String            @db.Uuid
+  revision            Int
+  configuration       Json
+  secretFieldNames    String[]
+  checksum            String            @db.VarChar(64)
+  createdBy           String?           @db.Uuid
+  createdAt           DateTime          @default(now()) @db.Timestamptz(6)
+  activatedAt         DateTime?         @db.Timestamptz(6)
+  serviceConnection   ServiceConnection @relation(fields: [serviceConnectionId], references: [id], onDelete: Cascade)
+
+  @@unique([serviceConnectionId, revision])
+  @@index([createdAt])
+}
+
+model AuditEvent {
+  id             String         @id @default(uuid()) @db.Uuid
+  occurredAt     DateTime       @default(now()) @db.Timestamptz(6)
+  actorType      AuditActorType
+  actorId        String?        @db.Uuid
+  action         String         @db.VarChar(160)
+  resourceType   String         @db.VarChar(120)
+  resourceId     String?        @db.VarChar(160)
+  outcome        String         @db.VarChar(40)
+  correlationId  String?        @db.Uuid
+  sourceIp       String?        @db.Inet
+  metadata       Json           @default("{}")
+
+  @@index([occurredAt])
+  @@index([resourceType, resourceId])
+  @@index([actorId, occurredAt])
+  @@index([correlationId])
+}
+
+model WorkerNode {
+  id         String                @id @db.VarChar(160)
+  name       String                @db.VarChar(160)
+  version    String                @db.VarChar(40)
+  status     WorkerLifecycleStatus @default(ONLINE)
+  queues     String[]
+  metadata   Json                  @default("{}")
+  startedAt  DateTime              @db.Timestamptz(6)
+  lastSeenAt DateTime              @db.Timestamptz(6)
+  stoppedAt  DateTime?             @db.Timestamptz(6)
+  createdAt  DateTime              @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime              @updatedAt @db.Timestamptz(6)
+
+  @@index([status, lastSeenAt])
+  @@index([lastSeenAt])
+}

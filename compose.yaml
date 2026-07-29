@@ -1,0 +1,113 @@
+name: mpm-aihub
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: aihub
+      POSTGRES_USER: aihub
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aihub -d aihub"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - data
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    depends_on:
+      postgres:
+        condition: service_healthy
+    secrets:
+      - aihub_database_url
+    command: ["pnpm", "--filter", "@aihub/database", "prisma:migrate:deploy"]
+    networks:
+      - data
+
+  jobs-migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    secrets:
+      - aihub_database_url
+    command: ["pnpm", "--filter", "@aihub/jobs", "migrate"]
+    networks:
+      - data
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    restart: unless-stopped
+    depends_on:
+      jobs-migrate:
+        condition: service_completed_successfully
+    secrets:
+      - aihub_database_url
+      - aihub_master_key
+      - aihub_bootstrap_token
+    networks:
+      - application
+      - data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    restart: unless-stopped
+    depends_on:
+      jobs-migrate:
+        condition: service_completed_successfully
+    secrets:
+      - aihub_database_url
+    networks:
+      - application
+      - data
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    networks:
+      - application
+
+secrets:
+  postgres_password:
+    file: ./.local/secrets/postgres_password
+  aihub_database_url:
+    file: ./.local/secrets/aihub_database_url
+  aihub_master_key:
+    file: ./.local/secrets/aihub_master_key
+  aihub_bootstrap_token:
+    file: ./.local/secrets/aihub_bootstrap_token
+
+volumes:
+  postgres_data:
+
+networks:
+  application:
+  data:
+    internal: true

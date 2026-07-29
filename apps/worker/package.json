@@ -1,0 +1,22 @@
+{
+  "name": "@aihub/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --exclude dist/**"
+  },
+  "dependencies": {
+    "@aihub/contracts": "workspace:*",
+    "@aihub/database": "workspace:*",
+    "@aihub/jobs": "workspace:*"
+  },
+  "devDependencies": {
+    "tsx": "4.23.1"
+  }
+}
