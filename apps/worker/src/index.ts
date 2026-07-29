@@ -2,8 +2,19 @@ import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 import { createPrismaClient, readBootstrapSecret } from "@aihub/database";
 import { PgBossQueueService } from "@aihub/jobs";
+import { decodeMasterKey, EnvelopeEncryption } from "@aihub/security";
+import {
+  PrismaRuntimeConnectionResolver,
+  HermesClient,
+  SeaweedDocumentStore,
+  SupermemoryClient,
+  UnlimitedOcrClient,
+} from "@aihub/document-runtime";
 import { WorkerRuntime } from "./worker-runtime.js";
 import { PrismaWorkerRegistry } from "./worker-registry.js";
+import { PrismaDocumentProcessor } from "./document-processor.js";
+import { PrismaMemoryProcessor } from "./memory-processor.js";
+import { PrismaAgentProcessor, WorkerAgentKnowledgeRetriever } from "./agent-processor.js";
 
 const databaseUrl = readBootstrapSecret("aihub_database_url");
 const prisma = createPrismaClient(databaseUrl);
@@ -12,6 +23,16 @@ const queue = new PgBossQueueService(databaseUrl, "worker", {
   error: (message, error) => console.error(message, error),
   warn: (message, details) => console.warn(message, details),
 });
+const encryption = new EnvelopeEncryption({
+  masterKey: decodeMasterKey(readBootstrapSecret("aihub_master_key")),
+});
+const documentResolver = new PrismaRuntimeConnectionResolver(prisma, encryption);
+const documentProcessor = new PrismaDocumentProcessor(
+  prisma,
+  new SeaweedDocumentStore(documentResolver),
+  new UnlimitedOcrClient(documentResolver),
+  queue,
+);
 const runtime = new WorkerRuntime(
   queue,
   new PrismaWorkerRegistry(prisma),
@@ -19,12 +40,20 @@ const runtime = new WorkerRuntime(
     id: workerId,
     name: hostname(),
     version: "0.1.0",
-    queues: ["aihub.system.probe"],
+    queues: ["aihub.system.probe", "aihub.documents.convert", "aihub.documents.ocr", "aihub.memory.index", "aihub.agents.run"],
   },
   {
     info: (message) => console.info(message),
     error: (message, error) => console.error(message, error),
   },
+  15_000,
+  documentProcessor,
+  new PrismaMemoryProcessor(prisma, new SupermemoryClient(documentResolver)),
+  new PrismaAgentProcessor(
+    prisma,
+    new HermesClient(documentResolver),
+    new WorkerAgentKnowledgeRetriever(prisma, new SupermemoryClient(documentResolver)),
+  ),
 );
 
 let shuttingDown = false;

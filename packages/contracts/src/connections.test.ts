@@ -35,6 +35,33 @@ describe("service connection configuration", () => {
     });
   });
 
+  it("accepts bounded Supermemory runtime and retrieval settings", () => {
+    expect(parseServiceConnectionConfiguration("SUPERMEMORY", {
+      documentsPath: "/v3/documents",
+      searchPath: "/v3/search",
+      memoryTimeoutMs: 300_000,
+      memoryPollIntervalMs: 2_000,
+      retrievalLimit: 6,
+      retrievalThreshold: 0.25,
+    })).toMatchObject({ documentsPath: "/v3/documents", retrievalLimit: 6 });
+
+    expect(() => parseServiceConnectionConfiguration("SUPERMEMORY", {
+      retrievalLimit: 100,
+    })).toThrow();
+  });
+
+  it("accepts only the Hermes control-plane paths used by the hardened worker", () => {
+    expect(parseServiceConnectionConfiguration("HERMES", {
+      healthPath: "/health",
+      capabilitiesPath: "/v1/capabilities",
+      toolsetsPath: "/v1/toolsets",
+      runsPath: "/v1/runs",
+      runPollIntervalMs: 1_000,
+      timeoutMs: 8_000,
+    })).toMatchObject({ toolsetsPath: "/v1/toolsets", runsPath: "/v1/runs" });
+    expect(() => parseServiceConnectionConfiguration("HERMES", { modelAlias: "not-owned-here" })).toThrow();
+  });
+
   it("rejects settings that do not belong to the selected service", () => {
     const result = createServiceConnectionSchema.safeParse({
       ...connectionBase,
@@ -51,6 +78,24 @@ describe("service connection configuration", () => {
         healthPath: "https://untrusted.example/health",
       }),
     ).toThrow();
+  });
+
+  it("accepts a bounded OIDC group allowlist and rejects provider-only settings elsewhere", () => {
+    expect(parseServiceConnectionConfiguration("OIDC", {
+      clientId: "aihub",
+      redirectUri: "https://aihub.mpm.internal/api/v1/auth/oidc/callback",
+      scopes: ["openid", "profile", "email", "groups"],
+      groupsClaim: "realm_access.groups",
+      allowedGroups: ["AIHub-Pilot"],
+      emailClaim: "email",
+      nameClaim: "name",
+      tokenAuthMethod: "client_secret_basic",
+      caseSensitiveGroups: false,
+    })).toMatchObject({ clientId: "aihub", allowedGroups: ["AIHub-Pilot"] });
+
+    expect(() => parseServiceConnectionConfiguration("VLLM", {
+      allowedGroups: ["AIHub-Pilot"],
+    })).toThrow();
   });
 
   it("does not allow arbitrary configuration keys in browser summaries", () => {

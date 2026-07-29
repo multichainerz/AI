@@ -9,6 +9,13 @@ import { registerConnectionRoutes } from "./connections/routes.js";
 import { createRuntimeServices, type RuntimeServices } from "./runtime.js";
 import { registerOperationsRoutes } from "./operations/routes.js";
 import { registerAdminSessionRoutes } from "./auth/routes.js";
+import { registerChatMetricsRoutes, registerChatRoutes } from "./chat/routes.js";
+import { registerIdentityRoutes } from "./identity/routes.js";
+import { registerDocumentRoutes } from "./documents/routes.js";
+import { registerMemoryRoutes } from "./memory/routes.js";
+import { registerAdminAgentRoutes, registerAgentRoutes } from "./agents/routes.js";
+import { registerAdminToolingRoutes, registerMcpGatewayRoutes } from "./tooling/routes.js";
+import { registerAiOpsRoutes } from "./ai-ops/routes.js";
 
 export interface AppOptions {
   logger?: boolean;
@@ -44,7 +51,16 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
   });
 
   app.addHook("onSend", async (request, reply, payload) => {
-    if (request.url.startsWith("/api/v1/admin/")) {
+    void reply.header("x-request-id", request.id);
+    if (
+      request.url.startsWith("/api/v1/admin/") ||
+      request.url.startsWith("/api/v1/chat/") ||
+      request.url.startsWith("/api/v1/session") ||
+      request.url.startsWith("/api/v1/auth/oidc/") ||
+      request.url.startsWith("/api/v1/documents")
+      || request.url.startsWith("/api/v1/agents")
+      || request.url.startsWith("/api/v1/mcp")
+    ) {
       void reply.header("cache-control", "no-store");
     }
     return payload;
@@ -62,19 +78,38 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
     }
   }
 
-  app.get("/healthz", async () =>
-    healthResponseSchema.parse({
+  app.get("/healthz", async (_request, reply) => {
+    void reply.header("cache-control", "no-store");
+    return healthResponseSchema.parse({
       status: "ok",
       service: "aihub-api",
       timestamp: new Date().toISOString(),
-    }),
-  );
+    });
+  });
+
+  app.get("/readyz", async (_request, reply) => {
+    void reply.header("cache-control", "no-store");
+    const response = (status: "ok" | "degraded") => healthResponseSchema.parse({
+      status,
+      service: "aihub-api-readiness",
+      timestamp: new Date().toISOString(),
+    });
+    if (runtime.bootstrapState !== "READY" || !runtime.prisma) {
+      return reply.code(503).send(response("degraded"));
+    }
+    try {
+      await runtime.prisma.$queryRaw`SELECT 1`;
+      return response("ok");
+    } catch {
+      return reply.code(503).send(response("degraded"));
+    }
+  });
 
   app.get("/api/v1/platform", async () =>
     platformMetaSchema.parse({
       product: "MPM AIHub",
       version: "0.1.0",
-      phase: "Foundation",
+      phase: "production pilot readiness foundation",
       configurationMode: "dashboard",
       bootstrapState: runtime.bootstrapState,
     }),
@@ -83,6 +118,87 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
   app.get("/api/v1/connections/catalog", async () => ({
     items: SERVICE_KINDS.map((kind) => ({ kind })),
   }));
+
+  await app.register(
+    async (chat) =>
+      registerChatRoutes(chat, {
+        ...(runtime.sessionManager ? { sessionManager: runtime.sessionManager } : {}),
+        ...(runtime.identityManager ? { identityManager: runtime.identityManager } : {}),
+        ...(runtime.chatManager ? { manager: runtime.chatManager } : {}),
+      }),
+    { prefix: "/api/v1/chat" },
+  );
+
+  await app.register(
+    async (documents) =>
+      registerDocumentRoutes(documents, {
+        ...(runtime.sessionManager ? { sessionManager: runtime.sessionManager } : {}),
+        ...(runtime.identityManager ? { identityManager: runtime.identityManager } : {}),
+        ...(runtime.documentManager ? { manager: runtime.documentManager } : {}),
+      }),
+    { prefix: "/api/v1/documents" },
+  );
+
+  await app.register(
+    async (agents) =>
+      registerAgentRoutes(agents, {
+        ...(runtime.sessionManager ? { sessionManager: runtime.sessionManager } : {}),
+        ...(runtime.identityManager ? { identityManager: runtime.identityManager } : {}),
+        ...(runtime.agentManager ? { manager: runtime.agentManager } : {}),
+      }),
+    { prefix: "/api/v1/agents" },
+  );
+
+  await app.register(
+    async (agents) =>
+      registerAdminAgentRoutes(agents, {
+        ...(runtime.sessionManager ? { sessionManager: runtime.sessionManager } : {}),
+        ...(runtime.identityManager ? { identityManager: runtime.identityManager } : {}),
+        ...(runtime.agentManager ? { manager: runtime.agentManager } : {}),
+      }),
+    { prefix: "/api/v1/admin/agents" },
+  );
+
+  await app.register(
+    async (mcp) => registerMcpGatewayRoutes(mcp, {
+      ...(runtime.toolingManager ? { manager: runtime.toolingManager } : {}),
+    }),
+    { prefix: "/api/v1/mcp" },
+  );
+
+  await app.register(
+    async (tooling) => registerAdminToolingRoutes(tooling, {
+      ...(runtime.sessionManager ? { sessionManager: runtime.sessionManager } : {}),
+      ...(runtime.toolingManager ? { manager: runtime.toolingManager } : {}),
+    }),
+    { prefix: "/api/v1/admin/tooling" },
+  );
+
+  await app.register(
+    async (memory) =>
+      registerMemoryRoutes(memory, {
+        ...(runtime.sessionManager ? { sessionManager: runtime.sessionManager } : {}),
+        ...(runtime.memoryManager ? { manager: runtime.memoryManager } : {}),
+      }),
+    { prefix: "/api/v1/admin/memory" },
+  );
+
+  await app.register(
+    async (chatMetrics) =>
+      registerChatMetricsRoutes(chatMetrics, {
+        ...(runtime.sessionManager ? { sessionManager: runtime.sessionManager } : {}),
+        ...(runtime.chatManager ? { manager: runtime.chatManager } : {}),
+      }),
+    { prefix: "/api/v1/admin/chat" },
+  );
+
+  await app.register(
+    async (identity) =>
+      registerIdentityRoutes(identity, {
+        ...(runtime.identityManager ? { manager: runtime.identityManager } : {}),
+      }),
+    { prefix: "/api/v1" },
+  );
 
   await app.register(
     async (adminSession) =>
@@ -100,6 +216,15 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
         ...(runtime.connectionTestService ? { tester: runtime.connectionTestService } : {}),
       }),
     { prefix: "/api/v1/admin/connections" },
+  );
+
+  await app.register(
+    async (aiOps) =>
+      registerAiOpsRoutes(aiOps, {
+        ...(runtime.sessionManager ? { sessionManager: runtime.sessionManager } : {}),
+        ...(runtime.aiOpsManager ? { manager: runtime.aiOpsManager } : {}),
+      }),
+    { prefix: "/api/v1/admin/operations" },
   );
 
   await app.register(

@@ -41,13 +41,14 @@ For Coolify, preserve the same dependency order and internal networks. Terminate
 
 After deployment:
 
-1. Confirm `/healthz` returns HTTP 200 through the approved ingress.
-2. Confirm `/api/v1/platform` reports `bootstrapState: "READY"`.
-3. Unlock AIHub with the bootstrap token over HTTPS.
-4. Configure one non-production service connection and run its sanitized health test.
-5. Open Operations and confirm every required queue says it is configured.
-6. Confirm at least one worker is `ONLINE`, then run a system probe.
-7. Sign out and verify the prior session can no longer call an administrator endpoint.
+1. Confirm `/healthz` returns HTTP 200 through the approved ingress as a process-liveness check.
+2. Confirm `/readyz` returns HTTP 200 after migrations and PostgreSQL are ready.
+3. Confirm `/api/v1/platform` reports `bootstrapState: "READY"`.
+4. Unlock AIHub with the bootstrap token over HTTPS.
+5. Configure one non-production service connection and run its sanitized health test.
+6. Open Operations and confirm every required queue says it is configured.
+7. Confirm at least one worker is `ONLINE`, then run a system probe.
+8. Sign out and verify the prior session can no longer call an administrator endpoint.
 
 A missing queue or absence of a current worker heartbeat puts Operations into `DEGRADED`; missing queues are not reported as empty healthy queues.
 

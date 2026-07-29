@@ -33,6 +33,25 @@ describe("AIHub API", () => {
     });
   });
 
+  it("separates process liveness from database-backed readiness", async () => {
+    const unavailable = await createApp({ logger: false, runtime: { bootstrapState: "LOCKED" } });
+    apps.push(unavailable);
+    const locked = await unavailable.inject({ method: "GET", url: "/readyz" });
+    expect(locked.statusCode).toBe(503);
+    expect(locked.json()).toMatchObject({ status: "degraded", service: "aihub-api-readiness" });
+
+    const query = vi.fn(async () => [{ ready: 1 }]);
+    const disconnect = vi.fn(async () => undefined);
+    const prisma = { $queryRaw: query, $disconnect: disconnect } as unknown as AIHubPrismaClient;
+    const ready = await createApp({ logger: false, runtime: { bootstrapState: "READY", prisma } });
+    apps.push(ready);
+    const response = await ready.inject({ method: "GET", url: "/readyz" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ status: "ok", service: "aihub-api-readiness" });
+    expect(response.headers["x-request-id"]).toBeTruthy();
+    expect(query).toHaveBeenCalledOnce();
+  });
+
   it("releases runtime resources when job operations fail to start", async () => {
     const stop = vi.fn(async () => undefined);
     const disconnect = vi.fn(async () => undefined);

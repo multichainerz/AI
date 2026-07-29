@@ -5,6 +5,7 @@ export const JOB_QUEUE_NAMES = [
   "aihub.documents.convert",
   "aihub.documents.ocr",
   "aihub.memory.index",
+  "aihub.agents.run",
   "aihub.dead-letter",
 ] as const;
 

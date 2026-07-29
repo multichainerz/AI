@@ -1,9 +1,17 @@
 import {
   JOB_QUEUE_NAMES,
   systemProbePayloadSchema,
+  documentConversionJobPayloadSchema,
+  documentOcrJobPayloadSchema,
+  memoryIndexJobPayloadSchema,
+  agentRunJobPayloadSchema,
   type JobQueueName,
   type JobQueueSnapshot,
   type SystemProbePayload,
+  type DocumentConversionJobPayload,
+  type DocumentOcrJobPayload,
+  type MemoryIndexJobPayload,
+  type AgentRunJobPayload,
 } from "@aihub/contracts";
 import { PgBoss, type Job, type QueueResult } from "pg-boss";
 import { AIHUB_QUEUE_DEFINITIONS, queueDefinition } from "./queue-definitions.js";
@@ -99,6 +107,98 @@ export class PgBossQueueService {
     const id = await this.boss.send("aihub.system.probe", parsed);
     if (!id) throw new Error("System probe job was not created.");
     return id;
+  }
+
+  async sendDocumentConversion(payload: DocumentConversionJobPayload): Promise<string> {
+    const parsed = documentConversionJobPayloadSchema.parse(payload);
+    const id = await this.boss.send("aihub.documents.convert", parsed, {
+      singletonKey: `${parsed.documentId}:${parsed.generation}`,
+    });
+    if (!id) throw new Error("Document conversion job was not created.");
+    return id;
+  }
+
+  async sendDocumentOcr(payload: DocumentOcrJobPayload): Promise<string> {
+    const parsed = documentOcrJobPayloadSchema.parse(payload);
+    const id = await this.boss.send("aihub.documents.ocr", parsed, {
+      singletonKey: `${parsed.documentId}:${parsed.generation}`,
+    });
+    if (!id) throw new Error("Document OCR job was not created.");
+    return id;
+  }
+
+  async sendMemoryIndex(payload: MemoryIndexJobPayload): Promise<string> {
+    const parsed = memoryIndexJobPayloadSchema.parse(payload);
+    const id = await this.boss.send("aihub.memory.index", parsed, {
+      singletonKey: `${parsed.documentId}:${parsed.generation}:${parsed.action}`,
+    });
+    if (!id) throw new Error("Memory synchronization job was not created.");
+    return id;
+  }
+
+  async sendAgentRun(payload: AgentRunJobPayload): Promise<string> {
+    const parsed = agentRunJobPayloadSchema.parse(payload);
+    const id = await this.boss.send("aihub.agents.run", parsed, {
+      singletonKey: parsed.runId,
+    });
+    if (!id) throw new Error("Agent run job was not created.");
+    return id;
+  }
+
+  async registerDocumentConversionWorker(
+    workerId: string,
+    handler: (payload: DocumentConversionJobPayload, jobId: string, workerId: string) => Promise<object>,
+  ): Promise<string> {
+    return this.boss.work<DocumentConversionJobPayload, object>(
+      "aihub.documents.convert",
+      { pollingIntervalSeconds: 5, localConcurrency: 1 },
+      async ([job]) => {
+        if (!job) throw new Error("pg-boss delivered an empty document conversion batch.");
+        return handler(documentConversionJobPayloadSchema.parse(job.data), job.id, workerId);
+      },
+    );
+  }
+
+  async registerDocumentOcrWorker(
+    workerId: string,
+    handler: (payload: DocumentOcrJobPayload, jobId: string, workerId: string) => Promise<object>,
+  ): Promise<string> {
+    return this.boss.work<DocumentOcrJobPayload, object>(
+      "aihub.documents.ocr",
+      { pollingIntervalSeconds: 5, localConcurrency: 1 },
+      async ([job]) => {
+        if (!job) throw new Error("pg-boss delivered an empty document OCR batch.");
+        return handler(documentOcrJobPayloadSchema.parse(job.data), job.id, workerId);
+      },
+    );
+  }
+
+  async registerMemoryIndexWorker(
+    workerId: string,
+    handler: (payload: MemoryIndexJobPayload, jobId: string, workerId: string) => Promise<object>,
+  ): Promise<string> {
+    return this.boss.work<MemoryIndexJobPayload, object>(
+      "aihub.memory.index",
+      { pollingIntervalSeconds: 5, localConcurrency: 1 },
+      async ([job]) => {
+        if (!job) throw new Error("pg-boss delivered an empty memory synchronization batch.");
+        return handler(memoryIndexJobPayloadSchema.parse(job.data), job.id, workerId);
+      },
+    );
+  }
+
+  async registerAgentRunWorker(
+    workerId: string,
+    handler: (payload: AgentRunJobPayload, jobId: string, workerId: string) => Promise<object>,
+  ): Promise<string> {
+    return this.boss.work<AgentRunJobPayload, object>(
+      "aihub.agents.run",
+      { pollingIntervalSeconds: 2, localConcurrency: 2 },
+      async ([job]) => {
+        if (!job) throw new Error("pg-boss delivered an empty agent run batch.");
+        return handler(agentRunJobPayloadSchema.parse(job.data), job.id, workerId);
+      },
+    );
   }
 
   async retry(name: JobQueueName, jobId: string): Promise<void> {

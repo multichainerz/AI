@@ -9,6 +9,7 @@ COPY packages/contracts/package.json packages/contracts/package.json
 COPY packages/database/package.json packages/database/package.json
 COPY packages/jobs/package.json packages/jobs/package.json
 COPY packages/security/package.json packages/security/package.json
+COPY packages/document-runtime/package.json packages/document-runtime/package.json
 
 RUN pnpm install --frozen-lockfile
 

@@ -11,6 +11,7 @@ const adapters: Record<ServiceKind, ConnectionDiagnosticAdapter> = {
     defaultHealthPath: "/health/liveliness",
   }),
   VLLM: new OpenAICompatibleAdapter({ serviceName: "vLLM", defaultHealthPath: "/health" }),
+  HERMES: new GenericHttpAdapter("Hermes agent", "/health"),
   OCR: new OpenAICompatibleAdapter({
     serviceName: "Unlimited OCR",
     defaultHealthPath: "/health",

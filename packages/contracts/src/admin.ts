@@ -8,6 +8,7 @@ export const ADMIN_ROLES = [
 ] as const;
 
 export const ADMIN_SCOPES = [
+  "chat:use",
   "connections:read",
   "connections:write",
   "connections:test",
@@ -15,6 +16,25 @@ export const ADMIN_SCOPES = [
   "operations:execute",
   "audit:read",
   "sessions:manage",
+  "documents:read",
+  "documents:review",
+  "documents:reprocess",
+  "documents:delete",
+  "memory:read",
+  "memory:manage",
+  "agents:read",
+  "agents:manage",
+  "agents:control",
+  "tools:read",
+  "tools:manage",
+  "approvals:read",
+  "approvals:review",
+  "evaluations:read",
+  "evaluations:manage",
+  "evaluations:promote",
+  "readiness:read",
+  "readiness:manage",
+  "readiness:approve",
 ] as const;
 
 export const adminRoleSchema = z.enum(ADMIN_ROLES);

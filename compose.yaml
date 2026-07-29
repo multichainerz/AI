@@ -62,7 +62,7 @@ services:
       - application
       - data
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/readyz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -77,6 +77,7 @@ services:
         condition: service_completed_successfully
     secrets:
       - aihub_database_url
+      - aihub_master_key
     networks:
       - application
       - data
@@ -93,6 +94,11 @@ services:
       - "8080:8080"
     networks:
       - application
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/web-healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
 
 secrets:
   postgres_password:

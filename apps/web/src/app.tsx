@@ -2,10 +2,12 @@ import type {
   AdministratorSession,
   ConfigurationRevisionList,
   ConnectionTestResult,
-  JobOperationsSnapshot,
   PlatformMeta,
   ServiceConnectionSummary,
   ServiceKind,
+  EnterpriseSession,
+  OidcStatus,
+  ChatMetrics,
 } from "@aihub/contracts";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
@@ -13,22 +15,28 @@ import {
   createAdministratorSession,
   createConnection,
   getAdministratorSession,
+  getEnterpriseSession,
+  getOidcStatus,
+  getChatMetrics,
   getConfigurationRevisions,
   getConnections,
-  getJobOperations,
   getPlatformMeta,
-  redriveDeadLetters,
   revokeAdministratorSession,
+  revokeEnterpriseSession,
   rollbackConfiguration,
-  sendSystemProbe,
   testConnection,
   updateConnection,
 } from "./api.js";
 import { ConnectionDrawer, type ConnectionDraft } from "./connection-drawer.js";
 import { connectionDefinitions } from "./connection-definitions.js";
 import { OperationsView } from "./operations-view.js";
+import { ChatView } from "./chat-view.js";
+import { DocumentsView } from "./documents-view.js";
+import { MemoryView } from "./memory-view.js";
+import { AgentsView } from "./agents-view.js";
+import { ToolingView } from "./tooling-view.js";
 
-type ActiveView = "Overview" | "Operations";
+type ActiveView = "Overview" | "Chat" | "Agents" | "Documents" | "Memory" | "Integrations" | "Operations";
 
 const navigation: ReadonlyArray<{
   label: string;
@@ -36,12 +44,12 @@ const navigation: ReadonlyArray<{
   available: boolean;
 }> = [
   { label: "Overview", icon: "overview", available: true },
-  { label: "Chat", icon: "chat", available: false },
+  { label: "Chat", icon: "chat", available: true },
   { label: "Models", icon: "models", available: false },
-  { label: "Agents", icon: "agents", available: false },
-  { label: "Documents", icon: "documents", available: false },
-  { label: "Memory", icon: "memory", available: false },
-  { label: "Integrations", icon: "integrations", available: false },
+  { label: "Agents", icon: "agents", available: true },
+  { label: "Documents", icon: "documents", available: true },
+  { label: "Memory", icon: "memory", available: true },
+  { label: "Integrations", icon: "integrations", available: true },
   { label: "Guardrails", icon: "guardrails", available: false },
   { label: "Operations", icon: "operations", available: true },
 ];
@@ -76,20 +84,39 @@ function App() {
   const [platform, setPlatform] = useState<PlatformMeta | null>(null);
   const [apiAvailable, setApiAvailable] = useState(true);
   const [adminSession, setAdminSession] = useState<AdministratorSession | null>(null);
+  const [enterpriseSession, setEnterpriseSession] = useState<EnterpriseSession | null>(null);
+  const [oidcStatus, setOidcStatus] = useState<OidcStatus | null>(null);
+  const [chatMetrics, setChatMetrics] = useState<ChatMetrics | null>(null);
   const [managedConnections, setManagedConnections] = useState<ServiceConnectionSummary[]>([]);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerKind, setDrawerKind] = useState<ServiceKind>("LITELLM");
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [diagnostic, setDiagnostic] = useState<ConnectionTestResult | null>(null);
-  const [activeView, setActiveView] = useState<ActiveView>("Overview");
-  const [operations, setOperations] = useState<JobOperationsSnapshot | null>(null);
-  const [operationsBusy, setOperationsBusy] = useState(false);
-  const [operationsError, setOperationsError] = useState<string | null>(null);
-  const [operationsMessage, setOperationsMessage] = useState<string | null>(null);
+  const [activeView, setActiveView] = useState<ActiveView>(() => {
+    const hash = window.location.hash.toLowerCase();
+    return hash === "#chat"
+      ? "Chat"
+      : hash === "#agents"
+        ? "Agents"
+      : hash === "#documents"
+        ? "Documents"
+        : hash === "#memory"
+          ? "Memory"
+          : hash === "#integrations"
+            ? "Integrations"
+            : hash === "#operations"
+              ? "Operations"
+              : "Overview";
+  });
   const [revisionHistory, setRevisionHistory] = useState<ConfigurationRevisionList | null>(null);
   const [revisionConnectionId, setRevisionConnectionId] = useState<string | null>(null);
   const sessionGeneration = useRef(0);
+  const activeNavigationItem = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    activeNavigationItem.current?.scrollIntoView({ behavior: "auto", block: "nearest", inline: "center" });
+  }, [activeView]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -115,6 +142,16 @@ function App() {
     let active = true;
     const generation = sessionGeneration.current;
     const restoreSession = async () => {
+      void getOidcStatus()
+        .then((status) => active && setOidcStatus(status))
+        .catch(() => active && setOidcStatus(null));
+      void getEnterpriseSession()
+        .then((session) => {
+          if (active && sessionGeneration.current === generation) setEnterpriseSession(session);
+        })
+        .catch(() => {
+          if (active && sessionGeneration.current === generation) setEnterpriseSession(null);
+        });
       try {
         const session = await getAdministratorSession();
         if (!active || sessionGeneration.current !== generation) return;
@@ -123,6 +160,9 @@ function App() {
           const connections = await getConnections();
           if (active && sessionGeneration.current === generation) {
             setManagedConnections(connections.items);
+            void getChatMetrics().then((metrics) => {
+              if (active && sessionGeneration.current === generation) setChatMetrics(metrics);
+            }).catch(() => undefined);
           }
         } catch (error) {
           if (active && sessionGeneration.current === generation) {
@@ -143,6 +183,9 @@ function App() {
 
   const bootstrapState = platform?.bootstrapState ?? (apiAvailable ? "REQUIRED" : "LOCKED");
   const unlocked = adminSession !== null;
+  const chatUnlocked = enterpriseSession !== null || unlocked;
+  const documentsUnlocked = unlocked || enterpriseSession?.scopes.includes("documents:use") === true;
+  const agentsUnlocked = unlocked || enterpriseSession?.scopes.includes("agents:use") === true;
   const enabledConnections = managedConnections.filter(({ enabled }) => enabled).length;
   const healthyConnections = managedConnections.filter(({ status }) => status === "HEALTHY").length;
 
@@ -161,19 +204,6 @@ function App() {
     return error instanceof Error ? error.message : fallback;
   };
 
-  const refreshOperations = async () => {
-    if (!adminSession) return;
-    setOperationsBusy(true);
-    setOperationsError(null);
-    try {
-      setOperations(await getJobOperations());
-    } catch (error) {
-      setOperationsError(handleAdminError(error, "Unable to load job operations."));
-    } finally {
-      setOperationsBusy(false);
-    }
-  };
-
   const unlockSettings = async (token: string) => {
     const generation = ++sessionGeneration.current;
     let createdSession = false;
@@ -186,12 +216,8 @@ function App() {
       if (sessionGeneration.current !== generation) return false;
       setAdminSession(session);
       setManagedConnections(response.items);
-      if (activeView === "Operations") {
-        setDrawerOpen(false);
-        void getJobOperations().then(setOperations).catch((error) => {
-          setOperationsError(handleAdminError(error, "Unable to load job operations."));
-        });
-      }
+      void getChatMetrics().then(setChatMetrics).catch(() => setChatMetrics(null));
+      if (activeView === "Operations") setDrawerOpen(false);
       return true;
     } catch (error) {
       if (createdSession) await revokeAdministratorSession().catch(() => undefined);
@@ -248,41 +274,13 @@ function App() {
     }
   };
 
-  const runSystemProbe = async () => {
-    if (!adminSession) return;
-    setOperationsBusy(true);
-    setOperationsError(null);
-    setOperationsMessage(null);
-    try {
-      const result = await sendSystemProbe();
-      setOperationsMessage(`System probe ${result.jobId.slice(0, 8)} queued.`);
-      setOperations(await getJobOperations());
-    } catch (error) {
-      setOperationsError(handleAdminError(error, "Unable to queue a system probe."));
-    } finally {
-      setOperationsBusy(false);
-    }
-  };
-
-  const runDeadLetterRedrive = async () => {
-    if (!adminSession) return;
-    setOperationsBusy(true);
-    setOperationsError(null);
-    setOperationsMessage(null);
-    try {
-      const result = await redriveDeadLetters();
-      setOperationsMessage(result.message);
-      setOperations(await getJobOperations());
-    } catch (error) {
-      setOperationsError(handleAdminError(error, "Unable to redrive dead letters."));
-    } finally {
-      setOperationsBusy(false);
-    }
-  };
-
   const selectView = (view: ActiveView) => {
     setActiveView(view);
-    if (view === "Operations" && adminSession) void refreshOperations();
+    window.history.replaceState(
+      null,
+      "",
+      view === "Overview" ? window.location.pathname : `#${view.toLowerCase()}`,
+    );
   };
 
   const loadRevisions = async (connectionId: string) => {
@@ -319,11 +317,15 @@ function App() {
   const signOut = async () => {
     sessionGeneration.current += 1;
     setAdminSession(null);
+    setEnterpriseSession(null);
+    setChatMetrics(null);
     setManagedConnections([]);
-    setOperations(null);
     setRevisionHistory(null);
     setRevisionConnectionId(null);
-    await revokeAdministratorSession().catch(() => undefined);
+    await Promise.allSettled([
+      revokeAdministratorSession(),
+      revokeEnterpriseSession(),
+    ]);
   };
 
   return (
@@ -340,6 +342,7 @@ function App() {
               className={label === activeView ? "nav-item active" : "nav-item"}
               disabled={!available}
               key={label}
+              ref={label === activeView ? activeNavigationItem : undefined}
               type="button"
               title={available ? label : `${label} is planned for a later phase`}
               onClick={() => available && selectView(label as ActiveView)}
@@ -355,26 +358,86 @@ function App() {
             <Glyph name="settings"/><span>Settings</span>
           </button>
           <div className="operator">
-            <div className="avatar">SA</div>
-            <div><strong>{adminSession ? "System administrator" : "Administrator locked"}</strong><span>{adminSession ? adminSession.role.replaceAll("_", " ").toLowerCase() : "No active session"}</span></div>
-            {adminSession && <button type="button" onClick={() => void signOut()}>Sign out</button>}
+            <div className="avatar">{adminSession ? "SA" : enterpriseSession ? enterpriseSession.user.displayName.slice(0, 2).toUpperCase() : "SA"}</div>
+            <div>
+              <strong>{adminSession ? "System administrator" : enterpriseSession?.user.displayName ?? "Not signed in"}</strong>
+              <span>{adminSession ? adminSession.role.replaceAll("_", " ").toLowerCase() : enterpriseSession ? "Enterprise user" : "No active session"}</span>
+            </div>
+            {(adminSession || enterpriseSession) && <button type="button" onClick={() => void signOut()}>Sign out</button>}
           </div>
         </div>
       </aside>
 
-      <main>
+      <main className={activeView === "Chat" ? "chat-page" : undefined}>
         <div className="mobile-brand"><span className="brand-mark">M</span><strong>MPM AIHub</strong></div>
-        {activeView === "Operations" ? (
-          <OperationsView
-            busy={operationsBusy}
-            error={operationsError}
-            message={operationsMessage}
-            snapshot={operations}
+        {activeView === "Chat" ? (
+          <ChatView
+            unlocked={chatUnlocked}
+            identityMode={adminSession ? "ADMINISTRATOR_PREVIEW" : enterpriseSession ? "ENTERPRISE" : null}
+            displayName={adminSession ? "System administrator" : enterpriseSession?.user.displayName ?? null}
+            oidcConfigured={oidcStatus?.configured === true}
+            onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23chat")}
+            onConfigure={() => openConnectionSettings("OIDC")}
+            onUnauthorized={() => {
+              sessionGeneration.current += 1;
+              setAdminSession(null);
+              setEnterpriseSession(null);
+            }}
+          />
+        ) : activeView === "Agents" ? (
+          <AgentsView
+            unlocked={agentsUnlocked}
+            administrator={adminSession !== null}
+            oidcConfigured={oidcStatus?.configured === true}
+            onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23agents")}
+            onConfigure={() => openConnectionSettings("HERMES")}
+            onUnauthorized={() => {
+              sessionGeneration.current += 1;
+              setAdminSession(null);
+              setEnterpriseSession(null);
+            }}
+          />
+        ) : activeView === "Documents" ? (
+          <DocumentsView
+            unlocked={documentsUnlocked}
+            administrator={adminSession !== null}
+            oidcConfigured={oidcStatus?.configured === true}
+            onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23documents")}
+            onConfigure={() => openConnectionSettings("SEAWEEDFS")}
+            onUnauthorized={() => {
+              sessionGeneration.current += 1;
+              setAdminSession(null);
+              setEnterpriseSession(null);
+            }}
+          />
+        ) : activeView === "Memory" ? (
+          <MemoryView
             unlocked={unlocked}
+            onConfigure={() => openConnectionSettings("SUPERMEMORY")}
+            onUnauthorized={() => {
+              sessionGeneration.current += 1;
+              setAdminSession(null);
+            }}
+          />
+        ) : activeView === "Integrations" ? (
+          <ToolingView
+            unlocked={unlocked}
+            scopes={adminSession?.scopes ?? []}
+            onConfigure={() => openConnectionSettings("MCP")}
+            onUnauthorized={() => {
+              sessionGeneration.current += 1;
+              setAdminSession(null);
+            }}
+          />
+        ) : activeView === "Operations" ? (
+          <OperationsView
+            unlocked={unlocked}
+            scopes={adminSession?.scopes ?? []}
             onConfigure={() => openConnectionSettings()}
-            onProbe={() => void runSystemProbe()}
-            onRedrive={() => void runDeadLetterRedrive()}
-            onRefresh={() => void refreshOperations()}
+            onUnauthorized={() => {
+              sessionGeneration.current += 1;
+              setAdminSession(null);
+            }}
           />
         ) : (
           <>
@@ -402,8 +465,8 @@ function App() {
             <section className="metrics" aria-label="Platform summary">
               <article><span>Configured services</span><strong>{unlocked ? managedConnections.length : "—"}</strong><small>{unlocked ? `${connectionDefinitions.length} supported in this release` : "Unlock to view"}</small></article>
               <article><span>Healthy connections</span><strong>{unlocked ? healthyConnections : "—"}</strong><small>Credential-aware checks</small></article>
-              <article><span>Enabled routes</span><strong>{unlocked ? enabledConnections : "—"}</strong><small>Available to AIHub services</small></article>
-              <article><span>Execution posture</span><strong className="text-good">Restricted</strong><small>Hermes remains default-deny</small></article>
+              <article><span>Enabled connections</span><strong>{unlocked ? enabledConnections : "—"}</strong><small>Available to AIHub services</small></article>
+              <article><span>Tool posture</span><strong>Default deny</strong><small>Gateway staged · approval gated</small></article>
             </section>
 
             <div className="content-grid">
@@ -429,27 +492,36 @@ function App() {
               </section>
 
               <section className="panel architecture-panel">
-                <div className="panel-heading"><div><p className="section-kicker">Trust boundary</p><h2>Inference route</h2><p>Every model request follows one governed path.</p></div></div>
+                <div className="panel-heading"><div><p className="section-kicker">Runtime trust boundary</p><h2>Agent inference route</h2><p>The zero-tool Hermes path remains enforced while the governed MCP gateway is accepted.</p></div></div>
                 <ol className="runtime-flow">
                   <li><span>1</span><div><strong>AIHub</strong><small>Identity and policy</small></div></li>
                   <li><span>2</span><div><strong>Hermes</strong><small>Scoped execution</small></div></li>
                   <li><span>3</span><div><strong>LiteLLM</strong><small>Gateway controls</small></div></li>
                   <li><span>4</span><div><strong>vLLM</strong><small>On-prem inference</small></div></li>
                 </ol>
-                <div className="boundary-note"><Glyph name="guardrails" /><div><strong>Credentials stay behind AIHub</strong><p>Hermes receives per-run capabilities, never general infrastructure credentials.</p></div></div>
+                <div className="boundary-note"><Glyph name="guardrails" /><div><strong>Credentials stay behind AIHub</strong><p>Hermes receives the bounded request and model alias, never storage, database, or connector credentials.</p></div></div>
               </section>
 
               <section className="panel delivery-panel">
-                <div className="panel-heading"><div><p className="section-kicker">Delivery</p><h2>Foundation readiness</h2><p>Core local controls are implemented; enterprise identity remains an integration gate.</p></div><span className="phase-tag">Phase 1</span></div>
-                <progress value="5" max="6">83%</progress>
-                <div className="progress-copy"><span>Platform foundation</span><strong>5 of 6 controls</strong></div>
+                <div className="panel-heading"><div><p className="section-kicker">Delivery</p><h2>On-premise AI workflows</h2><p>Phase 7 connects operational evidence, incident response, guardrail posture, and release gates across the existing workflows.</p></div><span className="phase-tag">Phase 7 foundation</span></div>
+                <div className="progress-copy"><span>Implementation status</span><strong>Acceptance candidate</strong></div>
+                {chatMetrics && (
+                  <div className="chat-metric-grid" aria-label="Chat metrics for the last 24 hours">
+                    <div><span>Responses</span><strong>{chatMetrics.responses.toLocaleString()}</strong></div>
+                    <div><span>Failure rate</span><strong>{(chatMetrics.failureRate * 100).toFixed(1)}%</strong></div>
+                    <div><span>Avg latency</span><strong>{chatMetrics.averageLatencyMs === null ? "—" : `${(chatMetrics.averageLatencyMs / 1000).toFixed(1)}s`}</strong></div>
+                    <div><span>Tokens</span><strong>{chatMetrics.totalTokens.toLocaleString()}</strong></div>
+                  </div>
+                )}
                 <ul>
-                  <li className="done">Application and database foundation</li>
-                  <li className="done">Encrypted configuration vault</li>
-                  <li className="done">Service diagnostics and audit trail</li>
-                  <li className="done">PostgreSQL job operations</li>
-                  <li className="done">Administrator sessions and scoped RBAC</li>
-                  <li className="next">Enterprise OIDC role mapping</li>
+                  <li className="done">Controlled LiteLLM chat and enterprise identity</li>
+                  <li className="done">SeaweedFS document conversion and OCR</li>
+                  <li className="done">Private Supermemory retrieval with source evidence</li>
+                  <li className="done">Immutable Hermes profiles and global runtime control</li>
+                  <li className="done">Zero-tool capability preflight and run revocation</li>
+                  <li className="done">MCP registry, exact-version grants, and approval inbox</li>
+                  <li className="done">AI operations, durable incidents, and evaluation release gates</li>
+                  <li className="next">Live Hermes propagation, GPU telemetry, SIEM, and target acceptance</li>
                 </ul>
               </section>
             </div>

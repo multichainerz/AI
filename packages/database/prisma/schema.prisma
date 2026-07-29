@@ -12,6 +12,7 @@ datasource db {
 enum ServiceKind {
   LITELLM
   VLLM
+  HERMES
   SUPERMEMORY
   SEAWEEDFS
   OCR
@@ -54,6 +55,168 @@ enum AdministratorRole {
   AUDITOR
 }
 
+enum ChatConversationStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum ChatMessageRole {
+  USER
+  ASSISTANT
+}
+
+enum ChatMessageStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum ChatFeedbackRating {
+  HELPFUL
+  NOT_HELPFUL
+}
+
+enum DocumentStatus {
+  QUARANTINED
+  QUEUED
+  CONVERTING
+  OCR_PENDING
+  OCR_PROCESSING
+  READY
+  FAILED
+  REJECTED
+  DELETING
+  DELETED
+}
+
+enum DocumentClassification {
+  INTERNAL
+  CONFIDENTIAL
+  RESTRICTED
+}
+
+enum DocumentArtifactKind {
+  ORIGINAL
+  PAGE_IMAGE
+  OCR_TEXT
+  OCR_MARKDOWN
+  OCR_JSON
+}
+
+enum MemorySyncStatus {
+  NOT_INDEXED
+  QUEUED
+  PROCESSING
+  READY
+  FAILED
+  DELETE_PENDING
+  DELETED
+}
+
+enum AgentProfileStatus {
+  DRAFT
+  ACTIVE
+  SUSPENDED
+}
+
+enum AgentRunStatus {
+  QUEUED
+  RUNNING
+  CANCEL_REQUESTED
+  COMPLETED
+  FAILED
+  CANCELLED
+  TIMED_OUT
+  DENIED
+}
+
+enum ToolRisk {
+  READ_ONLY
+  CONSEQUENTIAL
+}
+
+enum ToolStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum ToolCallStatus {
+  REQUESTED
+  APPROVAL_PENDING
+  EXECUTING
+  COMPLETED
+  FAILED
+  DENIED
+  CANCELLED
+}
+
+enum ToolApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+  CANCELLED
+}
+
+enum ToolResourceScope {
+  OWNER_ONLY
+}
+
+enum OperationalIncidentSeverity {
+  WARNING
+  CRITICAL
+}
+
+enum OperationalIncidentStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+enum EvaluationTargetType {
+  MODEL
+  PROMPT
+  POLICY
+  AGENT
+}
+
+enum EvaluationRunStatus {
+  DRAFT
+  PASSED
+  FAILED
+  PROMOTED
+}
+
+enum ProductionReadinessDomain {
+  SECURITY
+  INFRASTRUCTURE
+  RECOVERY
+  OPERATIONS
+  TRAINING
+  BUSINESS
+}
+
+enum ProductionReadinessControlStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  BLOCKED
+  VERIFIED
+  WAIVED
+}
+
+enum ProductionReadinessApprovalRole {
+  SECURITY
+  INFRASTRUCTURE
+  PRODUCT
+  BUSINESS
+}
+
+enum ProductionReadinessApprovalDecision {
+  APPROVED
+  REJECTED
+}
+
 model AdministratorSession {
   id                String            @id @default(uuid()) @db.Uuid
   tokenHash         Bytes             @unique
@@ -89,6 +252,7 @@ model ServiceConnection {
   updatedAt              DateTime              @updatedAt @db.Timestamptz(6)
   secrets                SecretRecord[]
   revisions              ConfigurationRevision[]
+  oidcAuthorizationRequests OidcAuthorizationRequest[]
 
   @@index([kind, environment])
   @@index([enabled, status])
@@ -166,4 +330,478 @@ model WorkerNode {
 
   @@index([status, lastSeenAt])
   @@index([lastSeenAt])
+}
+
+model OperationalIncident {
+  id                String                      @id @default(uuid()) @db.Uuid
+  activeFingerprint String?                     @unique @db.VarChar(160)
+  title             String                      @db.VarChar(160)
+  severity          OperationalIncidentSeverity
+  status            OperationalIncidentStatus   @default(OPEN)
+  component         String                      @db.VarChar(80)
+  summary           String                      @db.VarChar(1000)
+  owner             String?                     @db.VarChar(160)
+  automated         Boolean                     @default(false)
+  detectedAt        DateTime                    @default(now()) @db.Timestamptz(6)
+  lastObservedAt    DateTime                    @default(now()) @db.Timestamptz(6)
+  acknowledgedBy    String?                     @db.Uuid
+  acknowledgedAt    DateTime?                   @db.Timestamptz(6)
+  resolvedBy        String?                     @db.Uuid
+  resolvedAt        DateTime?                   @db.Timestamptz(6)
+  resolutionNote    String?                     @db.VarChar(1000)
+  createdAt         DateTime                    @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime                    @updatedAt @db.Timestamptz(6)
+
+  @@index([status, severity, detectedAt])
+  @@index([component, status])
+  @@index([owner, status])
+}
+
+model EvaluationRun {
+  id                 String              @id @default(uuid()) @db.Uuid
+  name               String              @db.VarChar(160)
+  targetType         EvaluationTargetType
+  targetReference    String              @db.VarChar(240)
+  targetVersion      String              @db.VarChar(120)
+  status             EvaluationRunStatus @default(DRAFT)
+  minimumPassRate    Float
+  requiredCategories String[]
+  categoryResults    Json                @default("[]")
+  totalCases         Int                 @default(0)
+  passedCases        Int                 @default(0)
+  criticalFailures   Int                 @default(0)
+  createdBy          String?             @db.Uuid
+  completedAt        DateTime?           @db.Timestamptz(6)
+  promotedBy         String?             @db.Uuid
+  promotedAt         DateTime?           @db.Timestamptz(6)
+  promotionReason    String?             @db.VarChar(1000)
+  createdAt          DateTime            @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime            @updatedAt @db.Timestamptz(6)
+
+  @@index([status, createdAt])
+  @@index([targetType, targetReference, targetVersion])
+}
+
+model ProductionReadinessControl {
+  key           String                           @id @db.VarChar(80)
+  title         String                           @db.VarChar(160)
+  domain        ProductionReadinessDomain
+  description   String                           @db.VarChar(1000)
+  status        ProductionReadinessControlStatus @default(NOT_STARTED)
+  owner         String?                          @db.VarChar(160)
+  evidenceRefs  String[]                           @default([])
+  note          String?                          @db.VarChar(1000)
+  lastUpdatedBy String?                          @db.VarChar(160)
+  verifiedAt    DateTime?                        @db.Timestamptz(6)
+  revision      Int                              @default(0)
+  createdAt     DateTime                         @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime                         @updatedAt @db.Timestamptz(6)
+
+  @@index([domain, status])
+  @@index([status, updatedAt])
+}
+
+model ProductionReadinessApproval {
+  id          String                              @id @default(uuid()) @db.Uuid
+  role        ProductionReadinessApprovalRole
+  decision    ProductionReadinessApprovalDecision
+  authority   String                              @db.VarChar(160)
+  evidenceRef String                              @db.VarChar(500)
+  reason      String                              @db.VarChar(1000)
+  recordedBy  String                              @db.VarChar(160)
+  recordedAt  DateTime                            @default(now()) @db.Timestamptz(6)
+  controlRevisions Json                           @default("{}")
+
+  @@index([role, recordedAt])
+  @@index([decision, recordedAt])
+}
+
+model ChatConversation {
+  id            String                 @id @default(uuid()) @db.Uuid
+  ownerSubject  String                 @db.VarChar(200)
+  title         String                 @db.VarChar(160)
+  modelAlias    String                 @db.VarChar(200)
+  status        ChatConversationStatus @default(ACTIVE)
+  generation    Int                    @default(0)
+  lastMessageAt DateTime?              @db.Timestamptz(6)
+  createdAt     DateTime               @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime               @updatedAt @db.Timestamptz(6)
+  messages      ChatMessage[]
+
+  @@index([ownerSubject, status, updatedAt])
+  @@index([lastMessageAt])
+}
+
+model ChatMessage {
+  id                String            @id @default(uuid()) @db.Uuid
+  conversationId    String            @db.Uuid
+  ordinal           Int
+  role              ChatMessageRole
+  status            ChatMessageStatus
+  content           String            @db.Text
+  modelAlias        String?           @db.VarChar(200)
+  inputTokens       Int?
+  outputTokens      Int?
+  totalTokens       Int?
+  latencyMs         Int?
+  finishReason      String?           @db.VarChar(120)
+  providerRequestId String?           @db.VarChar(200)
+  errorCode         String?           @db.VarChar(80)
+  sources           Json              @default("[]")
+  createdAt         DateTime          @default(now()) @db.Timestamptz(6)
+  completedAt       DateTime?         @db.Timestamptz(6)
+  conversation      ChatConversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  feedback          ChatFeedback?
+
+  @@unique([conversationId, ordinal])
+  @@index([conversationId, createdAt])
+  @@index([status, createdAt])
+}
+
+model ChatFeedback {
+  id           String             @id @default(uuid()) @db.Uuid
+  messageId    String             @unique @db.Uuid
+  ownerSubject String             @db.VarChar(200)
+  rating       ChatFeedbackRating
+  comment      String?            @db.VarChar(1000)
+  createdAt    DateTime           @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime           @updatedAt @db.Timestamptz(6)
+  message      ChatMessage        @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([ownerSubject, createdAt])
+  @@index([rating, createdAt])
+}
+
+model EnterpriseUser {
+  id          String                  @id @default(uuid()) @db.Uuid
+  issuer      String                  @db.VarChar(512)
+  subject     String                  @db.VarChar(255)
+  email       String?                 @db.VarChar(320)
+  displayName String                  @db.VarChar(200)
+  groups      String[]
+  enabled     Boolean                 @default(true)
+  lastLoginAt DateTime                @db.Timestamptz(6)
+  createdAt   DateTime                @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime                @updatedAt @db.Timestamptz(6)
+  sessions    EnterpriseUserSession[]
+
+  @@unique([issuer, subject])
+  @@index([email])
+  @@index([enabled, lastLoginAt])
+}
+
+model EnterpriseUserSession {
+  id                String         @id @default(uuid()) @db.Uuid
+  tokenHash         Bytes          @unique
+  userId            String         @db.Uuid
+  createdAt         DateTime       @default(now()) @db.Timestamptz(6)
+  lastSeenAt        DateTime       @db.Timestamptz(6)
+  idleExpiresAt     DateTime       @db.Timestamptz(6)
+  absoluteExpiresAt DateTime       @db.Timestamptz(6)
+  revokedAt         DateTime?      @db.Timestamptz(6)
+  sourceIp          String?        @db.Inet
+  userAgentHash     String?        @db.VarChar(64)
+  user              EnterpriseUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([revokedAt, idleExpiresAt])
+  @@index([absoluteExpiresAt])
+}
+
+model OidcAuthorizationRequest {
+  id                         String            @id @default(uuid()) @db.Uuid
+  serviceConnectionId        String            @db.Uuid
+  stateHash                  Bytes             @unique
+  nonce                      String            @db.VarChar(86)
+  returnTo                   String            @db.VarChar(500)
+  issuer                     String            @db.VarChar(512)
+  tokenEndpoint              String            @db.VarChar(2048)
+  jwksUri                    String            @db.VarChar(2048)
+  clientId                   String            @db.VarChar(256)
+  redirectUri                String            @db.VarChar(2048)
+  codeVerifierEncryptedValue Bytes
+  codeVerifierValueNonce     Bytes
+  codeVerifierValueAuthTag   Bytes
+  codeVerifierWrappedDataKey Bytes
+  codeVerifierKeyNonce       Bytes
+  codeVerifierKeyAuthTag     Bytes
+  encryptionVersion          Int               @default(1)
+  masterKeyVersion           Int               @default(1)
+  createdAt                  DateTime           @default(now()) @db.Timestamptz(6)
+  expiresAt                  DateTime           @db.Timestamptz(6)
+  consumedAt                 DateTime?          @db.Timestamptz(6)
+  serviceConnection          ServiceConnection @relation(fields: [serviceConnectionId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt, consumedAt])
+  @@index([serviceConnectionId, createdAt])
+}
+
+model Document {
+  id                   String                 @id @default(uuid()) @db.Uuid
+  ownerSubject         String                 @db.VarChar(200)
+  fileName             String                 @db.VarChar(255)
+  mediaType            String                 @db.VarChar(160)
+  sizeBytes            BigInt
+  sha256               String                 @db.VarChar(64)
+  classification       DocumentClassification
+  status               DocumentStatus         @default(QUARANTINED)
+  originalObjectKey    String                 @db.VarChar(1024)
+  pageCount            Int?
+  processingGeneration Int                    @default(0)
+  normalizedText       String?                @db.Text
+  normalizedMarkdown   String?                @db.Text
+  ocrMetadata          Json?
+  failureCode          String?                @db.VarChar(80)
+  failureMessage       String?                @db.VarChar(500)
+  retentionUntil       DateTime               @db.Timestamptz(6)
+  approvedAt           DateTime?              @db.Timestamptz(6)
+  approvedBy           String?                @db.Uuid
+  completedAt          DateTime?              @db.Timestamptz(6)
+  deletedAt            DateTime?              @db.Timestamptz(6)
+  createdAt            DateTime               @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime               @updatedAt @db.Timestamptz(6)
+  artifacts            DocumentArtifact[]
+  processingRuns       DocumentProcessingRun[]
+  memoryPublication    DocumentMemoryPublication?
+
+  @@index([ownerSubject, status, updatedAt])
+  @@index([status, createdAt])
+  @@index([retentionUntil, status])
+  @@index([sha256])
+}
+
+model DocumentMemoryPublication {
+  id                 String           @id @default(uuid()) @db.Uuid
+  documentId         String           @unique @db.Uuid
+  ownerSubject       String           @db.VarChar(200)
+  scopeTag           String           @db.VarChar(100)
+  generation         Int              @default(0)
+  status             MemorySyncStatus @default(NOT_INDEXED)
+  externalDocumentId String?          @db.VarChar(255)
+  jobId              String?          @db.Uuid
+  failureCode        String?          @db.VarChar(80)
+  failureMessage     String?          @db.VarChar(500)
+  queuedAt           DateTime?        @db.Timestamptz(6)
+  syncedAt           DateTime?        @db.Timestamptz(6)
+  deletedAt          DateTime?        @db.Timestamptz(6)
+  createdAt          DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime         @updatedAt @db.Timestamptz(6)
+  document           Document         @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([ownerSubject, status, updatedAt])
+  @@index([status, queuedAt])
+  @@index([scopeTag, status])
+}
+
+model AgentProfile {
+  id             String             @id @default(uuid()) @db.Uuid
+  slug           String             @unique @db.VarChar(64)
+  status         AgentProfileStatus @default(DRAFT)
+  currentVersion Int                @default(1)
+  activeVersion  Int?
+  createdAt      DateTime           @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime           @updatedAt @db.Timestamptz(6)
+  versions       AgentProfileVersion[]
+  runs           AgentRun[]
+
+  @@index([status, updatedAt])
+}
+
+model AgentProfileVersion {
+  id                    String       @id @default(uuid()) @db.Uuid
+  profileId             String       @db.Uuid
+  version               Int
+  displayName           String       @db.VarChar(120)
+  purpose               String       @db.VarChar(500)
+  instructions          String       @db.Text
+  modelAlias            String       @db.VarChar(200)
+  maxTurns              Int
+  timeoutSeconds        Int
+  maxConcurrentRuns     Int
+  allowPrivateKnowledge Boolean      @default(false)
+  safeMode              Boolean      @default(true)
+  createdBy             String?      @db.Uuid
+  createdAt             DateTime     @default(now()) @db.Timestamptz(6)
+  profile               AgentProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  runs                   AgentRun[]
+  toolGrants             AgentToolGrant[]
+
+  @@unique([profileId, version])
+  @@index([profileId, createdAt])
+}
+
+model AgentRun {
+  id                    String       @id @default(uuid()) @db.Uuid
+  profileId             String       @db.Uuid
+  profileVersionId      String       @db.Uuid
+  profileVersion        Int
+  ownerSubject          String       @db.VarChar(200)
+  requestedBy           String       @db.Uuid
+  status                AgentRunStatus @default(QUEUED)
+  input                 String       @db.Text
+  output                String?      @db.Text
+  effectiveCapabilities Json         @default("[]")
+  sources               Json         @default("[]")
+  toolCapabilityTokenHash Bytes?
+  toolCapabilityExpiresAt DateTime?   @db.Timestamptz(6)
+  externalRunId         String?      @db.VarChar(255)
+  jobId                 String?      @db.Uuid
+  failureCode           String?      @db.VarChar(80)
+  failureMessage        String?      @db.VarChar(500)
+  queuedAt              DateTime     @default(now()) @db.Timestamptz(6)
+  startedAt             DateTime?    @db.Timestamptz(6)
+  completedAt           DateTime?    @db.Timestamptz(6)
+  createdAt             DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime     @updatedAt @db.Timestamptz(6)
+  profile               AgentProfile @relation(fields: [profileId], references: [id], onDelete: Restrict)
+  version               AgentProfileVersion @relation(fields: [profileVersionId], references: [id], onDelete: Restrict)
+  toolCalls             GovernedToolCall[]
+
+  @@index([ownerSubject, createdAt])
+  @@index([profileId, status, createdAt])
+  @@index([status, queuedAt])
+}
+
+model AgentRuntimeControl {
+  id        String   @id @default("global") @db.VarChar(32)
+  enabled   Boolean  @default(false)
+  reason    String?  @db.VarChar(500)
+  updatedBy String?  @db.Uuid
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+}
+
+model GovernedTool {
+  id          String       @id @default(uuid()) @db.Uuid
+  slug        String       @unique @db.VarChar(80)
+  displayName String       @db.VarChar(120)
+  description String       @db.VarChar(1000)
+  risk        ToolRisk
+  status      ToolStatus   @default(ACTIVE)
+  handlerKey  String       @db.VarChar(120)
+  inputSchema Json
+  createdAt   DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime     @updatedAt @db.Timestamptz(6)
+  grants      AgentToolGrant[]
+  calls       GovernedToolCall[]
+
+  @@index([status, risk])
+}
+
+model AgentToolGrant {
+  id                String             @id @default(uuid()) @db.Uuid
+  profileVersionId  String             @db.Uuid
+  toolId            String             @db.Uuid
+  enabled           Boolean            @default(true)
+  allowedGroups     String[]
+  allowedAdminRoles AdministratorRole[]
+  resourceScope     ToolResourceScope  @default(OWNER_ONLY)
+  createdBy         String?            @db.Uuid
+  createdAt         DateTime           @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime           @updatedAt @db.Timestamptz(6)
+  profileVersion    AgentProfileVersion @relation(fields: [profileVersionId], references: [id], onDelete: Cascade)
+  tool              GovernedTool       @relation(fields: [toolId], references: [id], onDelete: Restrict)
+  calls             GovernedToolCall[]
+
+  @@unique([profileVersionId, toolId])
+  @@index([toolId, enabled])
+}
+
+model McpGatewayCredential {
+  id         String    @id @default(uuid()) @db.Uuid
+  name       String    @db.VarChar(120)
+  tokenPrefix String   @unique @db.VarChar(32)
+  tokenHash  Bytes     @unique
+  enabled    Boolean   @default(true)
+  lastUsedAt DateTime? @db.Timestamptz(6)
+  revokedAt  DateTime? @db.Timestamptz(6)
+  createdBy  String?   @db.Uuid
+  createdAt  DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([enabled, revokedAt])
+}
+
+model GovernedToolCall {
+  id             String         @id @default(uuid()) @db.Uuid
+  runId          String         @db.Uuid
+  toolId         String         @db.Uuid
+  grantId        String         @db.Uuid
+  requestId      String         @db.Uuid
+  status         ToolCallStatus @default(REQUESTED)
+  arguments      Json
+  result         Json?
+  errorCode      String?        @db.VarChar(80)
+  errorMessage   String?        @db.VarChar(500)
+  requestedAt    DateTime       @default(now()) @db.Timestamptz(6)
+  startedAt      DateTime?      @db.Timestamptz(6)
+  completedAt    DateTime?      @db.Timestamptz(6)
+  createdAt      DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime       @updatedAt @db.Timestamptz(6)
+  run            AgentRun       @relation(fields: [runId], references: [id], onDelete: Restrict)
+  tool           GovernedTool   @relation(fields: [toolId], references: [id], onDelete: Restrict)
+  grant          AgentToolGrant @relation(fields: [grantId], references: [id], onDelete: Restrict)
+  approval       ToolApproval?
+
+  @@unique([runId, requestId])
+  @@index([runId, createdAt])
+  @@index([toolId, status, createdAt])
+  @@index([status, requestedAt])
+}
+
+model ToolApproval {
+  id             String             @id @default(uuid()) @db.Uuid
+  callId         String             @unique @db.Uuid
+  status         ToolApprovalStatus @default(PENDING)
+  expiresAt      DateTime           @db.Timestamptz(6)
+  decisionReason String?            @db.VarChar(1000)
+  decisionBy     String?            @db.Uuid
+  decidedAt      DateTime?          @db.Timestamptz(6)
+  createdAt      DateTime           @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime           @updatedAt @db.Timestamptz(6)
+  call           GovernedToolCall   @relation(fields: [callId], references: [id], onDelete: Restrict)
+
+  @@index([status, expiresAt])
+}
+
+model ToolRuntimeControl {
+  id                 String   @id @default("global") @db.VarChar(32)
+  enabled            Boolean  @default(false)
+  reason             String?  @db.VarChar(500)
+  approvalTtlMinutes Int      @default(15)
+  updatedBy          String?  @db.Uuid
+  updatedAt          DateTime @updatedAt @db.Timestamptz(6)
+}
+
+model DocumentArtifact {
+  id          String               @id @default(uuid()) @db.Uuid
+  documentId  String               @db.Uuid
+  kind        DocumentArtifactKind
+  pageNumber  Int                  @default(0)
+  objectKey   String               @db.VarChar(1024)
+  mediaType   String               @db.VarChar(160)
+  sizeBytes   BigInt
+  sha256      String               @db.VarChar(64)
+  createdAt   DateTime             @default(now()) @db.Timestamptz(6)
+  document    Document             @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, kind, pageNumber])
+  @@index([documentId, createdAt])
+}
+
+model DocumentProcessingRun {
+  id            String    @id @default(uuid()) @db.Uuid
+  documentId    String    @db.Uuid
+  generation    Int
+  conversionJobId String? @db.Uuid
+  ocrJobId      String?   @db.Uuid
+  startedAt     DateTime? @db.Timestamptz(6)
+  completedAt   DateTime? @db.Timestamptz(6)
+  failedAt      DateTime? @db.Timestamptz(6)
+  failureCode   String?   @db.VarChar(80)
+  createdAt     DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime  @updatedAt @db.Timestamptz(6)
+  document      Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, generation])
+  @@index([conversionJobId])
+  @@index([ocrJobId])
 }

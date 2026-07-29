@@ -1,6 +1,6 @@
 # MPM AIHub - Phased Delivery Plan
 
-**Status:** Phase 1 local implementation baseline complete; environment acceptance pending  
+**Status:** Phase 1 local baseline complete; Phase 2 chat, Phase 3 document/OCR, private-scope Phase 4 knowledge, zero-tool Phase 5 Hermes, Phase 6 governed MCP, Phase 7 AI operations, and Phase 8 pilot-readiness foundations implemented as local acceptance candidates; live Hermes tooling and target-environment acceptance remain pending
 **Related document:** `docs/AIHUB_PRD.md`  
 **Delivery model:** Incremental, on-premises, security-first
 
@@ -112,6 +112,10 @@ Deliver the first end-user capability: authenticated, governed chat with the on-
 - Requests, policy decisions, errors, and administrative changes are traceable.
 - The chat path has passed functional, security, and pilot-load testing.
 
+### Current implementation note
+
+The repository now includes the locally testable controlled-chat candidate: PostgreSQL conversation and message persistence, stable enterprise-user ownership, OIDC authorization code with PKCE and verified group allowlisting, opaque sessions, one approved LiteLLM model alias, encrypted backend-only credential resolution, server-sent token streaming, cancellation, bounded context, PostgreSQL request limits, response feedback, rolling usage/failure telemetry, audit events, and a responsive Chat workspace. The scoped bootstrap administrator remains an explicitly labelled preview and recovery path. Phase 2 target acceptance still requires the real MPM identity provider and LiteLLM/vLLM route, approved access/retention policies, and functional, security, GPU-load, and soak gates in the on-premises environment.
+
 ## 7. Phase 3 - Document Storage, Conversion, and OCR
 
 ### Outcome
@@ -134,6 +138,10 @@ Allow MPM users to securely ingest documents and produce reusable normalized tex
 - Document ownership, classification, access, retention, and deletion are enforced and audited.
 - Restore and corruption-recovery procedures have been tested for representative artifacts.
 
+### Current implementation note
+
+The repository now includes the locally testable Phase 3 candidate: ownership-scoped uploads, content sniffing and SHA-256 checksums, classification and retention metadata, quarantine review, SeaweedFS S3 artifacts, generation-safe `pg-boss` conversion/OCR jobs, LibreOffice and Poppler page rendering, bounded Unlimited OCR requests, normalized text/Markdown/JSON outputs, reprocessing, deletion controls, audit events, metrics, and a responsive Documents workspace. The worker avoids Redis and uses PostgreSQL for durable coordination. Phase 3 is not accepted until representative MPM documents pass against the real SeaweedFS and Unlimited OCR services and backup, restore, corruption, security, performance, retention, and deletion procedures are demonstrated in the target environment. Quarantine is an authorization workflow, not a substitute for an approved malware-scanning control if MPM policy requires one.
+
 ## 8. Phase 4 - Enterprise Knowledge and Agent Memory
 
 ### Outcome
@@ -155,6 +163,10 @@ Add source-aware retrieval and governed memory without introducing a second sema
 - Retrieval respects user, department, project, and document permissions.
 - Deletion and retention propagate predictably from AIHub to SeaweedFS and Supermemory.
 - Retrieval quality meets the agreed pilot evaluation set.
+
+### Current implementation note
+
+The repository now includes the locally testable private-scope Phase 4 candidate: a backend-only self-hosted Supermemory adapter, ownership-derived container tags, stable document custom IDs, generation-safe PostgreSQL/`pg-boss` publication, synchronization and deletion state, administrative retries, source-aware chat messages, and a local authorization gate that rejects remote hits unless the current PostgreSQL document owner, lifecycle state, and memory publication are all eligible. The Memory workspace exposes publication health without exposing credentials or raw container identifiers. This is not target-environment acceptance: the real Supermemory deployment, representative retrieval evaluation set, deletion propagation, backup/recovery, latency, concurrency, and cross-user leakage tests must still pass. Organizational, departmental, project, and agent scopes are intentionally not inferred from identity groups; MPM must approve those ownership and inheritance rules before shared containers are implemented.
 
 ## 9. Phase 5 - Hardened Hermes Agent Runtime
 
@@ -179,6 +191,10 @@ Introduce agentic workflows while keeping AIHub as the authoritative execution a
 - Capability revocation takes effect for new calls and is auditable.
 - Security tests demonstrate default-deny behavior and credential isolation.
 
+### Current implementation note
+
+The repository now contains a deliberately zero-tool Phase 5 candidate: dashboard-managed immutable profiles and activation, a fail-closed global execution switch, PostgreSQL run ledgers and audits, a `pg-boss` worker, authenticated Hermes Runs API integration, mandatory capability and toolset discovery, single-turn safe mode, concurrency and timeout enforcement, cancellation, profile/version revocation, approval denial, and optional private Supermemory retrieval with local authorization rechecks. The responsive Agents workspace exposes these controls and source provenance without exposing service credentials. MCP, native tools, approvals, shared memory, and consequential actions remain disabled until Phase 6. The Phase 5 exit gate is not yet met: an isolated live Hermes deployment, its provider route to MPM LiteLLM/vLLM, network segmentation, GPU/load behavior, recovery, adversarial prompts, and end-to-end revocation must be demonstrated in the target on-premises environment.
+
 ## 10. Phase 6 - MCP Connectors and Human Approvals
 
 ### Outcome
@@ -200,6 +216,12 @@ Connect Hermes to selected MPM applications through controlled, observable tools
 - Consequential actions cannot execute before required approval.
 - Revoked or expired credentials and approvals fail closed.
 - Connector activity is visible in health, run history, and audit views.
+
+### Current implementation note
+
+The repository now contains the local Phase 6 control-plane foundation: a dual-era Streamable HTTP endpoint supporting the current stateless MCP `2026-07-28` protocol and the legacy `2025-11-25` handshake, hashed and revocable gateway credentials, short-lived run-capability persistence, an immutable tool registry, exact agent-version grants, exact group or administrator-role constraints, owner-only resource checks, an idempotent call ledger, a fail-closed runtime boundary, and expiring human approvals whose authorization is repeated before execution. The responsive **Integrations** workspace exposes registry state, grants, one-time credential issuance, approval decisions, calls, and metrics. Initial built-ins are limited to owner-scoped document metadata and an approval-gated Supermemory resync action.
+
+This is not the Phase 6 exit gate. Phase 5 remains zero-tool because current Hermes MCP configuration is static while AIHub authorization is derived per run. The worker does not yet mint and convey the persisted per-run capability to Hermes, and the selected live Hermes build has not passed modern or legacy interoperability. The first real application connector, durable recovery across approval-to-action submission, target identity/group changes, revocation, network, load, adversarial, backup, and recovery acceptance remain pending. See `docs/PHASE_6_MCP_APPROVALS_RUNBOOK.md`.
 
 ## 11. Phase 7 - AI Operations, Guardrails, and Evaluation
 
@@ -223,6 +245,12 @@ Provide MPM with a central operational view and repeatable controls for safe AI 
 - Guardrail violations and operational alerts are traceable to an owner and response procedure.
 - Capacity limits and degraded-service behavior are documented and tested.
 
+### Current implementation note
+
+The repository now contains the local Phase 7 control-plane foundation: a responsive AI operations control room, live PostgreSQL and `pg-boss` observations, explicitly labelled last-verified service checks, workflow impact mapping, durable automatic and operator-raised incidents, layered guardrail posture, immutable evaluation evidence, distinct completion and promotion permissions, and an enforced promoted-evidence gate for Hermes agent-profile activation. Chat, document, Supermemory, agent, tool, queue, and worker signals are aggregated without Redis or a parallel telemetry database.
+
+This is not the Phase 7 exit gate. GPU and vLLM metrics, continuous scheduled service probes, alert notification delivery, SIEM forwarding, configurable LiteLLM safety classifiers, representative MPM regression datasets, capacity baselines, and failure-mode tests require the real on-premises environment. Current service-connection health is a retained credential-aware check and is deliberately shown as **last verified**, not as continuous monitoring. Model, prompt, and policy evidence can be recorded and promoted, but their runtime deployment paths are not yet present; only agent activation is currently bound to the release gate. See `docs/PHASE_7_AI_OPERATIONS_RUNBOOK.md`.
+
 ## 12. Phase 8 - Production Hardening and Pilot Rollout
 
 ### Outcome
@@ -245,6 +273,14 @@ Move from an engineering system to a supportable on-premises production pilot.
 - Backup and recovery objectives have been demonstrated, not only documented.
 - Pilot success measures meet agreed thresholds.
 - Known residual risks have named owners and accepted mitigations.
+
+### Current implementation note
+
+The repository now contains the local Phase 8 pilot-readiness foundation. The AI Operations workspace includes twelve seeded security, infrastructure, recovery, operations, training, and business controls; evidence references, owners, waivers, blockers, and revisions are retained in PostgreSQL. Security, Infrastructure, Product, and Business sign-offs are append-only external-authority records. AIHub separately retains the signed-in recorder, binds every approval to the exact control revisions, and makes an approval stale after any evidence change. The derived gate cannot report **ready** until every control is verified or formally waived and all four latest authority decisions approve the current evidence snapshot.
+
+Deployment hardening now distinguishes `/healthz` process liveness from database-backed `/readyz`, uses readiness for API container orchestration, exposes request correlation IDs, closes API resources on termination, and probes the web container independently. `pnpm verify` runs the local quality gate and `pnpm security:audit` applies the high-severity production dependency threshold.
+
+This is not the Phase 8 exit gate. Penetration testing, image scanning, target-GPU load and soak tests, PostgreSQL/SeaweedFS/configuration-key restore demonstrations, Coolify/TLS/DNS/network validation, monitoring and SIEM delivery, training completion, pilot measures, residual-risk acceptance, and formal MPM approvals require the deployed on-premises environment. See `docs/PHASE_8_PRODUCTION_PILOT_RUNBOOK.md`.
 
 ## 13. Indicative Delivery Cadence
 

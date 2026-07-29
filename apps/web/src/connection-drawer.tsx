@@ -229,7 +229,7 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
             <div className="form-grid">
               <label>Display name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} required minLength={2}/></label>
               <label>Slug<input value={slug} onChange={(event) => setSlug(slugFor(event.target.value))} required disabled={Boolean(existing)}/></label>
-              <label className="wide">Endpoint URL<input type="url" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://service.mpm.internal"/></label>
+              <label className="wide">{definition.endpointLabel ?? "Endpoint URL"}<input type="url" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder={selectedKind === "OIDC" ? "https://identity.mpm.internal" : "https://service.mpm.internal"}/></label>
               <label>Environment<select value={environment} onChange={(event) => setEnvironment(event.target.value as Environment)}><option value="DEVELOPMENT">Development</option><option value="STAGING">Staging</option><option value="PRODUCTION">Production</option></select></label>
               <label className="switch-label"><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)}/><span>Enable after saving</span></label>
             </div>
@@ -257,27 +257,52 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
                     );
                   }
 
+                  if (field.type === "select") {
+                    return (
+                      <label key={field.name}>
+                        {field.label}
+                        <select
+                          value={typeof value === "string" ? value : ""}
+                          onChange={(event) => setConfiguration((current) => ({
+                            ...current,
+                            [field.name]: event.target.value,
+                          }))}
+                        >
+                          {field.options?.map((option) => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                        <small>{field.help}</small>
+                      </label>
+                    );
+                  }
+
                   return (
                     <label key={field.name}>
                       {field.label}
                       <input
-                        type={field.type}
-                        value={typeof value === "string" || typeof value === "number" ? value : ""}
+                        type={field.type === "text-list" ? "text" : field.type}
+                        value={field.type === "text-list" && Array.isArray(value)
+                          ? value.join(", ")
+                          : typeof value === "string" || typeof value === "number" ? value : ""}
                         placeholder={field.placeholder}
-                        min={field.type === "number" ? 1000 : undefined}
-                        max={field.type === "number" ? 30000 : undefined}
-                        step={field.type === "number" ? 500 : undefined}
+                        min={field.type === "number" ? (field.min ?? 1000) : undefined}
+                        max={field.type === "number" ? (field.max ?? 30000) : undefined}
+                        step={field.type === "number" ? (field.step ?? 500) : undefined}
                         onChange={(event) => {
                           const nextValue = event.target.value;
                           setConfiguration((current) => {
-                            const next: Record<string, string | number | boolean | undefined> = {
+                            const next: Record<string, string | number | boolean | string[] | undefined> = {
                               ...current,
                             };
                             if (nextValue.length === 0) {
                               delete next[field.name];
                             } else {
-                              next[field.name] =
-                                field.type === "number" ? Number(nextValue) : nextValue;
+                              next[field.name] = field.type === "number"
+                                ? Number(nextValue)
+                                : field.type === "text-list"
+                                  ? [...new Set(nextValue.split(",").map((item) => item.trim()).filter(Boolean))]
+                                  : nextValue;
                             }
                             return next as ServiceConnectionConfiguration;
                           });

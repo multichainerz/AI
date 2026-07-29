@@ -53,7 +53,7 @@ export const AIHUB_QUEUE_DEFINITIONS: readonly AIHubQueueDefinition[] = [
       warningQueueSize: 100,
       notify: true,
     },
-    workerEnabled: false,
+    workerEnabled: true,
   },
   {
     name: "aihub.documents.ocr",
@@ -69,7 +69,7 @@ export const AIHUB_QUEUE_DEFINITIONS: readonly AIHubQueueDefinition[] = [
       warningQueueSize: 100,
       notify: true,
     },
-    workerEnabled: false,
+    workerEnabled: true,
   },
   {
     name: "aihub.memory.index",
@@ -85,7 +85,23 @@ export const AIHUB_QUEUE_DEFINITIONS: readonly AIHubQueueDefinition[] = [
       warningQueueSize: 100,
       notify: true,
     },
-    workerEnabled: false,
+    workerEnabled: true,
+  },
+  {
+    name: "aihub.agents.run",
+    displayName: "Hermes agent runs",
+    options: {
+      policy: "standard",
+      retryLimit: 2,
+      retryDelay: 30,
+      retryBackoff: true,
+      expireInSeconds: 65 * 60,
+      heartbeatSeconds: 30,
+      deadLetter: deadLetterQueue.name,
+      warningQueueSize: 50,
+      notify: true,
+    },
+    workerEnabled: true,
   },
 ];
 

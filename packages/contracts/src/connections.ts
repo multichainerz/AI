@@ -3,6 +3,7 @@ import { z } from "zod";
 export const SERVICE_KINDS = [
   "LITELLM",
   "VLLM",
+  "HERMES",
   "SUPERMEMORY",
   "SEAWEEDFS",
   "OCR",
@@ -28,7 +29,7 @@ export const environmentSchema = z.enum(ENVIRONMENTS);
 export const connectionStatusSchema = z.enum(CONNECTION_STATUSES);
 export const serviceConnectionIdentifierSchema = z.uuid();
 
-export const serviceEndpointSchema = z.url().refine(
+export const serviceEndpointSchema = z.url().max(2_048).refine(
   (value) => value.startsWith("http://") || value.startsWith("https://"),
   { message: "Service endpoint must use HTTP or HTTPS." },
 ).refine((value) => !/^https?:\/\/[^/]*@/i.test(value), {
@@ -55,12 +56,44 @@ const modelAliasSchema = z
   .max(200)
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/, "Model alias contains unsupported characters.");
 
+const oidcClaimNameSchema = z
+  .string()
+  .min(1)
+  .max(160)
+  .regex(/^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/, "Claim names must use dot-separated identifier segments.");
+
+const oidcGroupSchema = z.string().trim().min(1).max(200);
+
 export const serviceConnectionConfigurationSchema = z
   .object({
     timeoutMs: z.number().int().min(1_000).max(30_000).optional(),
     healthPath: relativeHealthPathSchema.optional(),
     modelsPath: relativeHealthPathSchema.optional(),
     modelAlias: modelAliasSchema.optional(),
+    chatPath: relativeHealthPathSchema.optional(),
+    maxOutputTokens: z.number().int().min(64).max(32_768).optional(),
+    temperature: z.number().min(0).max(2).optional(),
+    inferenceTimeoutMs: z.number().int().min(5_000).max(600_000).optional(),
+    requestsPerMinute: z.number().int().min(1).max(120).optional(),
+    documentsPath: relativeHealthPathSchema.optional(),
+    searchPath: relativeHealthPathSchema.optional(),
+    memoryTimeoutMs: z.number().int().min(10_000).max(900_000).optional(),
+    memoryPollIntervalMs: z.number().int().min(500).max(30_000).optional(),
+    retrievalLimit: z.number().int().min(2).max(20).optional(),
+    retrievalThreshold: z.number().min(0).max(1).optional(),
+    capabilitiesPath: relativeHealthPathSchema.optional(),
+    runsPath: relativeHealthPathSchema.optional(),
+    toolsetsPath: relativeHealthPathSchema.optional(),
+    runPollIntervalMs: z.number().int().min(500).max(10_000).optional(),
+    clientId: z.string().trim().min(1).max(256).optional(),
+    redirectUri: serviceEndpointSchema.optional(),
+    scopes: z.array(z.string().trim().min(1).max(120)).min(1).max(20).optional(),
+    groupsClaim: oidcClaimNameSchema.optional(),
+    allowedGroups: z.array(oidcGroupSchema).max(100).optional(),
+    emailClaim: oidcClaimNameSchema.optional(),
+    nameClaim: oidcClaimNameSchema.optional(),
+    tokenAuthMethod: z.enum(["client_secret_basic", "client_secret_post"]).optional(),
+    caseSensitiveGroups: z.boolean().optional(),
     bucket: z
       .string()
       .min(3)
@@ -81,6 +114,11 @@ const connectionConfigurationSchemas = {
     healthPath: true,
     modelsPath: true,
     modelAlias: true,
+    chatPath: true,
+    maxOutputTokens: true,
+    temperature: true,
+      inferenceTimeoutMs: true,
+      requestsPerMinute: true,
   }),
   VLLM: serviceConnectionConfigurationSchema.pick({
     timeoutMs: true,
@@ -88,9 +126,23 @@ const connectionConfigurationSchemas = {
     modelsPath: true,
     modelAlias: true,
   }),
+  HERMES: serviceConnectionConfigurationSchema.pick({
+    timeoutMs: true,
+    healthPath: true,
+    capabilitiesPath: true,
+    runsPath: true,
+    toolsetsPath: true,
+    runPollIntervalMs: true,
+  }),
   SUPERMEMORY: serviceConnectionConfigurationSchema.pick({
     timeoutMs: true,
     healthPath: true,
+    documentsPath: true,
+    searchPath: true,
+    memoryTimeoutMs: true,
+    memoryPollIntervalMs: true,
+    retrievalLimit: true,
+    retrievalThreshold: true,
   }),
   SEAWEEDFS: serviceConnectionConfigurationSchema.pick({
     timeoutMs: true,
@@ -98,14 +150,27 @@ const connectionConfigurationSchemas = {
     region: true,
     forcePathStyle: true,
   }),
-  OCR: serviceConnectionConfigurationSchema.pick({
-    timeoutMs: true,
-    healthPath: true,
-    modelsPath: true,
-    modelAlias: true,
-  }),
+    OCR: serviceConnectionConfigurationSchema.pick({
+      timeoutMs: true,
+      healthPath: true,
+      modelsPath: true,
+      modelAlias: true,
+      chatPath: true,
+      inferenceTimeoutMs: true,
+    }),
   MCP: serviceConnectionConfigurationSchema.pick({ timeoutMs: true, healthPath: true }),
-  OIDC: serviceConnectionConfigurationSchema.pick({ timeoutMs: true }),
+  OIDC: serviceConnectionConfigurationSchema.pick({
+    timeoutMs: true,
+    clientId: true,
+    redirectUri: true,
+    scopes: true,
+    groupsClaim: true,
+    allowedGroups: true,
+    emailClaim: true,
+    nameClaim: true,
+    tokenAuthMethod: true,
+    caseSensitiveGroups: true,
+  }),
   SIEM: serviceConnectionConfigurationSchema.pick({ timeoutMs: true, healthPath: true }),
   NOTIFICATION: serviceConnectionConfigurationSchema.pick({
     timeoutMs: true,

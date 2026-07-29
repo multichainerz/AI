@@ -14,7 +14,9 @@
   "dependencies": {
     "@aihub/contracts": "workspace:*",
     "@aihub/database": "workspace:*",
-    "@aihub/jobs": "workspace:*"
+    "@aihub/document-runtime": "workspace:*",
+    "@aihub/jobs": "workspace:*",
+    "@aihub/security": "workspace:*"
   },
   "devDependencies": {
     "tsx": "4.23.1"

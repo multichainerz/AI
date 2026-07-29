@@ -27,9 +27,15 @@ describe("AIHub queue definitions", () => {
     }
   });
 
-  it("does not enable unfinished document and memory workers", () => {
+  it("enables every implemented processing worker", () => {
     expect(
       AIHUB_QUEUE_DEFINITIONS.filter(({ workerEnabled }) => workerEnabled).map(({ name }) => name),
-    ).toEqual(["aihub.system.probe"]);
+    ).toEqual([
+      "aihub.system.probe",
+      "aihub.documents.convert",
+      "aihub.documents.ocr",
+      "aihub.memory.index",
+      "aihub.agents.run",
+    ]);
   });
 });
