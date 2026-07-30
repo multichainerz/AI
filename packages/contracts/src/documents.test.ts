@@ -8,7 +8,6 @@ import {
 } from "./documents.js";
 
 const DOCUMENT_ID = "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d";
-const ARTIFACT_ID = "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb";
 
 describe("document contracts", () => {
   it("applies conservative upload defaults and rejects unrecognized metadata", () => {
@@ -36,16 +35,19 @@ describe("document contracts", () => {
     expect(documentOcrJobPayloadSchema.parse({
       documentId: DOCUMENT_ID,
       generation: 2,
-      pageNumbers: [1, 2],
-    }).pageNumbers).toEqual([1, 2]);
+      pages: [
+        { pageNumber: 1, mediaType: "image/png" },
+        { pageNumber: 2, mediaType: "image/jpeg" },
+      ],
+    }).pages).toHaveLength(2);
     expect(() => documentOcrJobPayloadSchema.parse({
       documentId: DOCUMENT_ID,
       generation: 0,
-      pageNumbers: [],
+      pages: [],
     })).toThrow();
   });
 
-  it("represents whole-document artifacts without inventing page zero", () => {
+  it("exposes transient staging state without durable document content", () => {
     const parsed = documentDetailSchema.parse({
       id: DOCUMENT_ID,
       fileName: "policy.pdf",
@@ -58,21 +60,15 @@ describe("document contracts", () => {
       processingGeneration: 1,
       failureCode: null,
       failureMessage: null,
+      stagingExpiresAt: null,
+      stagingPurgedAt: "2026-07-30T00:01:00.000Z",
+      reprocessAvailable: false,
       retentionUntil: "2027-07-30T00:00:00.000Z",
       createdAt: "2026-07-30T00:00:00.000Z",
       updatedAt: "2026-07-30T00:01:00.000Z",
       completedAt: "2026-07-30T00:01:00.000Z",
-      textPreview: "Policy text",
-      artifacts: [{
-        id: ARTIFACT_ID,
-        kind: "OCR_TEXT",
-        pageNumber: null,
-        mediaType: "text/plain",
-        sizeBytes: 11,
-        sha256: "b".repeat(64),
-        createdAt: "2026-07-30T00:01:00.000Z",
-      }],
     });
-    expect(parsed.artifacts[0]?.pageNumber).toBeNull();
+    expect(parsed.stagingPurgedAt).toBe("2026-07-30T00:01:00.000Z");
+    expect(parsed.reprocessAvailable).toBe(false);
   });
 });

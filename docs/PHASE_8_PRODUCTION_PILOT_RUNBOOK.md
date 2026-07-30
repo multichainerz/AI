@@ -76,9 +76,15 @@ Define RPO, RTO, retention, encryption, custody, and recovery owners before the 
 5. Confirm sessions, encrypted connection records, incidents, evaluation evidence, readiness evidence, tool ledgers, and audit events are present.
 6. Measure achieved RPO/RTO and retain the report reference under `recovery-postgresql-restore`.
 
-### S3-compatible object storage
+### Enterprise sources and transient staging
 
-Use the backup, replication, versioning, or snapshot method approved for the selected S3-compatible service. After restoring into an isolated bucket or namespace, reconcile document artifact keys, sizes, and checksums against PostgreSQL. Missing objects, orphan objects, or generation mismatches fail the exercise. Retain the inventory and reconciliation report under `recovery-s3-restore`.
+Enterprise repositories—not AIHub—own original files and their backup, retention, and recovery. Demonstrate that a representative authorized source can be refetched or re-uploaded after an AIHub loss and produces a new governed publication without weakening source permissions.
+
+The AIHub scratch volume must not be backed up. Verify application-level encryption, owner-only mount permissions, API/worker sharing, capacity alerting, expiry cleanup, immediate quarantine-rejection and deletion purge, and full-prefix purge after successful Supermemory publication. Restart API and worker instances during conversion and confirm retry does not create unbounded or orphaned scratch. Retain this evidence with the infrastructure and capacity controls.
+
+### Supermemory
+
+Back up and restore persistent Supermemory data using the procedure approved for the exact pinned release. Verify API compatibility, document counts, private-container isolation, representative retrieval, and deletion behavior. Then demonstrate a slower clean rebuild by refetching a representative authorized corpus from enterprise sources through AIHub. PostgreSQL cannot rebuild document bodies by itself. Record both achieved recovery times under `recovery-supermemory-restore`.
 
 ### Configuration vault and master key
 
@@ -89,9 +95,10 @@ PostgreSQL contains encrypted service configuration but cannot decrypt it withou
 Test the representative pilot workload and record percentiles, error rates, saturation, queue delay, recovery time, and data integrity for:
 
 - concurrent chat and Hermes requests at the approved RTX PRO 6000 capacity;
+- simultaneous or scheduled Laguna, Unlimited-OCR, and embedding workloads at the approved context and concurrency, including out-of-memory recovery;
 - LiteLLM/vLLM saturation and unavailable-model behavior;
 - worker loss, heartbeat expiry, retry, and dead-letter recovery;
-- OCR, S3, Supermemory, Hermes, and identity-provider outages;
+- OCR, transient-staging capacity or purge failure, Supermemory, Hermes, and identity-provider outages;
 - PostgreSQL connection exhaustion, restart, and recovery;
 - network partition, DNS failure, TLS expiry, and blocked egress;
 - approval expiry, revocation, global kill switches, and stale evaluation evidence;
@@ -103,7 +110,7 @@ Do not mark `operations-capacity-failure-tests` verified from synthetic local un
 
 Before pilot traffic:
 
-1. Apply all committed Prisma migrations through `20260730001500_prompt_templates` using the one-shot migration services.
+1. Apply all committed Prisma migrations through `20260730001700_ephemeral_document_staging` using the one-shot migration services.
 2. Confirm Coolify health checks, restart policies, persistent volumes, internal-only data network, and service ordering.
 3. Verify approved internal DNS names, TLS chain and expiry monitoring, proxy timeouts, streaming behavior, upload limits, and request-ID propagation.
 4. Prove that PostgreSQL and infrastructure administration are unreachable from Hermes and untrusted user networks.

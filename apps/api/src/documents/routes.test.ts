@@ -12,7 +12,6 @@ const SESSION_TOKEN = "s".repeat(43);
 const ENTERPRISE_TOKEN = "u".repeat(43);
 const SESSION_ID = "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb";
 const DOCUMENT_ID = "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d";
-const ARTIFACT_ID = "78e3b103-3c63-41d8-a6c9-13b02369ee07";
 
 const admin: AdminPrincipal = {
   id: SESSION_ID,
@@ -36,20 +35,13 @@ const detail: DocumentDetail = {
   processingGeneration: 0,
   failureCode: null,
   failureMessage: null,
+  stagingExpiresAt: "2026-07-31T00:00:00.000Z",
+  stagingPurgedAt: null,
+  reprocessAvailable: false,
   retentionUntil: "2027-07-30T00:00:00.000Z",
   createdAt: "2026-07-30T00:00:00.000Z",
   updatedAt: "2026-07-30T00:00:00.000Z",
   completedAt: null,
-  textPreview: null,
-  artifacts: [{
-    id: ARTIFACT_ID,
-    kind: "ORIGINAL",
-    pageNumber: null,
-    mediaType: "application/pdf",
-    sizeBytes: 1024,
-    sha256: "a".repeat(64),
-    createdAt: "2026-07-30T00:00:00.000Z",
-  }],
 };
 
 class SessionManager implements AdminSessionManager {
@@ -109,11 +101,6 @@ function memoryManager(): DocumentManager {
       processingGeneration: 1,
     })),
     delete: vi.fn(async () => undefined),
-    download: vi.fn(async () => ({
-      bytes: Uint8Array.from([1, 2, 3]),
-      fileName: "policy.pdf",
-      mediaType: "application/pdf",
-    })),
     metrics: vi.fn(async () => ({
       generatedAt: "2026-07-30T00:00:00.000Z",
       total: 1,
@@ -122,7 +109,8 @@ function memoryManager(): DocumentManager {
       ready: 0,
       failed: 0,
       rejected: 0,
-      storedBytes: 1024,
+      stagedDocuments: 1,
+      stagedSourceBytes: 1024,
     })),
   };
 }

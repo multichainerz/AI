@@ -32,6 +32,7 @@ export interface WorkerQueueRuntime {
 export interface DocumentWorkerHandlers {
   convert(payload: DocumentConversionJobPayload, jobId: string, workerId: string): Promise<object>;
   runOcr(payload: DocumentOcrJobPayload, jobId: string, workerId: string): Promise<object>;
+  cleanupExpired?(workerId: string): Promise<number>;
 }
 
 export interface MemoryWorkerHandler {
@@ -49,6 +50,8 @@ export interface ToolActionWorkerHandler {
 export class WorkerRuntime {
   private heartbeatTimer?: NodeJS.Timeout;
   private toolActionTimer?: NodeJS.Timeout;
+  private documentCleanupTimer?: NodeJS.Timeout;
+  private documentCleanupDrain: Promise<void> | undefined;
   private toolActionDrain: Promise<void> | undefined;
   private started = false;
 
@@ -80,6 +83,11 @@ export class WorkerRuntime {
           this.identity.id,
           (payload, jobId, workerId) => this.documentHandlers!.runOcr(payload, jobId, workerId),
         );
+        if (this.documentHandlers.cleanupExpired) {
+          await this.cleanupExpiredDocuments();
+          this.documentCleanupTimer = setInterval(() => void this.cleanupExpiredDocuments(), 5 * 60 * 1_000);
+          this.documentCleanupTimer.unref();
+        }
       }
       if (this.memoryHandler && this.queue.registerMemoryIndexWorker) {
         await this.queue.registerMemoryIndexWorker(
@@ -115,6 +123,8 @@ export class WorkerRuntime {
     if (!this.started) return;
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     if (this.toolActionTimer) clearInterval(this.toolActionTimer);
+    if (this.documentCleanupTimer) clearInterval(this.documentCleanupTimer);
+    if (this.documentCleanupDrain) await this.documentCleanupDrain;
     if (this.toolActionDrain) await this.toolActionDrain;
     const results = await Promise.allSettled([
       this.registry.markStopped(this.identity.id),
@@ -130,6 +140,25 @@ export class WorkerRuntime {
       await this.registry.markAlive(this.identity.id);
     } catch (error) {
       this.logger.error("Worker heartbeat update failed.", error);
+    }
+  }
+
+  private async cleanupExpiredDocuments(): Promise<void> {
+    if (!this.documentHandlers?.cleanupExpired || this.documentCleanupDrain) {
+      return this.documentCleanupDrain;
+    }
+    const drain = (async () => {
+      try {
+        await this.documentHandlers!.cleanupExpired!(this.identity.id);
+      } catch (error) {
+        this.logger.error("Transient document staging cleanup failed.", error);
+      }
+    })();
+    this.documentCleanupDrain = drain;
+    try {
+      await drain;
+    } finally {
+      if (this.documentCleanupDrain === drain) this.documentCleanupDrain = undefined;
     }
   }
 

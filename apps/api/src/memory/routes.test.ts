@@ -40,6 +40,7 @@ function manager(): MemoryManager {
       externalDocumentId: "sm-document-1",
       failureCode: null,
       failureMessage: null,
+      retryable: false,
       queuedAt: "2026-07-30T00:00:00.000Z",
       syncedAt: "2026-07-30T00:01:00.000Z",
       updatedAt: "2026-07-30T00:01:00.000Z",

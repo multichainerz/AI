@@ -30,6 +30,7 @@ export const memoryPublicationSchema = z.object({
   externalDocumentId: z.string().nullable(),
   failureCode: z.string().nullable(),
   failureMessage: z.string().nullable(),
+  retryable: z.boolean(),
   queuedAt: z.iso.datetime().nullable(),
   syncedAt: z.iso.datetime().nullable(),
   updatedAt: z.iso.datetime(),

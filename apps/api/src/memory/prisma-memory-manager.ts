@@ -14,7 +14,18 @@ export class PrismaMemoryManager implements MemoryManager {
     const publications = await this.prisma.documentMemoryPublication.findMany({
       orderBy: { updatedAt: "desc" },
       take: 200,
-      include: { document: { select: { fileName: true, classification: true } } },
+      include: {
+        document: {
+          select: {
+            fileName: true,
+            classification: true,
+            status: true,
+            stagingKey: true,
+            stagingExpiresAt: true,
+            stagingPurgedAt: true,
+          },
+        },
+      },
     });
     return {
       items: publications.map((publication): MemoryPublication => ({
@@ -26,6 +37,16 @@ export class PrismaMemoryManager implements MemoryManager {
         externalDocumentId: publication.externalDocumentId,
         failureCode: publication.failureCode,
         failureMessage: publication.failureMessage,
+        retryable: publication.status === "FAILED" && (
+          publication.document.status === "DELETED" ||
+          (
+            publication.document.status === "READY" &&
+            publication.document.stagingKey !== null &&
+            publication.document.stagingPurgedAt === null &&
+            publication.document.stagingExpiresAt !== null &&
+            publication.document.stagingExpiresAt > new Date()
+          )
+        ),
         queuedAt: publication.queuedAt?.toISOString() ?? null,
         syncedAt: publication.syncedAt?.toISOString() ?? null,
         updatedAt: publication.updatedAt.toISOString(),
@@ -54,10 +75,31 @@ export class PrismaMemoryManager implements MemoryManager {
 
   async reindex(documentId: string, actorId: string): Promise<void> {
     const document = await this.prisma.document.findFirst({
-      where: { id: documentId, status: { in: ["READY", "DELETED"] } },
-      select: { id: true, ownerSubject: true, processingGeneration: true, status: true },
+      where: {
+        id: documentId,
+        OR: [
+          { status: "DELETED" },
+          {
+            status: "READY",
+            stagingKey: { not: null },
+            stagingPurgedAt: null,
+            stagingExpiresAt: { gt: new Date() },
+            memoryPublication: { is: { status: "FAILED" } },
+          },
+        ],
+      },
+      select: {
+        id: true,
+        ownerSubject: true,
+        processingGeneration: true,
+        status: true,
+      },
     });
-    if (!document) throw new MemoryPublicationConflictError("Only a ready or deletion-pending document can be synchronized.");
+    if (!document) {
+      throw new MemoryPublicationConflictError(
+        "The publication is not retryable. Re-upload or re-fetch the enterprise source if transient staging has been purged.",
+      );
+    }
     const action = document.status === "DELETED" ? "DELETE" : "UPSERT";
     if (action === "DELETE") {
       const publication = await this.prisma.documentMemoryPublication.findUnique({

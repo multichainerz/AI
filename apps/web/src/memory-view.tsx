@@ -95,7 +95,7 @@ export function MemoryView({ unlocked, onConfigure, onUnauthorized }: MemoryView
             <span className="document-type">SM</span>
             <div><strong>{publication.fileName}</strong><small>Generation {publication.generation} &middot; {publication.classification.toLowerCase()}</small>{publication.failureMessage && <p>{publication.failureMessage}</p>}</div>
             <span className={`document-status ${tone(publication.status)}`}>{publication.status.replaceAll("_", " ").toLowerCase()}</span>
-            {(publication.status === "FAILED" || publication.status === "READY") && <button type="button" disabled={busyId !== null} onClick={() => void reindex(publication.documentId)}>{busyId === publication.documentId ? "Queuing..." : publication.status === "READY" ? "Reindex" : "Retry sync"}</button>}
+            {publication.retryable && <button type="button" disabled={busyId !== null} onClick={() => void reindex(publication.documentId)}>{busyId === publication.documentId ? "Queuing..." : "Retry sync"}</button>}
           </article>
         ))}</div>
       </section>

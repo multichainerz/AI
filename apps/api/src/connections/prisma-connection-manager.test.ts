@@ -1,37 +1,26 @@
 import { describe, expect, it } from "vitest";
 import { parseStoredRevision } from "./prisma-connection-manager.js";
 
-const legacyRevision = {
-  slug: "documents",
-  displayName: "Document storage",
-  kind: "SEAWEEDFS",
+const revision = {
+  slug: "inference-primary",
+  displayName: "Inference Primary",
+  kind: "VLLM",
   environment: "PRODUCTION",
-  baseUrl: "https://objects.mpm.internal",
+  baseUrl: "https://vllm.mpm.internal",
   enabled: true,
-  configuration: {
-    bucket: "aihub-documents",
-    region: "us-east-1",
-  },
-  secretFieldNames: ["accessKeyId", "secretAccessKey"],
+  configuration: { healthPath: "/health", modelsPath: "/v1/models" },
+  secretFieldNames: ["apiKey"],
 };
 
 describe("parseStoredRevision", () => {
-  it("reads an immutable SeaweedFS-era revision as a path-style S3 connection", () => {
-    expect(parseStoredRevision(legacyRevision)).toMatchObject({
-      kind: "S3",
-      configuration: {
-        bucket: "aihub-documents",
-        region: "us-east-1",
-        forcePathStyle: true,
-      },
+  it("reads an immutable revision for a supported connection kind", () => {
+    expect(parseStoredRevision(revision)).toMatchObject({
+      kind: "VLLM",
+      configuration: { healthPath: "/health", modelsPath: "/v1/models" },
     });
-    expect(legacyRevision).not.toHaveProperty("configuration.forcePathStyle");
   });
 
-  it("preserves an explicit addressing choice from a legacy revision", () => {
-    expect(parseStoredRevision({
-      ...legacyRevision,
-      configuration: { ...legacyRevision.configuration, forcePathStyle: false },
-    }).configuration.forcePathStyle).toBe(false);
+  it("rejects revisions for retired connection kinds", () => {
+    expect(() => parseStoredRevision({ ...revision, kind: "OBJECT_STORE" })).toThrow("stored revision is malformed");
   });
 });

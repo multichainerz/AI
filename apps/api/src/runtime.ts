@@ -25,8 +25,9 @@ import {
 } from "./identity/enterprise-session.js";
 import {
   PrismaRuntimeConnectionResolver,
+  documentScratchDirectory,
+  EncryptedFileSystemDocumentScratchStore,
   HermesClient,
-  S3DocumentStore,
   SupermemoryClient,
 } from "@aihub/document-runtime";
 import type { DocumentManager } from "./documents/document-manager.js";
@@ -96,9 +97,8 @@ export function createRuntimeServices(): RuntimeServices {
   try {
     const databaseUrl = readBootstrapSecret("aihub_database_url");
     const prisma = createPrismaClient(databaseUrl);
-    const encryption = new EnvelopeEncryption({
-      masterKey: decodeMasterKey(readBootstrapSecret("aihub_master_key")),
-    });
+    const masterKey = decodeMasterKey(readBootstrapSecret("aihub_master_key"));
+    const encryption = new EnvelopeEncryption({ masterKey });
     const authenticator = new BootstrapTokenAuthenticator(
       readBootstrapSecret("aihub_bootstrap_token"),
     );
@@ -129,7 +129,7 @@ export function createRuntimeServices(): RuntimeServices {
     );
     const documentManager = new PrismaDocumentManager(
       prisma,
-      new S3DocumentStore(documentResolver),
+      new EncryptedFileSystemDocumentScratchStore(documentScratchDirectory(), masterKey),
       queue,
     );
     const hermesClient = new HermesClient(documentResolver);

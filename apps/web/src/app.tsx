@@ -136,7 +136,12 @@ function App() {
   const activeNavigationItem = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
-    activeNavigationItem.current?.scrollIntoView({ behavior: "auto", block: "nearest", inline: "center" });
+    const item = activeNavigationItem.current;
+    const container = item?.parentElement;
+    if (!item || !container || container.scrollWidth <= container.clientWidth) return;
+
+    const centeredLeft = item.offsetLeft - (container.clientWidth - item.offsetWidth) / 2;
+    container.scrollTo({ left: Math.max(0, centeredLeft), behavior: "auto" });
   }, [activeView]);
 
   useEffect(() => {
@@ -382,6 +387,7 @@ function App() {
               disabled={!available}
               key={label}
               ref={label === activeView ? activeNavigationItem : undefined}
+              aria-current={label === activeView ? "page" : undefined}
               type="button"
               title={available ? label : `${label} is planned for a later phase`}
               onClick={() => available && selectView(label as ActiveView)}
@@ -463,7 +469,7 @@ function App() {
             administrator={adminSession !== null}
             oidcConfigured={oidcStatus?.configured === true}
             onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23documents")}
-            onConfigure={() => openConnectionSettings("S3")}
+            onConfigure={() => openConnectionSettings("OCR")}
             onUnauthorized={() => {
               sessionGeneration.current += 1;
               setAdminSession(null);
@@ -585,7 +591,7 @@ function App() {
                 )}
                 <ul>
                   <li className="done">Controlled LiteLLM chat and enterprise identity</li>
-                  <li className="done">S3 document conversion and OCR</li>
+                  <li className="done">Encrypted transient conversion, OCR, and knowledge publication</li>
                   <li className="done">Private Supermemory retrieval with source evidence</li>
                   <li className="done">Immutable Hermes profiles and global runtime control</li>
                   <li className="done">Zero-tool capability preflight and run revocation</li>

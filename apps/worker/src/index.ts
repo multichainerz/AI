@@ -5,8 +5,9 @@ import { PgBossQueueService } from "@aihub/jobs";
 import { decodeMasterKey, EnvelopeEncryption, RunCapabilityIssuer } from "@aihub/security";
 import {
   PrismaRuntimeConnectionResolver,
+  documentScratchDirectory,
+  EncryptedFileSystemDocumentScratchStore,
   HermesClient,
-  S3DocumentStore,
   SupermemoryClient,
   UnlimitedOcrClient,
 } from "@aihub/document-runtime";
@@ -27,9 +28,10 @@ const queue = new PgBossQueueService(databaseUrl, "worker", {
 const masterKey = decodeMasterKey(readBootstrapSecret("aihub_master_key"));
 const encryption = new EnvelopeEncryption({ masterKey });
 const documentResolver = new PrismaRuntimeConnectionResolver(prisma, encryption);
+const documentStore = new EncryptedFileSystemDocumentScratchStore(documentScratchDirectory(), masterKey);
 const documentProcessor = new PrismaDocumentProcessor(
   prisma,
-  new S3DocumentStore(documentResolver),
+  documentStore,
   new UnlimitedOcrClient(documentResolver),
   queue,
 );
@@ -48,7 +50,7 @@ const runtime = new WorkerRuntime(
   },
   15_000,
   documentProcessor,
-  new PrismaMemoryProcessor(prisma, new SupermemoryClient(documentResolver)),
+  new PrismaMemoryProcessor(prisma, new SupermemoryClient(documentResolver), documentStore),
   new PrismaAgentProcessor(
     prisma,
     new HermesClient(documentResolver),

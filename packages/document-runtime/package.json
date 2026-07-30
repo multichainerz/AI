@@ -6,14 +6,13 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --exclude dist/**"
   },
   "dependencies": {
     "@aihub/contracts": "workspace:*",
     "@aihub/database": "workspace:*",
-    "@aihub/security": "workspace:*",
-    "@aws-sdk/client-s3": "3.1097.0"
+    "@aihub/security": "workspace:*"
   }
 }

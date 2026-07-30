@@ -206,25 +206,6 @@ export async function registerDocumentRoutes(
     }
   });
 
-  app.get("/:documentId/artifacts/:artifactId/download", async (request, reply) => {
-    const principal = await requireDocumentPrincipal(request, reply, options, { adminScope: "documents:read" });
-    if (!principal) return;
-    const manager = managerOrLocked(options, reply);
-    if (!manager) return;
-    const params = request.params as Record<string, unknown>;
-    const documentId = uuid(params.documentId);
-    const artifactId = uuid(params.artifactId);
-    if (!documentId || !artifactId) return reply.code(400).send({ error: "INVALID_REQUEST", message: "Document or artifact ID is invalid." });
-    try {
-      const download = await manager.download(principal, documentId, artifactId);
-      void reply.header("content-type", download.mediaType);
-      void reply.header("content-disposition", `attachment; filename*=UTF-8''${encodeURIComponent(download.fileName)}`);
-      return reply.send(Buffer.from(download.bytes));
-    } catch (error) {
-      await sendDocumentError(reply, error);
-    }
-  });
-
   app.delete("/:documentId", async (request, reply) => {
     const principal = await requireDocumentPrincipal(request, reply, options, { adminScope: "documents:delete" });
     if (!principal) return;

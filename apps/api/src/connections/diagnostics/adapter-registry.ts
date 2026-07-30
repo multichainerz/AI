@@ -2,7 +2,6 @@ import type { ServiceKind } from "@aihub/contracts";
 import { GenericHttpAdapter } from "./generic-http-adapter.js";
 import { OidcAdapter } from "./oidc-adapter.js";
 import { OpenAICompatibleAdapter } from "./openai-compatible-adapter.js";
-import { S3Adapter } from "./s3-adapter.js";
 import type { ConnectionDiagnosticAdapter } from "./types.js";
 
 const adapters: Record<ServiceKind, ConnectionDiagnosticAdapter> = {
@@ -17,7 +16,6 @@ const adapters: Record<ServiceKind, ConnectionDiagnosticAdapter> = {
     defaultHealthPath: "/health",
   }),
   SUPERMEMORY: new GenericHttpAdapter("Supermemory"),
-  S3: new S3Adapter(),
   OIDC: new OidcAdapter(),
   MCP: new GenericHttpAdapter("MCP server", "/"),
   SIEM: new GenericHttpAdapter("SIEM endpoint"),

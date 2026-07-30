@@ -17,8 +17,9 @@ The first usable release will provide controlled internal chat. Later phases add
 - AIHub and Hermes call models through LiteLLM; vLLM remains the internal model-serving layer.
 - PostgreSQL and Prisma are the operational system of record.
 - PostgreSQL and `pg-boss` provide durable jobs and coordination; no Redis dependency is introduced.
-- Object storage is supplied through a vendor-neutral S3-compatible connector.
-- Supermemory is the sole semantic retrieval and memory layer; AIHub does not maintain a competing vector store.
+- Enterprise repositories are authoritative for originals; AIHub is an extraction control plane, not a file repository.
+- AIHub uses application-encrypted, time-bounded scratch for conversion and OCR, then purges the whole document prefix after durable publication.
+- Supermemory is the sole durable normalized-knowledge, semantic-retrieval, and memory layer; AIHub does not maintain a competing vector store.
 - Hermes is default-deny and can use only AIHub-issued capabilities, approved MCP servers, and approved tools.
 - Every phase includes security, audit, tests, documentation, and operational visibility.
 - External systems are accessed through replaceable adapters so development can proceed with mocks before production endpoints are available.
@@ -50,15 +51,19 @@ Confirm the critical technical assumptions before committing the platform to spe
 - Agree on the first pilot users and two or three priority use cases.
 - Validate Laguna inference, context length, streaming, structured output, and tool-calling behavior through vLLM and LiteLLM.
 - Validate Unlimited-OCR and the selected Qwen3 Embedding model.
-- Confirm Supermemory self-hosting, licensing, API behavior, and air-gapped requirements.
-- Validate the selected S3-compatible service for AIHub artifacts.
+- Confirm the exact Supermemory Local release, licensing, API behavior, single-process operational limits, persistent data directory, backup/recovery behavior, and air-gapped requirements. Do not assume hosted connectors are present in the open-source deployment.
+- Validate encrypted scratch isolation, capacity, expiry, crash cleanup, and post-publication purge on the target API/worker topology.
+- Identify the authoritative enterprise source and refetch/re-upload procedure for every production document corpus.
 - Establish initial security boundaries, data classifications, and deployment topology.
-- Record measurable latency, throughput, GPU memory, and concurrency baselines on the RTX PRO 6000 96 GB.
+- Record measurable latency, throughput, GPU memory, and concurrency baselines on the RTX PRO 6000 96 GB, including simultaneous Laguna, OCR, and embedding demand.
+- Decide whether production uses another GPU, a smaller primary model, a dedicated embedding service, or an explicitly degraded scheduling policy; do not infer safe co-residency from model weight size alone.
 
 ### Exit Gate
 
 - Selected services can be deployed on-premises and their licenses are acceptable.
 - The primary model works through LiteLLM at an acceptable pilot baseline.
+- The approved topology identifies one authoritative owner for operational records, original files, normalized knowledge, and Hermes state, with tested recovery paths.
+- The GPU plan supports the approved concurrency and availability targets, or the recorded limitation has an owner and accepted mitigation.
 - Major unknowns are either resolved or recorded with an owner and mitigation.
 - Pilot use cases and acceptance examples are approved.
 
@@ -116,7 +121,7 @@ Deliver the first end-user capability: authenticated, governed chat with the on-
 
 The repository now includes the locally testable controlled-chat candidate: PostgreSQL conversation and message persistence, stable enterprise-user ownership, OIDC authorization code with PKCE and verified group allowlisting, opaque sessions, encrypted backend-only credential resolution, server-sent token streaming, cancellation, bounded context, PostgreSQL request limits, response feedback, rolling usage/failure telemetry, audit events, and a responsive Chat workspace. The Models workspace adds versioned workload routes, bounded limits, serving-connection validation, safe draft staging, exact model-evaluation activation gates, one default per workload, conversation alias stickiness, and fail-closed enforcement after first activation. The scoped bootstrap administrator remains an explicitly labelled preview and recovery path. Phase 2 target acceptance still requires the real MPM identity provider and LiteLLM/vLLM routes, approved access/retention policies, representative model evaluations, and functional, security, GPU-load, and soak gates in the on-premises environment.
 
-## 7. Phase 3 - Document Storage, Conversion, and OCR
+## 7. Phase 3 - Document Ingestion, Conversion, and OCR
 
 ### Outcome
 
@@ -124,23 +129,24 @@ Allow MPM users to securely ingest documents and produce reusable normalized tex
 
 ### Scope
 
-- Integrate the selected object store through its S3-compatible API.
 - Build upload, validation, ownership, checksum, quarantine, retention, and deletion controls.
+- Add a shared encrypted scratch volume with document-scoped keys, strict permissions, a 24-hour deadline, and deterministic purge.
 - Implement `pg-boss` document workflows with retries, idempotency, dead-letter handling, and replay.
 - Convert document pages to images where required.
-- Integrate Unlimited-OCR and store OCR, Markdown, JSON, and processing metadata.
+- Integrate Unlimited-OCR and create one normalized transient representation for publication.
 - Add document status, failure review, reprocessing, and operational metrics.
 
 ### Exit Gate
 
 - Approved sample documents complete the upload-to-normalized-text workflow.
-- Failed jobs can be safely retried without duplicate artifacts.
+- Failed jobs can be safely retried while transient staging remains available.
 - Document ownership, classification, access, retention, and deletion are enforced and audited.
-- Restore and corruption-recovery procedures have been tested for representative artifacts.
+- Scratch expiry, successful-publication purge, purge failure, crash recovery, and source re-upload have been tested.
+- Queue payloads and PostgreSQL contain no source bytes or normalized document bodies.
 
 ### Current implementation note
 
-The repository now includes the locally testable Phase 3 candidate: ownership-scoped uploads, content sniffing and SHA-256 checksums, classification and retention metadata, quarantine review, S3-compatible artifacts, generation-safe `pg-boss` conversion/OCR jobs, LibreOffice and Poppler page rendering, bounded Unlimited OCR requests, normalized text/Markdown/JSON outputs, reprocessing, deletion controls, audit events, metrics, and a responsive Documents workspace. The worker avoids Redis and uses PostgreSQL for durable coordination. Phase 3 is not accepted until representative MPM documents pass against the selected S3 and Unlimited OCR services and backup, restore, corruption, security, performance, retention, and deletion procedures are demonstrated in the target environment. Quarantine is an authorization workflow, not a substitute for an approved malware-scanning control if MPM policy requires one.
+The repository now includes the locally testable Phase 3 candidate: ownership-scoped uploads, content sniffing and SHA-256 checksums, classification and retention metadata, quarantine review, application-encrypted scratch shared by API and worker, generation-safe `pg-boss` conversion/OCR jobs, LibreOffice and Poppler page rendering, bounded Unlimited OCR requests, normalized transient Markdown, expiry and post-publication purge, bounded reprocessing, deletion controls, audit events, metrics, and a responsive Documents workspace. The worker avoids Redis and uses PostgreSQL for durable coordination. Phase 3 is not accepted until representative MPM documents pass against Unlimited OCR and the scratch isolation, purge, crash, capacity, security, performance, retention, and source-recovery procedures are demonstrated in the target environment. Quarantine is an authorization workflow, not a substitute for approved malware scanning.
 
 ## 8. Phase 4 - Enterprise Knowledge and Agent Memory
 
@@ -151,22 +157,23 @@ Add source-aware retrieval and governed memory without introducing a second sema
 ### Scope
 
 - Integrate the self-hosted Supermemory service.
-- Publish approved document content and metadata through durable jobs.
+- Publish approved normalized document content and metadata from transient scratch through durable jobs.
 - Implement organizational, departmental, project, agent, and user memory scopes.
 - Add retrieval to chat with visible sources and traceable memory bindings.
-- Support reindexing, correction, forgetting, deletion, and synchronization status.
+- Support bounded failed-publication retry, correction through re-ingestion, forgetting, deletion, and synchronization status.
 - Evaluate retrieval relevance and test cross-scope leakage protections.
 
 ### Exit Gate
 
 - Chat can answer from approved MPM content and show the supporting sources.
 - Retrieval respects user, department, project, and document permissions.
-- Deletion and retention propagate predictably from AIHub to S3 and Supermemory.
+- AIHub purges transient extraction content after publication and enforces semantic deletion in Supermemory, with PostgreSQL retaining authoritative operation state and audit evidence.
 - Retrieval quality meets the agreed pilot evaluation set.
+- Supermemory's persistent data has passed backup/restore testing, and a representative corpus can be rebuilt from authorized enterprise sources.
 
 ### Current implementation note
 
-The repository now includes the locally testable private-scope Phase 4 candidate: a backend-only self-hosted Supermemory adapter, ownership-derived container tags, stable document custom IDs, generation-safe PostgreSQL/`pg-boss` publication, synchronization and deletion state, administrative retries, source-aware chat messages, and a local authorization gate that rejects remote hits unless the current PostgreSQL document owner, lifecycle state, and memory publication are all eligible. The Memory workspace exposes publication health without exposing credentials or raw container identifiers. This is not target-environment acceptance: the real Supermemory deployment, representative retrieval evaluation set, deletion propagation, backup/recovery, latency, concurrency, and cross-user leakage tests must still pass. Organizational, departmental, project, and agent scopes are intentionally not inferred from identity groups; MPM must approve those ownership and inheritance rules before shared containers are implemented.
+The repository now includes the locally testable private-scope Phase 4 candidate: a backend-only self-hosted Supermemory adapter, ownership-derived container tags, stable document custom IDs, generation-safe PostgreSQL/`pg-boss` publication, synchronization and deletion state, scratch-aware administrative retry, post-publication purge, source-aware chat messages, and a local authorization gate that rejects remote hits unless current PostgreSQL ownership and publication state remain eligible. The Memory workspace exposes publication health without exposing credentials or raw container identifiers. This is not target-environment acceptance: the exact pinned Supermemory deployment, API contract, persistent-data backup/recovery, enterprise-source rebuild procedure, representative retrieval evaluation set, deletion propagation, latency, concurrency, and cross-user leakage tests must still pass. Shared scopes require approved ownership and inheritance rules.
 
 ## 9. Phase 5 - Hardened Hermes Agent Runtime
 
@@ -181,7 +188,7 @@ Introduce agentic workflows while keeping AIHub as the authoritative execution a
 - Calculate per-run effective capabilities from user, role, department, agent, environment, and policy.
 - Implement the AIHub tool gateway and revalidate every invocation.
 - Add timeouts, maximum turns, concurrency limits, cancellation, safe mode, and kill switches.
-- Restrict network egress and prevent direct access to PostgreSQL, S3 administration, Coolify, host filesystems, Docker, and unrestricted internet.
+- Restrict network egress and prevent direct access to PostgreSQL, enterprise-storage administration, Coolify, host filesystems, Docker, and unrestricted internet.
 - Record agent runs, capability grants, tool attempts, results, and failures.
 
 ### Exit Gate
@@ -231,7 +238,7 @@ Provide MPM with a central operational view and repeatable controls for safe AI 
 
 ### Scope
 
-- Expand dashboards for GPU, vLLM, LiteLLM, PostgreSQL, jobs, S3, Supermemory, OCR, Hermes, and connectors.
+- Expand dashboards for GPU, vLLM, LiteLLM, PostgreSQL, jobs, transient staging, Supermemory, OCR, Hermes, and connectors.
 - Add alerts, service degradation states, incident context, and SIEM forwarding.
 - Implement layered input, output, retrieval, model-access, tool-use, and data-egress guardrails.
 - Add prompt, model, policy, and agent version evaluation.
@@ -261,7 +268,7 @@ Move from an engineering system to a supportable on-premises production pilot.
 
 - Conduct security review, threat-model review, dependency scanning, and penetration testing.
 - Run load, soak, concurrency, failure, and recovery tests.
-- Exercise database, object, configuration-vault, and master-key backup and recovery.
+- Exercise PostgreSQL, Supermemory, enterprise-source, configuration-vault, and master-key backup and recovery; verify scratch is excluded.
 - Define availability targets, maintenance procedures, incident response, and escalation paths.
 - Validate Coolify deployment, TLS, internal DNS, network segmentation, monitoring, and log retention.
 - Train administrators, reviewers, support personnel, and pilot users.
@@ -280,7 +287,7 @@ The repository now contains the local Phase 8 pilot-readiness foundation. The AI
 
 Deployment hardening now distinguishes `/healthz` process liveness from database-backed `/readyz`, uses readiness for API container orchestration, exposes request correlation IDs, closes API resources on termination, and probes the web container independently. `pnpm verify` runs the local quality gate and `pnpm security:audit` applies the high-severity production dependency threshold.
 
-This is not the Phase 8 exit gate. Penetration testing, image scanning, target-GPU load and soak tests, PostgreSQL/S3/configuration-key restore demonstrations, Coolify/TLS/DNS/network validation, monitoring and SIEM delivery, training completion, pilot measures, residual-risk acceptance, and formal MPM approvals require the deployed on-premises environment. See `docs/PHASE_8_PRODUCTION_PILOT_RUNBOOK.md`.
+This is not the Phase 8 exit gate. Penetration testing, image scanning, target-GPU load and soak tests, PostgreSQL/Supermemory/configuration-key restore demonstrations, enterprise-source rebuild, scratch purge validation, Coolify/TLS/DNS/network validation, monitoring and SIEM delivery, training completion, pilot measures, residual-risk acceptance, and formal MPM approvals require the deployed on-premises environment. See `docs/PHASE_8_PRODUCTION_PILOT_RUNBOOK.md`.
 
 ## 13. Indicative Delivery Cadence
 

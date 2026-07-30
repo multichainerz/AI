@@ -72,12 +72,12 @@ describe("ConnectionTestService", () => {
     expect(store.recorded).toEqual(result);
   });
 
-  it("classifies an S3 authentication rejection as degraded rather than unreachable", async () => {
+  it("classifies an authenticated service rejection as degraded rather than unreachable", async () => {
     const store = new MemoryDiagnosticStore({
       id: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d",
       activeRevision: 1,
-      kind: "S3",
-      baseUrl: "https://s3.mpm.internal",
+      kind: "SUPERMEMORY",
+      baseUrl: "https://memory.mpm.internal",
       configuration: {},
       secrets: { accessKeyId: "key", secretAccessKey: "secret" },
     });

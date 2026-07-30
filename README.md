@@ -4,7 +4,7 @@ MPM AIHub is an on-premises control plane for internal AI chat, models, document
 
 ## Current status
 
-The locally implementable Phase 1 foundation is complete, and the Phase 2 controlled-chat, Phase 3 document/OCR, private-scope Phase 4 knowledge, zero-tool Phase 5 Hermes, governed MCP Phase 6, AI operations Phase 7, and pilot-readiness Phase 8 foundations are on-premise acceptance candidates. AIHub's Phase 6 per-run handoff is implemented but remains fail-closed until a hardened Hermes build advertises and passes the required private-context interoperability contract. Live identity-provider, LiteLLM/vLLM, S3-compatible storage, Unlimited OCR, Supermemory, Hermes, GPU, SIEM, network-security, recovery, load, training, pilot, and formal-approval acceptance remain environment-dependent. The repository currently contains:
+The locally implementable Phase 1 foundation is complete, and the Phase 2 controlled-chat, Phase 3 document/OCR, private-scope Phase 4 knowledge, zero-tool Phase 5 Hermes, governed MCP Phase 6, AI operations Phase 7, and pilot-readiness Phase 8 foundations are on-premise acceptance candidates. AIHub's Phase 6 per-run handoff is implemented but remains fail-closed until a hardened Hermes build advertises and passes the required private-context interoperability contract. Live identity-provider, LiteLLM/vLLM, Unlimited OCR, Supermemory, Hermes, GPU, SIEM, network-security, recovery, load, training, pilot, and formal-approval acceptance remain environment-dependent. The repository currently contains:
 
 - a responsive React administrative console for desktop and mobile;
 - a Node.js/Fastify API foundation;
@@ -13,14 +13,14 @@ The locally implementable Phase 1 foundation is complete, and the Phase 2 contro
 - an envelope-encryption package for the AIHub secrets vault;
 - expiring, revocable administrator sessions with scoped foundation roles;
 - authenticated, write-only connection credential APIs;
-- a dashboard workflow for configuring LiteLLM, vLLM, Supermemory, S3-compatible storage, OCR, and enterprise OIDC;
+- a dashboard workflow for configuring LiteLLM, vLLM, Supermemory, OCR, Hermes, and enterprise OIDC;
 - a versioned model catalogue with workload assignments, serving-connection validation, bounded limits, safe legacy adoption, and evaluation-gated activation;
 - versioned chat guardrail policies with local input ceilings, approved per-request LiteLLM assignments, safety-evaluation gates, permanent fail-closed adoption, and sanitized rejection audits;
 - versioned chat-system prompts with content checksums, CHAT and SAFETY evaluation gates, permanent fail-closed adoption, and runtime audit provenance;
 - credential-aware connection diagnostics with bounded timeouts, persisted health state, and audit events;
 - dashboard-controlled scheduled connection monitoring with PostgreSQL leases, multi-instance-safe claims, stale-lease recovery, and explicit evidence freshness;
-- typed health adapters for OpenAI-compatible endpoints, S3, OIDC, MCP, and HTTP services;
-- service-specific operational settings for model aliases, health routes, diagnostic timeouts, and S3 addressing behavior;
+- typed health adapters for OpenAI-compatible endpoints, OIDC, MCP, and HTTP services;
+- service-specific operational settings for model aliases, health routes, and diagnostic timeouts;
 - PostgreSQL-native `pg-boss` queues with retry, heartbeat, and dead-letter policies;
 - a dedicated worker runtime with persisted liveness records;
 - authenticated Operations APIs and dashboard controls for queue health, probes, and dead-letter recovery;
@@ -33,10 +33,10 @@ The locally implementable Phase 1 foundation is complete, and the Phase 2 contro
 - a responsive Chat workspace for enterprise users with an explicitly identified administrator-preview recovery path;
 - PostgreSQL-backed per-user request limiting, response feedback, and rolling 24-hour operator telemetry;
 - ownership-scoped document upload with file sniffing, checksums, classification, quarantine approval, retention, and audited deletion;
-- generation-safe `pg-boss` conversion and OCR jobs with LibreOffice/Poppler page rendering and retry-safe artifacts;
-- vendor-neutral S3-compatible storage for originals, page images, OCR text, Markdown, and structured OCR metadata;
+- generation-safe `pg-boss` conversion and OCR jobs with LibreOffice/Poppler page rendering and retry-safe transient intermediates;
+- application-encrypted, shared transient staging for source files, page images, and normalized content, with automatic expiry and purge after publication;
 - backend-only Unlimited OCR integration with bounded multimodal requests, timeouts, and same-origin endpoint enforcement;
-- a responsive Documents workspace for upload, lifecycle review, content preview, artifacts, reprocessing, and operational metrics;
+- a responsive Documents workspace for upload, lifecycle review, staging visibility, bounded retry, and operational metrics;
 - durable publication of ready document generations to self-hosted Supermemory as the sole semantic index;
 - private ownership-derived memory containers, local authorization rechecks, source-aware chat, deletion propagation, and retryable synchronization;
 - a responsive administrator Memory workspace for publication health, failures, reindexing, and deletion recovery;
@@ -101,13 +101,13 @@ The Guardrails workspace stages versioned chat policies containing a local input
 
 The Prompts workspace stages the exact system instruction used by direct AIHub chat. Activation requires promoted `PROMPT` evidence for the exact `prompt:<slug>` and version, including both chat and safety categories. Content changes require a new version. Once prompt governance is first activated, missing or suspended prompt state fails closed. Runtime audits record the prompt identifier, version, and SHA-256 checksum without duplicating its content; prompt text cannot grant access to tools, memory, connectors, or infrastructure.
 
-Document processing requires exactly one enabled and healthy S3 connection and one enabled and healthy OCR connection. Uploaded content remains quarantined until an administrator approves it. The worker converts supported PDFs, Office Open XML files, and images into page images, invokes the configured OCR endpoint, and stores normalized outputs in the configured S3-compatible service while PostgreSQL remains the lifecycle and audit system of record.
+Document processing requires exactly one enabled and healthy OCR connection. Uploaded content remains quarantined until an administrator approves it. AIHub encrypts the upload in a shared API/worker scratch volume, converts supported PDFs, Office Open XML files, and images into transient page images, invokes the configured OCR endpoint, and publishes one normalized representation to Supermemory. The whole document scratch prefix is purged as soon as Supermemory confirms publication and otherwise expires after 24 hours. The scratch volume is not a repository, is excluded from backup, and is not exposed for browsing or download.
 
-Configure S3 with the service endpoint, private bucket, signing region, access-key pair, and optional temporary session token. Virtual-hosted addressing is the default for new connections; enable path-style addressing only when the selected provider requires it. The database migration preserves path-style behavior for connections created under the former SeaweedFS-specific connector.
+Enterprise repositories remain authoritative for original files. PostgreSQL stores document identity, checksum, classification, ownership, lifecycle, retention, publication, provenance, and audit metadata—never the source bytes or normalized document body. Supermemory owns the durable normalized knowledge and semantic graph. A failed publication can be retried only while transient staging remains available; after purge or expiry, AIHub requires a fresh upload or connector fetch from the enterprise source.
 
 Knowledge retrieval requires exactly one enabled and healthy Supermemory connection. AIHub publishes each approved, ready document through a generation-safe `pg-boss` job using a stable custom ID and an ownership-derived private container tag. Supermemory remains the only semantic index; PostgreSQL stores lifecycle, authorization provenance, source evidence, and synchronization state, not embeddings. Retrieval results are re-authorized against the current local document owner, status, and publication before they can enter a model request. Department, project, organization, and agent-shared scopes remain a later Phase 4 gate pending MPM identity and ownership rules.
 
-Hermes execution requires exactly one enabled and healthy Hermes connection, a strong API-server key, an active safe-mode profile, and the global runtime switch. AIHub refuses to enable that switch until Hermes passes a live authenticated capability and zero-enabled-toolset check, and the worker repeats the same preflight before each run. Phase 5 is restricted to one-turn, zero-tool work with optional requesting-user private knowledge. Hermes must run in an isolated container with no PostgreSQL, S3 administration, Coolify, Docker, host-filesystem, or unrestricted network access. Its provider bootstrap must separately route its approved model alias to MPM LiteLLM/vLLM because the current upstream API does not offer remote administrator configuration.
+Hermes execution requires exactly one enabled and healthy Hermes connection, a strong API-server key, an active safe-mode profile, and the global runtime switch. AIHub refuses to enable that switch until Hermes passes a live authenticated capability and zero-enabled-toolset check, and the worker repeats the same preflight before each run. Phase 5 is restricted to one-turn, zero-tool work with optional requesting-user private knowledge. Hermes must run in an isolated container with no PostgreSQL, enterprise-storage administration, Coolify, Docker, host-filesystem, or unrestricted network access. Its provider bootstrap must separately route its approved model alias to MPM LiteLLM/vLLM because the current upstream API does not offer remote administrator configuration.
 
 The Phase 6 MCP endpoint is `POST /api/v1/mcp/`; its administration APIs are under `/api/v1/admin/tooling`. AIHub uses two independent bearer factors: a revocable server credential stored in the dashboard-managed Hermes connection and a short-lived capability bound to an exact AIHub agent run. The latter is reproducible across worker retries but stored only as a digest. AIHub passes both in non-model-visible private run context, scopes discovery and calls by a transport header, and clears the run digest on completion. Governed mode remains fail-closed until the deployed hardened Hermes version advertises redaction and prompt-isolation guarantees and passes protocol, leakage, revocation, and recovery acceptance; standard Hermes remains zero-tool.
 

@@ -1,6 +1,11 @@
 import type { MemoryIndexJobPayload } from "@aihub/contracts";
 import type { AIHubPrismaClient } from "@aihub/database";
-import { SupermemoryClient } from "@aihub/document-runtime";
+import {
+  documentNormalizedKey,
+  documentScratchPrefix,
+  type DocumentScratchStore,
+  SupermemoryClient,
+} from "@aihub/document-runtime";
 
 function safeFailure(error: unknown): string {
   return error instanceof Error
@@ -12,6 +17,7 @@ export class PrismaMemoryProcessor {
   constructor(
     private readonly prisma: AIHubPrismaClient,
     private readonly client: SupermemoryClient,
+    private readonly store: DocumentScratchStore,
   ) {}
 
   async process(payload: MemoryIndexJobPayload, jobId: string, workerId: string): Promise<object> {
@@ -30,7 +36,10 @@ export class PrismaMemoryProcessor {
       (
         publication.document.status !== "READY" ||
         publication.document.processingGeneration !== payload.generation ||
-        !publication.document.normalizedText
+        !publication.document.stagingKey ||
+        publication.document.stagingPurgedAt !== null ||
+        !publication.document.stagingExpiresAt ||
+        publication.document.stagingExpiresAt <= new Date()
       )
     ) {
       return { skipped: true, reason: "document-generation-is-not-publishable" };
@@ -42,6 +51,17 @@ export class PrismaMemoryProcessor {
       where: {
         documentId: payload.documentId,
         generation: payload.generation,
+        document: {
+          is: payload.action === "DELETE"
+            ? { status: "DELETED" }
+            : {
+                status: "READY",
+                processingGeneration: payload.generation,
+                stagingKey: { not: null },
+                stagingPurgedAt: null,
+                stagingExpiresAt: { gt: new Date() },
+              },
+        },
         OR: [
           { status: { in: [...eligible] } },
           { status: "PROCESSING", jobId },
@@ -54,20 +74,25 @@ export class PrismaMemoryProcessor {
     try {
       if (payload.action === "DELETE") {
         await this.client.delete(payload.documentId, publication.externalDocumentId);
+        await this.store.deletePrefix(documentScratchPrefix(payload.documentId));
         await this.prisma.documentMemoryPublication.update({
           where: { documentId: payload.documentId },
           data: { status: "DELETED", deletedAt: new Date(), syncedAt: null },
         });
       } else {
+        const normalized = new TextDecoder("utf-8", { fatal: true }).decode(
+          await this.store.getBuffer(documentNormalizedKey(payload.documentId, payload.generation), 25 * 1024 * 1024),
+        ).trim();
+        if (!normalized) throw new Error("The transient normalized document is empty.");
         const externalDocumentId = await this.client.publish({
           documentId: publication.documentId,
           ownerSubject: publication.ownerSubject,
-          content: publication.document.normalizedMarkdown || publication.document.normalizedText || "",
+          content: normalized,
           fileName: publication.document.fileName,
           classification: publication.document.classification,
           generation: payload.generation,
         });
-        await this.prisma.documentMemoryPublication.updateMany({
+        const published = await this.prisma.documentMemoryPublication.updateMany({
           where: { documentId: payload.documentId, generation: payload.generation, status: "PROCESSING" },
           data: {
             status: "READY",
@@ -76,6 +101,40 @@ export class PrismaMemoryProcessor {
             deletedAt: null,
           },
         });
+        if (published.count === 1) {
+          try {
+            await this.store.deletePrefix(documentScratchPrefix(payload.documentId));
+            await this.prisma.document.updateMany({
+              where: { id: payload.documentId, processingGeneration: payload.generation },
+              data: {
+                stagingKey: null,
+                stagingExpiresAt: null,
+                stagingPurgedAt: new Date(),
+                failureCode: null,
+                failureMessage: null,
+              },
+            });
+          } catch (purgeError) {
+            await this.prisma.document.updateMany({
+              where: { id: payload.documentId, processingGeneration: payload.generation },
+              data: {
+                stagingExpiresAt: new Date(),
+                failureCode: "STAGING_PURGE_FAILED",
+                failureMessage: safeFailure(purgeError),
+              },
+            }).catch(() => undefined);
+            await this.prisma.auditEvent.create({
+              data: {
+                actorType: "SYSTEM",
+                action: "document.transient_staging_purge_failed",
+                resourceType: "Document",
+                resourceId: payload.documentId,
+                outcome: "FAILURE",
+                metadata: { generation: payload.generation, workerId, message: safeFailure(purgeError) },
+              },
+            }).catch(() => undefined);
+          }
+        }
       }
       await this.prisma.auditEvent.create({
         data: {

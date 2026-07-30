@@ -58,6 +58,10 @@ services:
       - aihub_database_url
       - aihub_master_key
       - aihub_bootstrap_token
+    environment:
+      AIHUB_DOCUMENT_SCRATCH_DIR: /var/lib/aihub-document-scratch
+    volumes:
+      - document_scratch:/var/lib/aihub-document-scratch
     networks:
       - application
       - data
@@ -78,6 +82,10 @@ services:
     secrets:
       - aihub_database_url
       - aihub_master_key
+    environment:
+      AIHUB_DOCUMENT_SCRATCH_DIR: /var/lib/aihub-document-scratch
+    volumes:
+      - document_scratch:/var/lib/aihub-document-scratch
     networks:
       - application
       - data
@@ -112,6 +120,7 @@ secrets:
 
 volumes:
   postgres_data:
+  document_scratch:
 
 networks:
   application:

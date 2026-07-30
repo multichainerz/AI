@@ -1,5 +1,5 @@
 import type { AIHubPrismaClient } from "@aihub/database";
-import type { SupermemoryClient } from "@aihub/document-runtime";
+import type { DocumentScratchStore, SupermemoryClient } from "@aihub/document-runtime";
 import { describe, expect, it, vi } from "vitest";
 import { PrismaMemoryProcessor } from "./memory-processor.js";
 
@@ -16,12 +16,20 @@ function publication() {
       id: DOCUMENT_ID,
       status: "READY",
       processingGeneration: 2,
-      normalizedText: "Approved policy text",
-      normalizedMarkdown: "# Approved policy text",
+      stagingKey: `documents/${DOCUMENT_ID}/original/source.bin`,
+      stagingExpiresAt: new Date(Date.now() + 60_000),
+      stagingPurgedAt: null,
       fileName: "policy.pdf",
       classification: "CONFIDENTIAL",
     },
   };
+}
+
+function scratchStore() {
+  return {
+    getBuffer: vi.fn(async () => Buffer.from("# Approved policy text", "utf8")),
+    deletePrefix: vi.fn(async () => undefined),
+  } as unknown as DocumentScratchStore;
 }
 
 describe("PrismaMemoryProcessor", () => {
@@ -33,13 +41,15 @@ describe("PrismaMemoryProcessor", () => {
         update: vi.fn(async () => ({})),
       },
       auditEvent: { create: vi.fn(async () => ({})) },
+      document: { updateMany: vi.fn(async () => ({ count: 1 })) },
       $transaction: vi.fn(),
     } as unknown as AIHubPrismaClient;
     const client = {
       publish: vi.fn(async () => "sm-document-1"),
       delete: vi.fn(),
     } as unknown as SupermemoryClient;
-    const processor = new PrismaMemoryProcessor(prisma, client);
+    const store = scratchStore();
+    const processor = new PrismaMemoryProcessor(prisma, client, store);
 
     await processor.process({ documentId: DOCUMENT_ID, generation: 2, action: "UPSERT" }, "job-1", "worker-1");
 
@@ -49,10 +59,22 @@ describe("PrismaMemoryProcessor", () => {
       content: "# Approved policy text",
       generation: 2,
     }));
+    expect(prisma.documentMemoryPublication.updateMany).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      where: expect.objectContaining({
+        document: {
+          is: expect.objectContaining({
+            processingGeneration: 2,
+            stagingKey: { not: null },
+            stagingPurgedAt: null,
+          }),
+        },
+      }),
+    }));
     expect(prisma.documentMemoryPublication.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({
       where: expect.objectContaining({ status: "PROCESSING" }),
       data: expect.objectContaining({ status: "READY", externalDocumentId: "sm-document-1" }),
     }));
+    expect(store.deletePrefix).toHaveBeenCalledWith(`documents/${DOCUMENT_ID}`);
   });
 
   it("skips a stale generation before making a remote call", async () => {
@@ -63,7 +85,7 @@ describe("PrismaMemoryProcessor", () => {
       publish: vi.fn(),
       delete: vi.fn(),
     } as unknown as SupermemoryClient;
-    const processor = new PrismaMemoryProcessor(prisma, client);
+    const processor = new PrismaMemoryProcessor(prisma, client, scratchStore());
 
     await expect(processor.process(
       { documentId: DOCUMENT_ID, generation: 1, action: "UPSERT" },
@@ -88,7 +110,7 @@ describe("PrismaMemoryProcessor", () => {
       publish: vi.fn(),
       delete: vi.fn(),
     } as unknown as SupermemoryClient;
-    const processor = new PrismaMemoryProcessor(prisma, client);
+    const processor = new PrismaMemoryProcessor(prisma, client, scratchStore());
 
     await expect(processor.process(
       { documentId: DOCUMENT_ID, generation: 2, action: "UPSERT" },

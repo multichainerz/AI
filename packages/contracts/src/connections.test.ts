@@ -29,29 +29,13 @@ describe("service connection configuration", () => {
     }).success).toBe(false);
   });
 
-  it("accepts typed vendor-neutral S3 settings", () => {
-    const result = createServiceConnectionSchema.parse({
+  it("rejects unsupported connection kinds", () => {
+    const result = createServiceConnectionSchema.safeParse({
       ...connectionBase,
-      kind: "S3",
-      configuration: {
-        bucket: "aihub-documents",
-        region: "us-east-1",
-        forcePathStyle: false,
-        objectTimeoutMs: 120_000,
-        timeoutMs: 10_000,
-      },
+      kind: "OBJECT_STORE",
+      configuration: {},
     });
-
-    expect(result.configuration).toEqual({
-      bucket: "aihub-documents",
-      region: "us-east-1",
-      forcePathStyle: false,
-      objectTimeoutMs: 120_000,
-      timeoutMs: 10_000,
-    });
-    expect(() => parseServiceConnectionConfiguration("S3", { bucket: "192.168.1.10" })).toThrow();
-    expect(() => parseServiceConnectionConfiguration("S3", { bucket: "invalid..bucket" })).toThrow();
-    expect(() => parseServiceConnectionConfiguration("S3", { objectTimeoutMs: 1_000 })).toThrow();
+    expect(result.success).toBe(false);
   });
 
   it("accepts bounded Supermemory runtime and retrieval settings", () => {
@@ -91,8 +75,8 @@ describe("service connection configuration", () => {
   it("rejects settings that do not belong to the selected service", () => {
     const result = createServiceConnectionSchema.safeParse({
       ...connectionBase,
-      kind: "S3",
-      configuration: { modelsPath: "/v1/models" },
+      kind: "VLLM",
+      configuration: { documentsPath: "/v3/documents" },
     });
 
     expect(result.success).toBe(false);

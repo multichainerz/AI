@@ -189,7 +189,7 @@ export function DocumentsView(props: DocumentsViewProps) {
         <div>
           <p className="page-kicker">Governed document pipeline</p>
           <h1>{props.oidcConfigured ? "Sign in to manage documents" : "Enterprise access is not configured"}</h1>
-          <p>Uploads remain quarantined until review, then flow through on-premise conversion, Unlimited OCR, and S3-compatible storage.</p>
+          <p>Uploads remain quarantined until review, then use encrypted transient staging for conversion and OCR before durable publication to Supermemory.</p>
         </div>
         <div className="document-lock-actions">
           {props.oidcConfigured && <button className="primary-button" type="button" onClick={props.onSignIn}>Sign in with MPM</button>}
@@ -202,7 +202,7 @@ export function DocumentsView(props: DocumentsViewProps) {
   return (
     <section className="documents-workspace">
       <header className="documents-header">
-        <div><p className="page-kicker">Content operations</p><h1>Documents</h1><p>Quarantine, convert, extract, retain, and review on-premise content.</p></div>
+        <div><p className="page-kicker">Content operations</p><h1>Documents</h1><p>Quarantine, convert, extract, and publish knowledge without retaining source files in AIHub.</p></div>
         <button className="primary-button" type="button" onClick={() => setUploadOpen((value) => !value)}>{uploadOpen ? "Close upload" : "Upload document"}</button>
       </header>
 
@@ -215,6 +215,7 @@ export function DocumentsView(props: DocumentsViewProps) {
             <small>PDF, Office, PNG, JPEG, or TXT · up to 50 MB</small>
             <input ref={fileInput} type="file" required accept=".pdf,.docx,.xlsx,.pptx,.png,.jpg,.jpeg,.txt" onChange={(event) => setFile(event.target.files?.[0] ?? null)}/>
           </label>
+          <p className="document-upload-note">AIHub encrypts this file in transient staging and purges it after Supermemory confirms publication. Keep the authoritative original in enterprise storage.</p>
           <label>Classification<select value={classification} onChange={(event) => setClassification(event.target.value as DocumentClassification)}><option value="INTERNAL">Internal</option><option value="CONFIDENTIAL">Confidential</option><option value="RESTRICTED">Restricted</option></select></label>
           <label>Retention days<input type="number" min={1} max={3650} value={retentionDays} onChange={(event) => setRetentionDays(Number(event.target.value))}/></label>
           <button className="primary-button" type="submit" disabled={!file || !validRetention || busy}>{busy ? "Uploading…" : "Upload to quarantine"}</button>
@@ -230,7 +231,7 @@ export function DocumentsView(props: DocumentsViewProps) {
 
       <div className="documents-layout">
         <section className="document-list panel" aria-label="Document list">
-          <div className="document-section-heading"><div><p className="section-kicker">Repository</p><h2>Managed files</h2></div><button type="button" onClick={() => void refresh()} disabled={busy}>Refresh</button></div>
+          <div className="document-section-heading"><div><p className="section-kicker">Ingestion ledger</p><h2>Document records</h2></div><button type="button" onClick={() => void refresh()} disabled={busy}>Refresh</button></div>
           {documents.length === 0 && !busy && <div className="document-empty"><strong>No documents yet</strong><span>Upload a file to begin the governed pipeline.</span></div>}
           {documents.map((document) => (
             <button key={document.id} type="button" className={active?.id === document.id ? "selected" : ""} onClick={() => void select(document.id)}>
@@ -243,7 +244,7 @@ export function DocumentsView(props: DocumentsViewProps) {
 
         <section className="document-detail panel">
           {!active ? (
-            <div className="document-empty"><strong>Select a document</strong><span>Lifecycle and normalized content will appear here.</span></div>
+            <div className="document-empty"><strong>Select a document</strong><span>Lifecycle, provenance, and transient staging state will appear here.</span></div>
           ) : (
             <>
               <div className="document-detail-title"><div><p className="section-kicker">Document record</p><h2>{active.fileName}</h2></div><span className={`document-status ${statusTone(active.status)}`}>{formatStatus(active.status)}</span></div>
@@ -252,15 +253,20 @@ export function DocumentsView(props: DocumentsViewProps) {
               {processingStatuses.has(active.status) && <div className="document-progress"><span/><div><strong>Processing generation {active.processingGeneration}</strong><small>Conversion and OCR run asynchronously through pg-boss.</small></div></div>}
               {(active.status === "FAILED" || active.status === "REJECTED") && <div className="document-failure"><strong>{active.failureCode ?? "PROCESSING_FAILED"}</strong><span>{active.failureMessage ?? "Document processing did not complete."}</span></div>}
 
-              {active.textPreview && <div className="document-preview"><span>Extracted text preview</span><p>{active.textPreview}</p></div>}
-
-              <div className="document-artifacts"><div><strong>Managed artifacts</strong><span>{active.artifacts.length} stored</span></div>{active.artifacts.map((artifact) => <a key={artifact.id} href={`/api/v1/documents/${active.id}/artifacts/${artifact.id}/download`}><span>{artifact.kind.replaceAll("_", " ").toLowerCase()}{artifact.pageNumber ? ` · page ${artifact.pageNumber}` : ""}</span><small>{formatBytes(artifact.sizeBytes)}</small></a>)}</div>
+              <div className="document-staging">
+                <strong>{active.stagingPurgedAt ? "Transient staging purged" : "Transient staging active"}</strong>
+                <span>{active.stagingPurgedAt
+                  ? "The source and extraction intermediates are no longer stored by AIHub. Durable normalized knowledge remains in Supermemory."
+                  : active.stagingExpiresAt
+                    ? `Encrypted processing data is available until ${new Date(active.stagingExpiresAt).toLocaleString()} or successful Supermemory publication, whichever comes first.`
+                    : "AIHub does not retain a document source for this record."}</span>
+              </div>
 
               {(props.administrator || ["QUARANTINED", "READY", "FAILED", "REJECTED"].includes(active.status)) && (
                 <div className="document-actions">
                   {props.administrator && (active.status === "QUARANTINED" || (["READY", "FAILED", "REJECTED"].includes(active.status) && new Date(active.retentionUntil) > new Date())) && <label>Review or override reason<textarea value={reviewReason} onChange={(event) => setReviewReason(event.target.value)} maxLength={1000} rows={2} placeholder="Record the operational reason"/></label>}
                   {props.administrator && active.status === "QUARANTINED" && <div><button className="primary-button" type="button" disabled={busy || reviewReason.trim().length < 3} onClick={() => void review("APPROVE")}>Approve processing</button><button className="danger-button" type="button" disabled={busy || reviewReason.trim().length < 3} onClick={() => void review("REJECT")}>Reject</button></div>}
-                  {(active.status === "FAILED" || active.status === "READY") && <button type="button" disabled={busy} onClick={() => void reprocess()}>Reprocess</button>}
+                  {active.reprocessAvailable && <button type="button" disabled={busy} onClick={() => void reprocess()}>Retry processing</button>}
                   {["QUARANTINED", "READY", "FAILED", "REJECTED"].includes(active.status) && <button className="danger-button" type="button" disabled={busy} onClick={() => void remove()}>Delete document</button>}
                 </div>
               )}

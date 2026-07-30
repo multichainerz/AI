@@ -5,7 +5,6 @@ export const SERVICE_KINDS = [
   "VLLM",
   "HERMES",
   "SUPERMEMORY",
-  "S3",
   "OCR",
   "MCP",
   "OIDC",
@@ -98,20 +97,6 @@ export const serviceConnectionConfigurationSchema = z
     nameClaim: oidcClaimNameSchema.optional(),
     tokenAuthMethod: z.enum(["client_secret_basic", "client_secret_post"]).optional(),
     caseSensitiveGroups: z.boolean().optional(),
-    bucket: z
-      .string()
-      .min(3)
-      .max(63)
-      .regex(
-        /^[a-z0-9][a-z0-9.-]*[a-z0-9]$/,
-        "Bucket must use lowercase DNS-compatible characters.",
-      )
-      .refine((value) => !value.includes(".."), "Bucket names cannot contain adjacent periods.")
-      .refine((value) => !/^\d{1,3}(?:\.\d{1,3}){3}$/.test(value), "Bucket names cannot use an IPv4 address format.")
-      .optional(),
-    region: z.string().min(1).max(64).regex(/^[a-z0-9-]+$/).optional(),
-    forcePathStyle: z.boolean().optional(),
-    objectTimeoutMs: z.number().int().min(5_000).max(600_000).optional(),
   })
   .strict();
 
@@ -152,13 +137,6 @@ const connectionConfigurationSchemas = {
     memoryPollIntervalMs: true,
     retrievalLimit: true,
     retrievalThreshold: true,
-  }),
-  S3: serviceConnectionConfigurationSchema.pick({
-    timeoutMs: true,
-    bucket: true,
-    region: true,
-    forcePathStyle: true,
-    objectTimeoutMs: true,
   }),
   OCR: serviceConnectionConfigurationSchema.pick({
     timeoutMs: true,

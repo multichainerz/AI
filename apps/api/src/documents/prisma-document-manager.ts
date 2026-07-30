@@ -1,12 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import { createWriteStream } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { basename, extname, join } from "node:path";
-import { Transform } from "node:stream";
-import { pipeline } from "node:stream/promises";
+import { basename, extname } from "node:path";
+import { Readable } from "node:stream";
 import type {
-  DocumentArtifact,
   DocumentDetail,
   DocumentList,
   DocumentMetrics,
@@ -14,15 +9,19 @@ import type {
   DocumentUploadMetadata,
   QuarantineDecision,
 } from "@aihub/contracts";
-import { Prisma, type AIHubPrismaClient } from "@aihub/database";
-import type { DocumentObjectStore } from "@aihub/document-runtime";
+import { type AIHubPrismaClient } from "@aihub/database";
+import {
+  DOCUMENT_SCRATCH_TTL_MS,
+  documentOriginalKey,
+  documentScratchPrefix,
+  type DocumentScratchStore,
+} from "@aihub/document-runtime";
 import type { PgBossQueueService } from "@aihub/jobs";
 import {
   DocumentConflictError,
   DocumentNotFoundError,
   DocumentStorageError,
   DocumentValidationError,
-  type DocumentDownload,
   type DocumentManager,
   type DocumentPrincipal,
   type DocumentUpload,
@@ -30,17 +29,6 @@ import {
 
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 const SNIFF_BYTES = 8 * 1024;
-
-interface StoredArtifact {
-  id: string;
-  kind: DocumentArtifact["kind"];
-  pageNumber: number;
-  objectKey: string;
-  mediaType: string;
-  sizeBytes: bigint;
-  sha256: string;
-  createdAt: Date;
-}
 
 interface StoredDocument {
   id: string;
@@ -52,26 +40,23 @@ interface StoredDocument {
   status: DocumentSummary["status"];
   pageCount: number | null;
   processingGeneration: number;
-  normalizedText: string | null;
   failureCode: string | null;
   failureMessage: string | null;
+  stagingKey: string | null;
+  stagingExpiresAt: Date | null;
+  stagingPurgedAt: Date | null;
   retentionUntil: Date;
   createdAt: Date;
   updatedAt: Date;
   completedAt: Date | null;
-  artifacts?: StoredArtifact[];
 }
 
-function artifactDto(artifact: StoredArtifact): DocumentArtifact {
-  return {
-    id: artifact.id,
-    kind: artifact.kind,
-    pageNumber: artifact.pageNumber === 0 ? null : artifact.pageNumber,
-    mediaType: artifact.mediaType,
-    sizeBytes: Number(artifact.sizeBytes),
-    sha256: artifact.sha256,
-    createdAt: artifact.createdAt.toISOString(),
-  };
+function canReprocess(document: StoredDocument): boolean {
+  return document.status === "FAILED" &&
+    document.stagingKey !== null &&
+    document.stagingPurgedAt === null &&
+    document.stagingExpiresAt !== null &&
+    document.stagingExpiresAt > new Date();
 }
 
 function summaryDto(document: StoredDocument): DocumentSummary {
@@ -87,6 +72,9 @@ function summaryDto(document: StoredDocument): DocumentSummary {
     processingGeneration: document.processingGeneration,
     failureCode: document.failureCode,
     failureMessage: document.failureMessage,
+    stagingExpiresAt: document.stagingExpiresAt?.toISOString() ?? null,
+    stagingPurgedAt: document.stagingPurgedAt?.toISOString() ?? null,
+    reprocessAvailable: canReprocess(document),
     retentionUntil: document.retentionUntil.toISOString(),
     createdAt: document.createdAt.toISOString(),
     updatedAt: document.updatedAt.toISOString(),
@@ -95,11 +83,7 @@ function summaryDto(document: StoredDocument): DocumentSummary {
 }
 
 function detailDto(document: StoredDocument): DocumentDetail {
-  return {
-    ...summaryDto(document),
-    textPreview: document.normalizedText?.slice(0, 4_000) ?? null,
-    artifacts: (document.artifacts ?? []).map(artifactDto),
-  };
+  return summaryDto(document);
 }
 
 function cleanFileName(value: string): string {
@@ -136,7 +120,7 @@ function visibility(principal: DocumentPrincipal) {
 export class PrismaDocumentManager implements DocumentManager {
   constructor(
     private readonly prisma: AIHubPrismaClient,
-    private readonly store: DocumentObjectStore,
+    private readonly store: DocumentScratchStore,
     private readonly queue: PgBossQueueService,
   ) {}
 
@@ -152,7 +136,6 @@ export class PrismaDocumentManager implements DocumentManager {
   async get(principal: DocumentPrincipal, documentId: string): Promise<DocumentDetail> {
     const document = await this.prisma.document.findFirst({
       where: { id: documentId, ...visibility(principal), status: { not: "DELETED" } },
-      include: { artifacts: { orderBy: [{ kind: "asc" }, { pageNumber: "asc" }] } },
     });
     if (!document) throw new DocumentNotFoundError();
     return detailDto(document as StoredDocument);
@@ -165,18 +148,17 @@ export class PrismaDocumentManager implements DocumentManager {
   ): Promise<DocumentDetail> {
     const fileName = cleanFileName(upload.fileName);
     const id = randomUUID();
-    const root = await mkdtemp(join(tmpdir(), "aihub-upload-"));
-    const path = join(root, "upload.bin");
+    const stagingKey = documentOriginalKey(id);
     const hash = createHash("sha256");
     let sizeBytes = 0;
     const sniffChunks: Buffer[] = [];
     let sniffSize = 0;
-    const meter = new Transform({
-      transform(chunk: Buffer, _encoding, callback) {
+    const measuredUpload = Readable.from((async function* () {
+      for await (const value of upload.stream) {
+        const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value as Uint8Array);
         sizeBytes += chunk.byteLength;
         if (sizeBytes > MAX_UPLOAD_BYTES) {
-          callback(new DocumentValidationError("Document exceeds the 50 MB upload limit."));
-          return;
+          throw new DocumentValidationError("Document exceeds the 50 MB upload limit.");
         }
         hash.update(chunk);
         if (sniffSize < SNIFF_BYTES) {
@@ -184,11 +166,16 @@ export class PrismaDocumentManager implements DocumentManager {
           sniffChunks.push(selected);
           sniffSize += selected.length;
         }
-        callback(null, chunk);
-      },
-    });
+        yield chunk;
+      }
+    })());
     try {
-      await pipeline(upload.stream, meter, createWriteStream(path, { flags: "wx" }));
+      try {
+        await this.store.putStream(stagingKey, measuredUpload);
+      } catch (error) {
+        if (error instanceof DocumentValidationError) throw error;
+        throw new DocumentStorageError("AIHub could not stage the document for transient processing.");
+      }
       if (sizeBytes === 0) throw new DocumentValidationError("Document is empty.");
       const mediaType = detectedMediaType(Buffer.concat(sniffChunks), fileName);
       const digest = hash.digest("hex");
@@ -196,64 +183,59 @@ export class PrismaDocumentManager implements DocumentManager {
         where: {
           ownerSubject: principal.subject,
           sha256: digest,
-          status: { notIn: ["DELETED", "REJECTED"] },
+          OR: [
+            { status: { in: ["QUARANTINED", "QUEUED", "CONVERTING", "OCR_PENDING", "OCR_PROCESSING", "READY"] } },
+            {
+              status: "FAILED",
+              stagingKey: { not: null },
+              stagingPurgedAt: null,
+              stagingExpiresAt: { gt: new Date() },
+            },
+          ],
         },
         select: { id: true },
       });
       if (duplicate) throw new DocumentConflictError("The same document is already present in your workspace.");
-      const objectKey = `quarantine/${id}/original/${encodeURIComponent(fileName)}`;
-      try {
-        await this.store.putFile(objectKey, path, mediaType, sizeBytes);
-      } catch {
-        throw new DocumentStorageError("AIHub could not store the document in S3.");
-      }
       const retentionUntil = new Date(Date.now() + metadata.retentionDays * 24 * 60 * 60 * 1_000);
-      try {
-        const created = await this.prisma.$transaction(async (transaction) => {
-          const document = await transaction.document.create({
-            data: {
-              id,
-              ownerSubject: principal.subject,
+      const stagingExpiresAt = new Date(Date.now() + DOCUMENT_SCRATCH_TTL_MS);
+      const created = await this.prisma.$transaction(async (transaction) => {
+        const document = await transaction.document.create({
+          data: {
+            id,
+            ownerSubject: principal.subject,
+            fileName,
+            mediaType,
+            sizeBytes,
+            sha256: digest,
+            classification: metadata.classification,
+            stagingKey,
+            stagingExpiresAt,
+            retentionUntil,
+          },
+        });
+        await transaction.auditEvent.create({
+          data: {
+            actorType: "USER",
+            actorId: principal.id,
+            action: "document.uploaded_to_quarantine",
+            resourceType: "Document",
+            resourceId: id,
+            outcome: "SUCCESS",
+            metadata: {
               fileName,
               mediaType,
               sizeBytes,
-              sha256: digest,
               classification: metadata.classification,
-              originalObjectKey: objectKey,
-              retentionUntil,
-              artifacts: {
-                create: {
-                  kind: "ORIGINAL",
-                  pageNumber: 0,
-                  objectKey,
-                  mediaType,
-                  sizeBytes,
-                  sha256: digest,
-                },
-              },
+              stagingExpiresAt: stagingExpiresAt.toISOString(),
             },
-            include: { artifacts: true },
-          });
-          await transaction.auditEvent.create({
-            data: {
-              actorType: "USER",
-              actorId: principal.id,
-              action: "document.uploaded_to_quarantine",
-              resourceType: "Document",
-              resourceId: id,
-              outcome: "SUCCESS",
-              metadata: { fileName, mediaType, sizeBytes, classification: metadata.classification },
-            },
-          });
-          return document;
+          },
         });
-        return detailDto(created as StoredDocument);
-      } catch (error) {
-        await this.store.delete([objectKey]).catch(() => undefined);
-        throw error;
-      }
-    } finally {
-      await rm(root, { recursive: true, force: true });
+        return document;
+      });
+      return detailDto(created as StoredDocument);
+    } catch (error) {
+      await this.store.deletePrefix(documentScratchPrefix(id)).catch(() => undefined);
+      throw error;
     }
   }
 
@@ -263,10 +245,14 @@ export class PrismaDocumentManager implements DocumentManager {
     decision: QuarantineDecision,
   ): Promise<DocumentDetail> {
     if (decision.decision === "REJECT") {
-      const updated = await this.prisma.$transaction(async (transaction) => {
+      await this.prisma.$transaction(async (transaction) => {
         const changed = await transaction.document.updateMany({
-          where: { id: documentId, status: "QUARANTINED" },
-          data: { status: "REJECTED", failureCode: "QUARANTINE_REJECTED", failureMessage: decision.reason },
+          where: { id: documentId, ...visibility(principal), status: "QUARANTINED" },
+          data: {
+            status: "REJECTED",
+            failureCode: "QUARANTINE_REJECTED",
+            failureMessage: decision.reason,
+          },
         });
         if (changed.count !== 1) throw new DocumentConflictError("Only quarantined documents can be reviewed.");
         await transaction.auditEvent.create({
@@ -280,7 +266,36 @@ export class PrismaDocumentManager implements DocumentManager {
             metadata: { reason: decision.reason },
           },
         });
-        return transaction.document.findUniqueOrThrow({ where: { id: documentId }, include: { artifacts: true } });
+      });
+      try {
+        await this.store.deletePrefix(documentScratchPrefix(documentId));
+      } catch (error) {
+        const message = error instanceof Error ? error.message.slice(0, 500) : "Transient staging purge failed.";
+        await this.prisma.$transaction([
+          this.prisma.document.updateMany({
+            where: { id: documentId, status: "REJECTED", stagingKey: { not: null } },
+            data: { stagingExpiresAt: new Date() },
+          }),
+          this.prisma.auditEvent.create({
+            data: {
+              actorType: "SYSTEM",
+              action: "document.transient_staging_purge_failed",
+              resourceType: "Document",
+              resourceId: documentId,
+              outcome: "FAILURE",
+              metadata: { stage: "quarantine_rejection", message },
+            },
+          }),
+        ]).catch(() => undefined);
+        throw new DocumentStorageError("AIHub rejected the document but could not purge transient staging; cleanup will retry.");
+      }
+      const updated = await this.prisma.document.update({
+        where: { id: documentId },
+        data: {
+          stagingKey: null,
+          stagingExpiresAt: null,
+          stagingPurgedAt: new Date(),
+        },
       });
       return detailDto(updated as StoredDocument);
     }
@@ -288,7 +303,7 @@ export class PrismaDocumentManager implements DocumentManager {
   }
 
   async reprocess(principal: DocumentPrincipal, documentId: string): Promise<DocumentDetail> {
-    return this.enqueue(principal, documentId, ["FAILED", "READY"], "Manual reprocessing requested.");
+    return this.enqueue(principal, documentId, ["FAILED"], "Manual reprocessing requested.");
   }
 
   async delete(
@@ -298,10 +313,7 @@ export class PrismaDocumentManager implements DocumentManager {
   ): Promise<void> {
     const document = await this.prisma.document.findFirst({
       where: { id: documentId, ...visibility(principal), status: { not: "DELETED" } },
-      include: {
-        artifacts: { select: { objectKey: true } },
-        memoryPublication: { select: { status: true } },
-      },
+      include: { memoryPublication: { select: { status: true } } },
     });
     if (!document) throw new DocumentNotFoundError();
     if (["QUEUED", "CONVERTING", "OCR_PENDING", "OCR_PROCESSING", "DELETING"].includes(document.status)) {
@@ -315,27 +327,49 @@ export class PrismaDocumentManager implements DocumentManager {
     if (document.retentionUntil > new Date() && !forceAllowed) {
       throw new DocumentConflictError("Document retention has not expired. An authorized forced deletion requires a reason.");
     }
-    await this.prisma.document.update({ where: { id: documentId }, data: { status: "DELETING" } });
-    const keys = [...new Set([document.originalObjectKey, ...document.artifacts.map(({ objectKey }) => objectKey)])];
+    const claimed = await this.prisma.document.updateMany({
+      where: {
+        id: documentId,
+        status: document.status,
+        processingGeneration: document.processingGeneration,
+      },
+      data: { status: "DELETING" },
+    });
+    if (claimed.count !== 1) {
+      throw new DocumentConflictError("The document changed while deletion was requested.");
+    }
     try {
-      await this.store.delete(keys);
-    } catch {
+      await this.store.deletePrefix(documentScratchPrefix(documentId));
+    } catch (error) {
       await this.prisma.document.update({
         where: { id: documentId },
-        data: { status: "FAILED", failureCode: "DELETE_FAILED", failureMessage: "S3 object deletion failed." },
+        data: { status: document.status },
       });
-      throw new DocumentStorageError("AIHub could not delete every managed document object.");
+      await this.prisma.auditEvent.create({
+        data: {
+          actorType: "USER",
+          actorId: principal.id,
+          action: "document.deletion_failed",
+          resourceType: "Document",
+          resourceId: documentId,
+          outcome: "FAILURE",
+          metadata: {
+            stage: "transient_staging_purge",
+            message: error instanceof Error ? error.message.slice(0, 500) : "Transient staging purge failed.",
+          },
+        },
+      }).catch(() => undefined);
+      throw new DocumentStorageError("AIHub could not purge the transient document staging area.");
     }
     await this.prisma.$transaction([
-      this.prisma.documentArtifact.deleteMany({ where: { documentId } }),
       this.prisma.document.update({
         where: { id: documentId },
         data: {
           status: "DELETED",
           deletedAt: new Date(),
-          normalizedText: null,
-          normalizedMarkdown: null,
-          ocrMetadata: Prisma.DbNull,
+          stagingKey: null,
+          stagingExpiresAt: null,
+          stagingPurgedAt: new Date(),
           failureCode: null,
           failureMessage: null,
         },
@@ -348,38 +382,15 @@ export class PrismaDocumentManager implements DocumentManager {
           resourceType: "Document",
           resourceId: documentId,
           outcome: "SUCCESS",
-          metadata: { objectCount: keys.length, reason: options.reason ?? null },
+          metadata: { transientStagingPurged: true, reason: options.reason ?? null },
         },
       }),
     ]);
     await this.scheduleMemoryDeletion(documentId);
   }
 
-  async download(
-    principal: DocumentPrincipal,
-    documentId: string,
-    artifactId: string,
-  ): Promise<DocumentDownload> {
-    const artifact = await this.prisma.documentArtifact.findFirst({
-      where: {
-        id: artifactId,
-        documentId,
-        document: { ...visibility(principal), status: { not: "DELETED" } },
-      },
-      include: { document: { select: { fileName: true } } },
-    });
-    if (!artifact) throw new DocumentNotFoundError();
-    const bytes = await this.store.getBuffer(artifact.objectKey);
-    const extension = artifact.kind === "OCR_TEXT" ? ".txt" : artifact.kind === "OCR_MARKDOWN" ? ".md" : artifact.kind === "OCR_JSON" ? ".json" : "";
-    return {
-      bytes,
-      mediaType: artifact.mediaType,
-      fileName: artifact.kind === "ORIGINAL" ? artifact.document.fileName : `${artifact.document.fileName}${extension}`,
-    };
-  }
-
   async metrics(): Promise<DocumentMetrics> {
-    const [groups, aggregate, artifactStorage] = await Promise.all([
+    const [groups, aggregate, staged] = await Promise.all([
       this.prisma.document.groupBy({
         by: ["status"],
         where: { status: { not: "DELETED" } },
@@ -389,8 +400,13 @@ export class PrismaDocumentManager implements DocumentManager {
         where: { status: { not: "DELETED" } },
         _count: { _all: true },
       }),
-      this.prisma.documentArtifact.aggregate({
-        where: { document: { status: { not: "DELETED" } } },
+      this.prisma.document.aggregate({
+        where: {
+          status: { not: "DELETED" },
+          stagingKey: { not: null },
+          stagingPurgedAt: null,
+        },
+        _count: { _all: true },
         _sum: { sizeBytes: true },
       }),
     ]);
@@ -405,14 +421,15 @@ export class PrismaDocumentManager implements DocumentManager {
       ready: count(["READY"]),
       failed: count(["FAILED"]),
       rejected: count(["REJECTED"]),
-      storedBytes: Number(artifactStorage._sum.sizeBytes ?? 0),
+      stagedDocuments: staged._count._all,
+      stagedSourceBytes: Number(staged._sum.sizeBytes ?? 0),
     };
   }
 
   private async enqueue(
     principal: DocumentPrincipal,
     documentId: string,
-    allowedStatuses: Array<"QUARANTINED" | "FAILED" | "READY">,
+    allowedStatuses: Array<"QUARANTINED" | "FAILED">,
     reason: string,
   ): Promise<DocumentDetail> {
     const prepared = await this.prisma.$transaction(async (transaction) => {
@@ -420,7 +437,16 @@ export class PrismaDocumentManager implements DocumentManager {
         where: { id: documentId, ...visibility(principal), status: { in: allowedStatuses } },
       });
       if (!current) throw new DocumentConflictError("The document is not eligible for this processing action.");
+      if (
+        !current.stagingKey ||
+        current.stagingPurgedAt ||
+        !current.stagingExpiresAt ||
+        current.stagingExpiresAt <= new Date()
+      ) {
+        throw new DocumentConflictError("The transient source is no longer available. Re-upload or re-fetch the enterprise source.");
+      }
       const generation = current.processingGeneration + 1;
+      const stagingExpiresAt = new Date(Date.now() + DOCUMENT_SCRATCH_TTL_MS);
       const claimed = await transaction.document.updateMany({
         where: { id: documentId, processingGeneration: current.processingGeneration, status: current.status },
         data: {
@@ -428,9 +454,7 @@ export class PrismaDocumentManager implements DocumentManager {
           processingGeneration: generation,
           approvedAt: current.approvedAt ?? new Date(),
           approvedBy: current.approvedBy ?? principal.id,
-          normalizedText: null,
-          normalizedMarkdown: null,
-          ocrMetadata: Prisma.DbNull,
+          stagingExpiresAt,
           failureCode: null,
           failureMessage: null,
           completedAt: null,
@@ -446,7 +470,7 @@ export class PrismaDocumentManager implements DocumentManager {
           resourceType: "Document",
           resourceId: documentId,
           outcome: "SUCCESS",
-          metadata: { generation, reason },
+          metadata: { generation, reason, stagingExpiresAt: stagingExpiresAt.toISOString() },
         },
       });
       return { generation };

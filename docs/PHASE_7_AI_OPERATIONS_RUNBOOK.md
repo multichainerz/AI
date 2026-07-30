@@ -92,5 +92,5 @@ The dashboard distinguishes locally enforced application controls from controls 
 - Run approved regression datasets for all enabled target categories.
 - Demonstrate agent activation rejection without matching promoted evidence and success with exact target/version evidence.
 - Demonstrate prompt activation rejection without exact promoted `PROMPT`, `CHAT`, and `SAFETY` evidence; then verify active-version checksum provenance and fail-closed suspension.
-- Exercise worker loss, queue backlog, OCR failure, S3 failure, Supermemory failure, inference saturation, and recovery.
+- Exercise worker loss, queue backlog, OCR failure, scratch-capacity or purge failure, Supermemory failure, inference saturation, and recovery.
 - Record capacity limits and degraded-mode procedures for the RTX PRO 6000 96 GB deployment.

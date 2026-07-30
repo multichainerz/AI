@@ -74,8 +74,8 @@ Views adoption, operational status, business usage, risks, capacity, and measura
 - **Human control:** consequential tool actions require explicit policy checks and, where required, human approval.
 - **Traceable by default:** significant AI and administrative events are auditable.
 - **PostgreSQL first:** PostgreSQL is the operational source of truth and coordination platform.
-- **One semantic layer:** Supermemory is the sole memory, embedding, retrieval, and RAG abstraction.
-- **Vendor-neutral object storage:** AIHub uses a dashboard-configured S3-compatible endpoint without coupling the application to a specific storage product.
+- **One durable knowledge layer:** Supermemory is the sole normalized-knowledge, embedding, retrieval, semantic-graph, and RAG abstraction; PostgreSQL does not duplicate document bodies or vectors.
+- **Enterprise-owned originals:** authoritative files remain in MPM repositories. AIHub uses encrypted, time-bounded scratch only for extraction and never becomes a document repository.
 - **Replaceable models:** applications use LiteLLM and stable internal interfaces rather than calling model servers directly.
 - **Configuration control plane:** authorized administrators configure integrations, endpoints, routes, and secrets centrally through AIHub.
 - **Progressive delivery:** begin with controlled use cases and add autonomy only after evaluation.
@@ -148,7 +148,7 @@ Hermes may access only:
 - individual tools granted within those MCP servers;
 - resource scopes and actions permitted for the requesting user and agent.
 
-Hermes will not receive direct access to PostgreSQL, S3 administration, Coolify, the Docker socket, host infrastructure, unrestricted filesystems, unrestricted shell execution, or the public internet unless a future use case is explicitly approved and exposed through a controlled AIHub tool.
+Hermes will not receive direct access to PostgreSQL, enterprise-storage administration, Coolify, the Docker socket, host infrastructure, unrestricted filesystems, unrestricted shell execution, or the public internet unless a future use case is explicitly approved and exposed through a controlled AIHub tool.
 
 For each run, AIHub will produce an effective capability set based on the user, role, department, agent profile, environment, tool grants, resource scopes, and approval policies. Every tool invocation will be revalidated at execution time. Changes, grants, denials, and emergency revocations will be auditable.
 
@@ -163,7 +163,7 @@ It will provide:
 - native text extraction where suitable;
 - page rendering for scanned or visual documents;
 - OCR using Unlimited-OCR;
-- normalized Markdown and structured extraction artifacts;
+- normalized Markdown for durable knowledge publication;
 - document status, version, source, checksum, and ownership metadata;
 - processing retries and failure review;
 - controlled publishing to Supermemory;
@@ -174,6 +174,8 @@ All long-running document work will execute asynchronously through PostgreSQL-ba
 ### 8.5 Knowledge and Memory Management
 
 Supermemory will be AIHub's single semantic context layer for enterprise knowledge, retrieval, embeddings, and durable agent memory.
+
+AIHub will publish approved normalized content through the Supermemory Memory API. Once Supermemory confirms the generation is indexed, AIHub will purge the source and all extraction intermediates from scratch. Supermemory persistent data is therefore production data and requires a tested backup/restore procedure. Clean rebuilds require authorized enterprise originals to be fetched or uploaded again; PostgreSQL metadata alone is insufficient.
 
 AIHub will provide controls to:
 
@@ -198,6 +200,8 @@ Initial model roles are expected to include:
 - Unlimited-OCR for document parsing;
 - Qwen3 Embedding for semantic indexing through Supermemory;
 - additional smaller models for efficient or specialized workloads as evaluated.
+
+The RTX PRO 6000 96 GB must not be assumed to serve all three roles concurrently. Phase 0 benchmarking must establish the actual Laguna runtime and KV-cache headroom, OCR contention, embedding placement, context limit, concurrency, and recovery behavior. Production requires either demonstrated safe co-residency, another GPU, a smaller primary model, a dedicated embedding route, or an explicitly accepted degraded scheduling policy.
 
 The component will provide:
 
@@ -292,19 +296,19 @@ The Jobs component will manage:
 
 Workers will be idempotent and use stable operation identifiers.
 
-### 8.11 S3-Compatible Object Storage
+### 8.11 Encrypted Transient Document Staging
 
-The configured S3-compatible service will store AIHub's binary and generated artifacts.
+AIHub API and worker instances will share a private scratch volume for the bounded extraction window. AIHub will encrypt bytes before writing them, use document- and generation-scoped paths, restrict filesystem permissions, and exclude the volume from backups and user-facing file access.
 
-Initial storage scopes will include:
+Scratch may contain only:
 
-- quarantined uploads;
-- original documents;
-- derived page images, OCR output, Markdown, and JSON;
-- temporary exports;
-- backup artifacts where appropriate.
+- quarantined uploads awaiting a decision;
+- current-generation page images;
+- current-generation normalized content awaiting Supermemory publication.
 
-AIHub will store bucket, object key, version, checksum, size, and classification metadata in PostgreSQL. S3 service administration will remain separate from application administration.
+The default maximum lifetime is 24 hours and may be extended only by a valid queued generation. Rejection and deletion purge immediately. Successful Supermemory publication purges the whole document prefix. A periodic worker sweep removes expired or previously failed-to-purge prefixes. PostgreSQL stores only scratch lifecycle metadata, document identity, checksum, size, classification, ownership, provenance, and publication state.
+
+Enterprise repositories remain authoritative for originals. Future repository connectors will fetch content into the same pipeline with least-privilege, read-only source access and will not turn scratch into durable storage.
 
 ### 8.12 Identity and Access Management
 
@@ -360,7 +364,7 @@ It will cover:
 
 - application and worker health;
 - PostgreSQL and `pg-boss` health;
-- S3 object-store health and capacity;
+- transient scratch capacity, age, expiry, and purge failures;
 - Supermemory availability and ingestion latency;
 - LiteLLM and vLLM health;
 - GPU memory, utilization, temperature, and errors;
@@ -377,7 +381,8 @@ Authorized administrators will manage shared platform configuration, including:
 - environments, service endpoints, authentication methods, and TLS settings;
 - LiteLLM and vLLM endpoints, model aliases, routes, limits, and health checks;
 - PostgreSQL-dependent application settings and `pg-boss` worker policies;
-- S3 endpoints, buckets, credentials, addressing mode, and storage policies;
+- transient-staging policy, capacity thresholds, and purge health;
+- enterprise repository connector endpoints, read-only credentials, and source scopes when implemented;
 - Supermemory endpoints, credentials, embedding configuration, and memory scopes;
 - OCR service endpoints and processing defaults;
 - MCP servers, connector endpoints, credentials, scopes, and allowed tools;
@@ -415,6 +420,7 @@ AIHub still requires a minimal bootstrap trust mechanism because the application
 ```mermaid
 flowchart TB
     U["MPM Users and Administrators"] --> W["React AIHub"]
+    E["Enterprise Source Repositories"] --> A
     W --> A["Node.js / TypeScript API"]
 
     A --> P["PostgreSQL + Prisma"]
@@ -427,12 +433,15 @@ flowchart TB
     G --> MCP["Approved MCP and Enterprise Systems"]
 
     H --> L["LiteLLM"]
+    A --> L
     L --> V["vLLM Model Services"]
 
+    A --> T["Encrypted transient scratch"]
+    WK --> T
     WK --> O["Unlimited-OCR"]
-    WK --> S["S3-compatible storage"]
     WK --> M["Supermemory"]
-    H <--> M
+    A --> M
+    M -. "Approved embedding route" .-> L
 
     A --> OBS["Observability and SIEM"]
 ```
@@ -441,8 +450,9 @@ flowchart TB
 
 - **PostgreSQL:** operational records, configuration, identity mappings, conversations, jobs, approvals, audit metadata, and external-service bindings.
 - **AIHub secrets vault:** encrypted credential payloads and versions stored in PostgreSQL; the master encryption key is held separately from the database.
-- **S3-compatible storage:** original files and generated binary/text artifacts.
-- **Supermemory:** embeddings, semantic retrieval, enterprise knowledge context, and durable agent/user memory.
+- **Enterprise source repositories:** authoritative original files and their native access controls.
+- **AIHub scratch volume:** application-encrypted source and extraction bytes retained only until publication, rejection, deletion, or the 24-hour deadline; never backed up.
+- **Supermemory:** durable normalized knowledge, embeddings, semantic graph, retrieval context, and agent/user memory.
 - **vLLM/model storage:** loaded model weights and inference runtime state.
 - **SIEM/observability systems:** operational telemetry and security monitoring according to MPM policy.
 
@@ -478,7 +488,7 @@ No component may directly depend on another component's private database schema.
 ### Maintainability
 
 - TypeScript contracts shared between frontend and backend.
-- Stable service adapters for models, storage, memory, and integrations.
+- Stable service adapters for models, enterprise sources, memory, and integrations.
 - Versioned database migrations and APIs.
 - Component-level configuration and health reporting.
 - Versioned, validated, and reversible configuration changes through AIHub.
@@ -491,7 +501,9 @@ No component may directly depend on another component's private database schema.
 
 ## 12. Deployment Approach
 
-Coolify will be used as the initial on-premises application and service deployment control plane. Pilot deployments may use simplified single-node service topologies. Production readiness will be evaluated independently for PostgreSQL, the selected S3-compatible service, Supermemory, model serving, GPU availability, backups, and DRC recovery.
+Coolify will be used as the initial on-premises application and service deployment control plane. The streamlined pilot placement is VM1 for AIHub Web/API/workers, their shared encrypted scratch volume, and LiteLLM; VM2 for hardened Hermes; VM3 for PostgreSQL and Supermemory on independent persistent volumes; and the GPU server for vLLM model services and Unlimited-OCR. Co-location is a pilot optimization, not evidence of high availability.
+
+Production readiness will be evaluated independently for PostgreSQL, Supermemory persistent data, enterprise source availability, model serving, GPU availability, backups, and DRC recovery. Scratch must be recoverable by replaying a source, not by backing up the volume. A failure of one co-located stateful VM must not destroy the only recoverable PostgreSQL or Supermemory copy.
 
 The initial installer will provision AIHub's database access and master encryption key as mounted Coolify/Docker secrets or protected local files. These are bootstrap dependencies only. Administrators will configure all subsequent supported services and credentials from AIHub's Settings and Integration workspaces.
 
@@ -504,7 +516,7 @@ The authoritative implementation sequence, exit gates, dependencies, and MPM inp
 - Phase 0: technical validation and scope baseline;
 - Phase 1: platform foundation and configuration control plane;
 - Phase 2: controlled internal chat and enterprise identity;
-- Phase 3: document storage, conversion, and OCR;
+- Phase 3: document ingestion, conversion, and OCR;
 - Phase 4: enterprise knowledge and agent memory;
 - Phase 5: hardened Hermes agent runtime;
 - Phase 6: MCP connectors and human approvals;
@@ -529,13 +541,15 @@ This PRD defines the target product; a capability listed here is not considered 
 ## 15. Major Risks
 
 - A single production GPU remains a capacity and availability constraint.
+- Laguna S 2.1 NVFP4, Unlimited-OCR, and Qwen3 Embedding may not safely coexist on one 96 GB GPU at the required context and concurrency.
 - Laguna's agentic coding strength may not translate directly to every MPM business use case.
 - Incorrect memory or document scoping could expose information across departments.
 - Broad MCP permissions could create unsafe agent actions.
 - User adoption may remain limited without training and use-case ownership.
 - Simplified Coolify service templates may not provide production-grade HA by default.
-- Self-hosted Supermemory licensing, deployment dependencies, and support must be confirmed.
-- Object versioning and WORM behavior must be validated before being treated as compliance controls.
+- Supermemory deployment topology, version support, API compatibility, backup/restore behavior, and organizational suitability must be confirmed.
+- A direct upload cannot be rebuilt after scratch purge unless its authoritative enterprise original remains available.
+- Scratch purge failure or uncontrolled volume backup could retain source content beyond the intended extraction window.
 
 ## 16. Open Product Decisions
 
@@ -547,11 +561,12 @@ This PRD defines the target product; a capability listed here is not considered 
 - Initial MCP systems and read/write permissions.
 - Approval matrix for consequential actions.
 - Production GPU redundancy and DRC model-serving approach.
-- Production S3-compatible service, bucket policy, topology, and backup target.
-- Required Supermemory commercial support and air-gapped packaging.
+- First enterprise repository connectors, read-only source scopes, and source re-ingestion ownership.
+- Whether Supermemory Local's single-node operating model is acceptable or a supported commercial/dedicated deployment is required.
+- Required Supermemory release pin, API adapter version, persistent-data backup target, rebuild procedure, support, and air-gapped packaging.
 
 ## 17. Product Acceptance at a High Level
 
-AIHub is successful when an authorized MPM user can securely access internal AI, retrieve approved enterprise knowledge, process documents, and use controlled agent capabilities, while MPM administrators can centrally manage and audit models, agents, memory, documents, integrations, policies, storage, jobs, infrastructure, and usage from one platform.
+AIHub is successful when an authorized MPM user can securely access internal AI, retrieve approved enterprise knowledge, process documents, and use controlled agent capabilities, while MPM administrators can centrally manage and audit models, agents, memory, document ingestion, integrations, policies, jobs, infrastructure, and usage from one platform.
 
 No Hermes run will be accepted as compliant if it can reach an infrastructure endpoint, MCP server, tool, resource, or action that is not explicitly authorized by the effective AIHub policy for that run.

@@ -122,26 +122,14 @@ export function parseStoredRevision(value: unknown): CreateServiceConnection {
     throw new InvalidConnectionConfigurationError("The stored revision is malformed.");
   }
   const candidate = value as Record<string, unknown>;
-  const legacyS3Configuration = candidate.kind === "SEAWEEDFS" &&
-    candidate.configuration &&
-    typeof candidate.configuration === "object" &&
-    !Array.isArray(candidate.configuration)
-    ? {
-        ...(candidate.configuration as Record<string, unknown>),
-        forcePathStyle: (candidate.configuration as Record<string, unknown>).forcePathStyle ?? true,
-      }
-    : candidate.configuration;
   const parsed = createServiceConnectionSchema.safeParse({
     slug: candidate.slug,
     displayName: candidate.displayName,
-    // Configuration revisions are immutable audit records. Interpret snapshots
-    // created before the generic S3 migration without rewriting their payload
-    // or invalidating their stored checksums.
-    kind: candidate.kind === "SEAWEEDFS" ? "S3" : candidate.kind,
+    kind: candidate.kind,
     environment: candidate.environment,
     baseUrl: candidate.baseUrl,
     enabled: candidate.enabled,
-    configuration: legacyS3Configuration,
+    configuration: candidate.configuration,
     secrets: {},
   });
   if (!parsed.success) {

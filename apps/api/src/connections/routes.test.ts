@@ -284,12 +284,12 @@ describe("administrator connection routes", () => {
       url: "/api/v1/admin/connections",
       headers: sessionHeaders,
       payload: {
-        slug: "s3-primary",
-        displayName: "S3 Primary",
-        kind: "S3",
+        slug: "vllm-primary",
+        displayName: "vLLM Primary",
+        kind: "VLLM",
         environment: "PRODUCTION",
-        baseUrl: "https://s3.mpm.internal",
-        configuration: { modelsPath: "/v1/models" },
+        baseUrl: "https://vllm.mpm.internal",
+        configuration: { documentsPath: "/v3/documents" },
       },
     });
 

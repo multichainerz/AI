@@ -21,12 +21,6 @@ export interface DocumentUpload {
   stream: Readable;
 }
 
-export interface DocumentDownload {
-  bytes: Uint8Array;
-  fileName: string;
-  mediaType: string;
-}
-
 export interface DocumentManager {
   list(principal: DocumentPrincipal): Promise<DocumentList>;
   get(principal: DocumentPrincipal, documentId: string): Promise<DocumentDetail>;
@@ -46,11 +40,6 @@ export interface DocumentManager {
     documentId: string,
     options: { force: boolean; reason?: string | undefined },
   ): Promise<void>;
-  download(
-    principal: DocumentPrincipal,
-    documentId: string,
-    artifactId: string,
-  ): Promise<DocumentDownload>;
   metrics(): Promise<DocumentMetrics>;
 }
 

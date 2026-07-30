@@ -607,7 +607,18 @@ export class PrismaToolingManager implements ToolingManager {
       throw new ToolingDeniedError("The requesting identity no longer satisfies the tool grant.");
     }
     const documentId = this.documentId(jsonObject(call.arguments));
-    const document = await client.document.findFirst({ where: { id: documentId, ownerSubject: call.run.ownerSubject, status: "READY", deletedAt: null }, select: { id: true } });
+    const document = await client.document.findFirst({
+      where: {
+        id: documentId,
+        ownerSubject: call.run.ownerSubject,
+        status: "READY",
+        deletedAt: null,
+        stagingKey: { not: null },
+        stagingPurgedAt: null,
+        stagingExpiresAt: { gt: new Date() },
+      },
+      select: { id: true },
+    });
     if (!document) throw new ToolingDeniedError("The target document is no longer eligible within owner-only scope.");
   }
 

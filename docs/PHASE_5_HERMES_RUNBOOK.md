@@ -35,8 +35,8 @@ Run Hermes in a dedicated container and network segment. The container must:
 
 - expose its API only to the AIHub worker network;
 - use a strong `API_SERVER_KEY` stored only in Hermes and the encrypted AIHub connection vault;
-- have no host filesystem, Docker socket, Coolify control socket, PostgreSQL credential, S3 administration credential, or Supermemory credential;
-- have no route to AIHub's database, object-store administration surface, or unrestricted internet;
+- have no host filesystem, Docker socket, Coolify control socket, PostgreSQL credential, enterprise-storage administration credential, or Supermemory credential;
+- have no route to AIHub's database, transient document scratch volume, or unrestricted internet;
 - have outbound access only to the approved inference route required by its configured provider;
 - have all `platform_toolsets.api_server` entries disabled;
 - use an isolated, non-privileged runtime user and read-only container filesystem wherever supported.

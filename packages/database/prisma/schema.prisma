@@ -14,7 +14,6 @@ enum ServiceKind {
   VLLM
   HERMES
   SUPERMEMORY
-  S3
   OCR
   MCP
   OIDC
@@ -94,14 +93,6 @@ enum DocumentClassification {
   INTERNAL
   CONFIDENTIAL
   RESTRICTED
-}
-
-enum DocumentArtifactKind {
-  ORIGINAL
-  PAGE_IMAGE
-  OCR_TEXT
-  OCR_MARKDOWN
-  OCR_JSON
 }
 
 enum MemorySyncStatus {
@@ -674,12 +665,11 @@ model Document {
   sha256               String                     @db.VarChar(64)
   classification       DocumentClassification
   status               DocumentStatus             @default(QUARANTINED)
-  originalObjectKey    String                     @db.VarChar(1024)
+  stagingKey           String?                    @db.VarChar(1024)
+  stagingExpiresAt     DateTime?                  @db.Timestamptz(6)
+  stagingPurgedAt      DateTime?                  @db.Timestamptz(6)
   pageCount            Int?
   processingGeneration Int                        @default(0)
-  normalizedText       String?                    @db.Text
-  normalizedMarkdown   String?                    @db.Text
-  ocrMetadata          Json?
   failureCode          String?                    @db.VarChar(80)
   failureMessage       String?                    @db.VarChar(500)
   retentionUntil       DateTime                   @db.Timestamptz(6)
@@ -689,13 +679,13 @@ model Document {
   deletedAt            DateTime?                  @db.Timestamptz(6)
   createdAt            DateTime                   @default(now()) @db.Timestamptz(6)
   updatedAt            DateTime                   @updatedAt @db.Timestamptz(6)
-  artifacts            DocumentArtifact[]
   processingRuns       DocumentProcessingRun[]
   memoryPublication    DocumentMemoryPublication?
 
   @@index([ownerSubject, status, updatedAt])
   @@index([status, createdAt])
   @@index([retentionUntil, status])
+  @@index([stagingExpiresAt, stagingPurgedAt])
   @@index([sha256])
 }
 
@@ -921,22 +911,6 @@ model ToolRuntimeControl {
   approvalTtlMinutes Int      @default(15)
   updatedBy          String?  @db.Uuid
   updatedAt          DateTime @updatedAt @db.Timestamptz(6)
-}
-
-model DocumentArtifact {
-  id         String               @id @default(uuid()) @db.Uuid
-  documentId String               @db.Uuid
-  kind       DocumentArtifactKind
-  pageNumber Int                  @default(0)
-  objectKey  String               @db.VarChar(1024)
-  mediaType  String               @db.VarChar(160)
-  sizeBytes  BigInt
-  sha256     String               @db.VarChar(64)
-  createdAt  DateTime             @default(now()) @db.Timestamptz(6)
-  document   Document             @relation(fields: [documentId], references: [id], onDelete: Cascade)
-
-  @@unique([documentId, kind, pageNumber])
-  @@index([documentId, createdAt])
 }
 
 model DocumentProcessingRun {

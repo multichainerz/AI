@@ -239,7 +239,9 @@ export class PrismaToolActionProcessor {
         ownerSubject: call.run.ownerSubject,
         status: "READY",
         deletedAt: null,
-        normalizedText: { not: null },
+        stagingKey: { not: null },
+        stagingPurgedAt: null,
+        stagingExpiresAt: { gt: new Date() },
       },
       select: { id: true, ownerSubject: true, processingGeneration: true },
     });

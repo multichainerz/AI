@@ -23,7 +23,7 @@ AIHub now owns a Streamable HTTP endpoint at `POST /api/v1/mcp/` and the corresp
 - a transactional PostgreSQL action outbox: approval and dispatch creation commit together, workers reclaim expired leases, and transient submission failures retry with bounded exponential backoff;
 - full runtime, profile-version, grant, current-session/group, handler, and owner-scope authorization revalidation in the worker immediately before an approved action is queued.
 
-Browser-origin MCP traffic is rejected. Hermes never receives PostgreSQL, S3, Supermemory, or broad application credentials through this gateway.
+Browser-origin MCP traffic is rejected. Hermes never receives PostgreSQL, enterprise-storage, Supermemory, or broad application credentials through this gateway.
 
 ## Initial governed tools
 

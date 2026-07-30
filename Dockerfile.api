@@ -31,6 +31,8 @@ COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/pnpm-workspace.yaml ./pnpm-workspace.yaml
 COPY --from=builder /app/pnpm-lock.yaml ./pnpm-lock.yaml
 
+RUN install -d -o node -g node -m 0700 /var/lib/aihub-document-scratch
+
 USER node
 EXPOSE 4000
 CMD ["node", "apps/api/dist/index.js"]

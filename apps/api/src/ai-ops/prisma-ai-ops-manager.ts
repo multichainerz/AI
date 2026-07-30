@@ -122,7 +122,6 @@ const serviceMetadata: Record<ServiceKind, { label: string; workflows: AiOpsWork
   VLLM: { label: "vLLM inference", workflows: ["CHAT", "AGENTS"] },
   HERMES: { label: "Hermes runtime", workflows: ["AGENTS", "TOOLS"] },
   SUPERMEMORY: { label: "Supermemory", workflows: ["CHAT", "MEMORY", "AGENTS"] },
-  S3: { label: "S3 object storage", workflows: ["DOCUMENTS"] },
   OCR: { label: "Unlimited OCR", workflows: ["DOCUMENTS"] },
   MCP: { label: "MCP gateway", workflows: ["AGENTS", "TOOLS"] },
   OIDC: { label: "Enterprise identity", workflows: ["CHAT", "DOCUMENTS", "MEMORY", "AGENTS", "TOOLS"] },
