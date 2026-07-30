@@ -372,14 +372,16 @@ export class PrismaAgentManager implements AgentManager {
         throw new AgentRuntimeDisabledError("Hermes boundary verification is unavailable; execution remains disabled.");
       }
       try {
-        await this.boundaryVerifier.assertZeroToolBoundary();
+        const toolControl = await this.prisma.toolRuntimeControl.findUnique({ where: { id: "global" } });
+        if (toolControl?.enabled) await this.boundaryVerifier.assertGovernedToolBoundary();
+        else await this.boundaryVerifier.assertZeroToolBoundary();
       } catch {
         await this.prisma.auditEvent.create({ data: {
           actorType: "USER", actorId: principal.id, action: "agent.runtime_enable_denied",
           resourceType: "AgentRuntimeControl", resourceId: "global", outcome: "FAILURE",
           metadata: { reason: input.reason, failureCode: "HERMES_BOUNDARY_VERIFICATION_FAILED" },
         } });
-        throw new AgentRuntimeDisabledError("Hermes failed the authenticated zero-tool boundary check; execution remains disabled.");
+        throw new AgentRuntimeDisabledError("Hermes failed the authenticated execution-boundary check; execution remains disabled.");
       }
     }
     const control = await this.prisma.$transaction(async (transaction) => {

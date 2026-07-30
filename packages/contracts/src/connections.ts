@@ -85,6 +85,10 @@ export const serviceConnectionConfigurationSchema = z
     runsPath: relativeHealthPathSchema.optional(),
     toolsetsPath: relativeHealthPathSchema.optional(),
     runPollIntervalMs: z.number().int().min(500).max(10_000).optional(),
+    governedMcpUrl: serviceEndpointSchema.optional(),
+    governedToolsetName: z.string().trim().min(2).max(120)
+      .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/, "Governed toolset name contains unsupported characters.")
+      .optional(),
     clientId: z.string().trim().min(1).max(256).optional(),
     redirectUri: serviceEndpointSchema.optional(),
     scopes: z.array(z.string().trim().min(1).max(120)).min(1).max(20).optional(),
@@ -133,6 +137,8 @@ const connectionConfigurationSchemas = {
     runsPath: true,
     toolsetsPath: true,
     runPollIntervalMs: true,
+    governedMcpUrl: true,
+    governedToolsetName: true,
   }),
   SUPERMEMORY: serviceConnectionConfigurationSchema.pick({
     timeoutMs: true,

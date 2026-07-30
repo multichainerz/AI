@@ -20,6 +20,7 @@ export interface AgentPrincipal {
 
 export interface AgentBoundaryVerifier {
   assertZeroToolBoundary(): Promise<void>;
+  assertGovernedToolBoundary(): Promise<void>;
 }
 
 export interface AgentManager {

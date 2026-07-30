@@ -132,8 +132,9 @@ export function createRuntimeServices(): RuntimeServices {
       new SeaweedDocumentStore(documentResolver),
       queue,
     );
-    const agentManager = new PrismaAgentManager(prisma, queue, new HermesClient(documentResolver));
-    const toolingManager = new PrismaToolingManager(prisma);
+    const hermesClient = new HermesClient(documentResolver);
+    const agentManager = new PrismaAgentManager(prisma, queue, hermesClient);
+    const toolingManager = new PrismaToolingManager(prisma, hermesClient);
     const aiOpsManager = new PrismaAiOpsManager(prisma, {
       connections: connectionManager,
       connectionMonitoring: connectionMonitor,

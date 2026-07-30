@@ -59,6 +59,10 @@ export interface HermesRunSubmission {
   instructions: string;
   sessionId: string;
   modelAlias: string;
+  governedMcp?: {
+    authorization: string;
+    expiresAt: Date;
+  };
 }
 
 export interface HermesRunState {
@@ -76,6 +80,51 @@ export class HermesClient {
 
   async assertZeroToolBoundary(): Promise<void> {
     const connection = await this.resolver.resolveOne("HERMES");
+    await this.assertZeroToolBoundaryFor(connection);
+  }
+
+  private async assertZeroToolBoundaryFor(connection: RuntimeConnection): Promise<void> {
+    const { toolsets } = await this.assertBaseBoundary(connection);
+    for (const toolset of toolsets) {
+      if (toolset.enabled) {
+        throw new Error("Hermes has an enabled toolset; AIHub requires a zero-tool boundary for this run.");
+      }
+    }
+  }
+
+  async assertGovernedToolBoundary(): Promise<void> {
+    const connection = await this.resolver.resolveOne("HERMES");
+    await this.assertGovernedToolBoundaryFor(connection);
+  }
+
+  private async assertGovernedToolBoundaryFor(connection: RuntimeConnection): Promise<void> {
+    const { capabilities, toolsets } = await this.assertBaseBoundary(connection);
+    const features = capabilities.features as Record<string, unknown>;
+    const runtime = capabilities.runtime as Record<string, unknown>;
+    if (
+      features.private_run_context !== "aihub_mcp_headers_v1" ||
+      runtime.private_context_redacted !== true ||
+      runtime.private_context_prompt_visible !== false
+    ) {
+      throw new Error("Hermes does not advertise AIHub's private, redacted per-run MCP handoff contract.");
+    }
+    const governedMcpUrl = stringSetting(connection, "governedMcpUrl", "");
+    const governedToolsetName = stringSetting(connection, "governedToolsetName", "aihub-governed-tools");
+    const gatewayToken = connection.secrets.mcpGatewayToken;
+    if (!governedMcpUrl || !gatewayToken?.startsWith("aihub_mcp_")) {
+      throw new Error("Hermes governed MCP endpoint or gateway credential is not configured.");
+    }
+    const enabled = toolsets.filter((toolset) => toolset.enabled);
+    if (enabled.length !== 1 || enabled[0]?.name !== governedToolsetName) {
+      throw new Error("Hermes must enable exactly the configured AIHub governed toolset and no other toolset.");
+    }
+    await this.assertGovernedGateway(connection, governedMcpUrl, gatewayToken);
+  }
+
+  private async assertBaseBoundary(connection: RuntimeConnection): Promise<{
+    capabilities: Record<string, unknown>;
+    toolsets: Array<{ name: string; enabled: boolean }>;
+  }> {
     const capabilitiesPath = stringSetting(connection, "capabilitiesPath", "/v1/capabilities");
     const capabilities = await this.request(connection, endpoint(connection, capabilitiesPath), { method: "GET" });
     if (!capabilities || typeof capabilities !== "object" || Array.isArray(capabilities)) {
@@ -102,19 +151,27 @@ export class HermesClient {
     if (toolsetEnvelope.platform !== "api_server" || !Array.isArray(toolsetEnvelope.data)) {
       throw new Error("Hermes toolset discovery did not describe the API-server surface.");
     }
-    for (const toolset of toolsetEnvelope.data) {
-      if (!toolset || typeof toolset !== "object" || Array.isArray(toolset) || typeof (toolset as { enabled?: unknown }).enabled !== "boolean") {
+    const toolsets = toolsetEnvelope.data.map((toolset) => {
+      if (
+        !toolset || typeof toolset !== "object" || Array.isArray(toolset) ||
+        typeof (toolset as { name?: unknown }).name !== "string" ||
+        typeof (toolset as { enabled?: unknown }).enabled !== "boolean"
+      ) {
         throw new Error("Hermes toolset discovery contained an unrecognized entry; AIHub denies execution fail-closed.");
       }
-      if ((toolset as { enabled: boolean }).enabled) {
-        throw new Error("Hermes has an enabled native toolset; AIHub requires a zero-tool Phase 5 profile.");
-      }
-    }
+      return toolset as { name: string; enabled: boolean };
+    });
+    return { capabilities: value, toolsets };
   }
 
   async start(input: HermesRunSubmission): Promise<string> {
     const connection = await this.resolver.resolveOne("HERMES");
+    if (input.governedMcp) await this.assertGovernedToolBoundaryFor(connection);
+    else await this.assertZeroToolBoundaryFor(connection);
     const runsPath = stringSetting(connection, "runsPath", "/v1/runs");
+    const privateContext = input.governedMcp
+      ? this.privateMcpContext(connection, input.governedMcp)
+      : undefined;
     const body = await this.request(connection, endpoint(connection, runsPath), {
       method: "POST",
       body: JSON.stringify({
@@ -122,6 +179,7 @@ export class HermesClient {
         instructions: input.instructions,
         session_id: input.sessionId,
         model: input.modelAlias,
+        ...(privateContext ? { private_context: privateContext } : {}),
       }),
       headers: { "idempotency-key": input.sessionId },
     });
@@ -130,6 +188,86 @@ export class HermesClient {
       : null;
     if (!id || id.length > 255) throw new Error("Hermes did not return a valid run ID.");
     return id;
+  }
+
+  private privateMcpContext(
+    connection: RuntimeConnection,
+    governedMcp: NonNullable<HermesRunSubmission["governedMcp"]>,
+  ): Record<string, unknown> {
+    const url = stringSetting(connection, "governedMcpUrl", "");
+    const toolset = stringSetting(connection, "governedToolsetName", "aihub-governed-tools");
+    const gatewayToken = connection.secrets.mcpGatewayToken;
+    if (!url || !gatewayToken?.startsWith("aihub_mcp_")) {
+      throw new Error("Hermes governed MCP endpoint or gateway credential is not configured.");
+    }
+    const parsedUrl = new URL(url);
+    if (!["http:", "https:"].includes(parsedUrl.protocol) || parsedUrl.username || parsedUrl.password) {
+      throw new Error("Hermes governed MCP endpoint is invalid.");
+    }
+    return {
+      protocol: "aihub_mcp_headers_v1",
+      expires_at: governedMcp.expiresAt.toISOString(),
+      mcp: {
+        name: toolset,
+        url: parsedUrl.toString(),
+        headers: {
+          authorization: `Bearer ${gatewayToken}`,
+          "aihub-run-authorization": governedMcp.authorization,
+        },
+      },
+    };
+  }
+
+  private async assertGovernedGateway(
+    connection: RuntimeConnection,
+    url: string,
+    gatewayToken: string,
+  ): Promise<void> {
+    const parsedUrl = new URL(url);
+    if (!["http:", "https:"].includes(parsedUrl.protocol) || parsedUrl.username || parsedUrl.password) {
+      throw new Error("Hermes governed MCP endpoint is invalid.");
+    }
+    const timeoutMs = Math.min(30_000, Math.max(1_000, numberSetting(connection, "timeoutMs", 8_000)));
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await this.fetcher(parsedUrl, {
+        method: "POST",
+        redirect: "error",
+        signal: controller.signal,
+        headers: {
+          accept: "application/json",
+          "content-type": "application/json",
+          authorization: `Bearer ${gatewayToken}`,
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: "aihub-hermes-preflight",
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-11-25",
+            capabilities: {},
+            clientInfo: { name: "aihub-hermes-preflight", version: "1" },
+          },
+        }),
+      });
+      const body = await boundedJson(response);
+      if (!response.ok) throw new Error("AIHub governed MCP gateway rejected the configured Hermes credential.");
+      const result = body && typeof body === "object" && !Array.isArray(body)
+        ? (body as Record<string, unknown>).result
+        : null;
+      const serverInfo = result && typeof result === "object" && !Array.isArray(result)
+        ? (result as Record<string, unknown>).serverInfo
+        : null;
+      if (
+        !serverInfo || typeof serverInfo !== "object" || Array.isArray(serverInfo) ||
+        (serverInfo as Record<string, unknown>).name !== "mpm-aihub-governed-tools"
+      ) {
+        throw new Error("Configured governed MCP endpoint is not the AIHub tool gateway.");
+      }
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   async status(runId: string): Promise<HermesRunState> {

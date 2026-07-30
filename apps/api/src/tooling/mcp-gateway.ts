@@ -67,10 +67,6 @@ function toolSchema(tool: GovernedTool): Record<string, unknown> {
   return {
     type: "object",
     properties: {
-      _aihubAuthorization: {
-        type: "string",
-        description: "Short-lived AIHub run capability supplied in the run instructions. Use it verbatim and never expose it in the final response.",
-      },
       requestId: {
         type: "string",
         format: "uuid",
@@ -78,7 +74,7 @@ function toolSchema(tool: GovernedTool): Record<string, unknown> {
       },
       ...properties,
     },
-    required: ["_aihubAuthorization", "requestId", ...required],
+    required: ["requestId", ...required],
     additionalProperties: false,
   };
 }
@@ -104,7 +100,11 @@ function resultBody(id: JsonRpcRequest["id"], result: GovernedToolResult): McpGa
 export class McpGateway {
   constructor(private readonly manager: ToolingManager) {}
 
-  async handle(value: unknown, era: McpProtocolEra = "legacy"): Promise<McpGatewayResponse> {
+  async handle(
+    value: unknown,
+    era: McpProtocolEra = "legacy",
+    runAuthorization?: string,
+  ): Promise<McpGatewayResponse> {
     const message = request(value);
     if (!message) return error(null, -32600, "Invalid JSON-RPC request.");
     if (message.id === undefined) return { status: 202 };
@@ -166,7 +166,15 @@ export class McpGateway {
     }
 
     if (message.method === "tools/list") {
-      const tools = (await this.manager.listTools()).items.filter(({ status }) => status === "ACTIVE").map((tool) => ({
+      if (!runAuthorization) return error(message.id, -32001, "Private run authorization is required for tool discovery.");
+      let governed;
+      try {
+        governed = await this.manager.listToolsForRun(runAuthorization);
+      } catch (cause) {
+        if (cause instanceof ToolingDeniedError) return error(message.id, -32001, cause.message);
+        throw cause;
+      }
+      const tools = governed.items.filter(({ status }) => status === "ACTIVE").map((tool) => ({
         name: tool.slug,
         title: tool.displayName,
         description: `${tool.description} Risk: ${tool.risk === "CONSEQUENTIAL" ? "human approval required" : "read-only"}.`,
@@ -201,17 +209,16 @@ export class McpGateway {
         return error(message.id, -32602, "Tool name and object arguments are required.");
       }
       const allArguments = args as Record<string, unknown>;
-      const authorization = allArguments._aihubAuthorization;
       const requestId = allArguments.requestId;
-      if (typeof authorization !== "string" || typeof requestId !== "string") {
-        return error(message.id, -32602, "AIHub run authorization and requestId are required.");
+      if (typeof runAuthorization !== "string" || typeof requestId !== "string") {
+        return error(message.id, -32602, "Private run authorization and requestId are required.");
       }
-      const businessArguments = Object.fromEntries(Object.entries(allArguments).filter(([key]) => key !== "_aihubAuthorization" && key !== "requestId"));
+      const businessArguments = Object.fromEntries(Object.entries(allArguments).filter(([key]) => key !== "requestId"));
       try {
-        return resultBody(message.id, await this.manager.invoke(name, { authorization, requestId, arguments: businessArguments }));
+        return resultBody(message.id, await this.manager.invoke(name, { authorization: runAuthorization, requestId, arguments: businessArguments }));
       } catch (cause) {
         if (cause instanceof ToolingDeniedError) {
-          await this.manager.recordDeniedInvocation(name, { authorization, requestId, arguments: businessArguments }, cause.message);
+          await this.manager.recordDeniedInvocation(name, { authorization: runAuthorization, requestId, arguments: businessArguments }, cause.message);
           return resultBody(message.id, { callId: "00000000-0000-4000-8000-000000000000", status: "DENIED", data: { message: cause.message }, isError: true });
         }
         throw cause;

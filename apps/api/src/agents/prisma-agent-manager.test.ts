@@ -115,10 +115,17 @@ describe("PrismaAgentManager", () => {
   });
 
   it("requires the authenticated zero-tool boundary before enabling execution", async () => {
-    const boundaryVerifier = { assertZeroToolBoundary: vi.fn(async () => { throw new Error("toolset enabled"); }) };
+    const boundaryVerifier = {
+      assertZeroToolBoundary: vi.fn(async () => { throw new Error("toolset enabled"); }),
+      assertGovernedToolBoundary: vi.fn(async () => undefined),
+    };
     const auditCreate = vi.fn(async () => ({}));
     const transaction = vi.fn();
-    const prisma = { $transaction: transaction, auditEvent: { create: auditCreate } } as unknown as AIHubPrismaClient;
+    const prisma = {
+      $transaction: transaction,
+      auditEvent: { create: auditCreate },
+      toolRuntimeControl: { findUnique: vi.fn(async () => ({ enabled: false })) },
+    } as unknown as AIHubPrismaClient;
     const manager = new PrismaAgentManager(prisma, {} as PgBossQueueService, boundaryVerifier);
 
     await expect(manager.updateRuntimeControl(principal, { enabled: true, reason: "Acceptance verification" })).rejects.toBeInstanceOf(AgentRuntimeDisabledError);

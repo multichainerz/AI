@@ -19,6 +19,7 @@ const tool: GovernedTool = {
 function manager(): ToolingManager {
   return {
     listTools: vi.fn(async () => ({ items: [tool] })),
+    listToolsForRun: vi.fn(async () => ({ items: [tool] })),
     setToolStatus: vi.fn(), listGrants: vi.fn(), upsertGrant: vi.fn(), listCredentials: vi.fn(),
     issueCredential: vi.fn(), revokeCredential: vi.fn(), authenticateGateway: vi.fn(async () => true),
     invoke: vi.fn(async () => ({ callId: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d", status: "COMPLETED", data: { fileName: "policy.pdf" }, isError: false })),
@@ -28,13 +29,15 @@ function manager(): ToolingManager {
 }
 
 describe("McpGateway", () => {
+  const authorization = `${"8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d"}.${"a".repeat(43)}`;
+
   it("retains the legacy handshake while exposing bounded tool schemas", async () => {
     const gateway = new McpGateway(manager());
     const initialized = await gateway.handle({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25" } });
-    const listed = await gateway.handle({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
+    const listed = await gateway.handle({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }, "legacy", authorization);
     expect(initialized.body).toMatchObject({ result: { protocolVersion: "2025-11-25", capabilities: { tools: { listChanged: false } } } });
     expect(listed.body).toMatchObject({ result: { tools: [{ name: "document_metadata_read", annotations: { readOnlyHint: true } }] } });
-    expect(JSON.stringify(listed.body)).toContain("_aihubAuthorization");
+    expect(JSON.stringify(listed.body)).not.toContain("_aihubAuthorization");
   });
 
   it("implements stateless modern discovery and cache-safe list results", async () => {
@@ -46,10 +49,10 @@ describe("McpGateway", () => {
     };
     const discovered = await gateway.handle({
       jsonrpc: "2.0", id: "discover-1", method: "server/discover", params: { _meta: meta },
-    }, "modern");
+    }, "modern", authorization);
     const listed = await gateway.handle({
       jsonrpc: "2.0", id: "list-1", method: "tools/list", params: { _meta: meta },
-    }, "modern");
+    }, "modern", authorization);
 
     expect(discovered.body).toMatchObject({ result: {
       resultType: "complete",
@@ -72,17 +75,16 @@ describe("McpGateway", () => {
     })).resolves.toEqual({ status: 202 });
   });
 
-  it("removes run authorization from business arguments before invocation", async () => {
+  it("takes run authorization from private transport context, not model arguments", async () => {
     const tooling = manager();
     const gateway = new McpGateway(tooling);
     const response = await gateway.handle({
       jsonrpc: "2.0", id: 3, method: "tools/call",
       params: { name: "document_metadata_read", arguments: {
-        _aihubAuthorization: `${"8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d"}.${"a".repeat(43)}`,
         requestId: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb",
         documentId: "b41d3534-658b-4cf0-a046-2b20b15f44e5",
       } },
-    });
+    }, "legacy", authorization);
     expect(tooling.invoke).toHaveBeenCalledWith("document_metadata_read", expect.objectContaining({
       arguments: { documentId: "b41d3534-658b-4cf0-a046-2b20b15f44e5" },
     }));
@@ -96,12 +98,16 @@ describe("McpGateway", () => {
     const response = await gateway.handle({
       jsonrpc: "2.0", id: 4, method: "tools/call",
       params: { name: "document_metadata_read", arguments: {
-        _aihubAuthorization: `${"8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d"}.${"a".repeat(43)}`,
         requestId: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb",
         documentId: "b41d3534-658b-4cf0-a046-2b20b15f44e5",
       } },
-    });
+    }, "legacy", authorization);
     expect(response.body).toMatchObject({ result: { isError: true, structuredContent: { status: "DENIED", message: "Grant revoked." } } });
     expect(tooling.recordDeniedInvocation).toHaveBeenCalledOnce();
+  });
+
+  it("denies tool discovery without private run authorization", async () => {
+    const response = await new McpGateway(manager()).handle({ jsonrpc: "2.0", id: 5, method: "tools/list", params: {} });
+    expect(response.body).toMatchObject({ error: { code: -32001 } });
   });
 });

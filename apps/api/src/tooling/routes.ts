@@ -165,7 +165,9 @@ export async function registerMcpGatewayRoutes(app: FastifyInstance, options: To
     }
     const era = await validateMcpTransport(request, reply);
     if (!era) return;
-    const response = await gateway.handle(request.body, era);
+    const runAuthorizationHeader = request.headers["aihub-run-authorization"];
+    const runAuthorization = typeof runAuthorizationHeader === "string" ? runAuthorizationHeader : undefined;
+    const response = await gateway.handle(request.body, era, runAuthorization);
     reply.code(response.status).header("mcp-protocol-version", era === "modern" ? MCP_MODERN_VERSION : MCP_LEGACY_VERSION);
     return response.body ? reply.send(response.body) : reply.send();
   });

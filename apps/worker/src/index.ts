@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 import { createPrismaClient, readBootstrapSecret } from "@aihub/database";
 import { PgBossQueueService } from "@aihub/jobs";
-import { decodeMasterKey, EnvelopeEncryption } from "@aihub/security";
+import { decodeMasterKey, EnvelopeEncryption, RunCapabilityIssuer } from "@aihub/security";
 import {
   PrismaRuntimeConnectionResolver,
   HermesClient,
@@ -24,9 +24,8 @@ const queue = new PgBossQueueService(databaseUrl, "worker", {
   error: (message, error) => console.error(message, error),
   warn: (message, details) => console.warn(message, details),
 });
-const encryption = new EnvelopeEncryption({
-  masterKey: decodeMasterKey(readBootstrapSecret("aihub_master_key")),
-});
+const masterKey = decodeMasterKey(readBootstrapSecret("aihub_master_key"));
+const encryption = new EnvelopeEncryption({ masterKey });
 const documentResolver = new PrismaRuntimeConnectionResolver(prisma, encryption);
 const documentProcessor = new PrismaDocumentProcessor(
   prisma,
@@ -54,6 +53,7 @@ const runtime = new WorkerRuntime(
     prisma,
     new HermesClient(documentResolver),
     new WorkerAgentKnowledgeRetriever(prisma, new SupermemoryClient(documentResolver)),
+    new RunCapabilityIssuer(masterKey),
   ),
   new PrismaToolActionProcessor(prisma, queue),
 );

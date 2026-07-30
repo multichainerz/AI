@@ -20,6 +20,7 @@ import {
   type GovernedToolResult,
   type ToolingManager,
   type ToolingPrincipal,
+  type ToolBoundaryVerifier,
 } from "./tooling-manager.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -157,11 +158,51 @@ function approvalDto(approval: {
 }
 
 export class PrismaToolingManager implements ToolingManager {
-  constructor(private readonly prisma: AIHubPrismaClient) {}
+  constructor(
+    private readonly prisma: AIHubPrismaClient,
+    private readonly boundaryVerifier?: ToolBoundaryVerifier,
+  ) {}
 
   async listTools() {
     const items = await this.prisma.governedTool.findMany({ orderBy: [{ risk: "asc" }, { displayName: "asc" }] });
     return { items: items.map(toolDto) };
+  }
+
+  async listToolsForRun(authorization: string | undefined) {
+    const parsedAuthorization = authorization ? RUN_AUTHORIZATION.exec(authorization) : null;
+    const runId = parsedAuthorization?.[1];
+    const capability = parsedAuthorization?.[2];
+    if (!runId || !capability) throw new ToolingDeniedError("Private run authorization is required for tool discovery.");
+    const [control, run] = await Promise.all([
+      this.prisma.toolRuntimeControl.findUnique({ where: { id: "global" } }),
+      this.prisma.agentRun.findUnique({
+        where: { id: runId },
+        include: {
+          profile: { select: { status: true, activeVersion: true } },
+          version: { include: { toolGrants: { where: { enabled: true }, include: { tool: true } } } },
+        },
+      }),
+    ]);
+    if (!control?.enabled) throw new ToolingDeniedError(control?.reason ?? "The tool gateway is disabled fail-closed.");
+    if (!run || run.status !== "RUNNING" || !run.toolCapabilityTokenHash || !run.toolCapabilityExpiresAt || run.toolCapabilityExpiresAt <= new Date()) {
+      throw new ToolingDeniedError("The agent run is not eligible for tool discovery or its capability has expired.");
+    }
+    const expected = Buffer.from(run.toolCapabilityTokenHash);
+    const actual = Buffer.from(digest(capability));
+    if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) throw new ToolingDeniedError("The run capability is invalid.");
+    if (run.profile.status !== "ACTIVE" || run.profile.activeVersion !== run.profileVersion) {
+      throw new ToolingDeniedError("The agent profile or version is no longer active.");
+    }
+    const items: GovernedTool[] = [];
+    for (const grant of run.version.toolGrants) {
+      if (
+        grant.tool.status === "ACTIVE" &&
+        await this.requesterMatchesGrant(run.requestedBy, grant.allowedGroups, grant.allowedAdminRoles)
+      ) {
+        items.push(toolDto(grant.tool));
+      }
+    }
+    return { items };
   }
 
   async setToolStatus(principal: ToolingPrincipal, toolId: string, status: ToolStatus): Promise<void> {
@@ -448,6 +489,19 @@ export class PrismaToolingManager implements ToolingManager {
           metadata: { activeGatewayCredentials: credentials, activeToolGrants: grants },
         } });
         throw new ToolingConflictError("Issue an active gateway credential and configure at least one active tool grant before enabling the gateway.");
+      }
+      if (!this.boundaryVerifier) {
+        throw new ToolingConflictError("Hermes governed-tool boundary verification is unavailable; the gateway remains disabled.");
+      }
+      try {
+        await this.boundaryVerifier.assertGovernedToolBoundary();
+      } catch {
+        await this.prisma.auditEvent.create({ data: {
+          actorType: "USER", actorId: principal.id, action: "tool.runtime_enable_denied",
+          resourceType: "ToolRuntimeControl", resourceId: "global", outcome: "FAILURE",
+          metadata: { activeGatewayCredentials: credentials, activeToolGrants: grants, failureCode: "HERMES_GOVERNED_BOUNDARY_FAILED" },
+        } });
+        throw new ToolingConflictError("Hermes failed the private governed-tool handoff check; the gateway remains disabled.");
       }
     }
     const control = await this.prisma.$transaction(async (transaction) => {

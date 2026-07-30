@@ -20,6 +20,10 @@ export interface ToolingPrincipal {
   subject: string;
 }
 
+export interface ToolBoundaryVerifier {
+  assertGovernedToolBoundary(): Promise<void>;
+}
+
 export interface GovernedToolInvocation {
   requestId: string;
   authorization: string;
@@ -35,6 +39,7 @@ export interface GovernedToolResult {
 
 export interface ToolingManager {
   listTools(): Promise<GovernedToolList>;
+  listToolsForRun(authorization: string | undefined): Promise<GovernedToolList>;
   setToolStatus(principal: ToolingPrincipal, toolId: string, status: ToolStatus): Promise<void>;
   listGrants(): Promise<ToolGrantList>;
   upsertGrant(principal: ToolingPrincipal, input: UpsertToolGrant): Promise<ToolGrant>;

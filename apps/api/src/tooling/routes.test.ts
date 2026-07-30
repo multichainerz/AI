@@ -19,7 +19,7 @@ class Sessions implements AdminSessionManager {
 
 function manager(): ToolingManager {
   return {
-    listTools: vi.fn(async () => ({ items: [] })), setToolStatus: vi.fn(), listGrants: vi.fn(async () => ({ items: [] })),
+    listTools: vi.fn(async () => ({ items: [] })), listToolsForRun: vi.fn(async () => ({ items: [] })), setToolStatus: vi.fn(), listGrants: vi.fn(async () => ({ items: [] })),
     upsertGrant: vi.fn(), listCredentials: vi.fn(async () => ({ items: [] })), issueCredential: vi.fn(async (_principal, name) => ({
       id: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb", name, tokenPrefix: GATEWAY_TOKEN.slice(0, 20), token: GATEWAY_TOKEN,
       enabled: true, lastUsedAt: null, revokedAt: null, createdAt: "2026-07-30T00:00:00.000Z",
@@ -97,5 +97,19 @@ describe("governed tooling routes", () => {
     expect(discovered.statusCode).toBe(200);
     expect(discovered.headers["mcp-protocol-version"]).toBe("2026-07-28");
     expect(discovered.json()).toMatchObject({ result: { resultType: "complete", supportedVersions: ["2026-07-28", "2025-11-25"] } });
+  });
+
+  it("forwards private run authorization outside model-visible tool arguments", async () => {
+    const { app, toolingManager } = await toolingApp();
+    const runAuthorization = `8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d.${"r".repeat(43)}`;
+    const listed = await app.inject({
+      method: "POST",
+      url: "/api/v1/mcp/",
+      headers: { authorization: `Bearer ${GATEWAY_TOKEN}`, "aihub-run-authorization": runAuthorization },
+      payload: { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },
+    });
+    expect(listed.statusCode).toBe(200);
+    expect(toolingManager.listToolsForRun).toHaveBeenCalledWith(runAuthorization);
+    expect(JSON.stringify(listed.json())).not.toContain(runAuthorization);
   });
 });

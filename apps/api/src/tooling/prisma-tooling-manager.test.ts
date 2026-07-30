@@ -96,6 +96,9 @@ describe("PrismaToolingManager", () => {
     prismaBase.$transaction = vi.fn(async (value: unknown) => Array.isArray(value) ? Promise.all(value) : (value as (tx: unknown) => Promise<unknown>)(prismaBase));
     const manager = new PrismaToolingManager(prismaBase as AIHubPrismaClient);
 
+    await expect(manager.listToolsForRun(`${RUN_ID}.${capability}`)).resolves.toMatchObject({
+      items: [{ slug: "document_metadata_read" }],
+    });
     await expect(manager.invoke("document_metadata_read", {
       authorization: `${RUN_ID}.${capability}`, requestId: REQUEST_ID, arguments: { documentId: DOCUMENT_ID },
     })).resolves.toMatchObject({ status: "COMPLETED", data: { fileName: "policy.pdf", documentId: DOCUMENT_ID } });
@@ -112,6 +115,23 @@ describe("PrismaToolingManager", () => {
     await expect(manager.updateRuntimeControl({ id: SESSION_ID, subject: "admin" }, {
       enabled: true, reason: "Pilot approved", approvalTtlMinutes: 15,
     })).rejects.toBeInstanceOf(ToolingConflictError);
+  });
+
+  it("will not enable governed tools unless Hermes confirms private handoff support", async () => {
+    const auditCreate = vi.fn(async () => ({}));
+    const prisma = {
+      mcpGatewayCredential: { count: vi.fn(async () => 1) },
+      agentToolGrant: { count: vi.fn(async () => 1) },
+      auditEvent: { create: auditCreate },
+    } as unknown as AIHubPrismaClient;
+    const boundary = { assertGovernedToolBoundary: vi.fn(async () => { throw new Error("unsupported"); }) };
+    const manager = new PrismaToolingManager(prisma, boundary);
+    await expect(manager.updateRuntimeControl({ id: SESSION_ID, subject: "admin" }, {
+      enabled: true, reason: "Pilot approved", approvalTtlMinutes: 15,
+    })).rejects.toThrow("private governed-tool handoff");
+    expect(auditCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ action: "tool.runtime_enable_denied", outcome: "FAILURE" }),
+    }));
   });
 
   it("commits an approved decision and its durable dispatch in one transaction", async () => {

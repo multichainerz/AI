@@ -70,9 +70,16 @@ describe("service connection configuration", () => {
       capabilitiesPath: "/v1/capabilities",
       toolsetsPath: "/v1/toolsets",
       runsPath: "/v1/runs",
+      governedMcpUrl: "https://aihub.internal/api/v1/mcp/",
+      governedToolsetName: "aihub-governed-tools",
       runPollIntervalMs: 1_000,
       timeoutMs: 8_000,
-    })).toMatchObject({ toolsetsPath: "/v1/toolsets", runsPath: "/v1/runs" });
+    })).toMatchObject({
+      toolsetsPath: "/v1/toolsets",
+      runsPath: "/v1/runs",
+      governedMcpUrl: "https://aihub.internal/api/v1/mcp/",
+      governedToolsetName: "aihub-governed-tools",
+    });
     expect(() => parseServiceConnectionConfiguration("HERMES", { modelAlias: "not-owned-here" })).toThrow();
   });
 
