@@ -14,7 +14,7 @@ AIHub now owns a Streamable HTTP endpoint at `POST /api/v1/mcp/` and the corresp
 - a compatibility path for the legacy `2025-11-25` initialization handshake;
 - a one-time-visible, revocable gateway credential whose digest—not plaintext—is retained in PostgreSQL;
 - a separate short-lived run capability, retained only as a digest on the agent run;
-- retry-safe capability derivation from a key separated from AIHub's bootstrap master key, so a worker crash does not require plaintext capability persistence;
+- retry-safe capability derivation from a key separated from AIHub's credential-encryption key, so a worker crash does not require plaintext capability persistence;
 - private transport-header authorization for both tool discovery and calls; the capability is absent from prompts, MCP tool schemas, tool arguments, results, and audit metadata;
 - exact agent-profile-version grants with exact enterprise groups or administrator roles;
 - owner-only resource enforcement and a fresh identity/session check on every call;

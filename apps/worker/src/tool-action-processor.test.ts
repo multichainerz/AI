@@ -8,7 +8,7 @@ const DOCUMENT_ID = "b41d3534-658b-4cf0-a046-2b20b15f44e5";
 const JOB_ID = "c197560c-9bf4-4c97-8e48-aac20990f45a";
 const WORKER_ID = "worker-1";
 
-function approvedCall() {
+function approvedCall(runStatus = "RUNNING") {
   return {
     id: CALL_ID,
     toolId: "d160a1a0-7218-48a4-8a9f-7e1681280fe4",
@@ -30,10 +30,13 @@ function approvedCall() {
       allowedAdminRoles: ["PLATFORM_ADMIN"],
     },
     run: {
+      status: runStatus,
       requestedBy: "ac369dab-cad5-4fd9-83ed-b4fbf528028a",
       ownerSubject: "platform-admin",
       profileVersionId: "11019af2-34a5-41e5-8e3a-cb027f3bf553",
       profileVersion: 1,
+      toolCapabilityTokenHash: new Uint8Array(32).fill(1),
+      toolCapabilityExpiresAt: new Date(Date.now() + 60_000),
       profile: { status: "ACTIVE", activeVersion: 1 },
     },
   };
@@ -41,6 +44,7 @@ function approvedCall() {
 
 function harness(options: {
   runtimeEnabled?: boolean;
+  runStatus?: string;
   queueError?: Error;
   publication?: { sourceToolDispatchId: string | null; jobId: string | null; generation: number; status: string };
 } = {}) {
@@ -58,7 +62,7 @@ function harness(options: {
     attemptCount: 1,
     claimedBy: WORKER_ID,
     claimToken,
-    call: approvedCall(),
+    call: approvedCall(options.runStatus),
   });
   const prismaBase: any = {
     $queryRaw: vi.fn(async () => [{ id: DISPATCH_ID }]),
@@ -147,6 +151,17 @@ describe("PrismaToolActionProcessor", () => {
         status: "DENIED",
         errorCode: "AUTHORIZATION_REVOKED_AFTER_APPROVAL",
       }),
+    }));
+  });
+
+  it("cancels fail-closed when the originating run has ended", async () => {
+    const test = harness({ runStatus: "DENIED" });
+
+    await expect(test.processor.processAvailable(WORKER_ID, 1)).resolves.toBe(1);
+
+    expect(test.queue.ensureMemoryIndex).not.toHaveBeenCalled();
+    expect(test.callUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: "DENIED", errorCode: "AUTHORIZATION_REVOKED_AFTER_APPROVAL" }),
     }));
   });
 

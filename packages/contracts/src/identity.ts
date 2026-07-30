@@ -18,6 +18,7 @@ export const enterpriseSessionSchema = z.object({
 
 export const oidcStatusSchema = z.object({
   configured: z.boolean(),
+  administratorSignIn: z.boolean().optional(),
   message: z.string(),
 });
 

@@ -8,6 +8,8 @@ import type { AdminActor } from "./connection-manager.js";
 import type { ConnectionTestService } from "./diagnostics/connection-test-service.js";
 
 const DEFAULT_REASON = "Scheduled connection monitoring has not been enabled.";
+const DEFAULT_CYCLE_LIMIT = 32;
+const DEFAULT_CYCLE_CONCURRENCY = 8;
 
 export interface ConnectionMonitorLogger {
   error(message: string, error?: unknown): void;
@@ -114,11 +116,31 @@ export class ConnectionMonitorRuntime implements ConnectionMonitorService {
     return true;
   }
 
+  async processDueConnections(
+    limit = DEFAULT_CYCLE_LIMIT,
+    concurrency = DEFAULT_CYCLE_CONCURRENCY,
+  ): Promise<number> {
+    const boundedLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
+    const lanes = Math.max(1, Math.min(boundedLimit, Math.trunc(concurrency)));
+    let reservations = 0;
+    const drainLane = async () => {
+      let processed = 0;
+      while (reservations < boundedLimit) {
+        reservations += 1;
+        if (!(await this.processOneDueConnection())) break;
+        processed += 1;
+      }
+      return processed;
+    };
+    const processed = await Promise.all(Array.from({ length: lanes }, () => drainLane()));
+    return processed.reduce((total, count) => total + count, 0);
+  }
+
   private async triggerCycle(): Promise<void> {
     if (this.activeCycle) return this.activeCycle;
     const cycle = (async () => {
       try {
-        await this.processOneDueConnection();
+        await this.processDueConnections();
       } catch (error) {
         this.logger.error("Scheduled connection monitoring cycle failed.", error);
       }

@@ -28,7 +28,7 @@ Configure, enable, and successfully test:
 - **Supermemory:** internal Memory API used for the durable normalized publication that completes ingestion.
 - **OIDC:** enterprise issuer, client registration, callback, claim mappings, and at least one allowed group for end-user access.
 
-Routine endpoints and credentials are entered in AIHub. Only the protected PostgreSQL URL, master key, bootstrap token, and deployment-owned scratch mount are installation bootstrap dependencies.
+Routine endpoints and credentials are entered in AIHub. Only the protected PostgreSQL URL, credential-encryption key, single-use installation claim, and deployment-owned scratch mount are installation bootstrap dependencies.
 
 ## Supported inputs and limits
 

@@ -4,6 +4,8 @@ import type {
   AgentProfile,
   AgentProfileList,
   AgentRun,
+  AgentRunEvent,
+  AgentRunEventList,
   AgentRunList,
   AgentRuntimeControl,
   CreateAgentProfile,
@@ -12,9 +14,10 @@ import type {
   UpdateAgentProfile,
   UpdateAgentRuntimeControl,
 } from "@aihub/contracts";
-import { agentCapabilitySchema, knowledgeSourceSchema } from "@aihub/contracts";
+import { agentCapabilitySchema, agentSkillReferenceSchema, knowledgeSourceSchema } from "@aihub/contracts";
 import { Prisma, type AIHubPrismaClient } from "@aihub/database";
 import type { PgBossQueueService } from "@aihub/jobs";
+import { createHash } from "node:crypto";
 import {
   AgentConflictError,
   AgentNotFoundError,
@@ -31,6 +34,9 @@ interface StoredVersion {
   displayName: string;
   purpose: string;
   instructions: string;
+  soulMd: string;
+  skills: unknown;
+  distributionDigest: string | null;
   modelAlias: string;
   maxTurns: number;
   timeoutSeconds: number;
@@ -56,6 +62,7 @@ interface StoredRun {
   id: string;
   profileId: string;
   profileVersion: number;
+  profileDistributionDigest: string | null;
   status: AgentRun["status"];
   input: string;
   output: string | null;
@@ -69,19 +76,83 @@ interface StoredRun {
   createdAt: Date;
   updatedAt: Date;
   profile: { slug: string };
-  version: { displayName: string };
+  version: { displayName: string; distributionDigest: string | null };
+}
+
+interface StoredRunEvent {
+  id: string;
+  runId: string;
+  type: AgentRunEvent["type"];
+  summary: string | null;
+  status: string | null;
+  toolName: string | null;
+  childSessionId: string | null;
+  durationMs: number | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  costUsd: Prisma.Decimal | number | null;
+  occurredAt: Date;
+}
+
+function parseSkills(value: unknown) {
+  if (!Array.isArray(value)) throw new AgentConflictError("The Profile Distribution Skill manifest is invalid.");
+  return value.map((skill) => {
+    const parsed = agentSkillReferenceSchema.safeParse(skill);
+    if (!parsed.success) throw new AgentConflictError("The Profile Distribution Skill manifest is invalid.");
+    return parsed.data;
+  });
+}
+
+function distributionDigest(configuration: {
+  displayName: string;
+  purpose: string;
+  instructions: string;
+  soulMd: string;
+  skills: Array<{ name: string; version: string; digest: string }>;
+  modelAlias: string;
+  maxTurns: number;
+  timeoutSeconds: number;
+  maxConcurrentRuns: number;
+  allowPrivateKnowledge: boolean;
+  safeMode: boolean;
+}): string {
+  const canonical = {
+    displayName: configuration.displayName,
+    purpose: configuration.purpose,
+    instructions: configuration.instructions,
+    soulMd: configuration.soulMd,
+    skills: [...configuration.skills].sort((left, right) =>
+      `${left.name}:${left.version}:${left.digest}`.localeCompare(`${right.name}:${right.version}:${right.digest}`)),
+    modelAlias: configuration.modelAlias,
+    maxTurns: configuration.maxTurns,
+    timeoutSeconds: configuration.timeoutSeconds,
+    maxConcurrentRuns: configuration.maxConcurrentRuns,
+    allowPrivateKnowledge: configuration.allowPrivateKnowledge,
+    safeMode: configuration.safeMode,
+  };
+  return createHash("sha256").update(JSON.stringify(canonical), "utf8").digest("hex");
 }
 
 function versionDto(version: StoredVersion) {
   if (version.maxTurns !== 1 || version.safeMode !== true) {
-    throw new AgentConflictError("The agent version does not satisfy the Phase 5 safe-mode boundary.");
+    throw new AgentConflictError("The agent version does not satisfy the enforced safe-mode boundary.");
   }
+  const skills = parseSkills(version.skills);
+  const soulMd = version.soulMd.trim().length >= 10 ? version.soulMd : version.instructions;
+  const digest = version.distributionDigest ?? distributionDigest({
+    displayName: version.displayName, purpose: version.purpose, instructions: version.instructions,
+    soulMd, skills, modelAlias: version.modelAlias, maxTurns: version.maxTurns,
+    timeoutSeconds: version.timeoutSeconds, maxConcurrentRuns: version.maxConcurrentRuns,
+    allowPrivateKnowledge: version.allowPrivateKnowledge, safeMode: version.safeMode,
+  });
   return {
     id: version.id,
     version: version.version,
     displayName: version.displayName,
     purpose: version.purpose,
     instructions: version.instructions,
+    soulMd,
+    skills,
     modelAlias: version.modelAlias,
     maxTurns: 1 as const,
     timeoutSeconds: version.timeoutSeconds,
@@ -89,6 +160,7 @@ function versionDto(version: StoredVersion) {
     allowPrivateKnowledge: version.allowPrivateKnowledge,
     safeMode: true as const,
     createdBy: version.createdBy,
+    distributionDigest: digest,
     createdAt: version.createdAt.toISOString(),
   };
 }
@@ -139,6 +211,7 @@ function runDto(run: StoredRun): AgentRun {
     profileSlug: run.profile.slug,
     profileName: run.version.displayName,
     profileVersion: run.profileVersion,
+    profileDistributionDigest: run.profileDistributionDigest ?? run.version.distributionDigest,
     status: run.status,
     input: run.input,
     output: run.output,
@@ -154,12 +227,29 @@ function runDto(run: StoredRun): AgentRun {
   };
 }
 
+function runEventDto(event: StoredRunEvent): AgentRunEvent {
+  return {
+    id: event.id,
+    runId: event.runId,
+    type: event.type,
+    summary: event.summary,
+    status: event.status,
+    toolName: event.toolName,
+    childSessionId: event.childSessionId,
+    durationMs: event.durationMs,
+    inputTokens: event.inputTokens,
+    outputTokens: event.outputTokens,
+    costUsd: event.costUsd === null ? null : Number(event.costUsd),
+    occurredAt: event.occurredAt.toISOString(),
+  };
+}
+
 const profileInclude = {
   versions: { orderBy: { version: "desc" as const } },
 } as const;
 const runInclude = {
   profile: { select: { slug: true } },
-  version: { select: { displayName: true } },
+  version: { select: { displayName: true, distributionDigest: true } },
 } as const;
 
 export class PrismaAgentManager implements AgentManager {
@@ -180,6 +270,7 @@ export class PrismaAgentManager implements AgentManager {
   }
 
   async createProfile(principal: AgentPrincipal, input: CreateAgentProfile): Promise<AgentProfile> {
+    const digest = distributionDigest(input);
     let created: StoredProfile;
     try {
       created = await this.prisma.$transaction(async (transaction) => {
@@ -192,6 +283,9 @@ export class PrismaAgentManager implements AgentManager {
               displayName: input.displayName,
               purpose: input.purpose,
               instructions: input.instructions,
+              soulMd: input.soulMd,
+              skills: input.skills,
+              distributionDigest: digest,
               modelAlias: input.modelAlias,
               maxTurns: input.maxTurns,
               timeoutSeconds: input.timeoutSeconds,
@@ -232,18 +326,26 @@ export class PrismaAgentManager implements AgentManager {
       });
       if (!current) throw new AgentConflictError("The current agent configuration is missing.");
       const nextVersion = profile.currentVersion + 1;
-      await transaction.agentProfileVersion.create({ data: {
-        profileId,
-        version: nextVersion,
+      const skills = input.skills ?? parseSkills(current.skills);
+      const soulMd = input.soulMd ?? (current.soulMd.trim().length >= 10 ? current.soulMd : current.instructions);
+      const nextConfiguration = {
         displayName: input.displayName ?? current.displayName,
         purpose: input.purpose ?? current.purpose,
         instructions: input.instructions ?? current.instructions,
+        soulMd,
+        skills,
         modelAlias: input.modelAlias ?? current.modelAlias,
         maxTurns: input.maxTurns ?? current.maxTurns,
         timeoutSeconds: input.timeoutSeconds ?? current.timeoutSeconds,
         maxConcurrentRuns: input.maxConcurrentRuns ?? current.maxConcurrentRuns,
         allowPrivateKnowledge: input.allowPrivateKnowledge ?? current.allowPrivateKnowledge,
         safeMode: input.safeMode ?? current.safeMode,
+      };
+      await transaction.agentProfileVersion.create({ data: {
+        profileId,
+        version: nextVersion,
+        ...nextConfiguration,
+        distributionDigest: distributionDigest(nextConfiguration),
         createdBy: principal.id,
       } });
       await transaction.agentProfile.update({ where: { id: profileId }, data: { currentVersion: nextVersion } });
@@ -259,6 +361,11 @@ export class PrismaAgentManager implements AgentManager {
 
   async activateProfile(principal: AgentPrincipal, profileId: string): Promise<AgentProfile> {
     const updated = await this.changeProfileState(principal, profileId, "ACTIVE");
+    return profileDto(updated, true);
+  }
+
+  async standbyProfile(principal: AgentPrincipal, profileId: string): Promise<AgentProfile> {
+    const updated = await this.changeProfileState(principal, profileId, "STANDBY");
     return profileDto(updated, true);
   }
 
@@ -284,6 +391,20 @@ export class PrismaAgentManager implements AgentManager {
     });
     if (!run) throw new AgentNotFoundError();
     return runDto(run as StoredRun);
+  }
+
+  async listRunEvents(principal: AgentPrincipal, runId: string, includeAll: boolean): Promise<AgentRunEventList> {
+    const run = await this.prisma.agentRun.findFirst({
+      where: { id: runId, ...(includeAll ? {} : { ownerSubject: principal.subject }) },
+      select: { id: true },
+    });
+    if (!run) throw new AgentNotFoundError();
+    const events = await this.prisma.agentRunEvent.findMany({
+      where: { runId },
+      orderBy: [{ occurredAt: "asc" }, { id: "asc" }],
+      take: 500,
+    });
+    return { items: events.map((event) => runEventDto(event as StoredRunEvent)) };
   }
 
   async submitRun(principal: AgentPrincipal, input: SubmitAgentRun): Promise<AgentRun> {
@@ -312,6 +433,7 @@ export class PrismaAgentManager implements AgentManager {
           profileId: profile.id,
           profileVersionId: version.id,
           profileVersion: version.version,
+          profileDistributionDigest: version.distributionDigest,
           ownerSubject: principal.subject,
           requestedBy: principal.id,
           input: input.input,
@@ -418,29 +540,42 @@ export class PrismaAgentManager implements AgentManager {
   private async changeProfileState(
     principal: AgentPrincipal,
     profileId: string,
-    state: "ACTIVE" | "SUSPENDED",
+    state: "ACTIVE" | "STANDBY" | "SUSPENDED",
   ): Promise<StoredProfile> {
     return this.prisma.$transaction(async (transaction) => {
       const profile = await transaction.agentProfile.findUnique({ where: { id: profileId } });
       if (!profile) throw new AgentNotFoundError();
-      const currentVersion = state === "ACTIVE" ? await transaction.agentProfileVersion.findUnique({
+      const requiresRelease = state !== "SUSPENDED";
+      const currentVersion = requiresRelease ? await transaction.agentProfileVersion.findUnique({
         where: { profileId_version: { profileId, version: profile.currentVersion } },
-        select: { modelAlias: true },
+        select: { modelAlias: true, distributionDigest: true },
       }) : null;
-      if (state === "ACTIVE" && !currentVersion) {
+      if (requiresRelease && !currentVersion) {
         throw new AgentConflictError("The current agent version is missing.");
       }
-      const modelCatalogueCount = state === "ACTIVE"
+      if (requiresRelease && !currentVersion!.distributionDigest) {
+        throw new AgentConflictError("Create a Phase 9 Profile Distribution version before standby or activation.");
+      }
+      if (requiresRelease) {
+        const hermesCompatibility = await transaction.componentCompatibility.findUnique({
+          where: { key: "hermes-api" },
+          select: { status: true },
+        });
+        if (hermesCompatibility?.status !== "PASSED") {
+          throw new AgentConflictError("Run Setup and pass Hermes compatibility before a Profile can enter standby or active service.");
+        }
+      }
+      const modelCatalogueCount = requiresRelease
         ? await transaction.modelDeployment.count({ where: { workload: "AGENT", firstActivatedAt: { not: null } } })
         : 0;
-      const modelRoute = state === "ACTIVE" && modelCatalogueCount > 0 ? await transaction.modelDeployment.findFirst({
+      const modelRoute = requiresRelease && modelCatalogueCount > 0 ? await transaction.modelDeployment.findFirst({
         where: { workload: "AGENT", modelAlias: currentVersion!.modelAlias, status: "ACTIVE" },
         select: { id: true },
       }) : null;
-      if (state === "ACTIVE" && modelCatalogueCount > 0 && !modelRoute) {
+      if (requiresRelease && modelCatalogueCount > 0 && !modelRoute) {
         throw new AgentConflictError(`Activate the '${currentVersion!.modelAlias}' agent model route before activating this profile.`);
       }
-      const releaseEvidence = state === "ACTIVE" ? await transaction.evaluationRun.findFirst({
+      const releaseEvidence = requiresRelease ? await transaction.evaluationRun.findFirst({
         where: {
           targetType: "AGENT",
           targetReference: `agent:${profile.slug}`,
@@ -449,20 +584,20 @@ export class PrismaAgentManager implements AgentManager {
         },
         select: { id: true },
       }) : null;
-      if (state === "ACTIVE" && !releaseEvidence) {
-        throw new AgentConflictError(`Agent activation requires promoted evaluation evidence for agent:${profile.slug} version ${profile.currentVersion}.`);
+      if (requiresRelease && !releaseEvidence) {
+        throw new AgentConflictError(`Agent standby or activation requires promoted evaluation evidence for agent:${profile.slug} version ${profile.currentVersion}.`);
       }
       const updated = await transaction.agentProfile.update({
         where: { id: profileId },
-        data: { status: state, ...(state === "ACTIVE" ? { activeVersion: profile.currentVersion } : {}) },
+        data: { status: state, ...(requiresRelease ? { activeVersion: profile.currentVersion } : {}) },
         include: profileInclude,
       });
       await transaction.auditEvent.create({ data: {
         actorType: "USER", actorId: principal.id,
-        action: state === "ACTIVE" ? "agent.profile_activated" : "agent.profile_suspended",
+        action: state === "ACTIVE" ? "agent.profile_activated" : state === "STANDBY" ? "agent.profile_standby" : "agent.profile_suspended",
         resourceType: "AgentProfile", resourceId: profileId, outcome: "SUCCESS",
         metadata: {
-          activeVersion: state === "ACTIVE" ? profile.currentVersion : profile.activeVersion,
+          activeVersion: requiresRelease ? profile.currentVersion : profile.activeVersion,
           evaluationRunId: releaseEvidence?.id ?? null,
           modelRouteId: modelRoute?.id ?? null,
         },

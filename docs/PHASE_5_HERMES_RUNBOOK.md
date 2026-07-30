@@ -34,8 +34,8 @@ The worker repeats the local runtime and profile checks while polling. A cancell
 Run Hermes in a dedicated container and network segment. The container must:
 
 - expose its API only to the AIHub worker network;
-- use a strong `API_SERVER_KEY` stored only in Hermes and the encrypted AIHub connection vault;
-- have no host filesystem, Docker socket, Coolify control socket, PostgreSQL credential, enterprise-storage administration credential, or Supermemory credential;
+- use a strong `API_SERVER_KEY` stored only in Hermes and AIHub's encrypted credential store;
+- have no host filesystem, Docker socket, deployment-control-plane credential, PostgreSQL credential, enterprise-storage administration credential, or Supermemory credential;
 - have no route to AIHub's database, transient document scratch volume, or unrestricted internet;
 - have outbound access only to the approved inference route required by its configured provider;
 - have all `platform_toolsets.api_server` entries disabled;
@@ -79,7 +79,7 @@ For unexpected behavior:
 2. isolate the Hermes service network if runs do not stop promptly;
 3. preserve AIHub agent runs, audit events, worker records, Hermes logs, and LiteLLM request records;
 4. suspend affected profiles;
-5. rotate the Hermes API-server key in Hermes and the AIHub vault;
+5. rotate the Hermes API-server key in Hermes and AIHub's encrypted credential store;
 6. remediate and repeat the full acceptance set before re-enabling execution.
 
 ## Deferred to Phase 6

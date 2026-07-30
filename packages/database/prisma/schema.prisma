@@ -107,6 +107,7 @@ enum MemorySyncStatus {
 
 enum AgentProfileStatus {
   DRAFT
+  STANDBY
   ACTIVE
   SUSPENDED
 }
@@ -243,6 +244,81 @@ enum ProductionReadinessApprovalRole {
 enum ProductionReadinessApprovalDecision {
   APPROVED
   REJECTED
+}
+
+enum ComponentCompatibilityStatus {
+  NOT_TESTED
+  IN_PROGRESS
+  PASSED
+  FAILED
+  BLOCKED
+}
+
+enum OnboardingJourneyStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  BLOCKED
+  COMPLETED
+}
+
+enum OnboardingStepStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  BLOCKED
+  COMPLETED
+}
+
+enum LiteLlmOwnershipMode {
+  EXTERNAL_VALIDATED
+  PINNED_API_RECONCILED
+}
+
+enum SupermemoryStorageMode {
+  EMBEDDED
+  SUPPORTED_EXTERNAL_POSTGRES
+}
+
+enum SupermemoryEmbeddingMode {
+  LOCAL
+  OPENAI_COMPATIBLE
+}
+
+enum HermesMemoryMode {
+  MEDIATED
+  NATIVE_SUPERMEMORY
+}
+
+enum GpuSchedulingMode {
+  DEDICATED_LLM
+  MEASURED_CO_RESIDENCY
+  SERIALIZED_DEGRADED
+}
+
+enum DeploymentTopologyMode {
+  COMPACT
+  CONTROL_PLANE
+  SEGMENTED_PRODUCTION
+}
+
+enum OnboardingTargetEnvironment {
+  DEVELOPMENT
+  PILOT
+  PRODUCTION
+}
+
+enum DeploymentInstallMethod {
+  SIGNED_INSTALLER
+}
+
+enum OnboardingEvidenceSource {
+  AUTOMATED
+  EXTERNAL_ATTESTATION
+}
+
+enum OnboardingEvidenceOutcome {
+  PASSED
+  FAILED
+  WARNING
 }
 
 model AdministratorSession {
@@ -536,6 +612,123 @@ model ProductionReadinessApproval {
   @@index([decision, recordedAt])
 }
 
+model PlatformArchitectureDecision {
+  id                       String                     @id @default("global") @db.VarChar(32)
+  topologyMode             DeploymentTopologyMode     @default(CONTROL_PLANE)
+  targetEnvironment        OnboardingTargetEnvironment @default(DEVELOPMENT)
+  installMethod            DeploymentInstallMethod    @default(SIGNED_INSTALLER)
+  localInference           Boolean                    @default(false)
+  liteLlmOwnershipMode     LiteLlmOwnershipMode       @default(EXTERNAL_VALIDATED)
+  supermemoryStorageMode   SupermemoryStorageMode     @default(EMBEDDED)
+  supermemoryEmbeddingMode SupermemoryEmbeddingMode   @default(LOCAL)
+  hermesMemoryMode         HermesMemoryMode           @default(MEDIATED)
+  gpuSchedulingMode        GpuSchedulingMode          @default(DEDICATED_LLM)
+  reason                   String?                    @db.VarChar(1000)
+  revision                 Int                        @default(0)
+  updatedBy                String?                    @db.Uuid
+  createdAt                DateTime                   @default(now()) @db.Timestamptz(6)
+  updatedAt                DateTime                   @updatedAt @db.Timestamptz(6)
+}
+
+model ComponentCompatibility {
+  key              String                       @id @db.VarChar(80)
+  displayName      String                       @db.VarChar(160)
+  category         String                       @db.VarChar(80)
+  required         Boolean                      @default(true)
+  expectedContract String                       @db.VarChar(1000)
+  status           ComponentCompatibilityStatus @default(NOT_TESTED)
+  observedVersion  String?                      @db.VarChar(240)
+  evidenceRef      String?                      @db.VarChar(500)
+  note             String?                      @db.VarChar(1000)
+  testedAt         DateTime?                    @db.Timestamptz(6)
+  updatedBy        String?                      @db.Uuid
+  revision         Int                          @default(0)
+  createdAt        DateTime                     @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime                     @updatedAt @db.Timestamptz(6)
+
+  @@index([required, status])
+  @@index([category, status])
+}
+
+model OnboardingJourney {
+  id             String                  @id @default("global") @db.VarChar(32)
+  status         OnboardingJourneyStatus @default(NOT_STARTED)
+  currentStepKey String?                 @db.VarChar(80)
+  reason         String?                 @db.VarChar(1000)
+  revision       Int                     @default(0)
+  startedAt      DateTime?               @db.Timestamptz(6)
+  completedAt    DateTime?               @db.Timestamptz(6)
+  activatedEnvironment OnboardingTargetEnvironment?
+  updatedBy      String?                 @db.Uuid
+  createdAt      DateTime                @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime                @updatedAt @db.Timestamptz(6)
+}
+
+model OnboardingStep {
+  key          String               @id @db.VarChar(80)
+  ordinal      Int
+  title        String               @db.VarChar(160)
+  description  String               @db.VarChar(1000)
+  required     Boolean              @default(true)
+  status       OnboardingStepStatus @default(NOT_STARTED)
+  evidenceRefs String[]             @default([])
+  note         String?              @db.VarChar(1000)
+  revision     Int                  @default(0)
+  updatedBy    String?              @db.Uuid
+  completedAt  DateTime?            @db.Timestamptz(6)
+  createdAt    DateTime             @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime             @updatedAt @db.Timestamptz(6)
+
+  @@unique([ordinal])
+  @@index([status, ordinal])
+}
+
+model InstallationClaim {
+  id                String    @id @default("initial") @db.VarChar(32)
+  tokenHash         Bytes     @unique
+  expiresAt         DateTime? @db.Timestamptz(6)
+  redeemedAt        DateTime? @db.Timestamptz(6)
+  redeemedSessionId String?   @db.Uuid
+  sourceIp          String?   @db.Inet
+  createdAt         DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime  @updatedAt @db.Timestamptz(6)
+
+  @@index([redeemedAt, expiresAt])
+}
+
+model CredentialRecoveryControl {
+  id             String    @id @default("global") @db.VarChar(32)
+  keyFingerprint String?   @db.VarChar(64)
+  kitChecksum    String?   @db.VarChar(64)
+  recoveryOwner  String?   @db.VarChar(160)
+  exportedAt     DateTime? @db.Timestamptz(6)
+  exportedBy     String?   @db.Uuid
+  verifiedAt     DateTime? @db.Timestamptz(6)
+  verifiedBy     String?   @db.Uuid
+  revision       Int       @default(0)
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(6)
+}
+
+model OnboardingEvidence {
+  id              String                    @id @default(uuid()) @db.Uuid
+  stageKey        String                    @db.VarChar(80)
+  componentKey    String?                   @db.VarChar(80)
+  source          OnboardingEvidenceSource
+  outcome         OnboardingEvidenceOutcome
+  code            String                    @db.VarChar(120)
+  summary         String                    @db.VarChar(1000)
+  observedVersion String?                   @db.VarChar(240)
+  details         Json                      @default("{}")
+  createdBy       String?                   @db.Uuid
+  createdAt       DateTime                  @default(now()) @db.Timestamptz(6)
+  expiresAt       DateTime?                 @db.Timestamptz(6)
+
+  @@index([stageKey, createdAt])
+  @@index([componentKey, createdAt])
+  @@index([source, outcome, createdAt])
+}
+
 model ChatConversation {
   id            String                 @id @default(uuid()) @db.Uuid
   ownerSubject  String                 @db.VarChar(200)
@@ -735,6 +928,9 @@ model AgentProfileVersion {
   displayName           String           @db.VarChar(120)
   purpose               String           @db.VarChar(500)
   instructions          String           @db.Text
+  soulMd                String           @default("") @db.Text
+  skills                Json             @default("[]")
+  distributionDigest    String?          @db.VarChar(64)
   modelAlias            String           @db.VarChar(200)
   maxTurns              Int
   timeoutSeconds        Int
@@ -756,6 +952,7 @@ model AgentRun {
   profileId               String              @db.Uuid
   profileVersionId        String              @db.Uuid
   profileVersion          Int
+  profileDistributionDigest String?            @db.VarChar(64)
   ownerSubject            String              @db.VarChar(200)
   requestedBy             String              @db.Uuid
   status                  AgentRunStatus      @default(QUEUED)
@@ -777,10 +974,32 @@ model AgentRun {
   profile                 AgentProfile        @relation(fields: [profileId], references: [id], onDelete: Restrict)
   version                 AgentProfileVersion @relation(fields: [profileVersionId], references: [id], onDelete: Restrict)
   toolCalls               GovernedToolCall[]
+  events                  AgentRunEvent[]
 
   @@index([ownerSubject, createdAt])
   @@index([profileId, status, createdAt])
   @@index([status, queuedAt])
+}
+
+model AgentRunEvent {
+  id             String   @id @default(uuid()) @db.Uuid
+  runId          String   @db.Uuid
+  sourceEventId  String?  @db.VarChar(255)
+  type           String   @db.VarChar(80)
+  summary        String?  @db.VarChar(1000)
+  status         String?  @db.VarChar(80)
+  toolName       String?  @db.VarChar(160)
+  childSessionId String?  @db.VarChar(255)
+  durationMs     Int?
+  inputTokens    Int?
+  outputTokens   Int?
+  costUsd        Decimal? @db.Decimal(18, 8)
+  occurredAt     DateTime @default(now()) @db.Timestamptz(6)
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+  run            AgentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, sourceEventId])
+  @@index([runId, occurredAt, id])
 }
 
 model AgentRuntimeControl {

@@ -74,7 +74,7 @@ Views adoption, operational status, business usage, risks, capacity, and measura
 - **Human control:** consequential tool actions require explicit policy checks and, where required, human approval.
 - **Traceable by default:** significant AI and administrative events are auditable.
 - **PostgreSQL first:** PostgreSQL is the operational source of truth and coordination platform.
-- **One durable knowledge layer:** Supermemory is the sole normalized-knowledge, embedding, retrieval, semantic-graph, and RAG abstraction; PostgreSQL does not duplicate document bodies or vectors.
+- **One durable enterprise knowledge layer:** Supermemory is the sole normalized-knowledge, embedding, retrieval, semantic-graph, and approved agent-memory abstraction; PostgreSQL does not duplicate document bodies or vectors, and Supermemory never shares the AIHub schema.
 - **Enterprise-owned originals:** authoritative files remain in MPM repositories. AIHub uses encrypted, time-bounded scratch only for extraction and never becomes a document repository.
 - **Replaceable models:** applications use LiteLLM and stable internal interfaces rather than calling model servers directly.
 - **Configuration control plane:** authorized administrators configure integrations, endpoints, routes, and secrets centrally through AIHub.
@@ -121,21 +121,30 @@ It will support:
 
 AIHub will use a hardened Hermes deployment for controlled agentic execution.
 
-The Agent component will manage:
+Phase 9 uses upstream Hermes terminology precisely: a durable expert is a Hermes **Profile**, its portable versioned package is a **Profile Distribution**, and a short-lived child created by `delegate_task` is a **subagent**. The Agent component will manage:
 
-- agent profiles and purposes;
-- model assignment;
-- system instructions and skills;
+- isolated Hermes runtime-node enrollment and health;
+- Hermes Profiles, purposes, routing descriptions, and Profile Distribution releases;
+- per-Profile `SOUL.md` personality, kept separate from enforceable policy;
+- configured model route and parser assignment, verified from the runtime rather than trusted from a request `model` label;
+- governed mediated or conditional native Supermemory provider mode;
+- system instructions and reviewed, checksummed Skills;
 - allowed MCP servers and tools;
 - data and memory scopes;
-- maximum turns, timeouts, and concurrency;
+- `delegate_task` policy, maximum spawn depth/width, turns, timeouts, and concurrency;
 - approval requirements;
 - safe-mode and kill-switch controls;
 - allowed internal AIHub infrastructure endpoints;
 - network egress and destination allowlists;
 - run-scoped service identities and credentials;
 - agent versioning and promotion between development and production;
-- run history and failure inspection.
+- standard/Agent Chat selection, run history, safe event timelines, and failure inspection.
+
+AIHub lifecycle terms such as **runtime node**, **standby**, and **Agent Chat** are control-plane concepts layered over Hermes rather than claimed upstream features. Hermes Kanban is an upstream durable SQLite-backed multi-Profile board; it will remain disabled as an operational authority in the initial enterprise release because PostgreSQL and `pg-boss` are AIHub's durable orchestration system of record. `delegate_task` is reserved for bounded in-run fan-out, while durable expert-to-expert routing creates a new AIHub-governed Profile run.
+
+Hermes will continue to use Profile-local `state.db` SQLite storage for active session messages, tool-call history, context lineage, token accounting, and native resume. Supermemory does not replace this operational state or reduce its writes during execution. Hermes also keeps built-in `MEMORY.md` and `USER.md` active; AIHub will constrain them to Profile-local non-secret behavioral/runtime notes rather than claiming they are disabled. PostgreSQL owns AIHub conversations, sanitized run/event projections, governance, and audit; Supermemory owns only policy-approved durable enterprise knowledge and agent memory. AIHub will correlate these stores through documented APIs and identifiers, never by reading or synchronizing Hermes SQLite rows. `state.db` therefore requires explicit retention, protected local persistence, backup/restore, single-owner affinity, and honest loss behavior.
+
+The default memory path is AIHub-mediated retrieval and publication with Hermes' external provider disabled. Direct use of the official Hermes Supermemory provider is conditional because it can prefetch context, synchronize turns, extract sessions, mirror built-in writes, and expose memory tools. It may be enabled only for a pinned Profile after custom base URL, user/container isolation, write controls, redaction, retention/deletion, failure handling, and cross-tenant tests pass.
 
 Hermes will operate inside a default-deny execution boundary. It will not independently decide or configure which infrastructure, MCP servers, or tools it can reach. AIHub will calculate the effective permissions for every agent run and enforce those permissions at the network, gateway, tool, and approval layers.
 
@@ -148,7 +157,7 @@ Hermes may access only:
 - individual tools granted within those MCP servers;
 - resource scopes and actions permitted for the requesting user and agent.
 
-Hermes will not receive direct access to PostgreSQL, enterprise-storage administration, Coolify, the Docker socket, host infrastructure, unrestricted filesystems, unrestricted shell execution, or the public internet unless a future use case is explicitly approved and exposed through a controlled AIHub tool.
+Hermes will not receive direct access to PostgreSQL, enterprise-storage administration, any deployment control plane, the Docker socket, host infrastructure, unrestricted filesystems, unrestricted shell execution, or the public internet unless a future use case is explicitly approved and exposed through a controlled AIHub tool.
 
 For each run, AIHub will produce an effective capability set based on the user, role, department, agent profile, environment, tool grants, resource scopes, and approval policies. Every tool invocation will be revalidated at execution time. Changes, grants, denials, and emergency revocations will be auditable.
 
@@ -171,11 +180,15 @@ It will provide:
 
 All long-running document work will execute asynchronously through PostgreSQL-backed jobs.
 
+Unlimited-OCR's official examples expose direct Transformers inference and page/PDF processing; they do not by themselves guarantee AIHub's generic OpenAI-compatible multimodal endpoint. The pinned deployment must pass AIHub's OCR adapter contract and representative MPM corpus. If it does not, AIHub will use a dedicated service adapter around the official inference path rather than mislabeling the upstream API.
+
 ### 8.5 Knowledge and Memory Management
 
-Supermemory will be AIHub's single semantic context layer for enterprise knowledge, retrieval, embeddings, and durable agent memory.
+Supermemory will be AIHub's single semantic context layer for enterprise knowledge, retrieval, embeddings, and approved durable agent memory.
 
 AIHub will publish approved normalized content through the Supermemory Memory API. Once Supermemory confirms the generation is indexed, AIHub will purge the source and all extraction intermediates from scratch. Supermemory persistent data is therefore production data and requires a tested backup/restore procedure. Clean rebuilds require authorized enterprise originals to be fetched or uploaded again; PostgreSQL metadata alone is insufficient.
+
+The streamlined pilot will use the exact supported Supermemory Local artifact with its private embedded encrypted storage and local embedding unless measured scale, recovery, or retrieval requirements justify another officially supported mode. An optional Supermemory PostgreSQL+pgvector backend is separately operated and remains private to Supermemory; it is never installed into or accessed through AIHub's database schema. The artifact edition, license/support entitlement, telemetry, air-gap behavior, persistent path, and backup procedure must be accepted before production.
 
 AIHub will provide controls to:
 
@@ -198,10 +211,10 @@ Initial model roles are expected to include:
 
 - Poolside Laguna S 2.1 NVFP4 for complex Hermes agent workflows;
 - Unlimited-OCR for document parsing;
-- Qwen3 Embedding for semantic indexing through Supermemory;
+- Supermemory's local embedding as the streamlined default, with Qwen3 Embedding as an optional evaluated route;
 - additional smaller models for efficient or specialized workloads as evaluated.
 
-The RTX PRO 6000 96 GB must not be assumed to serve all three roles concurrently. Phase 0 benchmarking must establish the actual Laguna runtime and KV-cache headroom, OCR contention, embedding placement, context limit, concurrency, and recovery behavior. Production requires either demonstrated safe co-residency, another GPU, a smaller primary model, a dedicated embedding route, or an explicitly accepted degraded scheduling policy.
+The RTX PRO 6000 96 GB must not be assumed to serve all model roles concurrently. The official Laguna NVFP4 model card reports roughly 71 GB of weights and requires vLLM `>=0.25.0` with `poolside_v1` reasoning/tool parsers; Phase 0 benchmarking must establish actual KV-cache headroom, OCR contention, embedding placement, context limit, concurrency, and recovery behavior on the exact driver/CUDA combination. Production requires either demonstrated safe co-residency, another GPU, a smaller primary model, a dedicated OCR/embedding route, or an explicitly accepted degraded scheduling policy.
 
 The component will provide:
 
@@ -218,6 +231,8 @@ The component will provide:
 ### 8.7 LiteLLM Gateway
 
 LiteLLM will be the centralized model API gateway between AIHub/Hermes and vLLM.
+
+The baseline uses a separately configured, pinned LiteLLM Proxy: AIHub stores and validates expected immutable model aliases and guardrail identifiers, while LiteLLM owns provider credentials, inference routing/fallback, virtual-key budgets, usage, and guardrail execution. If MPM later selects a supported LiteLLM management API, AIHub may reconcile desired state with versioned drift detection, audit, rollback, and one clear configuration owner. LiteLLM is never the enterprise resource/tool authorization boundary.
 
 It will be responsible for:
 
@@ -396,24 +411,26 @@ Authorized administrators will manage shared platform configuration, including:
 
 Configuration changes will support validation, test-connection checks, version history, controlled activation, rollback, and complete audit trails. Sensitive values will be masked after entry and will never be returned to the browser or written to application logs.
 
-### 8.17 Configuration and Secrets Vault
+### 8.17 Encrypted Credential Store
 
-AIHub will provide an on-premises configuration and secrets vault so routine operation does not depend on administrators editing environment files or restarting unrelated services.
+AIHub will provide an on-premises encrypted credential store so routine operation does not depend on administrators editing environment files or restarting unrelated services. This is an AIHub application capability backed by PostgreSQL; it is not HashiCorp Vault or Vault KV.
 
-The vault will provide:
+The credential store will provide:
 
 - encrypted storage for API keys, passwords, client secrets, certificates, and connector credentials;
-- envelope encryption using authenticated encryption and a separately protected master key;
+- envelope encryption using authenticated encryption and a separately protected AIHub credential-encryption key;
 - role-separated create, update, test, rotate, disable, and audit operations;
 - secret versioning and rotation without exposing previous plaintext values;
 - references from models, agents, MCP servers, and connectors instead of duplicated credentials;
 - runtime-only secret resolution by authorized backend services;
 - configuration export and import with secrets excluded by default;
-- backup and recovery procedures for both encrypted records and the master key.
+- backup and recovery procedures for both encrypted records and the credential-encryption key.
 
 Hermes will not receive general connector credentials. AIHub will either proxy the permitted operation or issue a narrowly scoped, short-lived runtime capability when supported. Frontend clients will never receive infrastructure secrets.
 
-AIHub still requires a minimal bootstrap trust mechanism because the application cannot securely retrieve the database credential and the key used to decrypt its own vault from that same encrypted database. Installation will generate these bootstrap values and mount them as protected local secret files or Docker/Coolify secrets. After bootstrap, all supported endpoints, keys, certificates, model routes, and connector settings will be managed from the AIHub dashboard. A future HSM or external on-premises secrets manager may replace the local master-key file without changing the administrator experience.
+AIHub still requires minimal installation trust because the application cannot securely retrieve the database credential and the key used to decrypt stored credentials from the same encrypted database. The signed installer will generate these values, mount them as protected local secret files, and emit only a short-lived single-use installation claim. After installation, all supported endpoints, keys, certificates, model routes, and connector settings will be managed from the AIHub dashboard. A future HSM or external on-premises secrets manager may protect the credential-encryption key without changing the administrator experience.
+
+The onboarding wizard will require export and verification of an encrypted off-host recovery kit before Production activation. Losing both the mounted credential-encryption key and every recovery copy leaves PostgreSQL metadata intact but makes encrypted connector credentials unrecoverable. Key rotation will re-encrypt stored credential payloads as a controlled, audited operation.
 
 ## 9. High-Level Technical Architecture
 
@@ -429,6 +446,7 @@ flowchart TB
 
     A --> C["Agent Access Control"]
     C -. "Run-scoped capabilities" .-> H["Hardened Hermes"]
+    H --> HS["Profile-local state.db"]
     H --> G["Policy, Tool Gateway, and Approval Layer"]
     G --> MCP["Approved MCP and Enterprise Systems"]
 
@@ -449,10 +467,12 @@ flowchart TB
 ## 10. Data Ownership
 
 - **PostgreSQL:** operational records, configuration, identity mappings, conversations, jobs, approvals, audit metadata, and external-service bindings.
-- **AIHub secrets vault:** encrypted credential payloads and versions stored in PostgreSQL; the master encryption key is held separately from the database.
+- **AIHub encrypted credential store:** encrypted credential payloads and versions stored in PostgreSQL; the credential-encryption key is held separately from the database. No HashiCorp Vault service is required.
 - **Enterprise source repositories:** authoritative original files and their native access controls.
 - **AIHub scratch volume:** application-encrypted source and extraction bytes retained only until publication, rejection, deletion, or the 24-hour deadline; never backed up.
-- **Supermemory:** durable normalized knowledge, embeddings, semantic graph, retrieval context, and agent/user memory.
+- **Supermemory deployment:** durable normalized enterprise knowledge, embeddings, semantic graph, retrieval context, approved agent/user memory, and its private embedded or separately supported backing store. AIHub never reads its private schema.
+- **Hermes Profile `state.db`:** Profile-local operational session history, context lineage, tool calls, token accounting, and native resume; never directly accessed by AIHub and never shared across hosts.
+- **Hermes built-in memory:** Profile-local `MEMORY.md` and `USER.md`, constrained to non-secret behavioral/runtime notes; not an enterprise knowledge or compliance store.
 - **vLLM/model storage:** loaded model weights and inference runtime state.
 - **SIEM/observability systems:** operational telemetry and security monitoring according to MPM policy.
 
@@ -501,13 +521,15 @@ No component may directly depend on another component's private database schema.
 
 ## 12. Deployment Approach
 
-Coolify will be used as the initial on-premises application and service deployment control plane. The streamlined pilot placement is VM1 for AIHub Web/API/workers, their shared encrypted scratch volume, and LiteLLM; VM2 for hardened Hermes; VM3 for PostgreSQL and Supermemory on independent persistent volumes; and the GPU server for vLLM model services and Unlimited-OCR. Co-location is a pilot optimization, not evidence of high availability.
+The canonical and sole supported entry experience is one supported Linux server and one pinned, signed AIHub release-bundle installer. The installer starts the AIHub Web/API/workers and PostgreSQL control plane, applies migrations, generates protected database and credential-encryption material, and emits only a short-lived single-use installation claim. The dashboard then offers Compact, Control-plane only, and Segmented production topologies without taking host or container-orchestrator credentials.
 
-Production readiness will be evaluated independently for PostgreSQL, Supermemory persistent data, enterprise source availability, model serving, GPU availability, backups, and DRC recovery. Scratch must be recoverable by replaying a source, not by backing up the volume. A failure of one co-located stateful VM must not destroy the only recoverable PostgreSQL or Supermemory copy.
+Compact mode may co-locate a hardened Hermes container and locally selected services, but it must not claim the same isolation or availability as separate hosts. Control-plane only mode connects to customer-operated LiteLLM, Unlimited-OCR, Supermemory, and Hermes APIs. Segmented production places Hermes and inference/GPU services in separate trust zones and uses certificate-bound runtime enrollment. LiteLLM is AIHub's single inference-routing gateway; direct vLLM connectivity is optional read-only health/capacity telemetry. Supermemory's internal database and embedding implementation remain private deployment details rather than routine AIHub wizard choices.
 
-The initial installer will provision AIHub's database access and master encryption key as mounted Coolify/Docker secrets or protected local files. These are bootstrap dependencies only. Administrators will configure all subsequent supported services and credentials from AIHub's Settings and Integration workspaces.
+Production readiness will be evaluated independently for PostgreSQL, Supermemory persistent data, Hermes Profile session state, enterprise source availability, model serving, GPU availability, backups, and DRC recovery. Scratch must be recoverable by replaying a source, not by backing up the volume. A failure of one co-located stateful VM must not destroy the only recoverable PostgreSQL or Supermemory copy. Restoring PostgreSQL audit records without the corresponding Hermes `state.db` does not restore native Hermes session continuity.
 
-The AIHub application will not depend on Redis. PostgreSQL and `pg-boss` will provide durable coordination. Valkey may be evaluated only if a measured scaling requirement or supported vendor dependency cannot be met through the PostgreSQL ecosystem.
+The installer will provision AIHub's database access and credential-encryption key as protected local files. Customers will not manually create these values or enter them into the browser. Administrators will configure all subsequent supported services and credentials from AIHub's Settings and Integration workspaces. Production activation requires enterprise identity, verified off-host recovery of the credential-encryption key, a current PostgreSQL backup, and a current READY decision from the Phase 8 controls and authority approvals. Changing the selected topology or target environment invalidates dependent compatibility and onboarding evidence.
+
+The AIHub application will not depend on Redis or Valkey. PostgreSQL and `pg-boss` provide durable coordination.
 
 ## 13. Delivery Phases
 
@@ -522,8 +544,11 @@ The authoritative implementation sequence, exit gates, dependencies, and MPM inp
 - Phase 6: MCP connectors and human approvals;
 - Phase 7: AI operations, guardrails, and evaluation;
 - Phase 8: production hardening and pilot rollout.
+- Phase 9: system cohesion, architecture and guardrail optimization, enterprise onboarding, and validated governed Hermes operations.
 
 This PRD defines the target product; a capability listed here is not considered implemented or accepted until its corresponding phase gate is demonstrated.
+
+The calibrated Phase 9 cohesion audit, official component contract matrix, data ownership, optimized flows, guardrail responsibilities, onboarding journey, and delivery gates are defined in `docs/PHASE_9_COHESION_ARCHITECTURE_ONBOARDING_PLAN.md`.
 
 ## 14. Initial Success Measures
 
@@ -546,8 +571,11 @@ This PRD defines the target product; a capability listed here is not considered 
 - Incorrect memory or document scoping could expose information across departments.
 - Broad MCP permissions could create unsafe agent actions.
 - User adoption may remain limited without training and use-case ownership.
-- Simplified Coolify service templates may not provide production-grade HA by default.
+- A single-server installer deployment does not provide production-grade high availability by itself.
 - Supermemory deployment topology, version support, API compatibility, backup/restore behavior, and organizational suitability must be confirmed.
+- Enabling the native Hermes Supermemory provider without controlling its automatic prefetch/sync/extraction/write behavior could create ungoverned memory egress or cross-scope retention.
+- AIHub's current generic OpenAI-compatible OCR adapter may not match the pinned Unlimited-OCR serving contract.
+- TypeScript 7's new compiler does not expose the former programmatic compiler API, and the repository currently pairs a Node 24 runtime contract with `@types/node` 26; dependent tooling and type/runtime alignment must pass the pinned compatibility suite or use the documented fallback.
 - A direct upload cannot be rebuilt after scratch purge unless its authoritative enterprise original remains available.
 - Scratch purge failure or uncontrolled volume backup could retain source content beyond the intended extraction window.
 
@@ -555,15 +583,17 @@ This PRD defines the target product; a capability listed here is not considered 
 
 - First three employee and departmental use cases.
 - Initial departments and pilot users.
-- Exact Qwen3 Embedding variant.
+- Whether Supermemory's local embedding is sufficient; if not, the exact Qwen3 Embedding variant, revision, dimensions, instruction template, and rebuild policy.
 - Memory-capture policy for conversations.
 - Required document classifications and retention periods.
 - Initial MCP systems and read/write permissions.
 - Approval matrix for consequential actions.
 - Production GPU redundancy and DRC model-serving approach.
 - First enterprise repository connectors, read-only source scopes, and source re-ingestion ownership.
-- Whether Supermemory Local's single-node operating model is acceptable or a supported commercial/dedicated deployment is required.
-- Required Supermemory release pin, API adapter version, persistent-data backup target, rebuild procedure, support, and air-gapped packaging.
+- Whether Supermemory Local's embedded-store operating model is acceptable or a supported separate backend/commercial deployment is required.
+- Required Supermemory artifact/edition, license/support entitlement, API adapter version, telemetry policy, persistent-data backup target, rebuild procedure, and air-gapped packaging.
+- LiteLLM configuration ownership: externally managed validated aliases or a pinned AIHub management-API reconciler.
+- Single-GPU admission limits versus an additional GPU or dedicated OCR/embedding host.
 
 ## 17. Product Acceptance at a High Level
 

@@ -209,6 +209,14 @@ export class PrismaToolActionProcessor {
     if (call.approval?.status !== "APPROVED" || call.status !== "EXECUTING") {
       throw new ToolActionPolicyError("The approved call is no longer executable.");
     }
+    if (
+      call.run.status !== "RUNNING" ||
+      !call.run.toolCapabilityTokenHash ||
+      !call.run.toolCapabilityExpiresAt ||
+      call.run.toolCapabilityExpiresAt <= new Date()
+    ) {
+      throw new ToolActionPolicyError("The originating agent run is no longer authorized for tool execution.");
+    }
     if (!control?.enabled || call.tool.status !== "ACTIVE" || !call.grant.enabled) {
       throw new ToolActionPolicyError("Tool execution was revoked after approval.");
     }

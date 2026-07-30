@@ -21,8 +21,10 @@ const profile: AgentProfile = {
   version: {
     id: "b41d3534-658b-4cf0-a046-2b20b15f44e5", version: 1, displayName: "Hermes Analyst",
     purpose: "Internal analysis", instructions: "Answer only the authorized request.", modelAlias: "hermes-agent",
+    soulMd: "You are a careful internal analyst who follows the approved evidence.", skills: [],
     maxTurns: 1, timeoutSeconds: 600, maxConcurrentRuns: 2, allowPrivateKnowledge: true, safeMode: true,
     createdAt: "2026-07-30T00:00:00.000Z", createdBy: session.id,
+    distributionDigest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   },
   activeVersionConfiguration: null,
   createdAt: "2026-07-30T00:00:00.000Z", updatedAt: "2026-07-30T00:00:00.000Z",
@@ -30,7 +32,7 @@ const profile: AgentProfile = {
 profile.activeVersionConfiguration = profile.version;
 const run: AgentRun = {
   id: RUN_ID, profileId: PROFILE_ID, profileSlug: profile.slug, profileName: profile.version.displayName,
-  profileVersion: 1, status: "QUEUED", input: "Analyze policy", output: null,
+  profileVersion: 1, profileDistributionDigest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", status: "QUEUED", input: "Analyze policy", output: null,
   effectiveCapabilities: ["knowledge:private:read"], sources: [], failureCode: null, failureMessage: null,
   queuedAt: "2026-07-30T00:00:00.000Z", startedAt: null, completedAt: null,
   createdAt: "2026-07-30T00:00:00.000Z", updatedAt: "2026-07-30T00:00:00.000Z",
@@ -47,10 +49,16 @@ function manager(): AgentManager {
     listProfiles: vi.fn(async () => ({ items: [profile] })),
     createProfile: vi.fn(async () => profile),
     updateProfile: vi.fn(async () => profile),
+    standbyProfile: vi.fn(async (): Promise<AgentProfile> => ({ ...profile, status: "STANDBY" })),
     activateProfile: vi.fn(async () => profile),
     suspendProfile: vi.fn(async (): Promise<AgentProfile> => ({ ...profile, status: "SUSPENDED" })),
     listRuns: vi.fn(async () => ({ items: [run] })),
     getRun: vi.fn(async () => run),
+    listRunEvents: vi.fn(async () => ({ items: [{
+      id: "d1fab491-ce72-4efe-8845-4d44150849d6", runId: RUN_ID, type: "SUBAGENT_COMPLETED" as const,
+      summary: "Bounded research completed.", status: "completed", toolName: null, childSessionId: "child-1",
+      durationMs: 1200, inputTokens: 20, outputTokens: 30, costUsd: null, occurredAt: "2026-07-30T00:00:01.000Z",
+    }] })),
     submitRun: vi.fn(async () => run),
     cancelRun: vi.fn(async (): Promise<AgentRun> => ({ ...run, status: "CANCEL_REQUESTED" })),
     getRuntimeControl: vi.fn(async () => ({ enabled: false, reason: "Acceptance pending.", updatedAt: "2026-07-30T00:00:00.000Z", updatedBy: null })),
@@ -80,6 +88,7 @@ describe("Hermes agent routes", () => {
     const headers = { cookie: `${ADMIN_SESSION_COOKIE}=${TOKEN}` };
     expect((await app.inject({ method: "GET", url: "/api/v1/admin/agents/profiles", headers })).json()).toMatchObject({ items: [{ slug: "hermes-analyst" }] });
     expect((await app.inject({ method: "GET", url: "/api/v1/admin/agents/runs", headers })).json()).toMatchObject({ items: [{ status: "QUEUED" }] });
+    expect((await app.inject({ method: "GET", url: `/api/v1/admin/agents/runs/${RUN_ID}/events`, headers })).json()).toMatchObject({ items: [{ type: "SUBAGENT_COMPLETED", childSessionId: "child-1" }] });
     expect((await app.inject({ method: "GET", url: "/api/v1/admin/agents/metrics", headers })).json()).toMatchObject({ profiles: 1 });
   });
 

@@ -1,4 +1,5 @@
 import type {
+  AdminRole,
   ConfigurationRevisionList,
   CreateServiceConnection,
   RollbackConfigurationResult,
@@ -9,6 +10,7 @@ import type {
 export interface AdminActor {
   id: string;
   subject: string;
+  role?: AdminRole;
 }
 
 export interface ConnectionManager {
@@ -53,5 +55,12 @@ export class ConnectionRevisionConflictError extends Error {
   constructor(message = "The connection changed before the rollback could be applied.") {
     super(message);
     this.name = "ConnectionRevisionConflictError";
+  }
+}
+
+export class ConnectionAuthorizationError extends Error {
+  constructor(message = "Only a Platform Administrator can change enterprise identity configuration.") {
+    super(message);
+    this.name = "ConnectionAuthorizationError";
   }
 }

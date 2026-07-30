@@ -3,6 +3,7 @@ import type {
   AgentProfile,
   AgentProfileList,
   AgentRun,
+  AgentRunEventList,
   AgentRunList,
   AgentRuntimeControl,
   CreateAgentProfile,
@@ -27,10 +28,12 @@ export interface AgentManager {
   listProfiles(principal: AgentPrincipal, includeInactive: boolean): Promise<AgentProfileList>;
   createProfile(principal: AgentPrincipal, input: CreateAgentProfile): Promise<AgentProfile>;
   updateProfile(principal: AgentPrincipal, profileId: string, input: UpdateAgentProfile): Promise<AgentProfile>;
+  standbyProfile(principal: AgentPrincipal, profileId: string): Promise<AgentProfile>;
   activateProfile(principal: AgentPrincipal, profileId: string): Promise<AgentProfile>;
   suspendProfile(principal: AgentPrincipal, profileId: string): Promise<AgentProfile>;
   listRuns(principal: AgentPrincipal, includeAll: boolean): Promise<AgentRunList>;
   getRun(principal: AgentPrincipal, runId: string, includeAll: boolean): Promise<AgentRun>;
+  listRunEvents(principal: AgentPrincipal, runId: string, includeAll: boolean): Promise<AgentRunEventList>;
   submitRun(principal: AgentPrincipal, input: SubmitAgentRun): Promise<AgentRun>;
   cancelRun(principal: AgentPrincipal, runId: string, includeAll: boolean): Promise<AgentRun>;
   getRuntimeControl(): Promise<AgentRuntimeControl>;

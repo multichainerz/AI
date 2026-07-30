@@ -2,7 +2,6 @@ import {
   createCipheriv,
   createDecipheriv,
   randomBytes,
-  type BinaryLike,
 } from "node:crypto";
 
 const ALGORITHM = "aes-256-gcm";
@@ -29,11 +28,11 @@ export interface EnvelopeEncryptionOptions {
 function encryptAesGcm(
   plaintext: Uint8Array,
   key: Uint8Array,
-  additionalData: BinaryLike,
+  additionalData: string,
 ): { ciphertext: Buffer; nonce: Buffer; authTag: Buffer } {
   const nonce = randomBytes(NONCE_BYTES);
   const cipher = createCipheriv(ALGORITHM, key, nonce);
-  cipher.setAAD(additionalData);
+  cipher.setAAD(Buffer.from(additionalData, "utf8"));
   const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
 
   return { ciphertext, nonce, authTag: cipher.getAuthTag() };
@@ -44,10 +43,10 @@ function decryptAesGcm(
   key: Uint8Array,
   nonce: Uint8Array,
   authTag: Uint8Array,
-  additionalData: BinaryLike,
+  additionalData: string,
 ): Buffer {
   const decipher = createDecipheriv(ALGORITHM, key, nonce);
-  decipher.setAAD(additionalData);
+  decipher.setAAD(Buffer.from(additionalData, "utf8"));
   decipher.setAuthTag(authTag);
   return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
 }

@@ -106,6 +106,10 @@ export const connectionDefinitions: ConnectionDefinition[] = [
       { name: "scopes", label: "Scopes", type: "text-list", defaultValue: ["openid", "profile", "email", "groups"], help: "Comma-separated OIDC scopes; openid is required." },
       { name: "groupsClaim", label: "Groups claim", type: "text", defaultValue: "groups", help: "Dot-separated ID-token claim containing group memberships." },
       { name: "allowedGroups", label: "Allowed groups", type: "text-list", help: "At least one comma-separated group is required. Access fails closed if none match." },
+      { name: "platformAdminGroups", label: "Platform admin groups", type: "text-list", help: "Members receive the complete AIHub administrator scope set after OIDC verification." },
+      { name: "securityAdminGroups", label: "Security admin groups", type: "text-list", help: "Members receive security policy, approval, identity, and audit administration scopes." },
+      { name: "operationsAdminGroups", label: "Operations admin groups", type: "text-list", help: "Members receive operational control without credential or security-policy administration." },
+      { name: "auditorGroups", label: "Auditor groups", type: "text-list", help: "Members receive read-only evidence and configuration scopes." },
       { name: "emailClaim", label: "Email claim", type: "text", defaultValue: "email", help: "ID-token claim used for the employee email address." },
       { name: "nameClaim", label: "Display-name claim", type: "text", defaultValue: "name", help: "ID-token claim shown in the AIHub interface." },
       {

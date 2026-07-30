@@ -12,7 +12,7 @@ export class BootstrapTokenAuthenticator implements AdminAuthenticator {
   readonly #expectedDigest: Buffer;
 
   constructor(token: string) {
-    if (token.length < 32) throw new Error("Bootstrap administrator token is too short.");
+    if (token.length < 32) throw new Error("Installation claim is too short.");
     this.#expectedDigest = digest(token);
   }
 

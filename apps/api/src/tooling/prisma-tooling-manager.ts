@@ -597,6 +597,14 @@ export class PrismaToolingManager implements ToolingManager {
   private async assertApprovalStillAuthorized(approval: any, client: any = this.prisma): Promise<void> {
     const control = await client.toolRuntimeControl.findUnique({ where: { id: "global" } });
     const { call } = approval;
+    if (
+      call.run.status !== "RUNNING" ||
+      !call.run.toolCapabilityTokenHash ||
+      !call.run.toolCapabilityExpiresAt ||
+      call.run.toolCapabilityExpiresAt <= new Date()
+    ) {
+      throw new ToolingDeniedError("The originating agent run is no longer authorized for tool execution.");
+    }
     if (!control?.enabled || call.tool.status !== "ACTIVE" || !call.grant.enabled) throw new ToolingDeniedError("Tool execution was revoked before approval.");
     if (call.grant.toolId !== call.toolId || call.grant.profileVersionId !== call.run.profileVersionId || call.grant.resourceScope !== "OWNER_ONLY") {
       throw new ToolingDeniedError("The stored tool grant no longer matches the exact run and tool scope.");

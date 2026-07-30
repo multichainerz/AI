@@ -10,7 +10,7 @@ import type {
   OidcStatus,
   ChatMetrics,
 } from "@aihub/contracts";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   AIHubApiError,
   createAdministratorSession,
@@ -32,17 +32,19 @@ import {
 } from "./api.js";
 import { ConnectionDrawer, type ConnectionDraft } from "./connection-drawer.js";
 import { connectionDefinitions } from "./connection-definitions.js";
-import { OperationsView } from "./operations-view.js";
-import { ChatView } from "./chat-view.js";
-import { DocumentsView } from "./documents-view.js";
-import { MemoryView } from "./memory-view.js";
-import { AgentsView } from "./agents-view.js";
-import { ToolingView } from "./tooling-view.js";
-import { ModelsView } from "./models-view.js";
-import { GuardrailsView } from "./guardrails-view.js";
-import { PromptsView } from "./prompts-view.js";
 
-type ActiveView = "Overview" | "Chat" | "Models" | "Prompts" | "Agents" | "Documents" | "Memory" | "Integrations" | "Guardrails" | "Operations";
+const OperationsView = lazy(() => import("./operations-view.js").then((module) => ({ default: module.OperationsView })));
+const ChatView = lazy(() => import("./chat-view.js").then((module) => ({ default: module.ChatView })));
+const DocumentsView = lazy(() => import("./documents-view.js").then((module) => ({ default: module.DocumentsView })));
+const MemoryView = lazy(() => import("./memory-view.js").then((module) => ({ default: module.MemoryView })));
+const AgentsView = lazy(() => import("./agents-view.js").then((module) => ({ default: module.AgentsView })));
+const ToolingView = lazy(() => import("./tooling-view.js").then((module) => ({ default: module.ToolingView })));
+const ModelsView = lazy(() => import("./models-view.js").then((module) => ({ default: module.ModelsView })));
+const GuardrailsView = lazy(() => import("./guardrails-view.js").then((module) => ({ default: module.GuardrailsView })));
+const PromptsView = lazy(() => import("./prompts-view.js").then((module) => ({ default: module.PromptsView })));
+const OnboardingView = lazy(() => import("./onboarding-view.js").then((module) => ({ default: module.OnboardingView })));
+
+type ActiveView = "Overview" | "Deployment" | "Chat" | "Models" | "Prompts" | "Agents" | "Documents" | "Memory" | "Integrations" | "Guardrails" | "Operations";
 
 const navigation: ReadonlyArray<{
   label: string;
@@ -50,6 +52,7 @@ const navigation: ReadonlyArray<{
   available: boolean;
 }> = [
   { label: "Overview", icon: "overview", available: true },
+  { label: "Deployment", icon: "setup", available: true },
   { label: "Chat", icon: "chat", available: true },
   { label: "Models", icon: "models", available: true },
   { label: "Prompts", icon: "prompts", available: true },
@@ -64,6 +67,7 @@ const navigation: ReadonlyArray<{
 function Glyph({ name }: { name: string }) {
   const glyphs: Record<string, ReactNode> = {
     overview: <><path d="M4 13h6V4H4v9Z"/><path d="M14 20h6v-9h-6v9Z"/><path d="M4 20h6v-3H4v3Z"/><path d="M14 7h6V4h-6v3Z"/></>,
+    setup: <><path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h5M8 17h3"/><path d="m15.5 16.5 1.5 1.5 3-3"/></>,
     chat: <path d="M21 12a8 8 0 0 1-8 8H7l-4 2 1.4-4.2A8 8 0 1 1 21 12Z"/>,
     models: <><path d="m12 2 8 4.5-8 4.5-8-4.5L12 2Z"/><path d="m4 11 8 4.5 8-4.5"/><path d="m4 15.5 8 4.5 8-4.5"/></>,
     prompts: <><path d="M6 3h12v18H6z"/><path d="M9 8h6M9 12h6M9 16h4"/></>,
@@ -112,6 +116,8 @@ function App() {
     const hash = window.location.hash.toLowerCase();
     return hash === "#chat"
       ? "Chat"
+      : hash === "#setup" || hash === "#deployment"
+        ? "Deployment"
       : hash === "#models"
         ? "Models"
         : hash === "#prompts"
@@ -415,6 +421,7 @@ function App() {
 
       <main className={activeView === "Chat" ? "chat-page" : undefined}>
         <div className="mobile-brand"><span className="brand-mark">M</span><strong>MPM AIHub</strong></div>
+        <Suspense fallback={<section className="view-loading" aria-live="polite"><span className="setup-spinner" />Loading workspace...</section>}>
         {activeView === "Chat" ? (
           <ChatView
             unlocked={chatUnlocked}
@@ -505,6 +512,17 @@ function App() {
               setAdminSession(null);
             }}
           />
+        ) : activeView === "Deployment" ? (
+          <OnboardingView
+            unlocked={unlocked}
+            oidcConfigured={oidcStatus?.administratorSignIn === true}
+            onConfigure={(kind) => openConnectionSettings(kind)}
+            onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23deployment")}
+            onUnauthorized={() => {
+              sessionGeneration.current += 1;
+              setAdminSession(null);
+            }}
+          />
         ) : activeView === "Operations" ? (
           <OperationsView
             unlocked={unlocked}
@@ -532,8 +550,8 @@ function App() {
             <section className={`setup-banner ${bootstrapState.toLowerCase()}`}>
               <div className="banner-icon"><Glyph name="guardrails" /></div>
               <div>
-                <strong>{bootstrapState === "READY" ? "Configuration vault ready" : bootstrapState === "REQUIRED" ? "Installation bootstrap required" : "Configuration vault locked"}</strong>
-                <p>{bootstrapState === "READY" ? "Unlock an administrator session to manage encrypted endpoints and credentials." : "Complete the protected database, master-key, and administrator-token bootstrap before configuring services."}</p>
+                <strong>{bootstrapState === "READY" ? "Encrypted credential store ready" : bootstrapState === "REQUIRED" ? "Installation claim required" : "Installation trust locked"}</strong>
+                <p>{bootstrapState === "READY" ? "Claim an administrator session to manage encrypted endpoints and credentials." : "Run the protected host installer before configuring services."}</p>
               </div>
               <button type="button" onClick={() => openConnectionSettings()}>{bootstrapState === "READY" ? "Open connections" : "Review setup"}</button>
             </section>
@@ -548,7 +566,7 @@ function App() {
             <div className="content-grid">
               <section className="panel connections-panel">
                 <div className="panel-heading">
-                  <div><p className="section-kicker">Infrastructure</p><h2>Service connections</h2><p>Endpoints and credentials are managed in the encrypted vault.</p></div>
+                  <div><p className="section-kicker">Infrastructure</p><h2>Service connections</h2><p>Endpoints and credentials are managed in AIHub's encrypted credential store.</p></div>
                   <button className="text-button" type="button" onClick={() => openConnectionSettings()}>Manage connections</button>
                 </div>
                 <div className="connection-list">
@@ -603,6 +621,7 @@ function App() {
             </div>
           </>
         )}
+        </Suspense>
       </main>
 
       <ConnectionDrawer

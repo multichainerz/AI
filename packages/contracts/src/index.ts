@@ -7,6 +7,7 @@ export * from "./jobs.js";
 export * from "./identity.js";
 export * from "./memory.js";
 export * from "./models.js";
+export * from "./onboarding.js";
 export * from "./guardrails.js";
 export * from "./prompts.js";
 export * from "./documents.js";

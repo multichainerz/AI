@@ -47,6 +47,8 @@ import type { GuardrailManager } from "./guardrails/guardrail-manager.js";
 import { PrismaGuardrailManager } from "./guardrails/prisma-guardrail-manager.js";
 import type { PromptManager } from "./prompts/prompt-manager.js";
 import { PrismaPromptManager } from "./prompts/prisma-prompt-manager.js";
+import type { OnboardingManager } from "./onboarding/onboarding-manager.js";
+import { PrismaOnboardingManager } from "./onboarding/prisma-onboarding-manager.js";
 
 export type BootstrapState = "REQUIRED" | "READY" | "LOCKED";
 
@@ -67,6 +69,7 @@ export interface RuntimeServices {
   agentManager?: AgentManager;
   toolingManager?: ToolingManager;
   aiOpsManager?: AiOpsManager;
+  onboardingManager?: OnboardingManager;
   prisma?: AIHubPrismaClient;
 }
 
@@ -102,6 +105,10 @@ export function createRuntimeServices(): RuntimeServices {
     const authenticator = new BootstrapTokenAuthenticator(
       readBootstrapSecret("aihub_bootstrap_token"),
     );
+    const claimExpiresAt = hasBootstrapSecret("aihub_installation_claim_expires_at")
+      ? new Date(readBootstrapSecret("aihub_installation_claim_expires_at"))
+      : undefined;
+    if (claimExpiresAt && Number.isNaN(claimExpiresAt.getTime())) throw new Error("Installation claim expiry is invalid.");
 
     const connectionManager = new PrismaConnectionManager(prisma, encryption);
     const connectionTestService = new ConnectionTestService(connectionManager);
@@ -110,7 +117,7 @@ export function createRuntimeServices(): RuntimeServices {
       connectionTestService,
       { error: (message, error) => console.error(message, error) },
     );
-    const sessionManager = new PrismaAdminSessionManager(prisma, authenticator);
+    const sessionManager = new PrismaAdminSessionManager(prisma, authenticator, claimExpiresAt);
     const queue = new PgBossQueueService(databaseUrl, "api", {
       error: (message, error) => console.error(message, error),
       warn: (message, details) => console.warn(message, details),
@@ -146,6 +153,7 @@ export function createRuntimeServices(): RuntimeServices {
       agents: agentManager,
       tools: toolingManager,
     });
+    const onboardingManager = new PrismaOnboardingManager(prisma, masterKey, aiOpsManager);
     return {
       bootstrapState,
       prisma,
@@ -159,6 +167,8 @@ export function createRuntimeServices(): RuntimeServices {
         prisma,
         connectionManager,
         encryption,
+        fetch,
+        sessionManager,
       ),
       documentManager,
       memoryManager,
@@ -168,6 +178,7 @@ export function createRuntimeServices(): RuntimeServices {
       agentManager,
       toolingManager,
       aiOpsManager,
+      onboardingManager,
     };
   } catch {
     return { bootstrapState: "LOCKED" };

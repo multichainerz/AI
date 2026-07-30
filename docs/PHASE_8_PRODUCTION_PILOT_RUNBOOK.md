@@ -58,10 +58,11 @@ Before producing a release candidate, run:
 ```bash
 pnpm install --frozen-lockfile
 pnpm verify
+AIHUB_INTEGRATION_DATABASE_URL=postgresql://aihub_test:password@127.0.0.1:5432/aihub_test pnpm verify:postgres
 pnpm security:audit
 ```
 
-`pnpm verify` executes type checking, all automated tests, production builds, and Prisma validation. `pnpm security:audit` rejects high or critical advisories in production JavaScript dependencies. MPM must additionally scan the built API, worker, web, PostgreSQL, Nginx, and document-conversion images with its approved image scanner and policy database. Record reports by immutable artifact or ticket reference rather than pasting sensitive reports into notes.
+`pnpm verify` executes type checking, all automated tests, production builds, and Prisma validation. `pnpm verify:postgres` deploys every migration into a generated disposable schema on a real PostgreSQL server, verifies the resulting onboarding contract, and removes that schema; never point it at a database that is not approved for integration testing. `pnpm security:audit` rejects high or critical advisories in production JavaScript dependencies. MPM must additionally scan the built API, worker, web, PostgreSQL, Nginx, and document-conversion images with its approved image scanner and policy database. Record reports by immutable artifact or ticket reference rather than pasting sensitive reports into notes.
 
 ## Backup and recovery evidence
 
@@ -86,9 +87,9 @@ The AIHub scratch volume must not be backed up. Verify application-level encrypt
 
 Back up and restore persistent Supermemory data using the procedure approved for the exact pinned release. Verify API compatibility, document counts, private-container isolation, representative retrieval, and deletion behavior. Then demonstrate a slower clean rebuild by refetching a representative authorized corpus from enterprise sources through AIHub. PostgreSQL cannot rebuild document bodies by itself. Record both achieved recovery times under `recovery-supermemory-restore`.
 
-### Configuration vault and master key
+### Encrypted credential store and encryption key
 
-PostgreSQL contains encrypted service configuration but cannot decrypt it without the separately held AIHub master key. Back up the database and key through distinct approved custody paths. The exercise must prove that an authorized recovery team can mount the recovered key as a protected file, start AIHub, decrypt configurations, and run sanitized credential-aware connection tests. Never copy the key into AIHub notes, logs, tickets, or evidence references.
+PostgreSQL contains encrypted service configuration but cannot decrypt it without the separately held AIHub credential-encryption key. Back up the database and key through distinct approved custody paths. The exercise must prove that an authorized recovery team can mount the recovered key as a protected file, start AIHub, decrypt configurations, and run sanitized credential-aware connection tests. Never copy the key into AIHub notes, logs, tickets, or evidence references.
 
 ## Failure, load, and capacity exercises
 
@@ -110,8 +111,8 @@ Do not mark `operations-capacity-failure-tests` verified from synthetic local un
 
 Before pilot traffic:
 
-1. Apply all committed Prisma migrations through `20260730001700_ephemeral_document_staging` using the one-shot migration services.
-2. Confirm Coolify health checks, restart policies, persistent volumes, internal-only data network, and service ordering.
+1. Apply all committed Prisma migrations using the one-shot migration services; do not pin operations to a stale migration directory.
+2. Confirm signed-installer health checks, restart policies, persistent volumes, internal-only data network, and service ordering.
 3. Verify approved internal DNS names, TLS chain and expiry monitoring, proxy timeouts, streaming behavior, upload limits, and request-ID propagation.
 4. Prove that PostgreSQL and infrastructure administration are unreachable from Hermes and untrusted user networks.
 5. Verify outbound destinations against the MPM allowlist and confirm denied egress is logged.

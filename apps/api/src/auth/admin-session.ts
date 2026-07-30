@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { isIP } from "node:net";
 import {
   ADMIN_SCOPES,
@@ -91,8 +91,20 @@ export interface AdminSessionManager {
     bootstrapToken: string | undefined,
     context: AdminRequestContext,
   ): Promise<IssuedAdminSession | null>;
+  issueFederatedSession?(
+    subject: string,
+    role: AdminRole,
+    context: AdminRequestContext,
+  ): Promise<IssuedAdminSession>;
   authenticate(token: string | undefined, requiredScope?: AdminScope): Promise<AdminPrincipal | null>;
   revoke(token: string | undefined): Promise<boolean>;
+}
+
+export class InstallationClaimRejectedError extends Error {
+  constructor(readonly reason: "CONSUMED" | "EXPIRED") {
+    super(reason === "CONSUMED" ? "The installation claim has already been used." : "The installation claim has expired.");
+    this.name = "InstallationClaimRejectedError";
+  }
 }
 
 function tokenDigest(token: string): Uint8Array<ArrayBuffer> {
@@ -133,13 +145,14 @@ export class PrismaAdminSessionManager implements AdminSessionManager {
   constructor(
     private readonly prisma: AIHubPrismaClient,
     private readonly bootstrapAuthenticator: AdminAuthenticator,
+    private readonly installationClaimExpiresAt?: Date,
   ) {}
 
   async createBootstrapSession(
     bootstrapToken: string | undefined,
     context: AdminRequestContext,
   ): Promise<IssuedAdminSession | null> {
-    if (!this.bootstrapAuthenticator.verify(bootstrapToken)) return null;
+    if (!bootstrapToken || !this.bootstrapAuthenticator.verify(bootstrapToken)) return null;
 
     const token = randomBytes(32).toString("base64url");
     const sourceIp = context.sourceIp && isIP(context.sourceIp) ? context.sourceIp : null;
@@ -147,6 +160,17 @@ export class PrismaAdminSessionManager implements AdminSessionManager {
     const idleExpiresAt = new Date(now.getTime() + ADMIN_SESSION_IDLE_MS);
     const absoluteExpiresAt = new Date(now.getTime() + ADMIN_SESSION_ABSOLUTE_MS);
     const session = await this.prisma.$transaction(async (transaction) => {
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('aihub-installation-claim', 0))`;
+      const claimHash = tokenDigest(bootstrapToken);
+      const existingClaim = await transaction.installationClaim.findUnique({ where: { id: "initial" } });
+      if (existingClaim) {
+        const expectedHash = Buffer.from(existingClaim.tokenHash);
+        if (expectedHash.byteLength !== claimHash.byteLength || !timingSafeEqual(expectedHash, claimHash)) return null;
+        if (existingClaim.redeemedAt) throw new InstallationClaimRejectedError("CONSUMED");
+        if (existingClaim.expiresAt && existingClaim.expiresAt <= now) throw new InstallationClaimRejectedError("EXPIRED");
+      } else if (this.installationClaimExpiresAt && this.installationClaimExpiresAt <= now) {
+        throw new InstallationClaimRejectedError("EXPIRED");
+      }
       await transaction.administratorSession.deleteMany({
         where: {
           absoluteExpiresAt: { lt: new Date(now.getTime() - ADMIN_SESSION_RETENTION_MS) },
@@ -164,6 +188,24 @@ export class PrismaAdminSessionManager implements AdminSessionManager {
           userAgentHash: userAgentDigest(context.userAgent) ?? null,
         },
       });
+      if (existingClaim) {
+        const consumed = await transaction.installationClaim.updateMany({
+          where: { id: "initial", redeemedAt: null, tokenHash: claimHash },
+          data: { redeemedAt: now, redeemedSessionId: created.id, sourceIp },
+        });
+        if (consumed.count !== 1) throw new InstallationClaimRejectedError("CONSUMED");
+      } else {
+        await transaction.installationClaim.create({
+          data: {
+            id: "initial",
+            tokenHash: claimHash,
+            expiresAt: this.installationClaimExpiresAt ?? null,
+            redeemedAt: now,
+            redeemedSessionId: created.id,
+            sourceIp,
+          },
+        });
+      }
       await transaction.auditEvent.create({
         data: {
           actorType: "USER",
@@ -173,12 +215,43 @@ export class PrismaAdminSessionManager implements AdminSessionManager {
           resourceId: created.id,
           outcome: "SUCCESS",
           sourceIp,
-          metadata: { role: created.role, authenticationMethod: "bootstrap-token" },
+          metadata: { role: created.role, authenticationMethod: "single-use-installation-claim" },
         },
       });
       return created;
     });
 
+    return session ? { token, principal: principalFromRecord(session) } : null;
+  }
+
+  async issueFederatedSession(
+    subject: string,
+    role: AdminRole,
+    context: AdminRequestContext,
+  ): Promise<IssuedAdminSession> {
+    if (!subject || subject.length > 160) throw new Error("Federated administrator subject is invalid.");
+    const token = randomBytes(32).toString("base64url");
+    const sourceIp = context.sourceIp && isIP(context.sourceIp) ? context.sourceIp : null;
+    const now = new Date();
+    const idleExpiresAt = new Date(now.getTime() + ADMIN_SESSION_IDLE_MS);
+    const absoluteExpiresAt = new Date(now.getTime() + ADMIN_SESSION_ABSOLUTE_MS);
+    const session = await this.prisma.$transaction(async (transaction) => {
+      await transaction.administratorSession.deleteMany({
+        where: { absoluteExpiresAt: { lt: new Date(now.getTime() - ADMIN_SESSION_RETENTION_MS) } },
+      });
+      const created = await transaction.administratorSession.create({
+        data: {
+          tokenHash: tokenDigest(token), subject, role, lastSeenAt: now, idleExpiresAt,
+          absoluteExpiresAt, sourceIp, userAgentHash: userAgentDigest(context.userAgent) ?? null,
+        },
+      });
+      await transaction.auditEvent.create({ data: {
+        actorType: "USER", actorId: created.id, action: "administrator.session_created",
+        resourceType: "AdministratorSession", resourceId: created.id, outcome: "SUCCESS", sourceIp,
+        metadata: { role, authenticationMethod: "oidc-pkce-group-mapping" },
+      } });
+      return created;
+    });
     return { token, principal: principalFromRecord(session) };
   }
 

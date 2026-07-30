@@ -4,7 +4,7 @@
 
 The Models workspace is AIHub's approved catalogue and workload-assignment control. It does not create, download, load, or mutate models in LiteLLM, vLLM, Unlimited OCR, or Supermemory. Operators configure those serving systems separately, register their protected endpoints in AIHub connections, and then approve the aliases AIHub may use.
 
-PostgreSQL stores catalogue state, limits, evaluation linkage, optimistic revisions, and audit events. Connector credentials remain in the encrypted connection vault and are never copied into a model route or returned to the browser.
+PostgreSQL stores catalogue state, limits, evaluation linkage, optimistic revisions, and audit events. Connector credentials remain in AIHub's encrypted credential store and are never copied into a model route or returned to the browser.
 
 ## Workload mappings
 

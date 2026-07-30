@@ -58,6 +58,7 @@ services:
       - aihub_database_url
       - aihub_master_key
       - aihub_bootstrap_token
+      - aihub_installation_claim_expires_at
     environment:
       AIHUB_DOCUMENT_SCRATCH_DIR: /var/lib/aihub-document-scratch
     volumes:
@@ -99,7 +100,7 @@ services:
       api:
         condition: service_healthy
     ports:
-      - "8080:8080"
+      - "${AIHUB_HTTP_PORT:-8080}:8080"
     networks:
       - application
     healthcheck:
@@ -117,6 +118,8 @@ secrets:
     file: ./.local/secrets/aihub_master_key
   aihub_bootstrap_token:
     file: ./.local/secrets/aihub_bootstrap_token
+  aihub_installation_claim_expires_at:
+    file: ./.local/secrets/aihub_installation_claim_expires_at
 
 volumes:
   postgres_data:

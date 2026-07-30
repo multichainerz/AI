@@ -97,11 +97,12 @@ describe("service connection configuration", () => {
       scopes: ["openid", "profile", "email", "groups"],
       groupsClaim: "realm_access.groups",
       allowedGroups: ["AIHub-Pilot"],
+      platformAdminGroups: ["AIHub-Platform-Admins"],
       emailClaim: "email",
       nameClaim: "name",
       tokenAuthMethod: "client_secret_basic",
       caseSensitiveGroups: false,
-    })).toMatchObject({ clientId: "aihub", allowedGroups: ["AIHub-Pilot"] });
+    })).toMatchObject({ clientId: "aihub", allowedGroups: ["AIHub-Pilot"], platformAdminGroups: ["AIHub-Platform-Admins"] });
 
     expect(() => parseServiceConnectionConfiguration("VLLM", {
       allowedGroups: ["AIHub-Pilot"],

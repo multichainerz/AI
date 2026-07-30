@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AdminAuthenticator } from "./bootstrap-auth.js";
 import {
   ADMIN_SESSION_IDLE_MS,
+  InstallationClaimRejectedError,
   PrismaAdminSessionManager,
 } from "./admin-session.js";
 
@@ -36,6 +37,11 @@ describe("PrismaAdminSessionManager", () => {
     const deleteMany = vi.fn(async () => ({ count: 1 }));
     const auditCreate = vi.fn(async () => ({}));
     const transaction = {
+      $executeRaw: vi.fn(async () => 1),
+      installationClaim: {
+        findUnique: vi.fn(async () => null),
+        create: vi.fn(async () => ({})),
+      },
       administratorSession: {
         deleteMany,
         create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
@@ -63,7 +69,53 @@ describe("PrismaAdminSessionManager", () => {
     expect(JSON.stringify(storedData)).not.toContain(issued?.token);
     expect(issued?.principal).toMatchObject({ role: "PLATFORM_ADMIN" });
     expect(deleteMany).toHaveBeenCalledOnce();
+    expect(transaction.installationClaim.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ redeemedSessionId: SESSION_ID, redeemedAt: new Date("2026-07-30T00:00:00.000Z") }),
+    }));
     expect(auditCreate).toHaveBeenCalledOnce();
+  });
+
+  it("rejects replay after the installation claim has been consumed", async () => {
+    const token = "a-secure-single-use-installation-claim";
+    const transaction = {
+      $executeRaw: vi.fn(async () => 1),
+      installationClaim: {
+        findUnique: vi.fn(async () => ({
+          tokenHash: new Uint8Array(await import("node:crypto").then(({ createHash }) => createHash("sha256").update(token).digest())),
+          redeemedAt: new Date("2026-07-30T00:00:00.000Z"),
+          expiresAt: new Date("2026-07-30T01:00:00.000Z"),
+        })),
+      },
+      administratorSession: { deleteMany: vi.fn(), create: vi.fn() },
+    };
+    const prisma = { $transaction: vi.fn(async (callback: (client: typeof transaction) => unknown) => callback(transaction)) } as unknown as AIHubPrismaClient;
+
+    await expect(new PrismaAdminSessionManager(prisma, { verify: (candidate) => candidate === token })
+      .createBootstrapSession(token, {})).rejects.toBeInstanceOf(InstallationClaimRejectedError);
+    expect(transaction.administratorSession.create).not.toHaveBeenCalled();
+  });
+
+  it("issues a scoped administrator session for a verified federated subject", async () => {
+    const transaction = {
+      administratorSession: {
+        deleteMany: vi.fn(async () => ({ count: 0 })),
+        create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => storedSession({ ...data, role: "AUDITOR", subject: `oidc:${"b".repeat(64)}` })),
+      },
+      auditEvent: { create: vi.fn(async () => ({})) },
+    };
+    const prisma = {
+      $transaction: vi.fn(async (callback: (client: typeof transaction) => unknown) => callback(transaction)),
+    } as unknown as AIHubPrismaClient;
+    const issued = await new PrismaAdminSessionManager(prisma, { verify: () => false })
+      .issueFederatedSession(`oidc:${"b".repeat(64)}`, "AUDITOR", { sourceIp: "127.0.0.1" });
+
+    expect(issued.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(issued.principal.role).toBe("AUDITOR");
+    expect(issued.principal.scopes).toContain("audit:read");
+    expect(issued.principal.scopes).not.toContain("connections:write");
+    expect(transaction.auditEvent.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ metadata: { role: "AUDITOR", authenticationMethod: "oidc-pkce-group-mapping" } }),
+    }));
   });
 
   it("extends idle expiry without passing the absolute session limit", async () => {

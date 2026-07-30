@@ -1,6 +1,7 @@
-import type { EnterpriseSession, OidcStatus } from "@aihub/contracts";
+import { ADMIN_SCOPES, type EnterpriseSession, type OidcStatus } from "@aihub/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.js";
+import { ADMIN_SESSION_COOKIE } from "../auth/admin-session.js";
 import {
   ENTERPRISE_SESSION_COOKIE,
   OIDC_STATE_COOKIE,
@@ -37,6 +38,7 @@ function memoryIdentityManager(): EnterpriseIdentityManager {
   return {
     status: vi.fn(async (): Promise<OidcStatus> => ({
       configured: true,
+      administratorSignIn: true,
       message: "Enterprise sign-in is configured.",
     })),
     startLogin: vi.fn(async () => ({
@@ -72,6 +74,7 @@ describe("enterprise identity routes", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({
       configured: true,
+      administratorSignIn: true,
       message: "Enterprise sign-in is configured.",
     });
     expect(response.headers["cache-control"]).toBe("no-store");
@@ -122,6 +125,40 @@ describe("enterprise identity routes", () => {
       STATE,
       expect.any(Object),
     );
+  });
+
+  it("sets a separate scoped administrator cookie for an OIDC administrator group", async () => {
+    const manager = memoryIdentityManager();
+    const administratorToken = "a".repeat(43);
+    manager.completeLogin = vi.fn(async () => ({
+      token: SESSION_TOKEN,
+      returnTo: "/#deployment",
+      principal,
+      administratorSession: {
+        token: administratorToken,
+        principal: {
+          id: "49df7682-56bf-4be5-a95f-d69887e6496c",
+          subject: `oidc:${"b".repeat(64)}`,
+          role: "PLATFORM_ADMIN" as const,
+          scopes: [...ADMIN_SCOPES],
+          createdAt: "2026-07-30T00:00:00.000Z",
+          idleExpiresAt: "2026-07-30T00:15:00.000Z",
+          absoluteExpiresAt: "2026-07-30T08:00:00.000Z",
+        },
+      },
+    }));
+    const app = await identityApp(manager);
+    const response = await app.inject({
+      method: "GET",
+      url: `/api/v1/auth/oidc/callback?code=approved&state=${STATE}`,
+      headers: { cookie: `${OIDC_STATE_COOKIE}=${STATE}` },
+    });
+
+    expect(response.statusCode).toBe(302);
+    expect(response.headers["set-cookie"]).toEqual(expect.arrayContaining([
+      expect.stringContaining(`${ENTERPRISE_SESSION_COOKIE}=${SESSION_TOKEN}`),
+      expect.stringContaining(`${ADMIN_SESSION_COOKIE}=${administratorToken}`),
+    ]));
   });
 
   it("restores and revokes an enterprise session", async () => {

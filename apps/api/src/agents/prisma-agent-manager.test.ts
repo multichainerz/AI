@@ -20,6 +20,9 @@ function version(versionNumber: number) {
     displayName: `Hermes Analyst v${versionNumber}`,
     purpose: "Internal analysis",
     instructions: "Answer from authorized evidence only.",
+    soulMd: "You are a careful internal analyst who follows the approved evidence.",
+    skills: [],
+    distributionDigest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     modelAlias: "hermes-agent",
     maxTurns: 1,
     timeoutSeconds: 600,
@@ -33,11 +36,11 @@ function version(versionNumber: number) {
 
 function storedRun() {
   return {
-    id: RUN_ID, profileId: PROFILE_ID, profileVersionId: VERSION_ID, profileVersion: 1,
+    id: RUN_ID, profileId: PROFILE_ID, profileVersionId: VERSION_ID, profileVersion: 1, profileDistributionDigest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     ownerSubject: principal.subject, requestedBy: principal.id, status: "QUEUED", input: "Analyze policy",
     output: null, effectiveCapabilities: ["knowledge:private:read"], sources: [], externalRunId: null,
     jobId: null, failureCode: null, failureMessage: null, queuedAt: now, startedAt: null, completedAt: null,
-    createdAt: now, updatedAt: now, profile: { slug: "hermes-analyst" }, version: { displayName: "Hermes Analyst v1" },
+    createdAt: now, updatedAt: now, profile: { slug: "hermes-analyst" }, version: { displayName: "Hermes Analyst v1", distributionDigest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
   };
 }
 
@@ -140,7 +143,8 @@ describe("PrismaAgentManager", () => {
         findUnique: vi.fn(async () => ({ id: PROFILE_ID, slug: "hermes-analyst", currentVersion: 1, activeVersion: null })),
         update: vi.fn(),
       },
-      agentProfileVersion: { findUnique: vi.fn(async () => ({ modelAlias: "hermes-agent" })) },
+      agentProfileVersion: { findUnique: vi.fn(async () => ({ modelAlias: "hermes-agent", distributionDigest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" })) },
+      componentCompatibility: { findUnique: vi.fn(async () => ({ status: "PASSED" })) },
       modelDeployment: { count: vi.fn(async () => 0), findFirst: vi.fn() },
       evaluationRun: { findFirst: vi.fn(async () => null) },
       auditEvent: { create: vi.fn() },
@@ -149,6 +153,28 @@ describe("PrismaAgentManager", () => {
 
     await expect(new PrismaAgentManager(prisma, {} as PgBossQueueService).activateProfile(principal, PROFILE_ID))
       .rejects.toBeInstanceOf(AgentConflictError);
+    expect(transaction.agentProfile.update).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when Hermes compatibility has not passed", async () => {
+    const transaction = {
+      agentProfile: {
+        findUnique: vi.fn(async () => ({ id: PROFILE_ID, slug: "hermes-analyst", currentVersion: 1, activeVersion: null })),
+        update: vi.fn(),
+      },
+      agentProfileVersion: { findUnique: vi.fn(async () => ({ modelAlias: "hermes-agent", distributionDigest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" })) },
+      componentCompatibility: {
+        findUnique: vi.fn(async () => null),
+      },
+      modelDeployment: { count: vi.fn(), findFirst: vi.fn() },
+      evaluationRun: { findFirst: vi.fn() },
+      auditEvent: { create: vi.fn() },
+    };
+    const prisma = { $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)) } as unknown as AIHubPrismaClient;
+
+    await expect(new PrismaAgentManager(prisma, {} as PgBossQueueService).standbyProfile(principal, PROFILE_ID))
+      .rejects.toThrow("Run Setup and pass Hermes compatibility");
+    expect(transaction.modelDeployment.count).not.toHaveBeenCalled();
     expect(transaction.agentProfile.update).not.toHaveBeenCalled();
   });
 
@@ -162,7 +188,8 @@ describe("PrismaAgentManager", () => {
         findUnique: vi.fn(async () => ({ id: PROFILE_ID, slug: "hermes-analyst", currentVersion: 1, activeVersion: null })),
         update: vi.fn(async () => updatedProfile),
       },
-      agentProfileVersion: { findUnique: vi.fn(async () => ({ modelAlias: "hermes-agent" })) },
+      agentProfileVersion: { findUnique: vi.fn(async () => ({ modelAlias: "hermes-agent", distributionDigest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" })) },
+      componentCompatibility: { findUnique: vi.fn(async () => ({ status: "PASSED" })) },
       modelDeployment: { count: vi.fn(async () => 1), findFirst: vi.fn(async () => ({ id: MODEL_ROUTE_ID })) },
       evaluationRun: { findFirst: vi.fn(async () => ({ id: EVALUATION_ID })) },
       auditEvent: { create: vi.fn(async () => ({})) },
@@ -182,7 +209,8 @@ describe("PrismaAgentManager", () => {
         findUnique: vi.fn(async () => ({ id: PROFILE_ID, slug: "hermes-analyst", currentVersion: 1, activeVersion: null })),
         update: vi.fn(),
       },
-      agentProfileVersion: { findUnique: vi.fn(async () => ({ modelAlias: "hermes-agent" })) },
+      agentProfileVersion: { findUnique: vi.fn(async () => ({ modelAlias: "hermes-agent", distributionDigest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" })) },
+      componentCompatibility: { findUnique: vi.fn(async () => ({ status: "PASSED" })) },
       modelDeployment: { count: vi.fn(async () => 1), findFirst: vi.fn(async () => null) },
       evaluationRun: { findFirst: vi.fn(async () => ({ id: EVALUATION_ID })) },
     };

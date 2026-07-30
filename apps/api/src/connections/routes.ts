@@ -15,6 +15,7 @@ import type { FastifyInstance } from "fastify";
 import { requireAdmin, type AdminSessionManager } from "../auth/admin-session.js";
 import {
   ConnectionConflictError,
+  ConnectionAuthorizationError,
   ConnectionRevisionConflictError,
   InvalidConnectionConfigurationError,
   ConnectionNotFoundError,
@@ -104,6 +105,9 @@ export async function registerConnectionRoutes(
       const connection = await dependencies.manager!.create(parsed.data, principal);
       return reply.code(201).send(serviceConnectionSummarySchema.parse(connection));
     } catch (error) {
+      if (error instanceof ConnectionAuthorizationError) {
+        return reply.code(403).send({ error: "IDENTITY_CONFIGURATION_FORBIDDEN", message: error.message });
+      }
       if (error instanceof ConnectionConflictError) {
         return reply.code(409).send({ error: "CONNECTION_EXISTS", message: error.message });
       }
@@ -142,6 +146,9 @@ export async function registerConnectionRoutes(
       );
       return serviceConnectionSummarySchema.parse(connection);
     } catch (error) {
+      if (error instanceof ConnectionAuthorizationError) {
+        return reply.code(403).send({ error: "IDENTITY_CONFIGURATION_FORBIDDEN", message: error.message });
+      }
       if (error instanceof ConnectionNotFoundError) {
         return reply.code(404).send({ error: "NOT_FOUND", message: error.message });
       }
@@ -244,6 +251,9 @@ export async function registerConnectionRoutes(
         );
         return rollbackConfigurationResultSchema.parse(result);
       } catch (error) {
+        if (error instanceof ConnectionAuthorizationError) {
+          return reply.code(403).send({ error: "IDENTITY_CONFIGURATION_FORBIDDEN", message: error.message });
+        }
         if (error instanceof ConnectionNotFoundError) {
           return reply.code(404).send({ error: "NOT_FOUND", message: error.message });
         }

@@ -8,6 +8,7 @@ import {
   expiredSessionCookie,
   requireAdmin,
   sessionCookie,
+  InstallationClaimRejectedError,
   type AdminSessionManager,
 } from "./admin-session.js";
 
@@ -34,13 +35,24 @@ export async function registerAdminSessionRoutes(
     if (!parsed.success) {
       return reply.code(400).send({
         error: "INVALID_SESSION_REQUEST",
-        message: "A valid bootstrap administrator token is required.",
+        message: "A valid single-use installation claim is required.",
       });
     }
-    const issued = await dependencies.sessionManager.createBootstrapSession(parsed.data.token, {
-      sourceIp: request.ip,
-      userAgent: request.headers["user-agent"],
-    });
+    let issued;
+    try {
+      issued = await dependencies.sessionManager.createBootstrapSession(parsed.data.token, {
+        sourceIp: request.ip,
+        userAgent: request.headers["user-agent"],
+      });
+    } catch (error) {
+      if (error instanceof InstallationClaimRejectedError) {
+        return reply.code(error.reason === "EXPIRED" ? 410 : 409).send({
+          error: `INSTALLATION_CLAIM_${error.reason}`,
+          message: error.message,
+        });
+      }
+      throw error;
+    }
     if (!issued) {
       return reply.code(401).send({
         error: "UNAUTHORIZED",

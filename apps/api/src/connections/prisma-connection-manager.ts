@@ -14,6 +14,7 @@ import { Prisma, type AIHubPrismaClient } from "@aihub/database";
 import { EnvelopeEncryption } from "@aihub/security";
 import {
   ConnectionConflictError,
+  ConnectionAuthorizationError,
   ConnectionRevisionConflictError,
   InvalidConnectionConfigurationError,
   ConnectionNotFoundError,
@@ -156,6 +157,9 @@ export class PrismaConnectionManager implements ConnectionManager, ConnectionDia
     input: CreateServiceConnection,
     actor?: AdminActor,
   ): Promise<ServiceConnectionSummary> {
+    if (input.kind === "OIDC" && actor?.role !== "PLATFORM_ADMIN") {
+      throw new ConnectionAuthorizationError();
+    }
     const connectionId = randomUUID();
     const secretFieldNames = Object.keys(input.secrets).sort();
     const revisionState = {
@@ -237,6 +241,9 @@ export class PrismaConnectionManager implements ConnectionManager, ConnectionDia
         include: connectionInclude,
       });
       if (!existing) throw new ConnectionNotFoundError(id);
+      if (existing.kind === "OIDC" && actor?.role !== "PLATFORM_ADMIN") {
+        throw new ConnectionAuthorizationError();
+      }
 
       const replacedSecretFields = Object.keys(input.secrets ?? {});
       const removedSecretFields = input.removeSecretFields ?? [];
@@ -411,6 +418,9 @@ export class PrismaConnectionManager implements ConnectionManager, ConnectionDia
         },
       });
       if (!existing) throw new ConnectionNotFoundError(id);
+      if (existing.kind === "OIDC" && actor?.role !== "PLATFORM_ADMIN") {
+        throw new ConnectionAuthorizationError();
+      }
       if (existing.activeRevision !== expectedActiveRevision) {
         throw new ConnectionRevisionConflictError();
       }

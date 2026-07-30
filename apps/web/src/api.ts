@@ -58,6 +58,7 @@ import {
   agentProfileListSchema,
   agentProfileSchema,
   agentRunListSchema,
+  agentRunEventListSchema,
   agentRunSchema,
   agentRuntimeControlSchema,
   agentMetricsSchema,
@@ -65,6 +66,7 @@ import {
   type AgentProfileList,
   type AgentRun,
   type AgentRunList,
+  type AgentRunEventList,
   type AgentRuntimeControl,
   type AgentMetrics,
   type CreateAgentProfile,
@@ -135,6 +137,19 @@ import {
   type CreatePromptTemplate,
   type UpdatePromptTemplate,
   type ChangePromptTemplateState,
+  onboardingSnapshotSchema,
+  architectureDecisionSchema,
+  recoveryKitExportSchema,
+  type OnboardingSnapshot,
+  type ArchitectureDecision,
+  type UpdateArchitectureDecision,
+  type UpdateComponentCompatibility,
+  type UpdateOnboardingStep,
+  type RunOnboardingValidation,
+  type ExportRecoveryKit,
+  type RecoveryKitExport,
+  type VerifyRecoveryKit,
+  type CompleteOnboarding,
 } from "@aihub/contracts";
 
 export class AIHubApiError extends Error {
@@ -572,7 +587,7 @@ export async function updateAgentProfile(id: string, input: UpdateAgentProfile):
   return agentProfileSchema.parse(await parsedResponse(response));
 }
 
-export async function setAgentProfileState(id: string, action: "activate" | "suspend"): Promise<AgentProfile> {
+export async function setAgentProfileState(id: string, action: "standby" | "activate" | "suspend"): Promise<AgentProfile> {
   const response = await fetch(`/api/v1/admin/agents/profiles/${encodeURIComponent(id)}/${action}`, {
     method: "POST", headers: adminHeaders(), credentials: "same-origin",
   });
@@ -583,6 +598,12 @@ export async function getAgentRuns(administrator: boolean): Promise<AgentRunList
   const path = administrator ? "/api/v1/admin/agents/runs" : "/api/v1/agents/runs";
   const response = await fetch(path, { credentials: "same-origin" });
   return agentRunListSchema.parse(await parsedResponse(response));
+}
+
+export async function getAgentRunEvents(runId: string, administrator: boolean): Promise<AgentRunEventList> {
+  const prefix = administrator ? "/api/v1/admin/agents" : "/api/v1/agents";
+  const response = await fetch(`${prefix}/runs/${encodeURIComponent(runId)}/events`, { credentials: "same-origin" });
+  return agentRunEventListSchema.parse(await parsedResponse(response));
 }
 
 export async function submitAgentRun(profileId: string, input: string): Promise<AgentRun> {
@@ -861,4 +882,61 @@ export async function recordProductionReadinessApproval(
     method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
   });
   return productionReadinessApprovalSchema.parse(await parsedResponse(response));
+}
+
+export async function getOnboardingSnapshot(): Promise<OnboardingSnapshot> {
+  const response = await fetch("/api/v1/admin/onboarding/", { credentials: "same-origin" });
+  return onboardingSnapshotSchema.parse(await parsedResponse(response));
+}
+
+export async function updateArchitectureDecision(input: UpdateArchitectureDecision): Promise<ArchitectureDecision> {
+  const response = await fetch("/api/v1/admin/onboarding/architecture", {
+    method: "PATCH", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return architectureDecisionSchema.parse(await parsedResponse(response));
+}
+
+export async function updateComponentCompatibility(
+  key: string,
+  input: UpdateComponentCompatibility,
+): Promise<OnboardingSnapshot> {
+  const response = await fetch(`/api/v1/admin/onboarding/components/${encodeURIComponent(key)}`, {
+    method: "PATCH", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return onboardingSnapshotSchema.parse(await parsedResponse(response));
+}
+
+export async function updateOnboardingStep(key: string, input: UpdateOnboardingStep): Promise<OnboardingSnapshot> {
+  const response = await fetch(`/api/v1/admin/onboarding/steps/${encodeURIComponent(key)}`, {
+    method: "PATCH", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return onboardingSnapshotSchema.parse(await parsedResponse(response));
+}
+
+export async function runOnboardingValidation(input: RunOnboardingValidation = {}): Promise<OnboardingSnapshot> {
+  const response = await fetch("/api/v1/admin/onboarding/validate", {
+    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return onboardingSnapshotSchema.parse(await parsedResponse(response));
+}
+
+export async function exportCredentialRecoveryKit(input: ExportRecoveryKit): Promise<RecoveryKitExport> {
+  const response = await fetch("/api/v1/admin/onboarding/recovery/export", {
+    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return recoveryKitExportSchema.parse(await parsedResponse(response));
+}
+
+export async function verifyCredentialRecoveryKit(input: VerifyRecoveryKit): Promise<OnboardingSnapshot> {
+  const response = await fetch("/api/v1/admin/onboarding/recovery/verify", {
+    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return onboardingSnapshotSchema.parse(await parsedResponse(response));
+}
+
+export async function completeOnboarding(input: CompleteOnboarding): Promise<OnboardingSnapshot> {
+  const response = await fetch("/api/v1/admin/onboarding/complete", {
+    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return onboardingSnapshotSchema.parse(await parsedResponse(response));
 }

@@ -5,7 +5,7 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import { isIP } from "node:net";
-import type { EnterpriseSession, OidcStatus } from "@aihub/contracts";
+import type { AdminRole, EnterpriseSession, OidcStatus } from "@aihub/contracts";
 import type { AIHubPrismaClient } from "@aihub/database";
 import { EnvelopeEncryption } from "@aihub/security";
 import {
@@ -15,6 +15,7 @@ import {
   type JWTPayload,
 } from "jose";
 import type { ConnectionDiagnosticStore, ResolvedConnection } from "../connections/diagnostics/types.js";
+import type { AdminSessionManager, IssuedAdminSession } from "../auth/admin-session.js";
 
 export const ENTERPRISE_SESSION_COOKIE = "aihub_user_session";
 export const OIDC_STATE_COOKIE = "aihub_oidc_state";
@@ -49,6 +50,7 @@ export interface IssuedEnterpriseSession {
   token: string;
   returnTo: string;
   principal: EnterprisePrincipal;
+  administratorSession?: IssuedAdminSession;
 }
 
 export interface EnterpriseIdentityManager {
@@ -91,6 +93,7 @@ interface OidcRuntime {
   scopes: string[];
   groupsClaim: string;
   allowedGroups: string[];
+  administratorGroups: Record<AdminRole, string[]>;
   emailClaim: string;
   nameClaim: string;
   tokenAuthMethod: "client_secret_basic" | "client_secret_post";
@@ -150,6 +153,17 @@ function stringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
     : [];
+}
+
+export function administratorRoleForGroups(
+  groups: readonly string[],
+  administratorGroups: Readonly<Record<AdminRole, readonly string[]>>,
+  caseSensitive: boolean,
+): AdminRole | null {
+  const normalize = (group: string) => caseSensitive ? group : group.toLocaleLowerCase("en-US");
+  const presented = new Set(groups.map(normalize));
+  const rolePriority: AdminRole[] = ["PLATFORM_ADMIN", "SECURITY_ADMIN", "OPERATIONS_ADMIN", "AUDITOR"];
+  return rolePriority.find((role) => administratorGroups[role].some((group) => presented.has(normalize(group)))) ?? null;
 }
 
 function formEncodedComponent(value: string): string {
@@ -222,21 +236,28 @@ export class PrismaEnterpriseIdentityManager implements EnterpriseIdentityManage
     private readonly connectionStore: ConnectionDiagnosticStore,
     private readonly encryption: EnvelopeEncryption,
     private readonly fetcher: typeof fetch = fetch,
+    private readonly adminSessions?: AdminSessionManager,
   ) {}
 
   async status(): Promise<OidcStatus> {
     try {
       const runtime = await this.resolveRuntime();
-      if (runtime.allowedGroups.length === 0) {
+      if (runtime.allowedGroups.length === 0 && Object.values(runtime.administratorGroups).every((groups) => groups.length === 0)) {
         return {
           configured: false,
-          message: "Enterprise sign-in requires at least one allowed group.",
+          administratorSignIn: false,
+          message: "Enterprise sign-in requires at least one user or administrator group.",
         };
       }
-      return { configured: true, message: "Enterprise sign-in is configured." };
+      return {
+        configured: true,
+        administratorSignIn: Object.values(runtime.administratorGroups).some((groups) => groups.length > 0),
+        message: "Enterprise sign-in is configured.",
+      };
     } catch {
       return {
         configured: false,
+        administratorSignIn: false,
         message: "Enterprise sign-in has not been completely configured and tested.",
       };
     }
@@ -387,7 +408,11 @@ export class PrismaEnterpriseIdentityManager implements EnterpriseIdentityManage
 
     const groups = stringArray(claimAtPath(payload, runtime.groupsClaim));
     const normalizeGroup = (group: string) => runtime.caseSensitiveGroups ? group : group.toLocaleLowerCase("en-US");
-    const allowed = new Set(runtime.allowedGroups.map(normalizeGroup));
+    const administratorRole = administratorRoleForGroups(groups, runtime.administratorGroups, runtime.caseSensitiveGroups);
+    const allowed = new Set([
+      ...runtime.allowedGroups,
+      ...Object.values(runtime.administratorGroups).flat(),
+    ].map(normalizeGroup));
     if (allowed.size === 0 || !groups.some((group) => allowed.has(normalizeGroup(group)))) {
       throw new EnterpriseIdentityError("OIDC_GROUP_DENIED", "Your enterprise account is not assigned to an AIHub access group.", 403);
     }
@@ -449,10 +474,19 @@ export class PrismaEnterpriseIdentityManager implements EnterpriseIdentityManage
       });
       return created;
     });
+    let administratorSession: IssuedAdminSession | undefined;
+    if (administratorRole) {
+      if (!this.adminSessions?.issueFederatedSession) {
+        throw new EnterpriseIdentityError("OIDC_ADMIN_SESSION_UNAVAILABLE", "Federated administrator sessions are unavailable.", 503);
+      }
+      const federatedSubject = `oidc:${createHash("sha256").update(`${authorization.issuer}\u0000${payload.sub}`, "utf8").digest("hex")}`;
+      administratorSession = await this.adminSessions.issueFederatedSession(federatedSubject, administratorRole, context);
+    }
     return {
       token: sessionToken,
       returnTo: authorization.returnTo,
       principal: principalFromRecord(session),
+      ...(administratorSession ? { administratorSession } : {}),
     };
   }
 
@@ -536,6 +570,12 @@ export class PrismaEnterpriseIdentityManager implements EnterpriseIdentityManage
     const clientId = connection.configuration.clientId;
     const redirectUri = connection.configuration.redirectUri;
     const allowedGroups = stringArray(connection.configuration.allowedGroups);
+    const administratorGroups: Record<AdminRole, string[]> = {
+      PLATFORM_ADMIN: stringArray(connection.configuration.platformAdminGroups),
+      SECURITY_ADMIN: stringArray(connection.configuration.securityAdminGroups),
+      OPERATIONS_ADMIN: stringArray(connection.configuration.operationsAdminGroups),
+      AUDITOR: stringArray(connection.configuration.auditorGroups),
+    };
     const configuredScopes = stringArray(connection.configuration.scopes);
     const scopes = configuredScopes.length > 0 ? [...new Set(configuredScopes)] : ["openid", "profile", "email", "groups"];
     if (
@@ -558,6 +598,7 @@ export class PrismaEnterpriseIdentityManager implements EnterpriseIdentityManage
       scopes,
       groupsClaim: stringSetting(connection.configuration.groupsClaim, "groups"),
       allowedGroups,
+      administratorGroups,
       emailClaim: stringSetting(connection.configuration.emailClaim, "email"),
       nameClaim: stringSetting(connection.configuration.nameClaim, "name"),
       tokenAuthMethod: connection.configuration.tokenAuthMethod === "client_secret_post"

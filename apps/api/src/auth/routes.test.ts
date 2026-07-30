@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.js";
 import {
   ADMIN_SESSION_COOKIE,
+  InstallationClaimRejectedError,
   type AdminSessionManager,
   type IssuedAdminSession,
 } from "./admin-session.js";
@@ -58,7 +59,7 @@ async function sessionApp() {
 }
 
 describe("administrator session routes", () => {
-  it("exchanges the bootstrap token for a protected opaque session cookie", async () => {
+  it("exchanges the installation claim for a protected opaque session cookie", async () => {
     const { app } = await sessionApp();
     const response = await app.inject({
       method: "POST",
@@ -74,7 +75,7 @@ describe("administrator session routes", () => {
     expect(response.json()).toMatchObject({ id: SESSION_ID, role: "PLATFORM_ADMIN" });
   });
 
-  it("rejects an invalid bootstrap token without setting a cookie", async () => {
+  it("rejects an invalid installation claim without setting a cookie", async () => {
     const { app } = await sessionApp();
     const response = await app.inject({
       method: "POST",
@@ -83,6 +84,26 @@ describe("administrator session routes", () => {
     });
 
     expect(response.statusCode).toBe(401);
+    expect(response.headers["set-cookie"]).toBeUndefined();
+  });
+
+  it.each([
+    ["CONSUMED", 409],
+    ["EXPIRED", 410],
+  ] as const)("maps a %s installation claim to a stable response", async (reason, statusCode) => {
+    const sessionManager = new MemorySessionManager();
+    sessionManager.createBootstrapSession = vi.fn(async () => { throw new InstallationClaimRejectedError(reason); });
+    const app = await createApp({ logger: false, runtime: { bootstrapState: "READY", sessionManager } });
+    apps.push(app);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/admin/session/bootstrap",
+      payload: { token: "a-secure-bootstrap-token-with-more-than-32-characters" },
+    });
+
+    expect(response.statusCode).toBe(statusCode);
+    expect(response.json()).toMatchObject({ error: `INSTALLATION_CLAIM_${reason}` });
     expect(response.headers["set-cookie"]).toBeUndefined();
   });
 

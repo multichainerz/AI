@@ -1,6 +1,6 @@
 # MPM AIHub - Phased Delivery Plan
 
-**Status:** Phase 1 local baseline complete; Phase 2 chat, Phase 3 document/OCR, private-scope Phase 4 knowledge, zero-tool Phase 5 Hermes, Phase 6 governed MCP, Phase 7 AI operations, and Phase 8 pilot-readiness foundations implemented as local acceptance candidates; live Hermes tooling and target-environment acceptance remain pending
+**Status:** Phase 1 local baseline complete; Phase 2 chat, Phase 3 document/OCR, private-scope Phase 4 knowledge, zero-tool Phase 5 Hermes, Phase 6 governed MCP, Phase 7 AI operations, Phase 8 pilot-readiness, and Phase 9 cohesion/onboarding foundations implemented as local acceptance candidates; automatic Hermes node/Profile reconciliation, delegation/native-memory expansion, and target-environment acceptance remain pending
 **Related document:** `docs/AIHUB_PRD.md`  
 **Delivery model:** Incremental, on-premises, security-first
 
@@ -8,7 +8,7 @@
 
 Deliver MPM AIHub as a sequence of usable, testable increments. Each phase must leave the platform deployable and must establish a clear acceptance gate before the next capability is trusted in production.
 
-The first usable release will provide controlled internal chat. Later phases add document processing, enterprise knowledge, Hermes agents, MCP integrations, approvals, and full AI operations.
+The first usable release will provide controlled internal chat. Later phases add document processing, enterprise knowledge, Hermes agents, MCP integrations, approvals, full AI operations, and an enterprise Hermes Profile/onboarding experience.
 
 ## 2. Delivery Principles
 
@@ -16,10 +16,11 @@ The first usable release will provide controlled internal chat. Later phases add
 - Routine configuration is performed in the AIHub dashboard; only installation bootstrap secrets remain outside the application database.
 - AIHub and Hermes call models through LiteLLM; vLLM remains the internal model-serving layer.
 - PostgreSQL and Prisma are the operational system of record.
-- PostgreSQL and `pg-boss` provide durable jobs and coordination; no Redis dependency is introduced.
+- PostgreSQL and `pg-boss` provide durable jobs and coordination; the AIHub application introduces no Redis or Valkey dependency.
 - Enterprise repositories are authoritative for originals; AIHub is an extraction control plane, not a file repository.
 - AIHub uses application-encrypted, time-bounded scratch for conversion and OCR, then purges the whole document prefix after durable publication.
-- Supermemory is the sole durable normalized-knowledge, semantic-retrieval, and memory layer; AIHub does not maintain a competing vector store.
+- Supermemory is the sole durable enterprise normalized-knowledge, semantic-retrieval, and approved agent-memory layer; AIHub does not maintain a competing vector store or share its PostgreSQL schema with Supermemory.
+- Hermes built-in `MEMORY.md` and `USER.md` remain active but are constrained to Profile-local behavioral/runtime notes rather than enterprise records or secrets.
 - Hermes is default-deny and can use only AIHub-issued capabilities, approved MCP servers, and approved tools.
 - Every phase includes security, audit, tests, documentation, and operational visibility.
 - External systems are accessed through replaceable adapters so development can proceed with mocks before production endpoints are available.
@@ -36,6 +37,7 @@ flowchart LR
     P5 --> P6["Phase 6: MCP and Approvals"]
     P6 --> P7["Phase 7: AI Operations"]
     P7 --> P8["Phase 8: Production Pilot"]
+    P8 --> P9["Phase 9: Cohesion and Enterprise Onboarding"]
 ```
 
 The phases describe the critical path. Work such as UI design, threat modeling, automated testing, and operational documentation may run continuously across phases.
@@ -50,8 +52,9 @@ Confirm the critical technical assumptions before committing the platform to spe
 
 - Agree on the first pilot users and two or three priority use cases.
 - Validate Laguna inference, context length, streaming, structured output, and tool-calling behavior through vLLM and LiteLLM.
-- Validate Unlimited-OCR and the selected Qwen3 Embedding model.
-- Confirm the exact Supermemory Local release, licensing, API behavior, single-process operational limits, persistent data directory, backup/recovery behavior, and air-gapped requirements. Do not assume hosted connectors are present in the open-source deployment.
+- Validate Unlimited-OCR through a pinned serving contract rather than assuming its official direct inference API is OpenAI-compatible.
+- Confirm the exact Supermemory Local artifact/edition, licensing/support, Memory API, encrypted embedded-storage behavior, optional supported backend, local-embedding default, model lock, telemetry, backup/recovery behavior, and air-gapped requirements. Do not assume hosted connectors are present in the local deployment.
+- Treat Qwen3 Embedding as optional. If selected instead of Supermemory's local embedding, lock its variant, revision, dimensions, normalization, and instruction template and prove the controlled rebuild path.
 - Validate encrypted scratch isolation, capacity, expiry, crash cleanup, and post-publication purge on the target API/worker topology.
 - Identify the authoritative enterprise source and refetch/re-upload procedure for every production document corpus.
 - Establish initial security boundaries, data classifications, and deployment topology.
@@ -77,12 +80,12 @@ Create the deployable AIHub foundation and make the dashboard the normal place t
 
 - Establish the TypeScript monorepo, React application, Node.js API, workers, shared contracts, and automated tests.
 - Establish PostgreSQL, Prisma migrations, `pg-boss`, service health checks, and audit events.
-- Implement bootstrap installation for database access and the master encryption key.
-- Implement the encrypted configuration and secrets vault.
+- Implement bootstrap installation for database access and the AIHub credential-encryption key.
+- Implement the PostgreSQL-backed encrypted credential store. This is an application capability, not HashiCorp Vault or Vault KV.
 - Build administrative pages for service endpoints, credentials, certificates, model aliases, connectors, and test-connection actions.
 - Add configuration versioning, activation, rollback, masking, and rotation.
 - Establish initial RBAC, administrator separation, and local bootstrap administration.
-- Provide container definitions and initial Coolify deployment guidance.
+- Provide the pinned release-bundle manifest and signed installer workflow.
 
 ### Exit Gate
 
@@ -93,7 +96,7 @@ Create the deployable AIHub foundation and make the dashboard the normal place t
 
 ### Current implementation note
 
-The repository now contains the local Phase 1 baseline: protected bootstrap, an encrypted write-only credential vault, expiring administrator sessions and scoped roles, service-specific diagnostics, append-only revisions with guarded non-secret rollback, PostgreSQL-native job operations, responsive administration UI, and automated coverage. Coolify/TLS deployment, live database and queue migrations, backup restoration, private-CA lifecycle requirements, real service endpoints, and enterprise identity mapping remain target-environment acceptance gates; they are not represented as completed by local unit tests.
+The repository contains the Phase 1 baseline: protected bootstrap, a PostgreSQL-backed encrypted write-only credential store, expiring administrator sessions and scoped roles, service-specific diagnostics, append-only revisions with guarded non-secret rollback, PostgreSQL-native job operations, responsive administration UI, and automated coverage. Phase 9 supersedes the original reusable bootstrap credential with atomic single-use installation claiming and mapped OIDC administrator sessions. Signed-installer/TLS deployment, live database and queue migrations, backup restoration, private-CA lifecycle requirements, real service endpoints, and target-environment identity exercises remain acceptance gates; they are not represented as completed by local unit tests.
 
 ## 6. Phase 2 - Controlled Internal Chat
 
@@ -188,7 +191,7 @@ Introduce agentic workflows while keeping AIHub as the authoritative execution a
 - Calculate per-run effective capabilities from user, role, department, agent, environment, and policy.
 - Implement the AIHub tool gateway and revalidate every invocation.
 - Add timeouts, maximum turns, concurrency limits, cancellation, safe mode, and kill switches.
-- Restrict network egress and prevent direct access to PostgreSQL, enterprise-storage administration, Coolify, host filesystems, Docker, and unrestricted internet.
+- Restrict network egress and prevent direct access to PostgreSQL, enterprise-storage administration, deployment control planes, host filesystems, Docker, and unrestricted internet.
 - Record agent runs, capability grants, tool attempts, results, and failures.
 
 ### Exit Gate
@@ -268,9 +271,9 @@ Move from an engineering system to a supportable on-premises production pilot.
 
 - Conduct security review, threat-model review, dependency scanning, and penetration testing.
 - Run load, soak, concurrency, failure, and recovery tests.
-- Exercise PostgreSQL, Supermemory, enterprise-source, configuration-vault, and master-key backup and recovery; verify scratch is excluded.
+- Exercise PostgreSQL, Supermemory, enterprise-source, encrypted-credential-store, and credential-encryption-key backup and recovery; verify scratch is excluded.
 - Define availability targets, maintenance procedures, incident response, and escalation paths.
-- Validate Coolify deployment, TLS, internal DNS, network segmentation, monitoring, and log retention.
+- Validate signed-installer deployment, TLS, internal DNS, network segmentation, monitoring, and log retention.
 - Train administrators, reviewers, support personnel, and pilot users.
 - Run a limited pilot, measure acceptance criteria, remediate findings, and obtain go-live approval.
 
@@ -285,11 +288,59 @@ Move from an engineering system to a supportable on-premises production pilot.
 
 The repository now contains the local Phase 8 pilot-readiness foundation. The AI Operations workspace includes twelve seeded security, infrastructure, recovery, operations, training, and business controls; evidence references, owners, waivers, blockers, and revisions are retained in PostgreSQL. Security, Infrastructure, Product, and Business sign-offs are append-only external-authority records. AIHub separately retains the signed-in recorder, binds every approval to the exact control revisions, and makes an approval stale after any evidence change. The derived gate cannot report **ready** until every control is verified or formally waived and all four latest authority decisions approve the current evidence snapshot.
 
-Deployment hardening now distinguishes `/healthz` process liveness from database-backed `/readyz`, uses readiness for API container orchestration, exposes request correlation IDs, closes API resources on termination, and probes the web container independently. `pnpm verify` runs the local quality gate and `pnpm security:audit` applies the high-severity production dependency threshold.
+Deployment hardening now distinguishes `/healthz` process liveness from database-backed `/readyz`, uses readiness for API container orchestration, exposes request correlation IDs, closes API resources on termination, and probes the web container independently. `pnpm verify` runs the local quality gate, `pnpm verify:postgres` exercises clean migrations in a disposable PostgreSQL schema, and `pnpm security:audit` applies the high-severity production dependency threshold.
 
-This is not the Phase 8 exit gate. Penetration testing, image scanning, target-GPU load and soak tests, PostgreSQL/Supermemory/configuration-key restore demonstrations, enterprise-source rebuild, scratch purge validation, Coolify/TLS/DNS/network validation, monitoring and SIEM delivery, training completion, pilot measures, residual-risk acceptance, and formal MPM approvals require the deployed on-premises environment. See `docs/PHASE_8_PRODUCTION_PILOT_RUNBOOK.md`.
+This is not the Phase 8 exit gate. Penetration testing, image scanning, target-GPU load and soak tests, PostgreSQL/Supermemory/configuration-key restore demonstrations, enterprise-source rebuild, scratch purge validation, signed-installer/TLS/DNS/network validation, monitoring and SIEM delivery, training completion, pilot measures, residual-risk acceptance, and formal MPM approvals require the deployed on-premises environment. See `docs/PHASE_8_PRODUCTION_PILOT_RUNBOOK.md`.
 
-## 13. Indicative Delivery Cadence
+## 13. Phase 9 - Cohesion, Architecture, Guardrails, and Enterprise Onboarding
+
+### Outcome
+
+Prove that AIHub is coherent as one on-premises product, optimize component and data ownership, harden every principal flow and guardrail boundary, and provide a resumable customer installation experience. Isolated Hermes enrollment, governed Profiles, Agent Chat, and safe activity visibility are validated outcomes after the cohesion gates pass.
+
+### Scope
+
+- Audit implemented code, schemas, UI, configuration, documentation, deployment assumptions, data ownership, trust boundaries, failure behavior, and readiness claims before expanding the runtime.
+- Reconcile a component-by-component official contract matrix for Node.js, TypeScript, React/Vite, Fastify, PostgreSQL, Prisma/`pg`, `pg-boss`, LiteLLM, vLLM, Laguna, Unlimited-OCR, Supermemory Local, optional Qwen3 Embedding, Hermes, MCP, OIDC, the signed installer and its pinned manifest, and the GPU/driver/CUDA stack.
+- Remove obsolete AIHub application dependencies on Redis/Valkey, object storage, direct pgvector, duplicate knowledge, and competing orchestrators; keep the minimum production-grade service set. A private Supermemory-supported backend remains a Supermemory deployment detail, not an AIHub vector plane.
+- Make PostgreSQL and `pg-boss` AIHub's durable control/work authority, Supermemory the durable enterprise semantic-knowledge authority, encrypted scratch ephemeral, Hermes `state.db` Profile-local operational session state, and Hermes built-in memory constrained Profile-local notes.
+- Default Supermemory Local to its private embedded store and local embedding for the streamlined pilot; use a supported separate backing store or Qwen3 route only when measured requirements justify it, and never place Supermemory tables in AIHub's schema.
+- Choose one LiteLLM ownership mode: AIHub validates externally managed immutable aliases/guardrail names, or a pinned AIHub reconciler uses a supported management API with drift detection and rollback.
+- Treat the current generic OpenAI-compatible OCR client as an adapter assumption; keep it only if the pinned Unlimited-OCR service passes the contract suite, otherwise add a dedicated official-inference adapter.
+- Optimize standard chat, Agent Chat, document/OCR, retrieval, memory promotion, MCP/approval, cancellation, event, and recovery flows with bounded retries and explicit failure semantics.
+- Give AIHub, LiteLLM, Hermes Toolsets, network policy, MCP authorization, approval, and output redaction distinct guardrail responsibilities that can narrow but never widen effective policy.
+- Add a one-server release-bundle installer that generates PostgreSQL and credential-encryption material internally, starts the control plane, and emits only a short-lived single-use installation claim. Complete publisher signing, image-digest publication, and offline provenance in the release pipeline.
+- Add a resumable, idempotent, mobile-usable customer wizard for installation claim, host/topology, identity/recovery, AI services, knowledge flow, Hermes/Profiles, guardrails/tools, automated validation, environment activation, and handover.
+- Replace routine manual technical pass/fail and free-form evidence controls with derived state and immutable evidence generated by contract, recovery, and negative-security tests. Retain authority-bound external attestations only for controls AIHub cannot exercise.
+- Move the full component contract register and architecture modes into Advanced Readiness; compute requirements from topology and selected capabilities instead of requiring vLLM, GPU, remote Hermes, and local Supermemory in every deployment. The signed installer contract is always required.
+- Make LiteLLM the only inference-routing gateway used by AIHub and Hermes. Treat direct vLLM access as optional read-only operational telemetry, and treat Supermemory's backing store as its private deployment concern rather than a primary wizard decision.
+- Add an encrypted recovery-kit export and verification flow for the AIHub credential-encryption key. Block Production until the kit is retained off-host, recovery owners are named, a PostgreSQL backup is current, and verification/restore evidence passes.
+- After onboarding, turn Setup into a persistent Deployment workspace for health, nodes, recovery, upgrades, topology changes, evidence, and revalidation.
+- Pin and verify the exact Hermes API Server, Runs/events/approval/stop APIs, configured model behavior, `state.db`, additive built-in/external memory behavior, Profile, Profile Distribution, Toolset, `delegate_task`, and guardrail contracts used by AIHub.
+- Establish GPU admission from tests of the exact Laguna NVFP4 revision, vLLM `>=0.25.0`, parser, driver, CUDA runtime, context, batching, and OCR/embedding contention; do not infer safe co-residency from the 96 GB capacity.
+- Add governed Profiles and Agent Chat only after cohesion, ownership, compatibility, and negative-security gates pass.
+
+### Exit Gate
+
+- Every durable datum and operational decision has one named authority, and no conflicting job, knowledge, vector, file, or session plane remains.
+- Every component is pinned in a bill of materials with a compatibility result, supported contract, owner, license/support decision, failure behavior, and rollback target.
+- Every primary flow has an owner, versioned policy, correlation path, bounded retry behavior, negative tests, and documented recovery semantics.
+- A clean customer deployment can reach verified zero-tool Agent Chat through the wizard without giving AIHub reusable VM administrator credentials.
+- Authorized users can chat with an approved Hermes Profile and inspect a safe, correlated parent/tool/subagent timeline.
+- Hermes `state.db` persistence, retention, backup, restore, affinity, and loss behavior are tested without pretending PostgreSQL or Supermemory can recreate native session state.
+- Hermes built-in memory cannot become an enterprise knowledge or secret store, and optional direct Supermemory provider traffic passes isolation, egress, retention, deletion, and cross-tenant tests.
+- Delegation cannot widen Toolsets, knowledge, tools, network access, model routes, width, depth, duration, or cost.
+- Security, Infrastructure, Product, and Business approvals are refreshed against the optimized deployed architecture.
+
+### Current implementation note
+
+The recalibrated Phase 9 onboarding foundation is implemented. PostgreSQL retains a revision-safe component register, topology/target/install decisions, eight derived stages, immutable automated versus authority-bound evidence, environment activation, single-use claim consumption, and recovery controls. The responsive Setup surface is now a persistent **Deployment** workspace. The release-bundle installer builds before generating the expiring claim, and local-root break glass can issue an audited replacement without revoking federated administrators. The encrypted credential-key recovery kit is exported to the browser without being stored by AIHub and must be verified against its retained checksum/fingerprint. OIDC user groups and scoped administrator-role groups receive separate opaque sessions.
+
+This is still not the Phase 9 production exit gate. Publisher signing, immutable image digests, SBOM/provenance publication, TLS automation, certificate-bound Hermes node enrollment, automated Profile Distribution installation/reconciliation, multi-node drain/upgrade/replacement, controlled delegation/native-memory expansion, signed handover export, PostgreSQL/Supermemory/Hermes restore drills, and the target-environment compatibility, GPU, negative-security, accessibility, load, soak, and acceptance exercises remain pending. Official Hermes exposes Profile/Skill discovery but no documented remote Profile mutation API, so AIHub does not pretend that saving desired state installed it upstream. The calibrated architecture and remaining evidence gates are in `docs/PHASE_9_COHESION_ARCHITECTURE_ONBOARDING_PLAN.md`.
+
+Phase 9 uses upstream terminology precisely: a durable expert is a Hermes **Profile**, a versioned portable package is a **Profile Distribution**, an ephemeral child is a `delegate_task` **subagent**, and durable upstream multi-profile work is **Hermes Kanban**. AIHub's terms **runtime node**, **standby**, and **Agent Chat** are explicit control-plane concepts rather than claimed upstream features. Because Phase 9 materially changes the deployed boundary, existing Phase 8 evidence and approvals must be refreshed after it is introduced.
+
+## 14. Indicative Delivery Cadence
 
 The plan should be estimated after Phase 0 because model performance, integration complexity, security review, and infrastructure readiness materially affect delivery. For planning purposes, use the following relative sizing rather than fixed calendar commitments:
 
@@ -304,15 +355,16 @@ The plan should be estimated after Phase 0 because model performance, integratio
 | 6. MCP and approvals | 2-3 iterations | First governed enterprise actions |
 | 7. AI Operations | 2 iterations | Central operational control and evaluations |
 | 8. Production pilot | 2-4 iterations | Approved production pilot |
+| 9. Cohesion and enterprise onboarding | 4-6 iterations | Optimized, wizard-installed AIHub with validated governed expert conversations |
 
 An iteration may be treated as two weeks for initial portfolio planning, but the plan should be re-estimated at every phase gate.
 
-## 14. MPM Inputs by Phase
+## 15. MPM Inputs by Phase
 
 | When needed | MPM input |
 |---|---|
 | Phase 0 | Pilot use cases, GPU access, service packages/licenses, model endpoints, evaluation examples, and security constraints |
-| Phase 1 | Coolify project access, internal DNS/TLS approach, backup destination, and initial administrator owners |
+| Phase 1 | Supported Linux host, internal DNS/TLS approach, backup destination, and initial administrator owners |
 | Phase 2 | OIDC/SSO application registration, group mappings, pilot users, and model-access rules |
 | Phase 3 | Representative documents, classifications, retention rules, and OCR acceptance examples |
 | Phase 4 | Knowledge ownership, scope rules, retrieval evaluation questions, and Supermemory deployment access |
@@ -320,10 +372,11 @@ An iteration may be treated as two weeks for initial portfolio planning, but the
 | Phase 6 | MCP/connector owners, endpoints, authentication, resource scopes, action risk ratings, and approval matrix |
 | Phase 7 | SIEM/alert targets, operational owners, evaluation thresholds, and reporting requirements |
 | Phase 8 | Production network, support model, recovery objectives, training participants, and formal approvers |
+| Phase 9 | Supported topology and installer constraints; exact component/model/driver bill of materials; Supermemory artifact/edition/storage/embedding mode; LiteLLM ownership mode; GPU admission decision; ownership/recovery decisions; enrollment trust; retention policy; expert roles; Profile/SOUL owners; approved Skills; delegation limits; guardrail tests; wizard UX; and acceptance cases |
 
-Secrets do not need to be provided in documents or chat. After Phase 1, authorized MPM administrators will enter and test them directly in the AIHub vault.
+Secrets do not need to be provided in documents or chat. After Phase 1, authorized MPM administrators enter and test them directly through AIHub's encrypted credential store.
 
-## 15. Cross-Phase Workstreams
+## 16. Cross-Phase Workstreams
 
 The following work continues throughout delivery:
 
@@ -336,8 +389,9 @@ The following work continues throughout delivery:
 - dependency, license, and vulnerability review;
 - evaluation dataset growth and regression testing;
 - capacity measurement on the available GPU and infrastructure.
+- Hermes release compatibility, Profile/Skill supply-chain review, node identity, and event-redaction regression testing.
 
-## 16. Definition of Done for Every Phase
+## 17. Definition of Done for Every Phase
 
 A phase is complete only when:
 
@@ -351,6 +405,6 @@ A phase is complete only when:
 - remaining risks, deferred work, and owners are recorded;
 - MPM accepts the phase before expansion of scope or autonomy.
 
-## 17. Recommended First Milestone
+## 18. Recommended First Milestone
 
-Begin with Phases 0 through 2 as the first milestone. This produces a secure, configurable AIHub with real on-premises chat while establishing the architecture required for every later component. Document ingestion, memory, and agent autonomy should be layered on only after the configuration vault, identity, policy, audit, and inference path are stable.
+Begin with Phases 0 through 2 as the first milestone. This produces a secure, configurable AIHub with real on-premises chat while establishing the architecture required for every later component. Document ingestion, memory, and agent autonomy should be layered on only after the encrypted credential store, identity, policy, audit, and inference path are stable.

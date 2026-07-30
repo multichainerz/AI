@@ -3,6 +3,7 @@ import {
   agentProfileListSchema,
   agentProfileSchema,
   agentRunListSchema,
+  agentRunEventListSchema,
   agentRunSchema,
   agentRuntimeControlSchema,
   createAgentProfileSchema,
@@ -132,6 +133,19 @@ export async function registerAgentRoutes(app: FastifyInstance, options: AgentRo
     }
   });
 
+  app.get("/runs/:runId/events", async (request, reply) => {
+    const principal = await requirePrincipal(request, reply, options, { adminScope: "agents:read" });
+    const manager = managerOrLocked(options, reply);
+    if (!principal || !manager) return;
+    const runId = uuid((request.params as Record<string, unknown>).runId);
+    if (!runId) return reply.code(400).send({ error: "INVALID_REQUEST", message: "Agent run ID is invalid." });
+    try {
+      return agentRunEventListSchema.parse(await manager.listRunEvents(principal, runId, false));
+    } catch (error) {
+      await sendAgentError(reply, error);
+    }
+  });
+
   app.post("/runs/:runId/cancel", async (request, reply) => {
     const principal = await requirePrincipal(request, reply, options, { adminScope: "agents:control" });
     const manager = managerOrLocked(options, reply);
@@ -184,7 +198,7 @@ export async function registerAdminAgentRoutes(app: FastifyInstance, options: Ag
     }
   });
 
-  for (const action of ["activate", "suspend"] as const) {
+  for (const action of ["standby", "activate", "suspend"] as const) {
     app.post(`/profiles/:profileId/${action}`, async (request, reply) => {
       const principal = await admin("agents:manage")(request, reply);
       const manager = managerOrLocked(options, reply);
@@ -192,7 +206,11 @@ export async function registerAdminAgentRoutes(app: FastifyInstance, options: Ag
       if (!principal || !manager) return;
       if (!profileId) return reply.code(400).send({ error: "INVALID_REQUEST", message: "Agent profile ID is invalid." });
       try {
-        const result = action === "activate" ? await manager.activateProfile(principal, profileId) : await manager.suspendProfile(principal, profileId);
+        const result = action === "activate"
+          ? await manager.activateProfile(principal, profileId)
+          : action === "standby"
+            ? await manager.standbyProfile(principal, profileId)
+            : await manager.suspendProfile(principal, profileId);
         return agentProfileSchema.parse(result);
       } catch (error) {
         await sendAgentError(reply, error);
@@ -205,6 +223,19 @@ export async function registerAdminAgentRoutes(app: FastifyInstance, options: Ag
     const manager = managerOrLocked(options, reply);
     if (!principal || !manager) return;
     return agentRunListSchema.parse(await manager.listRuns(principal, true));
+  });
+
+  app.get("/runs/:runId/events", async (request, reply) => {
+    const principal = await admin("agents:read")(request, reply);
+    const manager = managerOrLocked(options, reply);
+    const runId = uuid((request.params as Record<string, unknown>).runId);
+    if (!principal || !manager) return;
+    if (!runId) return reply.code(400).send({ error: "INVALID_REQUEST", message: "Agent run ID is invalid." });
+    try {
+      return agentRunEventListSchema.parse(await manager.listRunEvents(principal, runId, true));
+    } catch (error) {
+      await sendAgentError(reply, error);
+    }
   });
 
   app.post("/runs/:runId/cancel", async (request, reply) => {

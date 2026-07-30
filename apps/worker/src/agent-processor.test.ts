@@ -17,9 +17,10 @@ function runRecord(status = "QUEUED", externalRunId: string | null = null, jobId
     toolCapabilityExpiresAt: null,
     startedAt: externalRunId ? new Date() : null,
     profileVersion: 1,
+    profileDistributionDigest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     profile: { status: "ACTIVE", activeVersion: 1 },
     version: {
-      instructions: "Answer with authorized evidence.", modelAlias: "hermes-agent", maxTurns: 1,
+      instructions: "Answer with authorized evidence.", soulMd: "You are a careful internal analyst who follows approved evidence.", modelAlias: "hermes-agent", maxTurns: 1,
       timeoutSeconds: 60, safeMode: true,
       toolGrants: governedTools ? [{ enabled: true, tool: { status: "ACTIVE" } }] : [],
     },
@@ -152,6 +153,16 @@ describe("PrismaAgentProcessor", () => {
     const processor = new PrismaAgentProcessor(prisma, hermes, { search: vi.fn(async () => []) }, capabilities);
 
     await expect(processor.process({ runId: RUN_ID }, "job-1", "worker-1")).resolves.toMatchObject({ status: "DENIED" });
+    expect(hermes.stop).toHaveBeenCalledWith("run_external_1");
+  });
+
+  it("stops the Hermes run when polling fails unexpectedly", async () => {
+    const prisma = database();
+    const hermes = runtime();
+    hermes.status = vi.fn(async () => { throw new Error("Hermes connection reset"); });
+    const processor = new PrismaAgentProcessor(prisma, hermes, { search: vi.fn(async () => []) }, capabilities);
+
+    await expect(processor.process({ runId: RUN_ID }, "job-1", "worker-1")).resolves.toMatchObject({ status: "FAILED" });
     expect(hermes.stop).toHaveBeenCalledWith("run_external_1");
   });
 });

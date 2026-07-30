@@ -18,7 +18,7 @@ const capabilities = {
   platform: "hermes-agent",
   auth: { type: "bearer", required: true },
   runtime: { mode: "server_agent", tool_execution: "server", split_runtime: false },
-  features: { run_submission: true, run_status: true, run_stop: true },
+  features: { run_submission: true, run_status: true, run_events_sse: true, run_stop: true },
 };
 
 describe("HermesClient", () => {
@@ -28,7 +28,7 @@ describe("HermesClient", () => {
       expect(init?.headers).toEqual(expect.objectContaining({ authorization: "Bearer strong-hermes-key" }));
       return new Response(JSON.stringify(input.toString().endsWith("/v1/capabilities")
         ? capabilities
-        : { object: "list", platform: "api_server", data: [{ name: "terminal", enabled: false, tools: ["terminal"] }] }), { status: 200 });
+        : [{ name: "terminal", enabled: false, tools: ["terminal"] }]), { status: 200 });
     });
     await expect(new HermesClient(resolver(), fetcher).assertZeroToolBoundary()).resolves.toBeUndefined();
     expect(fetcher).toHaveBeenCalledTimes(2);
@@ -179,5 +179,37 @@ describe("HermesClient", () => {
     const client = new HermesClient(resolver({ capabilitiesPath: "https://outside.example/capabilities" }), fetcher);
     await expect(client.assertZeroToolBoundary()).rejects.toThrow("configured origin");
     expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("projects only bounded lifecycle fields from the official run SSE stream", async () => {
+    const payload = [
+      "id: event-1\nevent: subagent.start\ndata: {\"child_session_id\":\"child-1\",\"summary\":\"Researching the bounded task\",\"hidden_prompt\":\"do not retain\"}\n\n",
+      "event: token.delta\ndata: {\"delta\":\"private token stream\"}\n\n",
+      "id: event-2\nevent: subagent.complete\ndata: {\"child_session_id\":\"child-1\",\"status\":\"completed\",\"summary\":\"Research complete\",\"duration_ms\":1250,\"usage\":{\"input_tokens\":20,\"output_tokens\":30,\"cost_usd\":0.02},\"tool_arguments\":{\"secret\":true}}\n\n",
+    ].join("");
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(payload, {
+      status: 200,
+      headers: { "content-type": "text/event-stream; charset=utf-8" },
+    }));
+    const projected: unknown[] = [];
+    await new HermesClient(resolver(), fetcher).events(
+      "run_external_1",
+      (event) => { projected.push(event); },
+      new AbortController().signal,
+    );
+    expect(projected).toHaveLength(2);
+    expect(projected[1]).toMatchObject({
+      sourceEventId: "event-2",
+      type: "SUBAGENT_COMPLETED",
+      childSessionId: "child-1",
+      status: "completed",
+      summary: "Research complete",
+      durationMs: 1250,
+      inputTokens: 20,
+      outputTokens: 30,
+      costUsd: 0.02,
+    });
+    expect(projected[1]).not.toHaveProperty("hidden_prompt");
+    expect(projected[1]).not.toHaveProperty("tool_arguments");
   });
 });

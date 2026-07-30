@@ -17,7 +17,8 @@
     "test": "vitest run --passWithNoTests",
     "prisma:generate": "prisma generate",
     "prisma:validate": "prisma validate",
-    "prisma:migrate:deploy": "prisma migrate deploy"
+    "prisma:migrate:deploy": "prisma migrate deploy",
+    "verify:postgres": "node ./scripts/verify-postgres-integration.mjs"
   },
   "dependencies": {
     "@prisma/adapter-pg": "7.9.1",

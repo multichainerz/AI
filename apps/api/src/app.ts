@@ -19,6 +19,7 @@ import { registerAiOpsRoutes } from "./ai-ops/routes.js";
 import { registerModelRoutes } from "./models/routes.js";
 import { registerGuardrailRoutes } from "./guardrails/routes.js";
 import { registerPromptRoutes } from "./prompts/routes.js";
+import { registerOnboardingRoutes } from "./onboarding/routes.js";
 
 export interface AppOptions {
   logger?: boolean;
@@ -42,11 +43,16 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
                 "req.body.password",
                 "req.body.apiKey",
                 "req.body.token",
+                "req.body.passphrase",
+                "req.body.serializedKit",
               ],
               censor: "[REDACTED]",
             },
           },
-    trustProxy: true,
+    // AIHub's Compose topology exposes only the adjacent Nginx proxy. Trusting
+    // exactly one hop prevents client-supplied forwarding chains from becoming
+    // security or audit metadata.
+    trustProxy: 1,
   });
 
   await app.register(helmet, {
@@ -130,7 +136,7 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
     platformMetaSchema.parse({
       product: "MPM AIHub",
       version: "0.1.0",
-      phase: "production pilot readiness foundation",
+      phase: "phase 9 cohesion and onboarding candidate",
       configurationMode: "dashboard",
       bootstrapState: runtime.bootstrapState,
     }),
@@ -139,6 +145,15 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
   app.get("/api/v1/connections/catalog", async () => ({
     items: SERVICE_KINDS.map((kind) => ({ kind })),
   }));
+
+  await app.register(
+    async (onboarding) =>
+      registerOnboardingRoutes(onboarding, {
+        ...(runtime.sessionManager ? { sessionManager: runtime.sessionManager } : {}),
+        ...(runtime.onboardingManager ? { manager: runtime.onboardingManager } : {}),
+      }),
+    { prefix: "/api/v1/admin/onboarding" },
+  );
 
   await app.register(
     async (prompts) => registerPromptRoutes(prompts, {

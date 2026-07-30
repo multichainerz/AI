@@ -155,10 +155,13 @@ describe("PrismaToolingManager", () => {
         arguments: { documentId: DOCUMENT_ID },
         run: {
           id: RUN_ID,
+          status: "RUNNING",
           ownerSubject: "platform-admin",
           requestedBy: SESSION_ID,
           profileVersionId: "6f0b696b-9447-4932-848c-7f4c5295f935",
           profileVersion: 1,
+          toolCapabilityTokenHash: hash(capability),
+          toolCapabilityExpiresAt: new Date(Date.now() + 60_000),
           profile: { slug: "hermes-analyst", status: "ACTIVE", activeVersion: 1 },
         },
         tool: {
@@ -215,5 +218,42 @@ describe("PrismaToolingManager", () => {
     expect(prismaBase.governedToolCall.update).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ status: "EXECUTING" }),
     }));
+  });
+
+  it("cancels approval when the originating run capability was revoked", async () => {
+    const approval = {
+      id: APPROVAL_ID, callId: REQUEST_ID, status: "PENDING",
+      expiresAt: new Date(Date.now() + 60_000), decisionReason: null, decisionBy: null, decidedAt: null,
+      createdAt: now, updatedAt: now,
+      call: {
+        id: REQUEST_ID, runId: RUN_ID, toolId: TOOL_ID, grantId: GRANT_ID,
+        status: "APPROVAL_PENDING", arguments: { documentId: DOCUMENT_ID },
+        run: {
+          id: RUN_ID, status: "DENIED", ownerSubject: "platform-admin", requestedBy: SESSION_ID,
+          profileVersionId: "6f0b696b-9447-4932-848c-7f4c5295f935", profileVersion: 1,
+          toolCapabilityTokenHash: null, toolCapabilityExpiresAt: null,
+          profile: { slug: "hermes-analyst", status: "ACTIVE", activeVersion: 1 },
+        },
+        tool: { id: TOOL_ID, slug: "document_memory_resync", displayName: "Resynchronize document memory", risk: "CONSEQUENTIAL", status: "ACTIVE", handlerKey: "builtin.document_memory_resync" },
+        grant: { id: GRANT_ID, toolId: TOOL_ID, profileVersionId: "6f0b696b-9447-4932-848c-7f4c5295f935", enabled: true, allowedGroups: [], allowedAdminRoles: ["PLATFORM_ADMIN"], resourceScope: "OWNER_ONLY" },
+      },
+    };
+    const approvalUpdate = vi.fn(async () => approval);
+    const callUpdate = vi.fn(async () => ({}));
+    const prismaBase: any = {
+      $executeRaw: vi.fn(async () => 1),
+      toolApproval: { findUnique: vi.fn(async () => approval), update: approvalUpdate },
+      governedToolCall: { update: callUpdate },
+      auditEvent: { create: vi.fn(async () => ({})) },
+      toolRuntimeControl: { findUnique: vi.fn(async () => ({ enabled: true })) },
+    };
+    prismaBase.$transaction = vi.fn(async (callback: (transaction: unknown) => Promise<unknown>) => callback(prismaBase));
+
+    await expect(new PrismaToolingManager(prismaBase as AIHubPrismaClient).decideApproval(
+      { id: SESSION_ID, subject: "platform-admin" }, APPROVAL_ID,
+      { decision: "APPROVE", reason: "Approved for the pilot." },
+    )).rejects.toThrow("originating agent run is no longer authorized");
+    expect(approvalUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "CANCELLED" }) }));
+    expect(callUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "DENIED", errorCode: "AUTHORIZATION_REVOKED" }) }));
   });
 });

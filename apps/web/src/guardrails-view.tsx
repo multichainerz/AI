@@ -163,7 +163,7 @@ export function GuardrailsView({
   if (!session) {
     return <div className="guardrails-workspace">
       <header className="guardrails-header"><div><p className="page-kicker">Policy control</p><h1>Guardrails</h1><p>Evaluated request boundaries and approved LiteLLM safety assignments.</p></div></header>
-      <section className="guardrails-lock panel"><span className="guardrails-lock-mark">G</span><div><strong>Administrator session required</strong><p>Unlock AIHub to inspect policy versions and activation evidence. Guardrail credentials remain in the encrypted Connections vault.</p></div><button className="primary-button" type="button" onClick={onConfigureLiteLLM}>Open platform settings</button></section>
+      <section className="guardrails-lock panel"><span className="guardrails-lock-mark">G</span><div><strong>Administrator session required</strong><p>Claim or sign in to AIHub to inspect policy versions and activation evidence. Guardrail credentials remain in the encrypted credential store.</p></div><button className="primary-button" type="button" onClick={onConfigureLiteLLM}>Open platform settings</button></section>
     </div>;
   }
 

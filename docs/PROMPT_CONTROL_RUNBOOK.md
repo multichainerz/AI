@@ -4,7 +4,7 @@
 
 AIHub Prompt Control governs the system instruction used by the direct AIHub chat runtime. It does not replace an agent profile's separately versioned Hermes instruction, create prompts inside LiteLLM, or allow prompt text to grant infrastructure, MCP, tool, memory, or data-access permissions.
 
-PostgreSQL is the source of truth for prompt content, lifecycle, evaluation binding, operator decisions, and audit provenance. Prompt content must not contain credentials or secret values. Service keys and endpoints remain in the encrypted Connections vault.
+PostgreSQL is the source of truth for prompt content, lifecycle, evaluation binding, operator decisions, and audit provenance. Prompt content must not contain credentials or secret values. Service keys and endpoints remain in AIHub's encrypted credential store.
 
 ## Lifecycle
 

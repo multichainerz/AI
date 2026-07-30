@@ -1,5 +1,6 @@
 import { enterpriseSessionSchema, oidcStatusSchema } from "@aihub/contracts";
 import type { FastifyInstance, FastifyRequest } from "fastify";
+import { sessionCookie } from "../auth/admin-session.js";
 import {
   EnterpriseIdentityError,
   enterpriseSessionCookie,
@@ -106,6 +107,7 @@ export async function registerIdentityRoutes(
       void reply.header("set-cookie", [
         expiredOidcStateCookie(secure),
         enterpriseSessionCookie(issued.token, secure),
+        ...(issued.administratorSession ? [sessionCookie(issued.administratorSession.token, secure)] : []),
       ]);
       return reply.redirect(safeReturnTo(issued.returnTo));
     } catch (error) {

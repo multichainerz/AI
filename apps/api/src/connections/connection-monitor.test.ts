@@ -94,6 +94,17 @@ describe("ConnectionMonitorRuntime", () => {
     });
   });
 
+  it("drains multiple due connections in a bounded concurrent cycle", async () => {
+    const test = harness();
+    const processOne = vi.spyOn(test.monitor, "processOneDueConnection")
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(true)
+      .mockResolvedValue(false);
+
+    await expect(test.monitor.processDueConnections(4, 2)).resolves.toBe(2);
+    expect(processOne).toHaveBeenCalledTimes(4);
+  });
+
   it("records a sanitized degraded result and releases the lease when configuration resolution fails", async () => {
     const test = harness({ testError: new Error("private decryption detail") });
 

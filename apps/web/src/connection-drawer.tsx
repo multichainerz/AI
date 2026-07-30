@@ -182,13 +182,13 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
         {!props.unlocked ? (
           <form className="unlock-form" onSubmit={submitUnlock}>
             <div className="lock-mark" aria-hidden="true">M</div>
-            <h3>Unlock administrator setup</h3>
-            <p>The setup token is checked by the AIHub backend and is never stored by this browser.</p>
+            <h3>Claim administrator access</h3>
+            <p>The short-lived installation claim is exchanged once for an HttpOnly administrator session and is never stored by this browser.</p>
             {props.bootstrapState !== "READY" && (
-              <div className="form-notice">Bootstrap files are {props.bootstrapState.toLowerCase()}. Complete the server setup first.</div>
+              <div className="form-notice">Installation trust is {props.bootstrapState.toLowerCase()}. Complete the host installer first.</div>
             )}
             <label>
-              Bootstrap administrator token
+              Single-use installation claim
               <input
                 type="password"
                 value={token}
@@ -196,12 +196,12 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
                 autoComplete="off"
                 required
                 minLength={32}
-                placeholder="Enter token"
+                placeholder="Paste the claim printed by the installer"
               />
             </label>
             {props.error && <p className="form-error">{props.error}</p>}
             <button className="primary-button drawer-submit" type="submit" disabled={props.busy || props.bootstrapState !== "READY"}>
-              {props.busy ? "Checking…" : "Unlock settings"}
+              {props.busy ? "Claiming…" : "Claim installation"}
             </button>
           </form>
         ) : (

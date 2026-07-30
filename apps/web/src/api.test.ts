@@ -34,7 +34,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 describe("AIHub browser API", () => {
-  it("exchanges the bootstrap token without reusing it as an API header", async () => {
+  it("exchanges the installation claim without reusing it as an API header", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({
       id: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb",
       subject: "bootstrap-administrator",

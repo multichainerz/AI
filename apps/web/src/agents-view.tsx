@@ -1,4 +1,4 @@
-import type { AgentMetrics, AgentProfile, AgentRun, AgentRuntimeControl, CreateAgentProfile } from "@aihub/contracts";
+import type { AgentMetrics, AgentProfile, AgentRun, AgentRunEvent, AgentRuntimeControl, AgentSkillReference, CreateAgentProfile } from "@aihub/contracts";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   AIHubApiError,
@@ -6,6 +6,7 @@ import {
   createAgentProfile,
   getAgentMetrics,
   getAgentProfiles,
+  getAgentRunEvents,
   getAgentRuns,
   getAgentRuntime,
   setAgentProfileState,
@@ -31,6 +32,8 @@ const blankProfile: CreateAgentProfile = {
   displayName: "Hermes Analyst",
   purpose: "A bounded on-premise assistant for internal analysis and document-grounded answers.",
   instructions: "Provide concise, evidence-based answers. Clearly distinguish retrieved facts from analysis and state uncertainty.",
+  soulMd: "You are a careful MPM analyst. Be calm, precise, evidence-led, and candid about uncertainty.",
+  skills: [],
   modelAlias: "hermes-agent",
   maxTurns: 1,
   timeoutSeconds: 600,
@@ -39,9 +42,20 @@ const blankProfile: CreateAgentProfile = {
   safeMode: true,
 };
 
+function skillManifestText(skills: AgentSkillReference[]): string {
+  return skills.map((skill) => `${skill.name}@${skill.version} ${skill.digest}`).join("\n");
+}
+
+function parseSkillManifest(value: string): AgentSkillReference[] | null {
+  const lines = value.split("\n").map((line) => line.trim()).filter(Boolean);
+  const parsed = lines.map((line) => /^([a-z0-9]+(?:-[a-z0-9]+)*)@([A-Za-z0-9][A-Za-z0-9._+-]*)\s+([a-f0-9]{64})$/.exec(line));
+  if (parsed.some((match) => !match)) return null;
+  return parsed.map((match) => ({ name: match![1]!, version: match![2]!, digest: match![3]! }));
+}
+
 function statusTone(status: AgentRun["status"] | AgentProfile["status"]): string {
   if (terminalGood.has(status) || status === "ACTIVE") return "ready";
-  if (runningStatuses.has(status)) return "processing";
+  if (runningStatuses.has(status) || status === "STANDBY") return "processing";
   if (["FAILED", "TIMED_OUT", "DENIED"].includes(status)) return "failed";
   return "neutral";
 }
@@ -51,12 +65,26 @@ function friendlyTime(value: string | null): string {
   return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
 }
 
+function eventTitle(event: AgentRunEvent): string {
+  return event.type.replaceAll("_", " ").toLowerCase().replace(/^./, (first) => first.toUpperCase());
+}
+
+function eventDetail(event: AgentRunEvent): string {
+  if (event.summary) return event.summary;
+  if (event.toolName) return `Governed tool: ${event.toolName}`;
+  if (event.childSessionId) return `Temporary child session ${event.childSessionId}`;
+  if (event.status) return `Hermes status: ${event.status}`;
+  return "Hermes emitted a bounded lifecycle event.";
+}
+
 function draftFromProfile(profile: AgentProfile): CreateAgentProfile {
   return {
     slug: profile.slug,
     displayName: profile.version.displayName,
     purpose: profile.version.purpose,
     instructions: profile.version.instructions,
+    soulMd: profile.version.soulMd,
+    skills: profile.version.skills,
     modelAlias: profile.version.modelAlias,
     maxTurns: 1,
     timeoutSeconds: profile.version.timeoutSeconds,
@@ -70,13 +98,15 @@ export function AgentsView({ unlocked, administrator, oidcConfigured, onSignIn, 
   const runsRef = useRef<AgentRun[]>([]);
   const [profiles, setProfiles] = useState<AgentProfile[]>([]);
   const [runs, setRuns] = useState<AgentRun[]>([]);
+  const [runEvents, setRunEvents] = useState<AgentRunEvent[]>([]);
   const [metrics, setMetrics] = useState<AgentMetrics | null>(null);
   const [runtime, setRuntime] = useState<AgentRuntimeControl | null>(null);
   const [selectedProfileId, setSelectedProfileId] = useState("");
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [prompt, setPrompt] = useState("");
-  const [reason, setReason] = useState("Phase 5 acceptance boundary verified by the platform administrator.");
+  const [reason, setReason] = useState("Phase 9 runtime and Profile Distribution boundaries verified by the platform administrator.");
   const [profileDraft, setProfileDraft] = useState<CreateAgentProfile>(blankProfile);
+  const [skillsDraft, setSkillsDraft] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -115,6 +145,18 @@ export function AgentsView({ unlocked, administrator, oidcConfigured, onSignIn, 
     return () => { active = false; window.clearInterval(timer); };
   }, [unlocked, administrator]);
 
+  useEffect(() => {
+    if (!unlocked || !selectedRun) {
+      setRunEvents([]);
+      return;
+    }
+    let active = true;
+    void getAgentRunEvents(selectedRun.id, administrator)
+      .then((result) => { if (active) setRunEvents(result.items); })
+      .catch((cause) => { if (active) fail(cause); });
+    return () => { active = false; };
+  }, [unlocked, administrator, selectedRun?.id, selectedRun?.updatedAt]);
+
   const action = async (key: string, operation: () => Promise<unknown>) => {
     if (busy) return;
     setBusy(key); setError(null);
@@ -126,19 +168,26 @@ export function AgentsView({ unlocked, administrator, oidcConfigured, onSignIn, 
   const editProfile = (profile: AgentProfile) => {
     setEditingId(profile.id);
     setProfileDraft(draftFromProfile(profile));
+    setSkillsDraft(skillManifestText(profile.version.skills));
     setEditorOpen(true);
   };
 
   const saveProfile = async (event: FormEvent) => {
     event.preventDefault();
+    const skills = parseSkillManifest(skillsDraft);
+    if (!skills) {
+      setError("Each Skill must use 'name@version sha256' with a lowercase slug and a 64-character digest.");
+      return;
+    }
     await action("profile-save", async () => {
+      const candidate = { ...profileDraft, skills };
       if (editingId) {
-        const { slug: _slug, ...configuration } = profileDraft;
+        const { slug: _slug, ...configuration } = candidate;
         await updateAgentProfile(editingId, configuration);
       } else {
-        await createAgentProfile(profileDraft);
+        await createAgentProfile(candidate);
       }
-      setEditorOpen(false); setEditingId(null); setProfileDraft(blankProfile);
+      setEditorOpen(false); setEditingId(null); setProfileDraft(blankProfile); setSkillsDraft("");
     });
   };
 
@@ -170,8 +219,8 @@ export function AgentsView({ unlocked, administrator, oidcConfigured, onSignIn, 
   return (
     <section className="agents-workspace">
       <header className="documents-header agents-header">
-        <div><p className="page-kicker">Hardened orchestration</p><h1>Hermes agents</h1><p>Single-turn agent execution with zero native toolsets, private knowledge scoping, immutable profiles, and an operator kill switch.</p></div>
-        <div className="agent-header-actions"><button className="secondary-button" type="button" onClick={() => void load()}>Refresh</button>{administrator && <button className="primary-button" type="button" onClick={() => { setEditingId(null); setProfileDraft(blankProfile); setEditorOpen(true); }}>New profile</button>}</div>
+        <div><p className="page-kicker">Hardened orchestration</p><h1>Hermes Profiles</h1><p>Immutable Profile Distributions, scoped knowledge, optional AIHub-governed MCP actions, safe activity events, and an operator kill switch.</p></div>
+        <div className="agent-header-actions"><button className="secondary-button" type="button" onClick={() => void load()}>Refresh</button>{administrator && <button className="primary-button" type="button" onClick={() => { setEditingId(null); setProfileDraft(blankProfile); setSkillsDraft(""); setEditorOpen(true); }}>New profile</button>}</div>
       </header>
 
       {error && <div className="documents-alert" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
@@ -200,16 +249,16 @@ export function AgentsView({ unlocked, administrator, oidcConfigured, onSignIn, 
             {profiles.map((profile) => <article key={profile.id} className={selectedProfileId === profile.id ? "selected" : undefined}>
               <button className="agent-profile-select" type="button" onClick={() => setSelectedProfileId(profile.id)}>
                 <span className="agent-avatar">{profile.version.displayName.slice(0, 2).toUpperCase()}</span>
-                <div><strong>{profile.version.displayName}</strong><p>{profile.version.purpose}</p><small>{profile.slug} · current v{profile.version.version} · {profile.version.modelAlias}{profile.activeVersion !== null && profile.activeVersion !== profile.version.version ? ` · live v${profile.activeVersion}` : ""}</small></div>
+                <div><strong>{profile.version.displayName}</strong><p>{profile.version.purpose}</p><small>{profile.slug} · current v{profile.version.version} · {profile.version.modelAlias} · distro {profile.version.distributionDigest.slice(0, 10)}{profile.activeVersion !== null && profile.activeVersion !== profile.version.version ? ` · live v${profile.activeVersion}` : ""}</small></div>
                 <span className={`document-status ${statusTone(profile.status)}`}>{profile.status.toLowerCase()}</span>
               </button>
-              {administrator && <div className="agent-profile-actions"><button type="button" onClick={() => editProfile(profile)}>New version</button>{profile.status === "ACTIVE" ? <button type="button" disabled={busy !== null} onClick={() => void action(`suspend-${profile.id}`, () => setAgentProfileState(profile.id, "suspend"))}>Suspend</button> : <button type="button" disabled={busy !== null} onClick={() => void action(`activate-${profile.id}`, () => setAgentProfileState(profile.id, "activate"))}>Activate v{profile.currentVersion}</button>}</div>}
+              {administrator && <div className="agent-profile-actions"><button type="button" onClick={() => editProfile(profile)}>New version</button>{profile.status === "ACTIVE" ? <button type="button" disabled={busy !== null} onClick={() => void action(`suspend-${profile.id}`, () => setAgentProfileState(profile.id, "suspend"))}>Suspend</button> : profile.status === "STANDBY" ? <button type="button" disabled={busy !== null} onClick={() => void action(`activate-${profile.id}`, () => setAgentProfileState(profile.id, "activate"))}>Activate v{profile.currentVersion}</button> : <button type="button" disabled={busy !== null} onClick={() => void action(`standby-${profile.id}`, () => setAgentProfileState(profile.id, "standby"))}>Validate as standby</button>}</div>}
             </article>)}
           </div>
         </section>
 
         <section className="agent-run-panel panel">
-          <div className="document-section-heading"><div><p className="section-kicker">Bounded request</p><h2>Run an active profile</h2></div><span>1 turn · 0 tools</span></div>
+          <div className="document-section-heading"><div><p className="section-kicker">Bounded request</p><h2>Run an active Profile</h2></div><span>1 turn · governed tools only</span></div>
           <form className="agent-composer" onSubmit={(event) => void runAgent(event)}>
             <label htmlFor="agent-profile">Agent profile</label>
             <select id="agent-profile" value={selectedProfileId} onChange={(event) => setSelectedProfileId(event.target.value)}>
@@ -231,6 +280,15 @@ export function AgentsView({ unlocked, administrator, oidcConfigured, onSignIn, 
           {!selectedRun ? <div className="document-empty"><strong>Select a run</strong><span>Input, output, sources, and failure information remain in the AIHub execution ledger.</span></div> : <>
             <div className="agent-run-detail-head"><div><p className="section-kicker">Run detail</p><h2>{selectedRun.profileName}</h2><span>{selectedRun.profileSlug} · version {selectedRun.profileVersion}</span></div><span className={`document-status ${statusTone(selectedRun.status)}`}>{selectedRun.status.replaceAll("_", " ").toLowerCase()}</span></div>
             <dl className="agent-run-times"><div><dt>Queued</dt><dd>{friendlyTime(selectedRun.queuedAt)}</dd></div><div><dt>Started</dt><dd>{friendlyTime(selectedRun.startedAt)}</dd></div><div><dt>Completed</dt><dd>{friendlyTime(selectedRun.completedAt)}</dd></div></dl>
+            <div className="agent-distribution-pin"><span>Profile Distribution</span><code>{selectedRun.profileDistributionDigest ?? "Legacy run — no Phase 9 distribution digest"}</code></div>
+            <section className="agent-activity" aria-label="Safe Hermes activity timeline">
+              <div><span>Activity timeline</span><small>{runEvents.length} safe event{runEvents.length === 1 ? "" : "s"}</small></div>
+              {runEvents.length === 0 ? <p>No bounded Hermes activity events have been retained for this run.</p> : <ol>{runEvents.map((event) => <li key={event.id}>
+                <i className={event.type.includes("FAILED") ? "failed" : event.type.includes("COMPLETED") ? "ready" : "processing"} />
+                <div><strong>{eventTitle(event)}</strong><p>{eventDetail(event)}</p><small>{friendlyTime(event.occurredAt)}{event.durationMs !== null ? ` · ${Math.round(event.durationMs / 100) / 10}s` : ""}{event.inputTokens !== null || event.outputTokens !== null ? ` · ${(event.inputTokens ?? 0) + (event.outputTokens ?? 0)} tokens` : ""}</small></div>
+              </li>)}</ol>}
+              <footer>Token deltas, chain-of-thought, hidden prompts, credentials, tool arguments, and tool results are never retained here.</footer>
+            </section>
             <div className="agent-run-content"><span>Input</span><p>{selectedRun.input}</p></div>
             {selectedRun.output && <div className="agent-run-content output"><span>Hermes output</span><p>{selectedRun.output}</p></div>}
             {selectedRun.failureMessage && <div className="agent-run-failure"><strong>{selectedRun.failureCode}</strong><p>{selectedRun.failureMessage}</p></div>}
@@ -244,10 +302,12 @@ export function AgentsView({ unlocked, administrator, oidcConfigured, onSignIn, 
         <header><div><p className="section-kicker">{editingId ? "Immutable revision" : "New bounded profile"}</p><h2>{editingId ? "Create a new profile version" : "Create agent profile"}</h2></div><button type="button" aria-label="Close profile editor" onClick={() => setEditorOpen(false)}>×</button></header>
         <div className="agent-editor-grid"><label>Slug<input required disabled={editingId !== null} pattern="[a-z0-9]+(?:-[a-z0-9]+)*" value={profileDraft.slug} onChange={(event) => setProfileDraft({ ...profileDraft, slug: event.target.value })} /></label><label>Display name<input required minLength={2} maxLength={120} value={profileDraft.displayName} onChange={(event) => setProfileDraft({ ...profileDraft, displayName: event.target.value })} /></label></div>
         <label>Purpose<textarea required minLength={3} maxLength={500} value={profileDraft.purpose} onChange={(event) => setProfileDraft({ ...profileDraft, purpose: event.target.value })} /></label>
+        <label>SOUL.md<textarea className="instructions" required minLength={10} maxLength={32_000} value={profileDraft.soulMd} onChange={(event) => setProfileDraft({ ...profileDraft, soulMd: event.target.value })} /></label>
         <label>System instructions<textarea className="instructions" required minLength={10} maxLength={32_000} value={profileDraft.instructions} onChange={(event) => setProfileDraft({ ...profileDraft, instructions: event.target.value })} /></label>
+        <label>Approved Skills<textarea value={skillsDraft} placeholder={`One per line: name@version ${"a".repeat(64)}`} onChange={(event) => setSkillsDraft(event.target.value)} /><small>Only secret-free, reviewed Skill references are included in the distribution source. Runtime installation remains evidence-gated.</small></label>
         <div className="agent-editor-grid"><label>Hermes model alias<input required value={profileDraft.modelAlias} onChange={(event) => setProfileDraft({ ...profileDraft, modelAlias: event.target.value })} /></label><label>Timeout (seconds)<input required type="number" min={30} max={3600} value={profileDraft.timeoutSeconds} onChange={(event) => setProfileDraft({ ...profileDraft, timeoutSeconds: Number(event.target.value) })} /></label><label>Concurrent runs<input required type="number" min={1} max={20} value={profileDraft.maxConcurrentRuns} onChange={(event) => setProfileDraft({ ...profileDraft, maxConcurrentRuns: Number(event.target.value) })} /></label></div>
         <label className="agent-check"><input type="checkbox" checked={profileDraft.allowPrivateKnowledge} onChange={(event) => setProfileDraft({ ...profileDraft, allowPrivateKnowledge: event.target.checked })} /><span><strong>Allow private knowledge retrieval</strong><small>Searches only the requesting identity’s authorized Supermemory scope.</small></span></label>
-        <div className="agent-editor-boundary"><strong>Phase 5 boundary</strong><span>Safe mode is mandatory. Native Hermes toolsets are denied and each run is limited to one turn.</span></div>
+        <div className="agent-editor-boundary"><strong>Phase 9 distribution boundary</strong><span>SOUL.md and checksummed Skills describe behavior, never authority. Runtime installation must be verified before standby or activation; safe mode remains mandatory.</span></div>
         <footer><button className="secondary-button" type="button" onClick={() => setEditorOpen(false)}>Cancel</button><button className="primary-button" disabled={busy !== null} type="submit">{busy === "profile-save" ? "Saving..." : editingId ? "Create version" : "Create draft"}</button></footer>
       </form></div>}
     </section>

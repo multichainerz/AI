@@ -189,7 +189,7 @@ export function ModelsView({
       <header className="models-header"><div><p className="page-kicker">Inference control</p><h1>Models</h1><p>Central model routes, workload assignments, limits, and release evidence.</p></div></header>
       <section className="models-lock panel">
         <span className="models-lock-mark">M</span>
-        <div><strong>Administrator session required</strong><p>Unlock AIHub to view or change model routes. Serving credentials remain inside the encrypted connection vault.</p></div>
+        <div><strong>Administrator session required</strong><p>Claim or sign in to AIHub to view or change model routes. Serving credentials remain inside the encrypted credential store.</p></div>
         <button className="primary-button" type="button" onClick={onConfigureConnections}>Open platform settings</button>
       </section>
     </div>;
