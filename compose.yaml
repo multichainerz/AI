@@ -29,7 +29,13 @@ services:
         condition: service_healthy
     secrets:
       - aihub_database_url
-    command: ["pnpm", "--filter", "@aihub/database", "prisma:migrate:deploy"]
+    command:
+      - "node"
+      - "packages/database/node_modules/prisma/build/index.js"
+      - "migrate"
+      - "deploy"
+      - "--config"
+      - "packages/database/prisma.config.ts"
     networks:
       - data
 
@@ -42,7 +48,7 @@ services:
         condition: service_completed_successfully
     secrets:
       - aihub_database_url
-    command: ["pnpm", "--filter", "@aihub/jobs", "migrate"]
+    command: ["node", "packages/jobs/dist/migrate.js"]
     networks:
       - data
 

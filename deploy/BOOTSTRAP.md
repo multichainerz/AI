@@ -12,6 +12,22 @@ Set `AIHUB_HTTP_PORT` before invoking the script to use a port other than `8080`
 
 The installer refuses to overwrite any partial secret set. A complete existing set is preserved for idempotent restarts. It does not take an SSH password, mount the Docker socket into AIHub, or grant the dashboard host-level command execution.
 
+## Enroll an isolated Hermes VM
+
+For Control-plane only or Segmented production, prepare a second Debian or Ubuntu VM with private network reachability in both directions. In the dashboard, open **Deployment > Hermes nodes**, enter the VM2 API address and the AIHub address visible from VM2, then issue and download the short-lived enrollment bundle.
+
+On VM2, download the installer from the AIHub host, copy the enrollment JSON through the customer's approved administrative path, and run:
+
+```bash
+curl -fsS https://aihub.example.internal/install/hermes-node.sh -o install-hermes-node.sh
+chmod +x install-hermes-node.sh
+sudo ./install-hermes-node.sh aihub-hermes-runtime-01-enrollment.json
+```
+
+VM2 generates its Ed25519 private key locally, starts the official Hermes gateway container, exchanges the claim once, and enables a signed one-minute heartbeat timer. AIHub creates the encrypted Hermes connector and immediately tests the reverse path. It never receives the node private key, reusable SSH credentials, or a Docker socket. A current heartbeat proves VM2-to-AIHub reachability; a healthy generated connection proves AIHub-to-VM2 reachability.
+
+Before Production, replace tagged images with an approved digest, terminate AIHub enrollment traffic with customer-approved TLS, limit Hermes TCP/8642 to AIHub, restrict VM2 egress to AIHub plus approved LiteLLM/MCP destinations, and complete the customer PKI/mTLS acceptance gate. Application signatures do not replace transport encryption or network policy.
+
 If the first browser session is lost before OIDC administrator groups are configured, a customer with local root authority can invoke the audited break-glass flow:
 
 ```bash

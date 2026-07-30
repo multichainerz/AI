@@ -44,6 +44,7 @@ const COMPONENTS = [
   ["supermemory-external-backend", "Supermemory external backend", "Memory", false, "Selected Supermemory backend passes edition, isolation, recovery, and upgrade checks."],
   ["qwen3-embedding", "Qwen3 embedding route", "Memory", false, "Selected external embedding route passes revision, dimension, retrieval, and rebuild checks."],
   ["hermes-api", "Hermes API Server", "Agents", true, "Pinned Hermes passes capabilities, Runs, SSE, stop, Profile, Skill, Toolset, and state.db checks."],
+  ["hermes-runtime-node", "Hermes runtime node", "Agents", false, "An isolated Hermes node completes one-time enrollment, proves its signing identity, and maintains a current heartbeat without standing SSH trust."],
   ["hermes-native-memory", "Hermes native Supermemory provider", "Agents", false, "Selected native provider passes scope, synchronization, retention, deletion, and leakage checks."],
   ["mcp-gateway", "MCP gateway", "Tools", true, "Pinned protocol passes negotiation, discovery, calls, cancellation, authorization, and token-boundary checks."],
   ["enterprise-oidc", "Enterprise OIDC", "Identity", false, "Production identity passes discovery, signatures, PKCE, state, nonce, groups, logout, and revocation."],
@@ -55,7 +56,7 @@ const STEPS = [
   ["claim-installation", 1, "Claim installation", "Confirm the single-use installation claim, installed release, and host identity.", "Run installation validation"],
   ["system-topology", 2, "System and topology", "Validate the host and select Compact, Control-plane only, or Segmented production.", "Save topology, then validate this host"],
   ["identity-recovery", 3, "Identity and recovery", "Configure final trust, enterprise identity, recovery ownership, and a verified encrypted recovery kit.", "Export and verify recovery; configure OIDC for Production"],
-  ["ai-services", 4, "AI services", "Connect and validate LiteLLM, Unlimited-OCR, Supermemory, and Hermes.", "Configure and test the four required service connections"],
+  ["ai-services", 4, "AI services and Hermes node", "Connect LiteLLM, Unlimited-OCR, and Supermemory, then enroll and validate the isolated Hermes runtime.", "Test the service routes, then enroll the Hermes VM"],
   ["knowledge-workflow", 5, "Knowledge workflow", "Validate transient extraction, publication, authorized retrieval/deletion, and scratch purge.", "Process and publish a representative document"],
   ["hermes-profiles", 6, "Hermes and Profiles", "Validate the Hermes boundary and move an immutable Profile Distribution into standby.", "Create, evaluate, and validate a standby Profile"],
   ["guardrails-tools", 7, "Guardrails and tools", "Prove conservative policy, zero-tool operation, approvals, and bounded governed tools.", "Activate a guardrail baseline and validate tool posture"],
@@ -113,6 +114,7 @@ function componentRequirement(architecture: ArchitectureDecision, component: Sto
     [component.key === "supermemory-external-backend" && architecture.supermemoryStorageMode === "SUPPORTED_EXTERNAL_POSTGRES", "A supported external Supermemory backend was selected", "supermemory-external-backend"],
     [component.key === "qwen3-embedding" && architecture.supermemoryEmbeddingMode === "OPENAI_COMPATIBLE", "An external embedding route was selected", "qwen3-embedding"],
     [component.key === "hermes-native-memory" && architecture.hermesMemoryMode === "NATIVE_SUPERMEMORY", "Hermes native Supermemory mode was selected", "hermes-native-memory"],
+    [component.key === "hermes-runtime-node" && architecture.topologyMode !== "COMPACT", "The selected topology isolates Hermes from the AIHub control plane", "hermes-runtime-node"],
   ];
   for (const [condition, selectedReason, key] of selected) {
     if (condition && component.key === key) {
@@ -537,18 +539,39 @@ export class PrismaOnboardingManager implements OnboardingManager {
       ];
     }
     if (stageKey === "ai-services") {
-      const connections = await this.prisma.serviceConnection.findMany({
-        where: { kind: { in: ["LITELLM", "OCR", "SUPERMEMORY", "HERMES"] }, enabled: true },
-        orderBy: { updatedAt: "desc" },
-      });
+      const [connections, runtimeNode] = await Promise.all([
+        this.prisma.serviceConnection.findMany({
+          where: { kind: { in: ["LITELLM", "OCR", "SUPERMEMORY", "HERMES"] }, enabled: true },
+          orderBy: { updatedAt: "desc" },
+        }),
+        architecture.topologyMode === "COMPACT" ? Promise.resolve(null) : this.prisma.hermesRuntimeNode.findFirst({
+          where: { status: "ONLINE", identityFingerprint: { not: null }, lastSeenAt: { gt: new Date(Date.now() - 180_000) } },
+          orderBy: { lastSeenAt: "desc" },
+          include: { serviceConnection: { select: { status: true } } },
+        }),
+      ]);
       const required: Array<["LITELLM" | "OCR" | "SUPERMEMORY" | "HERMES", string, string]> = [
         ["LITELLM", "litellm-proxy", "LiteLLM"], ["OCR", "unlimited-ocr", "Unlimited-OCR"],
         ["SUPERMEMORY", "supermemory-local", "Supermemory"], ["HERMES", "hermes-api", "Hermes"],
       ];
-      return required.map(([kind, componentKey, label]) => {
+      const serviceChecks = required.map(([kind, componentKey, label]) => {
         const connection = connections.find((item) => item.kind === kind);
         return { stageKey, componentKey, outcome: contractOutcome(connection?.status === "HEALTHY"), code: `service-${kind.toLowerCase()}`, summary: connection?.status === "HEALTHY" ? `${label} has an enabled healthy connection; Production still requires its retained compatibility suite.` : `${label} requires an enabled connection with a current successful diagnostic.` };
       });
+      if (architecture.topologyMode === "COMPACT") return serviceChecks;
+      return [...serviceChecks, {
+        stageKey,
+        componentKey: "hermes-runtime-node",
+        outcome: runtimeNode?.serviceConnection?.status === "HEALTHY" ? contractOutcome(true) : "FAILED" as const,
+        code: "hermes-node-enrollment",
+        summary: runtimeNode?.serviceConnection?.status === "HEALTHY"
+          ? `Hermes node '${runtimeNode.slug}' has a verified signing identity, a current outbound heartbeat, and a healthy inbound AIHub route; Production still requires customer firewall evidence.`
+          : runtimeNode
+            ? `Hermes node '${runtimeNode.slug}' is reporting outbound, but AIHub cannot yet validate the inbound Hermes API route.`
+            : "After LiteLLM is healthy, enroll an isolated Hermes VM and receive a current signed heartbeat.",
+        ...(runtimeNode?.hermesVersion ? { observedVersion: runtimeNode.hermesVersion } : {}),
+        details: runtimeNode ? { nodeId: runtimeNode.id, identityFingerprint: runtimeNode.identityFingerprint } : {},
+      }];
     }
     if (stageKey === "knowledge-workflow") {
       const document = await this.prisma.document.findFirst({

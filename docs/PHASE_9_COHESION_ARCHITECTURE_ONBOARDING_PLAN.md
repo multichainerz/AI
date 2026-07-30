@@ -1,6 +1,6 @@
 # Phase 9 - Cohesion, Architecture, Guardrails, and Enterprise Onboarding
 
-**Status:** Recalibrated installer/wizard foundation implemented; signed release provenance, target-environment acceptance, and runtime enrollment/reconciliation remain open
+**Status:** Recalibrated installer/wizard and single-node enrollment foundation implemented; signed release provenance, customer PKI/mTLS, and target-environment acceptance remain open
 **Documentation baseline:** Primary documentation for every named component, reviewed 2026-07-30
 **Compatibility rule:** Production must pin every package, model revision, container digest, API revision, database patch release, GPU driver, and CUDA/runtime combination. Upstream `main`, `latest`, a model card, or a documented feature is design input—not proof that the deployed artifact supports AIHub's exact contract.
 
@@ -26,9 +26,9 @@ The phase has four required outcomes:
 - Official Hermes Runs capability/toolset compatibility fixes and bounded SSE lifecycle projection into PostgreSQL.
 - Profile Distribution desired state with `SOUL.md`, checksummed Skill references, deterministic SHA-256 digest, run pinning, and an evidence-gated `STANDBY` lifecycle.
 
-These controls are implemented software behavior, not evidence that a customer deployment has passed. The remaining target work includes the signed release/image provenance pipeline, TLS and offline-bundle automation, certificate-bound runtime-node enrollment, automatic distribution reconciliation, controlled delegation/native-memory modes, signed handover export, and the full compatibility, restore, security, GPU, and acceptance suite below.
+These controls are implemented software behavior, not evidence that a customer deployment has passed. The remaining target work includes the signed release/image provenance pipeline, customer PKI/mTLS and offline-bundle automation, multi-node lifecycle, controlled delegation/native-memory modes, signed handover export, and the full compatibility, restore, security, GPU, and acceptance suite below.
 
-Certificate-bound Hermes runtime-node enrollment, upstream Profile installation/reconciliation, controlled delegation, and optional native-memory expansion remain Phase 9 outcomes. Existing Profile desired state, Agent Chat execution, and safe event visibility do not waive those target-runtime gates.
+Single-node Hermes enrollment now uses a one-time claim, a node-generated Ed25519 identity, replay-protected heartbeats, automatic connector creation, bidirectional reachability evidence, and revocation without standing SSH trust. Customer-approved TLS is still mandatory and PKI/mTLS remains a Production gate. AIHub intentionally does not install Profiles into upstream Hermes: the official Docker guidance favors one container per Profile, while AIHub's governed execution model pins and injects the immutable `SOUL.md` behavior per Runs API request. Controlled delegation and optional native-memory expansion remain Phase 9 outcomes.
 
 ## 2. Principles and boundaries
 
@@ -37,7 +37,7 @@ Certificate-bound Hermes runtime-node enrollment, upstream Profile installation/
 - Supermemory is the single durable **enterprise semantic-knowledge and approved agent-memory** plane. Its private embedded or supported external backing store is not part of the AIHub schema.
 - Enterprise repositories remain authoritative for original documents. AIHub extraction bytes and page images are ephemeral.
 - Hermes SQLite is private runtime state, not an alternative AIHub database and not a shared multi-host service.
-- Hermes built-in `MEMORY.md` and `USER.md` memory remains active according to upstream behavior, but is constrained to Profile-local behavioral and runtime notes; it must not become an enterprise record, secret store, or second semantic authority.
+- Hermes built-in `MEMORY.md` and `USER.md` memory remains active according to upstream behavior inside the runtime node's `HERMES_HOME`; it must not become an enterprise record, secret store, second semantic authority, or claimed Profile-isolation boundary.
 - Hermes Kanban remains disabled as a durable authority because it would overlap with PostgreSQL and `pg-boss`.
 - Browsers communicate only with AIHub. They never receive connector, Hermes, LiteLLM, or service credentials.
 - Hermes reaches only LiteLLM, the AIHub-governed MCP gateway, and explicitly approved infrastructure endpoints.
@@ -75,14 +75,14 @@ Every contract is classified as:
 | AIHub signed installer | Supported deployment path | The signed release-bundle installer and its pinned internal manifest are the sole supported entry path. Unexposed services remain private, health checks are declared, and shared writable files have deliberate locking. AIHub receives neither reusable host credentials nor a Docker socket. | Clean-install, upgrade, rollback, and boundary test |
 | NVIDIA RTX PRO 6000 Blackwell | Conditional 96 GB local GPU host | Official capacity is 96 GB ECC GDDR7. Laguna's approximate 71 GB weights leave no basis to promise 256K context, production batching, OCR, and a large embedding model concurrently. Choose measured safe co-residency, dedicated services/additional GPU, or an explicitly degraded serialized workload policy. External-inference topology does not require a local GPU. | Conditional blocking GPU admission and soak test |
 
-The repository baseline is therefore coherent but not yet production-proven. Its core split—AIHub control data in PostgreSQL, durable jobs in `pg-boss`, enterprise semantic knowledge in Supermemory, Profile-local Hermes runtime state, and inference through LiteLLM/vLLM—matches the documented components. The unproven parts are now explicit compatibility gates instead of architecture claims.
+The repository baseline is therefore coherent but not yet production-proven. Its core split—AIHub control data in PostgreSQL, durable jobs in `pg-boss`, enterprise semantic knowledge in Supermemory, runtime-local Hermes state, and inference through LiteLLM/vLLM—matches the documented components. The unproven parts are now explicit compatibility gates instead of architecture claims.
 
 ## 4. Hermes terminology contract
 
 | Product concept | Official Hermes term | AIHub use |
 |---|---|---|
-| Persistent specialist | **Profile** | Independent `HERMES_HOME`, configuration, `SOUL.md`, Skills, sessions, and gateway lifecycle |
-| Portable specialist release | **Profile Distribution** | Reviewed, immutable, non-secret Profile content and metadata |
+| Upstream persistent specialist | **Profile** | Independent `HERMES_HOME`, configuration, `SOUL.md`, Skills, sessions, and gateway lifecycle; the baseline installer does not remotely create multiple Docker Profiles |
+| Portable specialist release | **Profile Distribution** | Reviewed, immutable, non-secret expert content and metadata that AIHub pins and injects per governed run |
 | Personality | **`SOUL.md`** | Identity, tone, and behavioral defaults; never permissions |
 | Project instructions | **`AGENTS.md`** | Workspace or repository guidance |
 | Reusable task instructions | **Skill** with `SKILL.md` | Checksummed content installed from an approved catalogue |
@@ -103,8 +103,8 @@ The repository baseline is therefore coherent but not yet production-proven. Its
 | Profile releases, activation, policy assignments, grants and approvals | PostgreSQL | Immutable versions are pinned to runs |
 | AIHub conversations, sanitized run/event projections, audit and evaluation evidence | PostgreSQL | Enterprise dashboard and reporting authority |
 | Durable jobs, retries, schedules, leases and expert-to-expert routing | PostgreSQL + `pg-boss` | No second queue authority |
-| Active Hermes session messages, tool-call history, context lineage and native resume | Profile-local Hermes `state.db` | SQLite WAL; private to the owning `HERMES_HOME` |
-| Profile-local built-in memory | Hermes `MEMORY.md` and `USER.md` | Upstream keeps built-in memory active; restrict it to behavioral/runtime notes and exclude enterprise records and secrets |
+| Active Hermes session messages, tool-call history, context lineage and native resume | Runtime-local Hermes `state.db` | SQLite WAL; private to the enrolled node's single `HERMES_HOME` |
+| Runtime-local built-in memory | Hermes `MEMORY.md` and `USER.md` | Upstream keeps built-in memory active; exclude enterprise records and secrets and do not claim isolation between AIHub Profile Distributions |
 | Normalized durable enterprise knowledge and approved agent memory | Supermemory | Receives only policy-approved promoted content |
 | Supermemory indexes, embeddings, graph, credentials, and private backing store | Supermemory deployment | Embedded by default; optional supported PostgreSQL+pgvector is separately operated and never shares the AIHub schema |
 | Original enterprise files | Customer repositories | AIHub does not become a file repository |
@@ -121,14 +121,14 @@ Supermemory does not replace Hermes `state.db`, does not reduce its writes durin
 
 AIHub must not read, write, migrate, or synchronize SQLite rows directly. Commands flow from AIHub to the Hermes API Server; events flow back through the documented API or a narrow reviewed adapter. Correlation uses AIHub run, conversation, Profile release, runtime-node, and Hermes session identifiers.
 
-Each `HERMES_HOME` has one active runtime owner. Its SQLite file is placed on a protected persistent local volume, never a shared network filesystem. Retention is configurable; active sessions are preserved. Losing `state.db` loses native Hermes resume capability even when the AIHub audit projection remains available, so backup and restore behavior must be tested and stated honestly.
+The baseline enrolled node has one `HERMES_HOME` and one active runtime owner. Its SQLite file is placed on a protected persistent local volume, never a shared network filesystem. Retention is configurable; active sessions are preserved. Losing `state.db` loses native Hermes resume capability even when the AIHub audit projection remains available, so backup and restore behavior must be tested and stated honestly. Multiple AIHub Profile Distributions may share this execution boundary, but they do not gain separate upstream filesystems; one-container-per-Profile isolation remains a future explicitly reconciled topology.
 
 The official Hermes Supermemory provider is additive: built-in memory stays active, the provider can prefetch before turns, synchronize turns after responses, extract on session end, mirror built-in writes, and expose provider tools. Therefore Phase 9 defines two supported modes:
 
 1. **Governed mediated mode (default):** the Hermes external memory provider is off. AIHub performs authorized retrieval and controlled publication through its backend adapter and passes only scoped context to a run.
 2. **Native provider mode (conditional):** a pinned Hermes Profile connects directly to a scoped Supermemory endpoint only after tests prove custom base URL behavior, per-user/container isolation, tool/write control, redaction, retention/deletion, failure handling, and no cross-tenant leakage. Automatic transcript synchronization is not enabled merely because the plugin exists.
 
-In either mode, Supermemory remains the enterprise semantic authority, while Hermes built-in files stay limited and auditable as Profile-local runtime configuration.
+In either mode, Supermemory remains the enterprise semantic authority, while Hermes built-in files stay limited and auditable as runtime-local configuration.
 
 ### 5.3 Control topology
 
@@ -143,14 +143,14 @@ flowchart LR
     Jobs --> SM["Supermemory"]
     Jobs --> Hermes["Hermes API Server"]
 
-    Hermes --> Profile["Selected Hermes Profile"]
-    Profile --> State["Profile-local state.db"]
-    Profile --> LocalMemory["Constrained built-in memory"]
-    Profile --> Lite
+    Hermes --> Distribution["Pinned Profile Distribution injected per run"]
+    Hermes --> State["Runtime-local state.db"]
+    Hermes --> LocalMemory["Runtime-local built-in memory"]
+    Distribution --> Lite
     Lite --> VLLM["vLLM model services"]
-    Profile --> MCP["AIHub governed MCP gateway"]
+    Distribution --> MCP["AIHub governed MCP gateway"]
     MCP --> Allowed["Approved enterprise actions"]
-    Profile -. "conditional scoped native provider" .-> SM
+    Distribution -. "conditional scoped native provider" .-> SM
     Hermes -- "bounded events" --> Web
 ```
 
@@ -255,7 +255,7 @@ LiteLLM configuration has one owner per setting. In baseline mode AIHub stores t
 - Treat Qwen3 Embedding as optional; prefer Supermemory's local embedding for the first capacity baseline unless retrieval evidence requires Qwen3.
 - Build a dedicated Unlimited-OCR service adapter if the pinned official inference deployment does not pass AIHub's existing OpenAI-compatible OCR contract.
 - Formalize one-way Hermes event projection and bounded event retention.
-- Define Profile-local `state.db` persistence, retention, backup, restore, node affinity, drain, upgrade, and loss behavior.
+- Define runtime-local `state.db` persistence, retention, backup, restore, node affinity, drain, upgrade, and loss behavior.
 - Define the governed mediated and conditional native Hermes/Supermemory memory modes and prevent built-in memory files from holding enterprise content or secrets.
 - Measure database, event, queue, GPU memory, KV-cache headroom, concurrency, OCR contention, retrieval, and interaction latency before optimizing or adding infrastructure.
 
@@ -312,7 +312,7 @@ The initially supported topology choices are:
 3. **Identity and recovery:** install the final TLS trust, configure OIDC and group mapping, assign recovery ownership, export an encrypted recovery kit, verify the kit, and retire bootstrap access before production.
 4. **AI services:** enter, encrypt, test, stage, and activate LiteLLM, Unlimited-OCR, Supermemory, and Hermes connections. LiteLLM is the single inference gateway. A direct vLLM connection is optional, read-only operational telemetry and never a second model-routing authority.
 5. **Knowledge workflow:** test source/upload, transient conversion, OCR, normalized publication, authorized retrieval/deletion, and complete scratch purge. Enterprise repositories remain authoritative for originals and Supermemory remains authoritative for semantic knowledge.
-6. **Hermes and Profiles:** use a managed Compact runtime, an existing endpoint, or certificate-bound remote enrollment; then create and validate the first immutable Profile Distribution with `SOUL.md`, checksummed Skills, model alias, knowledge, memory, Toolsets, MCP grants, limits, and lifecycle policy.
+6. **Hermes and Profiles:** use a managed Compact runtime, an existing endpoint, or one-time signed remote enrollment; then create and validate the first immutable Profile Distribution with `SOUL.md`, checksummed Skills, model alias, knowledge, memory, Toolsets, MCP grants, limits, and lifecycle policy. AIHub pins that distribution to each run rather than mutating upstream Profile files.
 7. **Guardrails and tools:** apply conservative defaults, zero-tool validation, network restrictions, MCP allowlists, approvals, redaction, bounded delegation, and kill-switch ownership before optionally enabling governed tools.
 8. **Validate and activate:** execute the automated acceptance suite, resolve blocking failures, record explicit waivers where policy permits, select Development, Pilot, or Production, and export the signed handover report.
 
@@ -357,7 +357,7 @@ The database/encryption bootstrap is deliberately absent from the customer-facin
 
 #### Scope
 
-- Enroll certificate-bound Hermes runtime nodes and report version, capacity, labels, health, last contact, and revocation state.
+- Extend the implemented signed single-node enrollment with customer PKI/mTLS, approved capacity labels, controlled replacement, and multi-node scheduling only after routing semantics are explicit.
 - Reconcile immutable Profile Distributions without credentials, sessions, native memory, logs, or runtime state.
 - Manage `SOUL.md`, approved Skills, configured model route, memory mode, knowledge, Toolsets, MCP grants, delegation, limits, evaluation, standby/default routing, and activation as separate versioned concerns.
 - Add Agent Chat through the authenticated Hermes Runs API while keeping the browser isolated from Hermes credentials and endpoints.

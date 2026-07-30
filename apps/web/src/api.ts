@@ -150,6 +150,14 @@ import {
   type RecoveryKitExport,
   type VerifyRecoveryKit,
   type CompleteOnboarding,
+  hermesNodeInvitationSchema,
+  hermesRuntimeNodeListSchema,
+  hermesRuntimeNodeSchema,
+  type CreateHermesNodeInvitation,
+  type HermesNodeInvitation,
+  type HermesRuntimeNode,
+  type HermesRuntimeNodeList,
+  type MutateHermesRuntimeNode,
 } from "@aihub/contracts";
 
 export class AIHubApiError extends Error {
@@ -939,4 +947,26 @@ export async function completeOnboarding(input: CompleteOnboarding): Promise<Onb
     method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
   });
   return onboardingSnapshotSchema.parse(await parsedResponse(response));
+}
+
+export async function getHermesRuntimeNodes(): Promise<HermesRuntimeNodeList> {
+  const response = await fetch("/api/v1/admin/runtime-nodes/", { credentials: "same-origin" });
+  return hermesRuntimeNodeListSchema.parse(await parsedResponse(response));
+}
+
+export async function createHermesNodeInvitation(input: CreateHermesNodeInvitation): Promise<HermesNodeInvitation> {
+  const response = await fetch("/api/v1/admin/runtime-nodes/invitations", {
+    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return hermesNodeInvitationSchema.parse(await parsedResponse(response));
+}
+
+export async function mutateHermesRuntimeNode(
+  id: string,
+  input: MutateHermesRuntimeNode,
+): Promise<HermesRuntimeNode> {
+  const response = await fetch(`/api/v1/admin/runtime-nodes/${encodeURIComponent(id)}/actions`, {
+    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return hermesRuntimeNodeSchema.parse(await parsedResponse(response));
 }

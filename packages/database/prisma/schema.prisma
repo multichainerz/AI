@@ -321,6 +321,23 @@ enum OnboardingEvidenceOutcome {
   WARNING
 }
 
+enum HermesRuntimeNodeStatus {
+  PENDING
+  ONLINE
+  DEGRADED
+  DRAINING
+  SUSPENDED
+  REVOKED
+  OFFLINE
+}
+
+enum HermesNodeEnrollmentStatus {
+  ISSUED
+  CONSUMED
+  REVOKED
+  EXPIRED
+}
+
 model AdministratorSession {
   id                String            @id @default(uuid()) @db.Uuid
   tokenHash         Bytes             @unique
@@ -361,6 +378,7 @@ model ServiceConnection {
   revisions                 ConfigurationRevision[]
   modelDeployments          ModelDeployment[]
   oidcAuthorizationRequests OidcAuthorizationRequest[]
+  hermesRuntimeNode         HermesRuntimeNode?
 
   @@index([kind, environment])
   @@index([enabled, status])
@@ -727,6 +745,64 @@ model OnboardingEvidence {
   @@index([stageKey, createdAt])
   @@index([componentKey, createdAt])
   @@index([source, outcome, createdAt])
+}
+
+model HermesRuntimeNode {
+  id                      String                  @id @default(uuid()) @db.Uuid
+  slug                    String                  @unique @db.VarChar(64)
+  displayName             String                  @db.VarChar(120)
+  baseUrl                 String                  @db.Text
+  expectedHostname        String?                 @db.VarChar(253)
+  hostname                String?                 @db.VarChar(253)
+  status                  HermesRuntimeNodeStatus @default(PENDING)
+  identityPublicKeyPem    String?                 @db.Text
+  identityFingerprint     String?                 @unique @db.VarChar(64)
+  hermesVersion           String?                 @db.VarChar(120)
+  installerVersion        String?                 @db.VarChar(120)
+  capabilities            Json                    @default("[]")
+  serviceConnectionId     String?                 @unique @db.Uuid
+  lastSeenAt              DateTime?               @db.Timestamptz(6)
+  enrolledAt              DateTime?               @db.Timestamptz(6)
+  revokedAt               DateTime?               @db.Timestamptz(6)
+  revision                Int                     @default(0)
+  createdBy               String?                 @db.Uuid
+  createdAt               DateTime                @default(now()) @db.Timestamptz(6)
+  updatedAt               DateTime                @updatedAt @db.Timestamptz(6)
+  serviceConnection       ServiceConnection?      @relation(fields: [serviceConnectionId], references: [id], onDelete: SetNull)
+  enrollments             HermesNodeEnrollment[]
+  requestNonces           HermesNodeRequestNonce[]
+
+  @@index([status, lastSeenAt])
+  @@index([createdAt])
+}
+
+model HermesNodeEnrollment {
+  id               String                     @id @default(uuid()) @db.Uuid
+  nodeId           String                     @db.Uuid
+  tokenHash        Bytes                      @unique
+  status           HermesNodeEnrollmentStatus @default(ISSUED)
+  expiresAt        DateTime                   @db.Timestamptz(6)
+  consumedAt       DateTime?                  @db.Timestamptz(6)
+  revokedAt        DateTime?                  @db.Timestamptz(6)
+  consumedSourceIp String?                    @db.Inet
+  createdBy        String?                    @db.Uuid
+  createdAt        DateTime                   @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime                   @updatedAt @db.Timestamptz(6)
+  node             HermesRuntimeNode          @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@index([nodeId, status])
+  @@index([status, expiresAt])
+}
+
+model HermesNodeRequestNonce {
+  id         String            @id @default(uuid()) @db.Uuid
+  nodeId     String            @db.Uuid
+  nonce      String            @db.Uuid
+  receivedAt DateTime          @default(now()) @db.Timestamptz(6)
+  node       HermesRuntimeNode @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@unique([nodeId, nonce])
+  @@index([receivedAt])
 }
 
 model ChatConversation {

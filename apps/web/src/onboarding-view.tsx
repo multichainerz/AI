@@ -17,6 +17,7 @@ import {
   updateComponentCompatibility,
   verifyCredentialRecoveryKit,
 } from "./api.js";
+import { RuntimeNodesPanel } from "./runtime-nodes-panel.js";
 
 interface OnboardingViewProps {
   unlocked: boolean;
@@ -26,7 +27,7 @@ interface OnboardingViewProps {
   onUnauthorized: () => void;
 }
 
-type WorkspaceTab = "journey" | "readiness" | "architecture" | "evidence";
+type WorkspaceTab = "journey" | "nodes" | "readiness" | "architecture" | "evidence";
 
 const serviceActions: Partial<Record<string, Array<{ kind: ServiceKind; label: string }>>> = {
   "identity-recovery": [{ kind: "OIDC", label: "Configure OIDC" }],
@@ -34,7 +35,6 @@ const serviceActions: Partial<Record<string, Array<{ kind: ServiceKind; label: s
     { kind: "LITELLM", label: "LiteLLM" },
     { kind: "OCR", label: "Unlimited-OCR" },
     { kind: "SUPERMEMORY", label: "Supermemory" },
-    { kind: "HERMES", label: "Hermes" },
   ],
   "hermes-profiles": [{ kind: "HERMES", label: "Hermes connection" }],
 };
@@ -271,7 +271,7 @@ export function OnboardingView({ unlocked, oidcConfigured, onConfigure, onSignIn
     </section>
 
     <nav className="setup-tabs" aria-label="Deployment setup sections">
-      {(["journey", "readiness", "architecture", "evidence"] as WorkspaceTab[]).map((item) => <button key={item} className={tab === item ? "active" : undefined} type="button" onClick={() => setTab(item)}>{item === "readiness" ? "Advanced readiness" : label(item)}</button>)}
+      {(["journey", "nodes", "readiness", "architecture", "evidence"] as WorkspaceTab[]).map((item) => <button key={item} className={tab === item ? "active" : undefined} type="button" onClick={() => setTab(item)}>{item === "nodes" ? "Hermes nodes" : item === "readiness" ? "Advanced readiness" : label(item)}</button>)}
     </nav>
 
     {tab === "journey" && <div className="setup-journey-layout">
@@ -284,6 +284,7 @@ export function OnboardingView({ unlocked, oidcConfigured, onConfigure, onSignIn
               <div className="setup-stage-copy"><div><strong>{step.title}</strong>{!step.required && <em>Recommended</em>}</div><p>{step.description}</p><small>{step.action} · {step.evidenceRefs.length} generated evidence record{step.evidenceRefs.length === 1 ? "" : "s"}</small>
                 {serviceActions[step.key] && <div className="setup-inline-actions">{serviceActions[step.key]?.map((action) => <button className="text-button" key={action.kind} type="button" onClick={() => onConfigure(action.kind)}>{action.label}</button>)}</div>}
                 {step.key === "system-topology" && <div className="setup-inline-actions"><button className="text-button" type="button" onClick={() => setTab("architecture")}>Review topology</button></div>}
+                {step.key === "ai-services" && architecture.topologyMode !== "COMPACT" && <div className="setup-inline-actions"><button className="text-button" type="button" onClick={() => setTab("nodes")}>Enroll Hermes VM</button></div>}
                 {step.key === "identity-recovery" && <div className="setup-inline-actions"><button className="text-button" type="button" onClick={() => setRecoveryOpen(true)}>Recovery kit</button></div>}
               </div>
               <div className="setup-stage-controls"><span className={`document-status ${tone(step.status)}`}>{label(step.status)}</span><button className="secondary-button" disabled={busy !== null} type="button" onClick={() => void validate(step.key)}>{busy === `validate-${step.key}` ? "Checking…" : "Run check"}</button></div>
@@ -299,6 +300,8 @@ export function OnboardingView({ unlocked, oidcConfigured, onConfigure, onSignIn
         <button className="primary-button" type="button" disabled={!snapshot.gate.ready || busy !== null} onClick={() => void run("activate", async () => applySnapshot(await completeOnboarding({ reason: completionReason.trim(), expectedRevision: snapshot.journey.revision })))}>{busy === "activate" ? "Activating…" : snapshot.journey.activatedEnvironment === architecture.targetEnvironment ? `${label(architecture.targetEnvironment)} active` : `Activate ${label(architecture.targetEnvironment)}`}</button>
       </aside>
     </div>}
+
+    {tab === "nodes" && <RuntimeNodesPanel targetEnvironment={architecture.targetEnvironment} onUnauthorized={onUnauthorized} />}
 
     {tab === "readiness" && <div className="setup-contract-groups">
       <section className="setup-advanced-note"><div><strong>Advanced readiness</strong><p>AIHub-generated checks are authoritative for testable controls. Use external attestation only when the control belongs to a customer authority outside AIHub.</p></div><button className="secondary-button" disabled={busy !== null} type="button" onClick={() => void validate()}>Refresh automated evidence</button></section>

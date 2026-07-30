@@ -49,6 +49,8 @@ import type { PromptManager } from "./prompts/prompt-manager.js";
 import { PrismaPromptManager } from "./prompts/prisma-prompt-manager.js";
 import type { OnboardingManager } from "./onboarding/onboarding-manager.js";
 import { PrismaOnboardingManager } from "./onboarding/prisma-onboarding-manager.js";
+import type { HermesRuntimeNodeManager } from "./runtime-nodes/runtime-node-manager.js";
+import { PrismaHermesRuntimeNodeManager } from "./runtime-nodes/prisma-runtime-node-manager.js";
 
 export type BootstrapState = "REQUIRED" | "READY" | "LOCKED";
 
@@ -70,6 +72,7 @@ export interface RuntimeServices {
   toolingManager?: ToolingManager;
   aiOpsManager?: AiOpsManager;
   onboardingManager?: OnboardingManager;
+  runtimeNodeManager?: HermesRuntimeNodeManager;
   prisma?: AIHubPrismaClient;
 }
 
@@ -154,6 +157,7 @@ export function createRuntimeServices(): RuntimeServices {
       tools: toolingManager,
     });
     const onboardingManager = new PrismaOnboardingManager(prisma, masterKey, aiOpsManager);
+    const runtimeNodeManager = new PrismaHermesRuntimeNodeManager(prisma, encryption, connectionTestService);
     return {
       bootstrapState,
       prisma,
@@ -179,6 +183,7 @@ export function createRuntimeServices(): RuntimeServices {
       toolingManager,
       aiOpsManager,
       onboardingManager,
+      runtimeNodeManager,
     };
   } catch {
     return { bootstrapState: "LOCKED" };

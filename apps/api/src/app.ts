@@ -20,6 +20,7 @@ import { registerModelRoutes } from "./models/routes.js";
 import { registerGuardrailRoutes } from "./guardrails/routes.js";
 import { registerPromptRoutes } from "./prompts/routes.js";
 import { registerOnboardingRoutes } from "./onboarding/routes.js";
+import { registerAdminRuntimeNodeRoutes, registerRuntimeNodeRoutes } from "./runtime-nodes/routes.js";
 
 export interface AppOptions {
   logger?: boolean;
@@ -69,6 +70,7 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
       request.url.startsWith("/api/v1/documents")
       || request.url.startsWith("/api/v1/agents")
       || request.url.startsWith("/api/v1/mcp")
+      || request.url.startsWith("/api/v1/runtime-nodes")
     ) {
       void reply.header("cache-control", "no-store");
     }
@@ -136,7 +138,7 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
     platformMetaSchema.parse({
       product: "MPM AIHub",
       version: "0.1.0",
-      phase: "phase 9 cohesion and onboarding candidate",
+      phase: "phase 9b isolated-node enrollment candidate",
       configurationMode: "dashboard",
       bootstrapState: runtime.bootstrapState,
     }),
@@ -153,6 +155,21 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
         ...(runtime.onboardingManager ? { manager: runtime.onboardingManager } : {}),
       }),
     { prefix: "/api/v1/admin/onboarding" },
+  );
+
+  await app.register(
+    async (runtimeNodes) => registerRuntimeNodeRoutes(runtimeNodes, {
+      ...(runtime.runtimeNodeManager ? { manager: runtime.runtimeNodeManager } : {}),
+    }),
+    { prefix: "/api/v1/runtime-nodes" },
+  );
+
+  await app.register(
+    async (runtimeNodes) => registerAdminRuntimeNodeRoutes(runtimeNodes, {
+      ...(runtime.sessionManager ? { sessionManager: runtime.sessionManager } : {}),
+      ...(runtime.runtimeNodeManager ? { manager: runtime.runtimeNodeManager } : {}),
+    }),
+    { prefix: "/api/v1/admin/runtime-nodes" },
   );
 
   await app.register(
