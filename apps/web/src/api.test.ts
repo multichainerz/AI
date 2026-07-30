@@ -3,6 +3,7 @@ import {
   AIHubApiError,
   createAdministratorSession,
   getConnections,
+  getConnectionMonitoring,
   getEnterpriseSession,
   getChatConversations,
   getToolRuntime,
@@ -14,6 +15,13 @@ import {
   rollbackConfiguration,
   streamChatMessage,
   updateToolRuntime,
+  updateConnectionMonitoring,
+  getModelDeployments,
+  changeModelDeploymentState,
+  getGuardrailPolicies,
+  changeGuardrailPolicyState,
+  getPromptTemplates,
+  changePromptTemplateState,
 } from "./api.js";
 
 afterEach(() => vi.restoreAllMocks());
@@ -58,6 +66,134 @@ describe("AIHub browser API", () => {
       "/api/v1/admin/connections",
       { credentials: "same-origin" },
     );
+  });
+
+  it("reads and updates the dashboard-owned connection monitoring control", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse({
+        enabled: false,
+        intervalSeconds: 300,
+        reason: "Acceptance pending",
+        updatedAt: "2026-07-30T00:00:00.000Z",
+        updatedBy: null,
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        enabled: true,
+        intervalSeconds: 300,
+        reason: "Pilot monitoring approved",
+        updatedAt: "2026-07-30T00:01:00.000Z",
+        updatedBy: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb",
+      }));
+
+    await getConnectionMonitoring();
+    await updateConnectionMonitoring({
+      enabled: true,
+      intervalSeconds: 300,
+      reason: "Pilot monitoring approved",
+    });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/admin/connections/monitoring");
+    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ method: "PATCH", credentials: "same-origin" });
+  });
+
+  it("reads model routes and sends an evidence-bound activation decision", async () => {
+    const model = {
+      id: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d",
+      slug: "laguna-hermes",
+      displayName: "Laguna Hermes",
+      modelAlias: "hermes-agent",
+      workload: "AGENT",
+      status: "ACTIVE",
+      connection: { id: "5277951c-7d22-4cec-8d46-fad3afba37dd", displayName: "LiteLLM Primary", kind: "LITELLM", environment: "PRODUCTION", enabled: true, status: "HEALTHY" },
+      version: "2.1-nvfp4",
+      license: null,
+      contextWindowTokens: 131072,
+      maxOutputTokens: 8192,
+      maxConcurrentRequests: 2,
+      isDefault: true,
+      activationEvaluationId: "de44bc5d-0355-4c3f-872e-1af99f356d19",
+      firstActivatedAt: "2026-07-30T00:00:00.000Z",
+      revision: 2,
+      createdBy: null,
+      updatedBy: null,
+      createdAt: "2026-07-30T00:00:00.000Z",
+      updatedAt: "2026-07-30T00:00:00.000Z",
+    };
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse({ items: [model] }))
+      .mockResolvedValueOnce(jsonResponse(model));
+
+    await getModelDeployments();
+    await changeModelDeploymentState(model.id, "activate", {
+      expectedRevision: 1,
+      reason: "Promoted pilot evidence",
+      makeDefault: true,
+    });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/admin/models");
+    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ method: "POST", credentials: "same-origin" });
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({ makeDefault: true, expectedRevision: 1 });
+  });
+
+  it("reads policies and sends an evidence-bound guardrail activation", async () => {
+    const policy = {
+      id: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d",
+      slug: "chat-safety",
+      displayName: "Chat safety",
+      description: "Approved chat safety controls.",
+      version: "1.0.0",
+      status: "ACTIVE",
+      liteLLMGuardrails: ["presidio-pii"],
+      maxInputCharacters: 12000,
+      activationEvaluationId: "de44bc5d-0355-4c3f-872e-1af99f356d19",
+      firstActivatedAt: "2026-07-30T00:00:00.000Z",
+      revision: 2,
+      createdBy: null,
+      updatedBy: null,
+      createdAt: "2026-07-30T00:00:00.000Z",
+      updatedAt: "2026-07-30T00:00:00.000Z",
+    };
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse({ items: [policy] }))
+      .mockResolvedValueOnce(jsonResponse(policy));
+
+    await getGuardrailPolicies();
+    await changeGuardrailPolicyState(policy.id, "activate", { expectedRevision: 1, reason: "Promoted safety evidence" });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/admin/guardrails");
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(`/api/v1/admin/guardrails/${policy.id}/activate`);
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({ expectedRevision: 1, reason: "Promoted safety evidence" });
+  });
+
+  it("reads prompts and sends an evidence-bound prompt activation", async () => {
+    const prompt = {
+      id: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d",
+      slug: "mpm-chat-system",
+      displayName: "MPM chat system",
+      description: "Approved employee chat behavior.",
+      purpose: "CHAT_SYSTEM",
+      version: "1.0.0",
+      status: "ACTIVE",
+      content: "You are the approved MPM assistant. State uncertainty and protect private data.",
+      contentChecksum: "a".repeat(64),
+      activationEvaluationId: "de44bc5d-0355-4c3f-872e-1af99f356d19",
+      firstActivatedAt: "2026-07-30T00:00:00.000Z",
+      revision: 2,
+      createdBy: null,
+      updatedBy: null,
+      createdAt: "2026-07-30T00:00:00.000Z",
+      updatedAt: "2026-07-30T00:00:00.000Z",
+    };
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse({ items: [prompt] }))
+      .mockResolvedValueOnce(jsonResponse(prompt));
+
+    await getPromptTemplates();
+    await changePromptTemplateState(prompt.id, "activate", { expectedRevision: 1, reason: "Promoted prompt evidence" });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/admin/prompts");
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(`/api/v1/admin/prompts/${prompt.id}/activate`);
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({ expectedRevision: 1, reason: "Promoted prompt evidence" });
   });
 
   it("restores the opaque enterprise session without exposing an OIDC token", async () => {

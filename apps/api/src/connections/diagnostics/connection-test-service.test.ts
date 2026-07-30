@@ -5,6 +5,7 @@ import type { ConnectionDiagnosticStore, ResolvedConnection } from "./types.js";
 
 class MemoryDiagnosticStore implements ConnectionDiagnosticStore {
   recorded?: ConnectionTestResult;
+  expectedRevision: number | undefined;
 
   constructor(private readonly connection: ResolvedConnection) {}
 
@@ -12,8 +13,10 @@ class MemoryDiagnosticStore implements ConnectionDiagnosticStore {
     return this.connection;
   }
 
-  async recordDiagnostic(result: ConnectionTestResult) {
+  async recordDiagnostic(result: ConnectionTestResult, _actor?: unknown, expectedRevision?: number) {
     this.recorded = result;
+    this.expectedRevision = expectedRevision;
+    return true;
   }
 }
 
@@ -23,6 +26,7 @@ describe("ConnectionTestService", () => {
   it("records a configuration failure without making a network request", async () => {
     const store = new MemoryDiagnosticStore({
       id: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d",
+      activeRevision: 1,
       kind: "SUPERMEMORY",
       baseUrl: null,
       configuration: {},
@@ -41,11 +45,13 @@ describe("ConnectionTestService", () => {
     });
     expect(adapter.test).not.toHaveBeenCalled();
     expect(store.recorded).toEqual(result);
+    expect(store.expectedRevision).toBe(1);
   });
 
   it("persists an unreachable result without exposing network error details", async () => {
     const store = new MemoryDiagnosticStore({
       id: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d",
+      activeRevision: 1,
       kind: "VLLM",
       baseUrl: "https://vllm.mpm.internal",
       configuration: {},
@@ -69,6 +75,7 @@ describe("ConnectionTestService", () => {
   it("classifies an S3 authentication rejection as degraded rather than unreachable", async () => {
     const store = new MemoryDiagnosticStore({
       id: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d",
+      activeRevision: 1,
       kind: "SEAWEEDFS",
       baseUrl: "https://s3.mpm.internal",
       configuration: {},

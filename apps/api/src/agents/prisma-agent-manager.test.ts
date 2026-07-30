@@ -8,6 +8,7 @@ const PROFILE_ID = "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb";
 const RUN_ID = "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d";
 const VERSION_ID = "b41d3534-658b-4cf0-a046-2b20b15f44e5";
 const EVALUATION_ID = "de44bc5d-0355-4c3f-872e-1af99f356d19";
+const MODEL_ROUTE_ID = "5277951c-7d22-4cec-8d46-fad3afba37dd";
 const USER_ID = "ac369dab-cad5-4fd9-83ed-b4fbf528028a";
 const now = new Date("2026-07-30T00:00:00.000Z");
 const principal: AgentPrincipal = { id: USER_ID, subject: "user:pilot", identityMode: "ENTERPRISE", scopes: ["agents:use"] };
@@ -132,6 +133,8 @@ describe("PrismaAgentManager", () => {
         findUnique: vi.fn(async () => ({ id: PROFILE_ID, slug: "hermes-analyst", currentVersion: 1, activeVersion: null })),
         update: vi.fn(),
       },
+      agentProfileVersion: { findUnique: vi.fn(async () => ({ modelAlias: "hermes-agent" })) },
+      modelDeployment: { count: vi.fn(async () => 0), findFirst: vi.fn() },
       evaluationRun: { findFirst: vi.fn(async () => null) },
       auditEvent: { create: vi.fn() },
     };
@@ -152,6 +155,8 @@ describe("PrismaAgentManager", () => {
         findUnique: vi.fn(async () => ({ id: PROFILE_ID, slug: "hermes-analyst", currentVersion: 1, activeVersion: null })),
         update: vi.fn(async () => updatedProfile),
       },
+      agentProfileVersion: { findUnique: vi.fn(async () => ({ modelAlias: "hermes-agent" })) },
+      modelDeployment: { count: vi.fn(async () => 1), findFirst: vi.fn(async () => ({ id: MODEL_ROUTE_ID })) },
       evaluationRun: { findFirst: vi.fn(async () => ({ id: EVALUATION_ID })) },
       auditEvent: { create: vi.fn(async () => ({})) },
     };
@@ -160,7 +165,28 @@ describe("PrismaAgentManager", () => {
     await expect(new PrismaAgentManager(prisma, {} as PgBossQueueService).activateProfile(principal, PROFILE_ID))
       .resolves.toMatchObject({ status: "ACTIVE", activeVersion: 1 });
     expect(transaction.auditEvent.create).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ metadata: expect.objectContaining({ evaluationRunId: EVALUATION_ID }) }),
+      data: expect.objectContaining({ metadata: expect.objectContaining({ evaluationRunId: EVALUATION_ID, modelRouteId: MODEL_ROUTE_ID }) }),
     }));
+  });
+
+  it("fails closed when the profile alias has no active agent model route", async () => {
+    const transaction = {
+      agentProfile: {
+        findUnique: vi.fn(async () => ({ id: PROFILE_ID, slug: "hermes-analyst", currentVersion: 1, activeVersion: null })),
+        update: vi.fn(),
+      },
+      agentProfileVersion: { findUnique: vi.fn(async () => ({ modelAlias: "hermes-agent" })) },
+      modelDeployment: { count: vi.fn(async () => 1), findFirst: vi.fn(async () => null) },
+      evaluationRun: { findFirst: vi.fn(async () => ({ id: EVALUATION_ID })) },
+    };
+    const prisma = { $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)) } as unknown as AIHubPrismaClient;
+
+    await expect(new PrismaAgentManager(prisma, {} as PgBossQueueService).activateProfile(principal, PROFILE_ID))
+      .rejects.toThrow("Activate the 'hermes-agent' agent model route");
+    expect(transaction.modelDeployment.count).toHaveBeenCalledWith({
+      where: { workload: "AGENT", firstActivatedAt: { not: null } },
+    });
+    expect(transaction.evaluationRun.findFirst).not.toHaveBeenCalled();
+    expect(transaction.agentProfile.update).not.toHaveBeenCalled();
   });
 });

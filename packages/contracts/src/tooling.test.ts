@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   decideToolApprovalSchema,
   issuedGatewayCredentialSchema,
+  toolMetricsSchema,
   upsertToolGrantSchema,
   updateToolRuntimeControlSchema,
 } from "./tooling.js";
@@ -32,5 +33,20 @@ describe("governed tooling contracts", () => {
     };
     expect(issuedGatewayCredentialSchema.safeParse({ ...base, token: `aihub_mcp_${"a".repeat(43)}` }).success).toBe(true);
     expect(issuedGatewayCredentialSchema.safeParse({ ...base, token: "secret" }).success).toBe(false);
+  });
+
+  it("keeps durable action-dispatch health visible in tooling metrics", () => {
+    expect(toolMetricsSchema.parse({
+      generatedAt: "2026-07-30T00:00:00.000Z",
+      activeTools: 2,
+      activeGrants: 1,
+      pendingApprovals: 1,
+      executingCalls: 1,
+      openActionDispatches: 1,
+      failedActionDispatches: 0,
+      completedCalls: 3,
+      deniedCalls: 2,
+      failedCalls: 0,
+    })).toMatchObject({ openActionDispatches: 1, failedActionDispatches: 0 });
   });
 });

@@ -4,6 +4,7 @@ import type { ResolvedConnection } from "./types.js";
 
 const connection: ResolvedConnection = {
   id: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d",
+  activeRevision: 1,
   kind: "VLLM",
   baseUrl: "https://vllm.mpm.internal",
   configuration: {},

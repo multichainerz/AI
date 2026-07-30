@@ -12,7 +12,6 @@ import type {
   UpsertToolGrant,
 } from "@aihub/contracts";
 import { Prisma, type AIHubPrismaClient } from "@aihub/database";
-import type { MemoryManager } from "../memory/memory-manager.js";
 import {
   ToolingConflictError,
   ToolingDeniedError,
@@ -158,10 +157,7 @@ function approvalDto(approval: {
 }
 
 export class PrismaToolingManager implements ToolingManager {
-  constructor(
-    private readonly prisma: AIHubPrismaClient,
-    private readonly memoryManager: MemoryManager,
-  ) {}
+  constructor(private readonly prisma: AIHubPrismaClient) {}
 
   async listTools() {
     const items = await this.prisma.governedTool.findMany({ orderBy: [{ risk: "asc" }, { displayName: "asc" }] });
@@ -363,7 +359,7 @@ export class PrismaToolingManager implements ToolingManager {
   async decideApproval(principal: ToolingPrincipal, approvalId: string, input: { decision: "APPROVE" | "REJECT"; reason: string }): Promise<ToolApproval> {
     let expired = false;
     let revokedReason: string | null = null;
-    const approval = await this.prisma.$transaction(async (transaction) => {
+    await this.prisma.$transaction(async (transaction) => {
       await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`aihub-tool-approval:${approvalId}`}, 0))`;
       const found = await transaction.toolApproval.findUnique({ where: { id: approvalId }, include: approvalInclude });
       if (!found) throw new ToolingNotFoundError("The approval request does not exist.");
@@ -408,10 +404,15 @@ export class PrismaToolingManager implements ToolingManager {
           ? { status: "EXECUTING", startedAt: now }
           : { status: "DENIED", errorCode: "APPROVAL_REJECTED", errorMessage: input.reason, completedAt: now },
       });
+      if (approved) {
+        await transaction.toolActionDispatch.create({
+          data: { callId: found.callId },
+        });
+      }
       await transaction.auditEvent.create({ data: {
         actorType: "USER", actorId: principal.id, action: approved ? "tool.approval_approved" : "tool.approval_rejected",
         resourceType: "ToolApproval", resourceId: approvalId, outcome: "SUCCESS",
-        metadata: { callId: found.callId, reason: input.reason },
+        metadata: { callId: found.callId, reason: input.reason, durableDispatchCreated: approved },
       } });
       return updated;
     });
@@ -419,17 +420,6 @@ export class PrismaToolingManager implements ToolingManager {
     if (expired) throw new ToolingConflictError("The approval request has expired.");
     if (revokedReason) throw new ToolingDeniedError(revokedReason);
 
-    if (input.decision === "APPROVE") {
-      const args = jsonObject(approval.call.arguments);
-      const documentId = typeof args.documentId === "string" ? args.documentId : "";
-      try {
-        await this.memoryManager.reindex(documentId, principal.id);
-        await this.completeCall(approval.callId, { queued: true, documentId });
-      } catch (error) {
-        const message = error instanceof Error ? error.message.slice(0, 500) : "Approved tool execution failed.";
-        await this.failCall(approval.callId, "APPROVED_ACTION_FAILED", message);
-      }
-    }
     const refreshed = await this.prisma.toolApproval.findUniqueOrThrow({ where: { id: approvalId }, include: approvalInclude });
     return approvalDto(refreshed as Parameters<typeof approvalDto>[0]);
   }
@@ -477,15 +467,25 @@ export class PrismaToolingManager implements ToolingManager {
   }
 
   async metrics(): Promise<ToolMetrics> {
-    const [activeTools, activeGrants, pendingApprovals, completedCalls, deniedCalls, failedCalls] = await Promise.all([
+    const [
+      activeTools, activeGrants, pendingApprovals, executingCalls,
+      openActionDispatches, failedActionDispatches, completedCalls, deniedCalls, failedCalls,
+    ] = await Promise.all([
       this.prisma.governedTool.count({ where: { status: "ACTIVE" } }),
       this.prisma.agentToolGrant.count({ where: { enabled: true } }),
       this.prisma.toolApproval.count({ where: { status: "PENDING", expiresAt: { gt: new Date() } } }),
+      this.prisma.governedToolCall.count({ where: { status: "EXECUTING" } }),
+      this.prisma.toolActionDispatch.count({ where: { status: { in: ["PENDING", "PROCESSING"] } } }),
+      this.prisma.toolActionDispatch.count({ where: { status: "FAILED" } }),
       this.prisma.governedToolCall.count({ where: { status: "COMPLETED" } }),
       this.prisma.governedToolCall.count({ where: { status: "DENIED" } }),
       this.prisma.governedToolCall.count({ where: { status: "FAILED" } }),
     ]);
-    return { generatedAt: new Date().toISOString(), activeTools, activeGrants, pendingApprovals, completedCalls, deniedCalls, failedCalls };
+    return {
+      generatedAt: new Date().toISOString(), activeTools, activeGrants, pendingApprovals,
+      executingCalls, openActionDispatches, failedActionDispatches,
+      completedCalls, deniedCalls, failedCalls,
+    };
   }
 
   private documentId(args: Record<string, unknown>): string {

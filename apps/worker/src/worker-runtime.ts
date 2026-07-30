@@ -42,8 +42,14 @@ export interface AgentWorkerHandler {
   process(payload: AgentRunJobPayload, jobId: string, workerId: string): Promise<object>;
 }
 
+export interface ToolActionWorkerHandler {
+  processAvailable(workerId: string): Promise<number>;
+}
+
 export class WorkerRuntime {
   private heartbeatTimer?: NodeJS.Timeout;
+  private toolActionTimer?: NodeJS.Timeout;
+  private toolActionDrain: Promise<void> | undefined;
   private started = false;
 
   constructor(
@@ -55,6 +61,8 @@ export class WorkerRuntime {
     private readonly documentHandlers?: DocumentWorkerHandlers,
     private readonly memoryHandler?: MemoryWorkerHandler,
     private readonly agentHandler?: AgentWorkerHandler,
+    private readonly toolActionHandler?: ToolActionWorkerHandler,
+    private readonly toolActionIntervalMs = 5_000,
   ) {}
 
   async start(): Promise<void> {
@@ -85,6 +93,11 @@ export class WorkerRuntime {
           (payload, jobId, workerId) => this.agentHandler!.process(payload, jobId, workerId),
         );
       }
+      if (this.toolActionHandler) {
+        await this.drainToolActions();
+        this.toolActionTimer = setInterval(() => void this.drainToolActions(), this.toolActionIntervalMs);
+        this.toolActionTimer.unref();
+      }
       this.heartbeatTimer = setInterval(() => void this.heartbeat(), this.heartbeatIntervalMs);
       this.heartbeatTimer.unref();
       this.started = true;
@@ -101,6 +114,8 @@ export class WorkerRuntime {
   async stop(): Promise<void> {
     if (!this.started) return;
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    if (this.toolActionTimer) clearInterval(this.toolActionTimer);
+    if (this.toolActionDrain) await this.toolActionDrain;
     const results = await Promise.allSettled([
       this.registry.markStopped(this.identity.id),
       this.queue.stop(),
@@ -115,6 +130,24 @@ export class WorkerRuntime {
       await this.registry.markAlive(this.identity.id);
     } catch (error) {
       this.logger.error("Worker heartbeat update failed.", error);
+    }
+  }
+
+  private async drainToolActions(): Promise<void> {
+    if (!this.toolActionHandler) return;
+    if (this.toolActionDrain) return this.toolActionDrain;
+    const drain = (async () => {
+      try {
+        await this.toolActionHandler!.processAvailable(this.identity.id);
+      } catch (error) {
+        this.logger.error("Approved tool action recovery failed.", error);
+      }
+    })();
+    this.toolActionDrain = drain;
+    try {
+      await drain;
+    } finally {
+      if (this.toolActionDrain === drain) this.toolActionDrain = undefined;
     }
   }
 }

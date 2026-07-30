@@ -77,3 +77,10 @@ export class ChatRateLimitError extends Error {
     this.name = "ChatRateLimitError";
   }
 }
+
+export class ChatPolicyViolationError extends Error {
+  constructor(message = "The request was blocked by the active AIHub guardrail policy.") {
+    super(message);
+    this.name = "ChatPolicyViolationError";
+  }
+}

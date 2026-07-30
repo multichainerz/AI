@@ -8,11 +8,19 @@ This runbook describes the local AI operations and evaluation foundation. It sep
 
 AIHub reports three kinds of observations:
 
-- **Live**: read during the request from PostgreSQL or `pg-boss`, including database availability, queues, and worker heartbeats.
-- **Last verified**: the retained result of an administrator-triggered credential-aware connection check. Passing results become `NOT_VERIFIED` after 15 minutes; an old result is never presented as live monitoring.
+- **Live**: read during the request from PostgreSQL or `pg-boss`, including database availability, queues, and worker heartbeats, or produced by enabled scheduled connection monitoring within its explicit freshness window.
+- **Last verified**: a retained credential-aware connection result produced manually, while monitoring was disabled, or now overdue. Manually produced passing results become `NOT_VERIFIED` after 15 minutes; an overdue scheduled passing result becomes `NOT_VERIFIED` after two configured intervals, with a minimum window of two minutes.
 - **Configuration**: whether a dashboard-managed connection exists and is enabled. Configuration alone is not evidence of availability.
 
 The control room maps component impact to chat, documents, memory, agents, and tools. Domain metrics retain their original time semantics. For example, chat error rate is a 24-hour window, while retained failed agent and tool counts are not presented as live error rates.
+
+## Scheduled connection monitoring
+
+Scheduled checks are disabled by default. An administrator with `connections:write` enables them in Platform connections, selects a cadence, and records an operator reason. The browser receives only the control state; connector credentials remain encrypted and are resolved inside the API for each check.
+
+The API process scans every five seconds and claims at most one enabled connection that is due. PostgreSQL row locks with `SKIP LOCKED`, a unique claim token, and instance ownership prevent two AIHub instances from intentionally checking the same row. A claim becomes recoverable after two minutes if an instance terminates. Configuration edits and rollbacks invalidate health evidence and clear any active claim. Monitoring uses the same bounded, redirect-blocking, credential-aware adapters as a manual connection test.
+
+The control room treats a scheduled result as live only while monitoring remains enabled and the result is no older than twice the configured cadence, with a two-minute minimum. An overdue healthy result becomes `NOT_VERIFIED`; degraded and unreachable results remain visible as the last known state but are no longer labelled live. Disabling monitoring prevents new claims and clears retained leases without deleting diagnostic history.
 
 ## Incident lifecycle
 
@@ -44,7 +52,7 @@ Hermes agent activation is bound to promoted evidence. For an agent profile with
 - target reference: `agent:hermes-analyst`
 - target version: `3`
 
-Activation fails closed until a matching promoted candidate exists. Model, prompt, and policy deployment gates will be bound when those versioned deployment paths are introduced.
+Activation fails closed until a matching promoted candidate exists. Model routes, chat guardrail policies, and chat-system prompts use the same exact-reference gate. Prompt activation additionally requires both `CHAT` and `SAFETY` categories. After the first prompt activation, chat fails closed whenever no governed prompt is active.
 
 ## Guardrail posture
 
@@ -52,8 +60,8 @@ The dashboard distinguishes locally enforced application controls from controls 
 
 | Layer | Local posture | Remaining acceptance |
 |---|---|---|
-| Input | Partial | Connect and evaluate the approved safety classifier |
-| Output | Not verified | Validate output classification with representative MPM data |
+| Input | Partial | Activate an evaluated policy, then prove each assigned LiteLLM pre-call hook with representative MPM data |
+| Output | Partial when a policy is active | Prove each assigned LiteLLM post-call hook, streaming behavior, and false-positive handling |
 | Retrieval | Enforced for private scope | Approve and test shared-scope inheritance rules |
 | Model access | Enforced | Validate the real LiteLLM/vLLM routes and capacity controls |
 | Tool use | Enforced in the gateway | Complete live Hermes per-run capability interoperability |
@@ -61,6 +69,7 @@ The dashboard distinguishes locally enforced application controls from controls 
 
 ## API surface
 
+- `GET|PATCH /api/v1/admin/connections/monitoring`
 - `GET /api/v1/admin/operations/overview`
 - `GET|POST /api/v1/admin/operations/incidents`
 - `POST /api/v1/admin/operations/incidents/:id/acknowledge`
@@ -68,16 +77,20 @@ The dashboard distinguishes locally enforced application controls from controls 
 - `GET|POST /api/v1/admin/operations/evaluations`
 - `POST /api/v1/admin/operations/evaluations/:id/complete`
 - `POST /api/v1/admin/operations/evaluations/:id/promote`
+- `GET|POST /api/v1/admin/prompts`
+- `PATCH /api/v1/admin/prompts/:id`
+- `POST /api/v1/admin/prompts/:id/activate|suspend`
 - Existing queue probe and dead-letter recovery routes remain under `/api/v1/admin/operations/jobs`.
 
 ## Target-environment acceptance checklist
 
-- Apply migration `20260730000900_ai_operations` and exercise backup and restore of incidents and evaluation evidence.
+- Apply migrations through `20260730001500_prompt_templates`, then exercise backup and restore of incidents, evaluation evidence, monitoring controls, leases, model routes, policies, and prompts.
 - Export RTX PRO 6000, vLLM, and LiteLLM utilization, saturation, latency, and error metrics through approved on-premises collectors.
-- Add scheduled credential-aware probes with bounded frequency and an explicit freshness policy.
+- Enable scheduled checks against the approved deployed endpoints and verify cadence, credential rotation, multi-instance exclusion, stale-lease recovery, and freshness transitions.
 - Configure notification delivery and verify alert acknowledgement, failure, retry, and escalation.
 - Forward incident, guardrail, tool, approval, and evaluation audit events to the MPM SIEM and verify retention.
 - Run approved regression datasets for all enabled target categories.
 - Demonstrate agent activation rejection without matching promoted evidence and success with exact target/version evidence.
+- Demonstrate prompt activation rejection without exact promoted `PROMPT`, `CHAT`, and `SAFETY` evidence; then verify active-version checksum provenance and fail-closed suspension.
 - Exercise worker loss, queue backlog, OCR failure, SeaweedFS failure, Supermemory failure, inference saturation, and recovery.
 - Record capacity limits and degraded-mode procedures for the RTX PRO 6000 96 GB deployment.

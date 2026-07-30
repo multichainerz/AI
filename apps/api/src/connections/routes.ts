@@ -1,5 +1,6 @@
 import {
   connectionTestResultSchema,
+  connectionMonitoringControlSchema,
   configurationRevisionListSchema,
   createServiceConnectionSchema,
   rollbackConfigurationRequestSchema,
@@ -8,6 +9,7 @@ import {
   serviceConnectionListSchema,
   serviceConnectionSummarySchema,
   updateServiceConnectionSchema,
+  updateConnectionMonitoringControlSchema,
 } from "@aihub/contracts";
 import type { FastifyInstance } from "fastify";
 import { requireAdmin, type AdminSessionManager } from "../auth/admin-session.js";
@@ -19,11 +21,13 @@ import {
   type ConnectionManager,
 } from "./connection-manager.js";
 import type { ConnectionTestService } from "./diagnostics/connection-test-service.js";
+import type { ConnectionMonitoringManager } from "./connection-monitor.js";
 
 interface ConnectionRouteDependencies {
   sessionManager?: AdminSessionManager;
   manager?: ConnectionManager;
   tester?: ConnectionTestService;
+  monitor?: ConnectionMonitoringManager;
 }
 
 export async function registerConnectionRoutes(
@@ -46,6 +50,37 @@ export async function registerConnectionRoutes(
     }
     const items = await dependencies.manager!.list();
     return serviceConnectionListSchema.parse({ items });
+  });
+
+  app.get("/monitoring", async (request, reply) => {
+    if (!(await requireAdmin(request, reply, dependencies.sessionManager, "connections:read"))) return;
+    if (!dependencies.monitor) {
+      return reply.code(503).send({
+        error: "MONITORING_UNAVAILABLE",
+        message: "Scheduled connection monitoring is not available.",
+      });
+    }
+    return connectionMonitoringControlSchema.parse(await dependencies.monitor.getControl());
+  });
+
+  app.patch("/monitoring", async (request, reply) => {
+    const principal = await requireAdmin(request, reply, dependencies.sessionManager, "connections:write");
+    if (!principal) return;
+    if (!dependencies.monitor) {
+      return reply.code(503).send({
+        error: "MONITORING_UNAVAILABLE",
+        message: "Scheduled connection monitoring is not available.",
+      });
+    }
+    const input = updateConnectionMonitoringControlSchema.safeParse(request.body);
+    if (!input.success) {
+      return reply.code(400).send({
+        error: "INVALID_MONITORING_CONTROL",
+        message: "Connection monitoring configuration is invalid.",
+        issues: input.error.issues,
+      });
+    }
+    return connectionMonitoringControlSchema.parse(await dependencies.monitor.updateControl(principal, input.data));
   });
 
   app.post("/", async (request, reply) => {

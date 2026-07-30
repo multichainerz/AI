@@ -1,5 +1,6 @@
 import type {
   CreateServiceConnection,
+  ConnectionMonitoringControl,
   ConnectionTestResult,
   ConfigurationRevisionList,
   Environment,
@@ -18,6 +19,7 @@ interface ConnectionDrawerProps {
   bootstrapState: "REQUIRED" | "READY" | "LOCKED";
   busy: boolean;
   connections: ServiceConnectionSummary[];
+  monitoring: ConnectionMonitoringControl | null;
   error: string | null;
   diagnostic: ConnectionTestResult | null;
   initialKind: ServiceKind;
@@ -28,6 +30,7 @@ interface ConnectionDrawerProps {
   onClose: () => void;
   onSave: (draft: ConnectionDraft) => Promise<void>;
   onTest: (id: string) => Promise<void>;
+  onUpdateMonitoring: (input: { enabled: boolean; intervalSeconds: number; reason: string }) => Promise<void>;
   onUnlock: (token: string) => Promise<boolean>;
   onLoadRevisions: (connectionId: string) => Promise<void>;
   onRollback: (
@@ -70,6 +73,9 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
   const [configuration, setConfiguration] = useState<ServiceConnectionConfiguration>({});
   const [secrets, setSecrets] = useState<Record<string, string>>({});
   const [rollbackCandidate, setRollbackCandidate] = useState<number | null>(null);
+  const [monitoringEnabled, setMonitoringEnabled] = useState(false);
+  const [monitoringInterval, setMonitoringInterval] = useState(300);
+  const [monitoringReason, setMonitoringReason] = useState("Enable scheduled credential-aware checks.");
 
   const definition = useMemo(
     () => connectionDefinitions.find(({ kind }) => kind === selectedKind) ?? connectionDefinitions[0]!,
@@ -80,6 +86,12 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
     existing && props.diagnostic?.connectionId === existing.id ? props.diagnostic : null;
 
   useEffect(() => setSelectedKind(props.initialKind), [props.initialKind]);
+
+  useEffect(() => {
+    setMonitoringEnabled(props.monitoring?.enabled ?? false);
+    setMonitoringInterval(props.monitoring?.intervalSeconds ?? 300);
+    setMonitoringReason(props.monitoring?.reason ?? "Enable scheduled credential-aware checks.");
+  }, [props.monitoring]);
 
   useEffect(() => {
     if (!props.open) return;
@@ -194,6 +206,35 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
           </form>
         ) : (
           <form className="connection-form" onSubmit={submitConnection}>
+            <section className={`monitoring-control ${monitoringEnabled ? "enabled" : "disabled"}`} aria-label="Scheduled connection monitoring">
+              <div>
+                <small>Continuous health evidence</small>
+                <strong>{monitoringEnabled ? "Scheduled monitoring enabled" : "Scheduled monitoring disabled"}</strong>
+                <span>Checks use encrypted connector credentials inside AIHub and never expose them to the browser.</span>
+              </div>
+              <label className="monitoring-toggle"><input type="checkbox" checked={monitoringEnabled} onChange={(event) => setMonitoringEnabled(event.target.checked)} /><span>Run scheduled checks</span></label>
+              <label>Cadence
+                <select value={monitoringInterval} onChange={(event) => setMonitoringInterval(Number(event.target.value))}>
+                  <option value={60}>Every minute</option>
+                  <option value={300}>Every 5 minutes</option>
+                  <option value={900}>Every 15 minutes</option>
+                  <option value={3600}>Every hour</option>
+                </select>
+              </label>
+              <label className="monitoring-reason">Operator reason
+                <input minLength={3} maxLength={500} value={monitoringReason} onChange={(event) => setMonitoringReason(event.target.value)} />
+              </label>
+              <button
+                className="primary-button"
+                type="button"
+                disabled={props.busy || monitoringReason.trim().length < 3}
+                onClick={() => void props.onUpdateMonitoring({
+                  enabled: monitoringEnabled,
+                  intervalSeconds: monitoringInterval,
+                  reason: monitoringReason.trim(),
+                })}
+              >{props.busy ? "Applying…" : "Save monitoring"}</button>
+            </section>
             <div className="kind-tabs" role="tablist" aria-label="Connection type">
               {connectionDefinitions.map((item) => (
                 <button

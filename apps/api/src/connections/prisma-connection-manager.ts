@@ -298,6 +298,9 @@ export class PrismaConnectionManager implements ConnectionManager, ConnectionDia
         status: nextEnabled ? "NOT_TESTED" : "DISABLED",
         lastHealthcheckAt: null,
         lastHealthcheckMessage: null,
+        monitoringClaimedAt: null,
+        monitoringClaimedBy: null,
+        monitoringClaimToken: null,
       };
       if (input.displayName !== undefined) updateData.displayName = input.displayName;
       if (input.environment !== undefined) updateData.environment = input.environment;
@@ -449,6 +452,9 @@ export class PrismaConnectionManager implements ConnectionManager, ConnectionDia
           status: restorable.enabled ? "NOT_TESTED" : "DISABLED",
           lastHealthcheckAt: null,
           lastHealthcheckMessage: null,
+          monitoringClaimedAt: null,
+          monitoringClaimedBy: null,
+          monitoringClaimToken: null,
         },
       });
       if (updated.count !== 1) throw new ConnectionRevisionConflictError();
@@ -501,6 +507,7 @@ export class PrismaConnectionManager implements ConnectionManager, ConnectionDia
       where: { id },
       select: {
         id: true,
+        activeRevision: true,
         kind: true,
         baseUrl: true,
         configuration: true,
@@ -552,6 +559,7 @@ export class PrismaConnectionManager implements ConnectionManager, ConnectionDia
 
     return {
       id: connection.id,
+      activeRevision: connection.activeRevision,
       kind: connection.kind,
       baseUrl: connection.baseUrl,
       configuration,
@@ -559,31 +567,37 @@ export class PrismaConnectionManager implements ConnectionManager, ConnectionDia
     };
   }
 
-  async recordDiagnostic(result: ConnectionTestResult, actor?: AdminActor): Promise<void> {
+  async recordDiagnostic(result: ConnectionTestResult, actor?: AdminActor, expectedRevision?: number): Promise<boolean> {
     const checkedAt = new Date(result.checkedAt);
-    await this.prisma.$transaction([
-      this.prisma.serviceConnection.update({
-        where: { id: result.connectionId },
+    return this.prisma.$transaction(async (transaction) => {
+      const updated = await transaction.serviceConnection.updateMany({
+        where: {
+          id: result.connectionId,
+          ...(expectedRevision === undefined ? {} : { activeRevision: expectedRevision }),
+        },
         data: {
           status: result.status,
           lastHealthcheckAt: checkedAt,
           lastHealthcheckMessage: result.message,
         },
-      }),
-      this.prisma.auditEvent.create({
+      });
+      await transaction.auditEvent.create({
         data: {
           ...auditActor(actor),
-          action: "connection.tested",
+          action: updated.count === 1 ? "connection.tested" : "connection.test_discarded",
           resourceType: "ServiceConnection",
           resourceId: result.connectionId,
-          outcome: result.status === "HEALTHY" ? "SUCCESS" : "FAILURE",
+          outcome: updated.count === 1 && result.status === "HEALTHY" ? "SUCCESS" : "FAILURE",
           metadata: {
             status: result.status,
             latencyMs: result.latencyMs,
             details: result.details,
+            ...(expectedRevision === undefined ? {} : { expectedRevision }),
+            stale: updated.count !== 1,
           } as Prisma.InputJsonValue,
         },
-      }),
-    ]);
+      });
+      return updated.count === 1;
+    });
   }
 }

@@ -421,6 +421,23 @@ export class PrismaAgentManager implements AgentManager {
     return this.prisma.$transaction(async (transaction) => {
       const profile = await transaction.agentProfile.findUnique({ where: { id: profileId } });
       if (!profile) throw new AgentNotFoundError();
+      const currentVersion = state === "ACTIVE" ? await transaction.agentProfileVersion.findUnique({
+        where: { profileId_version: { profileId, version: profile.currentVersion } },
+        select: { modelAlias: true },
+      }) : null;
+      if (state === "ACTIVE" && !currentVersion) {
+        throw new AgentConflictError("The current agent version is missing.");
+      }
+      const modelCatalogueCount = state === "ACTIVE"
+        ? await transaction.modelDeployment.count({ where: { workload: "AGENT", firstActivatedAt: { not: null } } })
+        : 0;
+      const modelRoute = state === "ACTIVE" && modelCatalogueCount > 0 ? await transaction.modelDeployment.findFirst({
+        where: { workload: "AGENT", modelAlias: currentVersion!.modelAlias, status: "ACTIVE" },
+        select: { id: true },
+      }) : null;
+      if (state === "ACTIVE" && modelCatalogueCount > 0 && !modelRoute) {
+        throw new AgentConflictError(`Activate the '${currentVersion!.modelAlias}' agent model route before activating this profile.`);
+      }
       const releaseEvidence = state === "ACTIVE" ? await transaction.evaluationRun.findFirst({
         where: {
           targetType: "AGENT",
@@ -445,6 +462,7 @@ export class PrismaAgentManager implements AgentManager {
         metadata: {
           activeVersion: state === "ACTIVE" ? profile.currentVersion : profile.activeVersion,
           evaluationRunId: releaseEvidence?.id ?? null,
+          modelRouteId: modelRoute?.id ?? null,
         },
       } });
       return updated as StoredProfile;

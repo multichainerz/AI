@@ -19,6 +19,7 @@ import {
   ChatConversationConflictError,
   ChatConversationNotFoundError,
   ChatMessageNotFoundError,
+  ChatPolicyViolationError,
   ChatRateLimitError,
   type ChatManager,
   type ChatPrincipal,
@@ -30,7 +31,7 @@ import {
 } from "./litellm-client.js";
 import type { KnowledgeRetriever } from "./knowledge-retriever.js";
 
-const SYSTEM_INSTRUCTION =
+const LEGACY_SYSTEM_INSTRUCTION =
   "You are the MPM AIHub assistant. Be accurate, concise, and explicit about uncertainty. " +
   "Do not claim to have used tools, enterprise data, or current external information unless that context is present in the conversation.";
 const MAX_CONTEXT_MESSAGES = 40;
@@ -83,6 +84,14 @@ interface ResolvedLiteLLM {
   temperature: number;
   timeoutMs: number;
   requestsPerMinute: number;
+  guardrailPolicyId: string | null;
+  guardrailPolicyVersion: string | null;
+  guardrails: string[];
+  maxInputCharacters: number;
+  promptTemplateId: string | null;
+  promptTemplateVersion: string | null;
+  promptContentChecksum: string | null;
+  systemInstruction: string;
 }
 
 function messageDto(message: StoredMessage): ChatMessage {
@@ -283,6 +292,29 @@ export class PrismaChatManager implements ChatManager {
     emit: (event: ChatStreamEvent) => void,
   ): Promise<void> {
     const runtime = await this.resolveLiteLLM();
+    if (content.length > runtime.maxInputCharacters) {
+      const ownedConversation = await this.prisma.chatConversation.findFirst({
+        where: { id: conversationId, ownerSubject: principal.subject },
+        select: { id: true },
+      });
+      if (!ownedConversation) throw new ChatConversationNotFoundError();
+      await this.prisma.auditEvent.create({ data: {
+        actorType: "USER",
+        actorId: principal.id,
+        action: "guardrail.request_blocked",
+        resourceType: "ChatConversation",
+        resourceId: conversationId,
+        outcome: "FAILURE",
+        metadata: {
+          policyId: runtime.guardrailPolicyId,
+          policyVersion: runtime.guardrailPolicyVersion,
+          reason: "INPUT_CHARACTER_LIMIT",
+          observedCharacters: content.length,
+          maxInputCharacters: runtime.maxInputCharacters,
+        },
+      } });
+      throw new ChatPolicyViolationError(`The active policy limits chat input to ${runtime.maxInputCharacters.toLocaleString("en-US")} characters.`);
+    }
     const now = new Date();
     const userMessageId = randomUUID();
     const assistantMessageId = randomUUID();
@@ -391,6 +423,12 @@ export class PrismaChatManager implements ChatManager {
             conversationId,
             modelAlias: runtime.modelAlias,
             connectionId: runtime.connectionId,
+            guardrailPolicyId: runtime.guardrailPolicyId,
+            guardrailPolicyVersion: runtime.guardrailPolicyVersion,
+            guardrailCount: runtime.guardrails.length,
+            promptTemplateId: runtime.promptTemplateId,
+            promptTemplateVersion: runtime.promptTemplateVersion,
+            promptContentChecksum: runtime.promptContentChecksum,
           },
         },
       });
@@ -417,7 +455,7 @@ export class PrismaChatManager implements ChatManager {
         ).join("\n\n")
       : null;
     const messages: LiteLLMInputMessage[] = [
-      { role: "system", content: SYSTEM_INSTRUCTION },
+      { role: "system", content: runtime.systemInstruction },
       ...(knowledgeContext ? [{ role: "system" as const, content: knowledgeContext }] : []),
       ...boundedContextMessages(prepared),
     ];
@@ -436,6 +474,7 @@ export class PrismaChatManager implements ChatManager {
           temperature: runtime.temperature,
           timeoutMs: runtime.timeoutMs,
           user: pseudonymousUser(principal.subject),
+          guardrails: runtime.guardrails,
         },
         signal,
         (delta) => {
@@ -480,6 +519,12 @@ export class PrismaChatManager implements ChatManager {
               totalTokens: result.totalTokens,
               finishReason: result.finishReason,
               knowledgeSourceCount: sources.length,
+              guardrailPolicyId: runtime.guardrailPolicyId,
+              guardrailPolicyVersion: runtime.guardrailPolicyVersion,
+              guardrailCount: runtime.guardrails.length,
+              promptTemplateId: runtime.promptTemplateId,
+              promptTemplateVersion: runtime.promptTemplateVersion,
+              promptContentChecksum: runtime.promptContentChecksum,
             } as Prisma.InputJsonValue,
           },
         });
@@ -521,11 +566,24 @@ export class PrismaChatManager implements ChatManager {
           data: {
             actorType: "USER",
             actorId: principal.id,
-            action: cancelled ? "chat.inference_cancelled" : "chat.inference_failed",
+            action: cancelled
+              ? "chat.inference_cancelled"
+              : errorCode === "GUARDRAIL_REJECTED"
+                ? "guardrail.inference_rejected"
+                : "chat.inference_failed",
             resourceType: "ChatMessage",
             resourceId: assistantMessageId,
             outcome: "FAILURE",
-            metadata: { conversationId, modelAlias: runtime.modelAlias, errorCode },
+            metadata: {
+              conversationId,
+              modelAlias: runtime.modelAlias,
+              errorCode,
+              guardrailPolicyId: runtime.guardrailPolicyId,
+              guardrailPolicyVersion: runtime.guardrailPolicyVersion,
+              promptTemplateId: runtime.promptTemplateId,
+              promptTemplateVersion: runtime.promptTemplateVersion,
+              promptContentChecksum: runtime.promptContentChecksum,
+            },
           },
         });
       });
@@ -544,8 +602,55 @@ export class PrismaChatManager implements ChatManager {
   }
 
   private async resolveLiteLLM(): Promise<ResolvedLiteLLM> {
+    const promptCatalogueEnforced = await this.prisma.promptTemplate.count({
+      where: { purpose: "CHAT_SYSTEM", firstActivatedAt: { not: null } },
+    }) > 0;
+    const prompts = !promptCatalogueEnforced ? [] : await this.prisma.promptTemplate.findMany({
+      where: { purpose: "CHAT_SYSTEM", status: "ACTIVE" },
+      select: { id: true, version: true, content: true, contentChecksum: true },
+      take: 2,
+    });
+    if (promptCatalogueEnforced && prompts.length === 0) {
+      throw new ChatConfigurationError("Activate one evaluated chat-system prompt in the Prompts workspace before using chat.");
+    }
+    if (prompts.length > 1) {
+      throw new ChatConfigurationError("More than one chat-system prompt is active.");
+    }
+    const prompt = prompts[0];
+    const guardrailCatalogueEnforced = await this.prisma.guardrailPolicy.count({
+      where: { firstActivatedAt: { not: null } },
+    }) > 0;
+    const policies = !guardrailCatalogueEnforced ? [] : await this.prisma.guardrailPolicy.findMany({
+      where: { status: "ACTIVE" },
+      select: { id: true, version: true, liteLLMGuardrails: true, maxInputCharacters: true },
+      take: 2,
+    });
+    if (guardrailCatalogueEnforced && policies.length === 0) {
+      throw new ChatConfigurationError("Activate one evaluated chat policy in the Guardrails workspace before using chat.");
+    }
+    if (policies.length > 1) {
+      throw new ChatConfigurationError("More than one chat guardrail policy is active.");
+    }
+    const policy = policies[0];
+    const catalogueEnforced = await this.prisma.modelDeployment.count({
+      where: { workload: "CHAT", firstActivatedAt: { not: null } },
+    }) > 0;
+    const routes = !catalogueEnforced ? [] : await this.prisma.modelDeployment.findMany({
+      where: { workload: "CHAT", status: "ACTIVE", isDefault: true },
+      select: { connectionId: true, modelAlias: true, maxOutputTokens: true },
+      take: 2,
+    });
+    if (catalogueEnforced && routes.length === 0) {
+      throw new ChatConfigurationError("Activate one default chat model route in the Models workspace before using chat.");
+    }
+    if (routes.length > 1) {
+      throw new ChatConfigurationError("More than one default chat model route is active.");
+    }
+    const route = routes[0];
     const candidates = await this.prisma.serviceConnection.findMany({
-      where: { kind: "LITELLM", enabled: true },
+      where: route
+        ? { id: route.connectionId, kind: "LITELLM", enabled: true }
+        : { kind: "LITELLM", enabled: true },
       orderBy: [{ environment: "desc" }, { updatedAt: "desc" }],
       select: { id: true, status: true },
       take: 2,
@@ -561,7 +666,7 @@ export class PrismaChatManager implements ChatManager {
       throw new ChatConfigurationError("Test the enabled LiteLLM connection successfully before using chat.");
     }
     const connection: ResolvedConnection = await this.connectionStore.resolveForDiagnostic(candidate.id);
-    const modelAlias = connection.configuration.modelAlias;
+    const modelAlias = route?.modelAlias ?? connection.configuration.modelAlias;
     if (!connection.baseUrl || typeof modelAlias !== "string" || modelAlias.length === 0) {
       throw new ChatConfigurationError("The LiteLLM endpoint and primary model alias are required for chat.");
     }
@@ -573,7 +678,9 @@ export class PrismaChatManager implements ChatManager {
       modelAlias,
       chatPath: typeof chatPath === "string" ? chatPath : "/v1/chat/completions",
       maxOutputTokens: Math.trunc(
-        numberSetting(connection.configuration.maxOutputTokens, 2_048, 64, 32_768),
+        route
+          ? Math.min(route.maxOutputTokens, 32_768)
+          : numberSetting(connection.configuration.maxOutputTokens, 2_048, 64, 32_768),
       ),
       temperature: numberSetting(connection.configuration.temperature, 0.2, 0, 2),
       timeoutMs: Math.trunc(
@@ -582,6 +689,14 @@ export class PrismaChatManager implements ChatManager {
       requestsPerMinute: Math.trunc(
         numberSetting(connection.configuration.requestsPerMinute, 12, 1, 120),
       ),
+      guardrailPolicyId: policy?.id ?? null,
+      guardrailPolicyVersion: policy?.version ?? null,
+      guardrails: policy?.liteLLMGuardrails ?? [],
+      maxInputCharacters: policy?.maxInputCharacters ?? 32_000,
+      promptTemplateId: prompt?.id ?? null,
+      promptTemplateVersion: prompt?.version ?? null,
+      promptContentChecksum: prompt?.contentChecksum ?? null,
+      systemInstruction: prompt?.content ?? LEGACY_SYSTEM_INSTRUCTION,
     };
   }
 

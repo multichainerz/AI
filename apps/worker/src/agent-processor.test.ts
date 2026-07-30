@@ -13,7 +13,7 @@ function runRecord(status = "QUEUED", externalRunId: string | null = null, jobId
     ownerSubject: "user:pilot",
     input: "Summarize the policy",
     effectiveCapabilities: ["knowledge:private:read"],
-    startedAt: externalRunId ? new Date("2026-07-30T00:00:00.000Z") : null,
+    startedAt: externalRunId ? new Date() : null,
     profileVersion: 1,
     profile: { status: "ACTIVE", activeVersion: 1 },
     version: {

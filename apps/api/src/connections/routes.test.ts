@@ -1,6 +1,7 @@
 import type {
   CreateServiceConnection,
   AdministratorSession,
+  ConnectionMonitoringControl,
   ConfigurationRevisionList,
   RollbackConfigurationResult,
   ServiceConnectionSummary,
@@ -15,6 +16,7 @@ import {
 import type { ConnectionManager } from "./connection-manager.js";
 import { ConnectionTestService } from "./diagnostics/connection-test-service.js";
 import type { ConnectionDiagnosticStore } from "./diagnostics/types.js";
+import type { ConnectionMonitorService } from "./connection-monitor.js";
 
 const CONNECTION_ID = "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d";
 const SESSION_TOKEN = "a".repeat(43);
@@ -143,6 +145,7 @@ async function authenticatedApp(
   manager = new MemoryConnectionManager(),
   tester?: ConnectionTestService,
   sessionManager: AdminSessionManager = new MemorySessionManager(),
+  monitor?: ConnectionMonitorService,
 ) {
   const app = await createApp({
     logger: false,
@@ -151,6 +154,7 @@ async function authenticatedApp(
       sessionManager,
       connectionManager: manager,
       ...(tester ? { connectionTestService: tester } : {}),
+      ...(monitor ? { connectionMonitor: monitor } : {}),
     },
   });
   apps.push(app);
@@ -158,6 +162,40 @@ async function authenticatedApp(
 }
 
 describe("administrator connection routes", () => {
+  it("reads and updates the scheduled monitoring control with scoped administration", async () => {
+    let control: ConnectionMonitoringControl = {
+      enabled: false,
+      intervalSeconds: 300,
+      reason: "Acceptance pending",
+      updatedAt: "2026-07-30T00:00:00.000Z",
+      updatedBy: null,
+    };
+    const monitor: ConnectionMonitorService = {
+      start: async () => undefined,
+      stop: async () => undefined,
+      getControl: async () => control,
+      updateControl: async (actor, input) => {
+        control = { ...input, updatedAt: "2026-07-30T00:01:00.000Z", updatedBy: actor.id };
+        return control;
+      },
+    };
+    const { app } = await authenticatedApp(
+      new MemoryConnectionManager(), undefined, new MemorySessionManager(), monitor,
+    );
+
+    const before = await app.inject({ method: "GET", url: "/api/v1/admin/connections/monitoring", headers: sessionHeaders });
+    const updated = await app.inject({
+      method: "PATCH",
+      url: "/api/v1/admin/connections/monitoring",
+      headers: sessionHeaders,
+      payload: { enabled: true, intervalSeconds: 300, reason: "Pilot monitoring approved" },
+    });
+
+    expect(before.json()).toMatchObject({ enabled: false, intervalSeconds: 300 });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json()).toMatchObject({ enabled: true, reason: "Pilot monitoring approved", updatedBy: SESSION_ID });
+  });
+
   it("fails closed without an administrator session", async () => {
     const { app } = await authenticatedApp();
 
@@ -283,12 +321,13 @@ describe("administrator connection routes", () => {
     const diagnosticStore: ConnectionDiagnosticStore = {
       resolveForDiagnostic: async () => ({
         id: CONNECTION_ID,
+        activeRevision: 1,
         kind: "VLLM",
         baseUrl: "https://vllm.mpm.internal",
         configuration: {},
         secrets: { apiKey: "must-never-be-returned" },
       }),
-      recordDiagnostic: async () => undefined,
+      recordDiagnostic: async () => true,
     };
     const tester = new ConnectionTestService(diagnosticStore, () => ({
       test: async () => ({

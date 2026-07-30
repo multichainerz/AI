@@ -15,6 +15,7 @@ import { PrismaWorkerRegistry } from "./worker-registry.js";
 import { PrismaDocumentProcessor } from "./document-processor.js";
 import { PrismaMemoryProcessor } from "./memory-processor.js";
 import { PrismaAgentProcessor, WorkerAgentKnowledgeRetriever } from "./agent-processor.js";
+import { PrismaToolActionProcessor } from "./tool-action-processor.js";
 
 const databaseUrl = readBootstrapSecret("aihub_database_url");
 const prisma = createPrismaClient(databaseUrl);
@@ -54,6 +55,7 @@ const runtime = new WorkerRuntime(
     new HermesClient(documentResolver),
     new WorkerAgentKnowledgeRetriever(prisma, new SupermemoryClient(documentResolver)),
   ),
+  new PrismaToolActionProcessor(prisma, queue),
 );
 
 let shuttingDown = false;

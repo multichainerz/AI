@@ -21,6 +21,8 @@ import {
   type ProductionReadinessControl,
   type RecordProductionReadinessApproval,
   type ServiceConnectionSummary,
+  type ConnectionMonitoringControl,
+  type ModelDeployment,
   type ServiceKind,
   type UpdateProductionReadinessControl,
 } from "@aihub/contracts";
@@ -29,16 +31,20 @@ import type { AgentManager } from "../agents/agent-manager.js";
 import type { AdminPrincipal } from "../auth/admin-session.js";
 import type { ChatManager } from "../chat/chat-manager.js";
 import type { ConnectionManager } from "../connections/connection-manager.js";
+import type { ConnectionMonitoringManager } from "../connections/connection-monitor.js";
 import type { DocumentManager } from "../documents/document-manager.js";
 import type { MemoryManager } from "../memory/memory-manager.js";
 import type { OperationsManager } from "../operations/operations-manager.js";
 import type { ToolingManager } from "../tooling/tooling-manager.js";
+import type { ModelManager } from "../models/model-manager.js";
 import { AiOpsConflictError, AiOpsNotFoundError, type AiOpsManager } from "./ai-ops-manager.js";
 
 const HEALTH_FRESHNESS_MS = 15 * 60 * 1_000;
 
 interface AiOpsDependencies {
   connections: ConnectionManager;
+  connectionMonitoring?: ConnectionMonitoringManager;
+  models?: ModelManager;
   jobs: OperationsManager;
   chat: ChatManager;
   documents: DocumentManager;
@@ -125,20 +131,50 @@ const serviceMetadata: Record<ServiceKind, { label: string; workflows: AiOpsWork
   OTHER: { label: "Other service", workflows: [] },
 };
 
-const guardrails: GuardrailControl[] = [
+interface ActiveGuardrailPolicy {
+  id: string;
+  displayName: string;
+  version: string;
+  liteLLMGuardrails: string[];
+  maxInputCharacters: number;
+  updatedAt: Date;
+}
+
+interface ActivePromptTemplate {
+  id: string;
+  displayName: string;
+  purpose: "CHAT_SYSTEM";
+  version: string;
+  contentChecksum: string;
+  updatedAt: Date;
+}
+
+function guardrailPosture(active: ActiveGuardrailPolicy | null): GuardrailControl[] {
+  const assignment = active
+    ? `${active.liteLLMGuardrails.length} approved LiteLLM guardrail${active.liteLLMGuardrails.length === 1 ? "" : "s"} from ${active.displayName} v${active.version}`
+    : null;
+  return [
   {
     layer: "INPUT",
     label: "Input boundary",
     status: "PARTIAL",
-    summary: "Schema, size, identity, and rate constraints are enforced; a content-safety classifier is not yet connected.",
-    evidence: "API contracts and identity-scoped request limits are enforced in the chat, document, agent, and tool routes.",
+    summary: active
+      ? `Schema, identity, rate, and ${active.maxInputCharacters.toLocaleString("en-US")}-character chat limits are locally enforced; ${assignment} are attached to every LiteLLM chat request.`
+      : "Schema, size, identity, and rate constraints are enforced; no evaluated LiteLLM guardrail assignment is active.",
+    evidence: active
+      ? `Policy ${active.id} is evaluation-gated in PostgreSQL; classifier behavior still requires target-environment evidence.`
+      : "API contracts and identity-scoped request limits are enforced in the chat, document, agent, and tool routes.",
   },
   {
     layer: "OUTPUT",
     label: "Output boundary",
     status: "NOT_VERIFIED",
-    summary: "Provider responses are structurally bounded, but output safety classification requires target-environment validation.",
-    evidence: "Streaming state and persistence are validated locally; safety-model evidence has not been recorded.",
+    summary: active
+      ? `${assignment} are delegated to LiteLLM, but AIHub does not infer whether each upstream guardrail is configured for pre-call, post-call, or both.`
+      : "Provider responses are structurally bounded, but no evaluated output guardrail assignment is active.",
+    evidence: active
+      ? "Streaming failures and LiteLLM policy rejections are retained as sanitized audit events; upstream hook modes require deployment verification."
+      : "Streaming state and persistence are validated locally; safety-model evidence has not been recorded.",
   },
   {
     layer: "RETRIEVAL",
@@ -152,7 +188,7 @@ const guardrails: GuardrailControl[] = [
     label: "Model access",
     status: "ENFORCED",
     summary: "Users and agents call dashboard-approved aliases through AIHub; provider credentials remain backend-only.",
-    evidence: "LiteLLM routing is resolved from active encrypted service configuration.",
+    evidence: "Versioned model routes require healthy serving connections and exact promoted evaluation evidence before activation.",
   },
   {
     layer: "TOOL_USE",
@@ -168,7 +204,8 @@ const guardrails: GuardrailControl[] = [
     summary: "AIHub uses configured internal endpoints, while infrastructure-level egress enforcement remains an on-prem acceptance gate.",
     evidence: "Application credentials are isolated; network policy and SIEM forwarding have not been proven locally.",
   },
-];
+  ];
+}
 
 function incident(record: StoredIncident): OperationalIncident {
   return {
@@ -261,9 +298,19 @@ function readinessApproval(record: StoredReadinessApproval, isCurrent: boolean):
   };
 }
 
-function configuredComponent(connection: ServiceConnectionSummary, now: Date): AiOpsComponent {
+function configuredComponent(
+  connection: ServiceConnectionSummary,
+  now: Date,
+  monitoring: ConnectionMonitoringControl | null,
+): AiOpsComponent {
   const metadata = serviceMetadata[connection.kind];
   const observedAt = connection.lastHealthcheckAt;
+  const continuous = monitoring?.enabled === true;
+  const freshnessMs = continuous
+    ? Math.max(2 * monitoring.intervalSeconds * 1_000, 2 * 60 * 1_000)
+    : HEALTH_FRESHNESS_MS;
+  const recentlyObserved = observedAt !== null && now.getTime() - new Date(observedAt).getTime() <= freshnessMs;
+  const evidenceSource = continuous && recentlyObserved ? "LIVE" as const : "LAST_VERIFIED" as const;
   if (!connection.enabled) {
     return {
       id: `connection:${connection.id}`,
@@ -282,7 +329,7 @@ function configuredComponent(connection: ServiceConnectionSummary, now: Date): A
       label: connection.displayName,
       status: "UNAVAILABLE",
       summary: connection.lastHealthcheckMessage ?? `${metadata.label} was unreachable during its last check.`,
-      source: "LAST_VERIFIED",
+      source: evidenceSource,
       observedAt,
       latencyMs: null,
       affectedWorkflows: metadata.workflows,
@@ -294,19 +341,23 @@ function configuredComponent(connection: ServiceConnectionSummary, now: Date): A
       label: connection.displayName,
       status: "DEGRADED",
       summary: connection.lastHealthcheckMessage ?? `${metadata.label} was degraded during its last check.`,
-      source: "LAST_VERIFIED",
+      source: evidenceSource,
       observedAt,
       latencyMs: null,
       affectedWorkflows: metadata.workflows,
     };
   }
-  const stale = !observedAt || now.getTime() - new Date(observedAt).getTime() > HEALTH_FRESHNESS_MS;
+  const stale = !observedAt || !recentlyObserved;
   if (connection.status !== "HEALTHY" || stale) {
     return {
       id: `connection:${connection.id}`,
       label: connection.displayName,
       status: "NOT_VERIFIED",
-      summary: !observedAt ? "Enabled, but no credential-aware connection test has passed." : "The last passing connection test is older than 15 minutes.",
+      summary: !observedAt
+        ? "Enabled, but no credential-aware connection test has passed."
+        : continuous
+          ? "The scheduled connection check is overdue."
+          : "The last passing connection test is older than 15 minutes.",
       source: observedAt ? "LAST_VERIFIED" : "CONFIGURATION",
       observedAt,
       latencyMs: null,
@@ -318,7 +369,7 @@ function configuredComponent(connection: ServiceConnectionSummary, now: Date): A
     label: connection.displayName,
     status: "HEALTHY",
     summary: connection.lastHealthcheckMessage ?? `${metadata.label} passed its last credential-aware check.`,
-    source: "LAST_VERIFIED",
+    source: evidenceSource,
     observedAt,
     latencyMs: null,
     affectedWorkflows: metadata.workflows,
@@ -339,6 +390,39 @@ function placeholderComponent(kind: ServiceKind): AiOpsComponent {
   };
 }
 
+function modelComponent(model: ModelDeployment): AiOpsComponent {
+  const affectedWorkflows: AiOpsWorkflow[] = model.workload === "CHAT"
+    ? ["CHAT"]
+    : model.workload === "AGENT"
+      ? ["AGENTS"]
+      : model.workload === "OCR"
+        ? ["DOCUMENTS"]
+        : ["MEMORY"];
+  const status = model.status !== "ACTIVE"
+    ? "NOT_CONFIGURED" as const
+    : !model.connection.enabled || ["DISABLED", "UNREACHABLE"].includes(model.connection.status)
+      ? "UNAVAILABLE" as const
+      : model.connection.status === "DEGRADED"
+        ? "DEGRADED" as const
+        : model.connection.status === "HEALTHY"
+          ? "HEALTHY" as const
+          : "NOT_VERIFIED" as const;
+  return {
+    id: `model:${model.id}`,
+    label: model.displayName,
+    status,
+    summary: model.status !== "ACTIVE"
+      ? `${model.workload.toLowerCase()} route ${model.modelAlias} is ${model.status.toLowerCase()}.`
+      : status === "HEALTHY"
+        ? `${model.modelAlias} is active${model.isDefault ? " as the workload default" : ""} with promoted version evidence.`
+        : `The active route depends on ${model.connection.displayName}, which is ${model.connection.status.toLowerCase()}.`,
+    source: "CONFIGURATION",
+    observedAt: model.updatedAt,
+    latencyMs: null,
+    affectedWorkflows,
+  };
+}
+
 async function settled<T>(promise: Promise<T>): Promise<T | null> {
   try {
     return await promise;
@@ -355,14 +439,24 @@ export class PrismaAiOpsManager implements AiOpsManager {
 
   async overview(): Promise<AiOpsOverview> {
     const generatedAt = new Date();
-    const [connections, jobs, chat, documents, memory, agents, tools] = await Promise.all([
+    const [connections, monitoring, models, jobs, chat, documents, memory, agents, tools, activeGuardrail, activePrompt] = await Promise.all([
       settled(this.dependencies.connections.list()),
+      this.dependencies.connectionMonitoring ? settled(this.dependencies.connectionMonitoring.getControl()) : Promise.resolve(null),
+      this.dependencies.models ? settled(this.dependencies.models.list()) : Promise.resolve(null),
       settled(this.dependencies.jobs.snapshot()),
       settled(this.dependencies.chat.metrics()),
       settled(this.dependencies.documents.metrics()),
       settled(this.dependencies.memory.metrics()),
       settled(this.dependencies.agents.metrics()),
       settled(this.dependencies.tools.metrics()),
+      settled(this.prisma.guardrailPolicy.findFirst({
+        where: { status: "ACTIVE" },
+        select: { id: true, displayName: true, version: true, liteLLMGuardrails: true, maxInputCharacters: true, updatedAt: true },
+      })),
+      settled(this.prisma.promptTemplate.findFirst({
+        where: { purpose: "CHAT_SYSTEM", status: "ACTIVE" },
+        select: { id: true, displayName: true, purpose: true, version: true, contentChecksum: true, updatedAt: true },
+      })),
     ]);
 
     const components: AiOpsComponent[] = [
@@ -390,7 +484,7 @@ export class PrismaAiOpsManager implements AiOpsManager {
 
     if (connections) {
       const configuredKinds = new Set(connections.map(({ kind }) => kind));
-      components.push(...connections.map((connection) => configuredComponent(connection, generatedAt)));
+      components.push(...connections.map((connection) => configuredComponent(connection, generatedAt, monitoring)));
       components.push(...SERVICE_KINDS.filter((kind) => kind !== "OTHER" && !configuredKinds.has(kind)).map(placeholderComponent));
     } else {
       components.push({
@@ -402,6 +496,32 @@ export class PrismaAiOpsManager implements AiOpsManager {
         observedAt: generatedAt.toISOString(),
         latencyMs: null,
         affectedWorkflows: ["CHAT", "DOCUMENTS", "MEMORY", "AGENTS", "TOOLS"],
+      });
+    }
+    if (models) components.push(...models.items.map(modelComponent));
+    if (activeGuardrail) {
+      components.push({
+        id: `guardrail:${activeGuardrail.id}`,
+        label: activeGuardrail.displayName,
+        status: "HEALTHY",
+        summary: `${activeGuardrail.liteLLMGuardrails.length} LiteLLM guardrail assignment${activeGuardrail.liteLLMGuardrails.length === 1 ? "" : "s"} active with promoted policy evidence.`,
+        source: "CONFIGURATION",
+        observedAt: activeGuardrail.updatedAt.toISOString(),
+        latencyMs: null,
+        affectedWorkflows: ["CHAT"],
+      });
+    }
+    if (activePrompt) {
+      const prompt = activePrompt as ActivePromptTemplate;
+      components.push({
+        id: `prompt:${prompt.id}`,
+        label: prompt.displayName,
+        status: "HEALTHY",
+        summary: `Chat-system prompt v${prompt.version} is active with promoted CHAT and SAFETY evidence; checksum ${prompt.contentChecksum.slice(0, 12)}.`,
+        source: "CONFIGURATION",
+        observedAt: prompt.updatedAt.toISOString(),
+        latencyMs: null,
+        affectedWorkflows: ["CHAT"],
       });
     }
 
@@ -439,7 +559,7 @@ export class PrismaAiOpsManager implements AiOpsManager {
       components,
       jobs,
       metrics: { chat, documents, memory, agents, tools },
-      guardrails,
+      guardrails: guardrailPosture(activeGuardrail),
       incidents: {
         open: openIncidentCount,
         critical: criticalIncidentCount,

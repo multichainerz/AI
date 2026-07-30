@@ -11,6 +11,7 @@ const input = {
   temperature: 0.2,
   timeoutMs: 30_000,
   user: "pseudonymous-user",
+  guardrails: ["presidio-pii", "prompt-injection"],
 };
 
 describe("LiteLLM streaming client", () => {
@@ -29,6 +30,7 @@ describe("LiteLLM streaming client", () => {
         model: "laguna-primary",
         stream: true,
         stream_options: { include_usage: true },
+        guardrails: ["presidio-pii", "prompt-injection"],
       });
       return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
     });
@@ -65,5 +67,15 @@ describe("LiteLLM streaming client", () => {
         message: "LiteLLM rejected the configured credential.",
       }),
     );
+  });
+
+  it("reports a safe policy rejection when guarded LiteLLM returns 400", async () => {
+    const fetcher = vi.fn(async () => new Response("classifier details", { status: 400 }));
+    await expect(
+      new LiteLLMClient(fetcher as typeof fetch).stream(input, new AbortController().signal, () => undefined),
+    ).rejects.toEqual(expect.objectContaining<Partial<LiteLLMRequestError>>({
+      code: "GUARDRAIL_REJECTED",
+      message: "LiteLLM rejected the guarded request. Review guardrail violation and assignment telemetry.",
+    }));
   });
 });

@@ -1,6 +1,7 @@
 import type {
   AdministratorSession,
   ConfigurationRevisionList,
+  ConnectionMonitoringControl,
   ConnectionTestResult,
   PlatformMeta,
   ServiceConnectionSummary,
@@ -19,6 +20,7 @@ import {
   getOidcStatus,
   getChatMetrics,
   getConfigurationRevisions,
+  getConnectionMonitoring,
   getConnections,
   getPlatformMeta,
   revokeAdministratorSession,
@@ -26,6 +28,7 @@ import {
   rollbackConfiguration,
   testConnection,
   updateConnection,
+  updateConnectionMonitoring,
 } from "./api.js";
 import { ConnectionDrawer, type ConnectionDraft } from "./connection-drawer.js";
 import { connectionDefinitions } from "./connection-definitions.js";
@@ -35,8 +38,11 @@ import { DocumentsView } from "./documents-view.js";
 import { MemoryView } from "./memory-view.js";
 import { AgentsView } from "./agents-view.js";
 import { ToolingView } from "./tooling-view.js";
+import { ModelsView } from "./models-view.js";
+import { GuardrailsView } from "./guardrails-view.js";
+import { PromptsView } from "./prompts-view.js";
 
-type ActiveView = "Overview" | "Chat" | "Agents" | "Documents" | "Memory" | "Integrations" | "Operations";
+type ActiveView = "Overview" | "Chat" | "Models" | "Prompts" | "Agents" | "Documents" | "Memory" | "Integrations" | "Guardrails" | "Operations";
 
 const navigation: ReadonlyArray<{
   label: string;
@@ -45,12 +51,13 @@ const navigation: ReadonlyArray<{
 }> = [
   { label: "Overview", icon: "overview", available: true },
   { label: "Chat", icon: "chat", available: true },
-  { label: "Models", icon: "models", available: false },
+  { label: "Models", icon: "models", available: true },
+  { label: "Prompts", icon: "prompts", available: true },
   { label: "Agents", icon: "agents", available: true },
   { label: "Documents", icon: "documents", available: true },
   { label: "Memory", icon: "memory", available: true },
   { label: "Integrations", icon: "integrations", available: true },
-  { label: "Guardrails", icon: "guardrails", available: false },
+  { label: "Guardrails", icon: "guardrails", available: true },
   { label: "Operations", icon: "operations", available: true },
 ];
 
@@ -59,6 +66,7 @@ function Glyph({ name }: { name: string }) {
     overview: <><path d="M4 13h6V4H4v9Z"/><path d="M14 20h6v-9h-6v9Z"/><path d="M4 20h6v-3H4v3Z"/><path d="M14 7h6V4h-6v3Z"/></>,
     chat: <path d="M21 12a8 8 0 0 1-8 8H7l-4 2 1.4-4.2A8 8 0 1 1 21 12Z"/>,
     models: <><path d="m12 2 8 4.5-8 4.5-8-4.5L12 2Z"/><path d="m4 11 8 4.5 8-4.5"/><path d="m4 15.5 8 4.5 8-4.5"/></>,
+    prompts: <><path d="M6 3h12v18H6z"/><path d="M9 8h6M9 12h6M9 16h4"/></>,
     agents: <><rect x="4" y="7" width="16" height="13" rx="3"/><path d="M9 12h.01M15 12h.01M9 16h6M12 7V3M9 3h6"/></>,
     documents: <><path d="M6 2h8l4 4v16H6z"/><path d="M14 2v5h5M9 12h6M9 16h6"/></>,
     memory: <><path d="M9.5 4A3.5 3.5 0 0 0 6 7.5c0 .5.1 1 .3 1.4A4 4 0 0 0 7 16.8V18a3 3 0 0 0 5 2.2V5.8A3 3 0 0 0 9.5 4Z"/><path d="M14.5 4A3.5 3.5 0 0 1 18 7.5c0 .5-.1 1-.3 1.4a4 4 0 0 1-.7 7.9V18a3 3 0 0 1-5 2.2V5.8A3 3 0 0 1 14.5 4Z"/></>,
@@ -80,6 +88,12 @@ function connectionState(connection: ServiceConnectionSummary | undefined) {
   };
 }
 
+function monitoringCadence(seconds: number): string {
+  if (seconds < 60) return `Checked every ${seconds} sec`;
+  if (seconds < 3_600) return `Checked every ${Math.round(seconds / 60)} min`;
+  return `Checked every ${Math.round(seconds / 3_600)} hr`;
+}
+
 function App() {
   const [platform, setPlatform] = useState<PlatformMeta | null>(null);
   const [apiAvailable, setApiAvailable] = useState(true);
@@ -88,6 +102,7 @@ function App() {
   const [oidcStatus, setOidcStatus] = useState<OidcStatus | null>(null);
   const [chatMetrics, setChatMetrics] = useState<ChatMetrics | null>(null);
   const [managedConnections, setManagedConnections] = useState<ServiceConnectionSummary[]>([]);
+  const [connectionMonitoring, setConnectionMonitoring] = useState<ConnectionMonitoringControl | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerKind, setDrawerKind] = useState<ServiceKind>("LITELLM");
   const [settingsBusy, setSettingsBusy] = useState(false);
@@ -97,17 +112,23 @@ function App() {
     const hash = window.location.hash.toLowerCase();
     return hash === "#chat"
       ? "Chat"
-      : hash === "#agents"
-        ? "Agents"
-      : hash === "#documents"
-        ? "Documents"
-        : hash === "#memory"
-          ? "Memory"
-          : hash === "#integrations"
-            ? "Integrations"
-            : hash === "#operations"
-              ? "Operations"
-              : "Overview";
+      : hash === "#models"
+        ? "Models"
+        : hash === "#prompts"
+          ? "Prompts"
+        : hash === "#agents"
+          ? "Agents"
+          : hash === "#documents"
+            ? "Documents"
+            : hash === "#memory"
+              ? "Memory"
+              : hash === "#integrations"
+                ? "Integrations"
+                : hash === "#guardrails"
+                  ? "Guardrails"
+                  : hash === "#operations"
+                    ? "Operations"
+                    : "Overview";
   });
   const [revisionHistory, setRevisionHistory] = useState<ConfigurationRevisionList | null>(null);
   const [revisionConnectionId, setRevisionConnectionId] = useState<string | null>(null);
@@ -160,6 +181,9 @@ function App() {
           const connections = await getConnections();
           if (active && sessionGeneration.current === generation) {
             setManagedConnections(connections.items);
+            void getConnectionMonitoring().then((control) => {
+              if (active && sessionGeneration.current === generation) setConnectionMonitoring(control);
+            }).catch(() => undefined);
             void getChatMetrics().then((metrics) => {
               if (active && sessionGeneration.current === generation) setChatMetrics(metrics);
             }).catch(() => undefined);
@@ -216,6 +240,7 @@ function App() {
       if (sessionGeneration.current !== generation) return false;
       setAdminSession(session);
       setManagedConnections(response.items);
+      void getConnectionMonitoring().then(setConnectionMonitoring).catch(() => setConnectionMonitoring(null));
       void getChatMetrics().then(setChatMetrics).catch(() => setChatMetrics(null));
       if (activeView === "Operations") setDrawerOpen(false);
       return true;
@@ -274,6 +299,19 @@ function App() {
     }
   };
 
+  const saveConnectionMonitoring = async (input: { enabled: boolean; intervalSeconds: number; reason: string }) => {
+    if (!adminSession) return;
+    setSettingsBusy(true);
+    setSettingsError(null);
+    try {
+      setConnectionMonitoring(await updateConnectionMonitoring(input));
+    } catch (error) {
+      setSettingsError(handleAdminError(error, "Unable to update scheduled monitoring."));
+    } finally {
+      setSettingsBusy(false);
+    }
+  };
+
   const selectView = (view: ActiveView) => {
     setActiveView(view);
     window.history.replaceState(
@@ -320,6 +358,7 @@ function App() {
     setEnterpriseSession(null);
     setChatMetrics(null);
     setManagedConnections([]);
+    setConnectionMonitoring(null);
     setRevisionHistory(null);
     setRevisionConnectionId(null);
     await Promise.allSettled([
@@ -384,6 +423,27 @@ function App() {
               setEnterpriseSession(null);
             }}
           />
+        ) : activeView === "Models" ? (
+          <ModelsView
+            session={adminSession}
+            connections={managedConnections}
+            onConfigureConnections={() => openConnectionSettings("LITELLM")}
+            onOpenOperations={() => selectView("Operations")}
+            onSessionExpired={() => {
+              sessionGeneration.current += 1;
+              setAdminSession(null);
+            }}
+          />
+        ) : activeView === "Prompts" ? (
+          <PromptsView
+            session={adminSession}
+            onOpenOperations={() => selectView("Operations")}
+            onOpenSettings={() => openConnectionSettings("LITELLM")}
+            onSessionExpired={() => {
+              sessionGeneration.current += 1;
+              setAdminSession(null);
+            }}
+          />
         ) : activeView === "Agents" ? (
           <AgentsView
             unlocked={agentsUnlocked}
@@ -429,6 +489,16 @@ function App() {
               setAdminSession(null);
             }}
           />
+        ) : activeView === "Guardrails" ? (
+          <GuardrailsView
+            session={adminSession}
+            onConfigureLiteLLM={() => openConnectionSettings("LITELLM")}
+            onOpenOperations={() => selectView("Operations")}
+            onSessionExpired={() => {
+              sessionGeneration.current += 1;
+              setAdminSession(null);
+            }}
+          />
         ) : activeView === "Operations" ? (
           <OperationsView
             unlocked={unlocked}
@@ -464,7 +534,7 @@ function App() {
 
             <section className="metrics" aria-label="Platform summary">
               <article><span>Configured services</span><strong>{unlocked ? managedConnections.length : "—"}</strong><small>{unlocked ? `${connectionDefinitions.length} supported in this release` : "Unlock to view"}</small></article>
-              <article><span>Healthy connections</span><strong>{unlocked ? healthyConnections : "—"}</strong><small>Credential-aware checks</small></article>
+              <article><span>Healthy connections</span><strong>{unlocked ? healthyConnections : "—"}</strong><small>{connectionMonitoring?.enabled ? monitoringCadence(connectionMonitoring.intervalSeconds) : "Credential-aware checks"}</small></article>
               <article><span>Enabled connections</span><strong>{unlocked ? enabledConnections : "—"}</strong><small>Available to AIHub services</small></article>
               <article><span>Tool posture</span><strong>Default deny</strong><small>Gateway staged · approval gated</small></article>
             </section>
@@ -533,6 +603,7 @@ function App() {
         bootstrapState={bootstrapState}
         busy={settingsBusy}
         connections={managedConnections}
+        monitoring={connectionMonitoring}
         diagnostic={diagnostic}
         error={settingsError}
         initialKind={drawerKind}
@@ -543,6 +614,7 @@ function App() {
         onClose={() => setDrawerOpen(false)}
         onSave={saveConnection}
         onTest={runConnectionTest}
+        onUpdateMonitoring={saveConnectionMonitoring}
         onUnlock={unlockSettings}
         onLoadRevisions={loadRevisions}
         onRollback={restoreRevision}

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createServiceConnectionSchema,
   parseServiceConnectionConfiguration,
+  updateConnectionMonitoringControlSchema,
   serviceConnectionSummarySchema,
 } from "./connections.js";
 
@@ -15,6 +16,19 @@ const connectionBase = {
 };
 
 describe("service connection configuration", () => {
+  it("bounds dashboard-managed scheduled monitoring", () => {
+    expect(updateConnectionMonitoringControlSchema.safeParse({
+      enabled: true,
+      intervalSeconds: 300,
+      reason: "Pilot monitoring approved",
+    }).success).toBe(true);
+    expect(updateConnectionMonitoringControlSchema.safeParse({
+      enabled: true,
+      intervalSeconds: 5,
+      reason: "Too frequent",
+    }).success).toBe(false);
+  });
+
   it("accepts typed SeaweedFS S3 settings", () => {
     const result = createServiceConnectionSchema.parse({
       ...connectionBase,

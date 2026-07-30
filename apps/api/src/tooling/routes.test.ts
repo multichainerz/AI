@@ -26,7 +26,11 @@ function manager(): ToolingManager {
     })), revokeCredential: vi.fn(), authenticateGateway: vi.fn(async (token) => token === GATEWAY_TOKEN),
     invoke: vi.fn(), recordDeniedInvocation: vi.fn(), listCalls: vi.fn(async () => ({ items: [] })), listApprovals: vi.fn(async () => ({ items: [] })),
     decideApproval: vi.fn(), getRuntimeControl: vi.fn(async () => ({ enabled: false, reason: "Acceptance pending", approvalTtlMinutes: 15, updatedAt: "2026-07-30T00:00:00.000Z", updatedBy: null })),
-    updateRuntimeControl: vi.fn(), metrics: vi.fn(async () => ({ generatedAt: "2026-07-30T00:00:00.000Z", activeTools: 2, activeGrants: 0, pendingApprovals: 0, completedCalls: 0, deniedCalls: 0, failedCalls: 0 })),
+    updateRuntimeControl: vi.fn(), metrics: vi.fn(async () => ({
+      generatedAt: "2026-07-30T00:00:00.000Z", activeTools: 2, activeGrants: 0,
+      pendingApprovals: 0, executingCalls: 0, openActionDispatches: 0, failedActionDispatches: 0,
+      completedCalls: 0, deniedCalls: 0, failedCalls: 0,
+    })),
   } as unknown as ToolingManager;
 }
 

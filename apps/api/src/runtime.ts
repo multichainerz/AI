@@ -13,6 +13,7 @@ import {
 import type { ConnectionManager } from "./connections/connection-manager.js";
 import { PrismaConnectionManager } from "./connections/prisma-connection-manager.js";
 import { ConnectionTestService } from "./connections/diagnostics/connection-test-service.js";
+import { ConnectionMonitorRuntime, type ConnectionMonitorService } from "./connections/connection-monitor.js";
 import { PgBossQueueService } from "@aihub/jobs";
 import type { OperationsManager } from "./operations/operations-manager.js";
 import { PrismaOperationsManager } from "./operations/prisma-operations-manager.js";
@@ -39,6 +40,12 @@ import type { ToolingManager } from "./tooling/tooling-manager.js";
 import { PrismaToolingManager } from "./tooling/prisma-tooling-manager.js";
 import type { AiOpsManager } from "./ai-ops/ai-ops-manager.js";
 import { PrismaAiOpsManager } from "./ai-ops/prisma-ai-ops-manager.js";
+import type { ModelManager } from "./models/model-manager.js";
+import { PrismaModelManager } from "./models/prisma-model-manager.js";
+import type { GuardrailManager } from "./guardrails/guardrail-manager.js";
+import { PrismaGuardrailManager } from "./guardrails/prisma-guardrail-manager.js";
+import type { PromptManager } from "./prompts/prompt-manager.js";
+import { PrismaPromptManager } from "./prompts/prisma-prompt-manager.js";
 
 export type BootstrapState = "REQUIRED" | "READY" | "LOCKED";
 
@@ -47,11 +54,15 @@ export interface RuntimeServices {
   sessionManager?: AdminSessionManager;
   connectionManager?: ConnectionManager;
   connectionTestService?: ConnectionTestService;
+  connectionMonitor?: ConnectionMonitorService;
   operationsManager?: OperationsManager;
   chatManager?: ChatManager;
   identityManager?: EnterpriseIdentityManager;
   documentManager?: DocumentManager;
   memoryManager?: MemoryManager;
+  modelManager?: ModelManager;
+  guardrailManager?: GuardrailManager;
+  promptManager?: PromptManager;
   agentManager?: AgentManager;
   toolingManager?: ToolingManager;
   aiOpsManager?: AiOpsManager;
@@ -93,6 +104,12 @@ export function createRuntimeServices(): RuntimeServices {
     );
 
     const connectionManager = new PrismaConnectionManager(prisma, encryption);
+    const connectionTestService = new ConnectionTestService(connectionManager);
+    const connectionMonitor = new ConnectionMonitorRuntime(
+      prisma,
+      connectionTestService,
+      { error: (message, error) => console.error(message, error) },
+    );
     const sessionManager = new PrismaAdminSessionManager(prisma, authenticator);
     const queue = new PgBossQueueService(databaseUrl, "api", {
       error: (message, error) => console.error(message, error),
@@ -101,6 +118,9 @@ export function createRuntimeServices(): RuntimeServices {
     const operationsManager = new PrismaOperationsManager(prisma, queue);
     const documentResolver = new PrismaRuntimeConnectionResolver(prisma, encryption);
     const memoryManager = new PrismaMemoryManager(prisma, queue);
+    const modelManager = new PrismaModelManager(prisma);
+    const guardrailManager = new PrismaGuardrailManager(prisma);
+    const promptManager = new PrismaPromptManager(prisma);
     const chatManager = new PrismaChatManager(
       prisma,
       connectionManager,
@@ -113,9 +133,11 @@ export function createRuntimeServices(): RuntimeServices {
       queue,
     );
     const agentManager = new PrismaAgentManager(prisma, queue, new HermesClient(documentResolver));
-    const toolingManager = new PrismaToolingManager(prisma, memoryManager);
+    const toolingManager = new PrismaToolingManager(prisma);
     const aiOpsManager = new PrismaAiOpsManager(prisma, {
       connections: connectionManager,
+      connectionMonitoring: connectionMonitor,
+      models: modelManager,
       jobs: operationsManager,
       chat: chatManager,
       documents: documentManager,
@@ -128,7 +150,8 @@ export function createRuntimeServices(): RuntimeServices {
       prisma,
       sessionManager,
       connectionManager,
-      connectionTestService: new ConnectionTestService(connectionManager),
+      connectionTestService,
+      connectionMonitor,
       operationsManager,
       chatManager,
       identityManager: new PrismaEnterpriseIdentityManager(
@@ -138,6 +161,9 @@ export function createRuntimeServices(): RuntimeServices {
       ),
       documentManager,
       memoryManager,
+      modelManager,
+      guardrailManager,
+      promptManager,
       agentManager,
       toolingManager,
       aiOpsManager,

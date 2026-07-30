@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import type { AIHubPrismaClient } from "@aihub/database";
-import type { MemoryManager } from "../memory/memory-manager.js";
 import { describe, expect, it, vi } from "vitest";
 import { ToolingConflictError, ToolingDeniedError } from "./tooling-manager.js";
 import { PrismaToolingManager } from "./prisma-tooling-manager.js";
@@ -11,12 +10,11 @@ const DOCUMENT_ID = "b41d3534-658b-4cf0-a046-2b20b15f44e5";
 const SESSION_ID = "ac369dab-cad5-4fd9-83ed-b4fbf528028a";
 const TOOL_ID = "d160a1a0-7218-48a4-8a9f-7e1681280fe4";
 const GRANT_ID = "9a36cfb0-37ee-4772-9aee-4df72a809ddb";
+const APPROVAL_ID = "b36b4ce0-6aac-4dd6-9b59-0e361f942e8d";
 const capability = "b".repeat(43);
 const now = new Date("2026-07-30T00:00:00.000Z");
 
 function hash(value: string) { return createHash("sha256").update(value).digest(); }
-function memory(): MemoryManager { return { list: vi.fn(), metrics: vi.fn(), reindex: vi.fn() } as unknown as MemoryManager; }
-
 describe("PrismaToolingManager", () => {
   it("authenticates a revocable gateway credential by prefix and constant-time digest", async () => {
     const token = `aihub_mcp_${"a".repeat(43)}`;
@@ -24,7 +22,7 @@ describe("PrismaToolingManager", () => {
     const prisma = { mcpGatewayCredential: {
       findUnique: vi.fn(async () => ({ id: TOOL_ID, enabled: true, revokedAt: null, tokenHash: hash(token) })), update,
     } } as unknown as AIHubPrismaClient;
-    const manager = new PrismaToolingManager(prisma, memory());
+    const manager = new PrismaToolingManager(prisma);
     await expect(manager.authenticateGateway(token)).resolves.toBe(true);
     await expect(manager.authenticateGateway("bad-token")).resolves.toBe(false);
     expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ lastUsedAt: expect.any(Date) }) }));
@@ -36,7 +34,7 @@ describe("PrismaToolingManager", () => {
       toolRuntimeControl: { findUnique: vi.fn(async () => ({ enabled: false, reason: "Acceptance pending" })) },
       agentRun: { findUnique: vi.fn() }, governedTool: { findUnique: vi.fn() },
     } as unknown as AIHubPrismaClient;
-    const manager = new PrismaToolingManager(prisma, memory());
+    const manager = new PrismaToolingManager(prisma);
     await expect(manager.invoke("document_metadata_read", {
       authorization: `${RUN_ID}.${capability}`, requestId: REQUEST_ID, arguments: { documentId: DOCUMENT_ID },
     })).rejects.toBeInstanceOf(ToolingDeniedError);
@@ -57,7 +55,7 @@ describe("PrismaToolingManager", () => {
       })) },
       governedTool: { findUnique: vi.fn(async () => null) },
     } as unknown as AIHubPrismaClient;
-    const manager = new PrismaToolingManager(prisma, memory());
+    const manager = new PrismaToolingManager(prisma);
 
     await expect(manager.invoke("document_metadata_read", {
       authorization: `${RUN_ID}.${capability}`,
@@ -96,7 +94,7 @@ describe("PrismaToolingManager", () => {
       auditEvent: { create: auditCreate },
     };
     prismaBase.$transaction = vi.fn(async (value: unknown) => Array.isArray(value) ? Promise.all(value) : (value as (tx: unknown) => Promise<unknown>)(prismaBase));
-    const manager = new PrismaToolingManager(prismaBase as AIHubPrismaClient, memory());
+    const manager = new PrismaToolingManager(prismaBase as AIHubPrismaClient);
 
     await expect(manager.invoke("document_metadata_read", {
       authorization: `${RUN_ID}.${capability}`, requestId: REQUEST_ID, arguments: { documentId: DOCUMENT_ID },
@@ -110,9 +108,92 @@ describe("PrismaToolingManager", () => {
       mcpGatewayCredential: { count: vi.fn(async () => 1) }, agentToolGrant: { count: vi.fn(async () => 0) },
       auditEvent: { create: vi.fn(async () => ({})) },
     } as unknown as AIHubPrismaClient;
-    const manager = new PrismaToolingManager(prisma, memory());
+    const manager = new PrismaToolingManager(prisma);
     await expect(manager.updateRuntimeControl({ id: SESSION_ID, subject: "admin" }, {
       enabled: true, reason: "Pilot approved", approvalTtlMinutes: 15,
     })).rejects.toBeInstanceOf(ToolingConflictError);
+  });
+
+  it("commits an approved decision and its durable dispatch in one transaction", async () => {
+    const toolActionDispatchCreate = vi.fn(async () => ({ id: REQUEST_ID }));
+    const approval = {
+      id: APPROVAL_ID,
+      callId: REQUEST_ID,
+      status: "PENDING",
+      expiresAt: new Date(Date.now() + 60_000),
+      decisionReason: null,
+      decisionBy: null,
+      decidedAt: null,
+      createdAt: now,
+      updatedAt: now,
+      call: {
+        id: REQUEST_ID,
+        runId: RUN_ID,
+        toolId: TOOL_ID,
+        grantId: GRANT_ID,
+        status: "APPROVAL_PENDING",
+        arguments: { documentId: DOCUMENT_ID },
+        run: {
+          id: RUN_ID,
+          ownerSubject: "platform-admin",
+          requestedBy: SESSION_ID,
+          profileVersionId: "6f0b696b-9447-4932-848c-7f4c5295f935",
+          profileVersion: 1,
+          profile: { slug: "hermes-analyst", status: "ACTIVE", activeVersion: 1 },
+        },
+        tool: {
+          id: TOOL_ID,
+          slug: "document_memory_resync",
+          displayName: "Resynchronize document memory",
+          risk: "CONSEQUENTIAL",
+          status: "ACTIVE",
+          handlerKey: "builtin.document_memory_resync",
+        },
+        grant: {
+          id: GRANT_ID,
+          toolId: TOOL_ID,
+          profileVersionId: "6f0b696b-9447-4932-848c-7f4c5295f935",
+          enabled: true,
+          allowedGroups: [],
+          allowedAdminRoles: ["PLATFORM_ADMIN"],
+          resourceScope: "OWNER_ONLY",
+        },
+      },
+    };
+    const approved = {
+      ...approval,
+      status: "APPROVED",
+      decisionReason: "Approved for the pilot.",
+      decisionBy: SESSION_ID,
+      decidedAt: now,
+    };
+    const prismaBase: any = {
+      $executeRaw: vi.fn(async () => 1),
+      toolApproval: {
+        findUnique: vi.fn(async () => approval),
+        update: vi.fn(async () => approved),
+        findUniqueOrThrow: vi.fn(async () => approved),
+      },
+      toolRuntimeControl: { findUnique: vi.fn(async () => ({ enabled: true })) },
+      administratorSession: { findFirst: vi.fn(async () => ({ role: "PLATFORM_ADMIN" })) },
+      enterpriseUserSession: { findFirst: vi.fn() },
+      document: { findFirst: vi.fn(async () => ({ id: DOCUMENT_ID })) },
+      governedToolCall: { update: vi.fn(async () => ({})) },
+      toolActionDispatch: { create: toolActionDispatchCreate },
+      auditEvent: { create: vi.fn(async () => ({})) },
+    };
+    prismaBase.$transaction = vi.fn(async (callback: (transaction: unknown) => Promise<unknown>) => callback(prismaBase));
+    const manager = new PrismaToolingManager(prismaBase as AIHubPrismaClient);
+
+    await expect(manager.decideApproval(
+      { id: SESSION_ID, subject: "platform-admin" },
+      APPROVAL_ID,
+      { decision: "APPROVE", reason: "Approved for the pilot." },
+    )).resolves.toMatchObject({ id: APPROVAL_ID, status: "APPROVED" });
+
+    expect(toolActionDispatchCreate).toHaveBeenCalledWith({ data: { callId: REQUEST_ID } });
+    expect(prismaBase.governedToolCall.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: "EXECUTING" }),
+    }));
   });
 });

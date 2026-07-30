@@ -128,12 +128,16 @@ export class PgBossQueueService {
   }
 
   async sendMemoryIndex(payload: MemoryIndexJobPayload): Promise<string> {
-    const parsed = memoryIndexJobPayloadSchema.parse(payload);
-    const id = await this.boss.send("aihub.memory.index", parsed, {
-      singletonKey: `${parsed.documentId}:${parsed.generation}:${parsed.action}`,
-    });
+    const id = await this.ensureMemoryIndex(payload);
     if (!id) throw new Error("Memory synchronization job was not created.");
     return id;
+  }
+
+  async ensureMemoryIndex(payload: MemoryIndexJobPayload): Promise<string | null> {
+    const parsed = memoryIndexJobPayloadSchema.parse(payload);
+    return this.boss.send("aihub.memory.index", parsed, {
+      singletonKey: `${parsed.documentId}:${parsed.generation}:${parsed.action}`,
+    });
   }
 
   async sendAgentRun(payload: AgentRunJobPayload): Promise<string> {

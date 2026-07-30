@@ -17,7 +17,9 @@ AIHub now owns a Streamable HTTP endpoint at `POST /api/v1/mcp/` and the corresp
 - exact agent-profile-version grants with exact enterprise groups or administrator roles;
 - owner-only resource enforcement and a fresh identity/session check on every call;
 - a fail-closed global runtime boundary, per-tool suspension, an idempotent request ledger, and audit events;
-- a human approval inbox with expiry, rejection, cancellation, decision reasons, and full authorization revalidation immediately before an approved action is queued.
+- a human approval inbox with expiry, rejection, cancellation, and decision reasons;
+- a transactional PostgreSQL action outbox: approval and dispatch creation commit together, workers reclaim expired leases, and transient submission failures retry with bounded exponential backoff;
+- full runtime, profile-version, grant, current-session/group, handler, and owner-scope authorization revalidation in the worker immediately before an approved action is queued.
 
 Browser-origin MCP traffic is rejected. Hermes never receives PostgreSQL, SeaweedFS, Supermemory, or broad application credentials through this gateway.
 
@@ -45,7 +47,7 @@ Every call must satisfy all of these checks:
 7. that exact version has an enabled grant for the exact tool;
 8. the original requesting administrator session or enterprise-user session remains active and still matches an explicitly named role or group;
 9. the target document is inside the run owner's local PostgreSQL scope;
-10. consequential calls remain pending until a scoped reviewer decides them, and all mutable checks are repeated before execution.
+10. consequential calls remain pending until a scoped reviewer decides them; approval creates a durable dispatch in the same transaction, and all mutable checks are repeated by the worker before submission.
 
 The client-supplied `requestId` is unique per run. A retry can observe the same call, but AIHub verifies the run capability first and rejects reuse of the same request ID with different arguments or a different tool.
 
@@ -83,7 +85,7 @@ For unexpected tool behavior:
 2. suspend the affected tool;
 3. revoke the Hermes gateway credential;
 4. keep the Phase 5 Hermes runtime zero-tool switch disabled, or isolate the Hermes network if it is already running;
-5. preserve governed calls, approvals, agent runs, audit events, worker records, Hermes logs, and reverse-proxy logs;
+5. preserve governed calls, approvals, action dispatches, agent runs, audit events, worker records, Hermes logs, and reverse-proxy logs;
 6. correct the grant, handler, identity mapping, or connector policy and repeat the full interoperability and revocation set before re-enabling.
 
 ## Acceptance still required
@@ -94,7 +96,7 @@ Phase 6 is not accepted until all of the following are demonstrated in MPM's tar
 - the worker mints a short-lived capability for an eligible run and conveys it to Hermes for that run only;
 - Hermes includes that capability and a stable idempotency key on every governed call without leaking them;
 - a complete read-only workflow and a complete approved consequential workflow pass end to end;
-- process interruption between approval and durable job submission is recovered without a lost or duplicate action;
+- process interruption between approval and durable job submission proves the implemented outbox lease recovery and idempotent queue submission in the deployed PostgreSQL/worker environment;
 - revocation, expiry, identity-group change, network isolation, backup/restore, adversarial prompt, concurrency, and load tests pass;
 - MPM approves the first real application connector, resource scopes, action risk rating, reviewer matrix, and retention rules.
 

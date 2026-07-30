@@ -48,9 +48,10 @@ The current upstream capabilities response advertises `admin_config_rw: false`. 
 1. Open **Settings**, select **Hermes**, and enter the internal endpoint and API-server key.
 2. Retain the default health, capability, toolset, and run paths unless the isolated profile uses an explicit path prefix.
 3. Save and test the connection.
-4. Open **Agents** and create a draft profile. Choose a Hermes-recognized model alias, timeout, concurrency limit, and whether private knowledge retrieval is allowed.
-5. Activate the intended version. Creating a later version does not change the active version until an administrator explicitly activates it.
-6. Complete the acceptance checks below, enter an operator reason, and enable the global execution boundary. AIHub performs a fresh authenticated capabilities and zero-enabled-toolset check before it persists the enabled state; a failed or unavailable check leaves execution disabled and records a denied audit event.
+4. Open **Models**, create the matching agent model route, promote exact `model:<route-slug>` version evidence, and activate the route. Draft routes do not begin catalogue enforcement.
+5. Open **Agents** and create a draft profile using the active route alias, timeout, concurrency limit, and whether private knowledge retrieval is allowed.
+6. Promote the exact `agent:<profile-slug>` version evidence and activate the intended profile version. Creating a later version does not change the active version until an administrator explicitly activates it.
+7. Complete the acceptance checks below, enter an operator reason, and enable the global execution boundary. AIHub performs a fresh authenticated capabilities and zero-enabled-toolset check before it persists the enabled state; a failed or unavailable check leaves execution disabled and records a denied audit event.
 
 Disabling the boundary is immediate from AIHub's perspective. Active workers observe the change at their next polling cycle and request remote stop.
 
@@ -90,4 +91,4 @@ MCP connectors, tool grants, per-resource authorization, proxied connector crede
 - Live Hermes, LiteLLM/vLLM, GPU, network-policy, recovery, concurrency, and adversarial acceptance require MPM infrastructure and endpoints.
 - The upstream idempotency cache reduces the duplicate-start window but is not a durable AIHub transaction. Crash testing around remote submission remains a target-environment acceptance item.
 - Phase 5 supports private knowledge only. Department, project, organization, and agent-shared memory require approved ownership rules.
-- The dashboard records operational outcomes but does not yet provide Phase 7 evaluation promotion gates, SIEM forwarding, or infrastructure-wide alerting.
+- Model and agent activation are bound to exact promoted evaluation evidence. SIEM forwarding and infrastructure-wide alert delivery still require the target environment.

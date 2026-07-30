@@ -3,6 +3,7 @@ import type { AdminActor } from "../connection-manager.js";
 
 export interface ResolvedConnection {
   id: string;
+  activeRevision: number;
   kind: ServiceKind;
   baseUrl: string | null;
   configuration: Record<string, unknown>;
@@ -21,5 +22,5 @@ export interface ConnectionDiagnosticAdapter {
 
 export interface ConnectionDiagnosticStore {
   resolveForDiagnostic(id: string): Promise<ResolvedConnection>;
-  recordDiagnostic(result: ConnectionTestResult, actor?: AdminActor): Promise<void>;
+  recordDiagnostic(result: ConnectionTestResult, actor?: AdminActor, expectedRevision?: number): Promise<boolean>;
 }

@@ -42,7 +42,7 @@ export class ConnectionTestService {
         latencyMs: 0,
         details: { failure: "configuration" },
       };
-      await this.store.recordDiagnostic(result, actor);
+      await this.store.recordDiagnostic(result, actor, connection.activeRevision);
       return result;
     }
 
@@ -89,7 +89,7 @@ export class ConnectionTestService {
       clearTimeout(timeout);
     }
 
-    await this.store.recordDiagnostic(result, actor);
+    await this.store.recordDiagnostic(result, actor, connection.activeRevision);
     return result;
   }
 }

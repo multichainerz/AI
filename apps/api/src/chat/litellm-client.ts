@@ -13,6 +13,7 @@ export interface LiteLLMStreamInput {
   temperature: number;
   timeoutMs: number;
   user: string;
+  guardrails: string[];
 }
 
 export interface LiteLLMStreamResult {
@@ -116,6 +117,7 @@ export class LiteLLMClient {
           max_tokens: input.maxOutputTokens,
           temperature: input.temperature,
           user: input.user,
+          ...(input.guardrails.length > 0 ? { guardrails: input.guardrails } : {}),
         }),
       });
     } catch (error) {
@@ -130,18 +132,22 @@ export class LiteLLMClient {
     }
 
     if (!response.ok) {
-      const code = response.status === 401 || response.status === 403
-        ? "INFERENCE_AUTHENTICATION_FAILED"
-        : response.status === 429
-          ? "INFERENCE_RATE_LIMITED"
-          : "INFERENCE_REJECTED";
+      const code = response.status === 400 && input.guardrails.length > 0
+        ? "GUARDRAIL_REJECTED"
+        : response.status === 401 || response.status === 403
+          ? "INFERENCE_AUTHENTICATION_FAILED"
+          : response.status === 429
+            ? "INFERENCE_RATE_LIMITED"
+            : "INFERENCE_REJECTED";
       throw new LiteLLMRequestError(
         code,
-        response.status === 429
-          ? "LiteLLM is currently at its request limit."
-          : response.status === 401 || response.status === 403
-            ? "LiteLLM rejected the configured credential."
-            : `LiteLLM rejected the request with status ${response.status}.`,
+        response.status === 400 && input.guardrails.length > 0
+          ? "LiteLLM rejected the guarded request. Review guardrail violation and assignment telemetry."
+          : response.status === 429
+            ? "LiteLLM is currently at its request limit."
+            : response.status === 401 || response.status === 403
+              ? "LiteLLM rejected the configured credential."
+              : `LiteLLM rejected the request with status ${response.status}.`,
       );
     }
     if (!response.body) {

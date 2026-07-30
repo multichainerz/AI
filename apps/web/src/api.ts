@@ -1,5 +1,6 @@
 import {
   connectionTestResultSchema,
+  connectionMonitoringControlSchema,
   administratorSessionSchema,
   configurationRevisionListSchema,
   jobActionResultSchema,
@@ -20,6 +21,8 @@ import {
   type AdministratorSession,
   type CreateServiceConnection,
   type ConnectionTestResult,
+  type ConnectionMonitoringControl,
+  type UpdateConnectionMonitoringControl,
   type ConfigurationRevisionList,
   type JobActionResult,
   type JobOperationsSnapshot,
@@ -111,6 +114,27 @@ import {
   type ProductionReadinessApproval,
   type UpdateProductionReadinessControl,
   type RecordProductionReadinessApproval,
+  modelDeploymentListSchema,
+  modelDeploymentSchema,
+  type ModelDeployment,
+  type ModelDeploymentList,
+  type CreateModelDeployment,
+  type UpdateModelDeployment,
+  type ChangeModelDeploymentState,
+  guardrailPolicyListSchema,
+  guardrailPolicySchema,
+  type GuardrailPolicy,
+  type GuardrailPolicyList,
+  type CreateGuardrailPolicy,
+  type UpdateGuardrailPolicy,
+  type ChangeGuardrailPolicyState,
+  promptTemplateListSchema,
+  promptTemplateSchema,
+  type PromptTemplate,
+  type PromptTemplateList,
+  type CreatePromptTemplate,
+  type UpdatePromptTemplate,
+  type ChangePromptTemplateState,
 } from "@aihub/contracts";
 
 export class AIHubApiError extends Error {
@@ -210,6 +234,25 @@ export async function getConnections(): Promise<ServiceConnectionList> {
     credentials: "same-origin",
   });
   return serviceConnectionListSchema.parse(await parsedResponse(response));
+}
+
+export async function getConnectionMonitoring(): Promise<ConnectionMonitoringControl> {
+  const response = await fetch("/api/v1/admin/connections/monitoring", {
+    credentials: "same-origin",
+  });
+  return connectionMonitoringControlSchema.parse(await parsedResponse(response));
+}
+
+export async function updateConnectionMonitoring(
+  input: UpdateConnectionMonitoringControl,
+): Promise<ConnectionMonitoringControl> {
+  const response = await fetch("/api/v1/admin/connections/monitoring", {
+    method: "PATCH",
+    headers: adminHeaders(),
+    credentials: "same-origin",
+    body: JSON.stringify(input),
+  });
+  return connectionMonitoringControlSchema.parse(await parsedResponse(response));
 }
 
 export async function createConnection(
@@ -572,6 +615,96 @@ export async function updateAgentRuntime(enabled: boolean, reason: string): Prom
 export async function getAgentMetrics(): Promise<AgentMetrics> {
   const response = await fetch("/api/v1/admin/agents/metrics", { credentials: "same-origin" });
   return agentMetricsSchema.parse(await parsedResponse(response));
+}
+
+export async function getModelDeployments(): Promise<ModelDeploymentList> {
+  const response = await fetch("/api/v1/admin/models", { credentials: "same-origin" });
+  return modelDeploymentListSchema.parse(await parsedResponse(response));
+}
+
+export async function createModelDeployment(input: CreateModelDeployment): Promise<ModelDeployment> {
+  const response = await fetch("/api/v1/admin/models", {
+    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return modelDeploymentSchema.parse(await parsedResponse(response));
+}
+
+export async function updateModelDeployment(id: string, input: UpdateModelDeployment): Promise<ModelDeployment> {
+  const response = await fetch(`/api/v1/admin/models/${encodeURIComponent(id)}`, {
+    method: "PATCH", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return modelDeploymentSchema.parse(await parsedResponse(response));
+}
+
+export async function changeModelDeploymentState(
+  id: string,
+  action: "activate" | "suspend",
+  input: ChangeModelDeploymentState,
+): Promise<ModelDeployment> {
+  const response = await fetch(`/api/v1/admin/models/${encodeURIComponent(id)}/${action}`, {
+    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return modelDeploymentSchema.parse(await parsedResponse(response));
+}
+
+export async function getGuardrailPolicies(): Promise<GuardrailPolicyList> {
+  const response = await fetch("/api/v1/admin/guardrails", { credentials: "same-origin" });
+  return guardrailPolicyListSchema.parse(await parsedResponse(response));
+}
+
+export async function createGuardrailPolicy(input: CreateGuardrailPolicy): Promise<GuardrailPolicy> {
+  const response = await fetch("/api/v1/admin/guardrails", {
+    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return guardrailPolicySchema.parse(await parsedResponse(response));
+}
+
+export async function updateGuardrailPolicy(id: string, input: UpdateGuardrailPolicy): Promise<GuardrailPolicy> {
+  const response = await fetch(`/api/v1/admin/guardrails/${encodeURIComponent(id)}`, {
+    method: "PATCH", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return guardrailPolicySchema.parse(await parsedResponse(response));
+}
+
+export async function changeGuardrailPolicyState(
+  id: string,
+  action: "activate" | "suspend",
+  input: ChangeGuardrailPolicyState,
+): Promise<GuardrailPolicy> {
+  const response = await fetch(`/api/v1/admin/guardrails/${encodeURIComponent(id)}/${action}`, {
+    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return guardrailPolicySchema.parse(await parsedResponse(response));
+}
+
+export async function getPromptTemplates(): Promise<PromptTemplateList> {
+  const response = await fetch("/api/v1/admin/prompts", { credentials: "same-origin" });
+  return promptTemplateListSchema.parse(await parsedResponse(response));
+}
+
+export async function createPromptTemplate(input: CreatePromptTemplate): Promise<PromptTemplate> {
+  const response = await fetch("/api/v1/admin/prompts", {
+    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return promptTemplateSchema.parse(await parsedResponse(response));
+}
+
+export async function updatePromptTemplate(id: string, input: UpdatePromptTemplate): Promise<PromptTemplate> {
+  const response = await fetch(`/api/v1/admin/prompts/${encodeURIComponent(id)}`, {
+    method: "PATCH", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return promptTemplateSchema.parse(await parsedResponse(response));
+}
+
+export async function changePromptTemplateState(
+  id: string,
+  action: "activate" | "suspend",
+  input: ChangePromptTemplateState,
+): Promise<PromptTemplate> {
+  const response = await fetch(`/api/v1/admin/prompts/${encodeURIComponent(id)}/${action}`, {
+    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return promptTemplateSchema.parse(await parsedResponse(response));
 }
 
 export async function getGovernedTools(): Promise<GovernedToolList> {

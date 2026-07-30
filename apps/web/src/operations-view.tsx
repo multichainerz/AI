@@ -392,7 +392,7 @@ export function OperationsView({ unlocked, scopes, onConfigure, onUnauthorized }
             <article><span>Document pipeline</span><strong>{metrics?.documents?.processing ?? "--"}</strong><small>{metrics?.documents?.failed ?? 0} failed / {metrics?.documents?.ready ?? 0} ready</small></article>
             <article><span>Supermemory sync</span><strong>{metrics?.memory?.processing ?? "--"}</strong><small>{metrics?.memory?.failed ?? 0} failed / {metrics?.memory?.ready ?? 0} ready</small></article>
             <article><span>Hermes runs</span><strong>{metrics?.agents?.runningRuns ?? "--"}</strong><small>{metrics?.agents?.queuedRuns ?? 0} queued / {metrics?.agents?.failedRuns ?? 0} retained failures</small></article>
-            <article><span>Governed tools</span><strong>{metrics?.tools?.pendingApprovals ?? "--"}</strong><small>{metrics?.tools?.deniedCalls ?? 0} denied / {metrics?.tools?.failedCalls ?? 0} failed</small></article>
+            <article><span>Tool actions</span><strong>{metrics?.tools?.openActionDispatches ?? "--"}</strong><small>{metrics?.tools?.pendingApprovals ?? 0} pending review / {metrics?.tools?.failedActionDispatches ?? 0} failed</small></article>
             <article><span>Managed artifacts</span><strong>{metrics?.documents ? bytes(metrics.documents.storedBytes) : "--"}</strong><small>{metrics?.documents?.total ?? 0} active documents</small></article>
           </div>
         </section>

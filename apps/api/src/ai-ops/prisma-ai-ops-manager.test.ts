@@ -1,3 +1,8 @@
+import type {
+  ConnectionMonitoringControl,
+  ModelDeployment,
+  ServiceConnectionSummary,
+} from "@aihub/contracts";
 import type { AIHubPrismaClient } from "@aihub/database";
 import { describe, expect, it, vi } from "vitest";
 import type { AdminPrincipal } from "../auth/admin-session.js";
@@ -16,6 +21,179 @@ const principal: AdminPrincipal = {
   idleExpiresAt: "2026-07-30T01:00:00.000Z",
   absoluteExpiresAt: "2026-07-30T08:00:00.000Z",
 };
+
+function operationsOverviewHarness(
+  connection: ServiceConnectionSummary,
+  monitoring: ConnectionMonitoringControl,
+  models: ModelDeployment[] = [],
+  activeGuardrail: {
+    id: string;
+    displayName: string;
+    version: string;
+    liteLLMGuardrails: string[];
+    maxInputCharacters: number;
+    updatedAt: Date;
+  } | null = null,
+  activePrompt: {
+    id: string;
+    displayName: string;
+    purpose: "CHAT_SYSTEM";
+    version: string;
+    contentChecksum: string;
+    updatedAt: Date;
+  } | null = null,
+) {
+  const operationalIncident = {
+    upsert: vi.fn(async () => ({})),
+    updateMany: vi.fn(async () => ({ count: 0 })),
+    findMany: vi.fn(async () => []),
+    count: vi.fn(async () => 0),
+  };
+  const prisma = {
+    operationalIncident,
+    evaluationRun: { groupBy: vi.fn(async () => []) },
+    guardrailPolicy: { findFirst: vi.fn(async () => activeGuardrail) },
+    promptTemplate: { findFirst: vi.fn(async () => activePrompt) },
+  } as unknown as AIHubPrismaClient;
+  const metrics = { metrics: vi.fn(async () => ({})) };
+  const dependencies = {
+    connections: { list: vi.fn(async () => [connection]) },
+    connectionMonitoring: { getControl: vi.fn(async () => monitoring) },
+    models: { list: vi.fn(async () => ({ items: models })) },
+    jobs: { snapshot: vi.fn(async () => ({
+      status: "ONLINE",
+      statusReasons: [],
+      capturedAt: new Date().toISOString(),
+    })) },
+    chat: metrics,
+    documents: metrics,
+    memory: metrics,
+    agents: metrics,
+    tools: metrics,
+  };
+  return new PrismaAiOpsManager(prisma, dependencies as never);
+}
+
+describe("PrismaAiOpsManager scheduled connection evidence", () => {
+  const connection = (lastHealthcheckAt: string): ServiceConnectionSummary => ({
+    id: "5277951c-7d22-4cec-8d46-fad3afba37dd",
+    slug: "litellm-primary",
+    displayName: "LiteLLM Primary",
+    kind: "LITELLM",
+    environment: "PRODUCTION",
+    baseUrl: "https://litellm.mpm.internal",
+    enabled: true,
+    status: "HEALTHY",
+    configuration: {},
+    activeRevision: 1,
+    secretFieldNames: ["apiKey"],
+    lastHealthcheckAt,
+    lastHealthcheckMessage: "Credential-aware check passed.",
+    updatedAt: lastHealthcheckAt,
+  });
+  const monitoring: ConnectionMonitoringControl = {
+    enabled: true,
+    intervalSeconds: 300,
+    reason: "Monitor pilot dependencies.",
+    updatedAt: new Date().toISOString(),
+    updatedBy: SESSION_ID,
+  };
+
+  it("reports a recent scheduled check as live evidence", async () => {
+    const manager = operationsOverviewHarness(connection(new Date().toISOString()), monitoring);
+
+    const overview = await manager.overview();
+
+    expect(overview.components.find(({ id }) => id.startsWith("connection:"))).toMatchObject({
+      status: "HEALTHY",
+      source: "LIVE",
+    });
+  });
+
+  it("downgrades an overdue scheduled check without presenting it as live", async () => {
+    const elevenMinutesAgo = new Date(Date.now() - 11 * 60 * 1_000).toISOString();
+    const manager = operationsOverviewHarness(connection(elevenMinutesAgo), monitoring);
+
+    const overview = await manager.overview();
+
+    expect(overview.components.find(({ id }) => id.startsWith("connection:"))).toMatchObject({
+      status: "NOT_VERIFIED",
+      source: "LAST_VERIFIED",
+      summary: "The scheduled connection check is overdue.",
+    });
+  });
+
+  it("includes evaluated active model routes in the central component view", async () => {
+    const observedAt = new Date().toISOString();
+    const manager = operationsOverviewHarness(connection(observedAt), monitoring, [{
+      id: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d",
+      slug: "laguna-chat",
+      displayName: "Laguna Chat",
+      modelAlias: "chat-primary",
+      workload: "CHAT",
+      status: "ACTIVE",
+      connection: { id: "5277951c-7d22-4cec-8d46-fad3afba37dd", displayName: "LiteLLM Primary", kind: "LITELLM", environment: "PRODUCTION", enabled: true, status: "HEALTHY" },
+      version: "2.1-nvfp4",
+      license: null,
+      contextWindowTokens: 131_072,
+      maxOutputTokens: 8_192,
+      maxConcurrentRequests: 4,
+      isDefault: true,
+      activationEvaluationId: EVALUATION_ID,
+      firstActivatedAt: observedAt,
+      revision: 2,
+      createdBy: SESSION_ID,
+      updatedBy: SESSION_ID,
+      createdAt: observedAt,
+      updatedAt: observedAt,
+    }]);
+
+    const overview = await manager.overview();
+
+    expect(overview.components.find(({ id }) => id.startsWith("model:"))).toMatchObject({
+      status: "HEALTHY",
+      source: "CONFIGURATION",
+      affectedWorkflows: ["CHAT"],
+    });
+  });
+
+  it("reports the evaluated active policy and its LiteLLM assignment posture", async () => {
+    const observedAt = new Date().toISOString();
+    const manager = operationsOverviewHarness(connection(observedAt), monitoring, [], {
+      id: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d",
+      displayName: "Chat safety",
+      version: "1.0.0",
+      liteLLMGuardrails: ["presidio-pii", "prompt-injection"],
+      maxInputCharacters: 12_000,
+      updatedAt: new Date(observedAt),
+    });
+
+    const overview = await manager.overview();
+
+    expect(overview.components.find(({ id }) => id.startsWith("guardrail:"))).toMatchObject({
+      status: "HEALTHY",
+      affectedWorkflows: ["CHAT"],
+    });
+    expect(overview.guardrails.find(({ layer }) => layer === "INPUT")?.summary).toContain("12,000-character");
+    expect(overview.guardrails.find(({ layer }) => layer === "OUTPUT")?.summary).toContain("2 approved LiteLLM guardrails");
+  });
+
+  it("reports the evaluated active chat-system prompt without exposing its content", async () => {
+    const observedAt = new Date().toISOString();
+    const manager = operationsOverviewHarness(connection(observedAt), monitoring, [], null, {
+      id: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d",
+      displayName: "MPM chat system",
+      purpose: "CHAT_SYSTEM",
+      version: "1.0.0",
+      contentChecksum: "a".repeat(64),
+      updatedAt: new Date(observedAt),
+    });
+
+    const component = (await manager.overview()).components.find(({ id }) => id.startsWith("prompt:"));
+    expect(component).toMatchObject({ status: "HEALTHY", source: "CONFIGURATION", affectedWorkflows: ["CHAT"] });
+    expect(component?.summary).toContain("checksum aaaaaaaaaaaa");
+  });
+});
 
 function draftEvaluation() {
   return {

@@ -272,6 +272,20 @@ export const connectionTestResultSchema = z.object({
   details: z.record(z.string(), z.unknown()).default({}),
 });
 
+export const connectionMonitoringControlSchema = z.object({
+  enabled: z.boolean(),
+  intervalSeconds: z.number().int().min(30).max(86_400),
+  reason: z.string().nullable(),
+  updatedAt: z.iso.datetime(),
+  updatedBy: z.uuid().nullable(),
+});
+
+export const updateConnectionMonitoringControlSchema = z.object({
+  enabled: z.boolean(),
+  intervalSeconds: z.number().int().min(30).max(86_400),
+  reason: z.string().trim().min(3).max(500),
+}).strict();
+
 export const configurationRevisionSummarySchema = z.object({
   id: z.uuid(),
   revision: z.number().int().positive(),
@@ -317,6 +331,8 @@ export type CreateServiceConnection = z.infer<typeof createServiceConnectionSche
 export type UpdateServiceConnection = z.infer<typeof updateServiceConnectionSchema>;
 export type ServiceConnectionList = z.infer<typeof serviceConnectionListSchema>;
 export type ConnectionTestResult = z.infer<typeof connectionTestResultSchema>;
+export type ConnectionMonitoringControl = z.infer<typeof connectionMonitoringControlSchema>;
+export type UpdateConnectionMonitoringControl = z.infer<typeof updateConnectionMonitoringControlSchema>;
 export type ConfigurationRevisionSummary = z.infer<
   typeof configurationRevisionSummarySchema
 >;

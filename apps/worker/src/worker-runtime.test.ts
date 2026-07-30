@@ -149,4 +149,25 @@ describe("WorkerRuntime", () => {
     expect(queue.registerAgentRunWorker).toHaveBeenCalledWith(identity.id, expect.any(Function));
     await runtime.stop();
   });
+
+  it("drains durable approved actions when the worker starts", async () => {
+    const queue: WorkerQueueRuntime = {
+      start: vi.fn(async () => undefined),
+      stop: vi.fn(async () => undefined),
+      registerSystemProbeWorker: vi.fn(async () => "probe-worker"),
+    };
+    const registry: WorkerRegistry = {
+      markStarted: vi.fn(async () => undefined), markAlive: vi.fn(async () => undefined), markStopped: vi.fn(async () => undefined),
+    };
+    const toolActionHandler = { processAvailable: vi.fn(async () => 1) };
+    const runtime = new WorkerRuntime(
+      queue, registry, identity, { info: vi.fn(), error: vi.fn() }, 60_000,
+      undefined, undefined, undefined, toolActionHandler, 60_000,
+    );
+
+    await runtime.start();
+
+    expect(toolActionHandler.processAvailable).toHaveBeenCalledWith(identity.id);
+    await runtime.stop();
+  });
 });

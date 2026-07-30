@@ -8,7 +8,7 @@ The preview provides:
 
 - PostgreSQL-backed conversations and messages;
 - ownership isolation by authenticated subject;
-- one approved model alias through exactly one enabled LiteLLM connection;
+- a legacy connection alias until model-catalogue enforcement begins, then one evaluated default chat route through exactly one enabled LiteLLM connection;
 - encrypted, backend-only LiteLLM credential resolution;
 - OpenAI-compatible server-sent token streaming;
 - request cancellation and interrupted-stream persistence;
@@ -49,7 +49,7 @@ From AIHub Settings, create or update the LiteLLM connection with:
 - maximum output tokens, temperature, inference timeout, and requests per user per minute;
 - the shorter diagnostic timeout and health/model-discovery paths.
 
-Run **Test connection** successfully after saving. Chat fails closed when no LiteLLM connection is enabled, more than one is enabled, its latest health state is not `HEALTHY`, or the conversation model no longer matches the configured alias.
+Run **Test connection** successfully after saving. Before model-catalogue enforcement begins, chat uses the connection-level primary alias. Draft catalogue routes can be prepared without interruption. After the first evaluated chat route is activated, chat requires one active default route and no longer falls back to a free-form alias. Chat also fails closed when no LiteLLM connection is enabled, more than one is enabled, its latest health state is not `HEALTHY`, or the conversation model no longer matches the active default.
 
 ## Runtime flow
 
@@ -74,6 +74,7 @@ The browser never receives the LiteLLM API key. The upstream receives a pseudony
 - `POST /api/v1/chat/conversations/:conversationId/messages`
 - `PUT /api/v1/chat/messages/:messageId/feedback`
 - `GET /api/v1/admin/chat/metrics`
+- Model catalogue administration is documented in `docs/MODEL_CONTROL_RUNBOOK.md`.
 
 The message endpoint emits `started`, `delta`, `completed`, `failed`, and `cancelled` events. Administrative API responses and streams use `Cache-Control: no-store`.
 

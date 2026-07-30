@@ -25,6 +25,7 @@ import {
   ChatConversationConflictError,
   ChatConversationNotFoundError,
   ChatMessageNotFoundError,
+  ChatPolicyViolationError,
   ChatRateLimitError,
   type ChatPrincipal,
   type ChatManager,
@@ -101,6 +102,10 @@ async function sendChatError(reply: FastifyReply, error: unknown): Promise<void>
   }
   if (error instanceof ChatRateLimitError) {
     await reply.code(429).send({ error: "CHAT_RATE_LIMITED", message: error.message });
+    return;
+  }
+  if (error instanceof ChatPolicyViolationError) {
+    await reply.code(422).send({ error: "GUARDRAIL_BLOCKED", message: error.message });
     return;
   }
   throw error;

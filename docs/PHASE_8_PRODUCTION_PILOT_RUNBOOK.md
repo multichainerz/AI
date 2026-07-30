@@ -103,7 +103,7 @@ Do not mark `operations-capacity-failure-tests` verified from synthetic local un
 
 Before pilot traffic:
 
-1. Apply Prisma migration `20260730001000_production_readiness` and all earlier migrations through the one-shot migration services.
+1. Apply all committed Prisma migrations through `20260730001500_prompt_templates` using the one-shot migration services.
 2. Confirm Coolify health checks, restart policies, persistent volumes, internal-only data network, and service ordering.
 3. Verify approved internal DNS names, TLS chain and expiry monitoring, proxy timeouts, streaming behavior, upload limits, and request-ID propagation.
 4. Prove that PostgreSQL and infrastructure administration are unreachable from Hermes and untrusted user networks.

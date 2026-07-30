@@ -16,6 +16,9 @@ import { registerMemoryRoutes } from "./memory/routes.js";
 import { registerAdminAgentRoutes, registerAgentRoutes } from "./agents/routes.js";
 import { registerAdminToolingRoutes, registerMcpGatewayRoutes } from "./tooling/routes.js";
 import { registerAiOpsRoutes } from "./ai-ops/routes.js";
+import { registerModelRoutes } from "./models/routes.js";
+import { registerGuardrailRoutes } from "./guardrails/routes.js";
+import { registerPromptRoutes } from "./prompts/routes.js";
 
 export interface AppOptions {
   logger?: boolean;
@@ -66,6 +69,20 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
     return payload;
   });
 
+  if (runtime.prisma || runtime.operationsManager || runtime.connectionMonitor) {
+    app.addHook("onClose", async () => {
+      try {
+        await runtime.connectionMonitor?.stop();
+      } finally {
+        try {
+          await runtime.operationsManager?.stop();
+        } finally {
+          await runtime.prisma?.$disconnect();
+        }
+      }
+    });
+  }
+
   if (runtime.operationsManager) {
     try {
       await runtime.operationsManager.start();
@@ -76,6 +93,10 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
       ]);
       throw error;
     }
+  }
+
+  if (runtime.connectionMonitor) {
+    await runtime.connectionMonitor.start();
   }
 
   app.get("/healthz", async (_request, reply) => {
@@ -118,6 +139,14 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
   app.get("/api/v1/connections/catalog", async () => ({
     items: SERVICE_KINDS.map((kind) => ({ kind })),
   }));
+
+  await app.register(
+    async (prompts) => registerPromptRoutes(prompts, {
+      ...(runtime.sessionManager ? { sessionManager: runtime.sessionManager } : {}),
+      ...(runtime.promptManager ? { manager: runtime.promptManager } : {}),
+    }),
+    { prefix: "/api/v1/admin/prompts" },
+  );
 
   await app.register(
     async (chat) =>
@@ -214,8 +243,27 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
         ...(runtime.sessionManager ? { sessionManager: runtime.sessionManager } : {}),
         ...(runtime.connectionManager ? { manager: runtime.connectionManager } : {}),
         ...(runtime.connectionTestService ? { tester: runtime.connectionTestService } : {}),
+        ...(runtime.connectionMonitor ? { monitor: runtime.connectionMonitor } : {}),
       }),
     { prefix: "/api/v1/admin/connections" },
+  );
+
+  await app.register(
+    async (models) =>
+      registerModelRoutes(models, {
+        ...(runtime.sessionManager ? { sessionManager: runtime.sessionManager } : {}),
+        ...(runtime.modelManager ? { manager: runtime.modelManager } : {}),
+      }),
+    { prefix: "/api/v1/admin/models" },
+  );
+
+  await app.register(
+    async (guardrails) =>
+      registerGuardrailRoutes(guardrails, {
+        ...(runtime.sessionManager ? { sessionManager: runtime.sessionManager } : {}),
+        ...(runtime.guardrailManager ? { manager: runtime.guardrailManager } : {}),
+      }),
+    { prefix: "/api/v1/admin/guardrails" },
   );
 
   await app.register(
@@ -235,16 +283,6 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
       }),
     { prefix: "/api/v1/admin/operations/jobs" },
   );
-
-  if (runtime.prisma || runtime.operationsManager) {
-    app.addHook("onClose", async () => {
-      try {
-        await runtime.operationsManager?.stop();
-      } finally {
-        await runtime.prisma?.$disconnect();
-      }
-    });
-  }
 
   app.setErrorHandler(async (error, request, reply) => {
     request.log.error({ error }, "AIHub request failed");
