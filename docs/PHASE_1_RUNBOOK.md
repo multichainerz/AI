@@ -122,7 +122,7 @@ The following cannot be proven from this workstation and remain required before 
 - TLS, internal DNS, proxy headers, network segmentation, and firewall rules;
 - live PostgreSQL/Prisma and pg-boss migration execution;
 - backup restore against MPM's approved destination and RPO/RTO;
-- real LiteLLM, vLLM, Supermemory, SeaweedFS, OCR, MCP, and OIDC diagnostics;
+- real LiteLLM, vLLM, Supermemory, S3, OCR, MCP, and OIDC diagnostics;
 - private-CA/certificate lifecycle requirements;
 - enterprise OIDC group-to-role mapping and bootstrap-token retirement;
 - security, dependency, and operational-owner approval.

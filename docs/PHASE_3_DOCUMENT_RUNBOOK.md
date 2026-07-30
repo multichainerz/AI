@@ -2,7 +2,7 @@
 
 ## Current operating mode
 
-The Phase 3 candidate provides an on-premises, governed document pipeline backed by PostgreSQL, `pg-boss`, SeaweedFS, LibreOffice/Poppler, and an administrator-configured Unlimited OCR endpoint. Approved enterprise identities can manage their own documents. Scoped administrators can review quarantine decisions and inspect fleet-level metrics.
+The Phase 3 candidate provides an on-premises, governed document pipeline backed by PostgreSQL, `pg-boss`, S3-compatible object storage, LibreOffice/Poppler, and an administrator-configured Unlimited OCR endpoint. Approved enterprise identities can manage their own documents. Scoped administrators can review quarantine decisions and inspect fleet-level metrics.
 
 This phase does not publish content to Supermemory or expose it to Chat or Hermes. Those paths remain default-denied until Phase 4 adds permission-aware synchronization and retrieval.
 
@@ -24,11 +24,11 @@ The worker image includes headless LibreOffice and Poppler. The API and worker b
 
 Configure, enable, and successfully test exactly one connection of each kind:
 
-- **SeaweedFS:** internal S3 endpoint, bucket, region, path-style option, and write-only access key pair. The API stores quarantined originals; the worker stores page and normalized artifacts.
+- **S3:** endpoint, bucket, signing region, optional path-style addressing, object-operation timeout, and a least-privilege application access-key pair with an optional temporary session token. Grant only the bucket and object read, write, delete, and health-check permissions required by the pipeline. The API stores quarantined originals; the worker stores page and normalized artifacts.
 - **OCR:** internal OpenAI-compatible endpoint, model alias, chat-completions path, per-page inference timeout, and write-only API key when required.
 - **OIDC:** enterprise issuer, client registration, callback, claim mappings, and at least one allowed group for end-user document access.
 
-The runtime fails closed when SeaweedFS or OCR is missing, disabled, not healthy, or ambiguous. Service credentials are decrypted only in backend memory and are never returned to the browser.
+The runtime fails closed when S3 or OCR is missing, disabled, not healthy, or ambiguous. Service credentials are decrypted only in backend memory and are never returned to the browser.
 
 ## Supported inputs and limits
 
@@ -61,7 +61,7 @@ Lifecycle states are `QUARANTINED`, `QUEUED`, `CONVERTING`, `OCR_PENDING`, `OCR_
 - Quarantine approval and rejection are administrator-only actions.
 - Documents cannot be deleted while processing.
 - Deletion before `retentionUntil` requires a scoped administrator, an explicit force flag, and a recorded reason.
-- Successful deletion removes referenced SeaweedFS objects and normalized database content while retaining the tombstoned document and audit history.
+- Successful deletion removes referenced S3 objects and normalized database content while retaining the tombstoned document and audit history.
 
 ## API surface
 
@@ -79,7 +79,7 @@ Document responses use `Cache-Control: no-store`. Downloads require the same own
 - Queue submission failures mark the generation failed and remain visible for reprocessing.
 - Conversion and OCR jobs use retries, exponential backoff, heartbeat expiry, singleton generation keys, and the shared dead-letter queue.
 - Workers claim only the active document generation. Stale or duplicate deliveries complete as skipped work rather than mutating a newer generation.
-- Reprocessing writes generation-specific SeaweedFS keys and updates the active artifact references idempotently.
+- Reprocessing writes generation-specific S3 keys and updates the active artifact references idempotently.
 - Missing page artifacts, invalid UTF-8, converter failures, OCR rejection, timeouts, oversized results, and storage failures are surfaced as sanitized failure states.
 - Operators can inspect queue state and redrive dead letters from Operations. A redrive should follow root-cause correction; it does not replace document-level reprocessing.
 
@@ -87,7 +87,7 @@ Document responses use `Cache-Control: no-store`. Downloads require the same own
 
 - Validate representative MPM PDFs, scans, DOCX, XLSX, and PPTX files against the real converter and Unlimited OCR model.
 - Measure OCR accuracy, page ordering, tables, handwriting behavior, latency, throughput, and GPU contention.
-- Exercise SeaweedFS credentials, bucket policy, TLS, capacity, object corruption, backup, restore, and lifecycle procedures.
+- Exercise S3 credentials, bucket policy, addressing mode, TLS, capacity, object corruption, backup, restore, and lifecycle procedures.
 - Verify cross-user isolation, administrator scopes, forced-retention deletion, session revocation, and credential isolation.
 - Test worker termination during conversion and OCR, queue retries, dead-letter redrive, and new-generation reprocessing.
 - Approve classification, retention, deletion, malware-scanning, maximum-size, and operational ownership policies.

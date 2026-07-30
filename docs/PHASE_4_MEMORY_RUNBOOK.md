@@ -8,7 +8,7 @@ This runbook covers the private-scope Phase 4 acceptance candidate. AIHub publis
 
 - Supermemory is the only semantic index. AIHub does not create PostgreSQL vectors or a second embedding store.
 - PostgreSQL remains authoritative for document ownership, lifecycle, publication state, audit records, and the source evidence attached to completed assistant messages.
-- SeaweedFS remains authoritative for original files and generated OCR artifacts.
+- S3-compatible object storage remains authoritative for original files and generated OCR artifacts.
 - Container tags are derived by AIHub from a hash of the stable owner subject. Clients cannot provide or override them.
 - Every remote retrieval hit is re-authorized against PostgreSQL before it is added to the model context.
 - The model receives retrieved text as untrusted reference material, not as system instructions.

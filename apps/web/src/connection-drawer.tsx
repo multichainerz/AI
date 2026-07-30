@@ -327,6 +327,7 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
                           ? value.join(", ")
                           : typeof value === "string" || typeof value === "number" ? value : ""}
                         placeholder={field.placeholder}
+                        required={field.required}
                         min={field.type === "number" ? (field.min ?? 1000) : undefined}
                         max={field.type === "number" ? (field.max ?? 30000) : undefined}
                         step={field.type === "number" ? (field.step ?? 500) : undefined}

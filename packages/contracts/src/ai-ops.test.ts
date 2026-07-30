@@ -22,7 +22,7 @@ describe("AI operations contracts", () => {
   });
 
   it("rejects impossible or duplicate evaluation result counts", () => {
-    const result = { category: "CHAT", totalCases: 10, passedCases: 11, criticalFailures: 0, evidenceRefs: ["seaweed/evals/chat-1.json"] };
+    const result = { category: "CHAT", totalCases: 10, passedCases: 11, criticalFailures: 0, evidenceRefs: ["s3/evals/chat-1.json"] };
     expect(completeEvaluationRunSchema.safeParse({ results: [result] }).success).toBe(false);
     expect(completeEvaluationRunSchema.safeParse({ results: [
       { ...result, passedCases: 9 },

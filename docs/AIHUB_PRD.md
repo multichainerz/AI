@@ -75,7 +75,7 @@ Views adoption, operational status, business usage, risks, capacity, and measura
 - **Traceable by default:** significant AI and administrative events are auditable.
 - **PostgreSQL first:** PostgreSQL is the operational source of truth and coordination platform.
 - **One semantic layer:** Supermemory is the sole memory, embedding, retrieval, and RAG abstraction.
-- **Vendor-neutral object storage:** AIHub uses an S3-compatible interface, initially backed by SeaweedFS.
+- **Vendor-neutral object storage:** AIHub uses a dashboard-configured S3-compatible endpoint without coupling the application to a specific storage product.
 - **Replaceable models:** applications use LiteLLM and stable internal interfaces rather than calling model servers directly.
 - **Configuration control plane:** authorized administrators configure integrations, endpoints, routes, and secrets centrally through AIHub.
 - **Progressive delivery:** begin with controlled use cases and add autonomy only after evaluation.
@@ -148,7 +148,7 @@ Hermes may access only:
 - individual tools granted within those MCP servers;
 - resource scopes and actions permitted for the requesting user and agent.
 
-Hermes will not receive direct access to PostgreSQL, SeaweedFS administration, Coolify, the Docker socket, host infrastructure, unrestricted filesystems, unrestricted shell execution, or the public internet unless a future use case is explicitly approved and exposed through a controlled AIHub tool.
+Hermes will not receive direct access to PostgreSQL, S3 administration, Coolify, the Docker socket, host infrastructure, unrestricted filesystems, unrestricted shell execution, or the public internet unless a future use case is explicitly approved and exposed through a controlled AIHub tool.
 
 For each run, AIHub will produce an effective capability set based on the user, role, department, agent profile, environment, tool grants, resource scopes, and approval policies. Every tool invocation will be revalidated at execution time. Changes, grants, denials, and emergency revocations will be auditable.
 
@@ -292,9 +292,9 @@ The Jobs component will manage:
 
 Workers will be idempotent and use stable operation identifiers.
 
-### 8.11 SeaweedFS Object Storage
+### 8.11 S3-Compatible Object Storage
 
-SeaweedFS will store AIHub's binary and generated artifacts through an S3-compatible interface.
+The configured S3-compatible service will store AIHub's binary and generated artifacts.
 
 Initial storage scopes will include:
 
@@ -304,7 +304,7 @@ Initial storage scopes will include:
 - temporary exports;
 - backup artifacts where appropriate.
 
-AIHub will store bucket, object key, version, checksum, size, and classification metadata in PostgreSQL. SeaweedFS administration will remain separate from application administration.
+AIHub will store bucket, object key, version, checksum, size, and classification metadata in PostgreSQL. S3 service administration will remain separate from application administration.
 
 ### 8.12 Identity and Access Management
 
@@ -360,7 +360,7 @@ It will cover:
 
 - application and worker health;
 - PostgreSQL and `pg-boss` health;
-- SeaweedFS health and capacity;
+- S3 object-store health and capacity;
 - Supermemory availability and ingestion latency;
 - LiteLLM and vLLM health;
 - GPU memory, utilization, temperature, and errors;
@@ -377,7 +377,7 @@ Authorized administrators will manage shared platform configuration, including:
 - environments, service endpoints, authentication methods, and TLS settings;
 - LiteLLM and vLLM endpoints, model aliases, routes, limits, and health checks;
 - PostgreSQL-dependent application settings and `pg-boss` worker policies;
-- SeaweedFS endpoints, buckets, credentials, and storage policies;
+- S3 endpoints, buckets, credentials, addressing mode, and storage policies;
 - Supermemory endpoints, credentials, embedding configuration, and memory scopes;
 - OCR service endpoints and processing defaults;
 - MCP servers, connector endpoints, credentials, scopes, and allowed tools;
@@ -430,7 +430,7 @@ flowchart TB
     L --> V["vLLM Model Services"]
 
     WK --> O["Unlimited-OCR"]
-    WK --> S["SeaweedFS"]
+    WK --> S["S3-compatible storage"]
     WK --> M["Supermemory"]
     H <--> M
 
@@ -441,7 +441,7 @@ flowchart TB
 
 - **PostgreSQL:** operational records, configuration, identity mappings, conversations, jobs, approvals, audit metadata, and external-service bindings.
 - **AIHub secrets vault:** encrypted credential payloads and versions stored in PostgreSQL; the master encryption key is held separately from the database.
-- **SeaweedFS:** original files and generated binary/text artifacts.
+- **S3-compatible storage:** original files and generated binary/text artifacts.
 - **Supermemory:** embeddings, semantic retrieval, enterprise knowledge context, and durable agent/user memory.
 - **vLLM/model storage:** loaded model weights and inference runtime state.
 - **SIEM/observability systems:** operational telemetry and security monitoring according to MPM policy.
@@ -491,7 +491,7 @@ No component may directly depend on another component's private database schema.
 
 ## 12. Deployment Approach
 
-Coolify will be used as the initial on-premises application and service deployment control plane. Pilot deployments may use simplified single-node service topologies. Production readiness will be evaluated independently for PostgreSQL, SeaweedFS, Supermemory, model serving, GPU availability, backups, and DRC recovery.
+Coolify will be used as the initial on-premises application and service deployment control plane. Pilot deployments may use simplified single-node service topologies. Production readiness will be evaluated independently for PostgreSQL, the selected S3-compatible service, Supermemory, model serving, GPU availability, backups, and DRC recovery.
 
 The initial installer will provision AIHub's database access and master encryption key as mounted Coolify/Docker secrets or protected local files. These are bootstrap dependencies only. Administrators will configure all subsequent supported services and credentials from AIHub's Settings and Integration workspaces.
 
@@ -547,7 +547,7 @@ This PRD defines the target product; a capability listed here is not considered 
 - Initial MCP systems and read/write permissions.
 - Approval matrix for consequential actions.
 - Production GPU redundancy and DRC model-serving approach.
-- Production SeaweedFS topology and backup target.
+- Production S3-compatible service, bucket policy, topology, and backup target.
 - Required Supermemory commercial support and air-gapped packaging.
 
 ## 17. Product Acceptance at a High Level

@@ -284,9 +284,9 @@ describe("administrator connection routes", () => {
       url: "/api/v1/admin/connections",
       headers: sessionHeaders,
       payload: {
-        slug: "seaweedfs-primary",
-        displayName: "SeaweedFS Primary",
-        kind: "SEAWEEDFS",
+        slug: "s3-primary",
+        displayName: "S3 Primary",
+        kind: "S3",
         environment: "PRODUCTION",
         baseUrl: "https://s3.mpm.internal",
         configuration: { modelsPath: "/v1/models" },

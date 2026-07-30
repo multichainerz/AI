@@ -26,7 +26,7 @@ import {
 import {
   PrismaRuntimeConnectionResolver,
   HermesClient,
-  SeaweedDocumentStore,
+  S3DocumentStore,
   SupermemoryClient,
 } from "@aihub/document-runtime";
 import type { DocumentManager } from "./documents/document-manager.js";
@@ -129,7 +129,7 @@ export function createRuntimeServices(): RuntimeServices {
     );
     const documentManager = new PrismaDocumentManager(
       prisma,
-      new SeaweedDocumentStore(documentResolver),
+      new S3DocumentStore(documentResolver),
       queue,
     );
     const hermesClient = new HermesClient(documentResolver);

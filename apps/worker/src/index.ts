@@ -6,7 +6,7 @@ import { decodeMasterKey, EnvelopeEncryption, RunCapabilityIssuer } from "@aihub
 import {
   PrismaRuntimeConnectionResolver,
   HermesClient,
-  SeaweedDocumentStore,
+  S3DocumentStore,
   SupermemoryClient,
   UnlimitedOcrClient,
 } from "@aihub/document-runtime";
@@ -29,7 +29,7 @@ const encryption = new EnvelopeEncryption({ masterKey });
 const documentResolver = new PrismaRuntimeConnectionResolver(prisma, encryption);
 const documentProcessor = new PrismaDocumentProcessor(
   prisma,
-  new SeaweedDocumentStore(documentResolver),
+  new S3DocumentStore(documentResolver),
   new UnlimitedOcrClient(documentResolver),
   queue,
 );

@@ -5,7 +5,7 @@ export const SERVICE_KINDS = [
   "VLLM",
   "HERMES",
   "SUPERMEMORY",
-  "SEAWEEDFS",
+  "S3",
   "OCR",
   "MCP",
   "OIDC",
@@ -106,9 +106,12 @@ export const serviceConnectionConfigurationSchema = z
         /^[a-z0-9][a-z0-9.-]*[a-z0-9]$/,
         "Bucket must use lowercase DNS-compatible characters.",
       )
+      .refine((value) => !value.includes(".."), "Bucket names cannot contain adjacent periods.")
+      .refine((value) => !/^\d{1,3}(?:\.\d{1,3}){3}$/.test(value), "Bucket names cannot use an IPv4 address format.")
       .optional(),
     region: z.string().min(1).max(64).regex(/^[a-z0-9-]+$/).optional(),
     forcePathStyle: z.boolean().optional(),
+    objectTimeoutMs: z.number().int().min(5_000).max(600_000).optional(),
   })
   .strict();
 
@@ -121,8 +124,8 @@ const connectionConfigurationSchemas = {
     chatPath: true,
     maxOutputTokens: true,
     temperature: true,
-      inferenceTimeoutMs: true,
-      requestsPerMinute: true,
+    inferenceTimeoutMs: true,
+    requestsPerMinute: true,
   }),
   VLLM: serviceConnectionConfigurationSchema.pick({
     timeoutMs: true,
@@ -150,20 +153,21 @@ const connectionConfigurationSchemas = {
     retrievalLimit: true,
     retrievalThreshold: true,
   }),
-  SEAWEEDFS: serviceConnectionConfigurationSchema.pick({
+  S3: serviceConnectionConfigurationSchema.pick({
     timeoutMs: true,
     bucket: true,
     region: true,
     forcePathStyle: true,
+    objectTimeoutMs: true,
   }),
-    OCR: serviceConnectionConfigurationSchema.pick({
-      timeoutMs: true,
-      healthPath: true,
-      modelsPath: true,
-      modelAlias: true,
-      chatPath: true,
-      inferenceTimeoutMs: true,
-    }),
+  OCR: serviceConnectionConfigurationSchema.pick({
+    timeoutMs: true,
+    healthPath: true,
+    modelsPath: true,
+    modelAlias: true,
+    chatPath: true,
+    inferenceTimeoutMs: true,
+  }),
   MCP: serviceConnectionConfigurationSchema.pick({ timeoutMs: true, healthPath: true }),
   OIDC: serviceConnectionConfigurationSchema.pick({
     timeoutMs: true,

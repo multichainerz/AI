@@ -14,7 +14,7 @@ enum ServiceKind {
   VLLM
   HERMES
   SUPERMEMORY
-  SEAWEEDFS
+  S3
   OCR
   MCP
   OIDC

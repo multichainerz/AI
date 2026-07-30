@@ -463,7 +463,7 @@ function App() {
             administrator={adminSession !== null}
             oidcConfigured={oidcStatus?.configured === true}
             onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23documents")}
-            onConfigure={() => openConnectionSettings("SEAWEEDFS")}
+            onConfigure={() => openConnectionSettings("S3")}
             onUnauthorized={() => {
               sessionGeneration.current += 1;
               setAdminSession(null);
@@ -585,7 +585,7 @@ function App() {
                 )}
                 <ul>
                   <li className="done">Controlled LiteLLM chat and enterprise identity</li>
-                  <li className="done">SeaweedFS document conversion and OCR</li>
+                  <li className="done">S3 document conversion and OCR</li>
                   <li className="done">Private Supermemory retrieval with source evidence</li>
                   <li className="done">Immutable Hermes profiles and global runtime control</li>
                   <li className="done">Zero-tool capability preflight and run revocation</li>

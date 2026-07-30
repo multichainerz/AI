@@ -29,14 +29,15 @@ describe("service connection configuration", () => {
     }).success).toBe(false);
   });
 
-  it("accepts typed SeaweedFS S3 settings", () => {
+  it("accepts typed vendor-neutral S3 settings", () => {
     const result = createServiceConnectionSchema.parse({
       ...connectionBase,
-      kind: "SEAWEEDFS",
+      kind: "S3",
       configuration: {
         bucket: "aihub-documents",
         region: "us-east-1",
-        forcePathStyle: true,
+        forcePathStyle: false,
+        objectTimeoutMs: 120_000,
         timeoutMs: 10_000,
       },
     });
@@ -44,9 +45,13 @@ describe("service connection configuration", () => {
     expect(result.configuration).toEqual({
       bucket: "aihub-documents",
       region: "us-east-1",
-      forcePathStyle: true,
+      forcePathStyle: false,
+      objectTimeoutMs: 120_000,
       timeoutMs: 10_000,
     });
+    expect(() => parseServiceConnectionConfiguration("S3", { bucket: "192.168.1.10" })).toThrow();
+    expect(() => parseServiceConnectionConfiguration("S3", { bucket: "invalid..bucket" })).toThrow();
+    expect(() => parseServiceConnectionConfiguration("S3", { objectTimeoutMs: 1_000 })).toThrow();
   });
 
   it("accepts bounded Supermemory runtime and retrieval settings", () => {
@@ -86,7 +91,7 @@ describe("service connection configuration", () => {
   it("rejects settings that do not belong to the selected service", () => {
     const result = createServiceConnectionSchema.safeParse({
       ...connectionBase,
-      kind: "SEAWEEDFS",
+      kind: "S3",
       configuration: { modelsPath: "/v1/models" },
     });
 

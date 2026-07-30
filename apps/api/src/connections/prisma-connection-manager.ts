@@ -117,19 +117,31 @@ function auditActor(actor: AdminActor | undefined) {
     : { actorType: "SYSTEM" as const };
 }
 
-function parseStoredRevision(value: unknown): CreateServiceConnection {
+export function parseStoredRevision(value: unknown): CreateServiceConnection {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new InvalidConnectionConfigurationError("The stored revision is malformed.");
   }
   const candidate = value as Record<string, unknown>;
+  const legacyS3Configuration = candidate.kind === "SEAWEEDFS" &&
+    candidate.configuration &&
+    typeof candidate.configuration === "object" &&
+    !Array.isArray(candidate.configuration)
+    ? {
+        ...(candidate.configuration as Record<string, unknown>),
+        forcePathStyle: (candidate.configuration as Record<string, unknown>).forcePathStyle ?? true,
+      }
+    : candidate.configuration;
   const parsed = createServiceConnectionSchema.safeParse({
     slug: candidate.slug,
     displayName: candidate.displayName,
-    kind: candidate.kind,
+    // Configuration revisions are immutable audit records. Interpret snapshots
+    // created before the generic S3 migration without rewriting their payload
+    // or invalidating their stored checksums.
+    kind: candidate.kind === "SEAWEEDFS" ? "S3" : candidate.kind,
     environment: candidate.environment,
     baseUrl: candidate.baseUrl,
     enabled: candidate.enabled,
-    configuration: candidate.configuration,
+    configuration: legacyS3Configuration,
     secrets: {},
   });
   if (!parsed.success) {

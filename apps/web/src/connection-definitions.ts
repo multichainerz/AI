@@ -10,6 +10,7 @@ export interface ConfigurationField {
   max?: number;
   step?: number;
   placeholder?: string;
+  required?: boolean;
   help: string;
 }
 
@@ -93,18 +94,21 @@ export const connectionDefinitions: ConnectionDefinition[] = [
     ],
   },
   {
-    kind: "SEAWEEDFS",
-    name: "SeaweedFS",
-    role: "Object storage",
+    kind: "S3",
+    name: "S3",
+    role: "S3-compatible object storage",
     tone: "green",
+    endpointLabel: "S3 endpoint URL",
     secretFields: [
       { name: "accessKeyId", label: "Access key ID", required: true },
       { name: "secretAccessKey", label: "Secret access key", required: true },
+      { name: "sessionToken", label: "Session token", required: false },
     ],
     configurationFields: [
-      { name: "bucket", label: "Validation bucket", type: "text", placeholder: "aihub-documents", help: "Optional bucket checked instead of listing every bucket." },
+      { name: "bucket", label: "Bucket", type: "text", placeholder: "aihub-documents", required: true, help: "Private bucket used for originals and generated artifacts." },
       { name: "region", label: "S3 region", type: "text", defaultValue: "us-east-1", help: "Signing region used by the S3 client." },
-      { name: "forcePathStyle", label: "Use path-style S3 URLs", type: "checkbox", defaultValue: true, help: "Recommended for an internal SeaweedFS S3 endpoint." },
+      { name: "forcePathStyle", label: "Use path-style S3 URLs", type: "checkbox", defaultValue: false, help: "Enable only when the S3-compatible provider does not support virtual-hosted bucket URLs." },
+      { name: "objectTimeoutMs", label: "Object operation timeout (ms)", type: "number", defaultValue: 120000, min: 5000, max: 600000, step: 5000, help: "Maximum duration for each upload, download, or delete request." },
       { name: "timeoutMs", label: "Diagnostic timeout (ms)", type: "number", defaultValue: 8000, help: "Allowed range: 1,000–30,000 milliseconds." },
     ],
   },

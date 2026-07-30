@@ -189,7 +189,7 @@ export function DocumentsView(props: DocumentsViewProps) {
         <div>
           <p className="page-kicker">Governed document pipeline</p>
           <h1>{props.oidcConfigured ? "Sign in to manage documents" : "Enterprise access is not configured"}</h1>
-          <p>Uploads remain quarantined until review, then flow through on-premise conversion, Unlimited OCR, and SeaweedFS storage.</p>
+          <p>Uploads remain quarantined until review, then flow through on-premise conversion, Unlimited OCR, and S3-compatible storage.</p>
         </div>
         <div className="document-lock-actions">
           {props.oidcConfigured && <button className="primary-button" type="button" onClick={props.onSignIn}>Sign in with MPM</button>}

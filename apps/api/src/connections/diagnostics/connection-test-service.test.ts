@@ -76,7 +76,7 @@ describe("ConnectionTestService", () => {
     const store = new MemoryDiagnosticStore({
       id: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d",
       activeRevision: 1,
-      kind: "SEAWEEDFS",
+      kind: "S3",
       baseUrl: "https://s3.mpm.internal",
       configuration: {},
       secrets: { accessKeyId: "key", secretAccessKey: "secret" },

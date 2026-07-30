@@ -17,7 +17,7 @@ The first usable release will provide controlled internal chat. Later phases add
 - AIHub and Hermes call models through LiteLLM; vLLM remains the internal model-serving layer.
 - PostgreSQL and Prisma are the operational system of record.
 - PostgreSQL and `pg-boss` provide durable jobs and coordination; no Redis dependency is introduced.
-- SeaweedFS is the S3-compatible object store.
+- Object storage is supplied through a vendor-neutral S3-compatible connector.
 - Supermemory is the sole semantic retrieval and memory layer; AIHub does not maintain a competing vector store.
 - Hermes is default-deny and can use only AIHub-issued capabilities, approved MCP servers, and approved tools.
 - Every phase includes security, audit, tests, documentation, and operational visibility.
@@ -51,7 +51,7 @@ Confirm the critical technical assumptions before committing the platform to spe
 - Validate Laguna inference, context length, streaming, structured output, and tool-calling behavior through vLLM and LiteLLM.
 - Validate Unlimited-OCR and the selected Qwen3 Embedding model.
 - Confirm Supermemory self-hosting, licensing, API behavior, and air-gapped requirements.
-- Validate SeaweedFS S3 compatibility for AIHub artifacts.
+- Validate the selected S3-compatible service for AIHub artifacts.
 - Establish initial security boundaries, data classifications, and deployment topology.
 - Record measurable latency, throughput, GPU memory, and concurrency baselines on the RTX PRO 6000 96 GB.
 
@@ -124,7 +124,7 @@ Allow MPM users to securely ingest documents and produce reusable normalized tex
 
 ### Scope
 
-- Integrate SeaweedFS through its S3-compatible API.
+- Integrate the selected object store through its S3-compatible API.
 - Build upload, validation, ownership, checksum, quarantine, retention, and deletion controls.
 - Implement `pg-boss` document workflows with retries, idempotency, dead-letter handling, and replay.
 - Convert document pages to images where required.
@@ -140,7 +140,7 @@ Allow MPM users to securely ingest documents and produce reusable normalized tex
 
 ### Current implementation note
 
-The repository now includes the locally testable Phase 3 candidate: ownership-scoped uploads, content sniffing and SHA-256 checksums, classification and retention metadata, quarantine review, SeaweedFS S3 artifacts, generation-safe `pg-boss` conversion/OCR jobs, LibreOffice and Poppler page rendering, bounded Unlimited OCR requests, normalized text/Markdown/JSON outputs, reprocessing, deletion controls, audit events, metrics, and a responsive Documents workspace. The worker avoids Redis and uses PostgreSQL for durable coordination. Phase 3 is not accepted until representative MPM documents pass against the real SeaweedFS and Unlimited OCR services and backup, restore, corruption, security, performance, retention, and deletion procedures are demonstrated in the target environment. Quarantine is an authorization workflow, not a substitute for an approved malware-scanning control if MPM policy requires one.
+The repository now includes the locally testable Phase 3 candidate: ownership-scoped uploads, content sniffing and SHA-256 checksums, classification and retention metadata, quarantine review, S3-compatible artifacts, generation-safe `pg-boss` conversion/OCR jobs, LibreOffice and Poppler page rendering, bounded Unlimited OCR requests, normalized text/Markdown/JSON outputs, reprocessing, deletion controls, audit events, metrics, and a responsive Documents workspace. The worker avoids Redis and uses PostgreSQL for durable coordination. Phase 3 is not accepted until representative MPM documents pass against the selected S3 and Unlimited OCR services and backup, restore, corruption, security, performance, retention, and deletion procedures are demonstrated in the target environment. Quarantine is an authorization workflow, not a substitute for an approved malware-scanning control if MPM policy requires one.
 
 ## 8. Phase 4 - Enterprise Knowledge and Agent Memory
 
@@ -161,7 +161,7 @@ Add source-aware retrieval and governed memory without introducing a second sema
 
 - Chat can answer from approved MPM content and show the supporting sources.
 - Retrieval respects user, department, project, and document permissions.
-- Deletion and retention propagate predictably from AIHub to SeaweedFS and Supermemory.
+- Deletion and retention propagate predictably from AIHub to S3 and Supermemory.
 - Retrieval quality meets the agreed pilot evaluation set.
 
 ### Current implementation note
@@ -181,7 +181,7 @@ Introduce agentic workflows while keeping AIHub as the authoritative execution a
 - Calculate per-run effective capabilities from user, role, department, agent, environment, and policy.
 - Implement the AIHub tool gateway and revalidate every invocation.
 - Add timeouts, maximum turns, concurrency limits, cancellation, safe mode, and kill switches.
-- Restrict network egress and prevent direct access to PostgreSQL, SeaweedFS administration, Coolify, host filesystems, Docker, and unrestricted internet.
+- Restrict network egress and prevent direct access to PostgreSQL, S3 administration, Coolify, host filesystems, Docker, and unrestricted internet.
 - Record agent runs, capability grants, tool attempts, results, and failures.
 
 ### Exit Gate
@@ -231,7 +231,7 @@ Provide MPM with a central operational view and repeatable controls for safe AI 
 
 ### Scope
 
-- Expand dashboards for GPU, vLLM, LiteLLM, PostgreSQL, jobs, SeaweedFS, Supermemory, OCR, Hermes, and connectors.
+- Expand dashboards for GPU, vLLM, LiteLLM, PostgreSQL, jobs, S3, Supermemory, OCR, Hermes, and connectors.
 - Add alerts, service degradation states, incident context, and SIEM forwarding.
 - Implement layered input, output, retrieval, model-access, tool-use, and data-egress guardrails.
 - Add prompt, model, policy, and agent version evaluation.
@@ -280,7 +280,7 @@ The repository now contains the local Phase 8 pilot-readiness foundation. The AI
 
 Deployment hardening now distinguishes `/healthz` process liveness from database-backed `/readyz`, uses readiness for API container orchestration, exposes request correlation IDs, closes API resources on termination, and probes the web container independently. `pnpm verify` runs the local quality gate and `pnpm security:audit` applies the high-severity production dependency threshold.
 
-This is not the Phase 8 exit gate. Penetration testing, image scanning, target-GPU load and soak tests, PostgreSQL/SeaweedFS/configuration-key restore demonstrations, Coolify/TLS/DNS/network validation, monitoring and SIEM delivery, training completion, pilot measures, residual-risk acceptance, and formal MPM approvals require the deployed on-premises environment. See `docs/PHASE_8_PRODUCTION_PILOT_RUNBOOK.md`.
+This is not the Phase 8 exit gate. Penetration testing, image scanning, target-GPU load and soak tests, PostgreSQL/S3/configuration-key restore demonstrations, Coolify/TLS/DNS/network validation, monitoring and SIEM delivery, training completion, pilot measures, residual-risk acceptance, and formal MPM approvals require the deployed on-premises environment. See `docs/PHASE_8_PRODUCTION_PILOT_RUNBOOK.md`.
 
 ## 13. Indicative Delivery Cadence
 

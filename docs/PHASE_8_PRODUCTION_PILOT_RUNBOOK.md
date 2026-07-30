@@ -76,9 +76,9 @@ Define RPO, RTO, retention, encryption, custody, and recovery owners before the 
 5. Confirm sessions, encrypted connection records, incidents, evaluation evidence, readiness evidence, tool ledgers, and audit events are present.
 6. Measure achieved RPO/RTO and retain the report reference under `recovery-postgresql-restore`.
 
-### SeaweedFS
+### S3-compatible object storage
 
-Use the backup/snapshot method approved for the deployed SeaweedFS topology. Capture filer metadata and volume data as a coordinated set. After restoring to an isolated namespace, reconcile document artifact keys, sizes, and checksums against PostgreSQL. Missing objects, orphan objects, or generation mismatches fail the exercise. Retain the inventory and reconciliation report under `recovery-seaweedfs-restore`.
+Use the backup, replication, versioning, or snapshot method approved for the selected S3-compatible service. After restoring into an isolated bucket or namespace, reconcile document artifact keys, sizes, and checksums against PostgreSQL. Missing objects, orphan objects, or generation mismatches fail the exercise. Retain the inventory and reconciliation report under `recovery-s3-restore`.
 
 ### Configuration vault and master key
 
@@ -91,7 +91,7 @@ Test the representative pilot workload and record percentiles, error rates, satu
 - concurrent chat and Hermes requests at the approved RTX PRO 6000 capacity;
 - LiteLLM/vLLM saturation and unavailable-model behavior;
 - worker loss, heartbeat expiry, retry, and dead-letter recovery;
-- OCR, SeaweedFS, Supermemory, Hermes, and identity-provider outages;
+- OCR, S3, Supermemory, Hermes, and identity-provider outages;
 - PostgreSQL connection exhaustion, restart, and recovery;
 - network partition, DNS failure, TLS expiry, and blocked egress;
 - approval expiry, revocation, global kill switches, and stale evaluation evidence;

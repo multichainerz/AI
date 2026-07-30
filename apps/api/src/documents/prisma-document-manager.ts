@@ -15,7 +15,7 @@ import type {
   QuarantineDecision,
 } from "@aihub/contracts";
 import { Prisma, type AIHubPrismaClient } from "@aihub/database";
-import { SeaweedDocumentStore } from "@aihub/document-runtime";
+import type { DocumentObjectStore } from "@aihub/document-runtime";
 import type { PgBossQueueService } from "@aihub/jobs";
 import {
   DocumentConflictError,
@@ -136,7 +136,7 @@ function visibility(principal: DocumentPrincipal) {
 export class PrismaDocumentManager implements DocumentManager {
   constructor(
     private readonly prisma: AIHubPrismaClient,
-    private readonly store: SeaweedDocumentStore,
+    private readonly store: DocumentObjectStore,
     private readonly queue: PgBossQueueService,
   ) {}
 
@@ -205,7 +205,7 @@ export class PrismaDocumentManager implements DocumentManager {
       try {
         await this.store.putFile(objectKey, path, mediaType, sizeBytes);
       } catch {
-        throw new DocumentStorageError("AIHub could not store the document in SeaweedFS.");
+        throw new DocumentStorageError("AIHub could not store the document in S3.");
       }
       const retentionUntil = new Date(Date.now() + metadata.retentionDays * 24 * 60 * 60 * 1_000);
       try {
@@ -322,7 +322,7 @@ export class PrismaDocumentManager implements DocumentManager {
     } catch {
       await this.prisma.document.update({
         where: { id: documentId },
-        data: { status: "FAILED", failureCode: "DELETE_FAILED", failureMessage: "SeaweedFS object deletion failed." },
+        data: { status: "FAILED", failureCode: "DELETE_FAILED", failureMessage: "S3 object deletion failed." },
       });
       throw new DocumentStorageError("AIHub could not delete every managed document object.");
     }

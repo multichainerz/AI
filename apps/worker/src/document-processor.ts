@@ -7,7 +7,7 @@ import { Prisma, type AIHubPrismaClient } from "@aihub/database";
 import {
   convertDocumentToPages,
   knowledgeScopeTag,
-  SeaweedDocumentStore,
+  type DocumentObjectStore,
   UnlimitedOcrClient,
 } from "@aihub/document-runtime";
 import type { PgBossQueueService } from "@aihub/jobs";
@@ -27,7 +27,7 @@ function safeFailure(error: unknown): string {
 export class PrismaDocumentProcessor {
   constructor(
     private readonly prisma: AIHubPrismaClient,
-    private readonly store: SeaweedDocumentStore,
+    private readonly store: DocumentObjectStore,
     private readonly ocr: UnlimitedOcrClient,
     private readonly queue: PgBossQueueService,
   ) {}

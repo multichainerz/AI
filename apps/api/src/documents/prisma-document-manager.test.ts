@@ -1,5 +1,5 @@
 import type { AIHubPrismaClient } from "@aihub/database";
-import type { SeaweedDocumentStore } from "@aihub/document-runtime";
+import type { DocumentObjectStore } from "@aihub/document-runtime";
 import type { PgBossQueueService } from "@aihub/jobs";
 import { describe, expect, it, vi } from "vitest";
 import { DocumentConflictError } from "./document-manager.js";
@@ -21,7 +21,7 @@ describe("PrismaDocumentManager deletion boundaries", () => {
         })),
       },
     } as unknown as AIHubPrismaClient;
-    const store = { delete: vi.fn() } as unknown as SeaweedDocumentStore;
+    const store = { delete: vi.fn() } as unknown as DocumentObjectStore;
     const queue = {} as PgBossQueueService;
     const manager = new PrismaDocumentManager(prisma, store, queue);
 
