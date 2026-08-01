@@ -32,31 +32,25 @@ const COMPONENTS = [
   ["typescript-toolchain", "TypeScript toolchain", "Application", true, "TypeScript, Vite, Vitest, Prisma generation, builds, and editor tooling pass together."],
   ["web-runtime", "React, Vite, and Nginx", "Application", true, "Pinned production bundle/server passes browser, accessibility, mobile, headers, and health acceptance."],
   ["fastify-api", "Fastify API", "Application", true, "Request/response schemas, limits, proxy behavior, streaming, and safe error serialization pass."],
-  ["document-conversion", "LibreOffice and Poppler", "Documents", true, "Pinned isolated document conversion passes bounded-resource and malformed-input tests."],
   ["postgresql", "PostgreSQL", "Data", true, "Pinned PostgreSQL 17 patch passes connection, migration, backup, restore, and upgrade checks."],
   ["prisma-pg", "Prisma and pg", "Data", true, "Pinned adapter and driver pass pool, timeout, migration, and drift checks."],
-  ["pg-boss", "pg-boss", "Data", true, "Transactional enqueue, retries, dead letters, schedules, idempotency, and reconciliation pass."],
-  ["litellm-proxy", "LiteLLM Proxy", "Inference", true, "The single inference gateway passes alias, budget, guardrail, routing, error, and usage checks."],
-  ["litellm-management-api", "LiteLLM management API", "Inference", false, "Selected reconciliation mode passes desired-state, drift, audit, and rollback tests."],
-  ["vllm-laguna", "vLLM and Laguna NVFP4", "Inference", false, "Selected local serving stack passes model, driver, parser, streaming, cancellation, load, and soak checks."],
-  ["unlimited-ocr", "Unlimited-OCR", "Documents", true, "Pinned OCR adapter passes schema, corpus, malformed-input, limit, and cancellation checks."],
+  ["postgresql-runtime", "PostgreSQL runtime state", "Data", true, "Durable domain state, compare-and-set claims, restart reconciliation, and executor heartbeats pass without a separate queue broker."],
+  ["vllm-inference", "vLLM inference", "Inference", true, "The selected local serving stack passes model discovery, parser, streaming, cancellation, usage, load, and soak checks."],
   ["supermemory-local", "Supermemory API", "Memory", true, "Selected Supermemory deployment passes API, isolation, deletion, telemetry, backup, and restore checks."],
-  ["supermemory-external-backend", "Supermemory external backend", "Memory", false, "Selected Supermemory backend passes edition, isolation, recovery, and upgrade checks."],
-  ["qwen3-embedding", "Qwen3 embedding route", "Memory", false, "Selected external embedding route passes revision, dimension, retrieval, and rebuild checks."],
   ["hermes-api", "Hermes API Server", "Agents", true, "Pinned Hermes passes capabilities, Runs, SSE, stop, Profile, Skill, Toolset, and state.db checks."],
   ["hermes-runtime-node", "Hermes runtime node", "Agents", false, "An isolated Hermes node completes one-time enrollment, proves its signing identity, and maintains a current heartbeat without standing SSH trust."],
-  ["hermes-native-memory", "Hermes native Supermemory provider", "Agents", false, "Selected native provider passes scope, synchronization, retention, deletion, and leakage checks."],
-  ["mcp-gateway", "MCP gateway", "Tools", true, "Pinned protocol passes negotiation, discovery, calls, cancellation, authorization, and token-boundary checks."],
+  ["hermes-native-memory", "Hermes native Supermemory provider", "Agents", true, "The scoped native provider passes isolation, retention, deletion, backup, restore, and leakage checks."],
+  ["mcp-gateway", "MCP gateway", "Tools", false, "Optional governed tools pass negotiation, discovery, calls, cancellation, authorization, and token-boundary checks."],
   ["enterprise-oidc", "Enterprise OIDC", "Identity", false, "Production identity passes discovery, signatures, PKCE, state, nonce, groups, logout, and revocation."],
   ["signed-installer", "AIHub signed installer", "Deployment", true, "The signed release-bundle installer passes clean install, isolation, upgrade, rollback, and recovery."],
   ["gpu-capacity", "Local GPU capacity", "Infrastructure", false, "Selected local inference stack passes admitted context, concurrency, contention, thermal, and recovery tests."],
 ] as const;
 
 const STEPS = [
-  ["claim-installation", 1, "Claim installation", "Confirm the single-use installation claim, installed release, and host identity.", "Run installation validation"],
+  ["activate-installation", 1, "Activate installation", "Confirm the permanent Installation Key, installed release, and host identity.", "Run installation validation"],
   ["system-topology", 2, "System and topology", "Validate the host and select Compact, Control-plane only, or Segmented production.", "Save topology, then validate this host"],
   ["identity-recovery", 3, "Identity and recovery", "Configure final trust, enterprise identity, recovery ownership, and a verified encrypted recovery kit.", "Export and verify recovery; configure OIDC for Production"],
-  ["ai-services", 4, "AI services and Hermes node", "Connect LiteLLM, Unlimited-OCR, and Supermemory, then enroll and validate the isolated Hermes runtime.", "Test the service routes, then enroll the Hermes VM"],
+  ["ai-services", 4, "AI services and Hermes node", "Connect vLLM, then enroll and validate the isolated Hermes + Supermemory runtime.", "Test vLLM, then enroll the Hermes VM"],
   ["knowledge-workflow", 5, "Knowledge workflow", "Validate transient extraction, publication, authorized retrieval/deletion, and scratch purge.", "Process and publish a representative document"],
   ["hermes-profiles", 6, "Hermes and Profiles", "Validate the Hermes boundary and move an immutable Profile Distribution into standby.", "Create, evaluate, and validate a standby Profile"],
   ["guardrails-tools", 7, "Guardrails and tools", "Prove conservative policy, zero-tool operation, approvals, and bounded governed tools.", "Activate a guardrail baseline and validate tool posture"],
@@ -64,7 +58,7 @@ const STEPS = [
 ] as const;
 
 const CANONICAL_STEP_KEYS = STEPS.map(([key]) => key);
-const CORE_RUNTIME_COMPONENTS = new Set(["postgresql", "litellm-proxy", "unlimited-ocr", "supermemory-local", "hermes-api", "mcp-gateway"]);
+const CORE_RUNTIME_COMPONENTS = new Set(["postgresql", "vllm-inference", "supermemory-local", "hermes-api", "hermes-native-memory"]);
 
 type StoredArchitecture = Prisma.PlatformArchitectureDecisionGetPayload<object>;
 type StoredComponent = Prisma.ComponentCompatibilityGetPayload<object>;
@@ -87,13 +81,6 @@ function architectureDto(value: StoredArchitecture): ArchitectureDecision {
   return {
     topologyMode: value.topologyMode,
     targetEnvironment: value.targetEnvironment,
-    installMethod: value.installMethod,
-    localInference: value.localInference,
-    liteLlmOwnershipMode: value.liteLlmOwnershipMode,
-    supermemoryStorageMode: value.supermemoryStorageMode,
-    supermemoryEmbeddingMode: value.supermemoryEmbeddingMode,
-    hermesMemoryMode: value.hermesMemoryMode,
-    gpuSchedulingMode: value.gpuSchedulingMode,
     reason: value.reason,
     revision: value.revision,
     updatedBy: value.updatedBy,
@@ -108,12 +95,8 @@ function componentRequirement(architecture: ArchitectureDecision, component: Sto
   const selected: Array<[boolean, string, string]> = [
     [component.key === "enterprise-oidc" && production, "Production requires enterprise identity", "enterprise-oidc"],
     [component.key === "signed-installer", "The supported AIHub release-bundle installer path must pass", "signed-installer"],
-    [component.key === "vllm-laguna" && architecture.localInference, "Local inference was selected", "vllm-laguna"],
-    [component.key === "gpu-capacity" && architecture.localInference, "Local inference requires measured GPU admission", "gpu-capacity"],
-    [component.key === "litellm-management-api" && architecture.liteLlmOwnershipMode === "PINNED_API_RECONCILED", "LiteLLM reconciliation mode was selected", "litellm-management-api"],
-    [component.key === "supermemory-external-backend" && architecture.supermemoryStorageMode === "SUPPORTED_EXTERNAL_POSTGRES", "A supported external Supermemory backend was selected", "supermemory-external-backend"],
-    [component.key === "qwen3-embedding" && architecture.supermemoryEmbeddingMode === "OPENAI_COMPATIBLE", "An external embedding route was selected", "qwen3-embedding"],
-    [component.key === "hermes-native-memory" && architecture.hermesMemoryMode === "NATIVE_SUPERMEMORY", "Hermes native Supermemory mode was selected", "hermes-native-memory"],
+    [component.key === "vllm-inference", "Direct vLLM inference is required", "vllm-inference"],
+    [component.key === "gpu-capacity" && production, "Production inference requires measured GPU admission", "gpu-capacity"],
     [component.key === "hermes-runtime-node" && architecture.topologyMode !== "COMPACT", "The selected topology isolates Hermes from the AIHub control plane", "hermes-runtime-node"],
   ];
   for (const [condition, selectedReason, key] of selected) {
@@ -123,7 +106,7 @@ function componentRequirement(architecture: ArchitectureDecision, component: Sto
     }
   }
   if (component.key === "enterprise-oidc" && !production) reason = "OIDC is recommended now and becomes blocking for Production";
-  if (["vllm-laguna", "gpu-capacity"].includes(component.key) && !architecture.localInference) reason = "Inference is provided behind an external LiteLLM gateway";
+  if (component.key === "gpu-capacity" && !production) reason = "GPU capacity is attested on the separately managed inference server before Production";
   return { required, reason };
 }
 
@@ -240,8 +223,8 @@ export function calculateOnboardingGate(
   }
   if (architecture.targetEnvironment === "PRODUCTION" && productionReadinessStatus !== "READY") {
     blockers.push(productionReadinessStatus === "UNAVAILABLE"
-      ? "Production readiness: the Phase 8 readiness authority is unavailable"
-      : `Production readiness: Phase 8 status is ${(productionReadinessStatus ?? "NOT_READY").toLowerCase().replaceAll("_", " ")}`);
+      ? "Production readiness: the readiness authority is unavailable"
+      : `Production readiness: status is ${(productionReadinessStatus ?? "NOT_READY").toLowerCase().replaceAll("_", " ")}`);
   }
   const warnings = components
     .filter((item) => !item.required && ["FAILED", "BLOCKED"].includes(item.status))
@@ -279,7 +262,12 @@ export class PrismaOnboardingManager implements OnboardingManager {
         });
       }
       await transaction.componentCompatibility.deleteMany({
-        where: { category: "Deployment", key: { not: "signed-installer" } },
+        where: {
+          OR: [
+            { category: "Deployment", key: { not: "signed-installer" } },
+            { key: { in: ["supermemory-external-backend", "qwen3-embedding"] } },
+          ],
+        },
       });
       for (const [key, ordinal, title, description] of STEPS) {
         await transaction.onboardingStep.upsert({
@@ -293,19 +281,19 @@ export class PrismaOnboardingManager implements OnboardingManager {
         data: { required: false },
       });
       await transaction.platformArchitectureDecision.upsert({ where: { id: "global" }, create: { id: "global" }, update: {} });
-      await transaction.onboardingJourney.upsert({ where: { id: "global" }, create: { id: "global", currentStepKey: "claim-installation" }, update: {} });
+      await transaction.onboardingJourney.upsert({ where: { id: "global" }, create: { id: "global", currentStepKey: "activate-installation" }, update: {} });
       await transaction.credentialRecoveryControl.upsert({ where: { id: "global" }, create: { id: "global" }, update: {} });
     });
   }
 
   async snapshot(): Promise<OnboardingSnapshot> {
     await this.ensureState();
-    const [architecture, journey, components, steps, installationClaim, recovery, evidence] = await Promise.all([
+    const [architecture, journey, components, steps, installationCredential, recovery, evidence] = await Promise.all([
       this.prisma.platformArchitectureDecision.findUniqueOrThrow({ where: { id: "global" } }),
       this.prisma.onboardingJourney.findUniqueOrThrow({ where: { id: "global" } }),
       this.prisma.componentCompatibility.findMany({ orderBy: [{ category: "asc" }, { displayName: "asc" }] }),
       this.prisma.onboardingStep.findMany({ where: { key: { in: CANONICAL_STEP_KEYS } }, orderBy: { ordinal: "asc" } }),
-      this.prisma.installationClaim.findUnique({ where: { id: "initial" } }),
+      this.prisma.installationCredential.findUnique({ where: { id: "primary" } }),
       this.prisma.credentialRecoveryControl.findUniqueOrThrow({ where: { id: "global" } }),
       this.prisma.onboardingEvidence.findMany({ orderBy: { createdAt: "desc" }, take: 100 }),
     ]);
@@ -326,7 +314,7 @@ export class PrismaOnboardingManager implements OnboardingManager {
     }
     return {
       generatedAt: new Date().toISOString(),
-      installation: { status: installationClaim?.redeemedAt ? "CLAIMED" : "UNKNOWN", claimedAt: installationClaim?.redeemedAt?.toISOString() ?? null },
+      installation: { status: installationCredential?.activatedAt ? "ACTIVATED" : "UNKNOWN", activatedAt: installationCredential?.activatedAt?.toISOString() ?? null },
       architecture: architectureValue,
       recovery: recoveryValue,
       journey: journeyDto(journey),
@@ -348,25 +336,11 @@ export class PrismaOnboardingManager implements OnboardingManager {
       if (current.revision !== input.expectedRevision) throw new OnboardingConflictError("Architecture decisions changed in another session. Refresh and try again.");
       const architectureChanged =
         (input.topologyMode !== undefined && input.topologyMode !== current.topologyMode) ||
-        (input.targetEnvironment !== undefined && input.targetEnvironment !== current.targetEnvironment) ||
-        (input.installMethod !== undefined && input.installMethod !== current.installMethod) ||
-        (input.localInference !== undefined && input.localInference !== current.localInference) ||
-        (input.liteLlmOwnershipMode !== undefined && input.liteLlmOwnershipMode !== current.liteLlmOwnershipMode) ||
-        (input.supermemoryStorageMode !== undefined && input.supermemoryStorageMode !== current.supermemoryStorageMode) ||
-        (input.supermemoryEmbeddingMode !== undefined && input.supermemoryEmbeddingMode !== current.supermemoryEmbeddingMode) ||
-        (input.hermesMemoryMode !== undefined && input.hermesMemoryMode !== current.hermesMemoryMode) ||
-        (input.gpuSchedulingMode !== undefined && input.gpuSchedulingMode !== current.gpuSchedulingMode);
+        (input.targetEnvironment !== undefined && input.targetEnvironment !== current.targetEnvironment);
       const changedFields = Object.keys(input).filter((key) => key !== "expectedRevision" && key !== "reason");
       const data: Prisma.PlatformArchitectureDecisionUpdateInput = { reason: input.reason, updatedBy: principal.id, revision: { increment: 1 } };
       if (input.topologyMode !== undefined) data.topologyMode = input.topologyMode;
       if (input.targetEnvironment !== undefined) data.targetEnvironment = input.targetEnvironment;
-      if (input.installMethod !== undefined) data.installMethod = input.installMethod;
-      if (input.localInference !== undefined) data.localInference = input.localInference;
-      if (input.liteLlmOwnershipMode !== undefined) data.liteLlmOwnershipMode = input.liteLlmOwnershipMode;
-      if (input.supermemoryStorageMode !== undefined) data.supermemoryStorageMode = input.supermemoryStorageMode;
-      if (input.supermemoryEmbeddingMode !== undefined) data.supermemoryEmbeddingMode = input.supermemoryEmbeddingMode;
-      if (input.hermesMemoryMode !== undefined) data.hermesMemoryMode = input.hermesMemoryMode;
-      if (input.gpuSchedulingMode !== undefined) data.gpuSchedulingMode = input.gpuSchedulingMode;
       const saved = await transaction.platformArchitectureDecision.update({ where: { id: "global" }, data });
       if (architectureChanged) {
         await transaction.componentCompatibility.updateMany({
@@ -381,7 +355,7 @@ export class PrismaOnboardingManager implements OnboardingManager {
           },
         });
         await transaction.onboardingStep.updateMany({
-          where: { key: { in: CANONICAL_STEP_KEYS.filter((key) => key !== "claim-installation") } },
+          where: { key: { in: CANONICAL_STEP_KEYS.filter((key) => key !== "activate-installation") } },
           data: {
             status: "NOT_STARTED",
             evidenceRefs: [],
@@ -507,9 +481,9 @@ export class PrismaOnboardingManager implements OnboardingManager {
     const contractOutcome = (passed: boolean): ValidationCheck["outcome"] => passed
       ? architecture.targetEnvironment === "PRODUCTION" ? "WARNING" : "PASSED"
       : "FAILED";
-    if (stageKey === "claim-installation") {
-      const claim = await this.prisma.installationClaim.findUnique({ where: { id: "initial" } });
-      return [{ stageKey, outcome: claim?.redeemedAt ? "PASSED" : "FAILED", code: "installation-claim", summary: claim?.redeemedAt ? "The single-use installation claim was consumed successfully." : "No consumed installation claim is recorded." }];
+    if (stageKey === "activate-installation") {
+      const credential = await this.prisma.installationCredential.findUnique({ where: { id: "primary" } });
+      return [{ stageKey, outcome: credential?.activatedAt ? "PASSED" : "FAILED", code: "installation-key", summary: credential?.activatedAt ? "The permanent Installation Key has activated local administrator access." : "The Installation Key has not been used to activate local administrator access." }];
     }
     if (stageKey === "system-topology") {
       const versionRows = await this.prisma.$queryRaw<Array<{ version: string }>>`SELECT version()`;
@@ -541,7 +515,7 @@ export class PrismaOnboardingManager implements OnboardingManager {
     if (stageKey === "ai-services") {
       const [connections, runtimeNode] = await Promise.all([
         this.prisma.serviceConnection.findMany({
-          where: { kind: { in: ["LITELLM", "OCR", "SUPERMEMORY", "HERMES"] }, enabled: true },
+          where: { kind: { in: ["VLLM", "SUPERMEMORY", "HERMES"] }, enabled: true },
           orderBy: { updatedAt: "desc" },
         }),
         architecture.topologyMode === "COMPACT" ? Promise.resolve(null) : this.prisma.hermesRuntimeNode.findFirst({
@@ -550,8 +524,8 @@ export class PrismaOnboardingManager implements OnboardingManager {
           include: { serviceConnection: { select: { status: true } } },
         }),
       ]);
-      const required: Array<["LITELLM" | "OCR" | "SUPERMEMORY" | "HERMES", string, string]> = [
-        ["LITELLM", "litellm-proxy", "LiteLLM"], ["OCR", "unlimited-ocr", "Unlimited-OCR"],
+      const required: Array<["VLLM" | "SUPERMEMORY" | "HERMES", string, string]> = [
+        ["VLLM", "vllm-inference", "vLLM"],
         ["SUPERMEMORY", "supermemory-local", "Supermemory"], ["HERMES", "hermes-api", "Hermes"],
       ];
       const serviceChecks = required.map(([kind, componentKey, label]) => {
@@ -568,7 +542,7 @@ export class PrismaOnboardingManager implements OnboardingManager {
           ? `Hermes node '${runtimeNode.slug}' has a verified signing identity, a current outbound heartbeat, and a healthy inbound AIHub route; Production still requires customer firewall evidence.`
           : runtimeNode
             ? `Hermes node '${runtimeNode.slug}' is reporting outbound, but AIHub cannot yet validate the inbound Hermes API route.`
-            : "After LiteLLM is healthy, enroll an isolated Hermes VM and receive a current signed heartbeat.",
+            : "After vLLM is healthy, enroll an isolated Hermes VM and receive a current signed heartbeat.",
         ...(runtimeNode?.hermesVersion ? { observedVersion: runtimeNode.hermesVersion } : {}),
         details: runtimeNode ? { nodeId: runtimeNode.id, identityFingerprint: runtimeNode.identityFingerprint } : {},
       }];
@@ -579,7 +553,7 @@ export class PrismaOnboardingManager implements OnboardingManager {
         orderBy: { completedAt: "desc" },
         select: { id: true, stagingPurgedAt: true, memoryPublication: { select: { syncedAt: true } } },
       });
-      return [{ stageKey, componentKey: "document-conversion", outcome: contractOutcome(Boolean(document)), code: "knowledge-roundtrip", summary: document ? "A ready document was published to Supermemory and its transient staging was purged; Production still requires malformed-input and recovery evidence." : "Process one representative document through OCR, Supermemory publication, and staging purge.", details: document ? { documentId: document.id } : {} }];
+      return [{ stageKey, componentKey: "document-conversion", outcome: contractOutcome(Boolean(document)), code: "knowledge-roundtrip", summary: document ? "A ready document was published to Supermemory and its transient staging was purged; Production still requires malformed-input and recovery evidence." : "Process one representative document through the optional extraction fallback, Supermemory publication, and staging purge.", details: document ? { documentId: document.id } : {} }];
     }
     if (stageKey === "hermes-profiles") {
       const profile = await this.prisma.agentProfile.findFirst({

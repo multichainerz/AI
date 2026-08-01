@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { PrismaRuntimeConnectionResolver } from "./connection-resolver.js";
 import {
   knowledgeDocumentCustomId,
-  knowledgeScopeTag,
+  agentMemoryContainerTag,
+  sharedKnowledgeScopeTag,
   SupermemoryClient,
 } from "./supermemory-client.js";
 
@@ -21,7 +22,7 @@ function resolver(configuration: Record<string, unknown> = {}): PrismaRuntimeCon
 }
 
 describe("SupermemoryClient", () => {
-  it("publishes a document into a derived private container and waits for indexing", async () => {
+  it("publishes a document into the shared governed knowledge container and waits for indexing", async () => {
     const fetcher = vi.fn<typeof fetch>(async (input, init) => {
       const url = input.toString();
       expect(init?.redirect).toBe("error");
@@ -29,7 +30,7 @@ describe("SupermemoryClient", () => {
       if (init?.method === "POST") {
         const body = JSON.parse(String(init.body)) as Record<string, unknown>;
         expect(body).toMatchObject({
-          containerTag: knowledgeScopeTag("user:pilot"),
+          containerTag: sharedKnowledgeScopeTag(),
           customId: knowledgeDocumentCustomId(DOCUMENT_ID),
           taskType: "superrag",
         });
@@ -57,7 +58,7 @@ describe("SupermemoryClient", () => {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
       expect(body).toMatchObject({
         q: "vehicle policy",
-        containerTag: knowledgeScopeTag("user:pilot"),
+        containerTag: sharedKnowledgeScopeTag(),
         limit: 4,
       });
       return new Response(JSON.stringify({ results: [{
@@ -75,6 +76,11 @@ describe("SupermemoryClient", () => {
       metadata: { aihubDocumentId: DOCUMENT_ID, generation: 2 },
       chunks: [{ content: "Keep every receipt.", score: 0.9 }],
     })]);
+  });
+
+  it("derives a stable agent-memory namespace without accepting arbitrary tags", () => {
+    expect(agentMemoryContainerTag("Primary Hermes")).toBe("mpm-agent-primary-hermes");
+    expect(() => agentMemoryContainerTag("---")).toThrow("supported character");
   });
 
   it("rejects administrator-configured paths that escape the Supermemory origin", async () => {

@@ -22,6 +22,10 @@ export const hermesRuntimeNodeStatusSchema = z.enum(HERMES_RUNTIME_NODE_STATUSES
 export const hermesNodeEnrollmentStatusSchema = z.enum(HERMES_NODE_ENROLLMENT_STATUSES);
 
 const nodeSlugSchema = z.string().trim().min(2).max(64).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+const runtimeOriginSchema = serviceEndpointSchema.regex(
+  /^https?:\/\/[^/?#]+\/?$/i,
+  "Runtime service addresses must be origins without a path, query, or fragment.",
+);
 const imageReferenceSchema = z.string().trim().min(3).max(500).regex(
   /^[a-zA-Z0-9._/-]+(?::[a-zA-Z0-9._-]+|@sha256:[a-f0-9]{64})$/,
   "Use a tagged or digest-pinned container image reference.",
@@ -31,7 +35,7 @@ export const hermesRuntimeNodeSchema = z.object({
   id: z.uuid(),
   slug: nodeSlugSchema,
   displayName: z.string().min(2).max(120),
-  baseUrl: serviceEndpointSchema,
+  baseUrl: runtimeOriginSchema,
   expectedHostname: z.string().nullable(),
   hostname: z.string().nullable(),
   status: hermesRuntimeNodeStatusSchema,
@@ -56,9 +60,9 @@ export const hermesRuntimeNodeListSchema = z.object({
 export const createHermesNodeInvitationSchema = z.object({
   slug: nodeSlugSchema,
   displayName: z.string().trim().min(2).max(120),
-  baseUrl: serviceEndpointSchema,
+  baseUrl: runtimeOriginSchema,
   expectedHostname: z.string().trim().min(1).max(253).optional(),
-  controlPlaneUrl: serviceEndpointSchema,
+  controlPlaneUrl: runtimeOriginSchema,
   hermesImage: imageReferenceSchema.default("nousresearch/hermes-agent:latest"),
   expiresInMinutes: z.number().int().min(10).max(1_440).default(30),
 }).strict();
@@ -68,8 +72,8 @@ export const hermesNodeEnrollmentBundleSchema = z.object({
   nodeId: z.uuid(),
   nodeSlug: nodeSlugSchema,
   token: z.string().min(32).max(512),
-  controlPlaneUrl: serviceEndpointSchema,
-  hermesBaseUrl: serviceEndpointSchema,
+  controlPlaneUrl: runtimeOriginSchema,
+  hermesBaseUrl: runtimeOriginSchema,
   hermesImage: imageReferenceSchema,
   expiresAt: z.iso.datetime(),
 }).strict();
@@ -84,6 +88,7 @@ export const enrollHermesNodeSchema = z.object({
   token: z.string().min(32).max(512),
   hostname: z.string().trim().min(1).max(253),
   publicKeyPem: z.string().min(80).max(4_096),
+  controlPlaneUrl: runtimeOriginSchema,
   apiKey: z.string().min(32).max(1_024),
   hermesVersion: z.string().trim().min(1).max(120).default("unknown"),
   installerVersion: z.string().trim().min(1).max(120),
@@ -113,6 +118,17 @@ export const hermesNodeHeartbeatResultSchema = z.object({
   serverTime: z.iso.datetime(),
 }).strict();
 
+export const registerHermesNodeMemorySchema = z.object({
+  baseUrl: runtimeOriginSchema,
+  apiKey: z.string().min(20).max(16_384),
+  observedVersion: z.string().trim().min(1).max(120),
+}).strict();
+
+export const registerHermesNodeMemoryResultSchema = z.object({
+  accepted: z.literal(true),
+  connectionId: z.uuid(),
+}).strict();
+
 export const mutateHermesRuntimeNodeSchema = z.object({
   action: z.enum(["DRAIN", "RESUME", "SUSPEND", "REVOKE"]),
   reason: z.string().trim().min(3).max(1_000),
@@ -128,4 +144,6 @@ export type EnrollHermesNode = z.infer<typeof enrollHermesNodeSchema>;
 export type HermesNodeEnrollmentResult = z.infer<typeof hermesNodeEnrollmentResultSchema>;
 export type HermesNodeHeartbeat = z.infer<typeof hermesNodeHeartbeatSchema>;
 export type HermesNodeHeartbeatResult = z.infer<typeof hermesNodeHeartbeatResultSchema>;
+export type RegisterHermesNodeMemory = z.infer<typeof registerHermesNodeMemorySchema>;
+export type RegisterHermesNodeMemoryResult = z.infer<typeof registerHermesNodeMemoryResultSchema>;
 export type MutateHermesRuntimeNode = z.infer<typeof mutateHermesRuntimeNodeSchema>;

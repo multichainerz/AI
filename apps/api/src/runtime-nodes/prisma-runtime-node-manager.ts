@@ -14,6 +14,8 @@ import type {
   HermesNodeInvitation,
   HermesRuntimeNode,
   MutateHermesRuntimeNode,
+  RegisterHermesNodeMemory,
+  RegisterHermesNodeMemoryResult,
 } from "@aihub/contracts";
 import { Prisma, type AIHubPrismaClient } from "@aihub/database";
 import { EnvelopeEncryption } from "@aihub/security";
@@ -92,51 +94,9 @@ function encryptedSecretData(connectionId: string, fieldName: string, value: str
   };
 }
 
-function decryptedSecret(
-  connectionId: string,
-  secret: {
-    fieldName: string;
-    encryptedValue: Uint8Array;
-    valueNonce: Uint8Array;
-    valueAuthTag: Uint8Array;
-    wrappedDataKey: Uint8Array;
-    keyNonce: Uint8Array;
-    keyAuthTag: Uint8Array;
-    encryptionVersion: number;
-    masterKeyVersion: number;
-  },
-  encryption: EnvelopeEncryption,
-): string {
-  if (secret.encryptionVersion !== 1) throw new RuntimeNodeEnrollmentError("The LiteLLM credential uses an unsupported encryption version.", "INVALID");
-  return encryption.decrypt({
-    algorithm: "AES-256-GCM",
-    encryptionVersion: 1,
-    masterKeyVersion: secret.masterKeyVersion,
-    encryptedValue: secret.encryptedValue,
-    valueNonce: secret.valueNonce,
-    valueAuthTag: secret.valueAuthTag,
-    wrappedDataKey: secret.wrappedDataKey,
-    keyNonce: secret.keyNonce,
-    keyAuthTag: secret.keyAuthTag,
-  }, `${connectionId}:${secret.fieldName}`);
-}
-
-export function liteLlmApiBaseUrl(baseUrl: string, configuration: unknown): string {
-  const settings = configuration && typeof configuration === "object" && !Array.isArray(configuration)
-    ? configuration as Record<string, unknown>
-    : {};
-  const chatPath = typeof settings.chatPath === "string" ? settings.chatPath : "/v1/chat/completions";
-  const prefix = chatPath.endsWith("/chat/completions")
-    ? chatPath.slice(0, -"/chat/completions".length)
-    : "/v1";
-  const url = new URL(baseUrl);
-  const normalizedPrefix = prefix.replace(/^\/+|\/+$/g, "");
-  const basePath = url.pathname.replace(/\/+$/, "");
-  if (normalizedPrefix && basePath !== `/${normalizedPrefix}` && !basePath.endsWith(`/${normalizedPrefix}`)) {
-    url.pathname = `${basePath}/${normalizedPrefix}`.replace(/\/{2,}/g, "/");
-  } else {
-    url.pathname = basePath || "/";
-  }
+export function inferenceGatewayBaseUrl(controlPlaneUrl: string): string {
+  const url = new URL(controlPlaneUrl);
+  url.pathname = "/internal/v1";
   url.search = "";
   url.hash = "";
   return url.toString().replace(/\/$/, "");
@@ -238,11 +198,11 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
   }
 
   async createInvitation(principal: AdminPrincipal, input: CreateHermesNodeInvitation): Promise<HermesNodeInvitation> {
-    const liteLlmCount = await this.prisma.serviceConnection.count({
-      where: { kind: "LITELLM", enabled: true, status: "HEALTHY" },
+    const inferenceCount = await this.prisma.serviceConnection.count({
+      where: { kind: "VLLM", enabled: true, status: "HEALTHY" },
     });
-    if (liteLlmCount !== 1) {
-      throw new RuntimeNodeConflictError("Configure and test exactly one healthy LiteLLM connection before enrolling Hermes.");
+    if (inferenceCount !== 1) {
+      throw new RuntimeNodeConflictError("Configure and test exactly one healthy vLLM connection before enrolling Hermes.");
     }
     const token = randomBytes(32).toString("base64url");
     const tokenHash = digest(token);
@@ -279,7 +239,13 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
           data: { status: "REVOKED", revokedAt: new Date() },
         });
         await transaction.hermesNodeEnrollment.create({
-          data: { nodeId: pending.id, tokenHash, expiresAt, createdBy: principal.id },
+          data: {
+            nodeId: pending.id,
+            tokenHash,
+            controlPlaneUrl: input.controlPlaneUrl.replace(/\/$/, ""),
+            expiresAt,
+            createdBy: principal.id,
+          },
         });
         await transaction.auditEvent.create({
           data: {
@@ -336,6 +302,9 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
       if (enrollment.status !== "ISSUED") {
         throw new RuntimeNodeEnrollmentError("The enrollment claim is no longer active.", "INVALID");
       }
+      if (enrollment.controlPlaneUrl !== input.controlPlaneUrl.replace(/\/$/, "")) {
+        throw new RuntimeNodeEnrollmentError("The enrollment control-plane origin does not match the invitation.", "INVALID");
+      }
       if (enrollment.expiresAt <= now) {
         await transaction.hermesNodeEnrollment.update({
           where: { id: enrollment.id },
@@ -354,24 +323,23 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
         throw new RuntimeNodeEnrollmentError(`Hermes runtime '${activeRuntime.slug}' is already the active AIHub execution boundary.`, "INVALID");
       }
 
-      const liteLlmConnections = await transaction.serviceConnection.findMany({
-        where: { kind: "LITELLM", enabled: true, status: "HEALTHY" },
-        include: { secrets: { where: { active: true, fieldName: "apiKey" } } },
+      const inferenceConnections = await transaction.serviceConnection.findMany({
+        where: { kind: "VLLM", enabled: true, status: "HEALTHY" },
         take: 2,
       });
-      const liteLlm = liteLlmConnections[0];
-      const liteLlmSecret = liteLlm?.secrets[0];
-      const liteLlmSettings = liteLlm?.configuration && typeof liteLlm.configuration === "object" && !Array.isArray(liteLlm.configuration)
-        ? liteLlm.configuration as Record<string, unknown>
+      const inference = inferenceConnections[0];
+      const inferenceSettings = inference?.configuration && typeof inference.configuration === "object" && !Array.isArray(inference.configuration)
+        ? inference.configuration as Record<string, unknown>
         : {};
-      if (liteLlmConnections.length !== 1 || !liteLlm?.baseUrl || !liteLlmSecret || typeof liteLlmSettings.modelAlias !== "string") {
-        throw new RuntimeNodeEnrollmentError("Exactly one healthy LiteLLM route with an API key and model alias is required.", "INVALID");
+      if (inferenceConnections.length !== 1 || !inference?.baseUrl || typeof inferenceSettings.modelAlias !== "string") {
+        throw new RuntimeNodeEnrollmentError("Exactly one healthy vLLM route with a model alias is required.", "INVALID");
       }
+      const gatewayKey = randomBytes(32).toString("base64url");
       const modelBootstrap = {
         provider: "custom" as const,
-        baseUrl: liteLlmApiBaseUrl(liteLlm.baseUrl, liteLlm.configuration),
-        modelAlias: liteLlmSettings.modelAlias,
-        apiKey: decryptedSecret(liteLlm.id, liteLlmSecret, this.encryption),
+        baseUrl: inferenceGatewayBaseUrl(input.controlPlaneUrl),
+        modelAlias: inferenceSettings.modelAlias,
+        apiKey: gatewayKey,
       };
 
       const architecture = await transaction.platformArchitectureDecision.findUnique({ where: { id: "global" } });
@@ -394,7 +362,7 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
         baseUrl: enrollment.node.baseUrl,
         enabled: true,
         configuration,
-        secretFieldNames: ["apiKey"],
+        secretFieldNames: ["apiKey", "inferenceGatewayKey"],
       };
       const connection = await transaction.serviceConnection.create({
         data: {
@@ -408,16 +376,16 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
           status: "NOT_TESTED",
           configuration,
           secrets: {
-            create: {
-              ...encryptedSecretData(connectionId, "apiKey", input.apiKey, this.encryption),
-              createdBy: null,
-            },
+            create: [
+              { ...encryptedSecretData(connectionId, "apiKey", input.apiKey, this.encryption), createdBy: null },
+              { ...encryptedSecretData(connectionId, "inferenceGatewayKey", gatewayKey, this.encryption), createdBy: null },
+            ],
           },
           revisions: {
             create: {
               revision: 1,
               configuration: revisionState,
-              secretFieldNames: ["apiKey"],
+              secretFieldNames: ["apiKey", "inferenceGatewayKey"],
               checksum: checksum(revisionState),
               activatedAt: now,
             },
@@ -530,6 +498,100 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
     return { accepted: true, serverTime: receivedAt.toISOString() };
   }
 
+  async registerMemory(
+    nodeId: string,
+    headers: NodeSignatureHeaders,
+    input: RegisterHermesNodeMemory,
+  ): Promise<RegisterHermesNodeMemoryResult> {
+    const node = await this.authenticate(nodeId, headers, input);
+    const hermesConnection = node.serviceConnectionId
+      ? await this.prisma.serviceConnection.findUnique({ where: { id: node.serviceConnectionId }, select: { baseUrl: true } })
+      : null;
+    if (!hermesConnection?.baseUrl) {
+      throw new RuntimeNodeConflictError("The enrolled Hermes route is unavailable for memory registration.");
+    }
+    const hermesUrl = new URL(hermesConnection.baseUrl);
+    const memoryUrl = new URL(input.baseUrl);
+    if (memoryUrl.hostname !== hermesUrl.hostname || memoryUrl.port !== "6767") {
+      throw new RuntimeNodeConflictError("Supermemory must be registered on the enrolled Hermes host at TCP 6767.");
+    }
+    const architecture = await this.prisma.platformArchitectureDecision.findUnique({ where: { id: "global" } });
+    const environment = connectionEnvironment(architecture?.targetEnvironment ?? "DEVELOPMENT");
+    const slug = `supermemory-node-${node.slug}`.slice(0, 64);
+    const now = new Date();
+    const connectionId = await this.prisma.$transaction(async (transaction) => {
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`aihub-supermemory-node:${nodeId}`}, 0))`;
+      const existing = await transaction.serviceConnection.findUnique({ where: { slug } });
+      if (existing && existing.kind !== "SUPERMEMORY") {
+        throw new RuntimeNodeConflictError("The managed Supermemory connection slug is already used by another service kind.");
+      }
+      const id = existing?.id ?? randomUUID();
+      const configuration = {
+        timeoutMs: 8_000,
+        healthPath: "/health",
+        documentsPath: "/v3/documents",
+        searchPath: "/v3/search",
+        memoryTimeoutMs: 300_000,
+        memoryPollIntervalMs: 2_000,
+        retrievalLimit: 6,
+        retrievalThreshold: 0.25,
+      };
+      const revision = (existing?.activeRevision ?? 0) + 1;
+      const revisionState = {
+        slug,
+        displayName: `${node.displayName} Supermemory`,
+        kind: "SUPERMEMORY",
+        environment,
+        baseUrl: input.baseUrl,
+        enabled: true,
+        configuration,
+        secretFieldNames: ["apiKey"],
+      };
+      if (existing) {
+        await transaction.secretRecord.updateMany({
+          where: { serviceConnectionId: id, fieldName: "apiKey", active: true },
+          data: { active: false, retiredAt: now },
+        });
+        await transaction.secretRecord.create({
+          data: { ...encryptedSecretData(id, "apiKey", input.apiKey, this.encryption), serviceConnectionId: id, createdBy: null },
+        });
+        await transaction.serviceConnection.update({
+          where: { id },
+          data: { baseUrl: input.baseUrl, enabled: true, status: "NOT_TESTED", environment, configuration, activeRevision: revision },
+        });
+        await transaction.configurationRevision.create({
+          data: { serviceConnectionId: id, revision, configuration: revisionState, secretFieldNames: ["apiKey"], checksum: checksum(revisionState), activatedAt: now },
+        });
+      } else {
+        await transaction.serviceConnection.create({ data: {
+          id,
+          slug,
+          displayName: `${node.displayName} Supermemory`,
+          kind: "SUPERMEMORY",
+          environment,
+          baseUrl: input.baseUrl,
+          enabled: true,
+          status: "NOT_TESTED",
+          configuration,
+          secrets: { create: { ...encryptedSecretData(id, "apiKey", input.apiKey, this.encryption), createdBy: null } },
+          revisions: { create: { revision, configuration: revisionState, secretFieldNames: ["apiKey"], checksum: checksum(revisionState), activatedAt: now } },
+        } });
+      }
+      await transaction.auditEvent.create({ data: {
+        actorType: "SERVICE",
+        actorId: nodeId,
+        action: "hermes.node.memory_registered",
+        resourceType: "ServiceConnection",
+        resourceId: id,
+        outcome: "SUCCESS",
+        metadata: { nodeId, observedVersion: input.observedVersion, managedBy: "HermesRuntimeNode" },
+      } });
+      return id;
+    });
+    await this.connectionTester?.test(connectionId).catch(() => undefined);
+    return { accepted: true, connectionId };
+  }
+
   async mutate(principal: AdminPrincipal, nodeId: string, input: MutateHermesRuntimeNode): Promise<HermesRuntimeNode> {
     const current = await this.prisma.hermesRuntimeNode.findUnique({ where: { id: nodeId } });
     if (!current) throw new RuntimeNodeNotFoundError();
@@ -565,6 +627,10 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
             data: { enabled: false, status: "DISABLED" },
           });
         }
+        await transaction.serviceConnection.updateMany({
+          where: { slug: `supermemory-node-${current.slug}`.slice(0, 64), kind: "SUPERMEMORY" },
+          data: { enabled: false, status: "DISABLED" },
+        });
       }
       await transaction.auditEvent.create({
         data: {

@@ -39,7 +39,7 @@ export async function registerConnectionRoutes(
     if (!dependencies.manager || !dependencies.sessionManager) {
       await reply.code(423).send({
         error: "PLATFORM_LOCKED",
-        message: "AIHub bootstrap trust is not ready.",
+        message: "AIHub installation trust is not ready.",
       });
       return reply;
     }

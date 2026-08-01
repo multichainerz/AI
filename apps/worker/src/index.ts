@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 import { createPrismaClient, readBootstrapSecret } from "@aihub/database";
-import { PgBossQueueService } from "@aihub/jobs";
 import { decodeMasterKey, EnvelopeEncryption, RunCapabilityIssuer } from "@aihub/security";
 import {
   PrismaRuntimeConnectionResolver,
@@ -9,7 +8,6 @@ import {
   EncryptedFileSystemDocumentScratchStore,
   HermesClient,
   SupermemoryClient,
-  UnlimitedOcrClient,
 } from "@aihub/document-runtime";
 import { WorkerRuntime } from "./worker-runtime.js";
 import { PrismaWorkerRegistry } from "./worker-registry.js";
@@ -21,10 +19,6 @@ import { PrismaToolActionProcessor } from "./tool-action-processor.js";
 const databaseUrl = readBootstrapSecret("aihub_database_url");
 const prisma = createPrismaClient(databaseUrl);
 const workerId = randomUUID();
-const queue = new PgBossQueueService(databaseUrl, "worker", {
-  error: (message, error) => console.error(message, error),
-  warn: (message, details) => console.warn(message, details),
-});
 const masterKey = decodeMasterKey(readBootstrapSecret("aihub_master_key"));
 const encryption = new EnvelopeEncryption({ masterKey });
 const documentResolver = new PrismaRuntimeConnectionResolver(prisma, encryption);
@@ -32,17 +26,15 @@ const documentStore = new EncryptedFileSystemDocumentScratchStore(documentScratc
 const documentProcessor = new PrismaDocumentProcessor(
   prisma,
   documentStore,
-  new UnlimitedOcrClient(documentResolver),
-  queue,
 );
 const runtime = new WorkerRuntime(
-  queue,
+  prisma,
   new PrismaWorkerRegistry(prisma),
   {
     id: workerId,
     name: hostname(),
     version: "0.1.0",
-    queues: ["aihub.system.probe", "aihub.documents.convert", "aihub.documents.ocr", "aihub.memory.index", "aihub.agents.run"],
+    workloads: ["documents", "memory", "agents", "tool-actions"],
   },
   {
     info: (message) => console.info(message),
@@ -57,7 +49,7 @@ const runtime = new WorkerRuntime(
     new WorkerAgentKnowledgeRetriever(prisma, new SupermemoryClient(documentResolver)),
     new RunCapabilityIssuer(masterKey),
   ),
-  new PrismaToolActionProcessor(prisma, queue),
+  new PrismaToolActionProcessor(prisma),
 );
 
 let shuttingDown = false;

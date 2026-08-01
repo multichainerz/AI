@@ -149,14 +149,14 @@ export function RuntimeNodesPanel({ targetEnvironment, onUnauthorized }: Runtime
 
     <aside className="panel runtime-network-contract">
       <p className="section-kicker">Network contract</p><h2>Required paths</h2>
-      <ol><li><span>1</span><div><strong>AIHub → Hermes</strong><small>TCP 8642, health and governed agent API only.</small></div></li><li><span>2</span><div><strong>Hermes → AIHub</strong><small>HTTPS, one-time enrollment and signed heartbeat.</small></div></li><li><span>3</span><div><strong>Hermes → approved services</strong><small>LiteLLM and explicitly granted MCP/tool destinations.</small></div></li></ol>
+      <ol><li><span>1</span><div><strong>AIHub → Hermes</strong><small>TCP 8642, health and governed agent API only.</small></div></li><li><span>2</span><div><strong>Runtime → AIHub</strong><small>HTTPS enrollment, heartbeat, and node-scoped inference gateway.</small></div></li><li><span>3</span><div><strong>Hermes ↔ Supermemory</strong><small>Profile-scoped durable memory on the isolated runtime host.</small></div></li></ol>
       <div className="runtime-network-note"><strong>The installer does not manage your firewall.</strong><p>Apply customer network policy before Production activation. Do not expose port 8642 to user or internet networks.</p></div>
     </aside>
 
     {editorOpen && <div className="agent-editor-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setEditorOpen(false); }}><section className="setup-evidence-editor runtime-node-editor">
       <header><div><p className="section-kicker">Two-VM enrollment</p><h2>{invitation ? "Install the Hermes node" : "Create runtime invitation"}</h2></div><button type="button" aria-label="Close" onClick={() => setEditorOpen(false)}>×</button></header>
       {!invitation ? <form onSubmit={(event) => void issueInvitation(event)}>
-        <p className="runtime-form-intro">Define the address AIHub will use to reach VM2. A healthy LiteLLM connection is required; its approved route is delivered directly to VM2 during enrollment and never placed in the browser bundle. No SSH password or private key is collected.</p>
+        <p className="runtime-form-intro">Define the address AIHub will use to reach VM2. A healthy vLLM connection is required; enrollment installs Hermes and Supermemory, then gives that runtime a scoped AIHub gateway key. No vLLM key, SSH password, or private key enters the browser.</p>
         <label>Node name<input required minLength={2} maxLength={120} value={form.displayName} onChange={(event) => setForm({ ...form, displayName: event.target.value })} /></label>
         <label>Node slug<input required pattern="[a-z0-9]+(?:-[a-z0-9]+)*" minLength={2} maxLength={64} value={form.slug} onChange={(event) => setForm({ ...form, slug: event.target.value })} /></label>
         <label>Hermes API address<input required type="url" value={form.baseUrl} onChange={(event) => setForm({ ...form, baseUrl: event.target.value })} /><small>Use the private VM2 address reachable from AIHub, normally port 8642.</small></label>

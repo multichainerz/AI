@@ -24,7 +24,7 @@ const route: ModelDeployment = {
   modelAlias: "hermes-agent",
   workload: "AGENT",
   status: "ACTIVE",
-  connection: { id: CONNECTION_ID, displayName: "LiteLLM Primary", kind: "LITELLM", environment: "PRODUCTION", enabled: true, status: "HEALTHY" },
+  connection: { id: CONNECTION_ID, displayName: "vLLM Primary", kind: "VLLM", environment: "PRODUCTION", enabled: true, status: "HEALTHY" },
   version: "2.1-nvfp4",
   license: null,
   contextWindowTokens: 131_072,
@@ -41,7 +41,7 @@ const route: ModelDeployment = {
 };
 
 class Sessions implements AdminSessionManager {
-  async createBootstrapSession() { return null; }
+  async createInstallationKeySession() { return null; }
   async authenticate(token: string | undefined) { return token === TOKEN ? session : null; }
   async revoke() { return false; }
 }

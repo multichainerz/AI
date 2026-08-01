@@ -15,7 +15,7 @@ const DOCUMENT_ID = "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d";
 
 const admin: AdminPrincipal = {
   id: SESSION_ID,
-  subject: "bootstrap-administrator",
+  subject: "installation-key-administrator",
   role: "PLATFORM_ADMIN",
   scopes: [...ADMIN_SCOPES],
   createdAt: "2026-07-30T00:00:00.000Z",
@@ -25,8 +25,8 @@ const admin: AdminPrincipal = {
 
 const detail: DocumentDetail = {
   id: DOCUMENT_ID,
-  fileName: "policy.pdf",
-  mediaType: "application/pdf",
+  fileName: "policy.txt",
+  mediaType: "text/plain",
   sizeBytes: 1024,
   sha256: "a".repeat(64),
   classification: "CONFIDENTIAL",
@@ -45,7 +45,7 @@ const detail: DocumentDetail = {
 };
 
 class SessionManager implements AdminSessionManager {
-  async createBootstrapSession() { return null; }
+  async createInstallationKeySession() { return null; }
   async authenticate(token: string | undefined) { return token === SESSION_TOKEN ? admin : null; }
   async revoke() { return true; }
 }
@@ -149,7 +149,7 @@ describe("document routes", () => {
       headers: { cookie: `${ENTERPRISE_SESSION_COOKIE}=${ENTERPRISE_TOKEN}` },
     });
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({ items: [{ id: DOCUMENT_ID, fileName: "policy.pdf", status: "QUARANTINED" }] });
+    expect(response.json()).toMatchObject({ items: [{ id: DOCUMENT_ID, fileName: "policy.txt", status: "QUARANTINED" }] });
     expect(response.body).not.toContain("textPreview");
     expect(response.body).not.toContain("artifacts");
     expect(manager.list).toHaveBeenCalledWith(expect.objectContaining({
@@ -171,7 +171,7 @@ describe("document routes", () => {
     expect(response.statusCode).toBe(200);
     expect(manager.list).toHaveBeenCalledWith(expect.objectContaining({
       identityMode: "ADMINISTRATOR_PREVIEW",
-      subject: "bootstrap-administrator",
+      subject: "installation-key-administrator",
     }));
   });
 

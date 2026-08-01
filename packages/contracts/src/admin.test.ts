@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   administratorSessionSchema,
-  bootstrapSessionRequestSchema,
+  installationKeySessionRequestSchema,
 } from "./admin.js";
 
 describe("administrator contracts", () => {
-  it("requires a sufficiently strong bootstrap credential payload", () => {
-    expect(bootstrapSessionRequestSchema.safeParse({ token: "short" }).success).toBe(false);
-    expect(bootstrapSessionRequestSchema.safeParse({ token: "a".repeat(32) }).success).toBe(true);
+  it("requires a sufficiently strong Installation Key payload", () => {
+    expect(installationKeySessionRequestSchema.safeParse({ installationKey: "short" }).success).toBe(false);
+    expect(installationKeySessionRequestSchema.safeParse({ installationKey: "a".repeat(32) }).success).toBe(true);
   });
 
   it("rejects invented roles and scopes from a session response", () => {

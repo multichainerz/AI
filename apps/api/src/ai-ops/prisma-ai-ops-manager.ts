@@ -45,7 +45,7 @@ interface AiOpsDependencies {
   connections: ConnectionManager;
   connectionMonitoring?: ConnectionMonitoringManager;
   models?: ModelManager;
-  jobs: OperationsManager;
+  runtime: OperationsManager;
   chat: ChatManager;
   documents: DocumentManager;
   memory: MemoryManager;
@@ -118,11 +118,9 @@ interface StoredReadinessApproval {
 const READINESS_APPROVAL_ROLES = ["SECURITY", "INFRASTRUCTURE", "PRODUCT", "BUSINESS"] as const;
 
 const serviceMetadata: Record<ServiceKind, { label: string; workflows: AiOpsWorkflow[] }> = {
-  LITELLM: { label: "LiteLLM gateway", workflows: ["CHAT", "AGENTS"] },
   VLLM: { label: "vLLM inference", workflows: ["CHAT", "AGENTS"] },
   HERMES: { label: "Hermes runtime", workflows: ["AGENTS", "TOOLS"] },
   SUPERMEMORY: { label: "Supermemory", workflows: ["CHAT", "MEMORY", "AGENTS"] },
-  OCR: { label: "Unlimited OCR", workflows: ["DOCUMENTS"] },
   MCP: { label: "MCP gateway", workflows: ["AGENTS", "TOOLS"] },
   OIDC: { label: "Enterprise identity", workflows: ["CHAT", "DOCUMENTS", "MEMORY", "AGENTS", "TOOLS"] },
   SIEM: { label: "SIEM forwarding", workflows: [] },
@@ -134,8 +132,10 @@ interface ActiveGuardrailPolicy {
   id: string;
   displayName: string;
   version: string;
-  liteLLMGuardrails: string[];
   maxInputCharacters: number;
+  maxOutputCharacters: number;
+  blockControlCharacters: boolean;
+  blockCredentialPatterns: boolean;
   updatedAt: Date;
 }
 
@@ -149,30 +149,30 @@ interface ActivePromptTemplate {
 }
 
 function guardrailPosture(active: ActiveGuardrailPolicy | null): GuardrailControl[] {
-  const assignment = active
-    ? `${active.liteLLMGuardrails.length} approved LiteLLM guardrail${active.liteLLMGuardrails.length === 1 ? "" : "s"} from ${active.displayName} v${active.version}`
-    : null;
+  const enabledChecks = active
+    ? Number(active.blockControlCharacters) + Number(active.blockCredentialPatterns)
+    : 0;
   return [
   {
     layer: "INPUT",
     label: "Input boundary",
     status: "PARTIAL",
     summary: active
-      ? `Schema, identity, rate, and ${active.maxInputCharacters.toLocaleString("en-US")}-character chat limits are locally enforced; ${assignment} are attached to every LiteLLM chat request.`
-      : "Schema, size, identity, and rate constraints are enforced; no evaluated LiteLLM guardrail assignment is active.",
+      ? `Schema, identity, rate, and ${active.maxInputCharacters.toLocaleString("en-US")}-character chat limits are locally enforced with ${enabledChecks} AIHub-native content check${enabledChecks === 1 ? "" : "s"}.`
+      : "Schema, size, identity, and rate constraints are enforced; no evaluated AIHub guardrail policy is active.",
     evidence: active
-      ? `Policy ${active.id} is evaluation-gated in PostgreSQL; classifier behavior still requires target-environment evidence.`
+      ? `Policy ${active.id} is evaluation-gated in PostgreSQL; semantic safety classification remains outside this deterministic baseline.`
       : "API contracts and identity-scoped request limits are enforced in the chat, document, agent, and tool routes.",
   },
   {
     layer: "OUTPUT",
     label: "Output boundary",
-    status: "NOT_VERIFIED",
+    status: active ? "PARTIAL" : "NOT_VERIFIED",
     summary: active
-      ? `${assignment} are delegated to LiteLLM, but AIHub does not infer whether each upstream guardrail is configured for pre-call, post-call, or both.`
+      ? `AIHub caps streamed responses at ${active.maxOutputCharacters.toLocaleString("en-US")} characters; semantic output classification is not claimed.`
       : "Provider responses are structurally bounded, but no evaluated output guardrail assignment is active.",
     evidence: active
-      ? "Streaming failures and LiteLLM policy rejections are retained as sanitized audit events; upstream hook modes require deployment verification."
+      ? "Streaming failures and response-limit rejections are retained as sanitized audit events; representative model safety still requires deployment evidence."
       : "Streaming state and persistence are validated locally; safety-model evidence has not been recorded.",
   },
   {
@@ -392,11 +392,7 @@ function placeholderComponent(kind: ServiceKind): AiOpsComponent {
 function modelComponent(model: ModelDeployment): AiOpsComponent {
   const affectedWorkflows: AiOpsWorkflow[] = model.workload === "CHAT"
     ? ["CHAT"]
-    : model.workload === "AGENT"
-      ? ["AGENTS"]
-      : model.workload === "OCR"
-        ? ["DOCUMENTS"]
-        : ["MEMORY"];
+    : ["AGENTS"];
   const status = model.status !== "ACTIVE"
     ? "NOT_CONFIGURED" as const
     : !model.connection.enabled || ["DISABLED", "UNREACHABLE"].includes(model.connection.status)
@@ -438,11 +434,11 @@ export class PrismaAiOpsManager implements AiOpsManager {
 
   async overview(): Promise<AiOpsOverview> {
     const generatedAt = new Date();
-    const [connections, monitoring, models, jobs, chat, documents, memory, agents, tools, activeGuardrail, activePrompt] = await Promise.all([
+    const [connections, monitoring, models, runtime, chat, documents, memory, agents, tools, activeGuardrail, activePrompt] = await Promise.all([
       settled(this.dependencies.connections.list()),
       this.dependencies.connectionMonitoring ? settled(this.dependencies.connectionMonitoring.getControl()) : Promise.resolve(null),
       this.dependencies.models ? settled(this.dependencies.models.list()) : Promise.resolve(null),
-      settled(this.dependencies.jobs.snapshot()),
+      settled(this.dependencies.runtime.snapshot()),
       settled(this.dependencies.chat.metrics()),
       settled(this.dependencies.documents.metrics()),
       settled(this.dependencies.memory.metrics()),
@@ -450,7 +446,16 @@ export class PrismaAiOpsManager implements AiOpsManager {
       settled(this.dependencies.tools.metrics()),
       settled(this.prisma.guardrailPolicy.findFirst({
         where: { status: "ACTIVE" },
-        select: { id: true, displayName: true, version: true, liteLLMGuardrails: true, maxInputCharacters: true, updatedAt: true },
+        select: {
+          id: true,
+          displayName: true,
+          version: true,
+          maxInputCharacters: true,
+          maxOutputCharacters: true,
+          blockControlCharacters: true,
+          blockCredentialPatterns: true,
+          updatedAt: true,
+        },
       })),
       settled(this.prisma.promptTemplate.findFirst({
         where: { purpose: "CHAT_SYSTEM", status: "ACTIVE" },
@@ -471,11 +476,11 @@ export class PrismaAiOpsManager implements AiOpsManager {
       },
       {
         id: "jobs",
-        label: "pg-boss workers",
-        status: jobs ? (jobs.status === "ONLINE" ? "HEALTHY" : "DEGRADED") : "UNAVAILABLE",
-        summary: jobs ? (jobs.statusReasons[0] ?? "Required queues have online workers.") : "Queue and worker state could not be read.",
+        label: "PostgreSQL runtime executors",
+        status: runtime ? (runtime.status === "ONLINE" ? "HEALTHY" : "DEGRADED") : "UNAVAILABLE",
+        summary: runtime ? (runtime.statusReasons[0] ?? "Required PostgreSQL workloads have an online executor.") : "PostgreSQL runtime state could not be read.",
         source: "LIVE",
-        observedAt: jobs?.capturedAt ?? generatedAt.toISOString(),
+        observedAt: runtime?.capturedAt ?? generatedAt.toISOString(),
         latencyMs: null,
         affectedWorkflows: ["DOCUMENTS", "MEMORY", "AGENTS"],
       },
@@ -503,7 +508,7 @@ export class PrismaAiOpsManager implements AiOpsManager {
         id: `guardrail:${activeGuardrail.id}`,
         label: activeGuardrail.displayName,
         status: "HEALTHY",
-        summary: `${activeGuardrail.liteLLMGuardrails.length} LiteLLM guardrail assignment${activeGuardrail.liteLLMGuardrails.length === 1 ? "" : "s"} active with promoted policy evidence.`,
+        summary: `AIHub-native runtime limits and ${Number(activeGuardrail.blockControlCharacters) + Number(activeGuardrail.blockCredentialPatterns)} content checks are active with promoted policy evidence.`,
         source: "CONFIGURATION",
         observedAt: activeGuardrail.updatedAt.toISOString(),
         latencyMs: null,
@@ -556,7 +561,7 @@ export class PrismaAiOpsManager implements AiOpsManager {
       generatedAt: generatedAt.toISOString(),
       status,
       components,
-      jobs,
+      runtime,
       metrics: { chat, documents, memory, agents, tools },
       guardrails: guardrailPosture(activeGuardrail),
       incidents: {

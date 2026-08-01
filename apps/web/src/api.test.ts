@@ -22,6 +22,7 @@ import {
   changeGuardrailPolicyState,
   getPromptTemplates,
   changePromptTemplateState,
+  testConnection,
 } from "./api.js";
 
 afterEach(() => vi.restoreAllMocks());
@@ -34,10 +35,10 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 describe("AIHub browser API", () => {
-  it("exchanges the installation claim without reusing it as an API header", async () => {
+  it("exchanges the Installation Key without reusing it as an API header", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({
       id: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb",
-      subject: "bootstrap-administrator",
+      subject: "installation-key-administrator",
       role: "PLATFORM_ADMIN",
       scopes: ["connections:read"],
       createdAt: "2026-07-30T00:00:00.000Z",
@@ -45,13 +46,14 @@ describe("AIHub browser API", () => {
       absoluteExpiresAt: "2026-07-30T08:00:00.000Z",
     }, 201));
 
-    await createAdministratorSession("a-secure-bootstrap-token-with-more-than-32-characters");
+    await createAdministratorSession("a-secure-installation-key-with-more-than-32-characters");
 
-    const [, options] = fetchMock.mock.calls[0]!;
+    const [url, options] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("/api/v1/admin/session/installation-key");
     expect(options).toMatchObject({ method: "POST", credentials: "same-origin" });
-    expect(new Headers(options?.headers).has("x-aihub-bootstrap-token")).toBe(false);
+    expect(new Headers(options?.headers).has("x-aihub-installation-key")).toBe(false);
     expect(JSON.parse(String(options?.body))).toEqual({
-      token: "a-secure-bootstrap-token-with-more-than-32-characters",
+      installationKey: "a-secure-installation-key-with-more-than-32-characters",
     });
   });
 
@@ -66,6 +68,25 @@ describe("AIHub browser API", () => {
       "/api/v1/admin/connections",
       { credentials: "same-origin" },
     );
+  });
+
+  it("does not declare JSON for a bodyless connection diagnostic", async () => {
+    const connectionId = "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d";
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({
+      connectionId,
+      status: "HEALTHY",
+      message: "Connection succeeded.",
+      checkedAt: "2026-07-30T00:00:00.000Z",
+      latencyMs: 12,
+      details: {},
+    }));
+
+    await testConnection(connectionId);
+
+    const [, options] = fetchMock.mock.calls[0]!;
+    expect(options).toMatchObject({ method: "POST", credentials: "same-origin" });
+    expect(options?.body).toBeUndefined();
+    expect(new Headers(options?.headers).has("content-type")).toBe(false);
   });
 
   it("reads and updates the dashboard-owned connection monitoring control", async () => {
@@ -104,7 +125,7 @@ describe("AIHub browser API", () => {
       modelAlias: "hermes-agent",
       workload: "AGENT",
       status: "ACTIVE",
-      connection: { id: "5277951c-7d22-4cec-8d46-fad3afba37dd", displayName: "LiteLLM Primary", kind: "LITELLM", environment: "PRODUCTION", enabled: true, status: "HEALTHY" },
+      connection: { id: "5277951c-7d22-4cec-8d46-fad3afba37dd", displayName: "vLLM Primary", kind: "VLLM", environment: "PRODUCTION", enabled: true, status: "HEALTHY" },
       version: "2.1-nvfp4",
       license: null,
       contextWindowTokens: 131072,
@@ -143,8 +164,10 @@ describe("AIHub browser API", () => {
       description: "Approved chat safety controls.",
       version: "1.0.0",
       status: "ACTIVE",
-      liteLLMGuardrails: ["presidio-pii"],
       maxInputCharacters: 12000,
+      maxOutputCharacters: 200000,
+      blockControlCharacters: true,
+      blockCredentialPatterns: true,
       activationEvaluationId: "de44bc5d-0355-4c3f-872e-1af99f356d19",
       firstActivatedAt: "2026-07-30T00:00:00.000Z",
       revision: 2,
@@ -232,11 +255,11 @@ describe("AIHub browser API", () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({
       connection: {
         id: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d",
-        slug: "litellm-primary",
-        displayName: "LiteLLM Primary",
-        kind: "LITELLM",
+        slug: "vllm-primary",
+        displayName: "vLLM Primary",
+        kind: "VLLM",
         environment: "PRODUCTION",
-        baseUrl: "https://litellm.mpm.internal",
+        baseUrl: "https://vllm.mpm.internal",
         enabled: true,
         status: "NOT_TESTED",
         configuration: {},

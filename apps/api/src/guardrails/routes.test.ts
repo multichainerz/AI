@@ -23,8 +23,10 @@ const policy: GuardrailPolicy = {
   description: "Approved chat safety controls.",
   version: "1.0.0",
   status: "ACTIVE",
-  liteLLMGuardrails: ["presidio-pii"],
   maxInputCharacters: 12_000,
+  maxOutputCharacters: 200_000,
+  blockControlCharacters: true,
+  blockCredentialPatterns: true,
   activationEvaluationId: EVALUATION_ID,
   firstActivatedAt: "2026-07-30T00:00:00.000Z",
   revision: 2,
@@ -35,7 +37,7 @@ const policy: GuardrailPolicy = {
 };
 
 class Sessions implements AdminSessionManager {
-  async createBootstrapSession() { return null; }
+  async createInstallationKeySession() { return null; }
   async authenticate(token: string | undefined) { return token === TOKEN ? session : null; }
   async revoke() { return false; }
 }

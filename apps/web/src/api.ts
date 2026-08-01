@@ -3,9 +3,8 @@ import {
   connectionMonitoringControlSchema,
   administratorSessionSchema,
   configurationRevisionListSchema,
-  jobActionResultSchema,
-  jobOperationsSnapshotSchema,
-  jobProbeResultSchema,
+  memoryReindexResultSchema,
+  runtimeOperationsSnapshotSchema,
   platformMetaSchema,
   serviceConnectionListSchema,
   serviceConnectionSummarySchema,
@@ -24,9 +23,8 @@ import {
   type ConnectionMonitoringControl,
   type UpdateConnectionMonitoringControl,
   type ConfigurationRevisionList,
-  type JobActionResult,
-  type JobOperationsSnapshot,
-  type JobProbeResult,
+  type MemoryReindexResult,
+  type RuntimeOperationsSnapshot,
   type PlatformMeta,
   type ServiceConnectionList,
   type ServiceConnectionSummary,
@@ -204,12 +202,12 @@ function adminHeaders(): HeadersInit {
   };
 }
 
-export async function createAdministratorSession(token: string): Promise<AdministratorSession> {
-  const response = await fetch("/api/v1/admin/session/bootstrap", {
+export async function createAdministratorSession(installationKey: string): Promise<AdministratorSession> {
+  const response = await fetch("/api/v1/admin/session/installation-key", {
     method: "POST",
     headers: adminHeaders(),
     credentials: "same-origin",
-    body: JSON.stringify({ token }),
+    body: JSON.stringify({ installationKey }),
   });
   return administratorSessionSchema.parse(await parsedResponse(response));
 }
@@ -308,7 +306,6 @@ export async function testConnection(
 ): Promise<ConnectionTestResult> {
   const response = await fetch(`/api/v1/admin/connections/${encodeURIComponent(id)}/test`, {
     method: "POST",
-    headers: adminHeaders(),
     credentials: "same-origin",
   });
   return connectionTestResultSchema.parse(await parsedResponse(response));
@@ -341,32 +338,11 @@ export async function rollbackConfiguration(
   return rollbackConfigurationResultSchema.parse(await parsedResponse(response));
 }
 
-export async function getJobOperations(): Promise<JobOperationsSnapshot> {
-  const response = await fetch("/api/v1/admin/operations/jobs", {
+export async function getRuntimeOperations(): Promise<RuntimeOperationsSnapshot> {
+  const response = await fetch("/api/v1/admin/operations/runtime", {
     credentials: "same-origin",
   });
-  return jobOperationsSnapshotSchema.parse(await parsedResponse(response));
-}
-
-export async function sendSystemProbe(): Promise<JobProbeResult> {
-  const response = await fetch("/api/v1/admin/operations/jobs/probe", {
-    method: "POST",
-    headers: adminHeaders(),
-    credentials: "same-origin",
-  });
-  return jobProbeResultSchema.parse(await parsedResponse(response));
-}
-
-export async function redriveDeadLetters(
-  limit = 100,
-): Promise<JobActionResult> {
-  const response = await fetch("/api/v1/admin/operations/jobs/dead-letter/redrive", {
-    method: "POST",
-    headers: adminHeaders(),
-    credentials: "same-origin",
-    body: JSON.stringify({ limit }),
-  });
-  return jobActionResultSchema.parse(await parsedResponse(response));
+  return runtimeOperationsSnapshotSchema.parse(await parsedResponse(response));
 }
 
 export async function getChatConversations(): Promise<ChatConversationList> {
@@ -530,7 +506,6 @@ export async function decideDocumentQuarantine(
 export async function reprocessDocument(id: string): Promise<DocumentDetail> {
   const response = await fetch(`/api/v1/documents/${encodeURIComponent(id)}/reprocess`, {
     method: "POST",
-    headers: adminHeaders(),
     credentials: "same-origin",
   });
   return documentDetailSchema.parse(await parsedResponse(response));
@@ -567,12 +542,12 @@ export async function getMemoryMetrics(): Promise<MemoryMetrics> {
   return memoryMetricsSchema.parse(await parsedResponse(response));
 }
 
-export async function reindexMemoryDocument(documentId: string): Promise<JobActionResult> {
+export async function reindexMemoryDocument(documentId: string): Promise<MemoryReindexResult> {
   const response = await fetch(
     `/api/v1/admin/memory/documents/${encodeURIComponent(documentId)}/reindex`,
-    { method: "POST", headers: adminHeaders(), credentials: "same-origin" },
+    { method: "POST", credentials: "same-origin" },
   );
-  return jobActionResultSchema.parse(await parsedResponse(response));
+  return memoryReindexResultSchema.parse(await parsedResponse(response));
 }
 
 export async function getAgentProfiles(administrator: boolean): Promise<AgentProfileList> {
@@ -597,7 +572,7 @@ export async function updateAgentProfile(id: string, input: UpdateAgentProfile):
 
 export async function setAgentProfileState(id: string, action: "standby" | "activate" | "suspend"): Promise<AgentProfile> {
   const response = await fetch(`/api/v1/admin/agents/profiles/${encodeURIComponent(id)}/${action}`, {
-    method: "POST", headers: adminHeaders(), credentials: "same-origin",
+    method: "POST", credentials: "same-origin",
   });
   return agentProfileSchema.parse(await parsedResponse(response));
 }
@@ -624,7 +599,7 @@ export async function submitAgentRun(profileId: string, input: string): Promise<
 export async function cancelAgentRun(runId: string, administrator: boolean): Promise<AgentRun> {
   const prefix = administrator ? "/api/v1/admin/agents" : "/api/v1/agents";
   const response = await fetch(`${prefix}/runs/${encodeURIComponent(runId)}/cancel`, {
-    method: "POST", headers: adminHeaders(), credentials: "same-origin",
+    method: "POST", credentials: "same-origin",
   });
   return agentRunSchema.parse(await parsedResponse(response));
 }
@@ -774,7 +749,7 @@ export async function issueGatewayCredential(name: string): Promise<IssuedGatewa
 
 export async function revokeGatewayCredential(id: string): Promise<void> {
   const response = await fetch(`/api/v1/admin/tooling/credentials/${encodeURIComponent(id)}`, {
-    method: "DELETE", headers: adminHeaders(), credentials: "same-origin",
+    method: "DELETE", credentials: "same-origin",
   });
   if (!response.ok) await parsedResponse(response);
 }

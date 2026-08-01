@@ -2,9 +2,23 @@ import type { AIHubPrismaClient } from "@aihub/database";
 import { describe, expect, it, vi } from "vitest";
 import type { ConnectionDiagnosticStore } from "../connections/diagnostics/types.js";
 import { ChatConfigurationError, ChatPolicyViolationError } from "./chat-manager.js";
-import { boundedContextMessages, PrismaChatManager } from "./prisma-chat-manager.js";
+import { acquireChatRateLimitLock, boundedContextMessages, PrismaChatManager } from "./prisma-chat-manager.js";
 
 describe("chat context bounding", () => {
+  it("acquires the transaction lock without deserializing PostgreSQL's void result", async () => {
+    const executeRaw = vi.fn(async (..._arguments: unknown[]) => 1);
+
+    await acquireChatRateLimitLock(
+      { $executeRaw: executeRaw } as unknown as Parameters<typeof acquireChatRateLimitLock>[0],
+      "user:pilot",
+    );
+
+    expect(executeRaw).toHaveBeenCalledTimes(1);
+    const call = executeRaw.mock.calls[0];
+    expect((call?.[0] as TemplateStringsArray).join(" ")).toContain("pg_advisory_xact_lock");
+    expect(call?.[1]).toBe("aihub-chat:user:pilot");
+  });
+
   it("keeps the newest complete messages within the character budget and restores chronology", () => {
     const result = boundedContextMessages([
       { role: "USER", content: "latest-user" },
@@ -90,8 +104,10 @@ describe("chat context bounding", () => {
         findMany: vi.fn(async () => [{
           id: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d",
           version: "1.0.0",
-          liteLLMGuardrails: ["presidio-pii"],
           maxInputCharacters: 5,
+          maxOutputCharacters: 200_000,
+          blockControlCharacters: true,
+          blockCredentialPatterns: true,
         }]),
       },
       modelDeployment: {
@@ -105,7 +121,7 @@ describe("chat context bounding", () => {
     const connections = {
       resolveForDiagnostic: vi.fn(async () => ({
         id: "5277951c-7d22-4cec-8d46-fad3afba37dd",
-        baseUrl: "https://litellm.mpm.internal",
+        baseUrl: "https://vllm.mpm.internal",
         configuration: {},
         secrets: { apiKey: "secret" },
       })),

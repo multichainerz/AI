@@ -46,22 +46,39 @@ const OnboardingView = lazy(() => import("./onboarding-view.js").then((module) =
 
 type ActiveView = "Overview" | "Deployment" | "Chat" | "Models" | "Prompts" | "Agents" | "Documents" | "Memory" | "Integrations" | "Guardrails" | "Operations";
 
-const navigation: ReadonlyArray<{
+type NavigationItem = {
   label: string;
   icon: string;
   available: boolean;
-}> = [
-  { label: "Overview", icon: "overview", available: true },
-  { label: "Deployment", icon: "setup", available: true },
-  { label: "Chat", icon: "chat", available: true },
-  { label: "Models", icon: "models", available: true },
-  { label: "Prompts", icon: "prompts", available: true },
-  { label: "Agents", icon: "agents", available: true },
-  { label: "Documents", icon: "documents", available: true },
-  { label: "Memory", icon: "memory", available: true },
-  { label: "Integrations", icon: "integrations", available: true },
-  { label: "Guardrails", icon: "guardrails", available: true },
-  { label: "Operations", icon: "operations", available: true },
+};
+
+const navigationGroups: ReadonlyArray<{ label: string; items: ReadonlyArray<NavigationItem> }> = [
+  {
+    label: "Workspace",
+    items: [
+      { label: "Overview", icon: "overview", available: true },
+      { label: "Chat", icon: "chat", available: true },
+      { label: "Documents", icon: "documents", available: true },
+      { label: "Memory", icon: "memory", available: true },
+    ],
+  },
+  {
+    label: "Intelligence",
+    items: [
+      { label: "Models", icon: "models", available: true },
+      { label: "Prompts", icon: "prompts", available: true },
+      { label: "Agents", icon: "agents", available: true },
+    ],
+  },
+  {
+    label: "Control",
+    items: [
+      { label: "Deployment", icon: "setup", available: true },
+      { label: "Integrations", icon: "integrations", available: true },
+      { label: "Guardrails", icon: "guardrails", available: true },
+      { label: "Operations", icon: "operations", available: true },
+    ],
+  },
 ];
 
 function Glyph({ name }: { name: string }) {
@@ -87,7 +104,10 @@ function connectionState(connection: ServiceConnectionSummary | undefined) {
   if (!connection) return { label: "Not configured", tone: "unconfigured" };
   if (!connection.enabled) return { label: "Saved, disabled", tone: "disabled" };
   return {
-    label: connection.status.replaceAll("_", " ").toLowerCase(),
+    label: connection.status
+      .replaceAll("_", " ")
+      .toLowerCase()
+      .replace(/^./, (character) => character.toUpperCase()),
     tone: connection.status.toLowerCase(),
   };
 }
@@ -108,7 +128,7 @@ function App() {
   const [managedConnections, setManagedConnections] = useState<ServiceConnectionSummary[]>([]);
   const [connectionMonitoring, setConnectionMonitoring] = useState<ConnectionMonitoringControl | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [drawerKind, setDrawerKind] = useState<ServiceKind>("LITELLM");
+  const [drawerKind, setDrawerKind] = useState<ServiceKind>("VLLM");
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [diagnostic, setDiagnostic] = useState<ConnectionTestResult | null>(null);
@@ -143,7 +163,7 @@ function App() {
 
   useEffect(() => {
     const item = activeNavigationItem.current;
-    const container = item?.parentElement;
+    const container = item?.closest("nav");
     if (!item || !container || container.scrollWidth <= container.clientWidth) return;
 
     const centeredLeft = item.offsetLeft - (container.clientWidth - item.offsetWidth) / 2;
@@ -223,8 +243,37 @@ function App() {
   const agentsUnlocked = unlocked || enterpriseSession?.scopes.includes("agents:use") === true;
   const enabledConnections = managedConnections.filter(({ enabled }) => enabled).length;
   const healthyConnections = managedConnections.filter(({ status }) => status === "HEALTHY").length;
+  const healthyConnection = (kind: ServiceKind) => managedConnections.some((connection) =>
+    connection.kind === kind && connection.enabled && connection.status === "HEALTHY");
+  const readinessChecks = [
+    {
+      label: "Inference",
+      detail: healthyConnection("VLLM") ? "vLLM route is reachable" : "Connect and verify a vLLM route",
+      ready: healthyConnection("VLLM"),
+      action: "Models" as ActiveView,
+    },
+    {
+      label: "Agent runtime",
+      detail: healthyConnection("HERMES") ? "Hermes endpoint is reachable" : "Enroll or connect Hermes",
+      ready: healthyConnection("HERMES"),
+      action: "Deployment" as ActiveView,
+    },
+    {
+      label: "Durable memory",
+      detail: healthyConnection("SUPERMEMORY") ? "Supermemory is reachable" : "Connect Supermemory",
+      ready: healthyConnection("SUPERMEMORY"),
+      action: "Memory" as ActiveView,
+    },
+    {
+      label: "Enterprise access",
+      detail: oidcStatus?.configured ? "Enterprise sign-in is configured" : "Configure enterprise OIDC",
+      ready: oidcStatus?.configured === true,
+      action: "Deployment" as ActiveView,
+    },
+  ];
+  const readyWorkloads = readinessChecks.filter(({ ready }) => ready).length;
 
-  const openConnectionSettings = (kind: ServiceKind = "LITELLM") => {
+  const openConnectionSettings = (kind: ServiceKind = "VLLM") => {
     setDrawerKind(kind);
     setSettingsError(null);
     setDiagnostic(null);
@@ -239,13 +288,13 @@ function App() {
     return error instanceof Error ? error.message : fallback;
   };
 
-  const unlockSettings = async (token: string) => {
+  const unlockSettings = async (installationKey: string) => {
     const generation = ++sessionGeneration.current;
     let createdSession = false;
     setSettingsBusy(true);
     setSettingsError(null);
     try {
-      const session = await createAdministratorSession(token);
+      const session = await createAdministratorSession(installationKey);
       createdSession = true;
       const response = await getConnections();
       if (sessionGeneration.current !== generation) return false;
@@ -383,25 +432,29 @@ function App() {
       <aside className="sidebar" aria-label="AIHub navigation">
         <div className="brand">
           <div className="brand-mark">M</div>
-          <div><strong>MPM AIHub</strong><span>Operations console</span></div>
+          <div><strong>MPM AIHub</strong><span>On-prem AI control plane</span></div>
         </div>
-        <p className="nav-label">Workspace</p>
         <nav aria-label="Primary navigation">
-          {navigation.map(({ label, icon, available }) => (
-            <button
-              className={label === activeView ? "nav-item active" : "nav-item"}
-              disabled={!available}
-              key={label}
-              ref={label === activeView ? activeNavigationItem : undefined}
-              aria-current={label === activeView ? "page" : undefined}
-              type="button"
-              title={available ? label : `${label} is planned for a later phase`}
-              onClick={() => available && selectView(label as ActiveView)}
-            >
-              <Glyph name={icon} />
-              <span>{label}</span>
-              {!available && <small>Planned</small>}
-            </button>
+          {navigationGroups.map((group) => (
+            <div className="nav-group" key={group.label}>
+              <p className="nav-label">{group.label}</p>
+              {group.items.map(({ label, icon, available }) => (
+                <button
+                  className={label === activeView ? "nav-item active" : "nav-item"}
+                  disabled={!available}
+                  key={label}
+                  ref={label === activeView ? activeNavigationItem : undefined}
+                  aria-current={label === activeView ? "page" : undefined}
+                  type="button"
+                  title={available ? label : `${label} is planned for a later phase`}
+                  onClick={() => available && selectView(label as ActiveView)}
+                >
+                  <Glyph name={icon} />
+                  <span>{label}</span>
+                  {!available && <small>Planned</small>}
+                </button>
+              ))}
+            </div>
           ))}
         </nav>
         <div className="sidebar-bottom">
@@ -440,7 +493,7 @@ function App() {
           <ModelsView
             session={adminSession}
             connections={managedConnections}
-            onConfigureConnections={() => openConnectionSettings("LITELLM")}
+            onConfigureConnections={() => openConnectionSettings("VLLM")}
             onOpenOperations={() => selectView("Operations")}
             onSessionExpired={() => {
               sessionGeneration.current += 1;
@@ -451,7 +504,7 @@ function App() {
           <PromptsView
             session={adminSession}
             onOpenOperations={() => selectView("Operations")}
-            onOpenSettings={() => openConnectionSettings("LITELLM")}
+            onOpenSettings={() => openConnectionSettings("VLLM")}
             onSessionExpired={() => {
               sessionGeneration.current += 1;
               setAdminSession(null);
@@ -476,7 +529,7 @@ function App() {
             administrator={adminSession !== null}
             oidcConfigured={oidcStatus?.configured === true}
             onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23documents")}
-            onConfigure={() => openConnectionSettings("OCR")}
+            onConfigure={() => openConnectionSettings("SUPERMEMORY")}
             onUnauthorized={() => {
               sessionGeneration.current += 1;
               setAdminSession(null);
@@ -505,7 +558,7 @@ function App() {
         ) : activeView === "Guardrails" ? (
           <GuardrailsView
             session={adminSession}
-            onConfigureLiteLLM={() => openConnectionSettings("LITELLM")}
+            onConfigureInference={() => openConnectionSettings("VLLM")}
             onOpenOperations={() => selectView("Operations")}
             onSessionExpired={() => {
               sessionGeneration.current += 1;
@@ -514,9 +567,11 @@ function App() {
           />
         ) : activeView === "Deployment" ? (
           <OnboardingView
+            connections={managedConnections}
             unlocked={unlocked}
             oidcConfigured={oidcStatus?.administratorSignIn === true}
             onConfigure={(kind) => openConnectionSettings(kind)}
+            onOpenWorkspace={(workspace) => selectView(workspace)}
             onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23deployment")}
             onUnauthorized={() => {
               sessionGeneration.current += 1;
@@ -537,12 +592,12 @@ function App() {
           <>
             <header className="topbar">
               <div className="page-heading">
-                <p className="page-kicker">Control plane</p>
-                <h1>Platform overview</h1>
-                <p>Configure and supervise the services that power MPM's on-premise AI platform.</p>
+                <p className="page-kicker">Control plane overview</p>
+                <h1>AI operations at a glance</h1>
+                <p>Current readiness, infrastructure health, and the shortest path to a usable on-premise AI workspace.</p>
               </div>
               <div className="topbar-actions">
-                <span className={`status-chip ${apiAvailable ? "online" : "offline"}`}><i />{apiAvailable ? "API available" : "API unavailable"}</span>
+                <span className={`status-chip ${apiAvailable ? "online" : "offline"}`}><i />{apiAvailable ? "Control plane online" : "Control plane offline"}</span>
                 <button className="primary-button" type="button" onClick={() => openConnectionSettings()}>Manage platform</button>
               </div>
             </header>
@@ -550,17 +605,17 @@ function App() {
             <section className={`setup-banner ${bootstrapState.toLowerCase()}`}>
               <div className="banner-icon"><Glyph name="guardrails" /></div>
               <div>
-                <strong>{bootstrapState === "READY" ? "Encrypted credential store ready" : bootstrapState === "REQUIRED" ? "Installation claim required" : "Installation trust locked"}</strong>
-                <p>{bootstrapState === "READY" ? "Claim an administrator session to manage encrypted endpoints and credentials." : "Run the protected host installer before configuring services."}</p>
+                <strong>{bootstrapState === "READY" ? unlocked ? "Administrator workspace active" : "Installation Key ready" : bootstrapState === "REQUIRED" ? "Installation required" : "Installation trust locked"}</strong>
+                <p>{bootstrapState === "READY" ? unlocked ? `${readyWorkloads} of ${readinessChecks.length} core capabilities are ready.` : "Unlock a local administrator session to manage encrypted endpoints and credentials." : "Run the protected host installer before configuring services."}</p>
               </div>
-              <button type="button" onClick={() => openConnectionSettings()}>{bootstrapState === "READY" ? "Open connections" : "Review setup"}</button>
+              <button type="button" onClick={() => bootstrapState === "READY" ? openConnectionSettings() : selectView("Deployment")}>{bootstrapState === "READY" ? "Open connections" : "Review setup"}</button>
             </section>
 
             <section className="metrics" aria-label="Platform summary">
               <article><span>Configured services</span><strong>{unlocked ? managedConnections.length : "—"}</strong><small>{unlocked ? `${connectionDefinitions.length} supported in this release` : "Unlock to view"}</small></article>
               <article><span>Healthy connections</span><strong>{unlocked ? healthyConnections : "—"}</strong><small>{connectionMonitoring?.enabled ? monitoringCadence(connectionMonitoring.intervalSeconds) : "Credential-aware checks"}</small></article>
               <article><span>Enabled connections</span><strong>{unlocked ? enabledConnections : "—"}</strong><small>Available to AIHub services</small></article>
-              <article><span>Tool posture</span><strong>Default deny</strong><small>Gateway staged · approval gated</small></article>
+              <article><span>Tool posture</span><strong className="metric-posture">Default deny</strong><small>No access without an explicit grant</small></article>
             </section>
 
             <div className="content-grid">
@@ -572,13 +627,13 @@ function App() {
                 <div className="connection-list">
                   {connectionDefinitions.map((definition) => {
                     const saved = managedConnections.find(({ kind }) => kind === definition.kind);
-                    const state = connectionState(saved);
+                    const state = unlocked ? connectionState(saved) : { label: "Unlock to view", tone: "disabled" };
                     return (
                       <article className="connection" key={definition.name}>
                         <div className={`connection-mark ${definition.tone}`}>{definition.name.slice(0, 2).toUpperCase()}</div>
                         <div className="connection-copy"><strong>{definition.name}</strong><span>{saved?.baseUrl ?? definition.role}</span></div>
                         <span className={`connection-status ${state.tone}`}><i />{state.label}</span>
-                        <button type="button" aria-label={`Configure ${definition.name}`} onClick={() => openConnectionSettings(definition.kind)}>{saved ? "Edit" : "Configure"}</button>
+                        <button type="button" aria-label={`Configure ${definition.name}`} onClick={() => openConnectionSettings(definition.kind)}>{unlocked ? saved ? "Edit" : "Configure" : "Unlock"}</button>
                       </article>
                     );
                   })}
@@ -586,19 +641,18 @@ function App() {
               </section>
 
               <section className="panel architecture-panel">
-                <div className="panel-heading"><div><p className="section-kicker">Runtime trust boundary</p><h2>Agent inference route</h2><p>The zero-tool Hermes path remains enforced while the governed MCP gateway is accepted.</p></div></div>
+                <div className="panel-heading"><div><p className="section-kicker">Runtime trust boundary</p><h2>Target execution path</h2><p>Hermes stays isolated while AIHub mediates identity, policy, model access, and approved integrations.</p></div><span className="phase-tag">Default deny</span></div>
                 <ol className="runtime-flow">
-                  <li><span>1</span><div><strong>AIHub</strong><small>Identity and policy</small></div></li>
-                  <li><span>2</span><div><strong>Hermes</strong><small>Scoped execution</small></div></li>
-                  <li><span>3</span><div><strong>LiteLLM</strong><small>Gateway controls</small></div></li>
-                  <li><span>4</span><div><strong>vLLM</strong><small>On-prem inference</small></div></li>
+                  <li><span>1</span><div><strong>AIHub</strong><small>Identity and orchestration</small></div></li>
+                  <li><span>2</span><div><strong>Hermes</strong><small>Isolated agent runtime</small></div></li>
+                  <li><span>3</span><div><strong>AIHub gateway</strong><small>Model policy and audit</small></div></li>
+                  <li><span>4</span><div><strong>vLLM</strong><small>Local model inference</small></div></li>
                 </ol>
-                <div className="boundary-note"><Glyph name="guardrails" /><div><strong>Credentials stay behind AIHub</strong><p>Hermes receives the bounded request and model alias, never storage, database, or connector credentials.</p></div></div>
+                <div className="boundary-note"><Glyph name="guardrails" /><div><strong>Secrets terminate at AIHub</strong><p>Hermes receives bounded runtime access; database and enterprise connector credentials remain in the control plane.</p></div></div>
               </section>
 
-              <section className="panel delivery-panel">
-                <div className="panel-heading"><div><p className="section-kicker">Delivery</p><h2>On-premise AI workflows</h2><p>Phase 7 connects operational evidence, incident response, guardrail posture, and release gates across the existing workflows.</p></div><span className="phase-tag">Phase 7 foundation</span></div>
-                <div className="progress-copy"><span>Implementation status</span><strong>Acceptance candidate</strong></div>
+              <section className="panel readiness-panel">
+                <div className="panel-heading"><div><p className="section-kicker">Operational readiness</p><h2>Core capabilities</h2><p>Live connection state determines what operators and employees can use now.</p></div><span className={`readiness-count ${!unlocked ? "restricted" : readyWorkloads === readinessChecks.length ? "ready" : "pending"}`}>{unlocked ? `${readyWorkloads}/${readinessChecks.length} ready` : "Unlock to verify"}</span></div>
                 {chatMetrics && (
                   <div className="chat-metric-grid" aria-label="Chat metrics for the last 24 hours">
                     <div><span>Responses</span><strong>{chatMetrics.responses.toLocaleString()}</strong></div>
@@ -607,16 +661,15 @@ function App() {
                     <div><span>Tokens</span><strong>{chatMetrics.totalTokens.toLocaleString()}</strong></div>
                   </div>
                 )}
-                <ul>
-                  <li className="done">Controlled LiteLLM chat and enterprise identity</li>
-                  <li className="done">Encrypted transient conversion, OCR, and knowledge publication</li>
-                  <li className="done">Private Supermemory retrieval with source evidence</li>
-                  <li className="done">Immutable Hermes profiles and global runtime control</li>
-                  <li className="done">Zero-tool capability preflight and run revocation</li>
-                  <li className="done">MCP registry, exact-version grants, and approval inbox</li>
-                  <li className="done">AI operations, durable incidents, and evaluation release gates</li>
-                  <li className="next">Live Hermes propagation, GPU telemetry, SIEM, and target acceptance</li>
-                </ul>
+                <div className="readiness-list">
+                  {readinessChecks.map((check) => (
+                    <button type="button" key={check.label} onClick={() => unlocked ? selectView(check.action) : openConnectionSettings()}>
+                      <span className={`readiness-dot ${!unlocked ? "restricted" : check.ready ? "ready" : "pending"}`}><i /></span>
+                      <span><strong>{check.label}</strong><small>{unlocked ? check.detail : "Unlock to view current readiness"}</small></span>
+                      <span aria-hidden="true">→</span>
+                    </button>
+                  ))}
+                </div>
               </section>
             </div>
           </>

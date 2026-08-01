@@ -7,6 +7,9 @@ INSTALLER_VERSION="ai-v1.7.0"
 STATE_ROOT="${AIHUB_HERMES_STATE_ROOT:-/var/lib/aihub-hermes}"
 CONTAINER_NAME="aihub-hermes"
 HEARTBEAT_SERVICE="aihub-hermes-heartbeat"
+SUPERMEMORY_ROOT="${AIHUB_SUPERMEMORY_STATE_ROOT:-/var/lib/aihub-supermemory}"
+SUPERMEMORY_SERVICE="aihub-supermemory"
+SUPERMEMORY_USER="aihub-supermemory"
 
 fail() {
   printf 'Hermes node installer error: %s\n' "$1" >&2
@@ -53,6 +56,99 @@ validate_bundle() {
   expires_at="$(jq -r '.expiresAt' "${bundle}")"
   expires_epoch="$(date --date="${expires_at}" '+%s' 2>/dev/null)" || fail "the enrollment expiry is invalid"
   (( expires_epoch > $(date '+%s') )) || fail "the enrollment bundle has expired; issue a new invitation in AIHub"
+}
+
+sign_node_payload() {
+  local body="$1" timestamp="$2" nonce="$3"
+  local body_digest message
+  body_digest="$(printf '%s' "${body}" | sha256sum | awk '{print $1}')"
+  message="$(printf '%s\n%s\n%s' "${timestamp}" "${nonce}" "${body_digest}")"
+  printf '%s' "${message}" \
+    | openssl pkeyutl -sign -rawin -inkey "${STATE_ROOT}/identity/node.key" \
+    | openssl base64 -A \
+    | tr '+/' '-_' \
+    | tr -d '='
+}
+
+install_supermemory() {
+  local inference_base_url="$1" model_alias="$2" gateway_key="$3"
+  local requested_version="${AIHUB_SUPERMEMORY_VERSION:-latest}"
+  local install_dir="${SUPERMEMORY_ROOT}/install"
+  local bin_dir="${SUPERMEMORY_ROOT}/bin"
+
+  if ! id -u "${SUPERMEMORY_USER}" >/dev/null 2>&1; then
+    useradd --system --home-dir "${SUPERMEMORY_ROOT}" --shell /usr/sbin/nologin "${SUPERMEMORY_USER}"
+  fi
+  install -d -m 0750 -o "${SUPERMEMORY_USER}" -g "${SUPERMEMORY_USER}" \
+    "${SUPERMEMORY_ROOT}" "${SUPERMEMORY_ROOT}/data" "${install_dir}" "${bin_dir}"
+
+  printf 'Installing the checksum-verified Supermemory Local binary (%s)...\n' "${requested_version}"
+  curl -fsSL https://supermemory.ai/install \
+    | SUPERMEMORY_INSTALL_DIR="${install_dir}" \
+      SUPERMEMORY_BIN_DIR="${bin_dir}" \
+      SUPERMEMORY_NO_START=1 \
+      SUPERMEMORY_NO_PROMPT=1 \
+      bash -s -- "${requested_version}"
+  chown -R "${SUPERMEMORY_USER}:${SUPERMEMORY_USER}" "${SUPERMEMORY_ROOT}"
+
+  install -m 0600 -o "${SUPERMEMORY_USER}" -g "${SUPERMEMORY_USER}" /dev/stdin "${SUPERMEMORY_ROOT}/runtime.env" <<EOF
+OPENAI_BASE_URL=${inference_base_url}
+OPENAI_API_KEY=${gateway_key}
+OPENAI_MODEL=${model_alias}
+OPENAI_FAST_MODEL=${model_alias}
+OPENAI_TEXT_MODEL=${model_alias}
+SUPERMEMORY_DATA_DIR=${SUPERMEMORY_ROOT}/data
+SUPERMEMORY_PORT=6767
+SUPERMEMORY_EMBEDDING_PROVIDER=local
+SUPERMEMORY_DISABLE_TELEMETRY=1
+EOF
+
+  install -m 0644 /dev/stdin "/etc/systemd/system/${SUPERMEMORY_SERVICE}.service" <<EOF
+[Unit]
+Description=MPM Supermemory Local runtime
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=${SUPERMEMORY_USER}
+Group=${SUPERMEMORY_USER}
+WorkingDirectory=${SUPERMEMORY_ROOT}
+EnvironmentFile=${SUPERMEMORY_ROOT}/runtime.env
+ExecStart=${install_dir}/bin/supermemory-server
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=${SUPERMEMORY_ROOT}
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  systemctl daemon-reload
+  systemctl enable --now "${SUPERMEMORY_SERVICE}.service"
+
+  local deadline=$((SECONDS + 180))
+  until curl --fail --silent --max-time 5 http://127.0.0.1:6767/health >/dev/null 2>&1; do
+    if (( SECONDS >= deadline )); then
+      journalctl -u "${SUPERMEMORY_SERVICE}.service" --no-pager -n 100 >&2 || true
+      fail "Supermemory Local did not become healthy within three minutes"
+    fi
+    sleep 2
+  done
+
+  local memory_api_key=""
+  while [[ -z "${memory_api_key}" && ${SECONDS} -lt ${deadline} ]]; do
+    memory_api_key="$(journalctl -u "${SUPERMEMORY_SERVICE}.service" --no-pager -o cat 2>/dev/null \
+      | grep -Eo 'sm_[A-Za-z0-9_-]{20,}' | tail -1 || true)"
+    [[ -n "${memory_api_key}" ]] || sleep 1
+  done
+  [[ -n "${memory_api_key}" ]] || fail "Supermemory Local started but its first-boot API key could not be captured"
+  printf '%s' "${memory_api_key}" > "${SUPERMEMORY_ROOT}/api-key"
+  chown root:root "${SUPERMEMORY_ROOT}/api-key"
+  chmod 0600 "${SUPERMEMORY_ROOT}/api-key"
 }
 
 write_heartbeat_client() {
@@ -185,6 +281,7 @@ EOF
     --cap-add SETGID \
     --cap-add SETUID \
     --security-opt no-new-privileges:true \
+    --add-host host.docker.internal:host-gateway \
     -e HERMES_UID=10000 \
     -e HERMES_GID=10000 \
     -e API_SERVER_ENABLED=true \
@@ -214,10 +311,11 @@ EOF
     --arg token "${token}" \
     --arg hostname "${hostname_value}" \
     --arg publicKeyPem "${public_key}" \
+    --arg controlPlaneUrl "${control_plane_url}" \
     --arg apiKey "${api_key}" \
     --arg hermesVersion "${hermes_image}" \
     --arg installerVersion "${INSTALLER_VERSION}" \
-    '{nodeId:$nodeId,token:$token,hostname:$hostname,publicKeyPem:$publicKeyPem,apiKey:$apiKey,hermesVersion:$hermesVersion,installerVersion:$installerVersion,capabilities:["gateway-api","signed-heartbeat"]}' \
+    '{nodeId:$nodeId,token:$token,hostname:$hostname,publicKeyPem:$publicKeyPem,controlPlaneUrl:$controlPlaneUrl,apiKey:$apiKey,hermesVersion:$hermesVersion,installerVersion:$installerVersion,capabilities:["gateway-api","signed-heartbeat"]}' \
     > "${request_file}"
   http_status="$(curl --silent --show-error --output "${response_file}" --write-out '%{http_code}' --max-time 30 \
     -H 'Content-Type: application/json' --data-binary "@${request_file}" \
@@ -232,16 +330,58 @@ EOF
     (.modelBootstrap.baseUrl | test("^https?://")) and
     (.modelBootstrap.modelAlias | type == "string" and length > 0) and
     (.modelBootstrap.apiKey | type == "string" and length > 0)
-  ' "${response_file}" >/dev/null || fail "AIHub enrollment omitted the approved LiteLLM runtime route"
+  ' "${response_file}" >/dev/null || fail "AIHub enrollment omitted its approved inference-gateway route"
   local model_base_url_json model_alias_json model_api_key_json
   model_base_url_json="$(jq -c '.modelBootstrap.baseUrl' "${response_file}")"
   model_alias_json="$(jq -c '.modelBootstrap.modelAlias' "${response_file}")"
   model_api_key_json="$(jq -c '.modelBootstrap.apiKey' "${response_file}")"
+  local model_base_url model_alias model_api_key
+  model_base_url="$(jq -r '.modelBootstrap.baseUrl' "${response_file}")"
+  model_alias="$(jq -r '.modelBootstrap.modelAlias' "${response_file}")"
+  model_api_key="$(jq -r '.modelBootstrap.apiKey' "${response_file}")"
+
+  install_supermemory "${model_base_url}" "${model_alias}" "${model_api_key}"
+  local supermemory_api_key supermemory_version runtime_authority runtime_host supermemory_base_url
+  supermemory_api_key="$(<"${SUPERMEMORY_ROOT}/api-key")"
+  supermemory_version="$(<"${SUPERMEMORY_ROOT}/install/bin/supermemory-server.version")"
+  runtime_authority="${hermes_base_url#*://}"
+  runtime_authority="${runtime_authority%%/*}"
+  if [[ "${runtime_authority}" == \[*\]* ]]; then
+    runtime_host="${runtime_authority%%]*}]"
+  else
+    runtime_host="${runtime_authority%%:*}"
+  fi
+  [[ -n "${runtime_host}" ]] || fail "the Hermes base URL does not contain a usable runtime host"
+  supermemory_base_url="http://${runtime_host}:6767"
+  curl --fail --silent --max-time 5 "${supermemory_base_url}/health" >/dev/null 2>&1 \
+    || fail "Supermemory is healthy on loopback but is not reachable through the invited runtime host on TCP 6767"
+
+  docker exec --user 10000:10000 "${CONTAINER_NAME}" python -c \
+    'from tools.lazy_deps import ensure; ensure("memory.supermemory", prompt=False)' >/dev/null
   install -m 0640 -o 10000 -g 10000 /dev/stdin "${STATE_ROOT}/data/config.yaml" <<EOF
 model:
   default: ${model_alias_json}
   provider: custom
   base_url: ${model_base_url_json}
+# Hermes otherwise falls back to its broad api_server platform preset. Keep
+# the production baseline tool-free (including dynamically configured MCP
+# servers) until AIHub explicitly distributes and verifies a governed toolset.
+platform_toolsets:
+  api_server:
+    - no_mcp
+memory:
+  provider: supermemory
+EOF
+  install -m 0640 -o 10000 -g 10000 /dev/stdin "${STATE_ROOT}/data/supermemory.json" <<EOF
+{
+  "base_url": "http://host.docker.internal:6767",
+  "container_tag": "mpm-agent-{identity}",
+  "auto_recall": true,
+  "auto_capture": true,
+  "search_mode": "hybrid",
+  "max_recall_results": 10,
+  "enable_custom_container_tags": false
+}
 EOF
   install -m 0600 -o 10000 -g 10000 /dev/stdin "${STATE_ROOT}/data/.env" <<EOF
 API_SERVER_ENABLED=true
@@ -250,13 +390,32 @@ API_SERVER_PORT=8642
 API_SERVER_KEY=${api_key}
 OPENAI_BASE_URL=${model_base_url_json}
 OPENAI_API_KEY=${model_api_key_json}
+SUPERMEMORY_API_KEY=${supermemory_api_key}
 EOF
   docker restart "${CONTAINER_NAME}" >/dev/null
   deadline=$((SECONDS + 180))
   until curl --fail --silent --max-time 5 http://127.0.0.1:8642/health >/dev/null 2>&1; do
-    (( SECONDS < deadline )) || fail "Hermes did not recover after applying the AIHub-managed LiteLLM route"
+    (( SECONDS < deadline )) || fail "Hermes did not recover after applying the AIHub-managed inference route"
     sleep 2
   done
+
+  local memory_payload memory_timestamp memory_nonce memory_signature memory_status
+  memory_payload="$(jq -cS -n \
+    --arg baseUrl "${supermemory_base_url}" \
+    --arg apiKey "${supermemory_api_key}" \
+    --arg observedVersion "${supermemory_version}" \
+    '{baseUrl:$baseUrl,apiKey:$apiKey,observedVersion:$observedVersion}')"
+  memory_timestamp="$(date --utc '+%Y-%m-%dT%H:%M:%SZ')"
+  memory_nonce="$(cat /proc/sys/kernel/random/uuid)"
+  memory_signature="$(sign_node_payload "${memory_payload}" "${memory_timestamp}" "${memory_nonce}")"
+  memory_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --max-time 30 \
+    -H 'Content-Type: application/json' \
+    -H "X-AIHub-Node-Timestamp: ${memory_timestamp}" \
+    -H "X-AIHub-Node-Nonce: ${memory_nonce}" \
+    -H "X-AIHub-Node-Signature: ${memory_signature}" \
+    --data-binary "${memory_payload}" \
+    "${control_plane_url}/api/v1/runtime-nodes/${node_id}/memory")"
+  [[ "${memory_status}" == "200" ]] || fail "AIHub rejected the Supermemory registration (HTTP ${memory_status})"
 
   printf '%s' "${node_id}" > "${STATE_ROOT}/node-id"
   printf '%s' "${control_plane_url}" > "${STATE_ROOT}/control-plane-url"
@@ -271,6 +430,7 @@ EOF
 
   printf '\nHermes runtime node enrolled successfully.\n'
   printf 'Runtime API: %s\n' "${hermes_base_url}"
+  printf 'Supermemory API: %s\n' "${supermemory_base_url}"
   printf 'Node identity: %s\n' "$(openssl pkey -pubin -in "${STATE_ROOT}/identity/node.pub" -outform DER | sha256sum | awk '{print $1}')"
   printf 'The enrollment token is consumed. AIHub now monitors this node without SSH or a Docker socket.\n'
   printf 'Enforce the VM firewall allowlist before production activation: AIHub to TCP/8642, and this node to AIHub HTTPS plus approved inference/MCP destinations.\n'

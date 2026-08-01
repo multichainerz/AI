@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   completeOnboardingSchema,
-  deploymentInstallMethodSchema,
   exportRecoveryKitSchema,
   runOnboardingValidationSchema,
   updateArchitectureDecisionSchema,
@@ -10,12 +9,7 @@ import {
   verifyRecoveryKitSchema,
 } from "./onboarding.js";
 
-describe("Phase 9 onboarding contracts", () => {
-  it("accepts only the signed release-bundle installer", () => {
-    expect(deploymentInstallMethodSchema.safeParse("SIGNED_INSTALLER").success).toBe(true);
-    expect(deploymentInstallMethodSchema.safeParse("UNSUPPORTED_PLATFORM").success).toBe(false);
-  });
-
+describe("onboarding contracts", () => {
   it("requires version and evidence before a component can pass", () => {
     expect(updateComponentCompatibilitySchema.safeParse({
       status: "PASSED", note: "Validated in the target deployment.", expectedRevision: 0,
@@ -37,7 +31,7 @@ describe("Phase 9 onboarding contracts", () => {
 
   it("makes architecture changes revision-safe and completion explicit", () => {
     expect(updateArchitectureDecisionSchema.safeParse({
-      hermesMemoryMode: "MEDIATED", reason: "Keep enterprise memory mediated by AIHub.", expectedRevision: 2,
+      topologyMode: "SEGMENTED_PRODUCTION", reason: "Isolate the agent runtime from the control plane.", expectedRevision: 2,
     }).success).toBe(true);
     expect(updateArchitectureDecisionSchema.safeParse({ reason: "No actual decision.", expectedRevision: 2 }).success).toBe(false);
     expect(completeOnboardingSchema.safeParse({ reason: "Evidence accepted by MPM.", expectedRevision: 4 }).success).toBe(true);

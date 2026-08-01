@@ -26,10 +26,8 @@ type StoredModel = Prisma.ModelDeploymentGetPayload<{ include: typeof modelInclu
 type StoredConnection = StoredModel["connection"];
 
 const permittedKinds: Readonly<Record<ModelWorkload, readonly ServiceKind[]>> = {
-  CHAT: ["LITELLM"],
-  AGENT: ["LITELLM", "VLLM"],
-  EMBEDDING: ["LITELLM", "VLLM"],
-  OCR: ["OCR"],
+  CHAT: ["VLLM"],
+  AGENT: ["VLLM"],
 };
 
 function dto(model: StoredModel): ModelDeployment {

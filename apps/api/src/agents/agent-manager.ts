@@ -61,10 +61,3 @@ export class AgentRuntimeDisabledError extends Error {
     this.name = "AgentRuntimeDisabledError";
   }
 }
-
-export class AgentQueueUnavailableError extends Error {
-  constructor(message = "AIHub could not enqueue the agent run. The run was recorded as failed and can be retried safely.") {
-    super(message);
-    this.name = "AgentQueueUnavailableError";
-  }
-}

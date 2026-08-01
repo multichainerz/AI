@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   documentConversionJobPayloadSchema,
   documentDetailSchema,
-  documentOcrJobPayloadSchema,
   documentUploadMetadataSchema,
   quarantineDecisionSchema,
 } from "./documents.js";
@@ -27,36 +26,27 @@ describe("document contracts", () => {
     expect(() => quarantineDecisionSchema.parse({ decision: "APPROVE", reason: "no" })).toThrow();
   });
 
-  it("keeps queue payloads generation-safe and page-bounded", () => {
+  it("keeps normalization queue payloads generation-safe", () => {
     expect(documentConversionJobPayloadSchema.parse({ documentId: DOCUMENT_ID, generation: 2 })).toEqual({
       documentId: DOCUMENT_ID,
       generation: 2,
     });
-    expect(documentOcrJobPayloadSchema.parse({
-      documentId: DOCUMENT_ID,
-      generation: 2,
-      pages: [
-        { pageNumber: 1, mediaType: "image/png" },
-        { pageNumber: 2, mediaType: "image/jpeg" },
-      ],
-    }).pages).toHaveLength(2);
-    expect(() => documentOcrJobPayloadSchema.parse({
+    expect(() => documentConversionJobPayloadSchema.parse({
       documentId: DOCUMENT_ID,
       generation: 0,
-      pages: [],
     })).toThrow();
   });
 
   it("exposes transient staging state without durable document content", () => {
     const parsed = documentDetailSchema.parse({
       id: DOCUMENT_ID,
-      fileName: "policy.pdf",
-      mediaType: "application/pdf",
+      fileName: "policy.txt",
+      mediaType: "text/plain",
       sizeBytes: 1024,
       sha256: "a".repeat(64),
       classification: "CONFIDENTIAL",
       status: "READY",
-      pageCount: 2,
+      pageCount: 1,
       processingGeneration: 1,
       failureCode: null,
       failureMessage: null,

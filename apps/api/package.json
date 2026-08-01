@@ -15,7 +15,6 @@
     "@aihub/contracts": "workspace:*",
     "@aihub/database": "workspace:*",
     "@aihub/document-runtime": "workspace:*",
-    "@aihub/jobs": "workspace:*",
     "@aihub/security": "workspace:*",
     "@fastify/helmet": "13.1.0",
     "@fastify/multipart": "9.3.0",

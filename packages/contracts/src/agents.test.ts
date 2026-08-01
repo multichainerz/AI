@@ -21,7 +21,7 @@ const configuration = {
 } as const;
 
 describe("agent contracts", () => {
-  it("accepts only the Phase 5 single-turn safe-mode boundary", () => {
+  it("accepts only the single-turn safe-mode boundary", () => {
     expect(createAgentProfileSchema.parse(configuration)).toEqual(configuration);
     expect(createAgentProfileSchema.safeParse({ ...configuration, maxTurns: 2 }).success).toBe(false);
     expect(createAgentProfileSchema.safeParse({ ...configuration, safeMode: false }).success).toBe(false);

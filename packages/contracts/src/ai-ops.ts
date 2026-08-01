@@ -2,7 +2,7 @@ import { z } from "zod";
 import { agentMetricsSchema } from "./agents.js";
 import { chatMetricsSchema } from "./chat.js";
 import { documentMetricsSchema } from "./documents.js";
-import { jobOperationsSnapshotSchema } from "./jobs.js";
+import { runtimeOperationsSnapshotSchema } from "./runtime-operations.js";
 import { memoryMetricsSchema } from "./memory.js";
 import { toolMetricsSchema } from "./tooling.js";
 
@@ -91,7 +91,6 @@ export const incidentDecisionSchema = z.object({
 export const EVALUATION_CATEGORIES = [
   "CHAT",
   "RETRIEVAL",
-  "OCR",
   "TOOL_USE",
   "SAFETY",
   "PERMISSIONS",
@@ -266,7 +265,7 @@ export const aiOpsOverviewSchema = z.object({
   generatedAt: z.iso.datetime(),
   status: z.enum(["HEALTHY", "DEGRADED", "CRITICAL"]),
   components: z.array(aiOpsComponentSchema),
-  jobs: jobOperationsSnapshotSchema.nullable(),
+  runtime: runtimeOperationsSnapshotSchema.nullable(),
   metrics: z.object({
     chat: chatMetricsSchema.nullable(),
     documents: documentMetricsSchema.nullable(),

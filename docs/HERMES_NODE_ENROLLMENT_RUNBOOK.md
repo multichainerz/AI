@@ -1,71 +1,91 @@
-# Hermes Runtime Node Enrollment
+# Hermes and Supermemory Node Enrollment
 
-AIHub supports one active isolated Hermes execution boundary. The customer installs AIHub on VM1, then uses the Deployment wizard to enroll VM2 without giving AIHub reusable SSH credentials or access to the host Docker socket.
+## Purpose
 
-## Trust model
+This workflow turns a clean Debian/Ubuntu VM into the isolated AIHub agent runtime. It installs Hermes Agent and Supermemory Local, configures both to use AIHub's authenticated inference gateway, and establishes a signed node identity without retaining SSH credentials.
 
-- An administrator issues a random enrollment claim that expires in 10 to 1,440 minutes and is returned only in the downloadable bundle.
-- PostgreSQL stores only the SHA-256 claim digest. Issuing a replacement revokes earlier unused claims for that node.
-- VM2 generates an Ed25519 private key under `/var/lib/aihub-hermes/identity` with root-only permissions. Only the public key and its fingerprint reach AIHub.
-- Enrollment consumes the claim atomically under a PostgreSQL advisory lock and creates the encrypted Hermes API connection.
-- Each heartbeat signs the timestamp, unique nonce, and canonical request digest. AIHub accepts a five-minute clock window and persists nonce uniqueness to reject replay.
-- Revocation disables both the node identity and its generated Hermes connection. Re-enrollment requires rebuilding or deliberately clearing the old VM state after revocation.
+The installer follows the current upstream integration model: Hermes runs its official Docker gateway/API server, external memory providers are additive to built-in `MEMORY.md`/`USER.md`, and Supermemory Local is a single self-hosted binary with embedded graph storage and local embeddings. It writes an explicit `platform_toolsets.api_server: [no_mcp]` baseline so the official Hermes image does not inherit its broad default tool surface.
 
-This application identity authenticates the VM2 heartbeat. It does not replace TLS, customer firewall policy, image provenance, host hardening, or a future customer-PKI/mTLS control.
+## Prerequisites
 
-## Customer workflow
+- AIHub is installed and claimed.
+- PostgreSQL is healthy.
+- exactly one vLLM connection is enabled and healthy;
+- an evaluated Agent model route is active;
+- VM2 is a clean supported Linux host with outbound access to AIHub and the artifact sources during installation;
+- AIHub can reach the VM2 Hermes address on TCP 8642 and Supermemory address on TCP 6767;
+- the invitation uses a hostname/address that matches customer DNS and TLS policy.
 
-1. Install AIHub on VM1 with `sudo ./scripts/install-aihub.sh` and claim it in the browser.
-2. Select Control-plane only or Segmented production in **Deployment > Architecture**.
-3. Open **Deployment > Hermes nodes** and enter:
-   - a stable node name and slug;
-   - the private VM2 URL that VM1 can reach, normally `https://hermes-01.internal:8642` or protected HTTP during development;
-   - the AIHub URL that VM2 can reach;
-   - the expected VM2 hostname when the customer's inventory has assigned one;
-   - an approved Hermes image reference, pinned by digest for Production.
-4. Download the one-time JSON bundle.
-5. On VM2, download `/install/hermes-node.sh` from VM1, copy the JSON using the customer's approved administrative channel, and run the installer as root.
-6. Refresh the node panel. `Online` proves the signed outbound heartbeat; `Healthy` under **AIHub → Hermes** proves the reverse API route.
-7. Configure LiteLLM before issuing the invitation. During enrollment AIHub decrypts the one healthy LiteLLM route only inside the API, returns it to the authenticated VM2 installer over the enrollment channel, and VM2 writes its local Hermes provider files. The key is never placed in the browser bundle. Configure OCR, Supermemory, model routes, Profiles, guardrails, and governed tools in their dashboard workspaces.
+For production, use a Hermes image digest and set `AIHUB_SUPERMEMORY_VERSION` to an exact release. Validate the Hermes `supermemory` Python package version as part of the bill of materials.
 
-## Runtime layout on VM2
+## Dashboard workflow
 
-The installer creates:
+1. Open **Deployment → Production setup → Hermes nodes**.
+2. Create an invitation with the runtime display name, slug, reachable Hermes base URL, approved image reference, and short TTL.
+3. Download the generated JSON bundle. AIHub stores only the token digest.
+4. Transfer the bundle and `scripts/install-hermes-node.sh` to VM2 through the customer's approved channel.
+5. Run:
 
-- `/var/lib/aihub-hermes/data` — the persistent `/opt/data` mount containing Hermes `.env`, `state.db`, sessions, built-in memory, and gateway state;
-- `/var/lib/aihub-hermes/identity/node.key` — the node signing key, never mounted into Hermes;
-- `/usr/local/lib/aihub/hermes-heartbeat.sh` — the bounded heartbeat client;
-- `aihub-hermes-heartbeat.service` and `.timer` — the one-minute systemd heartbeat;
-- `aihub-hermes` — the official gateway container with resource, PID, capability, and privilege-escalation limits.
+   ```bash
+   sudo AIHUB_SUPERMEMORY_VERSION=<exact-version> ./install-hermes-node.sh enrollment.json
+   ```
 
-The Docker socket is never mounted into AIHub or Hermes. Hermes Profile behavior remains versioned in PostgreSQL and is injected into each governed Runs API submission; the installer does not copy AIHub Profile files into the upstream container.
+6. Return to the dashboard and verify that Hermes, Supermemory, and the signed heartbeat are healthy.
+7. Run the AI-services and Hermes-profile checks before activation.
 
-## Required network policy
+## What the script does
 
-| Source | Destination | Purpose |
-|---|---|---|
-| VM1 AIHub | VM2 TCP/8642 | Hermes health, capability, toolset, Runs, event, and stop APIs |
-| VM2 host heartbeat | VM1 AIHub HTTPS | Enrollment and signed heartbeat |
-| VM2 Hermes | approved LiteLLM endpoint | Model inference only |
-| VM2 Hermes | approved AIHub MCP gateway | Only when governed tools are enabled and accepted |
+1. validates the bundle and expiry;
+2. installs required host packages when needed;
+3. creates a local Ed25519 identity;
+4. starts the constrained official Hermes container with persistent `/opt/data`;
+5. enrolls with the single-use claim;
+6. receives the AIHub `/internal/v1` URL, approved model alias, and a node-scoped bearer key;
+7. installs the checksum-verified Supermemory Local binary and starts it under a dedicated system user;
+8. configures Supermemory to use the AIHub gateway and local embeddings;
+9. installs/enables Hermes's native Supermemory provider with `mpm-agent-{identity}` and custom containers disabled;
+10. disables native API-server toolsets and default MCP discovery until an AIHub-reviewed distribution enables them;
+11. registers the VM2 Supermemory endpoint and encrypted API key with AIHub;
+12. starts a systemd timer that sends signed replay-protected heartbeats every minute.
 
-Deny user networks, public ingress, PostgreSQL, enterprise storage administration, hypervisor/orchestrator control, and unapproved egress. Preserve time synchronization because signed requests have a bounded clock window.
+The inference bootstrap never contains the vLLM credential. Revoking a node disables its generated Hermes connection and managed Supermemory connection.
 
-## Lifecycle and recovery
+Supermemory auto-recall and auto-capture remain active in this baseline because the memory provider is not a native model-callable toolset.
 
-- **Drain** prevents the node from presenting as normally available while existing operational work is handled.
-- **Resume** returns a recently reporting node online; otherwise it remains offline until the next valid heartbeat.
-- **Suspend** rejects signed node traffic without destroying identity history.
-- **Revoke** is permanent for that enrollment and disables the generated connector.
+## Network allowlist
 
-Back up Hermes `/opt/data` according to the customer session-continuity objective. PostgreSQL backup preserves AIHub governance and audit, but it cannot recreate lost Hermes `state.db` native session continuity. The Ed25519 identity may be backed up only if customer policy explicitly requires restoring the same node identity; otherwise revoke and re-enroll a replacement node.
+| Source | Destination | Required use |
+| --- | --- | --- |
+| VM2 | AIHub HTTPS | enrollment, memory registration, heartbeat, inference gateway |
+| AIHub | VM2 TCP 8642 | Hermes health and governed agent calls |
+| AIHub worker | VM2 TCP 6767 | document publication and authorized retrieval |
+| Hermes container | VM2 TCP 6767 | native long-term memory |
+| VM2 | approved artifact registries | installation/upgrade only; mirror internally for air-gapped production |
 
-## Current production gates
+Deny VM2 access to AIHub PostgreSQL, host Docker APIs, enterprise storage administration, hypervisor/deployment APIs, and unrestricted external networks. Do not expose ports 8642 or 6767 to user networks or the public internet.
 
-- MPM-signed AIHub release bundles and an approved image registry/digest pipeline;
-- customer-approved TLS/private CA distribution and, where required, mTLS;
-- negative network tests proving deny paths;
-- Hermes provider bootstrap to the approved LiteLLM alias;
-- pinned Hermes compatibility for Runs, events, stop, toolsets, and the hardened private MCP context contract;
-- backup/restore of Hermes state and honest loss behavior;
-- capacity, load, security, and organizational acceptance evidence.
+## Secrets and state
+
+- `${AIHUB_HERMES_STATE_ROOT:-/var/lib/aihub-hermes}` contains node identity and the Hermes data volume.
+- `${AIHUB_SUPERMEMORY_STATE_ROOT:-/var/lib/aihub-supermemory}` contains the binary, runtime environment, API key, and graph data.
+- AIHub stores encrypted Hermes, inference-gateway, and Supermemory secrets in PostgreSQL.
+- The invitation token is single-use, bound to the AIHub control-plane origin, and expires even if never consumed.
+- The node private key never leaves VM2.
+
+System journal access is root-equivalent for this workflow because Supermemory prints its generated API key on first boot. Restrict journal readers, complete registration promptly, and include key rotation/journal-retention behavior in production acceptance.
+
+## Backup and restore
+
+Back up Hermes `/opt/data` for sessions, Skills, profiles, built-in memory, and runtime configuration. Back up the complete Supermemory data directory consistently for graph, auth, and local-embedding state. PostgreSQL backup alone cannot reconstruct either runtime.
+
+Preferred host-loss procedure:
+
+1. revoke the missing node in AIHub;
+2. restore runtime data only under the approved recovery procedure, or create a clean node;
+3. issue a new invitation and identity;
+4. verify namespace isolation, inference gateway authentication, memory recall, document authorization, and deletion;
+5. retain the recovery evidence.
+
+## Upgrade
+
+Do not use an invitation as a generic remote administrator. Upgrade with pinned, signed artifacts under customer change control. Before promotion, test the exact Hermes image, Supermemory binary/SDK, API contracts, state migration, backup, rollback, memory isolation, and agent cancellation in a non-production environment.

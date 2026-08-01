@@ -27,7 +27,7 @@ interface DocumentsViewProps {
 }
 
 const processingStatuses = new Set<DocumentStatus>([
-  "QUEUED", "CONVERTING", "OCR_PENDING", "OCR_PROCESSING",
+  "QUEUED", "CONVERTING",
 ]);
 
 function formatBytes(value: number): string {
@@ -189,7 +189,7 @@ export function DocumentsView(props: DocumentsViewProps) {
         <div>
           <p className="page-kicker">Governed document pipeline</p>
           <h1>{props.oidcConfigured ? "Sign in to manage documents" : "Enterprise access is not configured"}</h1>
-          <p>Uploads remain quarantined until review, then use encrypted transient staging for conversion and OCR before durable publication to Supermemory.</p>
+          <p>UTF-8 TXT uploads remain quarantined until review, then use encrypted transient staging for normalization before durable publication to Supermemory.</p>
         </div>
         <div className="document-lock-actions">
           {props.oidcConfigured && <button className="primary-button" type="button" onClick={props.onSignIn}>Sign in with MPM</button>}
@@ -202,7 +202,7 @@ export function DocumentsView(props: DocumentsViewProps) {
   return (
     <section className="documents-workspace">
       <header className="documents-header">
-        <div><p className="page-kicker">Content operations</p><h1>Documents</h1><p>Quarantine, convert, extract, and publish knowledge without retaining source files in AIHub.</p></div>
+        <div><p className="page-kicker">Content operations</p><h1>Documents</h1><p>Quarantine, normalize, and publish UTF-8 text knowledge without retaining source files in AIHub.</p></div>
         <button className="primary-button" type="button" onClick={() => setUploadOpen((value) => !value)}>{uploadOpen ? "Close upload" : "Upload document"}</button>
       </header>
 
@@ -212,8 +212,8 @@ export function DocumentsView(props: DocumentsViewProps) {
         <form className="document-upload panel" onSubmit={submitUpload}>
           <label className="document-file-field">
             <span>{file ? file.name : "Choose an approved document"}</span>
-            <small>PDF, Office, PNG, JPEG, or TXT · up to 50 MB</small>
-            <input ref={fileInput} type="file" required accept=".pdf,.docx,.xlsx,.pptx,.png,.jpg,.jpeg,.txt" onChange={(event) => setFile(event.target.files?.[0] ?? null)}/>
+            <small>UTF-8 TXT · up to 50 MB</small>
+            <input ref={fileInput} type="file" required accept=".txt,text/plain" onChange={(event) => setFile(event.target.files?.[0] ?? null)}/>
           </label>
           <p className="document-upload-note">AIHub encrypts this file in transient staging and purges it after Supermemory confirms publication. Keep the authoritative original in enterprise storage.</p>
           <label>Classification<select value={classification} onChange={(event) => setClassification(event.target.value as DocumentClassification)}><option value="INTERNAL">Internal</option><option value="CONFIDENTIAL">Confidential</option><option value="RESTRICTED">Restricted</option></select></label>
@@ -250,7 +250,7 @@ export function DocumentsView(props: DocumentsViewProps) {
               <div className="document-detail-title"><div><p className="section-kicker">Document record</p><h2>{active.fileName}</h2></div><span className={`document-status ${statusTone(active.status)}`}>{formatStatus(active.status)}</span></div>
               <dl className="document-facts"><div><dt>Classification</dt><dd>{active.classification.toLowerCase()}</dd></div><div><dt>Pages</dt><dd>{active.pageCount ?? "—"}</dd></div><div><dt>Size</dt><dd>{formatBytes(active.sizeBytes)}</dd></div><div><dt>Retain until</dt><dd>{new Date(active.retentionUntil).toLocaleDateString()}</dd></div></dl>
 
-              {processingStatuses.has(active.status) && <div className="document-progress"><span/><div><strong>Processing generation {active.processingGeneration}</strong><small>Conversion and OCR run asynchronously through pg-boss.</small></div></div>}
+              {processingStatuses.has(active.status) && <div className="document-progress"><span/><div><strong>Processing generation {active.processingGeneration}</strong><small>Text normalization is reconciled from durable PostgreSQL document state.</small></div></div>}
               {(active.status === "FAILED" || active.status === "REJECTED") && <div className="document-failure"><strong>{active.failureCode ?? "PROCESSING_FAILED"}</strong><span>{active.failureMessage ?? "Document processing did not complete."}</span></div>}
 
               <div className="document-staging">

@@ -6,10 +6,6 @@ export const guardrailPolicyIdentifierSchema = z.uuid();
 
 const policySlugSchema = z.string().trim().min(2).max(64)
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
-const guardrailNameSchema = z.string().trim().min(1).max(120)
-  .regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/);
-const guardrailNamesSchema = z.array(guardrailNameSchema).min(1).max(20)
-  .refine((items) => new Set(items).size === items.length, "LiteLLM guardrail names must be unique.");
 
 export const guardrailPolicySchema = z.object({
   id: z.uuid(),
@@ -18,8 +14,10 @@ export const guardrailPolicySchema = z.object({
   description: z.string().trim().min(3).max(500),
   version: z.string().trim().min(1).max(120),
   status: guardrailPolicyStatusSchema,
-  liteLLMGuardrails: guardrailNamesSchema,
   maxInputCharacters: z.number().int().min(256).max(32_000),
+  maxOutputCharacters: z.number().int().min(1_024).max(1_000_000),
+  blockControlCharacters: z.boolean(),
+  blockCredentialPatterns: z.boolean(),
   activationEvaluationId: z.uuid().nullable(),
   firstActivatedAt: z.iso.datetime().nullable(),
   revision: z.number().int().positive(),
@@ -43,16 +41,20 @@ export const createGuardrailPolicySchema = z.object({
   displayName: z.string().trim().min(2).max(120),
   description: z.string().trim().min(3).max(500),
   version: z.string().trim().min(1).max(120),
-  liteLLMGuardrails: guardrailNamesSchema,
   maxInputCharacters: z.number().int().min(256).max(32_000),
+  maxOutputCharacters: z.number().int().min(1_024).max(1_000_000),
+  blockControlCharacters: z.boolean(),
+  blockCredentialPatterns: z.boolean(),
 }).strict();
 
 export const updateGuardrailPolicySchema = z.object({
   displayName: z.string().trim().min(2).max(120).optional(),
   description: z.string().trim().min(3).max(500).optional(),
   version: z.string().trim().min(1).max(120).optional(),
-  liteLLMGuardrails: guardrailNamesSchema.optional(),
   maxInputCharacters: z.number().int().min(256).max(32_000).optional(),
+  maxOutputCharacters: z.number().int().min(1_024).max(1_000_000).optional(),
+  blockControlCharacters: z.boolean().optional(),
+  blockCredentialPatterns: z.boolean().optional(),
   expectedRevision: z.number().int().positive(),
 }).strict();
 

@@ -1,6 +1,6 @@
 import {
   administratorSessionSchema,
-  bootstrapSessionRequestSchema,
+  installationKeySessionRequestSchema,
 } from "@aihub/contracts";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import {
@@ -8,7 +8,6 @@ import {
   expiredSessionCookie,
   requireAdmin,
   sessionCookie,
-  InstallationClaimRejectedError,
   type AdminSessionManager,
 } from "./admin-session.js";
 
@@ -24,35 +23,24 @@ export async function registerAdminSessionRoutes(
   app: FastifyInstance,
   dependencies: AdminSessionRouteDependencies,
 ): Promise<void> {
-  app.post("/bootstrap", async (request, reply) => {
+  app.post("/installation-key", async (request, reply) => {
     if (!dependencies.sessionManager) {
       return reply.code(423).send({
         error: "PLATFORM_LOCKED",
-        message: "AIHub bootstrap trust is not ready.",
+        message: "AIHub installation trust is not ready.",
       });
     }
-    const parsed = bootstrapSessionRequestSchema.safeParse(request.body);
+    const parsed = installationKeySessionRequestSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({
         error: "INVALID_SESSION_REQUEST",
-        message: "A valid single-use installation claim is required.",
+        message: "A valid Installation Key is required.",
       });
     }
-    let issued;
-    try {
-      issued = await dependencies.sessionManager.createBootstrapSession(parsed.data.token, {
-        sourceIp: request.ip,
-        userAgent: request.headers["user-agent"],
-      });
-    } catch (error) {
-      if (error instanceof InstallationClaimRejectedError) {
-        return reply.code(error.reason === "EXPIRED" ? 410 : 409).send({
-          error: `INSTALLATION_CLAIM_${error.reason}`,
-          message: error.message,
-        });
-      }
-      throw error;
-    }
+    const issued = await dependencies.sessionManager.createInstallationKeySession(parsed.data.installationKey, {
+      sourceIp: request.ip,
+      userAgent: request.headers["user-agent"],
+    });
     if (!issued) {
       return reply.code(401).send({
         error: "UNAUTHORIZED",

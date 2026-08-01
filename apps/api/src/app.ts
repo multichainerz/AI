@@ -21,6 +21,7 @@ import { registerGuardrailRoutes } from "./guardrails/routes.js";
 import { registerPromptRoutes } from "./prompts/routes.js";
 import { registerOnboardingRoutes } from "./onboarding/routes.js";
 import { registerAdminRuntimeNodeRoutes, registerRuntimeNodeRoutes } from "./runtime-nodes/routes.js";
+import { registerInferenceGatewayRoutes } from "./inference/routes.js";
 
 export interface AppOptions {
   logger?: boolean;
@@ -71,6 +72,7 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
       || request.url.startsWith("/api/v1/agents")
       || request.url.startsWith("/api/v1/mcp")
       || request.url.startsWith("/api/v1/runtime-nodes")
+      || request.url.startsWith("/internal/v1/")
     ) {
       void reply.header("cache-control", "no-store");
     }
@@ -138,7 +140,7 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
     platformMetaSchema.parse({
       product: "MPM AIHub",
       version: "0.1.0",
-      phase: "phase 9b isolated-node enrollment candidate",
+      phase: "streamlined on-prem acceptance candidate",
       configurationMode: "dashboard",
       bootstrapState: runtime.bootstrapState,
     }),
@@ -147,6 +149,13 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
   app.get("/api/v1/connections/catalog", async () => ({
     items: SERVICE_KINDS.map((kind) => ({ kind })),
   }));
+
+  await app.register(
+    async (inference) => registerInferenceGatewayRoutes(inference, {
+      ...(runtime.inferenceGateway ? { gateway: runtime.inferenceGateway } : {}),
+    }),
+    { prefix: "/internal/v1" },
+  );
 
   await app.register(
     async (onboarding) =>
@@ -313,7 +322,7 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
         ...(runtime.sessionManager ? { sessionManager: runtime.sessionManager } : {}),
         ...(runtime.operationsManager ? { manager: runtime.operationsManager } : {}),
       }),
-    { prefix: "/api/v1/admin/operations/jobs" },
+    { prefix: "/api/v1/admin/operations/runtime" },
   );
 
   app.setErrorHandler(async (error, request, reply) => {

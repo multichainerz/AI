@@ -46,8 +46,8 @@ export const ADMIN_SCOPES = [
 export const adminRoleSchema = z.enum(ADMIN_ROLES);
 export const adminScopeSchema = z.enum(ADMIN_SCOPES);
 
-export const bootstrapSessionRequestSchema = z.object({
-  token: z.string().min(32).max(4_096),
+export const installationKeySessionRequestSchema = z.object({
+  installationKey: z.string().min(32).max(4_096),
 }).strict();
 
 export const administratorSessionSchema = z.object({
@@ -62,5 +62,5 @@ export const administratorSessionSchema = z.object({
 
 export type AdminRole = z.infer<typeof adminRoleSchema>;
 export type AdminScope = z.infer<typeof adminScopeSchema>;
-export type BootstrapSessionRequest = z.infer<typeof bootstrapSessionRequestSchema>;
+export type InstallationKeySessionRequest = z.infer<typeof installationKeySessionRequestSchema>;
 export type AdministratorSession = z.infer<typeof administratorSessionSchema>;

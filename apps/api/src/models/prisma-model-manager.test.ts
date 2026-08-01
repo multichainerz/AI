@@ -20,8 +20,8 @@ const principal = {
 } as AdminPrincipal;
 const connection = {
   id: CONNECTION_ID,
-  displayName: "LiteLLM Primary",
-  kind: "LITELLM" as const,
+  displayName: "vLLM Primary",
+  kind: "VLLM" as const,
   environment: "PRODUCTION" as const,
   enabled: true,
   status: "HEALTHY" as const,

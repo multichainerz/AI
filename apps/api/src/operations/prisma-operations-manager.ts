@@ -1,148 +1,91 @@
 import {
-  jobQueueNameSchema,
-  type JobOperationsSnapshot,
-  type JobProbeResult,
-  type JobQueueName,
-  type WorkerNodeSnapshot,
+  RUNTIME_WORKLOAD_NAMES,
+  type RuntimeOperationsSnapshot,
+  type RuntimeExecutorSnapshot,
+  type RuntimeWorkloadName,
 } from "@aihub/contracts";
-import { Prisma, type AIHubPrismaClient } from "@aihub/database";
-import type { JobQueueSnapshot } from "@aihub/contracts";
+import type { AIHubPrismaClient } from "@aihub/database";
 import type { OperationsManager } from "./operations-manager.js";
-import type { AdminActor } from "../connections/connection-manager.js";
-
-export interface JobQueueOperations {
-  start(options?: { ensureQueues?: boolean }): Promise<void>;
-  stop(): Promise<void>;
-  snapshot(): Promise<JobQueueSnapshot[]>;
-  sendSystemProbe(payload: { requestedAt: string; requestedBy: string }): Promise<string>;
-  retry(name: JobQueueName, jobId: string): Promise<void>;
-  redriveDeadLetters(limit?: number): Promise<number>;
-}
 
 const STALE_AFTER_MS = 45_000;
-const VISIBLE_WORKER_HISTORY_MS = 24 * 60 * 60 * 1_000;
-const WORKER_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
+const VISIBLE_EXECUTOR_HISTORY_MS = 24 * 60 * 60 * 1_000;
+const EXECUTOR_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
+
+function count(groups: Array<{ status: string; _count: { _all: number } }>, statuses: string[]): number {
+  return groups.filter(({ status }) => statuses.includes(status)).reduce((sum, item) => sum + item._count._all, 0);
+}
+
+function isWorkload(value: string): value is RuntimeWorkloadName {
+  return (RUNTIME_WORKLOAD_NAMES as readonly string[]).includes(value);
+}
 
 export class PrismaOperationsManager implements OperationsManager {
-  constructor(
-    private readonly prisma: AIHubPrismaClient,
-    private readonly queue: JobQueueOperations,
-  ) {}
+  constructor(private readonly prisma: AIHubPrismaClient) {}
 
   async start(): Promise<void> {
     await this.prisma.workerNode.deleteMany({
-      where: { lastSeenAt: { lt: new Date(Date.now() - WORKER_RETENTION_MS) } },
+      where: { lastSeenAt: { lt: new Date(Date.now() - EXECUTOR_RETENTION_MS) } },
     });
-    await this.queue.start();
   }
 
-  async stop(): Promise<void> {
-    await this.queue.stop();
-  }
+  async stop(): Promise<void> {}
 
-  async snapshot(): Promise<JobOperationsSnapshot> {
+  async snapshot(): Promise<RuntimeOperationsSnapshot> {
     const capturedAt = new Date();
-    const [queues, workerRecords] = await Promise.all([
-      this.queue.snapshot(),
+    const [documentGroups, memoryGroups, agentGroups, toolGroups, executorRecords] = await Promise.all([
+      this.prisma.document.groupBy({ by: ["status"], where: { status: { not: "DELETED" } }, _count: { _all: true } }),
+      this.prisma.documentMemoryPublication.groupBy({ by: ["status"], _count: { _all: true } }),
+      this.prisma.agentRun.groupBy({ by: ["status"], _count: { _all: true } }),
+      this.prisma.toolActionDispatch.groupBy({ by: ["status"], _count: { _all: true } }),
       this.prisma.workerNode.findMany({
-        where: {
-          lastSeenAt: { gte: new Date(capturedAt.getTime() - VISIBLE_WORKER_HISTORY_MS) },
-        },
+        where: { lastSeenAt: { gte: new Date(capturedAt.getTime() - VISIBLE_EXECUTOR_HISTORY_MS) } },
         orderBy: { lastSeenAt: "desc" },
         take: 50,
       }),
     ]);
-    const workers: WorkerNodeSnapshot[] = workerRecords.map((worker) => {
-      const isStale =
-        worker.status === "ONLINE" &&
-        capturedAt.getTime() - worker.lastSeenAt.getTime() > STALE_AFTER_MS;
-      const queues = worker.queues.flatMap((name) => {
-        const parsed = jobQueueNameSchema.safeParse(name);
-        return parsed.success ? [parsed.data] : [];
-      });
+    const executors: RuntimeExecutorSnapshot[] = executorRecords.map((executor) => {
+      const stale = executor.status === "ONLINE" && capturedAt.getTime() - executor.lastSeenAt.getTime() > STALE_AFTER_MS;
       return {
-        id: worker.id,
-        name: worker.name,
-        status: worker.status === "STOPPED" ? "STOPPED" : isStale ? "STALE" : "ONLINE",
-        startedAt: worker.startedAt.toISOString(),
-        lastSeenAt: worker.lastSeenAt.toISOString(),
-        version: worker.version,
-        queues,
+        id: executor.id,
+        name: executor.name,
+        status: executor.status === "STOPPED" ? "STOPPED" : stale ? "STALE" : "ONLINE",
+        startedAt: executor.startedAt.toISOString(),
+        lastSeenAt: executor.lastSeenAt.toISOString(),
+        version: executor.version,
+        workloads: executor.workloads.filter(isWorkload),
       };
     });
-    const hasOnlineWorker = workers.some(({ status }) => status === "ONLINE");
-    const missingQueues = queues.filter(({ configured }) => !configured);
-    const onlineWorkerQueues = new Set(
-      workers
-        .filter(({ status }) => status === "ONLINE")
-        .flatMap(({ queues: workerQueues }) => workerQueues),
-    );
-    const unservedBacklogs = queues.filter(
-      ({ configured, name, readyCount }) =>
-        configured &&
-        name !== "aihub.dead-letter" &&
-        readyCount > 0 &&
-        !onlineWorkerQueues.has(name),
-    );
-    const statusReasons = [
-      ...(!hasOnlineWorker ? ["No online worker heartbeat is available."] : []),
-      ...missingQueues.map(({ displayName }) => `${displayName} queue is not configured.`),
-      ...unservedBacklogs.map(
-        ({ displayName, readyCount }) =>
-          `${displayName} has ${readyCount} ready job${readyCount === 1 ? "" : "s"} but no online worker.`,
-      ),
+    const workloads = [
+      {
+        name: "documents" as const, displayName: "Document processing",
+        pendingCount: count(documentGroups, ["QUEUED"]), activeCount: count(documentGroups, ["CONVERTING"]),
+        failedCount: count(documentGroups, ["FAILED"]), totalCount: count(documentGroups, documentGroups.map(({ status }) => status)),
+      },
+      {
+        name: "memory" as const, displayName: "Supermemory synchronization",
+        pendingCount: count(memoryGroups, ["QUEUED", "DELETE_PENDING"]), activeCount: count(memoryGroups, ["PROCESSING"]),
+        failedCount: count(memoryGroups, ["FAILED"]), totalCount: count(memoryGroups, memoryGroups.map(({ status }) => status)),
+      },
+      {
+        name: "agents" as const, displayName: "Hermes runs",
+        pendingCount: count(agentGroups, ["QUEUED", "CANCEL_REQUESTED"]), activeCount: count(agentGroups, ["RUNNING"]),
+        failedCount: count(agentGroups, ["FAILED", "TIMED_OUT", "DENIED"]), totalCount: count(agentGroups, agentGroups.map(({ status }) => status)),
+      },
+      {
+        name: "tool-actions" as const, displayName: "Governed tool actions",
+        pendingCount: count(toolGroups, ["PENDING", "RETRY_WAIT"]), activeCount: count(toolGroups, ["PROCESSING"]),
+        failedCount: count(toolGroups, ["FAILED", "CANCELLED"]), totalCount: count(toolGroups, toolGroups.map(({ status }) => status)),
+      },
     ];
-
+    const hasOnlineExecutor = executors.some(({ status }) => status === "ONLINE");
+    const statusReasons = hasOnlineExecutor ? [] : ["No online PostgreSQL runtime executor heartbeat is available."];
     return {
-      engine: "pg-boss",
-      status: statusReasons.length === 0 ? "ONLINE" : "DEGRADED",
+      engine: "postgresql-state",
+      status: statusReasons.length ? "DEGRADED" : "ONLINE",
       statusReasons,
-      queues,
-      workers,
+      workloads,
+      executors,
       capturedAt: capturedAt.toISOString(),
     };
-  }
-
-  async sendProbe(requestedBy: string, actor?: AdminActor): Promise<JobProbeResult> {
-    const queuedAt = new Date().toISOString();
-    const jobId = await this.queue.sendSystemProbe({ requestedAt: queuedAt, requestedBy });
-    await this.audit("job.probe_requested", "Job", jobId, {
-      queue: "aihub.system.probe",
-    }, actor);
-    return { jobId, queue: "aihub.system.probe", queuedAt };
-  }
-
-  async retry(queue: JobQueueName, jobId: string, actor?: AdminActor): Promise<void> {
-    await this.queue.retry(queue, jobId);
-    await this.audit("job.retry_requested", "Job", jobId, { queue }, actor);
-  }
-
-  async redriveDeadLetters(limit: number, actor?: AdminActor): Promise<number> {
-    const moved = await this.queue.redriveDeadLetters(limit);
-    await this.audit("job.dead_letters_redriven", "JobQueue", "aihub.dead-letter", {
-      limit,
-      moved,
-    }, actor);
-    return moved;
-  }
-
-  private async audit(
-    action: string,
-    resourceType: string,
-    resourceId: string,
-    metadata: Record<string, unknown>,
-    actor?: AdminActor,
-  ): Promise<void> {
-    await this.prisma.auditEvent.create({
-      data: {
-        actorType: actor ? "USER" : "SYSTEM",
-        actorId: actor?.id ?? null,
-        action,
-        resourceType,
-        resourceId,
-        outcome: "SUCCESS",
-        metadata: metadata as Prisma.InputJsonValue,
-      },
-    });
   }
 }

@@ -3,20 +3,14 @@ import { z } from "zod";
 export const COMPONENT_COMPATIBILITY_STATUSES = ["NOT_TESTED", "IN_PROGRESS", "PASSED", "FAILED", "BLOCKED"] as const;
 export const ONBOARDING_JOURNEY_STATUSES = ["NOT_STARTED", "IN_PROGRESS", "BLOCKED", "COMPLETED"] as const;
 export const ONBOARDING_STEP_STATUSES = ["NOT_STARTED", "IN_PROGRESS", "BLOCKED", "COMPLETED"] as const;
-export const LITELLM_OWNERSHIP_MODES = ["EXTERNAL_VALIDATED", "PINNED_API_RECONCILED"] as const;
-export const SUPERMEMORY_STORAGE_MODES = ["EMBEDDED", "SUPPORTED_EXTERNAL_POSTGRES"] as const;
-export const SUPERMEMORY_EMBEDDING_MODES = ["LOCAL", "OPENAI_COMPATIBLE"] as const;
-export const HERMES_MEMORY_MODES = ["MEDIATED", "NATIVE_SUPERMEMORY"] as const;
-export const GPU_SCHEDULING_MODES = ["DEDICATED_LLM", "MEASURED_CO_RESIDENCY", "SERIALIZED_DEGRADED"] as const;
 export const DEPLOYMENT_TOPOLOGY_MODES = ["COMPACT", "CONTROL_PLANE", "SEGMENTED_PRODUCTION"] as const;
 export const ONBOARDING_TARGET_ENVIRONMENTS = ["DEVELOPMENT", "PILOT", "PRODUCTION"] as const;
-export const DEPLOYMENT_INSTALL_METHODS = ["SIGNED_INSTALLER"] as const;
 export const ONBOARDING_EVIDENCE_SOURCES = ["AUTOMATED", "EXTERNAL_ATTESTATION"] as const;
 export const ONBOARDING_EVIDENCE_OUTCOMES = ["PASSED", "FAILED", "WARNING"] as const;
 export const RECOVERY_CONTROL_STATUSES = ["NOT_EXPORTED", "EXPORTED", "VERIFIED"] as const;
-export const INSTALLATION_CLAIM_STATUSES = ["UNKNOWN", "CLAIMED"] as const;
+export const INSTALLATION_ACTIVATION_STATUSES = ["UNKNOWN", "ACTIVATED"] as const;
 export const ONBOARDING_STEP_KEYS = [
-  "claim-installation",
+  "activate-installation",
   "system-topology",
   "identity-recovery",
   "ai-services",
@@ -29,14 +23,8 @@ export const ONBOARDING_STEP_KEYS = [
 export const componentCompatibilityStatusSchema = z.enum(COMPONENT_COMPATIBILITY_STATUSES);
 export const onboardingJourneyStatusSchema = z.enum(ONBOARDING_JOURNEY_STATUSES);
 export const onboardingStepStatusSchema = z.enum(ONBOARDING_STEP_STATUSES);
-export const liteLlmOwnershipModeSchema = z.enum(LITELLM_OWNERSHIP_MODES);
-export const supermemoryStorageModeSchema = z.enum(SUPERMEMORY_STORAGE_MODES);
-export const supermemoryEmbeddingModeSchema = z.enum(SUPERMEMORY_EMBEDDING_MODES);
-export const hermesMemoryModeSchema = z.enum(HERMES_MEMORY_MODES);
-export const gpuSchedulingModeSchema = z.enum(GPU_SCHEDULING_MODES);
 export const deploymentTopologyModeSchema = z.enum(DEPLOYMENT_TOPOLOGY_MODES);
 export const onboardingTargetEnvironmentSchema = z.enum(ONBOARDING_TARGET_ENVIRONMENTS);
-export const deploymentInstallMethodSchema = z.enum(DEPLOYMENT_INSTALL_METHODS);
 export const onboardingEvidenceSourceSchema = z.enum(ONBOARDING_EVIDENCE_SOURCES);
 export const onboardingEvidenceOutcomeSchema = z.enum(ONBOARDING_EVIDENCE_OUTCOMES);
 export const componentCompatibilityKeySchema = z.string().min(2).max(80).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
@@ -45,13 +33,6 @@ export const onboardingStepKeySchema = z.enum(ONBOARDING_STEP_KEYS);
 export const architectureDecisionSchema = z.object({
   topologyMode: deploymentTopologyModeSchema,
   targetEnvironment: onboardingTargetEnvironmentSchema,
-  installMethod: deploymentInstallMethodSchema,
-  localInference: z.boolean(),
-  liteLlmOwnershipMode: liteLlmOwnershipModeSchema,
-  supermemoryStorageMode: supermemoryStorageModeSchema,
-  supermemoryEmbeddingMode: supermemoryEmbeddingModeSchema,
-  hermesMemoryMode: hermesMemoryModeSchema,
-  gpuSchedulingMode: gpuSchedulingModeSchema,
   reason: z.string().nullable(),
   revision: z.number().int().nonnegative(),
   updatedBy: z.uuid().nullable(),
@@ -61,13 +42,6 @@ export const architectureDecisionSchema = z.object({
 export const updateArchitectureDecisionSchema = z.object({
   topologyMode: deploymentTopologyModeSchema.optional(),
   targetEnvironment: onboardingTargetEnvironmentSchema.optional(),
-  installMethod: deploymentInstallMethodSchema.optional(),
-  localInference: z.boolean().optional(),
-  liteLlmOwnershipMode: liteLlmOwnershipModeSchema.optional(),
-  supermemoryStorageMode: supermemoryStorageModeSchema.optional(),
-  supermemoryEmbeddingMode: supermemoryEmbeddingModeSchema.optional(),
-  hermesMemoryMode: hermesMemoryModeSchema.optional(),
-  gpuSchedulingMode: gpuSchedulingModeSchema.optional(),
   reason: z.string().trim().min(3).max(1000),
   expectedRevision: z.number().int().nonnegative(),
 }).strict().refine((value) => Object.keys(value).some((key) => !["reason", "expectedRevision"].includes(key)), {
@@ -145,9 +119,9 @@ export const onboardingJourneySchema = z.object({
   updatedAt: z.iso.datetime(),
 });
 
-export const installationClaimSummarySchema = z.object({
-  status: z.enum(INSTALLATION_CLAIM_STATUSES),
-  claimedAt: z.iso.datetime().nullable(),
+export const installationCredentialSummarySchema = z.object({
+  status: z.enum(INSTALLATION_ACTIVATION_STATUSES),
+  activatedAt: z.iso.datetime().nullable(),
 });
 
 export const credentialRecoveryControlSchema = z.object({
@@ -188,7 +162,7 @@ export const onboardingGateSchema = z.object({
 
 export const onboardingSnapshotSchema = z.object({
   generatedAt: z.iso.datetime(),
-  installation: installationClaimSummarySchema,
+  installation: installationCredentialSummarySchema,
   architecture: architectureDecisionSchema,
   recovery: credentialRecoveryControlSchema,
   journey: onboardingJourneySchema,
@@ -230,14 +204,8 @@ export type ComponentCompatibilityStatus = z.infer<typeof componentCompatibility
 export type OnboardingStepKey = z.infer<typeof onboardingStepKeySchema>;
 export type OnboardingJourneyStatus = z.infer<typeof onboardingJourneyStatusSchema>;
 export type OnboardingStepStatus = z.infer<typeof onboardingStepStatusSchema>;
-export type LiteLlmOwnershipMode = z.infer<typeof liteLlmOwnershipModeSchema>;
-export type SupermemoryStorageMode = z.infer<typeof supermemoryStorageModeSchema>;
-export type SupermemoryEmbeddingMode = z.infer<typeof supermemoryEmbeddingModeSchema>;
-export type HermesMemoryMode = z.infer<typeof hermesMemoryModeSchema>;
-export type GpuSchedulingMode = z.infer<typeof gpuSchedulingModeSchema>;
 export type DeploymentTopologyMode = z.infer<typeof deploymentTopologyModeSchema>;
 export type OnboardingTargetEnvironment = z.infer<typeof onboardingTargetEnvironmentSchema>;
-export type DeploymentInstallMethod = z.infer<typeof deploymentInstallMethodSchema>;
 export type ArchitectureDecision = z.infer<typeof architectureDecisionSchema>;
 export type UpdateArchitectureDecision = z.infer<typeof updateArchitectureDecisionSchema>;
 export type ComponentCompatibility = z.infer<typeof componentCompatibilitySchema>;
@@ -245,7 +213,7 @@ export type UpdateComponentCompatibility = z.infer<typeof updateComponentCompati
 export type OnboardingStep = z.infer<typeof onboardingStepSchema>;
 export type UpdateOnboardingStep = z.infer<typeof updateOnboardingStepSchema>;
 export type OnboardingJourney = z.infer<typeof onboardingJourneySchema>;
-export type InstallationClaimSummary = z.infer<typeof installationClaimSummarySchema>;
+export type InstallationCredentialSummary = z.infer<typeof installationCredentialSummarySchema>;
 export type CredentialRecoveryControl = z.infer<typeof credentialRecoveryControlSchema>;
 export type OnboardingEvidence = z.infer<typeof onboardingEvidenceSchema>;
 export type OnboardingGate = z.infer<typeof onboardingGateSchema>;

@@ -39,32 +39,18 @@ services:
     networks:
       - data
 
-  jobs-migrate:
-    build:
-      context: .
-      dockerfile: Dockerfile.api
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-    secrets:
-      - aihub_database_url
-    command: ["node", "packages/jobs/dist/migrate.js"]
-    networks:
-      - data
-
   api:
     build:
       context: .
       dockerfile: Dockerfile.api
     restart: unless-stopped
     depends_on:
-      jobs-migrate:
+      migrate:
         condition: service_completed_successfully
     secrets:
       - aihub_database_url
       - aihub_master_key
-      - aihub_bootstrap_token
-      - aihub_installation_claim_expires_at
+      - aihub_installation_key
     environment:
       AIHUB_DOCUMENT_SCRATCH_DIR: /var/lib/aihub-document-scratch
     volumes:
@@ -84,7 +70,7 @@ services:
       dockerfile: Dockerfile.worker
     restart: unless-stopped
     depends_on:
-      jobs-migrate:
+      migrate:
         condition: service_completed_successfully
     secrets:
       - aihub_database_url
@@ -122,10 +108,8 @@ secrets:
     file: ./.local/secrets/aihub_database_url
   aihub_master_key:
     file: ./.local/secrets/aihub_master_key
-  aihub_bootstrap_token:
-    file: ./.local/secrets/aihub_bootstrap_token
-  aihub_installation_claim_expires_at:
-    file: ./.local/secrets/aihub_installation_claim_expires_at
+  aihub_installation_key:
+    file: ./.local/secrets/aihub_installation_key
 
 volumes:
   postgres_data:

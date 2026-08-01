@@ -29,18 +29,18 @@ const principal: AdministratorSession = {
 };
 
 class Sessions implements AdminSessionManager {
-  async createBootstrapSession() { return null; }
+  async createInstallationKeySession() { return null; }
   async authenticate(token: string | undefined) { return token === TOKEN ? principal : null; }
   async revoke() { return true; }
 }
 
 const incident: OperationalIncident = {
   id: INCIDENT_ID,
-  title: "OCR unavailable",
+  title: "vLLM unavailable",
   severity: "CRITICAL",
   status: "OPEN",
-  component: "connection:ocr",
-  summary: "OCR did not pass its last connection check.",
+  component: "connection:vllm",
+  summary: "vLLM did not pass its last connection check.",
   owner: null,
   automated: true,
   detectedAt: timestamp,
@@ -113,7 +113,7 @@ const overview: AiOpsOverview = {
     id: "postgresql", label: "PostgreSQL", status: "HEALTHY", summary: "Live query succeeded.",
     source: "LIVE", observedAt: timestamp, latencyMs: null, affectedWorkflows: ["CHAT"],
   }],
-  jobs: null,
+  runtime: null,
   metrics: { chat: null, documents: null, memory: null, agents: null, tools: null },
   guardrails: [],
   incidents: { open: 1, critical: 1, items: [incident] },

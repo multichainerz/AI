@@ -50,6 +50,11 @@ export const memoryMetricsSchema = z.object({
   deletePending: z.number().int().nonnegative(),
 });
 
+export const memoryReindexResultSchema = z.object({
+  accepted: z.literal(true),
+  message: z.string(),
+});
+
 export const memoryIndexJobPayloadSchema = z.object({
   documentId: z.uuid(),
   generation: z.number().int().nonnegative(),
@@ -61,4 +66,5 @@ export type KnowledgeSource = z.infer<typeof knowledgeSourceSchema>;
 export type MemoryPublication = z.infer<typeof memoryPublicationSchema>;
 export type MemoryPublicationList = z.infer<typeof memoryPublicationListSchema>;
 export type MemoryMetrics = z.infer<typeof memoryMetricsSchema>;
+export type MemoryReindexResult = z.infer<typeof memoryReindexResultSchema>;
 export type MemoryIndexJobPayload = z.infer<typeof memoryIndexJobPayloadSchema>;

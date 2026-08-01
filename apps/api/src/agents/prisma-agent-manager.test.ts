@@ -1,7 +1,6 @@
 import type { AIHubPrismaClient } from "@aihub/database";
-import type { PgBossQueueService } from "@aihub/jobs";
 import { describe, expect, it, vi } from "vitest";
-import { AgentConflictError, AgentQueueUnavailableError, AgentRuntimeDisabledError, type AgentPrincipal } from "./agent-manager.js";
+import { AgentConflictError, AgentRuntimeDisabledError, type AgentPrincipal } from "./agent-manager.js";
 import { PrismaAgentManager } from "./prisma-agent-manager.js";
 
 const PROFILE_ID = "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb";
@@ -51,13 +50,13 @@ describe("PrismaAgentManager", () => {
       createdAt: now, updatedAt: now, versions: [version(2), version(1)],
     };
     const prisma = { agentProfile: { findMany: vi.fn(async () => [profile]) } } as unknown as AIHubPrismaClient;
-    const manager = new PrismaAgentManager(prisma, {} as PgBossQueueService);
+    const manager = new PrismaAgentManager(prisma);
 
     await expect(manager.listProfiles(principal, true)).resolves.toMatchObject({ items: [{ version: { version: 2 }, activeVersionConfiguration: { version: 1 } }] });
     await expect(manager.listProfiles(principal, false)).resolves.toMatchObject({ items: [{ version: { version: 1 }, activeVersionConfiguration: { version: 1 } }] });
   });
 
-  it("atomically checks runtime, active version, concurrency, and queues a run", async () => {
+  it("atomically checks runtime, active version, concurrency, and records durable work", async () => {
     const transaction = {
       $executeRaw: vi.fn(async () => 1),
       agentRuntimeControl: { findUnique: vi.fn(async () => ({ enabled: true, reason: "Verified" })) },
@@ -70,14 +69,15 @@ describe("PrismaAgentManager", () => {
       $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)),
       agentRun: { update: vi.fn(async () => ({ ...storedRun(), jobId: "f9558542-48f4-4b96-a536-65036114af6c" })) },
     } as unknown as AIHubPrismaClient;
-    const queue = { sendAgentRun: vi.fn(async () => "f9558542-48f4-4b96-a536-65036114af6c") } as unknown as PgBossQueueService;
-    const manager = new PrismaAgentManager(prisma, queue);
+    const manager = new PrismaAgentManager(prisma);
 
     await expect(manager.submitRun(principal, { profileId: PROFILE_ID, input: "Analyze policy" })).resolves.toMatchObject({
       id: RUN_ID, status: "QUEUED", effectiveCapabilities: ["knowledge:private:read"],
     });
     expect(transaction.agentRun.count).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ profileId: PROFILE_ID }) }));
-    expect(queue.sendAgentRun).toHaveBeenCalledWith({ runId: RUN_ID });
+    expect(transaction.agentRun.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ jobId: expect.any(String) }),
+    }));
   });
 
   it("denies submission fail-closed when the global runtime row is absent", async () => {
@@ -89,32 +89,9 @@ describe("PrismaAgentManager", () => {
     const prisma = {
       $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)),
     } as unknown as AIHubPrismaClient;
-    const queue = { sendAgentRun: vi.fn() } as unknown as PgBossQueueService;
-    const manager = new PrismaAgentManager(prisma, queue);
+    const manager = new PrismaAgentManager(prisma);
 
     await expect(manager.submitRun(principal, { profileId: PROFILE_ID, input: "Analyze policy" })).rejects.toBeInstanceOf(AgentRuntimeDisabledError);
-    expect(queue.sendAgentRun).not.toHaveBeenCalled();
-  });
-
-  it("records a failed run and exposes a stable error when pg-boss cannot enqueue it", async () => {
-    const transaction = {
-      $executeRaw: vi.fn(async () => 1),
-      agentRuntimeControl: { findUnique: vi.fn(async () => ({ enabled: true, reason: "Verified" })) },
-      agentProfile: { findUnique: vi.fn(async () => ({ id: PROFILE_ID, status: "ACTIVE", activeVersion: 1 })) },
-      agentProfileVersion: { findUnique: vi.fn(async () => version(1)) },
-      agentRun: { count: vi.fn(async () => 0), create: vi.fn(async () => storedRun()) },
-      auditEvent: { create: vi.fn(async () => ({})) },
-    };
-    const update = vi.fn(async () => storedRun());
-    const prisma = {
-      $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)),
-      agentRun: { update },
-    } as unknown as AIHubPrismaClient;
-    const queue = { sendAgentRun: vi.fn(async () => { throw new Error("pg-boss unavailable"); }) } as unknown as PgBossQueueService;
-    const manager = new PrismaAgentManager(prisma, queue);
-
-    await expect(manager.submitRun(principal, { profileId: PROFILE_ID, input: "Analyze policy" })).rejects.toBeInstanceOf(AgentQueueUnavailableError);
-    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "FAILED", failureCode: "QUEUE_UNAVAILABLE" }) }));
   });
 
   it("requires the authenticated zero-tool boundary before enabling execution", async () => {
@@ -129,7 +106,7 @@ describe("PrismaAgentManager", () => {
       auditEvent: { create: auditCreate },
       toolRuntimeControl: { findUnique: vi.fn(async () => ({ enabled: false })) },
     } as unknown as AIHubPrismaClient;
-    const manager = new PrismaAgentManager(prisma, {} as PgBossQueueService, boundaryVerifier);
+    const manager = new PrismaAgentManager(prisma, boundaryVerifier);
 
     await expect(manager.updateRuntimeControl(principal, { enabled: true, reason: "Acceptance verification" })).rejects.toBeInstanceOf(AgentRuntimeDisabledError);
     expect(boundaryVerifier.assertZeroToolBoundary).toHaveBeenCalledOnce();
@@ -151,7 +128,7 @@ describe("PrismaAgentManager", () => {
     };
     const prisma = { $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)) } as unknown as AIHubPrismaClient;
 
-    await expect(new PrismaAgentManager(prisma, {} as PgBossQueueService).activateProfile(principal, PROFILE_ID))
+    await expect(new PrismaAgentManager(prisma).activateProfile(principal, PROFILE_ID))
       .rejects.toBeInstanceOf(AgentConflictError);
     expect(transaction.agentProfile.update).not.toHaveBeenCalled();
   });
@@ -172,7 +149,7 @@ describe("PrismaAgentManager", () => {
     };
     const prisma = { $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)) } as unknown as AIHubPrismaClient;
 
-    await expect(new PrismaAgentManager(prisma, {} as PgBossQueueService).standbyProfile(principal, PROFILE_ID))
+    await expect(new PrismaAgentManager(prisma).standbyProfile(principal, PROFILE_ID))
       .rejects.toThrow("Run Setup and pass Hermes compatibility");
     expect(transaction.modelDeployment.count).not.toHaveBeenCalled();
     expect(transaction.agentProfile.update).not.toHaveBeenCalled();
@@ -196,7 +173,7 @@ describe("PrismaAgentManager", () => {
     };
     const prisma = { $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)) } as unknown as AIHubPrismaClient;
 
-    await expect(new PrismaAgentManager(prisma, {} as PgBossQueueService).activateProfile(principal, PROFILE_ID))
+    await expect(new PrismaAgentManager(prisma).activateProfile(principal, PROFILE_ID))
       .resolves.toMatchObject({ status: "ACTIVE", activeVersion: 1 });
     expect(transaction.auditEvent.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ metadata: expect.objectContaining({ evaluationRunId: EVALUATION_ID, modelRouteId: MODEL_ROUTE_ID }) }),
@@ -216,7 +193,7 @@ describe("PrismaAgentManager", () => {
     };
     const prisma = { $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)) } as unknown as AIHubPrismaClient;
 
-    await expect(new PrismaAgentManager(prisma, {} as PgBossQueueService).activateProfile(principal, PROFILE_ID))
+    await expect(new PrismaAgentManager(prisma).activateProfile(principal, PROFILE_ID))
       .rejects.toThrow("Activate the 'hermes-agent' agent model route");
     expect(transaction.modelDeployment.count).toHaveBeenCalledWith({
       where: { workload: "AGENT", firstActivatedAt: { not: null } },

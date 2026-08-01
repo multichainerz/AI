@@ -38,10 +38,8 @@ const initialDraft: ModelDraft = {
 };
 
 const connectionKinds: Readonly<Record<ModelWorkload, readonly string[]>> = {
-  CHAT: ["LITELLM"],
-  AGENT: ["LITELLM", "VLLM"],
-  EMBEDDING: ["LITELLM", "VLLM"],
-  OCR: ["OCR"],
+  CHAT: ["VLLM"],
+  AGENT: ["VLLM"],
 };
 
 function compactNumber(value: number): string {
@@ -96,7 +94,7 @@ export function ModelsView({
 
   const startCreate = () => {
     setEditing(null);
-    setDraft({ ...initialDraft, connectionId: connections.find(({ kind }) => kind === "LITELLM")?.id ?? "" });
+    setDraft({ ...initialDraft, connectionId: connections.find(({ kind }) => kind === "VLLM")?.id ?? "" });
     setShowEditor(true);
     setError(null);
     setMessage(null);
@@ -201,7 +199,7 @@ export function ModelsView({
 
   return <div className="models-workspace">
     <header className="models-header">
-      <div><p className="page-kicker">Inference control</p><h1>Models</h1><p>Approve aliases and bind workloads to healthy LiteLLM, vLLM, or OCR connections.</p></div>
+      <div><p className="page-kicker">Inference control</p><h1>Models</h1><p>Approve Chat and Hermes aliases on healthy vLLM connections.</p></div>
       <div className="model-header-actions">
         <button type="button" onClick={onOpenOperations}>Evaluation evidence</button>
         {canManage && <button className="primary-button" type="button" onClick={startCreate}>New model route</button>}
@@ -212,11 +210,11 @@ export function ModelsView({
       <article><span>Catalogue routes</span><strong>{models.length}</strong><small>Versioned records</small></article>
       <article><span>Active routes</span><strong>{activeCount}</strong><small>Evaluation gated</small></article>
       <article><span>Defaults</span><strong>{defaultCount}</strong><small>Per workload</small></article>
-      <article><span>Workloads</span><strong>{workloadCount}</strong><small>Chat, agent, OCR, embedding</small></article>
+      <article><span>Workloads</span><strong>{workloadCount}</strong><small>Chat and agent</small></article>
     </section>
 
     <section className="model-boundary panel">
-      <div><span>Control boundary</span><strong>AIHub approves routes; LiteLLM and vLLM remain the serving plane.</strong><p>Activation never modifies upstream configuration. The alias must already exist at the selected endpoint and the exact model version must have promoted evaluation evidence.</p></div>
+      <div><span>Control boundary</span><strong>AIHub approves routes; vLLM remains the serving plane.</strong><p>Activation never modifies upstream configuration. The alias must already exist at the selected endpoint and the exact model version must have promoted evaluation evidence.</p></div>
       <button type="button" onClick={onConfigureConnections}>Manage serving connections</button>
     </section>
 
@@ -228,7 +226,7 @@ export function ModelsView({
       <div className="model-editor-grid">
         <label><span>Display name</span><input value={draft.displayName} minLength={2} maxLength={120} required onChange={(event) => setDraft({ ...draft, displayName: event.target.value })} /></label>
         <label><span>Slug</span><input value={draft.slug} required disabled={Boolean(editing)} onChange={(event) => setDraft({ ...draft, slug: event.target.value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") })} /></label>
-        <label><span>Workload</span><select value={draft.workload} disabled={Boolean(editing)} onChange={(event) => setDraft({ ...draft, workload: event.target.value as ModelWorkload })}><option value="CHAT">Chat</option><option value="AGENT">Hermes agent</option><option value="OCR">OCR</option><option value="EMBEDDING">Embedding</option></select></label>
+        <label><span>Workload</span><select value={draft.workload} disabled={Boolean(editing)} onChange={(event) => setDraft({ ...draft, workload: event.target.value as ModelWorkload })}><option value="CHAT">Chat</option><option value="AGENT">Hermes agent</option></select></label>
         <label><span>Serving connection</span><select value={draft.connectionId} required onChange={(event) => setDraft({ ...draft, connectionId: event.target.value })}><option value="">Select a connection</option>{eligibleConnections.map((connection) => <option key={connection.id} value={connection.id}>{connection.displayName} - {connection.kind}</option>)}</select></label>
         <label><span>Model alias</span><input value={draft.modelAlias} required onChange={(event) => setDraft({ ...draft, modelAlias: event.target.value })} /></label>
         <label><span>Immutable version</span><input value={draft.version} required onChange={(event) => setDraft({ ...draft, version: event.target.value })} /></label>

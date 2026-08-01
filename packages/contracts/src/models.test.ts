@@ -42,8 +42,8 @@ describe("model catalogue contracts", () => {
       status: "ACTIVE",
       connection: {
         id: input.connectionId,
-        displayName: "LiteLLM Primary",
-        kind: "LITELLM",
+        displayName: "vLLM Primary",
+        kind: "VLLM",
         environment: "PRODUCTION",
         enabled: true,
         status: "HEALTHY",

@@ -1,6 +1,6 @@
 import type { AIHubPrismaClient } from "@aihub/database";
 import { describe, expect, it, vi } from "vitest";
-import { PrismaToolActionProcessor, type ToolActionQueue } from "./tool-action-processor.js";
+import { PrismaToolActionProcessor } from "./tool-action-processor.js";
 
 const DISPATCH_ID = "26ee2c9d-bcd4-4db8-9c9e-e39ee94c8221";
 const CALL_ID = "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb";
@@ -45,7 +45,6 @@ function approvedCall(runStatus = "RUNNING") {
 function harness(options: {
   runtimeEnabled?: boolean;
   runStatus?: string;
-  queueError?: Error;
   publication?: { sourceToolDispatchId: string | null; jobId: string | null; generation: number; status: string };
 } = {}) {
   let claimToken = "";
@@ -97,14 +96,8 @@ function harness(options: {
     if (typeof value === "function") return value(prismaBase);
     return Promise.all(value);
   });
-  const queue: ToolActionQueue = {
-    ensureMemoryIndex: options.queueError
-      ? vi.fn(async () => { throw options.queueError; })
-      : vi.fn(async () => JOB_ID),
-  };
   return {
-    processor: new PrismaToolActionProcessor(prismaBase as AIHubPrismaClient, queue),
-    queue,
+    processor: new PrismaToolActionProcessor(prismaBase as AIHubPrismaClient),
     dispatchUpdateMany,
     callUpdate,
     callUpdateMany,
@@ -120,17 +113,12 @@ describe("PrismaToolActionProcessor", () => {
 
     await expect(test.processor.processAvailable(WORKER_ID, 1)).resolves.toBe(1);
 
-    expect(test.queue.ensureMemoryIndex).toHaveBeenCalledWith({
-      documentId: DOCUMENT_ID,
-      generation: 3,
-      action: "UPSERT",
-    });
     expect(test.publicationUpsert).toHaveBeenCalledWith(expect.objectContaining({
       create: expect.objectContaining({ sourceToolDispatchId: DISPATCH_ID, status: "QUEUED" }),
     }));
-    expect(test.publicationUpdateMany).toHaveBeenCalledWith(expect.objectContaining({ data: { jobId: JOB_ID } }));
+    expect(test.publicationUpdateMany).toHaveBeenCalledWith(expect.objectContaining({ data: { jobId: expect.any(String) } }));
     expect(test.dispatchUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ status: "COMPLETED", submittedJobId: JOB_ID }),
+      data: expect.objectContaining({ status: "COMPLETED", submittedJobId: expect.any(String) }),
     }));
     expect(test.callUpdate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ status: "COMPLETED" }),
@@ -142,7 +130,6 @@ describe("PrismaToolActionProcessor", () => {
 
     await expect(test.processor.processAvailable(WORKER_ID, 1)).resolves.toBe(1);
 
-    expect(test.queue.ensureMemoryIndex).not.toHaveBeenCalled();
     expect(test.dispatchUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ status: "CANCELLED" }),
     }));
@@ -159,21 +146,9 @@ describe("PrismaToolActionProcessor", () => {
 
     await expect(test.processor.processAvailable(WORKER_ID, 1)).resolves.toBe(1);
 
-    expect(test.queue.ensureMemoryIndex).not.toHaveBeenCalled();
     expect(test.callUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ status: "DENIED", errorCode: "AUTHORIZATION_REVOKED_AFTER_APPROVAL" }),
     }));
-  });
-
-  it("releases a transient queue failure for a later worker retry", async () => {
-    const test = harness({ queueError: new Error("queue unavailable") });
-
-    await expect(test.processor.processAvailable(WORKER_ID, 1)).resolves.toBe(1);
-
-    expect(test.dispatchUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ status: "PENDING", lastError: "queue unavailable" }),
-    }));
-    expect(test.callUpdate).not.toHaveBeenCalled();
   });
 
   it("adopts an in-flight memory job without resetting its processing state", async () => {
@@ -193,7 +168,6 @@ describe("PrismaToolActionProcessor", () => {
       data: { sourceToolDispatchId: DISPATCH_ID },
     });
     expect(test.publicationUpsert).not.toHaveBeenCalled();
-    expect(test.queue.ensureMemoryIndex).not.toHaveBeenCalled();
     expect(test.dispatchUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ status: "COMPLETED", submittedJobId: JOB_ID }),
     }));

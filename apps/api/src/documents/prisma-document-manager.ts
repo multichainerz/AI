@@ -16,7 +16,6 @@ import {
   documentScratchPrefix,
   type DocumentScratchStore,
 } from "@aihub/document-runtime";
-import type { PgBossQueueService } from "@aihub/jobs";
 import {
   DocumentConflictError,
   DocumentNotFoundError,
@@ -92,25 +91,10 @@ function cleanFileName(value: string): string {
   return cleaned;
 }
 
-function begins(value: Uint8Array, signature: readonly number[]): boolean {
-  return signature.every((byte, index) => value[index] === byte);
-}
-
 function detectedMediaType(sniff: Uint8Array, fileName: string): string {
   const extension = extname(fileName).toLowerCase();
-  if (begins(sniff, [0x25, 0x50, 0x44, 0x46, 0x2d])) return "application/pdf";
-  if (begins(sniff, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return "image/png";
-  if (begins(sniff, [0xff, 0xd8, 0xff])) return "image/jpeg";
-  if (begins(sniff, [0x50, 0x4b, 0x03, 0x04])) {
-    const office: Record<string, string> = {
-      ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    };
-    if (office[extension]) return office[extension];
-  }
   if (extension === ".txt" && !sniff.includes(0)) return "text/plain";
-  throw new DocumentValidationError("Supported files are PDF, PNG, JPEG, TXT, DOCX, XLSX, and PPTX.");
+  throw new DocumentValidationError("This AIHub release accepts UTF-8 .txt documents only.");
 }
 
 function visibility(principal: DocumentPrincipal) {
@@ -121,7 +105,6 @@ export class PrismaDocumentManager implements DocumentManager {
   constructor(
     private readonly prisma: AIHubPrismaClient,
     private readonly store: DocumentScratchStore,
-    private readonly queue: PgBossQueueService,
   ) {}
 
   async list(principal: DocumentPrincipal): Promise<DocumentList> {
@@ -184,7 +167,7 @@ export class PrismaDocumentManager implements DocumentManager {
           ownerSubject: principal.subject,
           sha256: digest,
           OR: [
-            { status: { in: ["QUARANTINED", "QUEUED", "CONVERTING", "OCR_PENDING", "OCR_PROCESSING", "READY"] } },
+            { status: { in: ["QUARANTINED", "QUEUED", "CONVERTING", "READY"] } },
             {
               status: "FAILED",
               stagingKey: { not: null },
@@ -316,7 +299,7 @@ export class PrismaDocumentManager implements DocumentManager {
       include: { memoryPublication: { select: { status: true } } },
     });
     if (!document) throw new DocumentNotFoundError();
-    if (["QUEUED", "CONVERTING", "OCR_PENDING", "OCR_PROCESSING", "DELETING"].includes(document.status)) {
+    if (["QUEUED", "CONVERTING", "DELETING"].includes(document.status)) {
       throw new DocumentConflictError("A document cannot be deleted while processing is active.");
     }
     if (document.memoryPublication && ["QUEUED", "PROCESSING", "DELETE_PENDING"].includes(document.memoryPublication.status)) {
@@ -417,7 +400,7 @@ export class PrismaDocumentManager implements DocumentManager {
       generatedAt: new Date().toISOString(),
       total: aggregate._count._all,
       quarantined: count(["QUARANTINED"]),
-      processing: count(["QUEUED", "CONVERTING", "OCR_PENDING", "OCR_PROCESSING"]),
+      processing: count(["QUEUED", "CONVERTING"]),
       ready: count(["READY"]),
       failed: count(["FAILED"]),
       rejected: count(["REJECTED"]),
@@ -432,6 +415,7 @@ export class PrismaDocumentManager implements DocumentManager {
     allowedStatuses: Array<"QUARANTINED" | "FAILED">,
     reason: string,
   ): Promise<DocumentDetail> {
+    const jobId = randomUUID();
     const prepared = await this.prisma.$transaction(async (transaction) => {
       const current = await transaction.document.findFirst({
         where: { id: documentId, ...visibility(principal), status: { in: allowedStatuses } },
@@ -461,7 +445,7 @@ export class PrismaDocumentManager implements DocumentManager {
         },
       });
       if (claimed.count !== 1) throw new DocumentConflictError("The document changed while processing was requested.");
-      await transaction.documentProcessingRun.create({ data: { documentId, generation } });
+      await transaction.documentProcessingRun.create({ data: { documentId, generation, conversionJobId: jobId } });
       await transaction.auditEvent.create({
         data: {
           actorType: "USER",
@@ -475,25 +459,6 @@ export class PrismaDocumentManager implements DocumentManager {
       });
       return { generation };
     });
-    try {
-      const jobId = await this.queue.sendDocumentConversion({ documentId, generation: prepared.generation });
-      await this.prisma.documentProcessingRun.update({
-        where: { documentId_generation: { documentId, generation: prepared.generation } },
-        data: { conversionJobId: jobId },
-      });
-    } catch {
-      await this.prisma.$transaction([
-        this.prisma.document.update({
-          where: { id: documentId },
-          data: { status: "FAILED", failureCode: "QUEUE_SUBMISSION_FAILED", failureMessage: "Document processing could not be queued." },
-        }),
-        this.prisma.documentProcessingRun.update({
-          where: { documentId_generation: { documentId, generation: prepared.generation } },
-          data: { failedAt: new Date(), failureCode: "QUEUE_SUBMISSION_FAILED" },
-        }),
-      ]);
-      throw new DocumentStorageError("Document processing could not be queued.");
-    }
     return this.get(principal, documentId);
   }
 
@@ -503,34 +468,15 @@ export class PrismaDocumentManager implements DocumentManager {
       select: { generation: true },
     });
     if (!publication) return;
-    try {
-      await this.prisma.documentMemoryPublication.update({
-        where: { documentId },
-        data: {
-          status: "DELETE_PENDING",
-          failureCode: null,
-          failureMessage: null,
-          queuedAt: new Date(),
-        },
-      });
-      const jobId = await this.queue.sendMemoryIndex({
-        documentId,
-        generation: publication.generation,
-        action: "DELETE",
-      });
-      await this.prisma.documentMemoryPublication.update({
-        where: { documentId },
-        data: { jobId },
-      });
-    } catch (error) {
-      await this.prisma.documentMemoryPublication.updateMany({
-        where: { documentId },
-        data: {
-          status: "FAILED",
-          failureCode: "MEMORY_DELETE_QUEUE_FAILED",
-          failureMessage: error instanceof Error ? error.message.slice(0, 500) : "Memory deletion could not be queued.",
-        },
-      }).catch(() => undefined);
-    }
+    await this.prisma.documentMemoryPublication.update({
+      where: { documentId },
+      data: {
+        status: "DELETE_PENDING",
+        jobId: randomUUID(),
+        failureCode: null,
+        failureMessage: null,
+        queuedAt: new Date(),
+      },
+    });
   }
 }

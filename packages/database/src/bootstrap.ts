@@ -4,8 +4,7 @@ import { resolve } from "node:path";
 export type BootstrapSecretName =
   | "aihub_database_url"
   | "aihub_master_key"
-  | "aihub_bootstrap_token"
-  | "aihub_installation_claim_expires_at";
+  | "aihub_installation_key";
 
 export function bootstrapSecretCandidates(name: BootstrapSecretName): string[] {
   return [

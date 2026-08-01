@@ -64,7 +64,7 @@ export function ToolingView({ unlocked, scopes, onConfigure, onUnauthorized }: T
   const [adminRole, setAdminRole] = useState("PLATFORM_ADMIN");
   const [credentialName, setCredentialName] = useState("Hermes on-prem gateway");
   const [issuedCredential, setIssuedCredential] = useState<IssuedGatewayCredential | null>(null);
-  const [runtimeReason, setRuntimeReason] = useState("Phase 6 gateway controls reviewed for the isolated pilot.");
+  const [runtimeReason, setRuntimeReason] = useState("Gateway controls reviewed for the isolated pilot.");
   const [approvalTtl, setApprovalTtl] = useState(15);
   const [decisionReason, setDecisionReason] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
@@ -182,6 +182,6 @@ export function ToolingView({ unlocked, scopes, onConfigure, onUnauthorized }: T
       <div className="tooling-call-table"><div className="tooling-call-head"><span>Status</span><span>Tool</span><span>Agent</span><span>Requested</span><span>Outcome</span></div>{calls.length === 0 ? <div className="document-empty"><strong>No calls recorded</strong><span>The gateway remains staged until a live Hermes configuration carries an approved per-run capability.</span></div> : calls.map((call) => <article key={call.id}><span className={`document-status ${tone(call.status)}`}>{call.status.toLowerCase().replace("_", " ")}</span><strong>{call.toolName}</strong><span>{call.profileSlug} · v{call.profileVersion}</span><span>{when(call.requestedAt)}</span><span>{call.errorMessage ?? (call.result ? "Result retained" : "Awaiting outcome")}</span></article>)}</div>
     </section>
 
-    <div className="tooling-stage-note"><strong>Hermes remains zero-tool by default</strong><p>The gateway control plane is ready for acceptance, but Phase 5 runs will continue rejecting enabled Hermes toolsets until the isolated deployment proves exact tool discovery and per-run capability propagation end to end.</p></div>
+    <div className="tooling-stage-note"><strong>Hermes remains zero-tool by default</strong><p>The gateway control plane is ready for acceptance, but governed runs continue rejecting enabled Hermes toolsets until the isolated deployment proves exact tool discovery and per-run capability propagation end to end.</p></div>
   </section>;
 }

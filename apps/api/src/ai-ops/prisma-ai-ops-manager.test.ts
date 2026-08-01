@@ -30,8 +30,10 @@ function operationsOverviewHarness(
     id: string;
     displayName: string;
     version: string;
-    liteLLMGuardrails: string[];
     maxInputCharacters: number;
+    maxOutputCharacters: number;
+    blockControlCharacters: boolean;
+    blockCredentialPatterns: boolean;
     updatedAt: Date;
   } | null = null,
   activePrompt: {
@@ -60,7 +62,7 @@ function operationsOverviewHarness(
     connections: { list: vi.fn(async () => [connection]) },
     connectionMonitoring: { getControl: vi.fn(async () => monitoring) },
     models: { list: vi.fn(async () => ({ items: models })) },
-    jobs: { snapshot: vi.fn(async () => ({
+    runtime: { snapshot: vi.fn(async () => ({
       status: "ONLINE",
       statusReasons: [],
       capturedAt: new Date().toISOString(),
@@ -77,11 +79,11 @@ function operationsOverviewHarness(
 describe("PrismaAiOpsManager scheduled connection evidence", () => {
   const connection = (lastHealthcheckAt: string): ServiceConnectionSummary => ({
     id: "5277951c-7d22-4cec-8d46-fad3afba37dd",
-    slug: "litellm-primary",
-    displayName: "LiteLLM Primary",
-    kind: "LITELLM",
+    slug: "vllm-primary",
+    displayName: "vLLM Primary",
+    kind: "VLLM",
     environment: "PRODUCTION",
-    baseUrl: "https://litellm.mpm.internal",
+    baseUrl: "https://vllm.mpm.internal",
     enabled: true,
     status: "HEALTHY",
     configuration: {},
@@ -132,7 +134,7 @@ describe("PrismaAiOpsManager scheduled connection evidence", () => {
       modelAlias: "chat-primary",
       workload: "CHAT",
       status: "ACTIVE",
-      connection: { id: "5277951c-7d22-4cec-8d46-fad3afba37dd", displayName: "LiteLLM Primary", kind: "LITELLM", environment: "PRODUCTION", enabled: true, status: "HEALTHY" },
+      connection: { id: "5277951c-7d22-4cec-8d46-fad3afba37dd", displayName: "vLLM Primary", kind: "VLLM", environment: "PRODUCTION", enabled: true, status: "HEALTHY" },
       version: "2.1-nvfp4",
       license: null,
       contextWindowTokens: 131_072,
@@ -157,14 +159,16 @@ describe("PrismaAiOpsManager scheduled connection evidence", () => {
     });
   });
 
-  it("reports the evaluated active policy and its LiteLLM assignment posture", async () => {
+  it("reports the evaluated active AIHub policy posture", async () => {
     const observedAt = new Date().toISOString();
     const manager = operationsOverviewHarness(connection(observedAt), monitoring, [], {
       id: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d",
       displayName: "Chat safety",
       version: "1.0.0",
-      liteLLMGuardrails: ["presidio-pii", "prompt-injection"],
       maxInputCharacters: 12_000,
+      maxOutputCharacters: 200_000,
+      blockControlCharacters: true,
+      blockCredentialPatterns: true,
       updatedAt: new Date(observedAt),
     });
 
@@ -175,7 +179,7 @@ describe("PrismaAiOpsManager scheduled connection evidence", () => {
       affectedWorkflows: ["CHAT"],
     });
     expect(overview.guardrails.find(({ layer }) => layer === "INPUT")?.summary).toContain("12,000-character");
-    expect(overview.guardrails.find(({ layer }) => layer === "OUTPUT")?.summary).toContain("2 approved LiteLLM guardrails");
+    expect(overview.guardrails.find(({ layer }) => layer === "OUTPUT")?.summary).toContain("200,000 characters");
   });
 
   it("reports the evaluated active chat-system prompt without exposing its content", async () => {

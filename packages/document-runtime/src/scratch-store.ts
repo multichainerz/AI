@@ -97,16 +97,6 @@ export function documentGenerationPrefix(documentId: string, generation: number)
   return `${documentScratchPrefix(documentId)}/generation-${generation}`;
 }
 
-export function documentPageKey(
-  documentId: string,
-  generation: number,
-  pageNumber: number,
-  mediaType: "image/png" | "image/jpeg",
-): string {
-  const extension = mediaType === "image/png" ? "png" : "jpg";
-  return `${documentGenerationPrefix(documentId, generation)}/pages/${String(pageNumber).padStart(4, "0")}.${extension}`;
-}
-
 export function documentNormalizedKey(documentId: string, generation: number): string {
   return `${documentGenerationPrefix(documentId, generation)}/normalized/content.md`;
 }

@@ -26,8 +26,10 @@ function policy(overrides: Record<string, unknown> = {}) {
     description: "Approved chat safety controls.",
     version: "1.0.0",
     status: "DRAFT" as const,
-    liteLLMGuardrails: ["presidio-pii", "prompt-injection"],
     maxInputCharacters: 12_000,
+    maxOutputCharacters: 200_000,
+    blockControlCharacters: true,
+    blockCredentialPatterns: true,
     activationEvaluationId: null,
     firstActivatedAt: null,
     revision: 1,
@@ -49,7 +51,7 @@ function activationTransaction(overrides: Record<string, unknown> = {}) {
       findUniqueOrThrow: vi.fn(async () => policy({ status: "ACTIVE", activationEvaluationId: EVALUATION_ID, firstActivatedAt: now, revision: 2 })),
     },
     modelDeployment: { count: vi.fn(async () => 0), findFirst: vi.fn() },
-    serviceConnection: { findMany: vi.fn(async () => [{ kind: "LITELLM", enabled: true, status: "HEALTHY" }]) },
+    serviceConnection: { findMany: vi.fn(async () => [{ kind: "VLLM", enabled: true, status: "HEALTHY" }]) },
     evaluationRun: { findFirst: vi.fn(async () => ({ id: EVALUATION_ID })) },
     auditEvent: { create: vi.fn(async () => ({})) },
     ...overrides,
@@ -57,7 +59,7 @@ function activationTransaction(overrides: Record<string, unknown> = {}) {
 }
 
 describe("PrismaGuardrailManager", () => {
-  it("requires a new version when assignments or limits change", async () => {
+  it("requires a new version when runtime controls change", async () => {
     const transaction = {
       $executeRaw: vi.fn(async () => 1),
       guardrailPolicy: { findUnique: vi.fn(async () => policy({ status: "SUSPENDED" })), updateMany: vi.fn() },
@@ -65,17 +67,17 @@ describe("PrismaGuardrailManager", () => {
     const prisma = { $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)) } as unknown as AIHubPrismaClient;
 
     await expect(new PrismaGuardrailManager(prisma).update(principal, POLICY_ID, {
-      liteLLMGuardrails: ["new-safety-check"],
+      blockCredentialPatterns: false,
       expectedRevision: 1,
     })).rejects.toThrow("new policy version");
     expect(transaction.guardrailPolicy.updateMany).not.toHaveBeenCalled();
   });
 
-  it("requires exactly one healthy effective LiteLLM route", async () => {
+  it("requires exactly one healthy effective vLLM route", async () => {
     const transaction = activationTransaction({
       serviceConnection: { findMany: vi.fn(async () => [
-        { kind: "LITELLM", enabled: true, status: "HEALTHY" },
-        { kind: "LITELLM", enabled: true, status: "UNREACHABLE" },
+        { kind: "VLLM", enabled: true, status: "HEALTHY" },
+        { kind: "VLLM", enabled: true, status: "UNREACHABLE" },
       ]) },
     });
     const prisma = { $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)) } as unknown as AIHubPrismaClient;

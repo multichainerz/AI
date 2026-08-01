@@ -18,7 +18,7 @@ interface PromptRouteDependencies {
 export async function registerPromptRoutes(app: FastifyInstance, dependencies: PromptRouteDependencies): Promise<void> {
   app.addHook("preHandler", async (_request, reply) => {
     if (!dependencies.sessionManager || !dependencies.manager) {
-      return reply.code(423).send({ error: "PLATFORM_LOCKED", message: "AIHub bootstrap trust is not ready." });
+      return reply.code(423).send({ error: "PLATFORM_LOCKED", message: "AIHub installation trust is not ready." });
     }
   });
 

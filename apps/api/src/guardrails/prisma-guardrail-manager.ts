@@ -19,8 +19,10 @@ function dto(policy: StoredPolicy): GuardrailPolicy {
     description: policy.description,
     version: policy.version,
     status: policy.status,
-    liteLLMGuardrails: policy.liteLLMGuardrails,
     maxInputCharacters: policy.maxInputCharacters,
+    maxOutputCharacters: policy.maxOutputCharacters,
+    blockControlCharacters: policy.blockControlCharacters,
+    blockCredentialPatterns: policy.blockCredentialPatterns,
     activationEvaluationId: policy.activationEvaluationId,
     firstActivatedAt: policy.firstActivatedAt?.toISOString() ?? null,
     revision: policy.revision,
@@ -29,10 +31,6 @@ function dto(policy: StoredPolicy): GuardrailPolicy {
     createdAt: policy.createdAt.toISOString(),
     updatedAt: policy.updatedAt.toISOString(),
   };
-}
-
-function sameNames(left: readonly string[], right: readonly string[]): boolean {
-  return left.length === right.length && left.every((name, index) => name === right[index]);
 }
 
 export class PrismaGuardrailManager implements GuardrailManager {
@@ -59,7 +57,7 @@ export class PrismaGuardrailManager implements GuardrailManager {
           resourceType: "GuardrailPolicy",
           resourceId: policy.id,
           outcome: "SUCCESS",
-          metadata: { slug: policy.slug, version: policy.version, guardrailCount: policy.liteLLMGuardrails.length },
+          metadata: { slug: policy.slug, version: policy.version, enforcementPlane: "AIHUB" },
         } });
         return policy;
       });
@@ -84,10 +82,12 @@ export class PrismaGuardrailManager implements GuardrailManager {
       const materialChange = (
         (changes.version !== undefined && changes.version !== current.version)
         || (changes.maxInputCharacters !== undefined && changes.maxInputCharacters !== current.maxInputCharacters)
-        || (changes.liteLLMGuardrails !== undefined && !sameNames(changes.liteLLMGuardrails, current.liteLLMGuardrails))
+        || (changes.maxOutputCharacters !== undefined && changes.maxOutputCharacters !== current.maxOutputCharacters)
+        || (changes.blockControlCharacters !== undefined && changes.blockControlCharacters !== current.blockControlCharacters)
+        || (changes.blockCredentialPatterns !== undefined && changes.blockCredentialPatterns !== current.blockCredentialPatterns)
       );
       if (materialChange && (!changes.version || changes.version === current.version)) {
-        throw new GuardrailConflictError("Guardrail or input-limit changes require a new policy version.");
+        throw new GuardrailConflictError("Runtime guardrail changes require a new policy version.");
       }
       const updateData: Prisma.GuardrailPolicyUncheckedUpdateManyInput = {
         status: materialChange ? "DRAFT" : current.status,
@@ -98,8 +98,10 @@ export class PrismaGuardrailManager implements GuardrailManager {
       if (changes.displayName !== undefined) updateData.displayName = changes.displayName;
       if (changes.description !== undefined) updateData.description = changes.description;
       if (changes.version !== undefined) updateData.version = changes.version;
-      if (changes.liteLLMGuardrails !== undefined) updateData.liteLLMGuardrails = changes.liteLLMGuardrails;
       if (changes.maxInputCharacters !== undefined) updateData.maxInputCharacters = changes.maxInputCharacters;
+      if (changes.maxOutputCharacters !== undefined) updateData.maxOutputCharacters = changes.maxOutputCharacters;
+      if (changes.blockControlCharacters !== undefined) updateData.blockControlCharacters = changes.blockControlCharacters;
+      if (changes.blockCredentialPatterns !== undefined) updateData.blockCredentialPatterns = changes.blockCredentialPatterns;
       const updated = await transaction.guardrailPolicy.updateMany({
         where: { id, revision: expectedRevision, status: current.status },
         data: updateData,
@@ -142,13 +144,13 @@ export class PrismaGuardrailManager implements GuardrailManager {
         select: { connection: { select: { kind: true, enabled: true, status: true } } },
       }) : null;
       const legacyConnections = catalogueEnforced ? [] : await transaction.serviceConnection.findMany({
-        where: { kind: "LITELLM", enabled: true },
+        where: { kind: "VLLM", enabled: true },
         select: { kind: true, enabled: true, status: true },
         take: 2,
       });
       const servingConnection = modelRoute?.connection ?? (legacyConnections.length === 1 ? legacyConnections[0] : null);
-      if (!servingConnection || servingConnection.kind !== "LITELLM" || !servingConnection.enabled || servingConnection.status !== "HEALTHY") {
-        throw new GuardrailConflictError("One effective LiteLLM chat connection must be enabled and healthy before policy activation.");
+      if (!servingConnection || servingConnection.kind !== "VLLM" || !servingConnection.enabled || servingConnection.status !== "HEALTHY") {
+        throw new GuardrailConflictError("One effective vLLM chat connection must be enabled and healthy before policy activation.");
       }
 
       const evaluation = await transaction.evaluationRun.findFirst({
@@ -186,7 +188,7 @@ export class PrismaGuardrailManager implements GuardrailManager {
         resourceType: "GuardrailPolicy",
         resourceId: id,
         outcome: "SUCCESS",
-        metadata: { reason: input.reason, evaluationRunId: evaluation.id, version: current.version, liteLLMGuardrails: current.liteLLMGuardrails },
+        metadata: { reason: input.reason, evaluationRunId: evaluation.id, version: current.version, enforcementPlane: "AIHUB" },
       } });
       return dto(saved);
     }).catch((error: unknown) => {

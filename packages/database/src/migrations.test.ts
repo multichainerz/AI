@@ -39,4 +39,12 @@ describe("committed PostgreSQL migrations", () => {
     expect(sql).toContain('CREATE TYPE "DeploymentInstallMethod" AS ENUM (\'SIGNED_INSTALLER\')');
     expect(sql).toContain("infrastructure-installer-network-tls");
   });
+
+  it("removes legacy installation-claim and bootstrap-administrator identities", () => {
+    const directory = migrationDirectories.find((name) => name.endsWith("_terminology_cohesion"));
+    expect(directory).toBeTruthy();
+    const sql = readFileSync(resolve(migrationsRoot, directory!, "migration.sql"), "utf8");
+    expect(sql).toContain("'activate-installation'");
+    expect(sql).toContain("'installation-key-administrator'");
+  });
 });

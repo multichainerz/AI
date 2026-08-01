@@ -16,12 +16,10 @@ import type {
 } from "@aihub/contracts";
 import { agentCapabilitySchema, agentSkillReferenceSchema, knowledgeSourceSchema } from "@aihub/contracts";
 import { Prisma, type AIHubPrismaClient } from "@aihub/database";
-import type { PgBossQueueService } from "@aihub/jobs";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   AgentConflictError,
   AgentNotFoundError,
-  AgentQueueUnavailableError,
   AgentRuntimeDisabledError,
   type AgentBoundaryVerifier,
   type AgentManager,
@@ -255,7 +253,6 @@ const runInclude = {
 export class PrismaAgentManager implements AgentManager {
   constructor(
     private readonly prisma: AIHubPrismaClient,
-    private readonly queue: PgBossQueueService,
     private readonly boundaryVerifier?: AgentBoundaryVerifier,
   ) {}
 
@@ -437,6 +434,7 @@ export class PrismaAgentManager implements AgentManager {
           ownerSubject: principal.subject,
           requestedBy: principal.id,
           input: input.input,
+          jobId: randomUUID(),
           effectiveCapabilities: version.allowPrivateKnowledge ? ["knowledge:private:read"] : [],
         },
         include: runInclude,
@@ -448,17 +446,7 @@ export class PrismaAgentManager implements AgentManager {
       } });
       return created;
     });
-    try {
-      const jobId = await this.queue.sendAgentRun({ runId: run.id });
-      const queued = await this.prisma.agentRun.update({ where: { id: run.id }, data: { jobId }, include: runInclude });
-      return runDto(queued as StoredRun);
-    } catch (error) {
-      await this.prisma.agentRun.update({
-        where: { id: run.id },
-        data: { status: "FAILED", failureCode: "QUEUE_UNAVAILABLE", failureMessage: "AIHub could not enqueue the agent run.", completedAt: new Date() },
-      });
-      throw new AgentQueueUnavailableError();
-    }
+    return runDto(run as StoredRun);
   }
 
   async cancelRun(principal: AgentPrincipal, runId: string, includeAll: boolean): Promise<AgentRun> {
@@ -554,7 +542,7 @@ export class PrismaAgentManager implements AgentManager {
         throw new AgentConflictError("The current agent version is missing.");
       }
       if (requiresRelease && !currentVersion!.distributionDigest) {
-        throw new AgentConflictError("Create a Phase 9 Profile Distribution version before standby or activation.");
+        throw new AgentConflictError("Create a Profile Distribution version before standby or activation.");
       }
       if (requiresRelease) {
         const hermesCompatibility = await transaction.componentCompatibility.findUnique({

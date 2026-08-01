@@ -1,11 +1,10 @@
 import type { AIHubPrismaClient } from "@aihub/database";
-import type { JobQueueName } from "@aihub/contracts";
 
 export interface WorkerIdentity {
   id: string;
   name: string;
   version: string;
-  queues: JobQueueName[];
+  workloads: string[];
 }
 
 export interface WorkerRegistry {
@@ -26,7 +25,7 @@ export class PrismaWorkerRegistry implements WorkerRegistry {
         name: identity.name,
         version: identity.version,
         status: "ONLINE",
-        queues: identity.queues,
+        workloads: identity.workloads,
         metadata: {},
         startedAt: now,
         lastSeenAt: now,
@@ -35,7 +34,7 @@ export class PrismaWorkerRegistry implements WorkerRegistry {
         name: identity.name,
         version: identity.version,
         status: "ONLINE",
-        queues: identity.queues,
+        workloads: identity.workloads,
         startedAt: now,
         lastSeenAt: now,
         stoppedAt: null,

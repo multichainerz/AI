@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { connectionStatusSchema, environmentSchema, serviceKindSchema } from "./connections.js";
 
-export const MODEL_WORKLOADS = ["CHAT", "AGENT", "EMBEDDING", "OCR"] as const;
+export const MODEL_WORKLOADS = ["CHAT", "AGENT"] as const;
 export const MODEL_DEPLOYMENT_STATUSES = ["DRAFT", "ACTIVE", "SUSPENDED"] as const;
 
 export const modelWorkloadSchema = z.enum(MODEL_WORKLOADS);

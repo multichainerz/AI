@@ -14,27 +14,23 @@ import {
 
 interface GuardrailsViewProps {
   session: AdministratorSession | null;
-  onConfigureLiteLLM: () => void;
+  onConfigureInference: () => void;
   onOpenOperations: () => void;
   onSessionExpired: () => void;
 }
 
-interface PolicyDraft extends Omit<CreateGuardrailPolicy, "liteLLMGuardrails"> {
-  liteLLMGuardrails: string;
-}
+type PolicyDraft = CreateGuardrailPolicy;
 
 const initialDraft: PolicyDraft = {
   slug: "chat-safety",
   displayName: "Chat safety",
   description: "Approved input and output controls for internal AIHub chat.",
   version: "1.0.0",
-  liteLLMGuardrails: "",
   maxInputCharacters: 12_000,
+  maxOutputCharacters: 200_000,
+  blockControlCharacters: true,
+  blockCredentialPatterns: true,
 };
-
-function names(value: string): string[] {
-  return value.split(/[\n,]/).map((name) => name.trim()).filter(Boolean);
-}
 
 function tone(policy: GuardrailPolicy): string {
   if (policy.status === "ACTIVE") return "healthy";
@@ -48,7 +44,7 @@ function when(value: string): string {
 
 export function GuardrailsView({
   session,
-  onConfigureLiteLLM,
+  onConfigureInference,
   onOpenOperations,
   onSessionExpired,
 }: GuardrailsViewProps) {
@@ -90,8 +86,10 @@ export function GuardrailsView({
       displayName: policy.displayName,
       description: policy.description,
       version: policy.version,
-      liteLLMGuardrails: policy.liteLLMGuardrails.join("\n"),
       maxInputCharacters: policy.maxInputCharacters,
+      maxOutputCharacters: policy.maxOutputCharacters,
+      blockControlCharacters: policy.blockControlCharacters,
+      blockCredentialPatterns: policy.blockCredentialPatterns,
     });
     setShowEditor(true);
     setError(null);
@@ -100,11 +98,6 @@ export function GuardrailsView({
 
   const save = async (event: FormEvent) => {
     event.preventDefault();
-    const liteLLMGuardrails = names(draft.liteLLMGuardrails);
-    if (liteLLMGuardrails.length === 0) {
-      setError("Enter at least one guardrail name already configured in LiteLLM.");
-      return;
-    }
     setBusy(true);
     setError(null);
     setMessage(null);
@@ -114,13 +107,15 @@ export function GuardrailsView({
           displayName: draft.displayName,
           description: draft.description,
           version: draft.version,
-          liteLLMGuardrails,
           maxInputCharacters: draft.maxInputCharacters,
+          maxOutputCharacters: draft.maxOutputCharacters,
+          blockControlCharacters: draft.blockControlCharacters,
+          blockCredentialPatterns: draft.blockCredentialPatterns,
           expectedRevision: editing.revision,
         });
         setMessage("Policy updated. Material changes now require matching promoted safety evidence.");
       } else {
-        await createGuardrailPolicy({ ...draft, liteLLMGuardrails });
+        await createGuardrailPolicy(draft);
         setMessage("Draft guardrail policy created.");
       }
       setEditing(null);
@@ -162,45 +157,49 @@ export function GuardrailsView({
 
   if (!session) {
     return <div className="guardrails-workspace">
-      <header className="guardrails-header"><div><p className="page-kicker">Policy control</p><h1>Guardrails</h1><p>Evaluated request boundaries and approved LiteLLM safety assignments.</p></div></header>
-      <section className="guardrails-lock panel"><span className="guardrails-lock-mark">G</span><div><strong>Administrator session required</strong><p>Claim or sign in to AIHub to inspect policy versions and activation evidence. Guardrail credentials remain in the encrypted credential store.</p></div><button className="primary-button" type="button" onClick={onConfigureLiteLLM}>Open platform settings</button></section>
+      <header className="guardrails-header"><div><p className="page-kicker">Policy control</p><h1>Guardrails</h1><p>Evaluated request boundaries enforced by AIHub.</p></div></header>
+      <section className="guardrails-lock panel"><span className="guardrails-lock-mark">G</span><div><strong>Administrator session required</strong><p>Claim or sign in to AIHub to inspect policy versions and activation evidence.</p></div><button className="primary-button" type="button" onClick={onConfigureInference}>Open platform settings</button></section>
     </div>;
   }
 
   const active = policies.find(({ status }) => status === "ACTIVE");
   const activatedBefore = policies.some(({ firstActivatedAt }) => firstActivatedAt !== null);
-  const uniqueAssignments = new Set(policies.flatMap(({ liteLLMGuardrails }) => liteLLMGuardrails)).size;
+  const enabledControls = active
+    ? Number(active.blockControlCharacters) + Number(active.blockCredentialPatterns)
+    : 0;
 
   return <div className="guardrails-workspace">
     <header className="guardrails-header">
-      <div><p className="page-kicker">Policy control</p><h1>Guardrails</h1><p>Release evaluated chat boundaries and attach approved safety checks to every LiteLLM request.</p></div>
+      <div><p className="page-kicker">Policy control</p><h1>Guardrails</h1><p>Release evaluated limits and deterministic safety checks enforced inside AIHub.</p></div>
       <div className="guardrail-header-actions"><button type="button" onClick={onOpenOperations}>Evaluation evidence</button>{canManage && <button className="primary-button" type="button" onClick={startCreate}>New policy</button>}</div>
     </header>
 
     <section className="guardrail-metrics" aria-label="Guardrail policy summary">
       <article><span>Policy records</span><strong>{policies.length}</strong><small>Version controlled</small></article>
       <article><span>Active boundary</span><strong>{active ? "1" : "0"}</strong><small>{active ? active.displayName : activatedBefore ? "Fail closed" : "Legacy mode"}</small></article>
-      <article><span>Assignments</span><strong>{uniqueAssignments}</strong><small>Named LiteLLM guardrails</small></article>
+      <article><span>Active checks</span><strong>{enabledControls}</strong><small>AIHub-native detectors</small></article>
       <article><span>Input ceiling</span><strong>{active ? new Intl.NumberFormat("en", { notation: "compact" }).format(active.maxInputCharacters) : "—"}</strong><small>Characters per message</small></article>
     </section>
 
     <section className={`guardrail-boundary panel ${active ? "active" : activatedBefore ? "blocked" : "staged"}`}>
-      <div><span>Runtime boundary</span><strong>{active ? `${active.displayName} v${active.version} is enforcing chat.` : activatedBefore ? "Chat policy enforcement is paused and fails closed." : "Drafts do not change current chat behavior."}</strong><p>AIHub enforces the input ceiling locally and sends approved names using LiteLLM's per-request <code>guardrails</code> field. The named guardrails and their pre/post-call modes must already exist in LiteLLM.</p></div>
-      <button type="button" onClick={onConfigureLiteLLM}>Manage LiteLLM connection</button>
+      <div><span>Runtime boundary</span><strong>{active ? `${active.displayName} v${active.version} is enforcing chat.` : activatedBefore ? "Chat policy enforcement is paused and fails closed." : "Drafts do not change current chat behavior."}</strong><p>AIHub applies request size, response size, control-character, and credential-pattern checks before traffic reaches the approved vLLM route.</p></div>
+      <button type="button" onClick={onConfigureInference}>Manage vLLM connection</button>
     </section>
 
     {error && <div className="workspace-notice error" role="alert">{error}</div>}
     {message && <div className="workspace-notice success">{message}</div>}
 
     {showEditor && <form className="guardrail-editor panel" onSubmit={(event) => void save(event)}>
-      <div className="section-toolbar"><div><h2>{editing ? `Edit ${editing.displayName}` : "New chat policy"}</h2><p>Guardrail names are identifiers, never credentials. Put external classifier endpoints and keys in LiteLLM or AIHub Connections.</p></div><button type="button" onClick={() => setShowEditor(false)}>Cancel</button></div>
+      <div className="section-toolbar"><div><h2>{editing ? `Edit ${editing.displayName}` : "New chat policy"}</h2><p>These controls run locally in AIHub and are versioned with evaluation evidence.</p></div><button type="button" onClick={() => setShowEditor(false)}>Cancel</button></div>
       <div className="guardrail-editor-grid">
         <label><span>Display name</span><input value={draft.displayName} minLength={2} maxLength={120} required onChange={(event) => setDraft({ ...draft, displayName: event.target.value })} /></label>
         <label><span>Policy slug</span><input value={draft.slug} disabled={Boolean(editing)} required onChange={(event) => setDraft({ ...draft, slug: event.target.value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") })} /></label>
         <label><span>Immutable version</span><input value={draft.version} maxLength={120} required onChange={(event) => setDraft({ ...draft, version: event.target.value })} /></label>
         <label><span>Maximum input characters</span><input type="number" min={256} max={32000} value={draft.maxInputCharacters} required onChange={(event) => setDraft({ ...draft, maxInputCharacters: Number(event.target.value) })} /></label>
+        <label><span>Maximum output characters</span><input type="number" min={1024} max={1000000} value={draft.maxOutputCharacters} required onChange={(event) => setDraft({ ...draft, maxOutputCharacters: Number(event.target.value) })} /></label>
         <label className="wide"><span>Purpose and coverage</span><textarea value={draft.description} minLength={3} maxLength={500} rows={3} required onChange={(event) => setDraft({ ...draft, description: event.target.value })} /></label>
-        <label className="wide"><span>LiteLLM guardrail names</span><textarea value={draft.liteLLMGuardrails} rows={4} required onChange={(event) => setDraft({ ...draft, liteLLMGuardrails: event.target.value })} /><small>One name per line or comma-separated, in execution order.</small></label>
+        <label className="guardrail-check"><input type="checkbox" checked={draft.blockControlCharacters} onChange={(event) => setDraft({ ...draft, blockControlCharacters: event.target.checked })} /><span>Block unsafe control characters</span></label>
+        <label className="guardrail-check"><input type="checkbox" checked={draft.blockCredentialPatterns} onChange={(event) => setDraft({ ...draft, blockCredentialPatterns: event.target.checked })} /><span>Block recognizable credential patterns</span></label>
       </div>
       <button className="primary-button guardrail-save" type="submit" disabled={busy || editing?.status === "ACTIVE"}>{busy ? "Saving…" : editing ? "Save policy revision" : "Create draft policy"}</button>
     </form>}
@@ -210,8 +209,8 @@ export function GuardrailsView({
       {policies.map((policy) => <article className="guardrail-card panel" key={policy.id}>
         <header><span className="guardrail-version">v{policy.version}</span><span className={`connection-status ${tone(policy)}`}><i />{policy.status.toLowerCase()}</span></header>
         <div className="guardrail-card-title"><span>{policy.displayName.slice(0, 2).toUpperCase()}</span><div><h2>{policy.displayName}</h2><p>{policy.description}</p></div></div>
-        <div className="guardrail-tags">{policy.liteLLMGuardrails.map((name) => <code key={name}>{name}</code>)}</div>
-        <dl><div><dt>Input ceiling</dt><dd>{policy.maxInputCharacters.toLocaleString("en-US")} chars</dd></div><div><dt>Safety evidence</dt><dd>{policy.activationEvaluationId ? "Promoted" : "Required"}</dd></div><div><dt>Last updated</dt><dd>{when(policy.updatedAt)}</dd></div><div><dt>Enforcement history</dt><dd>{policy.firstActivatedAt ? "Started" : "Never active"}</dd></div></dl>
+        <div className="guardrail-tags"><code>AIHub native</code>{policy.blockControlCharacters && <code>control chars</code>}{policy.blockCredentialPatterns && <code>credentials</code>}</div>
+        <dl><div><dt>Input ceiling</dt><dd>{policy.maxInputCharacters.toLocaleString("en-US")} chars</dd></div><div><dt>Output ceiling</dt><dd>{policy.maxOutputCharacters.toLocaleString("en-US")} chars</dd></div><div><dt>Safety evidence</dt><dd>{policy.activationEvaluationId ? "Promoted" : "Required"}</dd></div><div><dt>Last updated</dt><dd>{when(policy.updatedAt)}</dd></div></dl>
         <footer><span>Revision {policy.revision}</span>{canManage && <div>{policy.status !== "ACTIVE" && <button type="button" onClick={() => startEdit(policy)}>Edit</button>}<button type="button" onClick={() => setDecision({ id: policy.id, action: policy.status === "ACTIVE" ? "suspend" : "activate", reason: "" })}>{policy.status === "ACTIVE" ? "Suspend" : "Activate"}</button></div>}</footer>
         {decision?.id === policy.id && <form className="guardrail-decision" onSubmit={(event) => void applyDecision(event)}><div><strong>{decision.action === "activate" ? "Activate evaluated policy" : "Suspend active policy"}</strong><span>{decision.action === "activate" ? `Requires a promoted POLICY evaluation for policy:${policy.slug}, version ${policy.version}, including SAFETY.` : "Because this policy has previously enforced chat, suspension deliberately makes chat fail closed."}</span></div><label><span>Operator reason</span><input value={decision.reason} minLength={3} maxLength={500} required onChange={(event) => setDecision({ ...decision, reason: event.target.value })} /></label><div><button type="button" onClick={() => setDecision(null)}>Cancel</button><button className="primary-button" type="submit" disabled={busy || decision.reason.trim().length < 3}>{busy ? "Applying…" : "Confirm"}</button></div></form>}
       </article>)}

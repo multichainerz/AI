@@ -15,7 +15,7 @@ const MESSAGE_ID = "78e3b103-3c63-41d8-a6c9-13b02369ee07";
 const ENTERPRISE_TOKEN = "u".repeat(43);
 const principal: AdminPrincipal = {
   id: SESSION_ID,
-  subject: "bootstrap-administrator",
+  subject: "installation-key-administrator",
   role: "PLATFORM_ADMIN",
   scopes: [...ADMIN_SCOPES],
   createdAt: "2026-07-30T00:00:00.000Z",
@@ -53,7 +53,7 @@ const completedMessage: ChatMessage = {
 };
 
 class SessionManager implements AdminSessionManager {
-  async createBootstrapSession() { return null; }
+  async createInstallationKeySession() { return null; }
   async authenticate(token: string | undefined) { return token === SESSION_TOKEN ? principal : null; }
   async revoke() { return true; }
 }
@@ -224,7 +224,7 @@ describe("controlled chat routes", () => {
   it("returns an actionable configuration gate before streaming begins", async () => {
     const manager = memoryChatManager();
     manager.create = vi.fn(async () => {
-      throw new ChatConfigurationError("Test LiteLLM first.");
+      throw new ChatConfigurationError("Test vLLM first.");
     });
     const app = await chatApp(manager);
     const response = await app.inject({
@@ -234,6 +234,6 @@ describe("controlled chat routes", () => {
       payload: {},
     });
     expect(response.statusCode).toBe(503);
-    expect(response.json()).toEqual({ error: "CHAT_NOT_CONFIGURED", message: "Test LiteLLM first." });
+    expect(response.json()).toEqual({ error: "CHAT_NOT_CONFIGURED", message: "Test vLLM first." });
   });
 });

@@ -41,7 +41,7 @@ const node: HermesRuntimeNode = {
 };
 
 class Sessions implements AdminSessionManager {
-  async createBootstrapSession() { return null; }
+  async createInstallationKeySession() { return null; }
   async authenticate(token: string | undefined) { return token === TOKEN ? session : null; }
   async revoke() { return true; }
 }
@@ -65,9 +65,10 @@ function manager(): HermesRuntimeNodeManager {
     enroll: vi.fn(async () => ({
       node: { ...node, hostname: "hermes-01.internal", enrolledAt: NOW, identityFingerprint: "a".repeat(64) },
       heartbeatPath: `/api/v1/runtime-nodes/${NODE_ID}/heartbeat`,
-      modelBootstrap: { provider: "custom" as const, baseUrl: "https://litellm.internal/v1", modelAlias: "hermes-agent", apiKey: "l".repeat(64) },
+      modelBootstrap: { provider: "custom" as const, baseUrl: "https://aihub.internal/internal/v1", modelAlias: "hermes-agent", apiKey: "g".repeat(64) },
     })),
     heartbeat: vi.fn(async () => ({ accepted: true as const, serverTime: NOW })),
+    registerMemory: vi.fn(async () => ({ accepted: true as const, connectionId: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb" })),
     mutate: vi.fn(async () => ({ ...node, status: "DRAINING" as const, revision: 1 })),
   };
 }
@@ -113,6 +114,7 @@ describe("Hermes runtime-node routes", () => {
         token: "t".repeat(43),
         hostname: "hermes-01.internal",
         publicKeyPem: `-----BEGIN PUBLIC KEY-----\n${"A".repeat(80)}\n-----END PUBLIC KEY-----`,
+        controlPlaneUrl: "https://aihub.internal",
         apiKey: "k".repeat(64),
         hermesVersion: "nousresearch/hermes-agent:latest",
         installerVersion: "ai-v1.7.0",

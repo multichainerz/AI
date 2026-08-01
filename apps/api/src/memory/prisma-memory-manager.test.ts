@@ -1,5 +1,4 @@
 import type { AIHubPrismaClient } from "@aihub/database";
-import type { PgBossQueueService } from "@aihub/jobs";
 import { describe, expect, it, vi } from "vitest";
 import { PrismaMemoryManager } from "./prisma-memory-manager.js";
 
@@ -23,38 +22,27 @@ function harness(status: "READY" | "DELETED") {
     auditEvent: { create: vi.fn(async () => ({})) },
     $transaction: vi.fn(async (actions: Array<Promise<unknown>>) => Promise.all(actions)),
   } as unknown as AIHubPrismaClient;
-  const queue = {
-    sendMemoryIndex: vi.fn(async () => "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb"),
-  } as unknown as PgBossQueueService;
-  return { prisma, queue, manager: new PrismaMemoryManager(prisma, queue) };
+  return { prisma, manager: new PrismaMemoryManager(prisma) };
 }
 
 describe("PrismaMemoryManager", () => {
   it("queues an upsert for an active ready document", async () => {
-    const { manager, queue, prisma } = harness("READY");
+    const { manager, prisma } = harness("READY");
     await manager.reindex(DOCUMENT_ID, "memory-operator");
-    expect(queue.sendMemoryIndex).toHaveBeenCalledWith({
-      documentId: DOCUMENT_ID,
-      generation: 2,
-      action: "UPSERT",
-    });
+    expect(prisma.documentMemoryPublication.update).toHaveBeenCalledWith(expect.objectContaining({ data: { jobId: expect.any(String) } }));
     expect(prisma.documentMemoryPublication.upsert).toHaveBeenCalledWith(expect.objectContaining({
       update: expect.objectContaining({ status: "QUEUED" }),
     }));
   });
 
   it("queues deletion recovery for a deleted document with a prior publication", async () => {
-    const { manager, queue, prisma } = harness("DELETED");
+    const { manager, prisma } = harness("DELETED");
     await manager.reindex(DOCUMENT_ID, "memory-operator");
     expect(prisma.documentMemoryPublication.findUnique).toHaveBeenCalledWith({
       where: { documentId: DOCUMENT_ID },
       select: { documentId: true },
     });
-    expect(queue.sendMemoryIndex).toHaveBeenCalledWith({
-      documentId: DOCUMENT_ID,
-      generation: 2,
-      action: "DELETE",
-    });
+    expect(prisma.documentMemoryPublication.update).toHaveBeenCalledWith(expect.objectContaining({ data: { jobId: expect.any(String) } }));
     expect(prisma.documentMemoryPublication.upsert).toHaveBeenCalledWith(expect.objectContaining({
       update: expect.objectContaining({ status: "DELETE_PENDING" }),
     }));

@@ -104,7 +104,7 @@ export function AgentsView({ unlocked, administrator, oidcConfigured, onSignIn, 
   const [selectedProfileId, setSelectedProfileId] = useState("");
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [prompt, setPrompt] = useState("");
-  const [reason, setReason] = useState("Phase 9 runtime and Profile Distribution boundaries verified by the platform administrator.");
+  const [reason, setReason] = useState("Runtime and Profile Distribution boundaries verified by the platform administrator.");
   const [profileDraft, setProfileDraft] = useState<CreateAgentProfile>(blankProfile);
   const [skillsDraft, setSkillsDraft] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -280,7 +280,7 @@ export function AgentsView({ unlocked, administrator, oidcConfigured, onSignIn, 
           {!selectedRun ? <div className="document-empty"><strong>Select a run</strong><span>Input, output, sources, and failure information remain in the AIHub execution ledger.</span></div> : <>
             <div className="agent-run-detail-head"><div><p className="section-kicker">Run detail</p><h2>{selectedRun.profileName}</h2><span>{selectedRun.profileSlug} · version {selectedRun.profileVersion}</span></div><span className={`document-status ${statusTone(selectedRun.status)}`}>{selectedRun.status.replaceAll("_", " ").toLowerCase()}</span></div>
             <dl className="agent-run-times"><div><dt>Queued</dt><dd>{friendlyTime(selectedRun.queuedAt)}</dd></div><div><dt>Started</dt><dd>{friendlyTime(selectedRun.startedAt)}</dd></div><div><dt>Completed</dt><dd>{friendlyTime(selectedRun.completedAt)}</dd></div></dl>
-            <div className="agent-distribution-pin"><span>Profile Distribution</span><code>{selectedRun.profileDistributionDigest ?? "Legacy run — no Phase 9 distribution digest"}</code></div>
+            <div className="agent-distribution-pin"><span>Profile Distribution</span><code>{selectedRun.profileDistributionDigest ?? "Legacy run — no distribution digest"}</code></div>
             <section className="agent-activity" aria-label="Safe Hermes activity timeline">
               <div><span>Activity timeline</span><small>{runEvents.length} safe event{runEvents.length === 1 ? "" : "s"}</small></div>
               {runEvents.length === 0 ? <p>No bounded Hermes activity events have been retained for this run.</p> : <ol>{runEvents.map((event) => <li key={event.id}>
@@ -307,7 +307,7 @@ export function AgentsView({ unlocked, administrator, oidcConfigured, onSignIn, 
         <label>Approved Skills<textarea value={skillsDraft} placeholder={`One per line: name@version ${"a".repeat(64)}`} onChange={(event) => setSkillsDraft(event.target.value)} /><small>Only secret-free, reviewed Skill references are included in the distribution source. Runtime installation remains evidence-gated.</small></label>
         <div className="agent-editor-grid"><label>Hermes model alias<input required value={profileDraft.modelAlias} onChange={(event) => setProfileDraft({ ...profileDraft, modelAlias: event.target.value })} /></label><label>Timeout (seconds)<input required type="number" min={30} max={3600} value={profileDraft.timeoutSeconds} onChange={(event) => setProfileDraft({ ...profileDraft, timeoutSeconds: Number(event.target.value) })} /></label><label>Concurrent runs<input required type="number" min={1} max={20} value={profileDraft.maxConcurrentRuns} onChange={(event) => setProfileDraft({ ...profileDraft, maxConcurrentRuns: Number(event.target.value) })} /></label></div>
         <label className="agent-check"><input type="checkbox" checked={profileDraft.allowPrivateKnowledge} onChange={(event) => setProfileDraft({ ...profileDraft, allowPrivateKnowledge: event.target.checked })} /><span><strong>Allow private knowledge retrieval</strong><small>Searches only the requesting identity’s authorized Supermemory scope.</small></span></label>
-        <div className="agent-editor-boundary"><strong>Phase 9 distribution boundary</strong><span>SOUL.md and checksummed Skills describe behavior, never authority. Runtime installation must be verified before standby or activation; safe mode remains mandatory.</span></div>
+        <div className="agent-editor-boundary"><strong>Distribution boundary</strong><span>SOUL.md and checksummed Skills describe behavior, never authority. Runtime installation must be verified before standby or activation; safe mode remains mandatory.</span></div>
         <footer><button className="secondary-button" type="button" onClick={() => setEditorOpen(false)}>Cancel</button><button className="primary-button" disabled={busy !== null} type="submit">{busy === "profile-save" ? "Saving..." : editingId ? "Create version" : "Create draft"}</button></footer>
       </form></div>}
     </section>

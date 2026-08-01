@@ -1,7 +1,13 @@
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
+import type { AIHubPrismaClient } from "@aihub/database";
+import { EnvelopeEncryption } from "@aihub/security";
 import { describe, expect, it } from "vitest";
 import { RuntimeNodeAuthenticationError } from "./runtime-node-manager.js";
-import { liteLlmApiBaseUrl, verifyNodeRequestSignature } from "./prisma-runtime-node-manager.js";
+import {
+  inferenceGatewayBaseUrl,
+  PrismaHermesRuntimeNodeManager,
+  verifyNodeRequestSignature,
+} from "./prisma-runtime-node-manager.js";
 
 function canonicalize(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
@@ -36,11 +42,51 @@ describe("Hermes runtime-node signatures", () => {
   });
 });
 
-describe("Hermes LiteLLM bootstrap URL", () => {
-  it("adds the OpenAI-compatible prefix without duplicating an existing prefix", () => {
-    expect(liteLlmApiBaseUrl("https://litellm.internal", {})).toBe("https://litellm.internal/v1");
-    expect(liteLlmApiBaseUrl("https://litellm.internal/v1", {})).toBe("https://litellm.internal/v1");
-    expect(liteLlmApiBaseUrl("https://gateway.internal/litellm", { chatPath: "/v1/chat/completions" }))
-      .toBe("https://gateway.internal/litellm/v1");
+describe("Hermes inference bootstrap URL", () => {
+  it("adds the OpenAI-compatible prefix to the bound control-plane origin", () => {
+    expect(inferenceGatewayBaseUrl("https://aihub.internal")).toBe("https://aihub.internal/internal/v1");
+    expect(inferenceGatewayBaseUrl("https://gateway.internal/"))
+      .toBe("https://gateway.internal/internal/v1");
+  });
+});
+
+describe("Hermes enrollment invitation binding", () => {
+  it("rejects a control-plane origin that differs from the issued invitation before creating credentials", async () => {
+    const { publicKey } = generateKeyPairSync("ed25519");
+    const transaction = {
+      $executeRaw: async () => 1,
+      hermesNodeEnrollment: {
+        findUnique: async () => ({
+          nodeId: "9de260d7-bc51-4558-9d20-06916d393072",
+          controlPlaneUrl: "https://aihub.internal",
+          status: "ISSUED",
+          expiresAt: new Date(Date.now() + 60_000),
+          node: { expectedHostname: null },
+        }),
+      },
+      serviceConnection: { create: async () => { throw new Error("must not create a connection"); } },
+    };
+    const prisma = {
+      $transaction: async (callback: (client: typeof transaction) => Promise<unknown>) => callback(transaction),
+    } as unknown as AIHubPrismaClient;
+    const manager = new PrismaHermesRuntimeNodeManager(
+      prisma,
+      new EnvelopeEncryption({ masterKey: new Uint8Array(32).fill(7) }),
+    );
+
+    await expect(manager.enroll({
+      nodeId: "9de260d7-bc51-4558-9d20-06916d393072",
+      token: "t".repeat(43),
+      hostname: "hermes-01.internal",
+      publicKeyPem: publicKey.export({ type: "spki", format: "pem" }).toString(),
+      controlPlaneUrl: "https://attacker.internal",
+      apiKey: "k".repeat(64),
+      hermesVersion: "nousresearch/hermes-agent:latest",
+      installerVersion: "ai-v1.7.0",
+      capabilities: ["gateway-api"],
+    })).rejects.toMatchObject({
+      code: "INVALID",
+      message: "The enrollment control-plane origin does not match the invitation.",
+    });
   });
 });

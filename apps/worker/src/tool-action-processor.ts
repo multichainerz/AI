@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
-import type { MemoryIndexJobPayload } from "@aihub/contracts";
 import { Prisma, type AIHubPrismaClient } from "@aihub/database";
-import { knowledgeScopeTag } from "@aihub/document-runtime";
+import { sharedKnowledgeScopeTag } from "@aihub/document-runtime";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_ATTEMPTS = 8;
@@ -16,10 +15,6 @@ const dispatchInclude = {
   },
 } satisfies Prisma.ToolActionDispatchInclude;
 type DispatchCall = Prisma.ToolActionDispatchGetPayload<{ include: typeof dispatchInclude }>["call"];
-
-export interface ToolActionQueue {
-  ensureMemoryIndex(payload: MemoryIndexJobPayload): Promise<string | null>;
-}
 
 class ToolActionPolicyError extends Error {}
 
@@ -36,10 +31,7 @@ function safeFailure(error: unknown): string {
 }
 
 export class PrismaToolActionProcessor {
-  constructor(
-    private readonly prisma: AIHubPrismaClient,
-    private readonly queue: ToolActionQueue,
-  ) {}
+  constructor(private readonly prisma: AIHubPrismaClient) {}
 
   async processAvailable(workerId: string, limit = 10): Promise<number> {
     let processed = 0;
@@ -125,7 +117,7 @@ export class PrismaToolActionProcessor {
               create: {
                 documentId: document.id,
                 ownerSubject: document.ownerSubject,
-                scopeTag: knowledgeScopeTag(document.ownerSubject),
+                scopeTag: sharedKnowledgeScopeTag(),
                 generation: document.processingGeneration,
                 status: "QUEUED",
                 queuedAt,
@@ -133,7 +125,7 @@ export class PrismaToolActionProcessor {
               },
               update: {
                 ownerSubject: document.ownerSubject,
-                scopeTag: knowledgeScopeTag(document.ownerSubject),
+                scopeTag: sharedKnowledgeScopeTag(),
                 generation: document.processingGeneration,
                 status: "QUEUED",
                 queuedAt,
@@ -148,11 +140,7 @@ export class PrismaToolActionProcessor {
           }
         }
         if (!jobId) {
-          jobId = await this.queue.ensureMemoryIndex({
-            documentId: document.id,
-            generation: document.processingGeneration,
-            action: "UPSERT",
-          });
+          jobId = randomUUID();
         }
         if (jobId) {
           await this.prisma.documentMemoryPublication.updateMany({

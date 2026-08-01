@@ -22,7 +22,7 @@ const principal: AdministratorSession = {
 };
 
 class SessionManager implements AdminSessionManager {
-  async createBootstrapSession() { return null; }
+  async createInstallationKeySession() { return null; }
   async authenticate(token: string | undefined, scope?: string) {
     return token === SESSION_TOKEN && (!scope || principal.scopes.includes(scope as never)) ? principal : null;
   }

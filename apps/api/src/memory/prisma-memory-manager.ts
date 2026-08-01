@@ -1,14 +1,11 @@
 import type { MemoryMetrics, MemoryPublication, MemoryPublicationList } from "@aihub/contracts";
 import type { AIHubPrismaClient } from "@aihub/database";
-import { knowledgeScopeTag } from "@aihub/document-runtime";
-import type { PgBossQueueService } from "@aihub/jobs";
+import { sharedKnowledgeScopeTag } from "@aihub/document-runtime";
+import { randomUUID } from "node:crypto";
 import { MemoryPublicationConflictError, type MemoryManager } from "./memory-manager.js";
 
 export class PrismaMemoryManager implements MemoryManager {
-  constructor(
-    private readonly prisma: AIHubPrismaClient,
-    private readonly queue: PgBossQueueService,
-  ) {}
+  constructor(private readonly prisma: AIHubPrismaClient) {}
 
   async list(): Promise<MemoryPublicationList> {
     const publications = await this.prisma.documentMemoryPublication.findMany({
@@ -114,14 +111,14 @@ export class PrismaMemoryManager implements MemoryManager {
       create: {
         documentId,
         ownerSubject: document.ownerSubject,
-        scopeTag: knowledgeScopeTag(document.ownerSubject),
+        scopeTag: sharedKnowledgeScopeTag(),
         generation: document.processingGeneration,
         status: action === "DELETE" ? "DELETE_PENDING" : "QUEUED",
         queuedAt,
       },
       update: {
         ownerSubject: document.ownerSubject,
-        scopeTag: knowledgeScopeTag(document.ownerSubject),
+        scopeTag: sharedKnowledgeScopeTag(),
         generation: document.processingGeneration,
         status: action === "DELETE" ? "DELETE_PENDING" : "QUEUED",
         failureCode: null,
@@ -131,36 +128,19 @@ export class PrismaMemoryManager implements MemoryManager {
         deletedAt: null,
       },
     });
-    try {
-      const jobId = await this.queue.sendMemoryIndex({
-        documentId,
-        generation: document.processingGeneration,
-        action,
-      });
-      await this.prisma.$transaction([
-        this.prisma.documentMemoryPublication.update({ where: { documentId }, data: { jobId } }),
-        this.prisma.auditEvent.create({
-          data: {
-            actorType: "USER",
-            actorId,
-            action: action === "DELETE" ? "memory.delete_retry_requested" : "memory.reindex_requested",
-            resourceType: "Document",
-            resourceId: documentId,
-            outcome: "SUCCESS",
-            metadata: { generation: document.processingGeneration, action },
-          },
-        }),
-      ]);
-    } catch {
-      await this.prisma.documentMemoryPublication.update({
-        where: { documentId },
+    await this.prisma.$transaction([
+      this.prisma.documentMemoryPublication.update({ where: { documentId }, data: { jobId: randomUUID() } }),
+      this.prisma.auditEvent.create({
         data: {
-          status: "FAILED",
-          failureCode: "MEMORY_QUEUE_FAILED",
-          failureMessage: "Memory synchronization could not be queued.",
+          actorType: "USER",
+          actorId,
+          action: action === "DELETE" ? "memory.delete_retry_requested" : "memory.reindex_requested",
+          resourceType: "Document",
+          resourceId: documentId,
+          outcome: "SUCCESS",
+          metadata: { generation: document.processingGeneration, action },
         },
-      });
-      throw new MemoryPublicationConflictError("Memory synchronization could not be queued.");
-    }
+      }),
+    ]);
   }
 }

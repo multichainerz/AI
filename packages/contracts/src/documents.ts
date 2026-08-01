@@ -4,8 +4,6 @@ export const DOCUMENT_STATUSES = [
   "QUARANTINED",
   "QUEUED",
   "CONVERTING",
-  "OCR_PENDING",
-  "OCR_PROCESSING",
   "READY",
   "FAILED",
   "REJECTED",
@@ -76,13 +74,6 @@ export const documentConversionJobPayloadSchema = z.object({
   generation: z.number().int().positive(),
 }).strict();
 
-export const documentOcrJobPayloadSchema = documentConversionJobPayloadSchema.extend({
-  pages: z.array(z.object({
-    pageNumber: z.number().int().positive(),
-    mediaType: z.enum(["image/png", "image/jpeg"]),
-  }).strict()).min(1).max(500),
-});
-
 export type DocumentStatus = z.infer<typeof documentStatusSchema>;
 export type DocumentClassification = z.infer<typeof documentClassificationSchema>;
 export type DocumentSummary = z.infer<typeof documentSummarySchema>;
@@ -92,4 +83,3 @@ export type DocumentUploadMetadata = z.infer<typeof documentUploadMetadataSchema
 export type QuarantineDecision = z.infer<typeof quarantineDecisionSchema>;
 export type DocumentMetrics = z.infer<typeof documentMetricsSchema>;
 export type DocumentConversionJobPayload = z.infer<typeof documentConversionJobPayloadSchema>;
-export type DocumentOcrJobPayload = z.infer<typeof documentOcrJobPayloadSchema>;

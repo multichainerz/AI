@@ -2,7 +2,7 @@ import { ADMIN_SCOPES, type AdministratorSession, type AgentProfile, type AgentR
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.js";
 import { ADMIN_SESSION_COOKIE, type AdminSessionManager } from "../auth/admin-session.js";
-import { AgentQueueUnavailableError, AgentRuntimeDisabledError, type AgentManager } from "./agent-manager.js";
+import { AgentRuntimeDisabledError, type AgentManager } from "./agent-manager.js";
 
 const TOKEN = "a".repeat(43);
 const PROFILE_ID = "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb";
@@ -39,7 +39,7 @@ const run: AgentRun = {
 };
 
 class Sessions implements AdminSessionManager {
-  async createBootstrapSession() { return null; }
+  async createInstallationKeySession() { return null; }
   async authenticate(token: string | undefined) { return token === TOKEN ? session : null; }
   async revoke() { return true; }
 }
@@ -110,7 +110,7 @@ describe("Hermes agent routes", () => {
     expect(agentManager.updateRuntimeControl).toHaveBeenCalled();
   });
 
-  it("reports boundary denial and queue failure with stable service responses", async () => {
+  it("reports boundary denial with a stable service response", async () => {
     const denied = manager();
     denied.updateRuntimeControl = vi.fn(async () => { throw new AgentRuntimeDisabledError("Hermes boundary verification failed."); });
     const deniedApp = await agentApp(denied);
@@ -118,12 +118,5 @@ describe("Hermes agent routes", () => {
     const runtime = await deniedApp.app.inject({ method: "PATCH", url: "/api/v1/admin/agents/runtime", headers, payload: { enabled: true, reason: "Verify zero tools" } });
     expect(runtime.statusCode).toBe(423);
     expect(runtime.json()).toMatchObject({ error: "AGENT_RUNTIME_DISABLED" });
-
-    const unavailable = manager();
-    unavailable.submitRun = vi.fn(async () => { throw new AgentQueueUnavailableError(); });
-    const unavailableApp = await agentApp(unavailable);
-    const queued = await unavailableApp.app.inject({ method: "POST", url: "/api/v1/agents/runs", headers, payload: { profileId: PROFILE_ID, input: "Analyze policy" } });
-    expect(queued.statusCode).toBe(503);
-    expect(queued.json()).toMatchObject({ error: "AGENT_QUEUE_UNAVAILABLE" });
   });
 });

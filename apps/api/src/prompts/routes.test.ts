@@ -37,7 +37,7 @@ const activePrompt: PromptTemplate = {
 };
 
 class Sessions implements AdminSessionManager {
-  async createBootstrapSession() { return null; }
+  async createInstallationKeySession() { return null; }
   async authenticate(token: string | undefined) { return token === TOKEN ? session : null; }
   async revoke() { return false; }
 }

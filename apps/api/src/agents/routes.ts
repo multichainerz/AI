@@ -18,7 +18,6 @@ import { enterpriseSessionToken, type EnterpriseIdentityManager } from "../ident
 import {
   AgentConflictError,
   AgentNotFoundError,
-  AgentQueueUnavailableError,
   AgentRuntimeDisabledError,
   type AgentManager,
   type AgentPrincipal,
@@ -77,10 +76,6 @@ async function sendAgentError(reply: FastifyReply, error: unknown): Promise<void
   }
   if (error instanceof AgentRuntimeDisabledError) {
     await reply.code(423).send({ error: "AGENT_RUNTIME_DISABLED", message: error.message });
-    return;
-  }
-  if (error instanceof AgentQueueUnavailableError) {
-    await reply.code(503).send({ error: "AGENT_QUEUE_UNAVAILABLE", message: error.message });
     return;
   }
   throw error;

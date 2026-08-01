@@ -1,11 +1,9 @@
 import { z } from "zod";
 
 export const SERVICE_KINDS = [
-  "LITELLM",
   "VLLM",
   "HERMES",
   "SUPERMEMORY",
-  "OCR",
   "MCP",
   "OIDC",
   "SIEM",
@@ -105,7 +103,7 @@ export const serviceConnectionConfigurationSchema = z
   .strict();
 
 const connectionConfigurationSchemas = {
-  LITELLM: serviceConnectionConfigurationSchema.pick({
+  VLLM: serviceConnectionConfigurationSchema.pick({
     timeoutMs: true,
     healthPath: true,
     modelsPath: true,
@@ -115,12 +113,6 @@ const connectionConfigurationSchemas = {
     temperature: true,
     inferenceTimeoutMs: true,
     requestsPerMinute: true,
-  }),
-  VLLM: serviceConnectionConfigurationSchema.pick({
-    timeoutMs: true,
-    healthPath: true,
-    modelsPath: true,
-    modelAlias: true,
   }),
   HERMES: serviceConnectionConfigurationSchema.pick({
     timeoutMs: true,
@@ -141,14 +133,6 @@ const connectionConfigurationSchemas = {
     memoryPollIntervalMs: true,
     retrievalLimit: true,
     retrievalThreshold: true,
-  }),
-  OCR: serviceConnectionConfigurationSchema.pick({
-    timeoutMs: true,
-    healthPath: true,
-    modelsPath: true,
-    modelAlias: true,
-    chatPath: true,
-    inferenceTimeoutMs: true,
   }),
   MCP: serviceConnectionConfigurationSchema.pick({ timeoutMs: true, healthPath: true }),
   OIDC: serviceConnectionConfigurationSchema.pick({

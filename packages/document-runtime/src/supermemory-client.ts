@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type { PrismaRuntimeConnectionResolver, RuntimeConnection } from "./connection-resolver.js";
 
 const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
@@ -63,8 +62,16 @@ async function boundedJson(response: Response): Promise<unknown> {
   }
 }
 
-export function knowledgeScopeTag(ownerSubject: string): string {
-  return `aihub_user_${createHash("sha256").update(ownerSubject, "utf8").digest("hex").slice(0, 48)}`;
+export const SHARED_KNOWLEDGE_CONTAINER_TAG = "mpm-knowledge";
+
+export function sharedKnowledgeScopeTag(): string {
+  return SHARED_KNOWLEDGE_CONTAINER_TAG;
+}
+
+export function agentMemoryContainerTag(identity: string): string {
+  const normalized = identity.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48);
+  if (!normalized) throw new Error("Agent memory identity must contain a supported character.");
+  return `mpm-agent-${normalized}`;
 }
 
 export function knowledgeDocumentCustomId(documentId: string): string {
@@ -101,7 +108,7 @@ export class SupermemoryClient {
       method: "POST",
       body: JSON.stringify({
         content: input.content,
-        containerTag: knowledgeScopeTag(input.ownerSubject),
+        containerTag: sharedKnowledgeScopeTag(),
         customId: knowledgeDocumentCustomId(input.documentId),
         taskType: "superrag",
         metadata: {
@@ -139,7 +146,7 @@ export class SupermemoryClient {
     throw new Error(`Supermemory rejected document deletion with status ${response.status}.`);
   }
 
-  async search(ownerSubject: string, query: string): Promise<SupermemorySearchHit[]> {
+  async search(_ownerSubject: string, query: string): Promise<SupermemorySearchHit[]> {
     const connection = await this.resolver.resolveOne("SUPERMEMORY");
     const searchPath = stringSetting(connection, "searchPath", "/v3/search");
     const limit = Math.trunc(numberSetting(connection, "retrievalLimit", 6, 2, 20));
@@ -148,7 +155,7 @@ export class SupermemoryClient {
       method: "POST",
       body: JSON.stringify({
         q: query,
-        containerTag: knowledgeScopeTag(ownerSubject),
+        containerTag: sharedKnowledgeScopeTag(),
         limit,
         chunkThreshold: threshold,
         includeFullDocs: false,

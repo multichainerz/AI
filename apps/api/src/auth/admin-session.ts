@@ -8,7 +8,7 @@ import {
 } from "@aihub/contracts";
 import type { AIHubPrismaClient } from "@aihub/database";
 import type { FastifyReply, FastifyRequest } from "fastify";
-import type { AdminAuthenticator } from "./bootstrap-auth.js";
+import type { InstallationKeyVerifier } from "./installation-key-auth.js";
 
 export const ADMIN_SESSION_COOKIE = "aihub_admin_session";
 export const ADMIN_SESSION_IDLE_MS = 15 * 60 * 1_000;
@@ -87,8 +87,8 @@ export interface IssuedAdminSession {
 }
 
 export interface AdminSessionManager {
-  createBootstrapSession(
-    bootstrapToken: string | undefined,
+  createInstallationKeySession(
+    installationKey: string | undefined,
     context: AdminRequestContext,
   ): Promise<IssuedAdminSession | null>;
   issueFederatedSession?(
@@ -98,13 +98,6 @@ export interface AdminSessionManager {
   ): Promise<IssuedAdminSession>;
   authenticate(token: string | undefined, requiredScope?: AdminScope): Promise<AdminPrincipal | null>;
   revoke(token: string | undefined): Promise<boolean>;
-}
-
-export class InstallationClaimRejectedError extends Error {
-  constructor(readonly reason: "CONSUMED" | "EXPIRED") {
-    super(reason === "CONSUMED" ? "The installation claim has already been used." : "The installation claim has expired.");
-    this.name = "InstallationClaimRejectedError";
-  }
 }
 
 function tokenDigest(token: string): Uint8Array<ArrayBuffer> {
@@ -144,15 +137,14 @@ function principalFromRecord(record: {
 export class PrismaAdminSessionManager implements AdminSessionManager {
   constructor(
     private readonly prisma: AIHubPrismaClient,
-    private readonly bootstrapAuthenticator: AdminAuthenticator,
-    private readonly installationClaimExpiresAt?: Date,
+    private readonly installationKeyAuthenticator: InstallationKeyVerifier,
   ) {}
 
-  async createBootstrapSession(
-    bootstrapToken: string | undefined,
+  async createInstallationKeySession(
+    installationKey: string | undefined,
     context: AdminRequestContext,
   ): Promise<IssuedAdminSession | null> {
-    if (!bootstrapToken || !this.bootstrapAuthenticator.verify(bootstrapToken)) return null;
+    if (!installationKey || !this.installationKeyAuthenticator.verify(installationKey)) return null;
 
     const token = randomBytes(32).toString("base64url");
     const sourceIp = context.sourceIp && isIP(context.sourceIp) ? context.sourceIp : null;
@@ -160,16 +152,25 @@ export class PrismaAdminSessionManager implements AdminSessionManager {
     const idleExpiresAt = new Date(now.getTime() + ADMIN_SESSION_IDLE_MS);
     const absoluteExpiresAt = new Date(now.getTime() + ADMIN_SESSION_ABSOLUTE_MS);
     const session = await this.prisma.$transaction(async (transaction) => {
-      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('aihub-installation-claim', 0))`;
-      const claimHash = tokenDigest(bootstrapToken);
-      const existingClaim = await transaction.installationClaim.findUnique({ where: { id: "initial" } });
-      if (existingClaim) {
-        const expectedHash = Buffer.from(existingClaim.tokenHash);
-        if (expectedHash.byteLength !== claimHash.byteLength || !timingSafeEqual(expectedHash, claimHash)) return null;
-        if (existingClaim.redeemedAt) throw new InstallationClaimRejectedError("CONSUMED");
-        if (existingClaim.expiresAt && existingClaim.expiresAt <= now) throw new InstallationClaimRejectedError("EXPIRED");
-      } else if (this.installationClaimExpiresAt && this.installationClaimExpiresAt <= now) {
-        throw new InstallationClaimRejectedError("EXPIRED");
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('aihub-installation-key', 0))`;
+      const keyHash = tokenDigest(installationKey);
+      const existingCredential = await transaction.installationCredential.findUnique({ where: { id: "primary" } });
+      if (existingCredential) {
+        const expectedHash = Buffer.from(existingCredential.keyHash);
+        const keyMatches = expectedHash.byteLength === keyHash.byteLength && timingSafeEqual(expectedHash, keyHash);
+        if (!keyMatches) {
+          // The root-owned mounted file is the authority for an intentional key
+          // rotation. The candidate already passed constant-time verification
+          // against that file before this transaction.
+          await transaction.installationCredential.update({
+            where: { id: "primary" },
+            data: { keyHash, activatedAt: null, lastSessionId: null, lastSourceIp: sourceIp },
+          });
+          await transaction.administratorSession.updateMany({
+            where: { subject: "installation-key-administrator", revokedAt: null },
+            data: { revokedAt: now },
+          });
+        }
       }
       await transaction.administratorSession.deleteMany({
         where: {
@@ -179,7 +180,7 @@ export class PrismaAdminSessionManager implements AdminSessionManager {
       const created = await transaction.administratorSession.create({
         data: {
           tokenHash: tokenDigest(token),
-          subject: "bootstrap-administrator",
+          subject: "installation-key-administrator",
           role: "PLATFORM_ADMIN",
           lastSeenAt: now,
           idleExpiresAt,
@@ -188,21 +189,24 @@ export class PrismaAdminSessionManager implements AdminSessionManager {
           userAgentHash: userAgentDigest(context.userAgent) ?? null,
         },
       });
-      if (existingClaim) {
-        const consumed = await transaction.installationClaim.updateMany({
-          where: { id: "initial", redeemedAt: null, tokenHash: claimHash },
-          data: { redeemedAt: now, redeemedSessionId: created.id, sourceIp },
-        });
-        if (consumed.count !== 1) throw new InstallationClaimRejectedError("CONSUMED");
-      } else {
-        await transaction.installationClaim.create({
+      if (existingCredential) {
+        await transaction.installationCredential.update({
+          where: { id: "primary" },
           data: {
-            id: "initial",
-            tokenHash: claimHash,
-            expiresAt: this.installationClaimExpiresAt ?? null,
-            redeemedAt: now,
-            redeemedSessionId: created.id,
-            sourceIp,
+            keyHash,
+            activatedAt: existingCredential.activatedAt ?? now,
+            lastSessionId: created.id,
+            lastSourceIp: sourceIp,
+          },
+        });
+      } else {
+        await transaction.installationCredential.create({
+          data: {
+            id: "primary",
+            keyHash,
+            activatedAt: now,
+            lastSessionId: created.id,
+            lastSourceIp: sourceIp,
           },
         });
       }
@@ -215,7 +219,7 @@ export class PrismaAdminSessionManager implements AdminSessionManager {
           resourceId: created.id,
           outcome: "SUCCESS",
           sourceIp,
-          metadata: { role: created.role, authenticationMethod: "single-use-installation-claim" },
+          metadata: { role: created.role, authenticationMethod: "permanent-installation-key" },
         },
       });
       return created;

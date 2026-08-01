@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.js";
 import {
   ADMIN_SESSION_COOKIE,
-  InstallationClaimRejectedError,
   type AdminSessionManager,
   type IssuedAdminSession,
 } from "./admin-session.js";
@@ -12,7 +11,7 @@ const SESSION_TOKEN = "s".repeat(43);
 const SESSION_ID = "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb";
 const principal: AdministratorSession = {
   id: SESSION_ID,
-  subject: "bootstrap-administrator",
+  subject: "installation-key-administrator",
   role: "PLATFORM_ADMIN",
   scopes: [
     "connections:read",
@@ -31,8 +30,8 @@ const principal: AdministratorSession = {
 class MemorySessionManager implements AdminSessionManager {
   readonly revoke = vi.fn(async () => true);
 
-  async createBootstrapSession(token: string | undefined): Promise<IssuedAdminSession | null> {
-    return token === "a-secure-bootstrap-token-with-more-than-32-characters"
+  async createInstallationKeySession(installationKey: string | undefined): Promise<IssuedAdminSession | null> {
+    return installationKey === "a-secure-installation-key-with-more-than-32-characters"
       ? { token: SESSION_TOKEN, principal }
       : null;
   }
@@ -59,12 +58,12 @@ async function sessionApp() {
 }
 
 describe("administrator session routes", () => {
-  it("exchanges the installation claim for a protected opaque session cookie", async () => {
+  it("exchanges the Installation Key for a protected opaque session cookie", async () => {
     const { app } = await sessionApp();
     const response = await app.inject({
       method: "POST",
-      url: "/api/v1/admin/session/bootstrap",
-      payload: { token: "a-secure-bootstrap-token-with-more-than-32-characters" },
+      url: "/api/v1/admin/session/installation-key",
+      payload: { installationKey: "a-secure-installation-key-with-more-than-32-characters" },
     });
 
     expect(response.statusCode).toBe(201);
@@ -75,35 +74,15 @@ describe("administrator session routes", () => {
     expect(response.json()).toMatchObject({ id: SESSION_ID, role: "PLATFORM_ADMIN" });
   });
 
-  it("rejects an invalid installation claim without setting a cookie", async () => {
+  it("rejects an invalid Installation Key without setting a cookie", async () => {
     const { app } = await sessionApp();
     const response = await app.inject({
       method: "POST",
-      url: "/api/v1/admin/session/bootstrap",
-      payload: { token: "this-token-is-long-enough-but-is-not-correct" },
+      url: "/api/v1/admin/session/installation-key",
+      payload: { installationKey: "this-key-is-long-enough-but-is-not-correct" },
     });
 
     expect(response.statusCode).toBe(401);
-    expect(response.headers["set-cookie"]).toBeUndefined();
-  });
-
-  it.each([
-    ["CONSUMED", 409],
-    ["EXPIRED", 410],
-  ] as const)("maps a %s installation claim to a stable response", async (reason, statusCode) => {
-    const sessionManager = new MemorySessionManager();
-    sessionManager.createBootstrapSession = vi.fn(async () => { throw new InstallationClaimRejectedError(reason); });
-    const app = await createApp({ logger: false, runtime: { bootstrapState: "READY", sessionManager } });
-    apps.push(app);
-
-    const response = await app.inject({
-      method: "POST",
-      url: "/api/v1/admin/session/bootstrap",
-      payload: { token: "a-secure-bootstrap-token-with-more-than-32-characters" },
-    });
-
-    expect(response.statusCode).toBe(statusCode);
-    expect(response.json()).toMatchObject({ error: `INSTALLATION_CLAIM_${reason}` });
     expect(response.headers["set-cookie"]).toBeUndefined();
   });
 
@@ -122,7 +101,7 @@ describe("administrator session routes", () => {
     });
 
     expect(current.statusCode).toBe(200);
-    expect(current.json()).toMatchObject({ subject: "bootstrap-administrator" });
+    expect(current.json()).toMatchObject({ subject: "installation-key-administrator" });
     expect(revoked.statusCode).toBe(204);
     expect(revoked.headers["set-cookie"]).toContain("Max-Age=0");
     expect(sessionManager.revoke).toHaveBeenCalledWith(SESSION_TOKEN);

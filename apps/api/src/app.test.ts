@@ -11,7 +11,7 @@ afterEach(async () => {
 
 describe("AIHub API", () => {
   it("reports service health", async () => {
-    const app = await createApp({ logger: false });
+    const app = await createApp({ logger: false, runtime: { bootstrapState: "REQUIRED" } });
     apps.push(app);
 
     const response = await app.inject({ method: "GET", url: "/healthz" });
@@ -21,7 +21,7 @@ describe("AIHub API", () => {
   });
 
   it("reports that dashboard configuration is enabled", async () => {
-    const app = await createApp({ logger: false });
+    const app = await createApp({ logger: false, runtime: { bootstrapState: "REQUIRED" } });
     apps.push(app);
 
     const response = await app.inject({ method: "GET", url: "/api/v1/platform" });

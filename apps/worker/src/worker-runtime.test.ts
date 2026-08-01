@@ -1,173 +1,57 @@
+import type { AIHubPrismaClient } from "@aihub/database";
 import { describe, expect, it, vi } from "vitest";
-import { WorkerRuntime, type WorkerQueueRuntime } from "./worker-runtime.js";
+import { WorkerRuntime } from "./worker-runtime.js";
 import type { WorkerIdentity, WorkerRegistry } from "./worker-registry.js";
 
 const identity: WorkerIdentity = {
-  id: "worker-1",
-  name: "worker.local",
+  id: "runtime-1",
+  name: "runtime.local",
   version: "0.1.0",
-  queues: ["aihub.system.probe"],
+  workloads: ["documents", "memory", "agents", "tool-actions"],
 };
 
+function prisma(documentWork: Array<{ documentId: string; generation: number; conversionJobId: string }> = []) {
+  return {
+    documentProcessingRun: { findMany: vi.fn(async () => documentWork) },
+    documentMemoryPublication: { findMany: vi.fn(async () => []) },
+    agentRun: { findMany: vi.fn(async () => []) },
+  } as unknown as AIHubPrismaClient;
+}
+
+function registry(): WorkerRegistry {
+  return {
+    markStarted: vi.fn(async () => undefined),
+    markAlive: vi.fn(async () => undefined),
+    markStopped: vi.fn(async () => undefined),
+  };
+}
+
 describe("WorkerRuntime", () => {
-  it("registers the worker and records a clean shutdown", async () => {
-    const queue: WorkerQueueRuntime = {
-      start: vi.fn(async () => undefined),
-      stop: vi.fn(async () => undefined),
-      registerSystemProbeWorker: vi.fn(async () => "pg-boss-worker-id"),
-    };
-    const registry: WorkerRegistry = {
-      markStarted: vi.fn(async () => undefined),
-      markAlive: vi.fn(async () => undefined),
-      markStopped: vi.fn(async () => undefined),
-    };
-    const runtime = new WorkerRuntime(
-      queue,
-      registry,
-      identity,
-      { info: vi.fn(), error: vi.fn() },
-      60_000,
-    );
+  it("registers the PostgreSQL executor and records a clean shutdown", async () => {
+    const records = registry();
+    const runtime = new WorkerRuntime(prisma(), records, identity, { info: vi.fn(), error: vi.fn() }, 60_000);
 
     await runtime.start();
     await runtime.stop();
 
-    expect(queue.start).toHaveBeenCalledOnce();
-    expect(queue.registerSystemProbeWorker).toHaveBeenCalledWith(identity.id);
-    expect(registry.markStarted).toHaveBeenCalledWith(identity);
-    expect(registry.markStopped).toHaveBeenCalledWith(identity.id);
-    expect(queue.stop).toHaveBeenCalledOnce();
+    expect(records.markStarted).toHaveBeenCalledWith(identity);
+    expect(records.markStopped).toHaveBeenCalledWith(identity.id);
   });
 
-  it("marks the worker stopped when handler registration fails", async () => {
-    const queue: WorkerQueueRuntime = {
-      start: vi.fn(async () => undefined),
-      stop: vi.fn(async () => undefined),
-      registerSystemProbeWorker: vi.fn(async () => {
-        throw new Error("registration failed");
-      }),
-    };
-    const registry: WorkerRegistry = {
-      markStarted: vi.fn(async () => undefined),
-      markAlive: vi.fn(async () => undefined),
-      markStopped: vi.fn(async () => undefined),
-    };
-    const runtime = new WorkerRuntime(
-      queue,
-      registry,
-      identity,
-      { info: vi.fn(), error: vi.fn() },
-      60_000,
-    );
-
-    await expect(runtime.start()).rejects.toThrow("registration failed");
-
-    expect(registry.markStopped).toHaveBeenCalledWith(identity.id);
-    expect(queue.stop).toHaveBeenCalledOnce();
-  });
-
-  it("registers document conversion and OCR handlers when the pipeline is configured", async () => {
-    const queue: WorkerQueueRuntime = {
-      start: vi.fn(async () => undefined),
-      stop: vi.fn(async () => undefined),
-      registerSystemProbeWorker: vi.fn(async () => "probe-worker"),
-      registerDocumentConversionWorker: vi.fn(async () => "convert-worker"),
-      registerDocumentOcrWorker: vi.fn(async () => "ocr-worker"),
-    };
-    const registry: WorkerRegistry = {
-      markStarted: vi.fn(async () => undefined),
-      markAlive: vi.fn(async () => undefined),
-      markStopped: vi.fn(async () => undefined),
-    };
-    const handlers = {
-      convert: vi.fn(async () => ({ converted: true })),
-      runOcr: vi.fn(async () => ({ extracted: true })),
-    };
-    const runtime = new WorkerRuntime(
-      queue,
-      registry,
-      identity,
-      { info: vi.fn(), error: vi.fn() },
-      60_000,
-      handlers,
-    );
+  it("reconciles durable document state when the runtime starts", async () => {
+    const documentHandler = { convert: vi.fn(async () => ({ converted: true })) };
+    const runtime = new WorkerRuntime(prisma([{
+      documentId: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d",
+      generation: 2,
+      conversionJobId: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb",
+    }]), registry(), identity, { info: vi.fn(), error: vi.fn() }, 60_000, documentHandler);
 
     await runtime.start();
-
-    expect(queue.registerDocumentConversionWorker).toHaveBeenCalledWith(identity.id, expect.any(Function));
-    expect(queue.registerDocumentOcrWorker).toHaveBeenCalledWith(identity.id, expect.any(Function));
-    await runtime.stop();
-  });
-
-  it("registers the memory synchronization handler when configured", async () => {
-    const queue: WorkerQueueRuntime = {
-      start: vi.fn(async () => undefined),
-      stop: vi.fn(async () => undefined),
-      registerSystemProbeWorker: vi.fn(async () => "probe-worker"),
-      registerMemoryIndexWorker: vi.fn(async () => "memory-worker"),
-    };
-    const registry: WorkerRegistry = {
-      markStarted: vi.fn(async () => undefined),
-      markAlive: vi.fn(async () => undefined),
-      markStopped: vi.fn(async () => undefined),
-    };
-    const memoryHandler = { process: vi.fn(async () => ({ synchronized: true })) };
-    const runtime = new WorkerRuntime(
-      queue,
-      registry,
-      identity,
-      { info: vi.fn(), error: vi.fn() },
-      60_000,
-      undefined,
-      memoryHandler,
+    expect(documentHandler.convert).toHaveBeenCalledWith(
+      { documentId: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d", generation: 2 },
+      "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb",
+      identity.id,
     );
-
-    await runtime.start();
-
-    expect(queue.registerMemoryIndexWorker).toHaveBeenCalledWith(identity.id, expect.any(Function));
-    await runtime.stop();
-  });
-
-  it("registers the Hermes run handler when configured", async () => {
-    const queue: WorkerQueueRuntime = {
-      start: vi.fn(async () => undefined),
-      stop: vi.fn(async () => undefined),
-      registerSystemProbeWorker: vi.fn(async () => "probe-worker"),
-      registerAgentRunWorker: vi.fn(async () => "agent-worker"),
-    };
-    const registry: WorkerRegistry = {
-      markStarted: vi.fn(async () => undefined), markAlive: vi.fn(async () => undefined), markStopped: vi.fn(async () => undefined),
-    };
-    const agentHandler = { process: vi.fn(async () => ({ completed: true })) };
-    const runtime = new WorkerRuntime(
-      queue, registry, identity, { info: vi.fn(), error: vi.fn() }, 60_000,
-      undefined, undefined, agentHandler,
-    );
-
-    await runtime.start();
-
-    expect(queue.registerAgentRunWorker).toHaveBeenCalledWith(identity.id, expect.any(Function));
-    await runtime.stop();
-  });
-
-  it("drains durable approved actions when the worker starts", async () => {
-    const queue: WorkerQueueRuntime = {
-      start: vi.fn(async () => undefined),
-      stop: vi.fn(async () => undefined),
-      registerSystemProbeWorker: vi.fn(async () => "probe-worker"),
-    };
-    const registry: WorkerRegistry = {
-      markStarted: vi.fn(async () => undefined), markAlive: vi.fn(async () => undefined), markStopped: vi.fn(async () => undefined),
-    };
-    const toolActionHandler = { processAvailable: vi.fn(async () => 1) };
-    const runtime = new WorkerRuntime(
-      queue, registry, identity, { info: vi.fn(), error: vi.fn() }, 60_000,
-      undefined, undefined, undefined, toolActionHandler, 60_000,
-    );
-
-    await runtime.start();
-
-    expect(toolActionHandler.processAvailable).toHaveBeenCalledWith(identity.id);
     await runtime.stop();
   });
 });

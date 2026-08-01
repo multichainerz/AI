@@ -7,6 +7,8 @@ import type {
   HermesNodeInvitation,
   HermesRuntimeNode,
   MutateHermesRuntimeNode,
+  RegisterHermesNodeMemory,
+  RegisterHermesNodeMemoryResult,
 } from "@aihub/contracts";
 import type { AdminPrincipal } from "../auth/admin-session.js";
 
@@ -25,6 +27,11 @@ export interface HermesRuntimeNodeManager {
     headers: NodeSignatureHeaders,
     input: HermesNodeHeartbeat,
   ): Promise<HermesNodeHeartbeatResult>;
+  registerMemory(
+    nodeId: string,
+    headers: NodeSignatureHeaders,
+    input: RegisterHermesNodeMemory,
+  ): Promise<RegisterHermesNodeMemoryResult>;
   mutate(principal: AdminPrincipal, nodeId: string, input: MutateHermesRuntimeNode): Promise<HermesRuntimeNode>;
 }
 

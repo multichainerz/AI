@@ -5,16 +5,8 @@ import { OpenAICompatibleAdapter } from "./openai-compatible-adapter.js";
 import type { ConnectionDiagnosticAdapter } from "./types.js";
 
 const adapters: Record<ServiceKind, ConnectionDiagnosticAdapter> = {
-  LITELLM: new OpenAICompatibleAdapter({
-    serviceName: "LiteLLM",
-    defaultHealthPath: "/health/liveliness",
-  }),
   VLLM: new OpenAICompatibleAdapter({ serviceName: "vLLM", defaultHealthPath: "/health" }),
   HERMES: new GenericHttpAdapter("Hermes agent", "/health"),
-  OCR: new OpenAICompatibleAdapter({
-    serviceName: "Unlimited OCR",
-    defaultHealthPath: "/health",
-  }),
   SUPERMEMORY: new GenericHttpAdapter("Supermemory"),
   OIDC: new OidcAdapter(),
   MCP: new GenericHttpAdapter("MCP server", "/"),

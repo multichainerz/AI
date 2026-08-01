@@ -15,7 +15,6 @@
     "@aihub/contracts": "workspace:*",
     "@aihub/database": "workspace:*",
     "@aihub/document-runtime": "workspace:*",
-    "@aihub/jobs": "workspace:*",
     "@aihub/security": "workspace:*"
   },
   "devDependencies": {

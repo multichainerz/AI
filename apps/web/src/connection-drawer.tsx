@@ -31,7 +31,7 @@ interface ConnectionDrawerProps {
   onSave: (draft: ConnectionDraft) => Promise<void>;
   onTest: (id: string) => Promise<void>;
   onUpdateMonitoring: (input: { enabled: boolean; intervalSeconds: number; reason: string }) => Promise<void>;
-  onUnlock: (token: string) => Promise<boolean>;
+  onUnlock: (installationKey: string) => Promise<boolean>;
   onLoadRevisions: (connectionId: string) => Promise<void>;
   onRollback: (
     connectionId: string,
@@ -63,7 +63,7 @@ function configurationDefaults(
 export function ConnectionDrawer(props: ConnectionDrawerProps) {
   const closeButton = useRef<HTMLButtonElement>(null);
   const dialogPanel = useRef<HTMLElement>(null);
-  const [token, setToken] = useState("");
+  const [installationKey, setInstallationKey] = useState("");
   const [selectedKind, setSelectedKind] = useState<ServiceKind>(props.initialKind);
   const [displayName, setDisplayName] = useState("");
   const [slug, setSlug] = useState("");
@@ -145,7 +145,7 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
 
   const submitUnlock = async (event: FormEvent) => {
     event.preventDefault();
-    if (await props.onUnlock(token)) setToken("");
+    if (await props.onUnlock(installationKey)) setInstallationKey("");
   };
 
   const submitConnection = (event: FormEvent) => {
@@ -182,26 +182,26 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
         {!props.unlocked ? (
           <form className="unlock-form" onSubmit={submitUnlock}>
             <div className="lock-mark" aria-hidden="true">M</div>
-            <h3>Claim administrator access</h3>
-            <p>The short-lived installation claim is exchanged once for an HttpOnly administrator session and is never stored by this browser.</p>
+            <h3>Unlock administrator access</h3>
+            <p>Your permanent Installation Key creates a protected HttpOnly administrator session. The browser never stores it, and it remains available for local recovery.</p>
             {props.bootstrapState !== "READY" && (
               <div className="form-notice">Installation trust is {props.bootstrapState.toLowerCase()}. Complete the host installer first.</div>
             )}
             <label>
-              Single-use installation claim
+              Installation Key
               <input
                 type="password"
-                value={token}
-                onChange={(event) => setToken(event.target.value)}
+                value={installationKey}
+                onChange={(event) => setInstallationKey(event.target.value)}
                 autoComplete="off"
                 required
                 minLength={32}
-                placeholder="Paste the claim printed by the installer"
+                placeholder="Paste the Installation Key printed by the installer"
               />
             </label>
             {props.error && <p className="form-error">{props.error}</p>}
             <button className="primary-button drawer-submit" type="submit" disabled={props.busy || props.bootstrapState !== "READY"}>
-              {props.busy ? "Claiming…" : "Claim installation"}
+              {props.busy ? "Unlocking…" : "Unlock AIHub"}
             </button>
           </form>
         ) : (

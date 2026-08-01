@@ -39,11 +39,11 @@ describe("AI operations contracts", () => {
   it("keeps incident lifecycle timestamps explicit", () => {
     const parsed = operationalIncidentSchema.safeParse({
       id: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb",
-      title: "OCR unavailable",
+      title: "vLLM unavailable",
       severity: "CRITICAL",
       status: "OPEN",
-      component: "connection:ocr",
-      summary: "The last credential-aware check could not reach OCR.",
+      component: "connection:vllm",
+      summary: "The last credential-aware check could not reach vLLM.",
       owner: null,
       automated: true,
       detectedAt: "2026-07-30T00:00:00.000Z",

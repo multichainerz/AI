@@ -13,11 +13,9 @@ const session: AdministratorSession = {
 
 const snapshot: OnboardingSnapshot = {
   generatedAt: "2026-07-30T00:00:00.000Z",
-  installation: { status: "CLAIMED", claimedAt: "2026-07-30T00:00:00.000Z" },
+  installation: { status: "ACTIVATED", activatedAt: "2026-07-30T00:00:00.000Z" },
   architecture: {
-    topologyMode: "CONTROL_PLANE", targetEnvironment: "DEVELOPMENT", installMethod: "SIGNED_INSTALLER", localInference: false,
-    liteLlmOwnershipMode: "EXTERNAL_VALIDATED", supermemoryStorageMode: "EMBEDDED",
-    supermemoryEmbeddingMode: "LOCAL", hermesMemoryMode: "MEDIATED", gpuSchedulingMode: "DEDICATED_LLM",
+    topologyMode: "CONTROL_PLANE", targetEnvironment: "DEVELOPMENT",
     reason: null, revision: 0, updatedBy: null, updatedAt: "2026-07-30T00:00:00.000Z",
   },
   journey: {
@@ -40,7 +38,7 @@ const snapshot: OnboardingSnapshot = {
 };
 
 class Sessions implements AdminSessionManager {
-  async createBootstrapSession() { return null; }
+  async createInstallationKeySession() { return null; }
   async authenticate(token: string | undefined) { return token === TOKEN ? session : null; }
   async revoke() { return true; }
 }
@@ -67,7 +65,7 @@ async function testApp(onboardingManager = manager()) {
   return { app, onboardingManager };
 }
 
-describe("Phase 9 onboarding routes", () => {
+describe("production onboarding routes", () => {
   it("requires administrator readiness access", async () => {
     const { app } = await testApp();
     expect((await app.inject({ method: "GET", url: "/api/v1/admin/onboarding/" })).statusCode).toBe(401);

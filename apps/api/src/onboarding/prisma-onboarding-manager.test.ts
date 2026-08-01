@@ -7,13 +7,6 @@ import { calculateOnboardingGate, PrismaOnboardingManager } from "./prisma-onboa
 const architecture: ArchitectureDecision = {
   topologyMode: "CONTROL_PLANE",
   targetEnvironment: "DEVELOPMENT",
-  installMethod: "SIGNED_INSTALLER",
-  localInference: false,
-  liteLlmOwnershipMode: "EXTERNAL_VALIDATED",
-  supermemoryStorageMode: "EMBEDDED",
-  supermemoryEmbeddingMode: "LOCAL",
-  hermesMemoryMode: "MEDIATED",
-  gpuSchedulingMode: "DEDICATED_LLM",
   reason: null,
   revision: 0,
   updatedBy: null,
@@ -37,7 +30,7 @@ const step: OnboardingStep = {
   completedAt: "2026-07-30T00:00:00.000Z", updatedAt: "2026-07-30T00:00:00.000Z",
 };
 
-describe("Phase 9 production gate", () => {
+describe("production onboarding gate", () => {
   it("passes only required contracts and steps in the baseline architecture", () => {
     const gate = calculateOnboardingGate(architecture, [
       component("hermes-api", true, "PASSED"),
@@ -46,8 +39,8 @@ describe("Phase 9 production gate", () => {
     expect(gate).toMatchObject({ ready: true, requiredComponents: 1, passedComponents: 1, requiredSteps: 1, completedSteps: 1 });
   });
 
-  it("blocks a selected conditional component until its compatibility passes", () => {
-    const gate = calculateOnboardingGate({ ...architecture, hermesMemoryMode: "NATIVE_SUPERMEMORY" }, [
+  it("blocks a required component until its compatibility passes", () => {
+    const gate = calculateOnboardingGate(architecture, [
       component("hermes-api", true, "PASSED"),
       component("hermes-native-memory", true, "NOT_TESTED"),
     ], [step]);
@@ -66,7 +59,7 @@ describe("Phase 9 production gate", () => {
     expect(gate.blockers[0]).toContain("Credential recovery");
   });
 
-  it("requires the current Phase 8 authority before Production activation", () => {
+  it("requires the current readiness authority before Production activation", () => {
     const gate = calculateOnboardingGate({ ...architecture, targetEnvironment: "PRODUCTION" }, [
       component("hermes-api", true, "PASSED"),
     ], [step], {
@@ -75,7 +68,7 @@ describe("Phase 9 production gate", () => {
     }, "NOT_READY");
 
     expect(gate.ready).toBe(false);
-    expect(gate.blockers).toContain("Production readiness: Phase 8 status is not ready");
+    expect(gate.blockers).toContain("Production readiness: status is not ready");
   });
 
   it("invalidates component and stage evidence when architecture changes", async () => {
@@ -115,7 +108,7 @@ describe("Phase 9 production gate", () => {
 
     expect(componentUpdateMany).toHaveBeenCalledWith({ data: expect.objectContaining({ status: "NOT_TESTED", evidenceRef: null, revision: { increment: 1 } }) });
     expect(stepUpdateMany).toHaveBeenLastCalledWith(expect.objectContaining({
-      where: { key: { in: expect.not.arrayContaining(["claim-installation"]) } },
+      where: { key: { in: expect.not.arrayContaining(["activate-installation"]) } },
       data: expect.objectContaining({ status: "NOT_STARTED", evidenceRefs: [] }),
     }));
   });

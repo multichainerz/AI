@@ -4,6 +4,7 @@ import type {
   ComponentCompatibilityStatus,
   OnboardingSnapshot,
   OnboardingStepKey,
+  ServiceConnectionSummary,
   ServiceKind,
 } from "@aihub/contracts";
 import { useEffect, useMemo, useState, type ChangeEvent, type CSSProperties, type FormEvent } from "react";
@@ -22,18 +23,20 @@ import { RuntimeNodesPanel } from "./runtime-nodes-panel.js";
 interface OnboardingViewProps {
   unlocked: boolean;
   oidcConfigured: boolean;
+  connections: ServiceConnectionSummary[];
   onConfigure: (kind?: ServiceKind) => void;
+  onOpenWorkspace: (workspace: "Chat" | "Documents") => void;
   onSignIn: () => void;
   onUnauthorized: () => void;
 }
 
 type WorkspaceTab = "journey" | "nodes" | "readiness" | "architecture" | "evidence";
+type SetupMode = "quick" | "advanced";
 
 const serviceActions: Partial<Record<string, Array<{ kind: ServiceKind; label: string }>>> = {
   "identity-recovery": [{ kind: "OIDC", label: "Configure OIDC" }],
   "ai-services": [
-    { kind: "LITELLM", label: "LiteLLM" },
-    { kind: "OCR", label: "Unlimited-OCR" },
+    { kind: "VLLM", label: "vLLM" },
     { kind: "SUPERMEMORY", label: "Supermemory" },
   ],
   "hermes-profiles": [{ kind: "HERMES", label: "Hermes connection" }],
@@ -44,7 +47,7 @@ function label(value: string): string {
 }
 
 function tone(value: string): string {
-  if (["PASSED", "COMPLETED", "VERIFIED", "CLAIMED"].includes(value)) return "ready";
+  if (["PASSED", "COMPLETED", "VERIFIED", "ACTIVATED"].includes(value)) return "ready";
   if (["IN_PROGRESS", "EXPORTED", "WARNING"].includes(value)) return "processing";
   if (["FAILED", "BLOCKED"].includes(value)) return "failed";
   return "neutral";
@@ -63,8 +66,9 @@ function downloadRecoveryKit(fileName: string, serializedKit: string): void {
   URL.revokeObjectURL(url);
 }
 
-export function OnboardingView({ unlocked, oidcConfigured, onConfigure, onSignIn, onUnauthorized }: OnboardingViewProps) {
+export function OnboardingView({ connections, unlocked, oidcConfigured, onConfigure, onOpenWorkspace, onSignIn, onUnauthorized }: OnboardingViewProps) {
   const [snapshot, setSnapshot] = useState<OnboardingSnapshot | null>(null);
+  const [setupMode, setSetupMode] = useState<SetupMode>("quick");
   const [tab, setTab] = useState<WorkspaceTab>("journey");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -98,7 +102,7 @@ export function OnboardingView({ unlocked, oidcConfigured, onConfigure, onSignIn
   const load = async () => applySnapshot(await getOnboardingSnapshot());
 
   useEffect(() => {
-    if (!unlocked) {
+    if (!unlocked || setupMode !== "advanced") {
       setSnapshot(null);
       setArchitecture(null);
       return;
@@ -106,7 +110,7 @@ export function OnboardingView({ unlocked, oidcConfigured, onConfigure, onSignIn
     let active = true;
     void getOnboardingSnapshot().then((next) => active && applySnapshot(next)).catch((cause) => active && fail(cause));
     return () => { active = false; };
-  }, [unlocked]);
+  }, [setupMode, unlocked]);
 
   const groupedComponents = useMemo(() => {
     const groups = new Map<string, ComponentCompatibility[]>();
@@ -138,13 +142,6 @@ export function OnboardingView({ unlocked, oidcConfigured, onConfigure, onSignIn
       await updateArchitectureDecision({
         topologyMode: architecture.topologyMode,
         targetEnvironment: architecture.targetEnvironment,
-        installMethod: architecture.installMethod,
-        localInference: architecture.localInference,
-        liteLlmOwnershipMode: architecture.liteLlmOwnershipMode,
-        supermemoryStorageMode: architecture.supermemoryStorageMode,
-        supermemoryEmbeddingMode: architecture.supermemoryEmbeddingMode,
-        hermesMemoryMode: architecture.hermesMemoryMode,
-        gpuSchedulingMode: architecture.gpuSchedulingMode,
         reason: architectureReason.trim(),
         expectedRevision: architecture.revision,
       });
@@ -225,17 +222,125 @@ export function OnboardingView({ unlocked, oidcConfigured, onConfigure, onSignIn
   if (!unlocked) {
     return <section className="setup-locked">
       <div className="setup-lock-symbol" aria-hidden="true">01</div>
-      <p className="page-kicker">Installation claim</p>
-      <h1>Claim this AIHub installation</h1>
-      <p>Use the short-lived claim printed by the installer. AIHub exchanges it once for a protected administrator session and never uses it as an API credential.</p>
+      <p className="page-kicker">Installation Key</p>
+      <h1>Unlock this AIHub installation</h1>
+      <p>Use the permanent Installation Key printed by the installer. Keep it in your organization password vault; AIHub uses it only to establish protected local administrator sessions.</p>
       <div className="setup-lock-actions">
         {oidcConfigured && <button className="primary-button" type="button" onClick={onSignIn}>Sign in with enterprise identity</button>}
-        <button className={oidcConfigured ? "secondary-button" : "primary-button"} type="button" onClick={() => onConfigure()}>Use installation claim</button>
+        <button className={oidcConfigured ? "secondary-button" : "primary-button"} type="button" onClick={() => onConfigure()}>Use Installation Key</button>
       </div>
     </section>;
   }
 
-  if (!snapshot || !architecture) return <section className="setup-loading" aria-live="polite"><span className="setup-spinner" />Loading deployment state…</section>;
+  const connectionFor = (kind: ServiceKind) => connections.find((connection) => connection.kind === kind);
+  const supermemory = connectionFor("SUPERMEMORY");
+  const hermes = connectionFor("HERMES");
+  const vllm = connectionFor("VLLM");
+  const isHealthy = (connection: ServiceConnectionSummary | undefined) => connection?.enabled === true && connection.status === "HEALTHY";
+  const vllmReady = isHealthy(vllm);
+  const supermemoryReady = isHealthy(supermemory);
+
+  if (setupMode === "quick") {
+    const services: Array<{
+      key: string;
+      name: string;
+      description: string;
+      detail: string;
+      state: string;
+      ready: boolean;
+      optional?: boolean;
+      kind?: ServiceKind;
+    }> = [
+      {
+        key: "postgresql",
+        name: "PostgreSQL",
+        description: "AIHub configuration, audit records, sessions, and durable jobs",
+        detail: "Installed with the AIHub stack and responding.",
+        state: "Ready",
+        ready: true,
+      },
+      {
+        key: "vllm",
+        name: "vLLM",
+        description: "The on-prem model endpoint used by AIHub and Hermes",
+        detail: vllm?.baseUrl ?? "Add the endpoint, served model name, and optional API key.",
+        state: vllmReady ? "Healthy" : vllm ? label(vllm.status) : "Not configured",
+        ready: vllmReady,
+        kind: "VLLM",
+      },
+      {
+        key: "supermemory",
+        name: "Supermemory on the Hermes node",
+        description: "Durable agent memory and normalized document knowledge",
+        detail: supermemory?.baseUrl ?? "Enrolling the isolated Hermes VM installs and registers its local Supermemory service.",
+        state: supermemoryReady ? "Healthy" : supermemory ? label(supermemory.status) : "Not configured",
+        ready: supermemoryReady,
+        kind: "SUPERMEMORY",
+      },
+      {
+        key: "hermes",
+        name: "Hermes",
+        description: "Isolated agent runtime for the full AIHub experience",
+        detail: hermes?.baseUrl ?? "Use the Hermes-node enrollment bundle on the second VM; no standing SSH credential is retained.",
+        state: isHealthy(hermes) ? "Healthy" : hermes ? label(hermes.status) : "Not configured",
+        ready: isHealthy(hermes),
+        kind: "HERMES",
+      },
+    ];
+
+    return <section className="setup-workspace setup-quick-start">
+      <header className="setup-quick-hero">
+        <div>
+          <p className="page-kicker">Development quick start</p>
+          <h1>Connect vLLM, then enroll the agent runtime</h1>
+          <p>PostgreSQL is already part of AIHub. A healthy vLLM route enables direct Chat; one enrollment installs the isolated Hermes and Supermemory runtime that adds agents and durable knowledge.</p>
+        </div>
+        <button className="secondary-button" type="button" onClick={() => setSetupMode("advanced")}>Production setup</button>
+      </header>
+
+      <section className="setup-quick-services" aria-label="Quick-start services">
+        {services.map((service, index) => <article className={service.ready ? "ready" : service.optional ? "optional" : "pending"} key={service.key}>
+          <div className="setup-quick-service-index">{String(index + 1).padStart(2, "0")}</div>
+          <div className="setup-quick-service-copy">
+            <div><h2>{service.name}</h2>{service.optional && <span>Optional</span>}</div>
+            <p>{service.description}</p>
+            <small>{service.detail}</small>
+          </div>
+          <div className="setup-quick-service-action">
+            <span className={`document-status ${service.ready ? "ready" : "neutral"}`}>{service.state}</span>
+            {service.kind && <button className="text-button" type="button" onClick={() => {
+              if (!service.ready && (service.key === "hermes" || service.key === "supermemory")) {
+                setTab("nodes");
+                setSetupMode("advanced");
+                return;
+              }
+              onConfigure(service.kind);
+            }}>{service.key === "vllm" && !vllm ? "Configure directly" : service.ready ? "Review" : service.key === "hermes" || service.key === "supermemory" ? "Enroll runtime" : "Configure"}</button>}
+          </div>
+        </article>)}
+      </section>
+
+      <section className="setup-quick-launch">
+        <article className={vllmReady ? "ready" : undefined}>
+          <div className="setup-quick-launch-icon" aria-hidden="true">C</div>
+          <div><p className="section-kicker">Workspace</p><h2>Chat</h2><p>Direct Chat can use vLLM immediately. Enroll Hermes for governed agent runs and durable memory; reviewed tools and subagents are a later opt-in.</p></div>
+          <button className="primary-button" type="button" disabled={!vllmReady} onClick={() => onOpenWorkspace("Chat")}>{vllmReady ? "Start chatting" : "Connect vLLM first"}</button>
+        </article>
+        <article className={supermemoryReady ? "ready" : undefined}>
+          <div className="setup-quick-launch-icon" aria-hidden="true">D</div>
+          <div><p className="section-kicker">Workspace</p><h2>Documents</h2><p>UTF-8 TXT ingestion publishes normalized knowledge to Supermemory. Rich documents and scanned images are not accepted by this release.</p></div>
+          <button className="primary-button" type="button" disabled={!supermemoryReady} onClick={() => onOpenWorkspace("Documents")}>{supermemoryReady ? "Open documents" : "Connect Supermemory first"}</button>
+        </article>
+      </section>
+
+      <aside className="setup-quick-deferred">
+        <div><p className="section-kicker">Deferred without blocking development</p><h2>Production controls remain available when you need them</h2><p>Enterprise OIDC, governed MCP tools, recovery evidence, compatibility attestations, and activation gates remain available in Production setup.</p></div>
+        <button className="text-button" type="button" onClick={() => setSetupMode("advanced")}>Review production controls</button>
+      </aside>
+    </section>;
+  }
+
+  if (!snapshot || !architecture) return <section className="setup-workspace"><button className="text-button setup-quick-return" type="button" onClick={() => setSetupMode("quick")}>Back to quick start</button><div className="setup-loading" aria-live="polite"><span className="setup-spinner" />Loading production setup…</div></section>;
 
   const componentProgress = percent(snapshot.gate.passedComponents, snapshot.gate.requiredComponents);
   const stepProgress = percent(snapshot.gate.completedSteps, snapshot.gate.requiredSteps);
@@ -248,6 +353,7 @@ export function OnboardingView({ unlocked, oidcConfigured, onConfigure, onSignIn
         <p>Configure the platform through one resumable path. Technical evidence is generated by validation; external attestations remain visibly distinct.</p>
       </div>
       <div className="setup-header-actions">
+        <button className="secondary-button" type="button" onClick={() => setSetupMode("quick")}>Quick start</button>
         <button className="secondary-button" type="button" disabled={busy !== null} onClick={() => void load()}>Refresh</button>
         <span className={`document-status ${tone(snapshot.journey.status)}`}>{label(snapshot.journey.status)}</span>
       </div>
@@ -322,16 +428,9 @@ export function OnboardingView({ unlocked, oidcConfigured, onConfigure, onSignIn
       </div>
       <div className="setup-architecture-grid">
         <label><span>Activation target</span><select value={architecture.targetEnvironment} onChange={(event) => setArchitecture({ ...architecture, targetEnvironment: event.target.value as ArchitectureDecision["targetEnvironment"] })}><option value="DEVELOPMENT">Development</option><option value="PILOT">Pilot</option><option value="PRODUCTION">Production</option></select><small>Production adds OIDC, complete compatibility, recovery, and approval gates.</small></label>
-        <label><span>Installation path</span><input value="AIHub signed release-bundle installer" readOnly /><small>This is the sole supported deployment path. AIHub never receives a Docker socket or reusable host credentials; publisher signing remains a release-pipeline gate.</small></label>
-        <label className="setup-check-field"><input type="checkbox" checked={architecture.localInference} onChange={(event) => setArchitecture({ ...architecture, localInference: event.target.checked })}/><span><strong>Local inference on this environment</strong><small>Requires conditional vLLM, model, GPU, driver, capacity, and soak evidence.</small></span></label>
+        <label><span>Installation path</span><input value="AIHub signed release-bundle installer" readOnly /><small>The installer starts AIHub and PostgreSQL. The dashboard then connects the approved vLLM route and enrolls the isolated Hermes + Supermemory runtime.</small></label>
       </div>
-      <details className="setup-advanced-architecture"><summary>Advanced service ownership</summary><div className="setup-architecture-grid">
-        <label><span>LiteLLM ownership</span><select value={architecture.liteLlmOwnershipMode} onChange={(event) => setArchitecture({ ...architecture, liteLlmOwnershipMode: event.target.value as ArchitectureDecision["liteLlmOwnershipMode"] })}><option value="EXTERNAL_VALIDATED">Externally managed, AIHub validated</option><option value="PINNED_API_RECONCILED">Pinned management API reconciliation</option></select></label>
-        <label><span>Supermemory storage evidence</span><select value={architecture.supermemoryStorageMode} onChange={(event) => setArchitecture({ ...architecture, supermemoryStorageMode: event.target.value as ArchitectureDecision["supermemoryStorageMode"] })}><option value="EMBEDDED">Private embedded store</option><option value="SUPPORTED_EXTERNAL_POSTGRES">Supported external backend</option></select></label>
-        <label><span>Embedding evidence</span><select value={architecture.supermemoryEmbeddingMode} onChange={(event) => setArchitecture({ ...architecture, supermemoryEmbeddingMode: event.target.value as ArchitectureDecision["supermemoryEmbeddingMode"] })}><option value="LOCAL">Supermemory local embedding</option><option value="OPENAI_COMPATIBLE">Pinned external route</option></select></label>
-        <label><span>Hermes memory</span><select value={architecture.hermesMemoryMode} onChange={(event) => setArchitecture({ ...architecture, hermesMemoryMode: event.target.value as ArchitectureDecision["hermesMemoryMode"] })}><option value="MEDIATED">AIHub-mediated</option><option value="NATIVE_SUPERMEMORY">Native scoped provider</option></select></label>
-        <label><span>GPU scheduling</span><select value={architecture.gpuSchedulingMode} onChange={(event) => setArchitecture({ ...architecture, gpuSchedulingMode: event.target.value as ArchitectureDecision["gpuSchedulingMode"] })}><option value="DEDICATED_LLM">Dedicated LLM</option><option value="MEASURED_CO_RESIDENCY">Measured co-residency</option><option value="SERIALIZED_DEGRADED">Serialized degraded mode</option></select></label>
-      </div></details>
+      <div className="setup-architecture-note"><strong>Fixed service ownership</strong><p>AIHub owns policy and the inference gateway. vLLM owns model serving. Hermes owns agent execution and uses its scoped Supermemory provider for durable memory. Internal Supermemory storage and embeddings are deployment details, not onboarding choices.</p></div>
       <label className="setup-architecture-reason"><span>Decision rationale</span><textarea minLength={3} maxLength={1000} value={architectureReason} onChange={(event) => setArchitectureReason(event.target.value)} /></label>
       <footer><span>Changing topology or target reopens activation and recalculates required contracts.</span><button className="primary-button" disabled={busy !== null || architectureReason.trim().length < 3} type="submit">{busy === "architecture" ? "Saving…" : "Save deployment decision"}</button></footer>
     </form>}

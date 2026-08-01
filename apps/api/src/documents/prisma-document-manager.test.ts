@@ -1,11 +1,41 @@
+import { Readable } from "node:stream";
 import type { AIHubPrismaClient } from "@aihub/database";
 import type { DocumentScratchStore } from "@aihub/document-runtime";
-import type { PgBossQueueService } from "@aihub/jobs";
 import { describe, expect, it, vi } from "vitest";
-import { DocumentConflictError, DocumentStorageError } from "./document-manager.js";
+import { DocumentConflictError, DocumentStorageError, DocumentValidationError } from "./document-manager.js";
 import { PrismaDocumentManager } from "./prisma-document-manager.js";
 
 const DOCUMENT_ID = "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d";
+
+describe("PrismaDocumentManager upload boundaries", () => {
+  it("rejects rich files before creating document metadata and purges transient staging", async () => {
+    const store = {
+      putStream: vi.fn(async (_key: string, source: Readable) => {
+        for await (const _chunk of source) {
+          // Consume the measured upload as the encrypted store would.
+        }
+      }),
+      deletePrefix: vi.fn(async () => undefined),
+    } as unknown as DocumentScratchStore;
+    const manager = new PrismaDocumentManager({} as AIHubPrismaClient, store);
+
+    await expect(manager.upload({
+      id: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb",
+      subject: "user:pilot",
+      identityMode: "ENTERPRISE",
+      scopes: ["documents:use"],
+    }, {
+      fileName: "scan.pdf",
+      declaredMediaType: "application/pdf",
+      stream: Readable.from([Buffer.from("%PDF-1.7")]),
+    }, {
+      classification: "INTERNAL",
+      retentionDays: 365,
+    })).rejects.toBeInstanceOf(DocumentValidationError);
+
+    expect(store.deletePrefix).toHaveBeenCalledOnce();
+  });
+});
 
 describe("PrismaDocumentManager deletion boundaries", () => {
   it("does not allow a late memory publication to race local deletion", async () => {
@@ -20,8 +50,7 @@ describe("PrismaDocumentManager deletion boundaries", () => {
       },
     } as unknown as AIHubPrismaClient;
     const store = { deletePrefix: vi.fn() } as unknown as DocumentScratchStore;
-    const queue = {} as PgBossQueueService;
-    const manager = new PrismaDocumentManager(prisma, store, queue);
+    const manager = new PrismaDocumentManager(prisma, store);
 
     await expect(manager.delete({
       id: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb",
@@ -51,7 +80,7 @@ describe("PrismaDocumentManager deletion boundaries", () => {
     const store = {
       deletePrefix: vi.fn(async () => { throw new Error("volume unavailable"); }),
     } as unknown as DocumentScratchStore;
-    const manager = new PrismaDocumentManager(prisma, store, {} as PgBossQueueService);
+    const manager = new PrismaDocumentManager(prisma, store);
 
     await expect(manager.delete({
       id: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb",
@@ -80,7 +109,7 @@ describe("PrismaDocumentManager quarantine boundaries", () => {
       $transaction: vi.fn(async (work: (client: typeof transaction) => unknown) => work(transaction)),
     } as unknown as AIHubPrismaClient;
     const store = { deletePrefix: vi.fn() } as unknown as DocumentScratchStore;
-    const manager = new PrismaDocumentManager(prisma, store, {} as PgBossQueueService);
+    const manager = new PrismaDocumentManager(prisma, store);
 
     await expect(manager.decideQuarantine({
       id: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb",

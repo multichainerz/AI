@@ -22,8 +22,6 @@ import {
   getProductionReadiness,
   promoteEvaluationRun,
   recordProductionReadinessApproval,
-  redriveDeadLetters,
-  sendSystemProbe,
   updateProductionReadinessControl,
 } from "./api.js";
 
@@ -70,7 +68,7 @@ function bytes(value: number): string {
 }
 
 function humanLabel(value: string): string {
-  const special: Partial<Record<string, string>> = { OCR: "OCR", MCP: "MCP", OIDC: "OIDC", SIEM: "SIEM", TOOL_USE: "Tool use", MODEL_ACCESS: "Model access", DATA_EGRESS: "Data egress" };
+  const special: Partial<Record<string, string>> = { MCP: "MCP", OIDC: "OIDC", SIEM: "SIEM", TOOL_USE: "Tool use", MODEL_ACCESS: "Model access", DATA_EGRESS: "Data egress" };
   return special[value] ?? value.replaceAll("_", " ").toLowerCase().replace(/^./, (letter) => letter.toUpperCase());
 }
 
@@ -92,7 +90,6 @@ export function OperationsView({ unlocked, scopes, onConfigure, onUnauthorized }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [confirmRedrive, setConfirmRedrive] = useState(false);
   const [incidentAction, setIncidentAction] = useState<IncidentAction>(null);
   const [decisionNote, setDecisionNote] = useState("");
   const [showIncidentForm, setShowIncidentForm] = useState(false);
@@ -141,38 +138,16 @@ export function OperationsView({ unlocked, scopes, onConfigure, onUnauthorized }
 
   useEffect(() => { void refresh(); }, [refresh]);
 
-  const queues = overview?.jobs?.queues ?? [];
-  const workers = overview?.jobs?.workers ?? [];
-  const readyJobs = queues.reduce((total, queue) => total + queue.readyCount, 0);
-  const failedJobs = queues.reduce((total, queue) => total + queue.failedCount, 0);
-  const deadLetters = queues.find(({ name }) => name === "aihub.dead-letter")?.readyCount ?? 0;
-  const probeConfigured = queues.find(({ name }) => name === "aihub.system.probe")?.configured ?? false;
+  const workloads = overview?.runtime?.workloads ?? [];
+  const executors = overview?.runtime?.executors ?? [];
+  const pendingWork = workloads.reduce((total, workload) => total + workload.pendingCount, 0);
+  const failedWork = workloads.reduce((total, workload) => total + workload.failedCount, 0);
   const readinessControlsAccepted = readiness !== null && readiness.controls.length > 0
     && readiness.controls.every(({ status }) => status === "VERIFIED" || status === "WAIVED");
   const sortedComponents = useMemo(() => [...(overview?.components ?? [])].sort((left, right) => {
     const weight = { UNAVAILABLE: 0, DEGRADED: 1, NOT_VERIFIED: 2, NOT_CONFIGURED: 3, HEALTHY: 4 } as const;
     return weight[left.status] - weight[right.status] || left.label.localeCompare(right.label);
   }), [overview]);
-
-  const runProbe = async () => {
-    setBusy(true); setError(null); setMessage(null);
-    try {
-      const result = await sendSystemProbe();
-      setMessage(`System probe ${result.jobId.slice(0, 8)} queued.`);
-      await refresh();
-    } catch (cause) { handleError(cause, "The system probe could not be queued."); }
-    finally { setBusy(false); }
-  };
-
-  const redrive = async () => {
-    setConfirmRedrive(false); setBusy(true); setError(null); setMessage(null);
-    try {
-      const result = await redriveDeadLetters();
-      setMessage(result.message);
-      await refresh();
-    } catch (cause) { handleError(cause, "Dead-letter jobs could not be redriven."); }
-    finally { setBusy(false); }
-  };
 
   const decideIncident = async (event: FormEvent) => {
     event.preventDefault();
@@ -346,7 +321,7 @@ export function OperationsView({ unlocked, scopes, onConfigure, onUnauthorized }
         <section className="metrics aiops-metrics" aria-label="AI operations summary">
           <article><span>Services needing attention</span><strong>{overview?.components.filter(({ status }) => status !== "HEALTHY").length ?? "--"}</strong><small>{overview?.components.length ?? 0} observed components</small></article>
           <article><span>Open incidents</span><strong className={overview?.incidents.critical ? "text-bad" : undefined}>{overview?.incidents.open ?? "--"}</strong><small>{overview?.incidents.critical ?? 0} critical</small></article>
-          <article><span>Ready jobs</span><strong>{numberFormatter.format(readyJobs)}</strong><small>{failedJobs} failed in pg-boss</small></article>
+          <article><span>Pending work</span><strong>{numberFormatter.format(pendingWork)}</strong><small>{failedWork} retained failures across domain state</small></article>
           <article><span>Release evidence</span><strong>{overview?.evaluations.passed ?? "--"}</strong><small>{overview?.evaluations.drafts ?? 0} draft / {overview?.evaluations.promoted ?? 0} promoted</small></article>
         </section>
 
@@ -398,14 +373,13 @@ export function OperationsView({ unlocked, scopes, onConfigure, onUnauthorized }
         </section>
 
         <section className="panel queue-panel">
-          <div className="panel-heading"><div><p className="section-kicker">PostgreSQL coordination</p><h2>Queue and worker health</h2><p>{overview?.jobs ? `Captured ${relativeTime(overview.jobs.capturedAt)} by pg-boss` : "Queue state is unavailable."}</p></div><button className="text-button" type="button" onClick={() => void runProbe()} disabled={busy || !canOperate || !probeConfigured}>Run system probe</button></div>
-          <div className="queue-table-wrap"><table className="queue-table"><thead><tr><th scope="col">Queue</th><th scope="col">Ready</th><th scope="col">Deferred</th><th scope="col">Active</th><th scope="col">Failed</th><th scope="col">Total</th></tr></thead><tbody>{queues.map((queue) => <tr key={queue.name}>
-            <th scope="row"><strong>{queue.displayName}</strong><span>{queue.configured ? queue.name : `${queue.name} / not configured`}</span></th>
-            <td data-label="Ready">{queue.readyCount}</td><td data-label="Deferred">{queue.deferredCount}</td><td data-label="Active">{queue.activeCount}</td><td data-label="Failed" className={queue.failedCount ? "cell-bad" : ""}>{queue.failedCount}</td><td data-label="Total">{queue.totalCount}</td>
+          <div className="panel-heading"><div><p className="section-kicker">PostgreSQL coordination</p><h2>Durable runtime state</h2><p>{overview?.runtime ? `Captured ${relativeTime(overview.runtime.capturedAt)} from domain state` : "Runtime state is unavailable."}</p></div><button className="text-button" type="button" onClick={() => void refresh()} disabled={busy}>Refresh state</button></div>
+          <div className="queue-table-wrap"><table className="queue-table"><thead><tr><th scope="col">Workload</th><th scope="col">Pending</th><th scope="col">Active</th><th scope="col">Failed</th><th scope="col">Retained</th></tr></thead><tbody>{workloads.map((workload) => <tr key={workload.name}>
+            <th scope="row"><strong>{workload.displayName}</strong><span>{workload.name}</span></th>
+            <td data-label="Pending">{workload.pendingCount}</td><td data-label="Active">{workload.activeCount}</td><td data-label="Failed" className={workload.failedCount ? "cell-bad" : ""}>{workload.failedCount}</td><td data-label="Retained">{workload.totalCount}</td>
           </tr>)}</tbody></table></div>
           <div className="queue-footer">
-            <div className="worker-list">{workers.map((worker) => <article key={worker.id}><span className={`worker-dot ${worker.status.toLowerCase()}`} /><div><strong>{worker.name}</strong><small>{worker.queues.length} queues / version {worker.version}</small></div><div className="worker-state"><strong>{humanLabel(worker.status)}</strong><span>{relativeTime(worker.lastSeenAt)}</span></div></article>)}{workers.length === 0 && <p className="empty-state">No worker heartbeat has been recorded.</p>}</div>
-            <div className="recovery-inline"><div><strong>{deadLetters}</strong><span>dead-letter jobs</span></div>{confirmRedrive ? <div className="recovery-actions"><button type="button" onClick={() => setConfirmRedrive(false)}>Cancel</button><button className="secondary-button" type="button" onClick={() => void redrive()} disabled={busy}>Confirm redrive</button></div> : <button className="secondary-button" type="button" onClick={() => setConfirmRedrive(true)} disabled={busy || !canOperate || deadLetters === 0}>Redrive up to 100</button>}</div>
+            <div className="worker-list">{executors.map((executor) => <article key={executor.id}><span className={`worker-dot ${executor.status.toLowerCase()}`} /><div><strong>{executor.name}</strong><small>{executor.workloads.length} workloads / version {executor.version}</small></div><div className="worker-state"><strong>{humanLabel(executor.status)}</strong><span>{relativeTime(executor.lastSeenAt)}</span></div></article>)}{executors.length === 0 && <p className="empty-state">No runtime executor heartbeat has been recorded.</p>}</div>
           </div>
         </section>
       </>}

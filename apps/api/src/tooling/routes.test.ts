@@ -12,7 +12,7 @@ const session: AdministratorSession = {
 };
 
 class Sessions implements AdminSessionManager {
-  async createBootstrapSession() { return null; }
+  async createInstallationKeySession() { return null; }
   async authenticate(token: string | undefined) { return token === SESSION_TOKEN ? session : null; }
   async revoke() { return true; }
 }

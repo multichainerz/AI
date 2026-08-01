@@ -5,7 +5,7 @@ import {
   type AIHubPrismaClient,
 } from "@aihub/database";
 import { decodeMasterKey, EnvelopeEncryption } from "@aihub/security";
-import { BootstrapTokenAuthenticator } from "./auth/bootstrap-auth.js";
+import { InstallationKeyAuthenticator } from "./auth/installation-key-auth.js";
 import {
   PrismaAdminSessionManager,
   type AdminSessionManager,
@@ -14,7 +14,6 @@ import type { ConnectionManager } from "./connections/connection-manager.js";
 import { PrismaConnectionManager } from "./connections/prisma-connection-manager.js";
 import { ConnectionTestService } from "./connections/diagnostics/connection-test-service.js";
 import { ConnectionMonitorRuntime, type ConnectionMonitorService } from "./connections/connection-monitor.js";
-import { PgBossQueueService } from "@aihub/jobs";
 import type { OperationsManager } from "./operations/operations-manager.js";
 import { PrismaOperationsManager } from "./operations/prisma-operations-manager.js";
 import type { ChatManager } from "./chat/chat-manager.js";
@@ -51,6 +50,7 @@ import type { OnboardingManager } from "./onboarding/onboarding-manager.js";
 import { PrismaOnboardingManager } from "./onboarding/prisma-onboarding-manager.js";
 import type { HermesRuntimeNodeManager } from "./runtime-nodes/runtime-node-manager.js";
 import { PrismaHermesRuntimeNodeManager } from "./runtime-nodes/prisma-runtime-node-manager.js";
+import { PrismaInferenceGateway } from "./inference/inference-gateway.js";
 
 export type BootstrapState = "REQUIRED" | "READY" | "LOCKED";
 
@@ -73,11 +73,12 @@ export interface RuntimeServices {
   aiOpsManager?: AiOpsManager;
   onboardingManager?: OnboardingManager;
   runtimeNodeManager?: HermesRuntimeNodeManager;
+  inferenceGateway?: PrismaInferenceGateway;
   prisma?: AIHubPrismaClient;
 }
 
 export function getBootstrapState(): BootstrapState {
-  const names = ["aihub_database_url", "aihub_master_key", "aihub_bootstrap_token"] as const;
+  const names = ["aihub_database_url", "aihub_master_key", "aihub_installation_key"] as const;
   const available = names.map((name) => hasBootstrapSecret(name));
 
   if (available.every((value) => !value)) return "REQUIRED";
@@ -89,7 +90,7 @@ export function getBootstrapState(): BootstrapState {
       return "LOCKED";
     }
     decodeMasterKey(readBootstrapSecret("aihub_master_key"));
-    if (readBootstrapSecret("aihub_bootstrap_token").length < 32) return "LOCKED";
+    if (readBootstrapSecret("aihub_installation_key").length < 32) return "LOCKED";
     return "READY";
   } catch {
     return "LOCKED";
@@ -105,13 +106,9 @@ export function createRuntimeServices(): RuntimeServices {
     const prisma = createPrismaClient(databaseUrl);
     const masterKey = decodeMasterKey(readBootstrapSecret("aihub_master_key"));
     const encryption = new EnvelopeEncryption({ masterKey });
-    const authenticator = new BootstrapTokenAuthenticator(
-      readBootstrapSecret("aihub_bootstrap_token"),
+    const authenticator = new InstallationKeyAuthenticator(
+      readBootstrapSecret("aihub_installation_key"),
     );
-    const claimExpiresAt = hasBootstrapSecret("aihub_installation_claim_expires_at")
-      ? new Date(readBootstrapSecret("aihub_installation_claim_expires_at"))
-      : undefined;
-    if (claimExpiresAt && Number.isNaN(claimExpiresAt.getTime())) throw new Error("Installation claim expiry is invalid.");
 
     const connectionManager = new PrismaConnectionManager(prisma, encryption);
     const connectionTestService = new ConnectionTestService(connectionManager);
@@ -120,14 +117,10 @@ export function createRuntimeServices(): RuntimeServices {
       connectionTestService,
       { error: (message, error) => console.error(message, error) },
     );
-    const sessionManager = new PrismaAdminSessionManager(prisma, authenticator, claimExpiresAt);
-    const queue = new PgBossQueueService(databaseUrl, "api", {
-      error: (message, error) => console.error(message, error),
-      warn: (message, details) => console.warn(message, details),
-    });
-    const operationsManager = new PrismaOperationsManager(prisma, queue);
+    const sessionManager = new PrismaAdminSessionManager(prisma, authenticator);
+    const operationsManager = new PrismaOperationsManager(prisma);
     const documentResolver = new PrismaRuntimeConnectionResolver(prisma, encryption);
-    const memoryManager = new PrismaMemoryManager(prisma, queue);
+    const memoryManager = new PrismaMemoryManager(prisma);
     const modelManager = new PrismaModelManager(prisma);
     const guardrailManager = new PrismaGuardrailManager(prisma);
     const promptManager = new PrismaPromptManager(prisma);
@@ -140,16 +133,15 @@ export function createRuntimeServices(): RuntimeServices {
     const documentManager = new PrismaDocumentManager(
       prisma,
       new EncryptedFileSystemDocumentScratchStore(documentScratchDirectory(), masterKey),
-      queue,
     );
     const hermesClient = new HermesClient(documentResolver);
-    const agentManager = new PrismaAgentManager(prisma, queue, hermesClient);
+    const agentManager = new PrismaAgentManager(prisma, hermesClient);
     const toolingManager = new PrismaToolingManager(prisma, hermesClient);
     const aiOpsManager = new PrismaAiOpsManager(prisma, {
       connections: connectionManager,
       connectionMonitoring: connectionMonitor,
       models: modelManager,
-      jobs: operationsManager,
+      runtime: operationsManager,
       chat: chatManager,
       documents: documentManager,
       memory: memoryManager,
@@ -158,6 +150,7 @@ export function createRuntimeServices(): RuntimeServices {
     });
     const onboardingManager = new PrismaOnboardingManager(prisma, masterKey, aiOpsManager);
     const runtimeNodeManager = new PrismaHermesRuntimeNodeManager(prisma, encryption, connectionTestService);
+    const inferenceGateway = new PrismaInferenceGateway(prisma, connectionManager);
     return {
       bootstrapState,
       prisma,
@@ -184,6 +177,7 @@ export function createRuntimeServices(): RuntimeServices {
       aiOpsManager,
       onboardingManager,
       runtimeNodeManager,
+      inferenceGateway,
     };
   } catch {
     return { bootstrapState: "LOCKED" };

@@ -30,8 +30,11 @@ try {
   await administrator.connect();
   await administrator.query(`CREATE SCHEMA "${schema}"`);
 
-  const pnpm = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
-  const migration = spawnSync(pnpm, ["exec", "prisma", "migrate", "deploy"], {
+  const migrationCommand = process.platform === "win32" ? (process.env.ComSpec || "cmd.exe") : "pnpm";
+  const migrationArguments = process.platform === "win32"
+    ? ["/d", "/s", "/c", "pnpm.cmd exec prisma migrate deploy"]
+    : ["exec", "prisma", "migrate", "deploy"];
+  const migration = spawnSync(migrationCommand, migrationArguments, {
     cwd: fileURLToPath(new URL("..", import.meta.url)),
     env: {
       ...process.env,
@@ -42,6 +45,9 @@ try {
   });
   if (migration.stdout) process.stdout.write(migration.stdout);
   if (migration.stderr) process.stderr.write(migration.stderr);
+  if (migration.error) {
+    throw new Error(`Unable to launch Prisma migration deployment: ${migration.error.message}`);
+  }
   if (migration.status !== 0) throw new Error(`Prisma migration deployment failed with status ${migration.status ?? "unknown"}.`);
 
   verifier = new Client({ connectionString: administrativeUrl.toString() });

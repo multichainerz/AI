@@ -61,6 +61,43 @@ function formatConversationTime(value: string | null): string {
     : date.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
+function formatMessageTime(value: string): string {
+  return new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function formatTokenCount(value: number | null): string {
+  return value === null ? "—" : value.toLocaleString();
+}
+
+function formatLatency(value: number | null): string {
+  if (value === null) return "—";
+  return value < 1_000 ? `${value} ms` : `${(value / 1_000).toFixed(2)} s`;
+}
+
+export interface ChatTelemetryMetric {
+  key: "throughput" | "input" | "output" | "total" | "latency" | "finish";
+  label: string;
+  value: string;
+}
+
+export function chatMessageTelemetry(message: ChatMessage): ChatTelemetryMetric[] {
+  const throughput = message.outputTokens !== null && message.latencyMs !== null && message.latencyMs > 0
+    ? `${(message.outputTokens / (message.latencyMs / 1_000)).toFixed(1)} tok/s`
+    : "—";
+  return [
+    { key: "throughput", label: "Effective speed", value: throughput },
+    { key: "input", label: "Input", value: formatTokenCount(message.inputTokens) },
+    { key: "output", label: "Output", value: formatTokenCount(message.outputTokens) },
+    { key: "total", label: "Total", value: formatTokenCount(message.totalTokens) },
+    { key: "latency", label: "Latency", value: formatLatency(message.latencyMs) },
+    {
+      key: "finish",
+      label: "Finish",
+      value: message.finishReason?.replaceAll("_", " ").toLowerCase() ?? "—",
+    },
+  ];
+}
+
 export function ChatView({
   unlocked,
   identityMode,
@@ -78,6 +115,8 @@ export function ChatView({
   const [error, setError] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [feedbackBusy, setFeedbackBusy] = useState<string | null>(null);
+  const [streamStartedAt, setStreamStartedAt] = useState<number | null>(null);
+  const [streamElapsedMs, setStreamElapsedMs] = useState(0);
   const abortController = useRef<AbortController | null>(null);
   const messageEnd = useRef<HTMLDivElement>(null);
 
@@ -118,6 +157,14 @@ export function ChatView({
   useEffect(() => {
     messageEnd.current?.scrollIntoView({ behavior: busy ? "auto" : "smooth" });
   }, [active?.messages, busy]);
+
+  useEffect(() => {
+    if (streamStartedAt === null) return;
+    const updateElapsed = () => setStreamElapsedMs(Date.now() - streamStartedAt);
+    updateElapsed();
+    const timer = window.setInterval(updateElapsed, 250);
+    return () => window.clearInterval(timer);
+  }, [streamStartedAt]);
 
   const selectConversation = async (id: string) => {
     if (busy) return;
@@ -212,6 +259,8 @@ export function ChatView({
       setActive({ ...conversation, messages: [...conversation.messages, optimistic] });
       const controller = new AbortController();
       abortController.current = controller;
+      setStreamElapsedMs(0);
+      setStreamStartedAt(Date.now());
       await streamChatMessage(conversation.id, content, applyStreamEvent, controller.signal);
       const refreshed = await getChatConversation(conversation.id);
       setActive(refreshed);
@@ -226,6 +275,7 @@ export function ChatView({
       }
     } finally {
       abortController.current = null;
+      setStreamStartedAt(null);
       setBusy(false);
     }
   };
@@ -285,6 +335,13 @@ export function ChatView({
     );
   }
 
+  const assistantResponses = active?.messages.filter(({ role }) => role === "ASSISTANT") ?? [];
+  const completedResponses = assistantResponses.filter(({ status }) => status === "COMPLETED");
+  const conversationTotalTokens = completedResponses.reduce(
+    (total, message) => total + (message.totalTokens ?? 0),
+    0,
+  );
+
   return (
     <section className="chat-workspace">
       <aside className={historyOpen ? "chat-history open" : "chat-history"}>
@@ -310,18 +367,28 @@ export function ChatView({
           ))}
         </div>
         <div className="chat-preview-note">
-          <span>Identity mode</span>
-          <strong>{identityMode === "ENTERPRISE" ? "Enterprise OIDC" : "Administrator preview"}</strong>
-          <small>{displayName ?? "Active AIHub session"}</small>
+          <div className="chat-preview-identity">
+            <i aria-hidden="true" />
+            <div><span>Identity mode</span><strong>{identityMode === "ENTERPRISE" ? "Enterprise OIDC" : "Administrator preview"}</strong><small>{displayName ?? "Active AIHub session"}</small></div>
+          </div>
+          <dl>
+            <div><dt>Route</dt><dd>{active?.modelAlias ?? "Automatic"}</dd></div>
+            <div><dt>Usage</dt><dd>{conversationTotalTokens.toLocaleString()} tokens</dd></div>
+          </dl>
         </div>
       </aside>
 
       <div className="chat-main">
         <header className="chat-topbar">
           <button className="history-toggle" type="button" onClick={() => setHistoryOpen((value) => !value)} aria-label="Toggle conversation history">☰</button>
-          <div>
+          <div className="chat-topbar-title">
             <strong>{active?.title ?? "New conversation"}</strong>
-            <span>{active?.modelAlias ?? "Uses the active LiteLLM model route"}</span>
+            <span>{active ? `${active.messages.length} messages in this conversation` : "Start a governed on-premise conversation"}</span>
+          </div>
+          <div className="chat-runtime-summary" aria-label="Conversation runtime summary">
+            <span className={busy ? "generating" : "ready"}><i aria-hidden="true" />{busy ? `Generating ${(streamElapsedMs / 1_000).toFixed(1)} s` : "Route ready"}</span>
+            <span><small>Model</small><strong>{active?.modelAlias ?? "Active default"}</strong></span>
+            <span><small>Session usage</small><strong>{conversationTotalTokens.toLocaleString()} tok</strong></span>
           </div>
           {active && <button type="button" disabled={busy || loading} onClick={() => void archive()}>Archive</button>}
         </header>
@@ -342,12 +409,21 @@ export function ChatView({
             active.messages.map((message) => (
               <article className={`chat-message ${message.role.toLowerCase()}`} key={message.id}>
                 <div className="message-avatar">{message.role === "USER" ? "You" : "M"}</div>
-                <div>
+                <div className="message-body">
                   <div className="message-heading">
-                    <strong>{message.role === "USER" ? "You" : "MPM AIHub"}</strong>
-                    {message.status !== "COMPLETED" && <span>{message.status.toLowerCase()}</span>}
+                    <div><strong>{message.role === "USER" ? "You" : "MPM AIHub"}</strong><time dateTime={message.createdAt}>{formatMessageTime(message.createdAt)}</time></div>
+                    <div className="message-heading-tags">
+                      {message.role === "ASSISTANT" && <span className="model">{message.modelAlias ?? active.modelAlias}</span>}
+                      {message.status !== "COMPLETED" && <span className={`status ${message.status.toLowerCase()}`}>{message.status.toLowerCase()}</span>}
+                    </div>
                   </div>
                   <p>{message.content || (message.status === "PENDING" ? "Thinking…" : "No content returned.")}</p>
+                  {message.role === "ASSISTANT" && message.status === "PENDING" && (
+                    <div className="message-stream-status" aria-label="Live generation status">
+                      <span><i aria-hidden="true" />Streaming response</span>
+                      <small>{busy ? `${(streamElapsedMs / 1_000).toFixed(1)} s elapsed` : "Awaiting recovery"} · {message.content.length.toLocaleString()} characters received · exact token usage reports on completion</small>
+                    </div>
+                  )}
                   {message.sources.length > 0 && (
                     <div className="message-sources" aria-label="Enterprise knowledge sources">
                       <strong>Sources</strong>
@@ -360,25 +436,35 @@ export function ChatView({
                     </div>
                   )}
                   {message.role === "ASSISTANT" && message.status === "COMPLETED" && (
-                    <div className="message-meta">
-                      <small>{message.totalTokens === null ? "Usage pending" : `${message.totalTokens.toLocaleString()} tokens`} · {message.latencyMs === null ? "Latency pending" : `${(message.latencyMs / 1000).toFixed(1)} s`}</small>
-                      <div className="message-feedback" aria-label="Response feedback">
-                        <button
-                          type="button"
-                          aria-label="Mark response helpful"
-                          aria-pressed={message.feedback?.rating === "HELPFUL"}
-                          disabled={feedbackBusy === message.id}
-                          onClick={() => void recordFeedback(message.id, "HELPFUL")}
-                        >Helpful</button>
-                        <button
-                          type="button"
-                          aria-label="Mark response not helpful"
-                          aria-pressed={message.feedback?.rating === "NOT_HELPFUL"}
-                          disabled={feedbackBusy === message.id}
-                          onClick={() => void recordFeedback(message.id, "NOT_HELPFUL")}
-                        >Not helpful</button>
+                    <>
+                      <section className="message-telemetry" aria-label="Response performance">
+                        <header><div><strong>Response telemetry</strong><small>Reported by vLLM and measured by AIHub</small></div>{message.sources.length > 0 && <span>{message.sources.length} knowledge source{message.sources.length === 1 ? "" : "s"}</span>}</header>
+                        <dl>{chatMessageTelemetry(message).map((metric) => (
+                          <div className={metric.key === "throughput" ? "primary" : undefined} key={metric.key}>
+                            <dt>{metric.label}</dt><dd>{metric.value}</dd>
+                          </div>
+                        ))}</dl>
+                      </section>
+                      <div className="message-meta">
+                        <small>Effective speed is output tokens divided by end-to-end response latency.</small>
+                        <div className="message-feedback" aria-label="Response feedback">
+                          <button
+                            type="button"
+                            aria-label="Mark response helpful"
+                            aria-pressed={message.feedback?.rating === "HELPFUL"}
+                            disabled={feedbackBusy === message.id}
+                            onClick={() => void recordFeedback(message.id, "HELPFUL")}
+                          >Helpful</button>
+                          <button
+                            type="button"
+                            aria-label="Mark response not helpful"
+                            aria-pressed={message.feedback?.rating === "NOT_HELPFUL"}
+                            disabled={feedbackBusy === message.id}
+                            onClick={() => void recordFeedback(message.id, "NOT_HELPFUL")}
+                          >Not helpful</button>
+                        </div>
                       </div>
-                    </div>
+                    </>
                   )}
                   {(message.status === "FAILED" || message.status === "CANCELLED") && (
                     <small className="message-failure">{message.status === "CANCELLED" ? "Generation cancelled" : `Generation failed · ${message.errorCode ?? "UNKNOWN"}`}</small>
@@ -393,28 +479,35 @@ export function ChatView({
         <div className="chat-composer-wrap">
           {error && <div className="chat-error" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
           <form className="chat-composer" onSubmit={submit}>
-            <textarea
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  event.currentTarget.form?.requestSubmit();
-                }
-              }}
-              placeholder="Message the approved on-premise model"
-              rows={1}
-              maxLength={32_000}
-              disabled={busy}
-              aria-label="Chat message"
-            />
+            <div className="chat-composer-input">
+              <textarea
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    event.currentTarget.form?.requestSubmit();
+                  }
+                }}
+                placeholder="Message the approved on-premise model"
+                rows={1}
+                maxLength={32_000}
+                disabled={busy}
+                aria-label="Chat message"
+              />
+              <div><span>Enter to send · Shift + Enter for a new line</span><span>{draft.length.toLocaleString()} / 32,000</span></div>
+            </div>
             {busy ? (
               <button className="stop-button" type="button" onClick={() => abortController.current?.abort()}>Stop</button>
             ) : (
               <button className="send-button" type="submit" disabled={!draft.trim()} aria-label="Send message">↑</button>
             )}
           </form>
-          <p>{identityMode === "ENTERPRISE" ? "Enterprise session" : "Administrator preview"} · LiteLLM only · approved private knowledge · no tools</p>
+          <div className="chat-composer-status">
+            <span className={busy ? "generating" : "ready"}><i aria-hidden="true" />{busy ? "Model is generating" : "Inference route ready"}</span>
+            <span>{identityMode === "ENTERPRISE" ? "Enterprise session" : "Administrator preview"}</span>
+            <span>AIHub gateway · governed knowledge · tools disabled</span>
+          </div>
         </div>
       </div>
     </section>

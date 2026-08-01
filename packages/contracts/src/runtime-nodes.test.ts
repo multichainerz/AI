@@ -4,6 +4,7 @@ import {
   enrollHermesNodeSchema,
   hermesNodeHeartbeatSchema,
   mutateHermesRuntimeNodeSchema,
+  registerHermesNodeMemorySchema,
 } from "./runtime-nodes.js";
 
 describe("Hermes runtime-node contracts", () => {
@@ -23,6 +24,13 @@ describe("Hermes runtime-node contracts", () => {
       controlPlaneUrl: "https://aihub.internal",
       hermesImage: "nousresearch/hermes-agent",
     }).success).toBe(false);
+    expect(createHermesNodeInvitationSchema.safeParse({
+      slug: "hermes-runtime-01",
+      displayName: "Hermes Runtime 01",
+      baseUrl: "http://10.0.0.12:8642/admin",
+      controlPlaneUrl: "https://aihub.internal/setup?token=unsafe",
+      hermesImage: "nousresearch/hermes-agent",
+    }).success).toBe(false);
   });
 
   it("keeps enrollment identity and runtime API credentials explicit", () => {
@@ -31,6 +39,7 @@ describe("Hermes runtime-node contracts", () => {
       token: "t".repeat(43),
       hostname: "hermes-01.internal",
       publicKeyPem: `-----BEGIN PUBLIC KEY-----\n${"A".repeat(80)}\n-----END PUBLIC KEY-----`,
+      controlPlaneUrl: "https://aihub.internal",
       apiKey: "k".repeat(64),
       hermesVersion: "nousresearch/hermes-agent:latest",
       installerVersion: "ai-v1.7.0",
@@ -41,6 +50,16 @@ describe("Hermes runtime-node contracts", () => {
   });
 
   it("rejects unbounded heartbeat and lifecycle input", () => {
+    expect(registerHermesNodeMemorySchema.safeParse({
+      baseUrl: "http://10.0.0.12:6767",
+      apiKey: `sm_${"a".repeat(32)}`,
+      observedVersion: "0.1.0",
+    }).success).toBe(true);
+    expect(registerHermesNodeMemorySchema.safeParse({
+      baseUrl: "http://10.0.0.12:6767/v3",
+      apiKey: `sm_${"a".repeat(32)}`,
+      observedVersion: "0.1.0",
+    }).success).toBe(false);
     expect(hermesNodeHeartbeatSchema.safeParse({
       observedAt: "2026-07-30T00:00:00.000Z",
       status: "ONLINE",

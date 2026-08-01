@@ -25,11 +25,12 @@ import {
   type ChatPrincipal,
 } from "./chat-manager.js";
 import {
-  LiteLLMClient,
-  LiteLLMRequestError,
-  type LiteLLMInputMessage,
-} from "./litellm-client.js";
+  InferenceRequestError,
+  type InferenceInputMessage,
+  OpenAICompatibleInferenceClient,
+} from "./inference-client.js";
 import type { KnowledgeRetriever } from "./knowledge-retriever.js";
+import { inspectInputText } from "../guardrails/runtime-policy.js";
 
 const LEGACY_SYSTEM_INSTRUCTION =
   "You are the MPM AIHub assistant. Be accurate, concise, and explicit about uncertainty. " +
@@ -74,7 +75,7 @@ interface StoredConversation {
   messages?: StoredMessage[];
 }
 
-interface ResolvedLiteLLM {
+interface ResolvedInference {
   connectionId: string;
   baseUrl: string;
   apiKey?: string | undefined;
@@ -86,8 +87,10 @@ interface ResolvedLiteLLM {
   requestsPerMinute: number;
   guardrailPolicyId: string | null;
   guardrailPolicyVersion: string | null;
-  guardrails: string[];
   maxInputCharacters: number;
+  maxOutputCharacters: number;
+  blockControlCharacters: boolean;
+  blockCredentialPatterns: boolean;
   promptTemplateId: string | null;
   promptTemplateVersion: string | null;
   promptContentChecksum: string | null;
@@ -149,8 +152,8 @@ function pseudonymousUser(subject: string): string {
 export function boundedContextMessages(
   newestFirst: Array<{ role: "USER" | "ASSISTANT"; content: string }>,
   characterLimit = MAX_CONTEXT_CHARACTERS,
-): LiteLLMInputMessage[] {
-  const selected: LiteLLMInputMessage[] = [];
+): InferenceInputMessage[] {
+  const selected: InferenceInputMessage[] = [];
   let remaining = characterLimit;
   for (const message of newestFirst) {
     if (message.content.length > remaining) break;
@@ -161,6 +164,15 @@ export function boundedContextMessages(
     remaining -= message.content.length;
   }
   return selected.reverse();
+}
+
+export async function acquireChatRateLimitLock(
+  transaction: Pick<Prisma.TransactionClient, "$executeRaw">,
+  subject: string,
+): Promise<void> {
+  await transaction.$executeRaw`
+    SELECT pg_advisory_xact_lock(hashtext(${`aihub-chat:${subject}`}))
+  `;
 }
 
 function numberSetting(
@@ -178,7 +190,7 @@ export class PrismaChatManager implements ChatManager {
   constructor(
     private readonly prisma: AIHubPrismaClient,
     private readonly connectionStore: ConnectionDiagnosticStore,
-    private readonly client = new LiteLLMClient(),
+    private readonly client = new OpenAICompatibleInferenceClient(),
     private readonly knowledgeRetriever?: KnowledgeRetriever,
   ) {}
 
@@ -203,7 +215,7 @@ export class PrismaChatManager implements ChatManager {
     principal: ChatPrincipal,
     input: CreateChatConversation,
   ): Promise<ChatConversationSummary> {
-    const runtime = await this.resolveLiteLLM();
+    const runtime = await this.resolveInference();
     if (input.modelAlias && input.modelAlias !== runtime.modelAlias) {
       throw new ChatConfigurationError(
         `Model '${input.modelAlias}' is not available through the active AIHub route.`,
@@ -291,8 +303,9 @@ export class PrismaChatManager implements ChatManager {
     signal: AbortSignal,
     emit: (event: ChatStreamEvent) => void,
   ): Promise<void> {
-    const runtime = await this.resolveLiteLLM();
-    if (content.length > runtime.maxInputCharacters) {
+    const runtime = await this.resolveInference();
+    const policyViolation = inspectInputText(content, runtime);
+    if (policyViolation) {
       const ownedConversation = await this.prisma.chatConversation.findFirst({
         where: { id: conversationId, ownerSubject: principal.subject },
         select: { id: true },
@@ -308,20 +321,23 @@ export class PrismaChatManager implements ChatManager {
         metadata: {
           policyId: runtime.guardrailPolicyId,
           policyVersion: runtime.guardrailPolicyVersion,
-          reason: "INPUT_CHARACTER_LIMIT",
+          reason: policyViolation,
           observedCharacters: content.length,
           maxInputCharacters: runtime.maxInputCharacters,
         },
       } });
-      throw new ChatPolicyViolationError(`The active policy limits chat input to ${runtime.maxInputCharacters.toLocaleString("en-US")} characters.`);
+      const message = policyViolation === "INPUT_CHARACTER_LIMIT"
+        ? `The active policy limits chat input to ${runtime.maxInputCharacters.toLocaleString("en-US")} characters.`
+        : policyViolation === "CONTROL_CHARACTERS"
+          ? "The active policy blocks unsafe control characters."
+          : "The active policy blocks content that appears to contain a credential.";
+      throw new ChatPolicyViolationError(message);
     }
     const now = new Date();
     const userMessageId = randomUUID();
     const assistantMessageId = randomUUID();
     const prepared = await this.prisma.$transaction(async (transaction) => {
-      await transaction.$queryRaw`
-        SELECT pg_advisory_xact_lock(hashtext(${`aihub-chat:${principal.subject}`}))
-      `;
+      await acquireChatRateLimitLock(transaction, principal.subject);
       const recentRequests = await transaction.chatMessage.count({
         where: {
           role: "USER",
@@ -370,7 +386,7 @@ export class PrismaChatManager implements ChatManager {
       }
       if (conversation.modelAlias !== runtime.modelAlias) {
         throw new ChatConfigurationError(
-          `Model '${conversation.modelAlias}' is no longer assigned to the active LiteLLM route.`,
+          `Model '${conversation.modelAlias}' is no longer assigned to the active vLLM route.`,
         );
       }
       const generation = conversation.generation + 1;
@@ -425,7 +441,7 @@ export class PrismaChatManager implements ChatManager {
             connectionId: runtime.connectionId,
             guardrailPolicyId: runtime.guardrailPolicyId,
             guardrailPolicyVersion: runtime.guardrailPolicyVersion,
-            guardrailCount: runtime.guardrails.length,
+            enforcementPlane: "AIHUB",
             promptTemplateId: runtime.promptTemplateId,
             promptTemplateVersion: runtime.promptTemplateVersion,
             promptContentChecksum: runtime.promptContentChecksum,
@@ -454,7 +470,7 @@ export class PrismaChatManager implements ChatManager {
           `[Source ${index + 1}: ${source.fileName} | document ${source.documentId}]\n${source.excerpt}`,
         ).join("\n\n")
       : null;
-    const messages: LiteLLMInputMessage[] = [
+    const messages: InferenceInputMessage[] = [
       { role: "system", content: runtime.systemInstruction },
       ...(knowledgeContext ? [{ role: "system" as const, content: knowledgeContext }] : []),
       ...boundedContextMessages(prepared),
@@ -474,7 +490,7 @@ export class PrismaChatManager implements ChatManager {
           temperature: runtime.temperature,
           timeoutMs: runtime.timeoutMs,
           user: pseudonymousUser(principal.subject),
-          guardrails: runtime.guardrails,
+          maxResponseCharacters: runtime.maxOutputCharacters,
         },
         signal,
         (delta) => {
@@ -521,7 +537,7 @@ export class PrismaChatManager implements ChatManager {
               knowledgeSourceCount: sources.length,
               guardrailPolicyId: runtime.guardrailPolicyId,
               guardrailPolicyVersion: runtime.guardrailPolicyVersion,
-              guardrailCount: runtime.guardrails.length,
+              enforcementPlane: "AIHUB",
               promptTemplateId: runtime.promptTemplateId,
               promptTemplateVersion: runtime.promptTemplateVersion,
               promptContentChecksum: runtime.promptContentChecksum,
@@ -543,12 +559,12 @@ export class PrismaChatManager implements ChatManager {
       const cancelled = signal.aborted;
       const errorCode = cancelled
         ? "INFERENCE_CANCELLED"
-        : error instanceof LiteLLMRequestError
+        : error instanceof InferenceRequestError
           ? error.code
           : "INFERENCE_FAILED";
       const safeError = cancelled
         ? "Generation was cancelled."
-        : error instanceof LiteLLMRequestError
+        : error instanceof InferenceRequestError
           ? error.message
           : "AIHub could not complete the model response.";
       await this.prisma.$transaction(async (transaction) => {
@@ -601,7 +617,7 @@ export class PrismaChatManager implements ChatManager {
     }
   }
 
-  private async resolveLiteLLM(): Promise<ResolvedLiteLLM> {
+  private async resolveInference(): Promise<ResolvedInference> {
     const promptCatalogueEnforced = await this.prisma.promptTemplate.count({
       where: { purpose: "CHAT_SYSTEM", firstActivatedAt: { not: null } },
     }) > 0;
@@ -622,7 +638,14 @@ export class PrismaChatManager implements ChatManager {
     }) > 0;
     const policies = !guardrailCatalogueEnforced ? [] : await this.prisma.guardrailPolicy.findMany({
       where: { status: "ACTIVE" },
-      select: { id: true, version: true, liteLLMGuardrails: true, maxInputCharacters: true },
+      select: {
+        id: true,
+        version: true,
+        maxInputCharacters: true,
+        maxOutputCharacters: true,
+        blockControlCharacters: true,
+        blockCredentialPatterns: true,
+      },
       take: 2,
     });
     if (guardrailCatalogueEnforced && policies.length === 0) {
@@ -649,26 +672,26 @@ export class PrismaChatManager implements ChatManager {
     const route = routes[0];
     const candidates = await this.prisma.serviceConnection.findMany({
       where: route
-        ? { id: route.connectionId, kind: "LITELLM", enabled: true }
-        : { kind: "LITELLM", enabled: true },
+        ? { id: route.connectionId, kind: "VLLM", enabled: true }
+        : { kind: "VLLM", enabled: true },
       orderBy: [{ environment: "desc" }, { updatedAt: "desc" }],
       select: { id: true, status: true },
       take: 2,
     });
     if (candidates.length === 0) {
-      throw new ChatConfigurationError("Configure and enable one LiteLLM connection before using chat.");
+      throw new ChatConfigurationError("Configure and enable one vLLM connection before using chat.");
     }
     if (candidates.length > 1) {
-      throw new ChatConfigurationError("Exactly one LiteLLM connection must be enabled for the pilot chat route.");
+      throw new ChatConfigurationError("Exactly one vLLM connection must be enabled for the direct chat route.");
     }
     const candidate = candidates[0]!;
     if (candidate.status !== "HEALTHY") {
-      throw new ChatConfigurationError("Test the enabled LiteLLM connection successfully before using chat.");
+      throw new ChatConfigurationError("Test the enabled vLLM connection successfully before using chat.");
     }
     const connection: ResolvedConnection = await this.connectionStore.resolveForDiagnostic(candidate.id);
     const modelAlias = route?.modelAlias ?? connection.configuration.modelAlias;
     if (!connection.baseUrl || typeof modelAlias !== "string" || modelAlias.length === 0) {
-      throw new ChatConfigurationError("The LiteLLM endpoint and primary model alias are required for chat.");
+      throw new ChatConfigurationError("The vLLM endpoint and primary model alias are required for chat.");
     }
     const chatPath = connection.configuration.chatPath;
     return {
@@ -691,8 +714,10 @@ export class PrismaChatManager implements ChatManager {
       ),
       guardrailPolicyId: policy?.id ?? null,
       guardrailPolicyVersion: policy?.version ?? null,
-      guardrails: policy?.liteLLMGuardrails ?? [],
       maxInputCharacters: policy?.maxInputCharacters ?? 32_000,
+      maxOutputCharacters: policy?.maxOutputCharacters ?? 200_000,
+      blockControlCharacters: policy?.blockControlCharacters ?? true,
+      blockCredentialPatterns: policy?.blockCredentialPatterns ?? true,
       promptTemplateId: prompt?.id ?? null,
       promptTemplateVersion: prompt?.version ?? null,
       promptContentChecksum: prompt?.contentChecksum ?? null,

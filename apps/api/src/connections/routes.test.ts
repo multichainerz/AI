@@ -42,7 +42,7 @@ const principal: AdministratorSession = {
 
 class MemorySessionManager implements AdminSessionManager {
   constructor(private readonly session = principal) {}
-  async createBootstrapSession() { return null; }
+  async createInstallationKeySession() { return null; }
   async authenticate(token: string | undefined) {
     return token === SESSION_TOKEN ? this.session : null;
   }
@@ -256,11 +256,11 @@ describe("administrator connection routes", () => {
       url: "/api/v1/admin/connections",
       headers: sessionHeaders,
       payload: {
-        slug: "litellm-primary",
-        displayName: "LiteLLM Primary",
-        kind: "LITELLM",
+        slug: "vllm-primary",
+        displayName: "vLLM Primary",
+        kind: "VLLM",
         environment: "PRODUCTION",
-        baseUrl: "https://litellm.mpm.internal",
+        baseUrl: "https://vllm.mpm.internal",
         enabled: true,
         configuration: { modelAlias: "hermes-primary" },
         secrets: { apiKey: "must-never-be-returned" },
@@ -270,7 +270,7 @@ describe("administrator connection routes", () => {
     expect(response.statusCode).toBe(201);
     expect(response.body).not.toContain("must-never-be-returned");
     expect(response.json()).toMatchObject({
-      slug: "litellm-primary",
+      slug: "vllm-primary",
       configuration: { modelAlias: "hermes-primary" },
       secretFieldNames: ["apiKey"],
     });
@@ -356,16 +356,16 @@ describe("administrator connection routes", () => {
   it("lists revisions and restores configuration with an optimistic revision guard", async () => {
     const manager = new MemoryConnectionManager();
     await manager.create({
-      slug: "litellm-primary",
-      displayName: "LiteLLM Primary",
-      kind: "LITELLM",
+      slug: "vllm-primary",
+      displayName: "vLLM Primary",
+      kind: "VLLM",
       environment: "PRODUCTION",
-      baseUrl: "https://litellm.mpm.internal",
+      baseUrl: "https://vllm.mpm.internal",
       enabled: true,
       configuration: {},
       secrets: { apiKey: "current-secret" },
     });
-    await manager.update(CONNECTION_ID, { displayName: "LiteLLM Current" });
+    await manager.update(CONNECTION_ID, { displayName: "vLLM Current" });
     const { app } = await authenticatedApp(manager);
 
     const history = await app.inject({
