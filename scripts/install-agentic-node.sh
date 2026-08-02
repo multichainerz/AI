@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="ai-v1.15.5"
+INSTALLER_VERSION="ai-v1.15.6"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 CONTAINER_NAME="orcasynapse-hermes"
 HEARTBEAT_SERVICE="orcasynapse-hermes-heartbeat"
@@ -102,7 +102,22 @@ warning() {
   printf '  %b[WARN]%b %s\n' "${UI_AMBER}${UI_BOLD}" "${UI_RESET}" "$1" >&2
 }
 
-run_with_spinner() {
+render_activity_progress() {
+  local label="$1" elapsed="$2" tick="$3" width=24 segment=6 span position
+  local leading trailing active bar
+  span=$((2 * (width - segment)))
+  position=$((tick % span))
+  (( position > width - segment )) && position=$((span - position))
+  printf -v leading '%*s' "${position}" ''
+  printf -v trailing '%*s' "$((width - segment - position))" ''
+  printf -v active '%*s' "${segment}" ''
+  active="${active// /=}"
+  bar="${leading}${active}${trailing}"
+  printf '\r\033[2K  %b[RUN]%b [%s] %-36.36s %4ss' \
+    "${UI_CYAN}${UI_BOLD}" "${UI_RESET}" "${bar}" "${label}" "${elapsed}"
+}
+
+run_with_progress() {
   local label="$1"
   shift
   if (( ! UI_INTERACTIVE )); then
@@ -113,7 +128,6 @@ run_with_spinner() {
   fi
 
   local log_file pid status=0 frame_index=0 started elapsed
-  local frames=('|' '/' '-' "\\")
   log_file="$(mktemp /tmp/orcasynapse-command.XXXXXX)"
   TEMPORARY_FILES+=("${log_file}")
   started="${SECONDS}"
@@ -122,8 +136,8 @@ run_with_spinner() {
   printf '\033[?25l'
   while kill -0 "${pid}" 2>/dev/null; do
     elapsed=$((SECONDS - started))
-    printf '\r  %b[%s]%b %-48s %4ss' "${UI_CYAN}${UI_BOLD}" "${frames[frame_index]}" "${UI_RESET}" "${label}" "${elapsed}"
-    frame_index=$(((frame_index + 1) % ${#frames[@]}))
+    render_activity_progress "${label}" "${elapsed}" "${frame_index}"
+    frame_index=$((frame_index + 1))
     sleep 0.12
   done
   if wait "${pid}"; then status=0; else status=$?; fi
@@ -250,7 +264,7 @@ security:
 EOF
 
   local install_status=0
-  run_with_spinner "Install the governed Hermes memory provider" \
+  run_with_progress "Install the governed Hermes memory provider" \
     docker exec \
       --env HERMES_MANAGED_DIR=/opt/data/.orcasynapse-bootstrap-managed \
       --user "${HERMES_UID}:${HERMES_GID}" \
@@ -260,7 +274,7 @@ EOF
   remove_hermes_bootstrap_policy
   (( install_status == 0 )) || return "${install_status}"
 
-  run_with_spinner "Verify the locked Hermes memory provider" \
+  run_with_progress "Verify the locked Hermes memory provider" \
     docker exec --user "${HERMES_UID}:${HERMES_GID}" "${CONTAINER_NAME}" python -c \
       'from tools.lazy_deps import activate_durable_lazy_target, feature_missing; activate_durable_lazy_target(); missing = feature_missing("memory.supermemory"); assert not missing, f"missing dependencies: {missing}"; import supermemory' \
     || return $?
@@ -270,13 +284,13 @@ install_host_dependencies() {
   require_ubuntu_host
   if ! command -v docker >/dev/null 2>&1 || ! command -v openssl >/dev/null 2>&1 \
     || ! command -v curl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
-    run_with_spinner "Refresh operating-system packages" apt-get update \
+    run_with_progress "Refresh operating-system packages" apt-get update \
       || fail "could not refresh Ubuntu package metadata"
-    run_with_spinner "Install runtime security dependencies" env DEBIAN_FRONTEND=noninteractive \
+    run_with_progress "Install runtime security dependencies" env DEBIAN_FRONTEND=noninteractive \
       apt-get install -y ca-certificates curl jq openssl docker.io \
       || fail "could not install Docker and runtime security dependencies"
   fi
-  run_with_spinner "Enable the Docker service" systemctl enable --now docker \
+  run_with_progress "Enable the Docker service" systemctl enable --now docker \
     || fail "could not enable the Docker service"
   docker info >/dev/null 2>&1 || fail "the Docker daemon is not reachable after startup"
 
@@ -450,7 +464,7 @@ verify_enrolled_identity() {
   response_error="${response_error:0:400}"
   [[ -n "${response_error}" ]] || response_error="The control plane returned no diagnostic message."
   if [[ "${http_status}" == "401" ]]; then
-    fail "VM1 rejected the enrolled VM2 identity ${node_fingerprint} for node ${node_id}. The retained VM2 state and dashboard record no longer share the same trust binding. Revoke and decommission the stale Agentic System node in the dashboard, run 'curl -fsSL ${control_plane_url}/install/remove-agentic-node.sh | sudo bash' on VM2, then issue a fresh installer claim. Server response: ${response_error}"
+    fail "VM1 rejected the enrolled VM2 identity ${node_fingerprint} for node ${node_id}. The retained VM2 state and dashboard record no longer share the same trust binding. Revoke and decommission the stale Agentic System node in the dashboard, run 'curl --fail --show-error --location --progress-bar ${control_plane_url}/install/remove-agentic-node.sh | sudo bash' on VM2, then issue a fresh installer claim. Server response: ${response_error}"
   fi
   fail "VM1 could not verify the enrolled VM2 trust binding (HTTP ${http_status}): ${response_error}"
 }
@@ -516,7 +530,7 @@ wait_for_supermemory() {
   local base_url="$1" invocation_id="$2"
   local deadline=$((SECONDS + SUPERMEMORY_START_TIMEOUT_SECONDS))
   local started="${SECONDS}" last_percent="" progress_record="" percent="" detail=""
-  local frames=('|' '/' '-' "\\") frame_index=0
+  local frame_index=0
 
   if (( UI_INTERACTIVE )); then
     printf '\033[?25l'
@@ -542,10 +556,8 @@ wait_for_supermemory() {
       fi
       last_percent="${percent}"
     elif (( UI_INTERACTIVE )); then
-      printf '\r\033[2K  %b[%s]%b %-42s %4ss' \
-        "${UI_CYAN}${UI_BOLD}" "${frames[frame_index]}" "${UI_RESET}" \
-        "Initialize Supermemory local embeddings" "$((SECONDS - started))"
-      frame_index=$(((frame_index + 1) % ${#frames[@]}))
+      render_activity_progress "Initialize Supermemory embeddings" "$((SECONDS - started))" "${frame_index}"
+      frame_index=$((frame_index + 1))
     fi
 
     if (( SECONDS >= deadline )); then
@@ -588,7 +600,7 @@ install_supermemory() {
     fi
     info "Reusing the protected Supermemory Local installation already present on this node."
   else
-    run_with_spinner "Install Supermemory Local (${requested_version})" \
+    run_with_progress "Install Supermemory Local (${requested_version})" \
       install_supermemory_binary "${requested_version}" "${install_dir}" "${bin_dir}" \
       || fail "Supermemory Local installation failed"
     installed_version="$(<"${install_dir}/bin/supermemory-server.version")"
@@ -875,12 +887,12 @@ EOF
   if docker inspect "${CONTAINER_NAME}" >/dev/null 2>&1; then
     (( resuming )) || fail "a container named '${CONTAINER_NAME}' already exists"
     docker start "${CONTAINER_NAME}" >/dev/null 2>&1 || true
-    run_with_spinner "Verify retained Hermes runtime" wait_for_hermes 0 \
+    run_with_progress "Verify retained Hermes runtime" wait_for_hermes 0 \
       || fail "the retained Hermes runtime is not healthy"
   else
-    run_with_spinner "Pull approved Hermes image" docker pull "${hermes_image}" \
+    run_with_progress "Pull approved Hermes image" docker pull "${hermes_image}" \
       || fail "could not pull the approved Hermes image '${hermes_image}'"
-    run_with_spinner "Launch hardened Hermes container" docker run -d \
+    run_with_progress "Launch hardened Hermes container" docker run -d \
     --name "${CONTAINER_NAME}" \
     --label io.orcasynapse.managed=true \
     --label io.orcasynapse.component=agentic-runtime \
@@ -908,7 +920,7 @@ EOF
       "${hermes_image}" gateway run \
       || fail "the hardened Hermes container could not start"
 
-    run_with_spinner "Verify Hermes runtime health" wait_for_hermes 1 \
+    run_with_progress "Verify Hermes runtime health" wait_for_hermes 1 \
       || fail "Hermes did not become healthy within three minutes"
   fi
 
@@ -1021,9 +1033,9 @@ OPENAI_BASE_URL=${model_base_url_json}
 OPENAI_API_KEY=${model_api_key_json}
 SUPERMEMORY_API_KEY=${supermemory_api_key}
 EOF
-  run_with_spinner "Apply the managed runtime policy" docker restart "${CONTAINER_NAME}" \
+  run_with_progress "Apply the managed runtime policy" docker restart "${CONTAINER_NAME}" \
     || fail "Hermes could not restart with its managed policy"
-  run_with_spinner "Verify governed runtime recovery" wait_for_hermes 0 \
+  run_with_progress "Verify governed runtime recovery" wait_for_hermes 0 \
     || fail "Hermes did not recover after applying the OrcaSynapse-managed inference route"
 
   step 7 7 "Register memory and enable monitoring"

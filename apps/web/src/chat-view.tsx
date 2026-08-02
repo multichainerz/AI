@@ -25,6 +25,35 @@ interface ChatViewProps {
   onUnauthorized: () => void;
 }
 
+interface ClientCrypto {
+  randomUUID?: () => string;
+  getRandomValues?: (array: Uint8Array) => Uint8Array;
+}
+
+let fallbackMessageSequence = 0;
+
+export function createClientMessageId(
+  cryptoApi: ClientCrypto | null | undefined = globalThis.crypto as ClientCrypto | undefined,
+): string {
+  if (typeof cryptoApi?.randomUUID === "function") return cryptoApi.randomUUID();
+
+  const bytes = new Uint8Array(16);
+  if (typeof cryptoApi?.getRandomValues === "function") {
+    cryptoApi.getRandomValues(bytes);
+  } else {
+    // This identifier exists only until the server-supplied message replaces
+    // the optimistic row. It is never used as an authentication token.
+    const seed = `${Date.now()}-${fallbackMessageSequence += 1}-${Math.random()}`;
+    for (let index = 0; index < bytes.length; index += 1) {
+      bytes[index] = seed.charCodeAt(index % seed.length) ^ ((index * 31) & 0xff);
+    }
+  }
+  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 function emptyMessage(
   conversationId: string,
   id: string,
@@ -251,7 +280,7 @@ export function ChatView({
       }
       const optimistic = emptyMessage(
         conversation.id,
-        crypto.randomUUID(),
+        createClientMessageId(),
         "USER",
         content,
         "COMPLETED",

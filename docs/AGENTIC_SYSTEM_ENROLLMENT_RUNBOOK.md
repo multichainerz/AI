@@ -27,7 +27,7 @@ For production, enter a Hermes image digest and exact Supermemory release in the
 5. Run it against the same OrcaSynapse origin, then paste the claim at the hidden prompt:
 
    ```bash
-   curl -fsSL https://orcasynapse.example.internal/install/agentic-node.sh \
+   curl --fail --show-error --location --progress-bar https://orcasynapse.example.internal/install/agentic-node.sh \
      | sudo bash -s -- --connect https://orcasynapse.example.internal
    ```
 

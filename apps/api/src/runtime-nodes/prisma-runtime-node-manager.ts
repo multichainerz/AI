@@ -23,6 +23,7 @@ import { Prisma, type OrcaSynapsePrismaClient } from "@orcasynapse/database";
 import { EnvelopeEncryption } from "@orcasynapse/security";
 import type { AdminPrincipal } from "../auth/admin-session.js";
 import type { ConnectionTestService } from "../connections/diagnostics/connection-test-service.js";
+import { SUPERMEMORY_LOCAL_READY_PATH } from "../connections/diagnostics/supermemory-adapter.js";
 import {
   RuntimeNodeAuthenticationError,
   RuntimeNodeConflictError,
@@ -659,7 +660,7 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
       const id = existing?.id ?? randomUUID();
       const configuration = {
         timeoutMs: 8_000,
-        healthPath: "/health",
+        healthPath: SUPERMEMORY_LOCAL_READY_PATH,
         documentsPath: "/v3/documents",
         searchPath: "/v3/search",
         memoryTimeoutMs: 300_000,

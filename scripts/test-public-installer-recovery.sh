@@ -9,11 +9,21 @@ SCRIPT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 . "${SCRIPT_ROOT}/install.sh"
 
 test_root="$(mktemp -d /tmp/orcasynapse-recovery-test.XXXXXX)"
+temporary_root="${test_root}"
 finish() {
   cleanup
   rm -rf -- "${test_root}"
 }
 trap finish EXIT
+
+[[ "$(format_transfer_bytes 1536)" == "1.5 KB" ]]
+printf 'progress-test-payload\n' > "${test_root}/download-source"
+download_with_progress "Verify local transfer progress" \
+  "file://${test_root}/download-source" "${test_root}/download-target"
+cmp "${test_root}/download-source" "${test_root}/download-target"
+grep -Fq 'render_activity_progress()' "${SCRIPT_ROOT}/scripts/install-orcasynapse.sh"
+grep -Fq 'render_activity_progress()' "${SCRIPT_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq 'render_supermemory_progress' "${SCRIPT_ROOT}/scripts/install-agentic-node.sh"
 
 old_commit="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 new_commit="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"

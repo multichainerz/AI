@@ -94,7 +94,22 @@ warning() {
   printf '  %b[WARN]%b %s\n' "${UI_AMBER}${UI_BOLD}" "${UI_RESET}" "$1" >&2
 }
 
-run_with_spinner() {
+render_activity_progress() {
+  local label="$1" elapsed="$2" tick="$3" width=24 segment=6 span position
+  local leading trailing active bar
+  span=$((2 * (width - segment)))
+  position=$((tick % span))
+  (( position > width - segment )) && position=$((span - position))
+  printf -v leading '%*s' "${position}" ''
+  printf -v trailing '%*s' "$((width - segment - position))" ''
+  printf -v active '%*s' "${segment}" ''
+  active="${active// /=}"
+  bar="${leading}${active}${trailing}"
+  printf '\r\033[2K  %b[RUN]%b [%s] %-36.36s %4ss' \
+    "${UI_CYAN}${UI_BOLD}" "${UI_RESET}" "${bar}" "${label}" "${elapsed}"
+}
+
+run_with_progress() {
   local label="$1"
   shift
   if (( ! UI_INTERACTIVE )); then
@@ -105,7 +120,6 @@ run_with_spinner() {
   fi
 
   local log_file pid status=0 frame_index=0 started elapsed
-  local frames=('|' '/' '-' '\')
   log_file="$(mktemp /tmp/orcasynapse-command.XXXXXX)"
   started="${SECONDS}"
   "$@" >"${log_file}" 2>&1 &
@@ -113,8 +127,8 @@ run_with_spinner() {
   printf '\033[?25l'
   while kill -0 "${pid}" 2>/dev/null; do
     elapsed=$((SECONDS - started))
-    printf '\r  %b[%s]%b %-48s %4ss' "${UI_CYAN}${UI_BOLD}" "${frames[frame_index]}" "${UI_RESET}" "${label}" "${elapsed}"
-    frame_index=$(((frame_index + 1) % ${#frames[@]}))
+    render_activity_progress "${label}" "${elapsed}" "${frame_index}"
+    frame_index=$((frame_index + 1))
     sleep 0.12
   done
   if wait "${pid}"; then status=0; else status=$?; fi
@@ -129,6 +143,85 @@ run_with_spinner() {
   tail -n 120 "${log_file}" >&2 || true
   rm -f -- "${log_file}"
   return "${status}"
+}
+
+format_transfer_bytes() {
+  local bytes="${1:-0}" unit=1 suffix="B" tenths
+  if (( bytes >= 1073741824 )); then unit=1073741824; suffix="GB"
+  elif (( bytes >= 1048576 )); then unit=1048576; suffix="MB"
+  elif (( bytes >= 1024 )); then unit=1024; suffix="KB"
+  fi
+  if (( unit == 1 )); then
+    printf '%d B' "${bytes}"
+    return
+  fi
+  tenths=$((bytes * 10 / unit))
+  printf '%d.%d %s' "$((tenths / 10))" "$((tenths % 10))" "${suffix}"
+}
+
+render_download_progress() {
+  local label="$1" current="$2" total="$3" elapsed="$4" width=24 percent=0 filled empty progress remainder speed
+  (( total > 0 )) && percent=$((current * 100 / total))
+  if (( current < total && percent > 99 )); then percent=99; fi
+  (( percent > 100 )) && percent=100
+  filled=$((percent * width / 100))
+  empty=$((width - filled))
+  printf -v progress '%*s' "${filled}" ''
+  printf -v remainder '%*s' "${empty}" ''
+  progress="${progress// /=}"
+  remainder="${remainder// / }"
+  (( elapsed > 0 )) && speed=$((current / elapsed)) || speed=0
+  printf '\r\033[2K  %b[DL]%b [%s%s] %3d%%  %-17.17s / %-9.9s  %8s/s  %-24.24s' \
+    "${UI_CYAN}${UI_BOLD}" "${UI_RESET}" "${progress}" "${remainder}" "${percent}" \
+    "$(format_transfer_bytes "${current}")" "$(format_transfer_bytes "${total}")" "$(format_transfer_bytes "${speed}")" "${label}"
+}
+
+download_with_progress() {
+  local label="$1" url="$2" destination="$3"
+  local headers total=0 log_file pid status=0 started current=0 elapsed=0 tick=0
+  headers="$(curl --fail --silent --show-error --location --head --max-time 30 "${url}" 2>/dev/null || true)"
+  total="$(printf '%s\n' "${headers}" | tr -d '\r' \
+    | awk 'tolower($1) == "content-length:" && $2 ~ /^[0-9]+$/ { size=$2 } END { print size+0 }')"
+  log_file="${temporary_root}/download.log"
+  started="${SECONDS}"
+  curl --fail --silent --show-error --location --retry 3 --max-time 300 \
+    "${url}" --output "${destination}" 2>"${log_file}" &
+  pid=$!
+  if (( UI_INTERACTIVE )); then printf '\033[?25l'; else info "${label}"; fi
+  while kill -0 "${pid}" 2>/dev/null; do
+    current="$(stat -c '%s' "${destination}" 2>/dev/null || printf '0')"
+    elapsed=$((SECONDS - started))
+    if (( UI_INTERACTIVE )); then
+      if (( total > 0 )); then
+        render_download_progress "${label}" "${current}" "${total}" "${elapsed}"
+      else
+        render_activity_progress "${label}" "${elapsed}" "${tick}"
+      fi
+    fi
+    tick=$((tick + 1))
+    sleep 0.12
+  done
+  if wait "${pid}"; then status=0; else status=$?; fi
+  current="$(stat -c '%s' "${destination}" 2>/dev/null || printf '0')"
+  elapsed=$((SECONDS - started))
+  if (( UI_INTERACTIVE )); then
+    if (( status == 0 )); then
+      total="${total:-0}"
+      (( total > 0 )) || total="${current}"
+      render_download_progress "${label}" "${total}" "${total}" "${elapsed}"
+      printf '\r\033[2K\033[?25h'
+    else
+      printf '\r\033[2K\033[?25h'
+    fi
+  fi
+  if (( status != 0 )); then
+    printf '  %b[FAIL]%b %s\n' "${UI_RED}${UI_BOLD}" "${UI_RESET}" "${label}" >&2
+    tail -n 40 "${log_file}" >&2 || true
+    rm -f -- "${log_file}"
+    return "${status}"
+  fi
+  rm -f -- "${log_file}"
+  success "${label} ($(format_transfer_bytes "${current}") transferred)."
 }
 
 fail() {
@@ -168,9 +261,9 @@ install_bootstrap_dependencies() {
     *) fail "automatic dependency installation supports Debian and Ubuntu; install curl, tar, and sha256sum first" ;;
   esac
 
-  run_with_spinner "Refresh operating-system packages" apt-get update \
+  run_with_progress "Refresh operating-system packages" apt-get update \
     || fail "could not refresh operating-system packages"
-  run_with_spinner "Install bootstrap dependencies" env DEBIAN_FRONTEND=noninteractive \
+  run_with_progress "Install bootstrap dependencies" env DEBIAN_FRONTEND=noninteractive \
     apt-get install -y ca-certificates curl tar coreutils \
     || fail "could not install curl, tar, and checksum utilities"
 }
@@ -212,10 +305,8 @@ resolve_commit() {
 
 download_release_source() {
   local commit="$1" archive="$2"
-  run_with_spinner "Download immutable source ${commit:0:12}" \
-    curl --fail --silent --show-error --location --retry 3 --max-time 300 \
-    "https://codeload.github.com/${ORCASYNAPSE_GITHUB_REPOSITORY}/tar.gz/${commit}" \
-    --output "${archive}" \
+  download_with_progress "Download immutable source ${commit:0:12}" \
+    "https://codeload.github.com/${ORCASYNAPSE_GITHUB_REPOSITORY}/tar.gz/${commit}" "${archive}" \
     || fail "GitHub source download failed"
 
   local actual_checksum
@@ -357,12 +448,12 @@ clean_existing_install() {
   if [[ -f "${ORCASYNAPSE_INSTALL_DIR}/compose.yaml" ]] \
     && command -v docker >/dev/null 2>&1 \
     && docker compose version >/dev/null 2>&1; then
-    run_with_spinner "Remove existing containers and data volumes" \
+    run_with_progress "Remove existing containers and data volumes" \
       docker compose --project-directory "${ORCASYNAPSE_INSTALL_DIR}" down --remove-orphans --volumes --timeout 30 \
       || fail "Docker could not cleanly remove the existing OrcaSynapse stack"
   fi
 
-  run_with_spinner "Remove existing application files and local secrets" \
+  run_with_progress "Remove existing application files and local secrets" \
     rm -rf --one-file-system -- "${resolved_target}" \
     || fail "the existing installation directory could not be removed"
   [[ ! -e "${resolved_target}" ]] || fail "the existing installation directory could not be removed"

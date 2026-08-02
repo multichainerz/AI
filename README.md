@@ -21,7 +21,7 @@
 Start with one clean Debian or Ubuntu VM. The installer provisions Docker, PostgreSQL, the API, worker, dashboard, encrypted secrets, and the first local administrator.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/multichainerz/AI/main/install.sh | sudo bash
+curl --fail --show-error --location --progress-bar https://raw.githubusercontent.com/multichainerz/AI/main/install.sh | sudo bash
 ```
 
 Open the dashboard URL printed by the installer. That is the only command needed on VM1.
@@ -30,7 +30,7 @@ Open the dashboard URL printed by the installer. That is the only command needed
 <summary>Prefer to inspect the bootstrap first?</summary>
 
 ```bash
-curl -fsSLo orcasynapse-install.sh https://raw.githubusercontent.com/multichainerz/AI/main/install.sh
+curl --fail --show-error --location --progress-bar --output orcasynapse-install.sh https://raw.githubusercontent.com/multichainerz/AI/main/install.sh
 sed -n '1,260p' orcasynapse-install.sh
 sudo bash orcasynapse-install.sh
 ```

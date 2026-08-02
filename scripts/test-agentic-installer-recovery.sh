@@ -120,6 +120,8 @@ grep -Fq 'activate_durable_lazy_target' "${REPOSITORY_ROOT}/scripts/install-agen
 grep -Fq 'Local identity fingerprint:' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 grep -Fq 'VM1 accepted the signed VM2 trust handshake.' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 grep -Fq 'The retained VM2 state and dashboard record no longer share the same trust binding.' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq 'render_activity_progress()' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq 'render_activity_progress "Initialize Supermemory embeddings"' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 if grep -Fq '/dev/stdin' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"; then
   printf 'Agentic System installer still depends on non-portable /dev/stdin file copies\n' >&2
   exit 1

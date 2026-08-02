@@ -1,6 +1,6 @@
 import type { ChatMessage } from "@orcasynapse/contracts";
 import { describe, expect, it } from "vitest";
-import { chatMessageTelemetry } from "./chat-view.js";
+import { chatMessageTelemetry, createClientMessageId } from "./chat-view.js";
 
 function message(overrides: Partial<ChatMessage> = {}): ChatMessage {
   return {
@@ -46,5 +46,28 @@ describe("chat response telemetry", () => {
     }));
 
     expect(metrics.every(({ value }) => value === "—")).toBe(true);
+  });
+});
+
+describe("optimistic chat message identifiers", () => {
+  it("uses native randomUUID when the browser exposes it", () => {
+    expect(createClientMessageId({ randomUUID: () => "native-uuid" })).toBe("native-uuid");
+  });
+
+  it("creates an RFC 4122-shaped UUID when randomUUID is unavailable", () => {
+    const id = createClientMessageId({
+      getRandomValues: (bytes) => {
+        bytes.fill(0xab);
+        return bytes;
+      },
+    });
+
+    expect(id).toBe("abababab-abab-4bab-abab-abababababab");
+  });
+
+  it("still creates a local-only UUID when Web Crypto is unavailable", () => {
+    expect(createClientMessageId(null)).toMatch(
+      /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/,
+    );
   });
 });

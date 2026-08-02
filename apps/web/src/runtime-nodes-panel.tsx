@@ -43,12 +43,12 @@ function saveFile(fileName: string, content: string, contentType: string): void 
 
 export function agenticNodeInstallCommand(controlPlaneUrl: string): string {
   const origin = controlPlaneUrl.replace(/\/+$/, "");
-  return `curl -fsSL ${origin}/install/agentic-node.sh | sudo bash -s -- --connect ${origin}`;
+  return `curl --fail --show-error --location --progress-bar ${origin}/install/agentic-node.sh | sudo bash -s -- --connect ${origin}`;
 }
 
 export function agenticNodeRemovalCommand(controlPlaneUrl: string): string {
   const origin = controlPlaneUrl.replace(/\/+$/, "");
-  return `curl -fsSL ${origin}/install/remove-agentic-node.sh | sudo bash`;
+  return `curl --fail --show-error --location --progress-bar ${origin}/install/remove-agentic-node.sh | sudo bash`;
 }
 
 function defaultForm(): CreateHermesNodeInvitation {

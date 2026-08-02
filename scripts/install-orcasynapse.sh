@@ -90,7 +90,22 @@ warning() {
   printf '  %b[WARN]%b %s\n' "${UI_AMBER}${UI_BOLD}" "${UI_RESET}" "$1" >&2
 }
 
-run_with_spinner() {
+render_activity_progress() {
+  local label="$1" elapsed="$2" tick="$3" width=24 segment=6 span position
+  local leading trailing active bar
+  span=$((2 * (width - segment)))
+  position=$((tick % span))
+  (( position > width - segment )) && position=$((span - position))
+  printf -v leading '%*s' "${position}" ''
+  printf -v trailing '%*s' "$((width - segment - position))" ''
+  printf -v active '%*s' "${segment}" ''
+  active="${active// /=}"
+  bar="${leading}${active}${trailing}"
+  printf '\r\033[2K  %b[RUN]%b [%s] %-36.36s %4ss' \
+    "${UI_CYAN}${UI_BOLD}" "${UI_RESET}" "${bar}" "${label}" "${elapsed}"
+}
+
+run_with_progress() {
   local label="$1"
   shift
   if (( ! UI_INTERACTIVE )); then
@@ -101,7 +116,6 @@ run_with_spinner() {
   fi
 
   local log_file pid status=0 frame_index=0 started elapsed
-  local frames=('|' '/' '-' '\')
   log_file="$(mktemp /tmp/orcasynapse-command.XXXXXX)"
   started="${SECONDS}"
   "$@" >"${log_file}" 2>&1 &
@@ -109,8 +123,8 @@ run_with_spinner() {
   printf '\033[?25l'
   while kill -0 "${pid}" 2>/dev/null; do
     elapsed=$((SECONDS - started))
-    printf '\r  %b[%s]%b %-48s %4ss' "${UI_CYAN}${UI_BOLD}" "${frames[frame_index]}" "${UI_RESET}" "${label}" "${elapsed}"
-    frame_index=$(((frame_index + 1) % ${#frames[@]}))
+    render_activity_progress "${label}" "${elapsed}" "${frame_index}"
+    frame_index=$((frame_index + 1))
     sleep 0.12
   done
   if wait "${pid}"; then status=0; else status=$?; fi
@@ -152,16 +166,16 @@ install_host_dependencies() {
     *) fail "automatic dependency installation supports Debian and Ubuntu; install Docker Compose v2, OpenSSL, and curl first" ;;
   esac
 
-  run_with_spinner "Refresh operating-system packages" apt-get update \
+  run_with_progress "Refresh operating-system packages" apt-get update \
     || fail "could not refresh operating-system packages"
-  run_with_spinner "Install Docker and security dependencies" env DEBIAN_FRONTEND=noninteractive \
+  run_with_progress "Install Docker and security dependencies" env DEBIAN_FRONTEND=noninteractive \
     apt-get install -y ca-certificates curl openssl docker.io \
     || fail "could not install Docker and security dependencies"
-  if ! run_with_spinner "Install Docker Compose v2" apt-get install -y docker-compose-v2; then
-    run_with_spinner "Install Docker Compose plugin" apt-get install -y docker-compose-plugin \
+  if ! run_with_progress "Install Docker Compose v2" apt-get install -y docker-compose-v2; then
+    run_with_progress "Install Docker Compose plugin" apt-get install -y docker-compose-plugin \
       || fail "could not install Docker Compose v2"
   fi
-  run_with_spinner "Enable the Docker service" systemctl enable --now docker \
+  run_with_progress "Enable the Docker service" systemctl enable --now docker \
     || fail "could not enable the Docker service"
 }
 
@@ -248,7 +262,7 @@ migrate_legacy_installation_secret() {
 }
 
 start_stack() {
-  if run_with_spinner "Start PostgreSQL and application services" docker compose up -d --no-build; then
+  if run_with_progress "Start PostgreSQL and application services" docker compose up -d --no-build; then
     return
   fi
 
@@ -309,7 +323,7 @@ main() {
   migrate_legacy_installation_secret
 
   step 2 5 "Build the pinned release"
-  run_with_spinner "Build verified application images" docker compose build \
+  run_with_progress "Build verified application images" docker compose build \
     || fail "application image build failed"
 
   step 3 5 "Protect installation secrets"
@@ -324,7 +338,7 @@ main() {
 
   step 4 5 "Migrate PostgreSQL and start services"
   start_stack
-  run_with_spinner "Wait for control-plane readiness" wait_for_orcasynapse \
+  run_with_progress "Wait for control-plane readiness" wait_for_orcasynapse \
     || fail "control-plane readiness checks failed"
 
   step 5 5 "Provision administrator access"
