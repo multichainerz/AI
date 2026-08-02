@@ -52,6 +52,43 @@ describe("Hermes runtime-node signatures", () => {
     expect(() => verifyNodeRequestSignature(publicKeyPem, { ...headers, nonce: "not-a-uuid--------------------------" }, body, new Date(timestamp).getTime()))
       .toThrow(RuntimeNodeAuthenticationError);
   });
+
+  it("reveals inactive lifecycle state only after a valid enrolled identity signature", async () => {
+    const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+    const timestamp = new Date().toISOString();
+    const nonce = "ca05dc91-d182-437b-b122-1e8a8270601d";
+    const body = {
+      observedAt: timestamp,
+      status: "ONLINE" as const,
+      hermesVersion: "nousresearch/hermes-agent:latest",
+      capabilities: ["gateway-api", "signed-heartbeat"],
+    };
+    const bodyDigest = createHash("sha256").update(canonicalize(body)).digest("hex");
+    const headers = {
+      timestamp,
+      nonce,
+      signature: sign(null, Buffer.from(`${timestamp}\n${nonce}\n${bodyDigest}`), privateKey).toString("base64url"),
+    };
+    const prisma = {
+      hermesRuntimeNode: {
+        findUnique: async () => ({
+          identityPublicKeyPem: publicKey.export({ type: "spki", format: "pem" }).toString(),
+          status: "REVOKED",
+        }),
+      },
+    } as unknown as OrcaSynapsePrismaClient;
+    const manager = new PrismaHermesRuntimeNodeManager(
+      prisma,
+      new EnvelopeEncryption({ masterKey: new Uint8Array(32).fill(7) }),
+    );
+
+    await expect(manager.heartbeat("9de260d7-bc51-4558-9d20-06916d393072", headers, body))
+      .rejects.toThrow("The runtime node is revoked and is not allowed to authenticate.");
+    await expect(manager.heartbeat("9de260d7-bc51-4558-9d20-06916d393072", {
+      ...headers,
+      signature: "invalid",
+    }, body)).rejects.toThrow("The runtime node signature is invalid.");
+  });
 });
 
 describe("Hermes inference bootstrap URL", () => {

@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="ai-v1.15.3"
+INSTALLER_VERSION="ai-v1.15.4"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 CONTAINER_NAME="orcasynapse-hermes"
 HEARTBEAT_SERVICE="orcasynapse-hermes-heartbeat"
@@ -958,6 +958,7 @@ EOF
 
   step 7 7 "Register memory and enable monitoring"
   local memory_payload memory_timestamp memory_nonce memory_signature memory_status
+  local memory_response_file memory_error node_fingerprint
   memory_payload="$(jq -cS -n \
     --arg baseUrl "${supermemory_base_url}" \
     --arg apiKey "${supermemory_api_key}" \
@@ -966,14 +967,23 @@ EOF
   memory_timestamp="$(date --utc '+%Y-%m-%dT%H:%M:%SZ')"
   memory_nonce="$(cat /proc/sys/kernel/random/uuid)"
   memory_signature="$(sign_node_payload "${memory_payload}" "${memory_timestamp}" "${memory_nonce}")"
-  memory_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --max-time 30 \
+  memory_response_file="$(mktemp)"
+  TEMPORARY_FILES+=("${memory_response_file}")
+  memory_status="$(curl --silent --show-error --output "${memory_response_file}" --write-out '%{http_code}' --max-time 30 \
     -H 'Content-Type: application/json' \
     -H "X-OrcaSynapse-Node-Timestamp: ${memory_timestamp}" \
     -H "X-OrcaSynapse-Node-Nonce: ${memory_nonce}" \
     -H "X-OrcaSynapse-Node-Signature: ${memory_signature}" \
     --data-binary "${memory_payload}" \
     "${control_plane_url}/api/v1/runtime-nodes/${node_id}/memory")"
-  [[ "${memory_status}" == "200" ]] || fail "OrcaSynapse rejected the Supermemory registration (HTTP ${memory_status})"
+  node_fingerprint="$(openssl pkey -pubin -in "${STATE_ROOT}/identity/node.pub" -outform DER | sha256sum | awk '{print $1}')"
+  if [[ "${memory_status}" != "200" ]]; then
+    memory_error="$(jq -r '.message // .error // empty' "${memory_response_file}" 2>/dev/null \
+      | LC_ALL=C tr -cd '[:print:]' || true)"
+    memory_error="${memory_error:0:400}"
+    [[ -n "${memory_error}" ]] || memory_error="The control plane returned no diagnostic message."
+    fail "OrcaSynapse rejected Supermemory registration (HTTP ${memory_status}): ${memory_error} Local identity fingerprint: ${node_fingerprint}"
+  fi
 
   printf '%s' "${node_id}" > "${STATE_ROOT}/node-id"
   printf '%s' "${control_plane_url}" > "${STATE_ROOT}/control-plane-url"
@@ -986,8 +996,6 @@ EOF
   systemctl enable --now "${HEARTBEAT_SERVICE}.timer"
   systemctl start "${HEARTBEAT_SERVICE}.service"
 
-  local node_fingerprint
-  node_fingerprint="$(openssl pkey -pubin -in "${STATE_ROOT}/identity/node.pub" -outform DER | sha256sum | awk '{print $1}')"
   success "Signed heartbeat monitoring is active."
   rm -f -- "${ENROLLMENT_STATE}"
   INSTALLATION_COMPLETED=1

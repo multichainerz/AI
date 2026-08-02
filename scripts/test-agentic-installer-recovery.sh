@@ -12,7 +12,7 @@ source "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 mkdir -p "${STATE_ROOT}/identity"
 openssl genpkey -algorithm ED25519 -out "${STATE_ROOT}/identity/node.key"
 openssl pkey -in "${STATE_ROOT}/identity/node.key" -pubout -out "${STATE_ROOT}/identity/node.pub"
-signature_body='{"status":"ONLINE"}'
+signature_body='{"apiKey":"sm_test_registration_key_0123456789","baseUrl":"http://10.0.0.12:6767","observedVersion":"0.0.5"}'
 signature_timestamp='2026-08-03T00:00:00Z'
 signature_nonce='c634de85-7087-426a-b4f5-f4c2857f55c2'
 signature_value="$(sign_node_payload "${signature_body}" "${signature_timestamp}" "${signature_nonce}")"
@@ -28,6 +28,30 @@ openssl pkeyutl -verify -rawin -pubin \
   -inkey "${STATE_ROOT}/identity/node.pub" \
   -in "${TEST_ROOT}/signature-message" \
   -sigfile "${TEST_ROOT}/signature-bytes" >/dev/null
+SIGNATURE_BODY="${signature_body}" \
+SIGNATURE_TIMESTAMP="${signature_timestamp}" \
+SIGNATURE_NONCE="${signature_nonce}" \
+SIGNATURE_VALUE="${signature_value}" \
+SIGNATURE_PUBLIC_KEY="${STATE_ROOT}/identity/node.pub" \
+node --input-type=module -e '
+  import { createHash, verify } from "node:crypto";
+  import { readFileSync } from "node:fs";
+  const body = JSON.parse(process.env.SIGNATURE_BODY);
+  const canonicalize = (value) => {
+    if (value === null || typeof value !== "object") return JSON.stringify(value);
+    if (Array.isArray(value)) return `[${value.map(canonicalize).join(",")}]`;
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalize(value[key])}`).join(",")}}`;
+  };
+  const digest = createHash("sha256").update(canonicalize(body)).digest("hex");
+  const message = `${process.env.SIGNATURE_TIMESTAMP}\n${process.env.SIGNATURE_NONCE}\n${digest}`;
+  const valid = verify(
+    null,
+    Buffer.from(message, "utf8"),
+    readFileSync(process.env.SIGNATURE_PUBLIC_KEY, "utf8"),
+    Buffer.from(process.env.SIGNATURE_VALUE, "base64url"),
+  );
+  if (!valid) process.exit(1);
+'
 
 valid_state="${TEST_ROOT}/valid.json"
 jq -n \
@@ -91,6 +115,7 @@ grep -Fq 'HERMES_MANAGED_DIR=/opt/data/.orcasynapse-bootstrap-managed' "${REPOSI
 grep -Fq 'allow_lazy_installs: true' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 grep -Fq 'allow_lazy_installs: false' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 grep -Fq 'activate_durable_lazy_target' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq 'Local identity fingerprint:' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 if grep -Fq '/dev/stdin' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"; then
   printf 'Agentic System installer still depends on non-portable /dev/stdin file copies\n' >&2
   exit 1

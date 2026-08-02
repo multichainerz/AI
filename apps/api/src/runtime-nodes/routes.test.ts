@@ -120,6 +120,7 @@ describe("Hermes runtime-node routes", () => {
     expect(ready.body).toContain("allow_lazy_installs: false");
     expect(ready.body).toContain("activate_durable_lazy_target");
     expect(ready.body).toContain("-in \"${message_file}\"");
+    expect(ready.body).toContain("Local identity fingerprint:");
     expect(ready.body).not.toContain("/dev/stdin");
     expect((await app.inject({ method: "GET", url: "/install/hermes-node.sh" })).statusCode).toBe(404);
     const remover = await app.inject({ method: "GET", url: "/install/remove-agentic-node.sh" });

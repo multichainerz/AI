@@ -584,10 +584,18 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
       throw new RuntimeNodeAuthenticationError();
     }
     const node = await this.prisma.hermesRuntimeNode.findUnique({ where: { id: nodeId } });
-    if (!node?.identityPublicKeyPem || node.status === "REVOKED" || node.status === "SUSPENDED") {
+    if (!node?.identityPublicKeyPem) {
       throw new RuntimeNodeAuthenticationError();
     }
     verifyNodeRequestSignature(node.identityPublicKeyPem, headers, body);
+    // Only disclose lifecycle state after possession of the enrolled private
+    // key has been proven. This keeps enumeration fail-closed while giving a
+    // legitimate VM2 operator an actionable recovery reason.
+    if (node.status === "REVOKED" || node.status === "SUSPENDED") {
+      throw new RuntimeNodeAuthenticationError(
+        `The runtime node is ${node.status.toLowerCase()} and is not allowed to authenticate.`,
+      );
+    }
     try {
       await this.prisma.hermesNodeRequestNonce.create({ data: { nodeId, nonce } });
     } catch (error) {
