@@ -85,7 +85,7 @@ The public GitHub bootstrap resolves an immutable OrcaSynapse commit and starts 
 
 ### Agent host
 
-The dashboard creates a short-lived one-use enrollment claim. The customer downloads one script from their own OrcaSynapse origin and executes it on a clean Debian/Ubuntu VM. The script resolves the non-secret installation profile from OrcaSynapse, then:
+The dashboard creates a short-lived one-use enrollment claim. The customer downloads one script from their own OrcaSynapse origin and executes it on a clean Ubuntu systemd VM. The script resolves the non-secret installation profile from OrcaSynapse, then:
 
 1. creates an Ed25519 runtime identity;
 2. starts a constrained official Hermes container;

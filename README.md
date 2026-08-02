@@ -103,7 +103,7 @@ Vite serves the React dashboard; pnpm manages the TypeScript workspace. Run the 
 
 - [Architecture and trust boundaries](docs/ARCHITECTURE.md)
 - [Installation and recovery](deploy/BOOTSTRAP.md)
-- [Hermes and Supermemory enrollment](docs/HERMES_NODE_ENROLLMENT_RUNBOOK.md)
+- [Agentic System enrollment](docs/AGENTIC_SYSTEM_ENROLLMENT_RUNBOOK.md)
 - [Product requirements](docs/ORCASYNAPSE_PRD.md)
 - [Delivery and acceptance plan](docs/ORCASYNAPSE_PHASED_PLAN.md)
 

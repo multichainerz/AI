@@ -1,8 +1,8 @@
-# Hermes and Supermemory Node Enrollment
+# Agentic System Node Enrollment
 
 ## Purpose
 
-This workflow turns a clean Debian/Ubuntu VM into the isolated OrcaSynapse agent runtime. It installs Hermes Agent and Supermemory Local, configures both to use OrcaSynapse's authenticated inference gateway, and establishes a signed node identity without retaining SSH credentials.
+This workflow turns a clean Ubuntu systemd VM into the isolated OrcaSynapse Agentic System. It installs Hermes Agent and Supermemory Local, configures both to use OrcaSynapse's authenticated inference gateway, and establishes a signed node identity without retaining SSH credentials.
 
 The installer follows the current upstream integration model: Hermes runs its official Docker gateway/API server, external memory providers are additive to built-in `MEMORY.md`/`USER.md`, and Supermemory Local is a single self-hosted binary with embedded graph storage and CPU-local `Xenova/bge-m3` embeddings (1024 dimensions). It uses Hermes's root-owned managed scope to pin the approved model route, Supermemory provider, secret redaction, unattended loop circuit breakers, and an explicit `platform_toolsets.api_server: [no_mcp]` baseline so the official image does not inherit its broad default tool surface.
 
@@ -12,7 +12,7 @@ The installer follows the current upstream integration model: Hermes runs its of
 - PostgreSQL is healthy.
 - exactly one AI Inference connection is enabled, healthy, and has a selected served model;
 - an evaluated Agent model route is active;
-- VM2 is a clean supported Linux host with outbound access to OrcaSynapse and the artifact sources during installation;
+- VM2 is a clean Ubuntu systemd VM on x86_64 or aarch64 with outbound access to OrcaSynapse and the artifact sources during installation;
 - OrcaSynapse can reach the VM2 Hermes address on TCP 8642 and Supermemory address on TCP 6767;
 - the invitation uses a hostname/address that matches customer DNS and TLS policy.
 
@@ -20,21 +20,21 @@ For production, enter a Hermes image digest and exact Supermemory release in the
 
 ## Dashboard workflow
 
-1. Open **Deployment → Production setup → Hermes nodes**.
+1. Open **Deployment → Agentic System**.
 2. Create an invitation with the runtime display name, slug, reachable Hermes base URL, approved image reference, and short TTL.
 3. Copy the one-time claim. OrcaSynapse stores only its digest.
-4. On VM2, download the installer from the OrcaSynapse URL shown by the dashboard. The route is unavailable before dashboard setup and healthy AI Inference are present; a live claim is additionally required for a new enrollment.
+4. On VM2, download the installer from the OrcaSynapse URL shown by the dashboard. The route is unavailable before dashboard setup and healthy AI Inference are present. It remains available afterward for protected local recovery, while a live claim is required to begin a new enrollment.
 5. Run it against the same OrcaSynapse origin, then paste the claim at the hidden prompt:
 
    ```bash
-   curl -fsSL https://orcasynapse.example.internal/install/hermes-node.sh \
+   curl -fsSL https://orcasynapse.example.internal/install/agentic-node.sh \
      | sudo bash -s -- --connect https://orcasynapse.example.internal
    ```
 
 6. Return to the dashboard and verify that Hermes, Supermemory, and the signed heartbeat are healthy.
 7. Run the AI-services and Hermes-profile checks before activation.
 
-For an offline administrative transfer, download the JSON bundle and run `sudo bash orcasynapse-node-install.sh enrollment.json` instead. Do not place the claim in a URL, command argument, or shell history.
+For an offline administrative transfer, download the JSON bundle and run `sudo bash install-agentic-node.sh enrollment.json` instead. Do not place the claim in a URL, command argument, or shell history.
 
 ## What the script does
 

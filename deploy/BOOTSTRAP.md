@@ -37,20 +37,20 @@ Set `ORCASYNAPSE_HTTP_PORT` before invoking the script to use a port other than 
 
 The installer refuses to overwrite any partial secret set. A complete existing set is preserved for idempotent restarts. It does not take an SSH password, mount the Docker socket into OrcaSynapse, or grant the dashboard host-level command execution.
 
-## Enroll an isolated Hermes VM
+## Enroll an isolated Agentic System VM
 
-For Control-plane only or Segmented production, prepare a second Debian or Ubuntu VM with private network reachability in both directions. First replace the temporary dashboard password and configure exactly one healthy AI Inference route with a discovered model. Then open **Deployment > Hermes nodes**, enter the VM2 API address and the OrcaSynapse address visible from VM2, and issue the short-lived enrollment claim.
+For Control-plane only or Segmented production, prepare a second Ubuntu systemd VM with private network reachability in both directions. First replace the temporary dashboard password and configure exactly one healthy AI Inference route with a discovered model. Then open **Deployment > Agentic System**, enter the VM2 API address and the OrcaSynapse address visible from VM2, and issue the short-lived enrollment claim.
 
-The VM2 installer is not a permanently public static asset. OrcaSynapse serves it through a readiness-gated API only while dashboard setup is complete, AI Inference is healthy and seedable, and a live one-time invitation exists. The dashboard reveals the command only after those checks pass.
+The VM2 installer is not a permanently public static asset. OrcaSynapse serves the non-secret script through a readiness-gated API only after dashboard setup is complete and AI Inference is healthy and seedable. The script remains available after enrollment so an interrupted VM2 can resume with its protected local recovery state; a live one-time claim is still required to begin a new enrollment.
 
 On VM2, run the installer served by the customer-owned OrcaSynapse host against that same origin:
 
 ```bash
-curl -fsSL https://orcasynapse.example.internal/install/hermes-node.sh \
+curl -fsSL https://orcasynapse.example.internal/install/agentic-node.sh \
   | sudo bash -s -- --connect https://orcasynapse.example.internal
 ```
 
-Paste the short-lived claim displayed by the dashboard at the hidden prompt. The token is submitted in a redacted POST body rather than a URL or shell-history argument. The downloaded JSON bundle remains an offline fallback: `sudo bash install-hermes-node.sh enrollment.json`.
+Paste the short-lived claim displayed by the dashboard at the hidden prompt. The token is submitted in a redacted POST body rather than a URL or shell-history argument. The downloaded JSON bundle remains an offline fallback: `sudo bash install-agentic-node.sh enrollment.json`.
 
 VM2 generates its Ed25519 private key locally, starts the official Hermes gateway container, exchanges the claim once, installs checksum-verified Supermemory Local with local embeddings, enables Hermes's scoped native Supermemory provider, registers both service routes, and enables a signed one-minute heartbeat timer. The OrcaSynapse-selected model route and baseline guardrails are installed through Hermes's root-owned managed scope mounted read-only at `/etc/hermes`; runtime secrets remain in the protected Hermes data volume. OrcaSynapse never receives the node private key, reusable SSH credentials, or a Docker socket. A current heartbeat proves VM2-to-OrcaSynapse reachability; healthy generated connections prove OrcaSynapse-to-VM2 reachability.
 

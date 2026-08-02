@@ -30,7 +30,7 @@ export interface RuntimeNodeRouteOptions {
   manager?: HermesRuntimeNodeManager;
 }
 
-const HERMES_NODE_INSTALLER_PATH = new URL("../../../../scripts/install-hermes-node.sh", import.meta.url);
+const AGENTIC_NODE_INSTALLER_PATH = new URL("../../../../scripts/install-agentic-node.sh", import.meta.url);
 
 function managerOrLocked(options: RuntimeNodeRouteOptions, reply: FastifyReply): HermesRuntimeNodeManager | null {
   if (options.manager) return options.manager;
@@ -71,7 +71,7 @@ export async function registerRuntimeNodeInstallerRoutes(
   app: FastifyInstance,
   options: RuntimeNodeRouteOptions,
 ): Promise<void> {
-  app.get("/hermes-node.sh", async (_request, reply) => {
+  app.get("/agentic-node.sh", async (_request, reply) => {
     const manager = options.manager;
     if (!manager) {
       return reply.code(404).send({
@@ -88,10 +88,10 @@ export async function registerRuntimeNodeInstallerRoutes(
       });
     }
 
-    const installer = await readFile(HERMES_NODE_INSTALLER_PATH, "utf8");
+    const installer = await readFile(AGENTIC_NODE_INSTALLER_PATH, "utf8");
     return reply
       .header("cache-control", "no-store")
-      .header("content-disposition", "inline; filename=orcasynapse-agentic-system.sh")
+      .header("content-disposition", "inline; filename=install-agentic-node.sh")
       .type("text/x-shellscript; charset=utf-8")
       .send(installer);
   });

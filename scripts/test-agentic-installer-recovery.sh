@@ -6,8 +6,8 @@ TEST_ROOT="$(mktemp -d)"
 trap 'rm -rf -- "${TEST_ROOT}"' EXIT
 
 export ORCASYNAPSE_HERMES_STATE_ROOT="${TEST_ROOT}/hermes"
-# shellcheck source=install-hermes-node.sh
-source "${REPOSITORY_ROOT}/scripts/install-hermes-node.sh"
+# shellcheck source=install-agentic-node.sh
+source "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 
 valid_state="${TEST_ROOT}/valid.json"
 jq -n \
@@ -41,14 +41,27 @@ if supermemory_release_matches "1.2.4" "v1.2.3"; then
   exit 1
 fi
 
-grep -Fq 'default: ${model_alias_json}' "${REPOSITORY_ROOT}/scripts/install-hermes-node.sh"
-grep -Fq 'local key_deadline=' "${REPOSITORY_ROOT}/scripts/install-hermes-node.sh"
+grep -Fq 'default: ${model_alias_json}' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq 'local key_deadline=' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq 'chown "${HERMES_UID}:${HERMES_GID}" "${destination}"' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+if grep -Eq 'install .*-[og] (10000|"?\$\{HERMES_(UID|GID)\})' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"; then
+  printf 'Agentic System installer passes a numeric identity through install -o/-g\n' >&2
+  exit 1
+fi
+
+if [[ "${EUID}" -eq 0 ]]; then
+  ownership_root="${TEST_ROOT}/numeric-ownership"
+  install_hermes_directory 0750 "${ownership_root}"
+  printf 'protected=true\n' | install_hermes_file_from_stdin 0600 "${ownership_root}/runtime.env"
+  [[ "$(stat -c '%u:%g:%a' "${ownership_root}")" == "${HERMES_UID}:${HERMES_GID}:750" ]]
+  [[ "$(stat -c '%u:%g:%a' "${ownership_root}/runtime.env")" == "${HERMES_UID}:${HERMES_GID}:600" ]]
+fi
 
 piped_output="$(
   sed 's/^  main .*$/  printf '\''piped entrypoint invoked\\n'\''/' \
-    "${REPOSITORY_ROOT}/scripts/install-hermes-node.sh" \
+    "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh" \
     | bash -s -- --connect https://orcasynapse.internal
 )"
 [[ "${piped_output}" == "piped entrypoint invoked" ]]
 
-printf 'Hermes installer recovery checks passed.\n'
+printf 'Agentic System installer recovery checks passed.\n'

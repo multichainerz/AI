@@ -32,7 +32,7 @@ jobs:
       - name: Verify installer recovery paths
         run: |
           bash scripts/test-public-installer-recovery.sh
-          bash scripts/test-hermes-installer-recovery.sh
+          bash scripts/test-agentic-installer-recovery.sh
       - name: Verify Linux container secret access
         run: sudo bash scripts/test-installer-secret-permissions.sh
       - uses: pnpm/action-setup@v4

@@ -3,10 +3,12 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="ai-v1.14.1"
+INSTALLER_VERSION="ai-v1.14.2"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 CONTAINER_NAME="orcasynapse-hermes"
 HEARTBEAT_SERVICE="orcasynapse-hermes-heartbeat"
+HERMES_UID="10000"
+HERMES_GID="10000"
 SUPERMEMORY_ROOT="${ORCASYNAPSE_SUPERMEMORY_STATE_ROOT:-/var/lib/orcasynapse-supermemory}"
 SUPERMEMORY_SERVICE="orcasynapse-supermemory"
 SUPERMEMORY_USER="orcasynapse-supermemory"
@@ -158,28 +160,53 @@ cleanup() {
 trap cleanup EXIT
 
 require_root() {
-  [[ "${EUID}" -eq 0 ]] || fail "run the installer as root (for example: sudo ./install-hermes-node.sh enrollment.json)"
+  [[ "${EUID}" -eq 0 ]] || fail "run the installer as root (for example: sudo ./install-agentic-node.sh enrollment.json)"
+}
+
+require_ubuntu_host() {
+  [[ -r /etc/os-release ]] || fail "VM2 must run Ubuntu with a readable /etc/os-release"
+  # shellcheck disable=SC1091
+  . /etc/os-release
+  [[ "${ID:-}" == "ubuntu" ]] || fail "VM2 must run Ubuntu; detected '${PRETTY_NAME:-unknown operating system}'"
+  [[ -n "${VERSION_ID:-}" ]] || fail "the Ubuntu release version could not be identified"
+  [[ -d /run/systemd/system ]] || fail "VM2 must be an Ubuntu systemd VM, not a minimal container userland"
+  case "$(uname -m)" in
+    x86_64|aarch64) ;;
+    *) fail "VM2 architecture '$(uname -m)' is unsupported; use x86_64 or aarch64 Ubuntu" ;;
+  esac
+}
+
+install_hermes_directory() {
+  local mode="$1" destination="$2"
+  install -d -m "${mode}" "${destination}"
+  chown "${HERMES_UID}:${HERMES_GID}" "${destination}"
+}
+
+install_hermes_file_from_stdin() {
+  local mode="$1" destination="$2"
+  install -m "${mode}" /dev/stdin "${destination}"
+  chown "${HERMES_UID}:${HERMES_GID}" "${destination}"
 }
 
 install_host_dependencies() {
-  if command -v docker >/dev/null 2>&1 && command -v openssl >/dev/null 2>&1 \
-    && command -v curl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
-    return
+  require_ubuntu_host
+  if ! command -v docker >/dev/null 2>&1 || ! command -v openssl >/dev/null 2>&1 \
+    || ! command -v curl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+    run_with_spinner "Refresh operating-system packages" apt-get update \
+      || fail "could not refresh Ubuntu package metadata"
+    run_with_spinner "Install runtime security dependencies" env DEBIAN_FRONTEND=noninteractive \
+      apt-get install -y ca-certificates curl jq openssl docker.io \
+      || fail "could not install Docker and runtime security dependencies"
   fi
-  [[ -r /etc/os-release ]] || fail "automatic dependency installation supports Debian and Ubuntu"
-  # shellcheck disable=SC1091
-  . /etc/os-release
-  case "${ID:-}" in
-    debian|ubuntu) ;;
-    *) fail "automatic dependency installation supports Debian and Ubuntu; install Docker, OpenSSL, curl, and jq first" ;;
-  esac
-  run_with_spinner "Refresh operating-system packages" apt-get update \
-    || fail "could not refresh operating-system packages"
-  run_with_spinner "Install runtime security dependencies" env DEBIAN_FRONTEND=noninteractive \
-    apt-get install -y ca-certificates curl jq openssl docker.io \
-    || fail "could not install Docker and runtime security dependencies"
   run_with_spinner "Enable the Docker service" systemctl enable --now docker \
     || fail "could not enable the Docker service"
+  docker info >/dev/null 2>&1 || fail "the Docker daemon is not reachable after startup"
+
+  local required_command
+  for required_command in install chown useradd journalctl sha256sum awk sed grep date hostname; do
+    command -v "${required_command}" >/dev/null 2>&1 \
+      || fail "the Ubuntu host is missing required command '${required_command}'"
+  done
 }
 
 validate_bundle() {
@@ -302,8 +329,11 @@ install_supermemory() {
   local bin_dir="${SUPERMEMORY_ROOT}/bin"
 
   if ! id -u "${SUPERMEMORY_USER}" >/dev/null 2>&1; then
-    useradd --system --home-dir "${SUPERMEMORY_ROOT}" --shell /usr/sbin/nologin "${SUPERMEMORY_USER}"
+    useradd --system --user-group --no-create-home \
+      --home-dir "${SUPERMEMORY_ROOT}" --shell /usr/sbin/nologin "${SUPERMEMORY_USER}"
   fi
+  [[ "$(id -gn "${SUPERMEMORY_USER}")" == "${SUPERMEMORY_USER}" ]] \
+    || fail "the retained Supermemory service account does not have its expected private primary group"
   install -d -m 0750 -o "${SUPERMEMORY_USER}" -g "${SUPERMEMORY_USER}" \
     "${SUPERMEMORY_ROOT}" "${SUPERMEMORY_ROOT}/data" "${install_dir}" "${bin_dir}"
 
@@ -492,7 +522,7 @@ main() {
   step 1 7 "Validate the isolated host"
   require_root
   install_host_dependencies
-  success "Docker, OpenSSL, curl, and jq are ready."
+  success "Ubuntu, systemd, Docker, OpenSSL, curl, and jq are ready."
 
   step 2 7 "Resolve or resume the protected enrollment"
   local bundle="" resuming=0
@@ -525,7 +555,7 @@ main() {
       resolve_bundle_from_orcasynapse "$2"
       bundle="${RESOLVED_BUNDLE}"
     else
-      fail "usage: install-hermes-node.sh <enrollment-bundle.json> | install-hermes-node.sh --connect <OrcaSynapse-origin>"
+      fail "usage: install-agentic-node.sh <enrollment-bundle.json> | install-agentic-node.sh --connect <OrcaSynapse-origin>"
     fi
     validate_bundle "${bundle}"
     node_id="$(jq -r '.nodeId' "${bundle}")"
@@ -545,7 +575,7 @@ main() {
   # container receives it at /etc/hermes so users cannot override the exact
   # OrcaSynapse-pinned model route and baseline guardrails through /opt/data.
   install -d -m 0755 "${STATE_ROOT}/managed"
-  install -d -m 0750 -o 10000 -g 10000 "${STATE_ROOT}/data"
+  install_hermes_directory 0750 "${STATE_ROOT}/data"
   if (( resuming )); then
     [[ -s "${STATE_ROOT}/identity/node.key" && -s "${STATE_ROOT}/identity/node.pub" ]] \
       || fail "the retained enrollment state is missing its node identity"
@@ -560,13 +590,12 @@ main() {
   public_key="$(<"${STATE_ROOT}/identity/node.pub")"
   success "Node identity and protected runtime state created."
 
-  install -m 0600 /dev/stdin "${STATE_ROOT}/data/.env" <<EOF
+  install_hermes_file_from_stdin 0600 "${STATE_ROOT}/data/.env" <<EOF
 API_SERVER_ENABLED=true
 API_SERVER_HOST=0.0.0.0
 API_SERVER_PORT=8642
 API_SERVER_KEY=${api_key}
 EOF
-  chown 10000:10000 "${STATE_ROOT}/data/.env"
 
   step 4 7 "Start the hardened Hermes runtime"
   if docker inspect "${CONTAINER_NAME}" >/dev/null 2>&1; then
@@ -590,8 +619,8 @@ EOF
     --cap-add SETUID \
     --security-opt no-new-privileges:true \
     --add-host host.docker.internal:host-gateway \
-    -e HERMES_UID=10000 \
-    -e HERMES_GID=10000 \
+    -e "HERMES_UID=${HERMES_UID}" \
+    -e "HERMES_GID=${HERMES_GID}" \
     -e HERMES_MANAGED_DIR=/etc/hermes \
     -e API_SERVER_ENABLED=true \
     -e API_SERVER_HOST=0.0.0.0 \
@@ -686,7 +715,7 @@ EOF
     || fail "Supermemory is healthy on loopback but is not reachable through the invited runtime host on TCP 6767"
 
   run_with_spinner "Load the governed Hermes memory provider" \
-    docker exec --user 10000:10000 "${CONTAINER_NAME}" python -c \
+    docker exec --user "${HERMES_UID}:${HERMES_GID}" "${CONTAINER_NAME}" python -c \
       'from tools.lazy_deps import ensure; ensure("memory.supermemory", prompt=False)' \
     || fail "Hermes could not load its governed Supermemory provider"
   install -m 0644 -o root -g root /dev/stdin "${STATE_ROOT}/managed/config.yaml" <<EOF
@@ -712,7 +741,7 @@ tool_loop_guardrails:
     exact_failure: 5
     idempotent_no_progress: 5
 EOF
-  install -m 0640 -o 10000 -g 10000 /dev/stdin "${STATE_ROOT}/data/supermemory.json" <<EOF
+  install_hermes_file_from_stdin 0640 "${STATE_ROOT}/data/supermemory.json" <<EOF
 {
   "base_url": "http://host.docker.internal:6767",
   "container_tag": "orcasynapse-agent-{identity}",
@@ -723,7 +752,7 @@ EOF
   "enable_custom_container_tags": false
 }
 EOF
-  install -m 0600 -o 10000 -g 10000 /dev/stdin "${STATE_ROOT}/data/.env" <<EOF
+  install_hermes_file_from_stdin 0600 "${STATE_ROOT}/data/.env" <<EOF
 API_SERVER_ENABLED=true
 API_SERVER_HOST=0.0.0.0
 API_SERVER_PORT=8642

@@ -107,18 +107,20 @@ describe("Hermes runtime-node routes", () => {
   it("serves the VM2 installer after dashboard and inference readiness so enrollment can resume", async () => {
     const runtimeNodeManager = manager();
     const { app } = await testApp(runtimeNodeManager);
-    const ready = await app.inject({ method: "GET", url: "/install/hermes-node.sh" });
+    const ready = await app.inject({ method: "GET", url: "/install/agentic-node.sh" });
     expect(ready.statusCode, ready.body).toBe(200);
     expect(ready.headers["content-type"]).toContain("text/x-shellscript");
     expect(ready.headers["cache-control"]).toBe("no-store");
+    expect(ready.headers["content-disposition"]).toBe("inline; filename=install-agentic-node.sh");
     expect(ready.body).toContain("#!/usr/bin/env bash");
+    expect((await app.inject({ method: "GET", url: "/install/hermes-node.sh" })).statusCode).toBe(404);
 
     for (const state of [
       { ready: false, dashboardReady: false, inferenceReady: true, invitationReady: true },
       { ready: false, dashboardReady: true, inferenceReady: false, invitationReady: true },
     ] as const) {
       runtimeNodeManager.installerReadiness = vi.fn(async () => state);
-      const blocked = await app.inject({ method: "GET", url: "/install/hermes-node.sh" });
+      const blocked = await app.inject({ method: "GET", url: "/install/agentic-node.sh" });
       expect(blocked.statusCode).toBe(404);
       expect(blocked.json()).toMatchObject({ error: "AGENTIC_INSTALLER_UNAVAILABLE" });
       expect(blocked.body).not.toContain("#!/usr/bin/env bash");
@@ -127,7 +129,7 @@ describe("Hermes runtime-node routes", () => {
     runtimeNodeManager.installerReadiness = vi.fn(async () => ({
       ready: true, dashboardReady: true, inferenceReady: true, invitationReady: false,
     }));
-    expect((await app.inject({ method: "GET", url: "/install/hermes-node.sh" })).statusCode).toBe(200);
+    expect((await app.inject({ method: "GET", url: "/install/agentic-node.sh" })).statusCode).toBe(200);
   });
 
   it("protects fleet administration while allowing one-time node enrollment", async () => {

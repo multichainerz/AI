@@ -40,6 +40,11 @@ function saveFile(fileName: string, content: string, contentType: string): void 
   URL.revokeObjectURL(url);
 }
 
+export function agenticNodeInstallCommand(controlPlaneUrl: string): string {
+  const origin = controlPlaneUrl.replace(/\/+$/, "");
+  return `curl -fsSL ${origin}/install/agentic-node.sh | sudo bash -s -- --connect ${origin}`;
+}
+
 function defaultForm(): CreateHermesNodeInvitation {
   return {
     slug: "hermes-runtime-01",
@@ -187,7 +192,7 @@ export function RuntimeNodesPanel({
         <footer><button className="secondary-button" type="button" onClick={() => setEditorOpen(false)}>Cancel</button><button className="primary-button" disabled={busy !== null || productionArtifactBlocked} type="submit">{busy === "invite" ? "Preparing installer…" : productionArtifactBlocked ? "Review production options" : "Generate install command"}</button></footer>
       </form> : <div className="runtime-install-steps">
         <div className="runtime-success-mark">✓</div><p>The enrollment claim expires <strong>{new Date(invitation.bundle.expiresAt).toLocaleString()}</strong> and can be used only once.</p>
-        <ol><li><span>1</span><div><strong>Run one command on VM2</strong><small>OrcaSynapse serves the installer directly; it connects back only to this control-plane origin.</small><code>curl -fsSL {invitation.bundle.controlPlaneUrl}/install/hermes-node.sh | sudo bash -s -- --connect {invitation.bundle.controlPlaneUrl}</code></div></li><li><span>2</span><div><strong>Paste the claim when prompted</strong><small>The installer reads it from the terminal with hidden input and sends it in a redacted POST body—not in the URL or shell history.</small><code>{invitation.bundle.token}</code><button className="secondary-button" type="button" onClick={() => void navigator.clipboard.writeText(invitation.bundle.token)}>Copy claim</button></div></li><li><span>3</span><div><strong>Watch the node come online</strong><small>OrcaSynapse installs Hermes and Supermemory, applies the approved route and policy, then starts signed health reporting.</small><button className="secondary-button" type="button" onClick={downloadBundle}>Download JSON fallback</button></div></li></ol>
+        <ol><li><span>1</span><div><strong>Run one command on VM2</strong><small>OrcaSynapse serves the installer directly; it connects back only to this control-plane origin.</small><code>{agenticNodeInstallCommand(invitation.bundle.controlPlaneUrl)}</code></div></li><li><span>2</span><div><strong>Paste the claim when prompted</strong><small>The installer reads it from the terminal with hidden input and sends it in a redacted POST body—not in the URL or shell history.</small><code>{invitation.bundle.token}</code><button className="secondary-button" type="button" onClick={() => void navigator.clipboard.writeText(invitation.bundle.token)}>Copy claim</button></div></li><li><span>3</span><div><strong>Watch the node come online</strong><small>OrcaSynapse installs Hermes and Supermemory, applies the approved route and policy, then starts signed health reporting.</small><button className="secondary-button" type="button" onClick={downloadBundle}>Download JSON fallback</button></div></li></ol>
         <div className="runtime-network-note"><strong>What happens next</strong><p>VM2 generates its own private identity, installs Hermes and Supermemory, exchanges the claim once, and appears Online here. OrcaSynapse never receives the private signing key or a reusable VM credential.</p></div>
         <footer><button className="secondary-button" type="button" onClick={() => setInvitation(null)}>Issue another</button><button className="primary-button" type="button" onClick={() => { setEditorOpen(false); void load(); }}>Done</button></footer>
       </div>}

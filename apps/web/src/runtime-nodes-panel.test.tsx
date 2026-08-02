@@ -1,8 +1,15 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { RuntimeNodesPanel } from "./runtime-nodes-panel.js";
+import { RuntimeNodesPanel, agenticNodeInstallCommand } from "./runtime-nodes-panel.js";
 
 describe("RuntimeNodesPanel", () => {
+  it("builds one canonical Agentic System command from origins with or without a trailing slash", () => {
+    const expected = "curl -fsSL https://orcasynapse.internal/install/agentic-node.sh | sudo bash -s -- --connect https://orcasynapse.internal";
+    expect(agenticNodeInstallCommand("https://orcasynapse.internal")).toBe(expected);
+    expect(agenticNodeInstallCommand("https://orcasynapse.internal/")).toBe(expected);
+    expect(expected).not.toContain("hermes-node.sh");
+  });
+
   it("keeps VM2 enrollment and installer guidance hidden until AI Inference is ready", () => {
     const html = renderToStaticMarkup(<RuntimeNodesPanel
       targetEnvironment="DEVELOPMENT"
