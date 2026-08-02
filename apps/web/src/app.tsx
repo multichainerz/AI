@@ -148,6 +148,7 @@ function App() {
   const [connectionMonitoring, setConnectionMonitoring] = useState<ConnectionMonitoringControl | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerKind, setDrawerKind] = useState<ServiceKind>("INFERENCE");
+  const [deploymentInitialTab, setDeploymentInitialTab] = useState<"journey" | "nodes">("journey");
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [diagnostic, setDiagnostic] = useState<ConnectionTestResult | null>(null);
@@ -346,6 +347,11 @@ function App() {
   const readyWorkloads = readinessChecks.filter(({ ready }) => ready).length;
 
   const openConnectionSettings = (kind: ServiceKind = "INFERENCE") => {
+    if (kind === "HERMES" || kind === "SUPERMEMORY") {
+      setDrawerOpen(false);
+      selectView("Deployment", "nodes");
+      return;
+    }
     setDrawerKind(kind);
     setSettingsError(null);
     setDiagnostic(null);
@@ -451,18 +457,32 @@ function App() {
     setSettingsBusy(true);
     setSettingsError(null);
     try {
+      let savedConnection: ServiceConnectionSummary;
+      const activateInference = draft.kind === "INFERENCE" && draft.enabled;
       if (draft.existingId) {
         const secrets = Object.keys(draft.secrets).length > 0 ? draft.secrets : undefined;
-        await updateConnection(draft.existingId, {
+        savedConnection = await updateConnection(draft.existingId, {
           displayName: draft.displayName,
           environment: draft.environment,
           baseUrl: draft.baseUrl,
-          enabled: draft.enabled,
+          enabled: activateInference ? false : draft.enabled,
           configuration: draft.configuration,
           ...(secrets ? { secrets } : {}),
         });
       } else {
-        await createConnection(draft);
+        savedConnection = await createConnection({
+          ...draft,
+          enabled: activateInference ? false : draft.enabled,
+        });
+      }
+      if (activateInference) {
+        const result = await testConnection(savedConnection.id);
+        setDiagnostic(result);
+        if (result.status === "HEALTHY") {
+          await updateConnection(savedConnection.id, { enabled: true });
+        } else {
+          setSettingsError(`AI Inference was saved but remains disabled: ${result.message}`);
+        }
       }
       setManagedConnections((await getConnections()).items);
       setRevisionHistory(null);
@@ -480,7 +500,16 @@ function App() {
     setSettingsError(null);
     setDiagnostic(null);
     try {
-      setDiagnostic(await testConnection(id));
+      const connection = managedConnections.find((item) => item.id === id);
+      const result = await testConnection(id);
+      setDiagnostic(result);
+      if (connection?.kind === "INFERENCE" && !connection.enabled) {
+        if (result.status === "HEALTHY") {
+          await updateConnection(id, { enabled: true });
+        } else {
+          setSettingsError(`AI Inference remains disabled: ${result.message}`);
+        }
+      }
       setManagedConnections((await getConnections()).items);
     } catch (error) {
       setSettingsError(handleAdminError(error, "Unable to test the connection."));
@@ -518,7 +547,8 @@ function App() {
     }
   };
 
-  const selectView = (view: ActiveView) => {
+  const selectView = (view: ActiveView, deploymentTab: "journey" | "nodes" = "journey") => {
+    if (view === "Deployment") setDeploymentInitialTab(deploymentTab);
     setActiveView(view);
     window.history.replaceState(
       null,
@@ -716,6 +746,7 @@ function App() {
             connections={managedConnections}
             unlocked={unlocked}
             oidcConfigured={oidcStatus?.administratorSignIn === true}
+            initialTab={deploymentInitialTab}
             onConfigure={(kind) => openConnectionSettings(kind)}
             onOpenWorkspace={(workspace) => selectView(workspace)}
             onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23deployment")}
@@ -758,7 +789,7 @@ function App() {
             </section>
 
             <section className="metrics" aria-label="Platform summary">
-              <article><span>Configured endpoints</span><strong>{unlocked ? managedConnections.length : "—"}</strong><small>{unlocked ? `${connectionDefinitions.length} managed connectors across 3 layers` : "Unlock to view"}</small></article>
+              <article><span>Configured services</span><strong>{unlocked ? managedConnections.length : "—"}</strong><small>{unlocked ? `${connectionDefinitions.length} operator setup paths plus enrolled runtime services` : "Unlock to view"}</small></article>
               <article><span>Healthy connections</span><strong>{unlocked ? healthyConnections : "—"}</strong><small>{connectionMonitoring?.enabled ? monitoringCadence(connectionMonitoring.intervalSeconds) : "Credential-aware checks"}</small></article>
               <article><span>Enabled connections</span><strong>{unlocked ? enabledConnections : "—"}</strong><small>Available to OrcaSynapse services</small></article>
               <article><span>Tool posture</span><strong className="metric-posture">Default deny</strong><small>No access without an explicit grant</small></article>
@@ -836,6 +867,7 @@ function App() {
         onClose={() => {
           if (!adminSession?.passwordChangeRequired) setDrawerOpen(false);
         }}
+        onOpenAgenticSystem={() => openConnectionSettings("HERMES")}
         onSave={saveConnection}
         onTest={runConnectionTest}
         onDiscoverInference={discoverInference}

@@ -68,4 +68,19 @@ describe("OnboardingView", () => {
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Set up AI Inference first<\/button>/);
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Enroll Agentic System first<\/button>/);
   });
+
+  it("opens Agentic System configuration on the VM2 installer rather than connector fields", () => {
+    const html = renderToStaticMarkup(<OnboardingView
+      connections={[connection("INFERENCE", "http://vllm.internal:8000")]}
+      unlocked
+      oidcConfigured={false}
+      initialTab="nodes"
+      {...callbacks}
+    />);
+
+    expect(html).toContain("Agentic System");
+    expect(html).toContain("Generate VM2 installer");
+    expect(html).not.toContain("Connect Hermes");
+    expect(html).not.toContain("Operational settings");
+  });
 });

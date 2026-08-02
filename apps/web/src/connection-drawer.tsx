@@ -31,6 +31,7 @@ interface ConnectionDrawerProps {
   revisionConnectionId: string | null;
   revisionHistory: ConfigurationRevisionList | null;
   onClose: () => void;
+  onOpenAgenticSystem: () => void;
   onSave: (draft: ConnectionDraft) => Promise<void>;
   onTest: (id: string) => Promise<void>;
   onDiscoverInference: (input: InferenceDiscoveryRequest) => Promise<InferenceDiscoveryResult | null>;
@@ -232,6 +233,7 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
     if (!result) return;
 
     setInferenceDiscovery(result);
+    setEnabled(result.status === "READY");
     setBaseUrl(result.recommended.baseUrl);
     setConfiguration((current) => {
       const next: ServiceConnectionConfiguration = {
@@ -253,7 +255,7 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
     }}>
       <aside ref={dialogPanel} className="connection-drawer" role="dialog" aria-modal="true" aria-labelledby="connection-drawer-title">
         <header>
-          <div><p className="page-kicker">Secure configuration</p><h2 id="connection-drawer-title">Platform connections</h2></div>
+          <div><p className="page-kicker">Platform setup</p><h2 id="connection-drawer-title">Connect your AI stack</h2></div>
           <div className="drawer-header-actions">
             {props.session && <button type="button" onClick={() => void props.onSignOut()}>Sign out</button>}
             {!props.session?.passwordChangeRequired && <button ref={closeButton} className="drawer-close" type="button" onClick={props.onClose} aria-label="Close settings">×</button>}
@@ -305,7 +307,12 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
           </form>
         ) : (
           <form className="connection-form" onSubmit={submitConnection}>
-            <section className={`monitoring-control ${monitoringEnabled ? "enabled" : "disabled"}`} aria-label="Scheduled connection monitoring">
+            <details className="drawer-operations-details">
+              <summary>
+                <span><strong>Connection monitoring</strong><small>Optional scheduled health checks</small></span>
+                <em>{monitoringEnabled ? "On" : "Off"}</em>
+              </summary>
+              <section className={`monitoring-control ${monitoringEnabled ? "enabled" : "disabled"}`} aria-label="Scheduled connection monitoring">
               <div>
                 <small>Continuous health evidence</small>
                 <strong>{monitoringEnabled ? "Scheduled monitoring enabled" : "Scheduled monitoring disabled"}</strong>
@@ -333,9 +340,26 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
                   reason: monitoringReason.trim(),
                 })}
               >{props.busy ? "Applying…" : "Save monitoring"}</button>
-            </section>
+              </section>
+            </details>
             <div className="kind-tabs" role="tablist" aria-label="Connection type">
-              {connectionDefinitions.map((item) => (
+              {connectionDefinitions.filter(({ kind }) => kind === "INFERENCE").map((item) => (
+                <button
+                  key={item.kind}
+                  type="button"
+                  role="tab"
+                  aria-selected={selectedKind === item.kind}
+                  className={selectedKind === item.kind ? "selected" : ""}
+                  onClick={() => setSelectedKind(item.kind)}
+                >{item.name}</button>
+              ))}
+              <button
+                type="button"
+                role="tab"
+                aria-selected="false"
+                onClick={props.onOpenAgenticSystem}
+              >Agentic System</button>
+              {connectionDefinitions.filter(({ kind }) => kind === "OIDC").map((item) => (
                 <button
                   key={item.kind}
                   type="button"
@@ -354,30 +378,33 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
             </div>
 
             {existing && (
-              <div className={`diagnostic-result ${diagnostic?.status.toLowerCase() ?? "idle"}`}>
+              <div className={`diagnostic-result ${(diagnostic?.status ?? existing.status).toLowerCase()}`}>
                 <div>
-                  <strong>{diagnostic ? diagnostic.status : "Connection not tested in this session"}</strong>
+                  <strong>{diagnostic
+                    ? diagnostic.status
+                    : existing.enabled && existing.status === "HEALTHY" ? "Connected and active" : existing.status.replaceAll("_", " ")}</strong>
                   <span>{diagnostic?.message ?? existing.lastHealthcheckMessage ?? "Run a credential-aware health check."}</span>
                 </div>
                 {diagnostic && <small>{diagnostic.latencyMs} ms</small>}
                 <button type="button" disabled={props.busy} onClick={() => void props.onTest(existing.id)}>
-                  {props.busy ? "Testing…" : "Test connection"}
+                  {props.busy
+                    ? existing.kind === "INFERENCE" && !existing.enabled ? "Testing and activating…" : "Testing…"
+                    : existing.kind === "INFERENCE" && !existing.enabled ? "Test & activate" : "Test connection"}
                 </button>
               </div>
             )}
 
-            <div className="form-grid">
+            {selectedKind !== "INFERENCE" && <div className="form-grid">
               <label>Display name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} required minLength={2}/></label>
               <label>Slug<input value={slug} onChange={(event) => setSlug(slugFor(event.target.value))} required disabled={Boolean(existing)}/></label>
-              {selectedKind !== "INFERENCE" && <label className="wide">{definition.endpointLabel ?? "Endpoint URL"}<input type="url" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder={selectedKind === "OIDC" ? "https://identity.orcasynapse.internal" : "https://service.orcasynapse.internal"}/></label>}
+              <label className="wide">{definition.endpointLabel ?? "Endpoint URL"}<input type="url" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder={selectedKind === "OIDC" ? "https://identity.orcasynapse.internal" : "https://service.orcasynapse.internal"}/></label>
               <label>Environment<select value={environment} onChange={(event) => setEnvironment(event.target.value as Environment)}><option value="DEVELOPMENT">Development</option><option value="STAGING">Staging</option><option value="PRODUCTION">Production</option></select></label>
               <label className="switch-label"><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)}/><span>Enable after saving</span></label>
-            </div>
+            </div>}
 
             {selectedKind === "INFERENCE" && <section className="inference-discovery-section" aria-labelledby="inference-discovery-title">
               <header>
-                <div><small>Guided setup</small><strong id="inference-discovery-title">Connect and discover</strong><span>Enter one address. OrcaSynapse will identify the server, working routes, and available models.</span></div>
-                <em>{inferenceDiscovery ? "Step 3 of 3" : "Step 1 of 3"}</em>
+                <div><small>AI Inference</small><strong id="inference-discovery-title">Connect a model server</strong><span>Paste its address. OrcaSynapse discovers the backend and available models automatically.</span></div>
               </header>
               <div className="inference-connect-grid">
                 <label>AI Inference address
@@ -415,11 +442,7 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
                 >{props.busy ? "Discovering…" : "Discover server"}</button>
               </div>
 
-              {!inferenceDiscovery ? <ol className="inference-discovery-steps" aria-label="Inference discovery steps">
-                <li className="active"><span>1</span><div><strong>Connect</strong><small>Supply one reachable address</small></div></li>
-                <li><span>2</span><div><strong>Discover</strong><small>Identify backend, health, and models</small></div></li>
-                <li><span>3</span><div><strong>Activate</strong><small>Review evidence and save</small></div></li>
-              </ol> : <div className={`inference-discovery-result ${inferenceDiscovery.status.toLowerCase()}`}>
+              {inferenceDiscovery && <div className={`inference-discovery-result ${inferenceDiscovery.status.toLowerCase()}`}>
                 <div className="inference-discovery-summary">
                   <span className="discovery-status-mark" aria-hidden="true">{inferenceDiscovery.status === "READY" ? "✓" : "!"}</span>
                   <div><small>{inferenceDiscovery.status.replaceAll("_", " ")}</small><strong>{inferenceDiscovery.message}</strong><span>Normalized to {inferenceDiscovery.normalizedBaseUrl}</span></div>
@@ -439,6 +462,10 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
                   </select>
                   <small>Loaded directly from the server; no model name needs to be typed manually.</small>
                 </label>}
+                {inferenceDiscovery.status === "READY" && <div className="inference-activation-note">
+                  <strong>Ready to activate</strong>
+                  <span>Review the selected model, then activate below. OrcaSynapse will save, verify, and admit this endpoint in one operation.</span>
+                </div>}
                 <details className="discovery-evidence">
                   <summary>View discovery evidence</summary>
                   <div>
@@ -458,6 +485,11 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
 
             {(selectedKind !== "INFERENCE" || inferenceAdvancedOpen) && <div className="configuration-section">
               <div><strong>Operational settings</strong><span>Validated non-secret values</span></div>
+              {selectedKind === "INFERENCE" && <div className="form-grid inference-identity-grid">
+                <label>Display name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} required minLength={2}/></label>
+                <label>Slug<input value={slug} onChange={(event) => setSlug(slugFor(event.target.value))} required disabled={Boolean(existing)}/></label>
+                <label>Environment<select value={environment} onChange={(event) => setEnvironment(event.target.value as Environment)}><option value="DEVELOPMENT">Development</option><option value="STAGING">Staging</option><option value="PRODUCTION">Production</option></select></label>
+              </div>}
               <div className="configuration-grid">
                 {selectedKind === "INFERENCE" && <label>Serving implementation
                   <select
@@ -570,7 +602,7 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
               })}
             </div>}
 
-            {existing && (
+            {existing && (selectedKind !== "INFERENCE" || inferenceAdvancedOpen) && (
               <section className="revision-section" aria-labelledby="revision-history-title">
                 <div className="revision-heading">
                   <div>
@@ -637,10 +669,10 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
             <div className="drawer-actions">
               <button type="button" onClick={props.onClose}>Cancel</button>
               <button className="primary-button" type="submit" disabled={props.busy}>{props.busy
-                ? "Saving…"
+                ? selectedKind === "INFERENCE" && enabled ? "Saving and verifying…" : "Saving…"
                 : selectedKind === "INFERENCE" && inferenceDiscovery?.status === "READY"
-                  ? "Save discovered configuration"
-                  : existing ? "Save new revision" : "Create connection"}</button>
+                  ? "Activate AI Inference"
+                  : existing ? "Save changes" : "Create connection"}</button>
             </div>
           </form>
         )}

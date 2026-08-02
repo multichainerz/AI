@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import { connectionDefinitions, inferenceEndpointPresets } from "./connection-definitions.js";
 
 describe("inference server connection definition", () => {
+  it("keeps installer-managed Agentic System services out of manual connector setup", () => {
+    expect(connectionDefinitions.map(({ kind }) => kind)).toEqual(["INFERENCE", "OIDC"]);
+  });
+
   it("offers concrete backends plus a future-compatible OpenAI endpoint", () => {
     const definition = connectionDefinitions.find(({ kind }) => kind === "INFERENCE");
     expect(definition?.name).toBe("AI Inference");

@@ -43,6 +43,24 @@ interface StoredConnection {
   secrets: Array<{ fieldName: string }>;
 }
 
+export function diagnosticTransitionForUpdate(
+  existing: Pick<StoredConnection, "status">,
+  input: UpdateServiceConnection,
+  nextEnabled: boolean,
+): { status: ServiceConnectionSummary["status"]; clearEvidence: boolean } {
+  const connectivityChanged = input.baseUrl !== undefined
+    || input.configuration !== undefined
+    || input.secrets !== undefined
+    || input.removeSecretFields !== undefined;
+
+  if (!nextEnabled) return { status: "DISABLED", clearEvidence: true };
+  if (connectivityChanged || existing.status === "DISABLED") {
+    return { status: "NOT_TESTED", clearEvidence: true };
+  }
+
+  return { status: existing.status, clearEvidence: false };
+}
+
 function canonicalize(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(canonicalize).join(",")}]`;
@@ -288,6 +306,7 @@ export class PrismaConnectionManager implements ConnectionManager, ConnectionDia
         ]),
       ].sort();
       const nextEnabled = input.enabled ?? existing.enabled;
+      const diagnosticTransition = diagnosticTransitionForUpdate(existing, input, nextEnabled);
       const nextRevision = existing.activeRevision + 1;
       const nextState = {
         slug: existing.slug,
@@ -302,9 +321,11 @@ export class PrismaConnectionManager implements ConnectionManager, ConnectionDia
 
       const updateData: Prisma.ServiceConnectionUpdateManyMutationInput = {
         activeRevision: nextRevision,
-        status: nextEnabled ? "NOT_TESTED" : "DISABLED",
-        lastHealthcheckAt: null,
-        lastHealthcheckMessage: null,
+        status: diagnosticTransition.status,
+        ...(diagnosticTransition.clearEvidence ? {
+          lastHealthcheckAt: null,
+          lastHealthcheckMessage: null,
+        } : {}),
         monitoringClaimedAt: null,
         monitoringClaimedBy: null,
         monitoringClaimToken: null,

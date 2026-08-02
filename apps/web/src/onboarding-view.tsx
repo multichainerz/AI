@@ -24,6 +24,7 @@ interface OnboardingViewProps {
   unlocked: boolean;
   oidcConfigured: boolean;
   connections: ServiceConnectionSummary[];
+  initialTab?: "journey" | "nodes";
   onConfigure: (kind?: ServiceKind) => void;
   onOpenWorkspace: (workspace: "Chat" | "Documents") => void;
   onSignIn: () => void;
@@ -35,11 +36,7 @@ type SetupMode = "quick" | "advanced";
 
 const serviceActions: Partial<Record<string, Array<{ kind: ServiceKind; label: string }>>> = {
   "identity-recovery": [{ kind: "OIDC", label: "Enterprise Access" }],
-  "ai-services": [
-    { kind: "INFERENCE", label: "AI Inference" },
-    { kind: "SUPERMEMORY", label: "Supermemory" },
-  ],
-  "hermes-profiles": [{ kind: "HERMES", label: "Hermes runtime" }],
+  "ai-services": [{ kind: "INFERENCE", label: "AI Inference" }],
 };
 
 function label(value: string): string {
@@ -66,10 +63,10 @@ function downloadRecoveryKit(fileName: string, serializedKit: string): void {
   URL.revokeObjectURL(url);
 }
 
-export function OnboardingView({ connections, unlocked, oidcConfigured, onConfigure, onOpenWorkspace, onSignIn, onUnauthorized }: OnboardingViewProps) {
+export function OnboardingView({ connections, unlocked, oidcConfigured, initialTab = "journey", onConfigure, onOpenWorkspace, onSignIn, onUnauthorized }: OnboardingViewProps) {
   const [snapshot, setSnapshot] = useState<OnboardingSnapshot | null>(null);
-  const [setupMode, setSetupMode] = useState<SetupMode>("quick");
-  const [tab, setTab] = useState<WorkspaceTab>("journey");
+  const [setupMode, setSetupMode] = useState<SetupMode>(initialTab === "nodes" ? "advanced" : "quick");
+  const [tab, setTab] = useState<WorkspaceTab>(initialTab);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [architecture, setArchitecture] = useState<ArchitectureDecision | null>(null);
@@ -100,6 +97,16 @@ export function OnboardingView({ connections, unlocked, oidcConfigured, onConfig
   };
 
   const load = async () => applySnapshot(await getOnboardingSnapshot());
+
+  useEffect(() => {
+    if (initialTab === "nodes") {
+      setSetupMode("advanced");
+      setTab("nodes");
+      return;
+    }
+    setSetupMode("quick");
+    setTab("journey");
+  }, [initialTab]);
 
   useEffect(() => {
     if (!unlocked || setupMode !== "advanced") {
@@ -344,6 +351,18 @@ export function OnboardingView({ connections, unlocked, oidcConfigured, onConfig
     </section>;
   }
 
+  if (tab === "nodes" && (!snapshot || !architecture)) {
+    return <section className="setup-workspace setup-agentic-direct">
+      <button className="text-button setup-quick-return" type="button" onClick={() => setSetupMode("quick")}>Back to quick start</button>
+      <RuntimeNodesPanel
+        targetEnvironment="DEVELOPMENT"
+        inferenceReady={inferenceReady}
+        onConfigureInference={() => onConfigure("INFERENCE")}
+        onUnauthorized={onUnauthorized}
+      />
+    </section>;
+  }
+
   if (!snapshot || !architecture) return <section className="setup-workspace"><button className="text-button setup-quick-return" type="button" onClick={() => setSetupMode("quick")}>Back to quick start</button><div className="setup-loading" aria-live="polite"><span className="setup-spinner" />Loading production setup…</div></section>;
 
   const componentProgress = percent(snapshot.gate.passedComponents, snapshot.gate.requiredComponents);
@@ -381,7 +400,7 @@ export function OnboardingView({ connections, unlocked, oidcConfigured, onConfig
     </section>
 
     <nav className="setup-tabs" aria-label="Deployment setup sections">
-      {(["journey", "nodes", "readiness", "architecture", "evidence"] as WorkspaceTab[]).map((item) => <button key={item} className={tab === item ? "active" : undefined} type="button" onClick={() => setTab(item)}>{item === "nodes" ? "Hermes nodes" : item === "readiness" ? "Advanced readiness" : label(item)}</button>)}
+      {(["journey", "nodes", "readiness", "architecture", "evidence"] as WorkspaceTab[]).map((item) => <button key={item} className={tab === item ? "active" : undefined} type="button" onClick={() => setTab(item)}>{item === "nodes" ? "Agentic System" : item === "readiness" ? "Advanced readiness" : label(item)}</button>)}
     </nav>
 
     {tab === "journey" && <div className="setup-journey-layout">

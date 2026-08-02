@@ -15,7 +15,7 @@ describe("RuntimeNodesPanel", () => {
     expect(html).toContain("Configure AI Inference");
     expect(html).not.toContain("Run one command on VM2");
     expect(html).not.toContain("Issue one-time invitation");
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Enroll node<\/button>/);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Generate installer<\/button>/);
   });
 
   it("unlocks invitation creation after AI Inference is healthy", () => {
@@ -26,8 +26,8 @@ describe("RuntimeNodesPanel", () => {
       onUnauthorized={vi.fn()}
     />);
 
-    expect(html).toContain("No Hermes runtime node enrolled");
-    expect(html).toContain("Enroll the first node");
+    expect(html).toContain("Install the Agentic System on VM2");
+    expect(html).toContain("Generate VM2 installer");
     expect(html).not.toContain("AI Inference must be ready first");
   });
 });

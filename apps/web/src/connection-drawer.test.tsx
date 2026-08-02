@@ -30,6 +30,7 @@ describe("ConnectionDrawer inference endpoint", () => {
       revisionConnectionId={null}
       revisionHistory={null}
       onClose={vi.fn()}
+      onOpenAgenticSystem={vi.fn()}
       onSave={vi.fn(async () => undefined)}
       onTest={vi.fn(async () => undefined)}
       onDiscoverInference={vi.fn(async () => null)}
@@ -43,11 +44,16 @@ describe("ConnectionDrawer inference endpoint", () => {
       onSignOut={vi.fn(async () => undefined)}
     />);
 
-    expect(html).toContain("Connect and discover");
+    expect(html).toContain("Connect a model server");
     expect(html).toContain("AI Inference address");
     expect(html).toContain("Discover server");
+    expect(html).not.toContain("Enable after saving");
     expect(html).toContain("Advanced configuration");
     expect(html).not.toContain("Endpoint suggestion");
     expect(html).not.toContain("Serving implementation");
+    expect(html).toContain("Agentic System");
+    expect(html).not.toContain(">Hermes<");
+    expect(html).not.toContain(">Supermemory<");
+    expect(html).not.toContain("Configuration history");
   });
 });
