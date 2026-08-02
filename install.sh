@@ -11,6 +11,7 @@ ORCASYNAPSE_ARCHIVE_SHA256="${ORCASYNAPSE_ARCHIVE_SHA256:-}"
 temporary_root=""
 staging_dir=""
 backup_dir=""
+existing_install_action=""
 
 if [[ -t 1 && "${TERM:-dumb}" != "dumb" ]]; then
   UI_INTERACTIVE=1
@@ -253,21 +254,23 @@ choose_existing_install_action() {
   local verified="$1" requested_commit="$2"
   local configured_action="${ORCASYNAPSE_EXISTING_INSTALL_ACTION:-}" choice=""
 
+  existing_install_action=""
+
   if [[ -n "${configured_action}" ]]; then
     case "${configured_action}" in
       upgrade)
         [[ "${verified}" == "1" ]] || fail "cannot upgrade an unverified directory; use an empty path or explicitly choose erase"
-        printf 'upgrade'
+        existing_install_action="upgrade"
         return
         ;;
       erase)
         [[ "${ORCASYNAPSE_CONFIRM_ERASE:-}" == "ERASE" ]] \
           || fail "automated erase requires ORCASYNAPSE_CONFIRM_ERASE=ERASE"
-        printf 'erase'
+        existing_install_action="erase"
         return
         ;;
       abort)
-        printf 'abort'
+        existing_install_action="abort"
         return
         ;;
       *) fail "ORCASYNAPSE_EXISTING_INSTALL_ACTION must be upgrade, erase, or abort" ;;
@@ -290,37 +293,59 @@ choose_existing_install_action() {
       printf '   %b2%b  Clean reinstall; permanently erase containers, volumes, accounts, and secrets\n' \
         "${UI_RED}${UI_BOLD}" "${UI_RESET}"
       printf '   %b3%b  Exit without changes\n' "${UI_DIM}" "${UI_RESET}"
-      printf '\n   Select an action [1]: '
+      printf '\n   Enter 1, 2, or 3 and press Enter. Pressing Enter alone selects 1.\n'
+      printf '   Awaiting selection on the next line:\n\n'
     else
       printf '   This directory is not a verified OrcaSynapse source tree.\n\n'
       printf '   %b1%b  Clean the directory and install from scratch\n' "${UI_RED}${UI_BOLD}" "${UI_RESET}"
       printf '   %b2%b  Exit without changes\n' "${UI_DIM}" "${UI_RESET}"
-      printf '\n   Select an action [2]: '
+      printf '\n   Enter 1 or 2 and press Enter. Pressing Enter alone selects 2.\n'
+      printf '   Awaiting selection on the next line:\n\n'
     fi
   } > /dev/tty
 
-  IFS= read -r choice < /dev/tty
+  if ! IFS= read -r choice < /dev/tty; then
+    fail "the terminal closed before an installation action was received"
+  fi
   if [[ "${verified}" == "1" ]]; then
     case "${choice:-1}" in
-      1) printf 'upgrade'; return ;;
+      1)
+        printf '   Selection received: update and preserve data.\n\n' > /dev/tty
+        existing_install_action="upgrade"
+        return
+        ;;
       2) choice="erase" ;;
-      3) printf 'abort'; return ;;
+      3)
+        printf '   Selection received: exit without changes.\n\n' > /dev/tty
+        existing_install_action="abort"
+        return
+        ;;
       *) fail "invalid existing-installation selection" ;;
     esac
   else
     case "${choice:-2}" in
       1) choice="erase" ;;
-      2) printf 'abort'; return ;;
+      2)
+        printf '   Selection received: exit without changes.\n\n' > /dev/tty
+        existing_install_action="abort"
+        return
+        ;;
       *) fail "invalid existing-directory selection" ;;
     esac
   fi
 
-  printf '\n   %bDESTRUCTIVE ACTION%b\n' "${UI_RED}${UI_BOLD}" "${UI_RESET}" > /dev/tty
-  printf '   Type ERASE to permanently remove this installation and its data: ' > /dev/tty
-  IFS= read -r choice < /dev/tty
+  {
+    printf '\n   %bDESTRUCTIVE ACTION SELECTED%b\n' "${UI_RED}${UI_BOLD}" "${UI_RESET}"
+    printf '   Nothing has been deleted yet.\n'
+    printf '   Type ERASE and press Enter to permanently remove this installation and its data.\n'
+    printf '   Confirmation input follows on the next line:\n\n'
+  } > /dev/tty
+  if ! IFS= read -r choice < /dev/tty; then
+    fail "the terminal closed before destructive confirmation was received; no data was removed"
+  fi
   printf '\n' > /dev/tty
   [[ "${choice}" == "ERASE" ]] || fail "clean reinstall cancelled; no data was removed"
-  printf 'erase'
+  existing_install_action="erase"
 }
 
 clean_existing_install() {
@@ -333,13 +358,15 @@ clean_existing_install() {
     && command -v docker >/dev/null 2>&1 \
     && docker compose version >/dev/null 2>&1; then
     run_with_spinner "Remove existing containers and data volumes" \
-      docker compose --project-directory "${ORCASYNAPSE_INSTALL_DIR}" down --remove-orphans --volumes \
+      docker compose --project-directory "${ORCASYNAPSE_INSTALL_DIR}" down --remove-orphans --volumes --timeout 30 \
       || fail "Docker could not cleanly remove the existing OrcaSynapse stack"
   fi
 
-  rm -rf --one-file-system -- "${resolved_target}"
+  run_with_spinner "Remove existing application files and local secrets" \
+    rm -rf --one-file-system -- "${resolved_target}" \
+    || fail "the existing installation directory could not be removed"
   [[ ! -e "${resolved_target}" ]] || fail "the existing installation directory could not be removed"
-  success "Existing application files, local secrets, and managed data volumes were removed."
+  success "Clean-installation boundary verified; new source installation can proceed."
 }
 
 upgrade_source_tree() {
@@ -377,10 +404,14 @@ install_source_tree() {
       fi
     fi
 
-    action="$(choose_existing_install_action "${verified}" "${commit}")"
+    choose_existing_install_action "${verified}" "${commit}"
+    action="${existing_install_action}"
     case "${action}" in
       abort) fail "installation cancelled; no changes were made" ;;
-      erase) clean_existing_install ;;
+      erase)
+        warning "Destructive confirmation accepted; starting the clean reinstall."
+        clean_existing_install
+        ;;
       upgrade) ;;
       *) fail "existing-installation action could not be resolved" ;;
     esac
