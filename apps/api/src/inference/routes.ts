@@ -1,5 +1,5 @@
 import { Readable } from "node:stream";
-import { inferenceGatewayChatRequestSchema } from "@aihub/contracts";
+import { inferenceGatewayChatRequestSchema } from "@orcasynapse/contracts";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { InferenceGatewayError, type InferenceGatewayResult, type PrismaInferenceGateway } from "./inference-gateway.js";
 
@@ -30,7 +30,7 @@ function sendGatewayError(error: unknown, reply: FastifyReply) {
 
 function gatewayOrLocked(options: InferenceGatewayRouteOptions, reply: FastifyReply) {
   if (options.gateway) return options.gateway;
-  void reply.code(503).send({ error: { type: "gateway_unavailable", message: "AIHub inference services are not ready." } });
+  void reply.code(503).send({ error: { type: "gateway_unavailable", message: "OrcaSynapse inference services are not ready." } });
   return null;
 }
 
@@ -45,7 +45,7 @@ function boundedResponseStream({ response, maxResponseBytes }: InferenceGatewayR
         const { value, done } = await reader.read();
         if (done) break;
         bytes += value.byteLength;
-        if (bytes > maxResponseBytes) throw new Error("AIHub inference response limit exceeded.");
+        if (bytes > maxResponseBytes) throw new Error("OrcaSynapse inference response limit exceeded.");
         yield value;
       }
     } finally {

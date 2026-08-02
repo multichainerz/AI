@@ -13,9 +13,9 @@ import type {
   SubmitAgentRun,
   UpdateAgentProfile,
   UpdateAgentRuntimeControl,
-} from "@aihub/contracts";
-import { agentCapabilitySchema, agentSkillReferenceSchema, knowledgeSourceSchema } from "@aihub/contracts";
-import { Prisma, type AIHubPrismaClient } from "@aihub/database";
+} from "@orcasynapse/contracts";
+import { agentCapabilitySchema, agentSkillReferenceSchema, knowledgeSourceSchema } from "@orcasynapse/contracts";
+import { Prisma, type OrcaSynapsePrismaClient } from "@orcasynapse/database";
 import { createHash, randomUUID } from "node:crypto";
 import {
   AgentConflictError,
@@ -252,7 +252,7 @@ const runInclude = {
 
 export class PrismaAgentManager implements AgentManager {
   constructor(
-    private readonly prisma: AIHubPrismaClient,
+    private readonly prisma: OrcaSynapsePrismaClient,
     private readonly boundaryVerifier?: AgentBoundaryVerifier,
   ) {}
 
@@ -313,7 +313,7 @@ export class PrismaAgentManager implements AgentManager {
 
   async updateProfile(principal: AgentPrincipal, profileId: string, input: UpdateAgentProfile): Promise<AgentProfile> {
     const updated = await this.prisma.$transaction(async (transaction) => {
-      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`aihub-agent-profile:${profileId}`}, 0))`;
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`orcasynapse-agent-profile:${profileId}`}, 0))`;
       const profile = await transaction.agentProfile.findUnique({
         where: { id: profileId },
       });
@@ -406,7 +406,7 @@ export class PrismaAgentManager implements AgentManager {
 
   async submitRun(principal: AgentPrincipal, input: SubmitAgentRun): Promise<AgentRun> {
     const run = await this.prisma.$transaction(async (transaction) => {
-      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`aihub-agent-submit:${input.profileId}`}, 0))`;
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`orcasynapse-agent-submit:${input.profileId}`}, 0))`;
       const [control, profile] = await Promise.all([
         transaction.agentRuntimeControl.findUnique({ where: { id: "global" } }),
         transaction.agentProfile.findUnique({ where: { id: input.profileId } }),

@@ -17,7 +17,7 @@ import {
   productionReadinessSchema,
   recordProductionReadinessApprovalSchema,
   updateProductionReadinessControlSchema,
-} from "@aihub/contracts";
+} from "@orcasynapse/contracts";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { requireAdmin, type AdminSessionManager } from "../auth/admin-session.js";
 import { AiOpsConflictError, AiOpsNotFoundError, type AiOpsManager } from "./ai-ops-manager.js";

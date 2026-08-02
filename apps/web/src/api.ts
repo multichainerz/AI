@@ -1,6 +1,7 @@
 import {
   connectionTestResultSchema,
   connectionMonitoringControlSchema,
+  inferenceDiscoveryResultSchema,
   administratorSessionSchema,
   configurationRevisionListSchema,
   memoryReindexResultSchema,
@@ -21,6 +22,8 @@ import {
   type CreateServiceConnection,
   type ConnectionTestResult,
   type ConnectionMonitoringControl,
+  type InferenceDiscoveryRequest,
+  type InferenceDiscoveryResult,
   type UpdateConnectionMonitoringControl,
   type ConfigurationRevisionList,
   type MemoryReindexResult,
@@ -156,15 +159,15 @@ import {
   type HermesRuntimeNode,
   type HermesRuntimeNodeList,
   type MutateHermesRuntimeNode,
-} from "@aihub/contracts";
+} from "@orcasynapse/contracts";
 
-export class AIHubApiError extends Error {
+export class OrcaSynapseApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
   ) {
     super(message);
-    this.name = "AIHubApiError";
+    this.name = "OrcaSynapseApiError";
   }
 }
 
@@ -176,7 +179,7 @@ async function parsedResponse(response: Response): Promise<unknown> {
       body = JSON.parse(text) as unknown;
     } catch {
       if (response.ok) {
-        throw new AIHubApiError(response.status, "AIHub returned an invalid response.");
+        throw new OrcaSynapseApiError(response.status, "OrcaSynapse returned an invalid response.");
       }
     }
   }
@@ -188,9 +191,9 @@ async function parsedResponse(response: Response): Promise<unknown> {
       typeof body.message === "string"
         ? body.message
         : undefined;
-    throw new AIHubApiError(
+    throw new OrcaSynapseApiError(
       response.status,
-      message ?? `AIHub API returned ${response.status} ${response.statusText}`.trim(),
+      message ?? `OrcaSynapse API returned ${response.status} ${response.statusText}`.trim(),
     );
   }
   return body;
@@ -344,6 +347,18 @@ export async function testConnection(
   return connectionTestResultSchema.parse(await parsedResponse(response));
 }
 
+export async function discoverInferenceServer(
+  input: InferenceDiscoveryRequest,
+): Promise<InferenceDiscoveryResult> {
+  const response = await fetch("/api/v1/admin/connections/inference/discover", {
+    method: "POST",
+    headers: adminHeaders(),
+    credentials: "same-origin",
+    body: JSON.stringify(input),
+  });
+  return inferenceDiscoveryResultSchema.parse(await parsedResponse(response));
+}
+
 export async function getConfigurationRevisions(
   id: string,
 ): Promise<ConfigurationRevisionList> {
@@ -442,7 +457,7 @@ export async function streamChatMessage(
     return;
   }
   if (!response.body) {
-    throw new AIHubApiError(response.status, "AIHub returned no chat response stream.");
+    throw new OrcaSynapseApiError(response.status, "OrcaSynapse returned no chat response stream.");
   }
 
   const reader = response.body.getReader();

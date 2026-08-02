@@ -1,5 +1,5 @@
 {
-  "name": "@aihub/document-runtime",
+  "name": "@orcasynapse/document-runtime",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -11,8 +11,8 @@
     "test": "vitest run --exclude dist/**"
   },
   "dependencies": {
-    "@aihub/contracts": "workspace:*",
-    "@aihub/database": "workspace:*",
-    "@aihub/security": "workspace:*"
+    "@orcasynapse/contracts": "workspace:*",
+    "@orcasynapse/database": "workspace:*",
+    "@orcasynapse/security": "workspace:*"
   }
 }

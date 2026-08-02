@@ -1,4 +1,4 @@
-import { memoryMetricsSchema, memoryPublicationListSchema } from "@aihub/contracts";
+import { memoryMetricsSchema, memoryPublicationListSchema } from "@orcasynapse/contracts";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { adminSessionToken, type AdminSessionManager } from "../auth/admin-session.js";
 import { MemoryPublicationConflictError, type MemoryManager } from "./memory-manager.js";

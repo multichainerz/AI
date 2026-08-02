@@ -1,4 +1,4 @@
-import { ADMIN_SCOPES, type ChatMessage } from "@aihub/contracts";
+import { ADMIN_SCOPES, type ChatMessage } from "@orcasynapse/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.js";
 import { ADMIN_SESSION_COOKIE, type AdminPrincipal, type AdminSessionManager } from "../auth/admin-session.js";
@@ -68,7 +68,7 @@ const enterpriseIdentity: EnterpriseIdentityManager = {
       subject: "user:fb8c1e58-10d6-4ac7-aafe-e259763a6f63",
       identityMode: "ENTERPRISE",
       displayName: "Pilot User",
-      email: "pilot@mpm.example",
+      email: "pilot@orcasynapse.example",
       scopes: ["chat:use", "documents:use", "agents:use"],
       session: {
         id: SESSION_ID,
@@ -76,7 +76,7 @@ const enterpriseIdentity: EnterpriseIdentityManager = {
         user: {
           id: "fb8c1e58-10d6-4ac7-aafe-e259763a6f63",
           displayName: "Pilot User",
-          email: "pilot@mpm.example",
+          email: "pilot@orcasynapse.example",
         },
         scopes: ["chat:use", "documents:use", "agents:use"],
         createdAt: "2026-07-30T00:00:00.000Z",

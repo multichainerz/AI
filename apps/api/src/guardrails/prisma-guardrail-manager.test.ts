@@ -1,4 +1,4 @@
-import type { AIHubPrismaClient } from "@aihub/database";
+import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
 import { describe, expect, it, vi } from "vitest";
 import type { AdminPrincipal } from "../auth/admin-session.js";
 import { GuardrailConflictError } from "./guardrail-manager.js";
@@ -51,7 +51,7 @@ function activationTransaction(overrides: Record<string, unknown> = {}) {
       findUniqueOrThrow: vi.fn(async () => policy({ status: "ACTIVE", activationEvaluationId: EVALUATION_ID, firstActivatedAt: now, revision: 2 })),
     },
     modelDeployment: { count: vi.fn(async () => 0), findFirst: vi.fn() },
-    serviceConnection: { findMany: vi.fn(async () => [{ kind: "VLLM", enabled: true, status: "HEALTHY" }]) },
+    serviceConnection: { findMany: vi.fn(async () => [{ kind: "INFERENCE", enabled: true, status: "HEALTHY" }]) },
     evaluationRun: { findFirst: vi.fn(async () => ({ id: EVALUATION_ID })) },
     auditEvent: { create: vi.fn(async () => ({})) },
     ...overrides,
@@ -64,7 +64,7 @@ describe("PrismaGuardrailManager", () => {
       $executeRaw: vi.fn(async () => 1),
       guardrailPolicy: { findUnique: vi.fn(async () => policy({ status: "SUSPENDED" })), updateMany: vi.fn() },
     };
-    const prisma = { $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)) } as unknown as AIHubPrismaClient;
+    const prisma = { $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)) } as unknown as OrcaSynapsePrismaClient;
 
     await expect(new PrismaGuardrailManager(prisma).update(principal, POLICY_ID, {
       blockCredentialPatterns: false,
@@ -73,14 +73,14 @@ describe("PrismaGuardrailManager", () => {
     expect(transaction.guardrailPolicy.updateMany).not.toHaveBeenCalled();
   });
 
-  it("requires exactly one healthy effective vLLM route", async () => {
+  it("requires exactly one healthy effective inference route", async () => {
     const transaction = activationTransaction({
       serviceConnection: { findMany: vi.fn(async () => [
-        { kind: "VLLM", enabled: true, status: "HEALTHY" },
-        { kind: "VLLM", enabled: true, status: "UNREACHABLE" },
+        { kind: "INFERENCE", enabled: true, status: "HEALTHY" },
+        { kind: "INFERENCE", enabled: true, status: "UNREACHABLE" },
       ]) },
     });
-    const prisma = { $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)) } as unknown as AIHubPrismaClient;
+    const prisma = { $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)) } as unknown as OrcaSynapsePrismaClient;
 
     await expect(new PrismaGuardrailManager(prisma).activate(principal, POLICY_ID, {
       expectedRevision: 1,
@@ -93,7 +93,7 @@ describe("PrismaGuardrailManager", () => {
     const transaction = activationTransaction({
       evaluationRun: { findFirst: vi.fn(async () => null) },
     });
-    const prisma = { $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)) } as unknown as AIHubPrismaClient;
+    const prisma = { $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)) } as unknown as OrcaSynapsePrismaClient;
 
     await expect(new PrismaGuardrailManager(prisma).activate(principal, POLICY_ID, {
       expectedRevision: 1,
@@ -112,7 +112,7 @@ describe("PrismaGuardrailManager", () => {
 
   it("activates atomically and records the evidence without classifier secrets", async () => {
     const transaction = activationTransaction();
-    const prisma = { $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)) } as unknown as AIHubPrismaClient;
+    const prisma = { $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)) } as unknown as OrcaSynapsePrismaClient;
 
     await expect(new PrismaGuardrailManager(prisma).activate(principal, POLICY_ID, {
       expectedRevision: 1,

@@ -2,9 +2,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 export type BootstrapSecretName =
-  | "aihub_database_url"
-  | "aihub_master_key"
-  | "aihub_installation_key";
+  | "orcasynapse_database_url"
+  | "orcasynapse_master_key"
+  | "orcasynapse_installation_key";
 
 export function bootstrapSecretCandidates(name: BootstrapSecretName): string[] {
   return [

@@ -10,7 +10,7 @@ import type {
   SubmitAgentRun,
   UpdateAgentProfile,
   UpdateAgentRuntimeControl,
-} from "@aihub/contracts";
+} from "@orcasynapse/contracts";
 
 export interface AgentPrincipal {
   id: string;

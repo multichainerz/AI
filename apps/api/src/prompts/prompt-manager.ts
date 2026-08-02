@@ -4,7 +4,7 @@ import type {
   PromptTemplate,
   PromptTemplateList,
   UpdatePromptTemplate,
-} from "@aihub/contracts";
+} from "@orcasynapse/contracts";
 import type { AdminPrincipal } from "../auth/admin-session.js";
 
 export interface PromptManager {

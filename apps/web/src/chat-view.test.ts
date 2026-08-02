@@ -1,4 +1,4 @@
-import type { ChatMessage } from "@aihub/contracts";
+import type { ChatMessage } from "@orcasynapse/contracts";
 import { describe, expect, it } from "vitest";
 import { chatMessageTelemetry } from "./chat-view.js";
 
@@ -36,7 +36,7 @@ describe("chat response telemetry", () => {
     ]);
   });
 
-  it("does not invent throughput when vLLM omits usage", () => {
+  it("does not invent throughput when the inference server omits usage", () => {
     const metrics = chatMessageTelemetry(message({
       inputTokens: null,
       outputTokens: null,

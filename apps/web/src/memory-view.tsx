@@ -1,6 +1,6 @@
-import type { MemoryMetrics, MemoryPublication } from "@aihub/contracts";
+import type { MemoryMetrics, MemoryPublication } from "@orcasynapse/contracts";
 import { useEffect, useRef, useState } from "react";
-import { AIHubApiError, getMemoryMetrics, getMemoryPublications, reindexMemoryDocument } from "./api.js";
+import { OrcaSynapseApiError, getMemoryMetrics, getMemoryPublications, reindexMemoryDocument } from "./api.js";
 
 interface MemoryViewProps {
   unlocked: boolean;
@@ -32,7 +32,7 @@ export function MemoryView({ unlocked, onConfigure, onUnauthorized }: MemoryView
   };
 
   const fail = (cause: unknown) => {
-    if (cause instanceof AIHubApiError && cause.status === 401) onUnauthorized();
+    if (cause instanceof OrcaSynapseApiError && cause.status === 401) onUnauthorized();
     setError(cause instanceof Error ? cause.message : "Unable to load memory operations.");
   };
 

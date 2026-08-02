@@ -8,7 +8,7 @@ import type {
   SetChatFeedback,
   CreateChatConversation,
   UpdateChatConversation,
-} from "@aihub/contracts";
+} from "@orcasynapse/contracts";
 
 export interface ChatPrincipal {
   id: string;
@@ -79,7 +79,7 @@ export class ChatRateLimitError extends Error {
 }
 
 export class ChatPolicyViolationError extends Error {
-  constructor(message = "The request was blocked by the active AIHub guardrail policy.") {
+  constructor(message = "The request was blocked by the active OrcaSynapse guardrail policy.") {
     super(message);
     this.name = "ChatPolicyViolationError";
   }

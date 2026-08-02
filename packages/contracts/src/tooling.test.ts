@@ -16,7 +16,7 @@ describe("governed tooling contracts", () => {
       resourceScope: "OWNER_ONLY",
     } as const;
     expect(upsertToolGrantSchema.safeParse(base).success).toBe(false);
-    expect(upsertToolGrantSchema.safeParse({ ...base, allowedGroups: ["MPM-AI-Pilot"] }).success).toBe(true);
+    expect(upsertToolGrantSchema.safeParse({ ...base, allowedGroups: ["OrcaSynapse-AI-Pilot"] }).success).toBe(true);
   });
 
   it("requires explicit review reasons and bounded runtime settings", () => {
@@ -28,10 +28,10 @@ describe("governed tooling contracts", () => {
   it("accepts only one-time gateway token format", () => {
     const base = {
       id: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb", name: "Hermes gateway",
-      tokenPrefix: "aihub_mcp_abcd", enabled: true, lastUsedAt: null, revokedAt: null,
+      tokenPrefix: "orcasynapse_mcp_abcd", enabled: true, lastUsedAt: null, revokedAt: null,
       createdAt: "2026-07-30T00:00:00.000Z",
     };
-    expect(issuedGatewayCredentialSchema.safeParse({ ...base, token: `aihub_mcp_${"a".repeat(43)}` }).success).toBe(true);
+    expect(issuedGatewayCredentialSchema.safeParse({ ...base, token: `orcasynapse_mcp_${"a".repeat(43)}` }).success).toBe(true);
     expect(issuedGatewayCredentialSchema.safeParse({ ...base, token: "secret" }).success).toBe(false);
   });
 

@@ -8,10 +8,10 @@ import {
   type ProductionReadiness,
   type ProductionReadinessControl,
   type ProductionReadinessControlStatus,
-} from "@aihub/contracts";
+} from "@orcasynapse/contracts";
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import {
-  AIHubApiError,
+  OrcaSynapseApiError,
   completeEvaluationRun,
   createEvaluationRun,
   createOperationalIncident,
@@ -110,7 +110,7 @@ export function OperationsView({ unlocked, scopes, onConfigure, onUnauthorized }
   const canApproveReadiness = scopes.includes("readiness:approve");
 
   const handleError = useCallback((cause: unknown, fallback: string) => {
-    if (cause instanceof AIHubApiError && cause.status === 401) onUnauthorized();
+    if (cause instanceof OrcaSynapseApiError && cause.status === 401) onUnauthorized();
     setError(cause instanceof Error ? cause.message : fallback);
   }, [onUnauthorized]);
 
@@ -432,17 +432,17 @@ export function OperationsView({ unlocked, scopes, onConfigure, onUnauthorized }
       </section>}
 
       {tab === "readiness" && <section className="aiops-section readiness-section">
-        <div className="section-toolbar"><div><h2>Production pilot readiness</h2><p>Evidence-backed controls and externally issued MPM decisions. AIHub records approvals; it does not grant them.</p></div>{canApproveReadiness && <button className="secondary-button" type="button" onClick={() => setShowApprovalForm((shown) => !shown)}>{showApprovalForm ? "Cancel" : "Record sign-off"}</button>}</div>
+        <div className="section-toolbar"><div><h2>Production pilot readiness</h2><p>Evidence-backed controls and externally issued OrcaSynapse decisions. OrcaSynapse records approvals; it does not grant them.</p></div>{canApproveReadiness && <button className="secondary-button" type="button" onClick={() => setShowApprovalForm((shown) => !shown)}>{showApprovalForm ? "Cancel" : "Record sign-off"}</button>}</div>
         <section className={`panel readiness-hero ${readiness?.status.toLowerCase() ?? "not_ready"}`}>
           <div><p className="section-kicker">Derived gate</p><h3>{readiness ? humanLabel(readiness.status) : "Loading"}</h3><p>Ready requires every control to be verified or formally waived and the latest Security, Infrastructure, Product, and Business decisions to be approved.</p></div>
           <dl><div><dt>Controls accepted</dt><dd>{readiness ? readiness.summary.verifiedControls + readiness.summary.waivedControls : "--"}<span> / {readiness?.summary.totalControls ?? 0}</span></dd></div><div><dt>External approvals</dt><dd>{readiness?.summary.approvedRoles ?? "--"}<span> / {readiness?.summary.requiredApprovals ?? 4}</span></dd></div><div><dt>Blocked controls</dt><dd>{readiness?.summary.blockedControls ?? "--"}</dd></div></dl>
         </section>
 
         {showApprovalForm && <form className="panel aiops-form readiness-approval-form" onSubmit={(event) => void submitReadinessApproval(event)}>
-          <div className="readiness-form-note wide"><strong>External decision record</strong><span>The authority is the MPM body that made the decision. Your signed-in AIHub identity is retained separately as the recorder. {readinessControlsAccepted ? "All controls are accepted for an approval snapshot." : "Approval remains disabled until every control is verified or waived; rejection can still be recorded."}</span></div>
+          <div className="readiness-form-note wide"><strong>External decision record</strong><span>The authority is the OrcaSynapse body that made the decision. Your signed-in OrcaSynapse identity is retained separately as the recorder. {readinessControlsAccepted ? "All controls are accepted for an approval snapshot." : "Approval remains disabled until every control is verified or waived; rejection can still be recorded."}</span></div>
           <label><span>Approval role</span><select name="role"><option>SECURITY</option><option>INFRASTRUCTURE</option><option>PRODUCT</option><option>BUSINESS</option></select></label>
           <label><span>Decision</span><select name="decision" defaultValue={readinessControlsAccepted ? "APPROVED" : "REJECTED"}><option value="APPROVED" disabled={!readinessControlsAccepted}>APPROVED</option><option value="REJECTED">REJECTED</option></select></label>
-          <label><span>Approving authority</span><input name="authority" minLength={1} maxLength={160} placeholder="MPM Security Review Board" required /></label>
+          <label><span>Approving authority</span><input name="authority" minLength={1} maxLength={160} placeholder="OrcaSynapse Security Review Board" required /></label>
           <label><span>Approval evidence</span><input name="evidenceRef" minLength={1} maxLength={500} placeholder="Approval ID or immutable artifact reference" required /></label>
           <label className="wide"><span>Decision rationale</span><textarea name="reason" minLength={3} maxLength={1000} rows={3} required /></label>
           <div className="wide form-actions"><button className="primary-button" type="submit" disabled={busy}>Append authority decision</button></div>

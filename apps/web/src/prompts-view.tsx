@@ -1,7 +1,7 @@
-import type { AdministratorSession, CreatePromptTemplate, PromptTemplate } from "@aihub/contracts";
+import type { AdministratorSession, CreatePromptTemplate, PromptTemplate } from "@orcasynapse/contracts";
 import { useEffect, useState, type FormEvent } from "react";
 import {
-  AIHubApiError,
+  OrcaSynapseApiError,
   changePromptTemplateState,
   createPromptTemplate,
   getPromptTemplates,
@@ -16,12 +16,12 @@ interface PromptsViewProps {
 }
 
 const initialDraft: CreatePromptTemplate = {
-  slug: "mpm-chat-system",
-  displayName: "MPM chat system",
+  slug: "orcasynapse-chat-system",
+  displayName: "OrcaSynapse chat system",
   description: "Approved system behavior for internal employee chat.",
   purpose: "CHAT_SYSTEM",
   version: "1.0.0",
-  content: "You are the MPM AIHub assistant. Be accurate, concise, and explicit about uncertainty. Do not claim to have used tools, enterprise data, or current external information unless that context is present in the conversation.",
+  content: "You are the OrcaSynapse assistant. Be accurate, concise, and explicit about uncertainty. Do not claim to have used tools, enterprise data, or current external information unless that context is present in the conversation.",
 };
 
 function tone(prompt: PromptTemplate): string {
@@ -51,7 +51,7 @@ export function PromptsView({ session, onOpenOperations, onOpenSettings, onSessi
       setPrompts((await getPromptTemplates()).items);
       setError(null);
     } catch (cause) {
-      if (cause instanceof AIHubApiError && cause.status === 401) onSessionExpired();
+      if (cause instanceof OrcaSynapseApiError && cause.status === 401) onSessionExpired();
       else setError(cause instanceof Error ? cause.message : "Unable to load prompt templates.");
     }
   };
@@ -104,7 +104,7 @@ export function PromptsView({ session, onOpenOperations, onOpenSettings, onSessi
       setShowEditor(false);
       await load();
     } catch (cause) {
-      if (cause instanceof AIHubApiError && cause.status === 401) onSessionExpired();
+      if (cause instanceof OrcaSynapseApiError && cause.status === 401) onSessionExpired();
       else setError(cause instanceof Error ? cause.message : "Unable to save the prompt template.");
     } finally {
       setBusy(false);
@@ -130,7 +130,7 @@ export function PromptsView({ session, onOpenOperations, onOpenSettings, onSessi
       setDecision(null);
       await load();
     } catch (cause) {
-      if (cause instanceof AIHubApiError && cause.status === 401) onSessionExpired();
+      if (cause instanceof OrcaSynapseApiError && cause.status === 401) onSessionExpired();
       else setError(cause instanceof Error ? cause.message : "Unable to change the prompt state.");
     } finally {
       setBusy(false);
@@ -140,7 +140,7 @@ export function PromptsView({ session, onOpenOperations, onOpenSettings, onSessi
   if (!session) {
     return <div className="prompts-workspace">
       <header className="prompts-header"><div><p className="page-kicker">Release governance</p><h1>Prompts</h1><p>Versioned runtime instructions backed by promoted evaluation evidence.</p></div></header>
-      <section className="prompts-lock panel"><span className="prompts-lock-mark">P</span><div><strong>Administrator session required</strong><p>Unlock AIHub to review prompt content, checksums, and release evidence.</p></div><button className="primary-button" type="button" onClick={onOpenSettings}>Open platform settings</button></section>
+      <section className="prompts-lock panel"><span className="prompts-lock-mark">P</span><div><strong>Administrator session required</strong><p>Unlock OrcaSynapse to review prompt content, checksums, and release evidence.</p></div><button className="primary-button" type="button" onClick={onOpenSettings}>Open platform settings</button></section>
     </div>;
   }
 
@@ -149,7 +149,7 @@ export function PromptsView({ session, onOpenOperations, onOpenSettings, onSessi
 
   return <div className="prompts-workspace">
     <header className="prompts-header">
-      <div><p className="page-kicker">Release governance</p><h1>Prompts</h1><p>Author, evaluate, and release the exact system instruction used by AIHub chat.</p></div>
+      <div><p className="page-kicker">Release governance</p><h1>Prompts</h1><p>Author, evaluate, and release the exact system instruction used by OrcaSynapse chat.</p></div>
       <div className="prompt-header-actions"><button type="button" onClick={onOpenOperations}>Evaluation evidence</button>{canManage && <button className="primary-button" type="button" onClick={startCreate}>New prompt</button>}</div>
     </header>
 
@@ -161,7 +161,7 @@ export function PromptsView({ session, onOpenOperations, onOpenSettings, onSessi
     </section>
 
     <section className={`prompt-runtime panel ${active ? "active" : activatedBefore ? "blocked" : "staged"}`}>
-      <div><span>Runtime assignment</span><strong>{active ? `${active.displayName} v${active.version} is bound to chat.` : activatedBefore ? "Prompt enforcement is paused and chat fails closed." : "Drafts do not change the built-in chat instruction."}</strong><p>AIHub resolves one active <code>CHAT_SYSTEM</code> prompt before model or guardrail routing. Audit events retain the version and SHA-256 checksum, never a duplicate of the prompt body.</p></div>
+      <div><span>Runtime assignment</span><strong>{active ? `${active.displayName} v${active.version} is bound to chat.` : activatedBefore ? "Prompt enforcement is paused and chat fails closed." : "Drafts do not change the built-in chat instruction."}</strong><p>OrcaSynapse resolves one active <code>CHAT_SYSTEM</code> prompt before model or guardrail routing. Audit events retain the version and SHA-256 checksum, never a duplicate of the prompt body.</p></div>
       {active && <code>{active.contentChecksum.slice(0, 16)}…</code>}
     </section>
 

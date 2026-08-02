@@ -7,7 +7,7 @@ import {
   type ProductionReadiness,
   type ProductionReadinessApproval,
   type ProductionReadinessControl,
-} from "@aihub/contracts";
+} from "@orcasynapse/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.js";
 import { ADMIN_SESSION_COOKIE, type AdminSessionManager } from "../auth/admin-session.js";
@@ -74,7 +74,7 @@ const readinessControl: ProductionReadinessControl = {
   key: "security-threat-model",
   title: "Threat model and security review",
   domain: "SECURITY",
-  description: "MPM Security reviews the intended pilot scope.",
+  description: "OrcaSynapse Security reviews the intended pilot scope.",
   status: "NOT_STARTED",
   owner: null,
   evidenceRefs: [],
@@ -89,7 +89,7 @@ const readinessApproval: ProductionReadinessApproval = {
   id: "c43149d0-a76d-43ee-932e-7a4d527673e8",
   role: "SECURITY",
   decision: "APPROVED",
-  authority: "MPM Security Review Board",
+  authority: "OrcaSynapse Security Review Board",
   evidenceRef: "approval/security/2026-07-30",
   reason: "Approved for the bounded pilot scope.",
   recordedBy: "platform-admin",
@@ -208,7 +208,7 @@ describe("AI operations routes", () => {
     const input = {
       role: "SECURITY",
       decision: "APPROVED",
-      authority: "MPM Security Review Board",
+      authority: "OrcaSynapse Security Review Board",
       evidenceRef: "approval/security/2026-07-30",
       reason: "Approved for the bounded pilot scope.",
     } as const;
@@ -231,7 +231,7 @@ describe("AI operations routes", () => {
       method: "POST",
       url: "/api/v1/admin/operations/readiness/approvals",
       headers: { cookie: `${ADMIN_SESSION_COOKIE}=${TOKEN}` },
-      payload: { role: "SECURITY", decision: "APPROVED", authority: "MPM Security", evidenceRef: "approval/security", reason: "Approved for pilot." },
+      payload: { role: "SECURITY", decision: "APPROVED", authority: "OrcaSynapse Security", evidenceRef: "approval/security", reason: "Approved for pilot." },
     });
     expect(response.statusCode).toBe(409);
     expect(response.json()).toMatchObject({ error: "CONFLICT" });

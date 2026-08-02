@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const SERVICE_KINDS = [
-  "VLLM",
+  "INFERENCE",
   "HERMES",
   "SUPERMEMORY",
   "MCP",
@@ -9,6 +9,15 @@ export const SERVICE_KINDS = [
   "SIEM",
   "NOTIFICATION",
   "OTHER",
+] as const;
+
+export const INFERENCE_BACKENDS = [
+  "VLLM",
+  "LLAMA_CPP",
+  "SGLANG",
+  "OLLAMA",
+  "TGI",
+  "CUSTOM_OPENAI_COMPATIBLE",
 ] as const;
 
 export const ENVIRONMENTS = ["DEVELOPMENT", "STAGING", "PRODUCTION"] as const;
@@ -22,6 +31,7 @@ export const CONNECTION_STATUSES = [
 ] as const;
 
 export const serviceKindSchema = z.enum(SERVICE_KINDS);
+export const inferenceBackendSchema = z.enum(INFERENCE_BACKENDS);
 export const environmentSchema = z.enum(ENVIRONMENTS);
 export const connectionStatusSchema = z.enum(CONNECTION_STATUSES);
 export const serviceConnectionIdentifierSchema = z.uuid();
@@ -63,6 +73,7 @@ const oidcGroupSchema = z.string().trim().min(1).max(200);
 
 export const serviceConnectionConfigurationSchema = z
   .object({
+    inferenceBackend: inferenceBackendSchema.optional(),
     timeoutMs: z.number().int().min(1_000).max(30_000).optional(),
     healthPath: relativeHealthPathSchema.optional(),
     modelsPath: relativeHealthPathSchema.optional(),
@@ -103,7 +114,8 @@ export const serviceConnectionConfigurationSchema = z
   .strict();
 
 const connectionConfigurationSchemas = {
-  VLLM: serviceConnectionConfigurationSchema.pick({
+  INFERENCE: serviceConnectionConfigurationSchema.pick({
+    inferenceBackend: true,
     timeoutMs: true,
     healthPath: true,
     modelsPath: true,
@@ -252,6 +264,46 @@ export const connectionTestResultSchema = z.object({
   details: z.record(z.string(), z.unknown()).default({}),
 });
 
+const inferenceDiscoveryAddressSchema = z.string().trim().min(1).max(2_048)
+  .transform((value) => value.includes("://") ? value : `http://${value}`)
+  .pipe(serviceEndpointSchema);
+
+export const inferenceDiscoveryRequestSchema = z.object({
+  baseUrl: inferenceDiscoveryAddressSchema,
+  connectionId: serviceConnectionIdentifierSchema.optional(),
+  apiKey: z.string().min(1).max(16_384).optional(),
+  timeoutMs: z.number().int().min(1_000).max(30_000).default(8_000),
+}).strict();
+
+export const inferenceDiscoveryProbeSchema = z.object({
+  key: z.string().min(1).max(80),
+  label: z.string().min(1).max(120),
+  path: relativeHealthPathSchema,
+  status: z.enum(["PASSED", "WARNING", "FAILED"]),
+  httpStatus: z.number().int().min(100).max(599).nullable(),
+  latencyMs: z.number().int().nonnegative(),
+  message: z.string().min(1).max(500),
+});
+
+export const inferenceDiscoveryResultSchema = z.object({
+  status: z.enum(["READY", "PARTIAL", "AUTH_REQUIRED", "UNREACHABLE"]),
+  message: z.string().min(1).max(500),
+  normalizedBaseUrl: serviceEndpointSchema,
+  backend: inferenceBackendSchema,
+  backendConfidence: z.enum(["HIGH", "MEDIUM", "LOW"]),
+  backendEvidence: z.array(z.string().min(1).max(300)).max(20),
+  models: z.array(z.object({ id: modelAliasSchema })).max(200),
+  recommended: z.object({
+    baseUrl: serviceEndpointSchema,
+    inferenceBackend: inferenceBackendSchema,
+    healthPath: relativeHealthPathSchema.nullable(),
+    modelsPath: relativeHealthPathSchema,
+    chatPath: relativeHealthPathSchema,
+    modelAlias: modelAliasSchema.nullable(),
+  }),
+  probes: z.array(inferenceDiscoveryProbeSchema).min(1).max(30),
+});
+
 export const connectionMonitoringControlSchema = z.object({
   enabled: z.boolean(),
   intervalSeconds: z.number().int().min(30).max(86_400),
@@ -301,6 +353,7 @@ export const rollbackConfigurationResultSchema = z.object({
 });
 
 export type ServiceKind = z.infer<typeof serviceKindSchema>;
+export type InferenceBackend = z.infer<typeof inferenceBackendSchema>;
 export type Environment = z.infer<typeof environmentSchema>;
 export type ConnectionStatus = z.infer<typeof connectionStatusSchema>;
 export type ServiceConnectionConfiguration = z.infer<
@@ -311,6 +364,9 @@ export type CreateServiceConnection = z.infer<typeof createServiceConnectionSche
 export type UpdateServiceConnection = z.infer<typeof updateServiceConnectionSchema>;
 export type ServiceConnectionList = z.infer<typeof serviceConnectionListSchema>;
 export type ConnectionTestResult = z.infer<typeof connectionTestResultSchema>;
+export type InferenceDiscoveryRequest = z.infer<typeof inferenceDiscoveryRequestSchema>;
+export type InferenceDiscoveryProbe = z.infer<typeof inferenceDiscoveryProbeSchema>;
+export type InferenceDiscoveryResult = z.infer<typeof inferenceDiscoveryResultSchema>;
 export type ConnectionMonitoringControl = z.infer<typeof connectionMonitoringControlSchema>;
 export type UpdateConnectionMonitoringControl = z.infer<typeof updateConnectionMonitoringControlSchema>;
 export type ConfigurationRevisionSummary = z.infer<

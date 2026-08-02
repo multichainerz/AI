@@ -2,6 +2,7 @@ import type {
   CreateHermesNodeInvitation,
   EnrollHermesNode,
   HermesNodeEnrollmentResult,
+  HermesNodeEnrollmentBundle,
   HermesNodeHeartbeat,
   HermesNodeHeartbeatResult,
   HermesNodeInvitation,
@@ -9,7 +10,7 @@ import type {
   MutateHermesRuntimeNode,
   RegisterHermesNodeMemory,
   RegisterHermesNodeMemoryResult,
-} from "@aihub/contracts";
+} from "@orcasynapse/contracts";
 import type { AdminPrincipal } from "../auth/admin-session.js";
 
 export interface NodeSignatureHeaders {
@@ -21,6 +22,7 @@ export interface NodeSignatureHeaders {
 export interface HermesRuntimeNodeManager {
   list(): Promise<HermesRuntimeNode[]>;
   createInvitation(principal: AdminPrincipal, input: CreateHermesNodeInvitation): Promise<HermesNodeInvitation>;
+  resolveInvitation(token: string): Promise<HermesNodeEnrollmentBundle>;
   enroll(input: EnrollHermesNode, sourceIp?: string): Promise<HermesNodeEnrollmentResult>;
   heartbeat(
     nodeId: string,

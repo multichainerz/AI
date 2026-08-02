@@ -13,7 +13,7 @@ import type {
   ToolStatus,
   UpdateToolRuntimeControl,
   UpsertToolGrant,
-} from "@aihub/contracts";
+} from "@orcasynapse/contracts";
 
 export interface ToolingPrincipal {
   id: string;
@@ -72,7 +72,7 @@ export class ToolingConflictError extends Error {
 }
 
 export class ToolingDeniedError extends Error {
-  constructor(message = "The governed tool invocation was denied by current AIHub policy.") {
+  constructor(message = "The governed tool invocation was denied by current OrcaSynapse policy.") {
     super(message);
     this.name = "ToolingDeniedError";
   }

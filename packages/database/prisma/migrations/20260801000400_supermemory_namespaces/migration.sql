@@ -1,3 +1,3 @@
 UPDATE "DocumentMemoryPublication"
-SET "scopeTag" = 'mpm-knowledge'
-WHERE "scopeTag" <> 'mpm-knowledge';
+SET "scopeTag" = 'orcasynapse-knowledge'
+WHERE "scopeTag" <> 'orcasynapse-knowledge';

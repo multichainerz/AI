@@ -11,8 +11,8 @@ import {
   type CreateChatConversation,
   type UpdateChatConversation,
   type SetChatFeedback,
-} from "@aihub/contracts";
-import { Prisma, type AIHubPrismaClient } from "@aihub/database";
+} from "@orcasynapse/contracts";
+import { Prisma, type OrcaSynapsePrismaClient } from "@orcasynapse/database";
 import type { ConnectionDiagnosticStore, ResolvedConnection } from "../connections/diagnostics/types.js";
 import {
   ChatConfigurationError,
@@ -33,7 +33,7 @@ import type { KnowledgeRetriever } from "./knowledge-retriever.js";
 import { inspectInputText } from "../guardrails/runtime-policy.js";
 
 const LEGACY_SYSTEM_INSTRUCTION =
-  "You are the MPM AIHub assistant. Be accurate, concise, and explicit about uncertainty. " +
+  "You are the OrcaSynapse assistant. Be accurate, concise, and explicit about uncertainty. " +
   "Do not claim to have used tools, enterprise data, or current external information unless that context is present in the conversation.";
 const MAX_CONTEXT_MESSAGES = 40;
 const MAX_CONTEXT_CHARACTERS = 120_000;
@@ -171,7 +171,7 @@ export async function acquireChatRateLimitLock(
   subject: string,
 ): Promise<void> {
   await transaction.$executeRaw`
-    SELECT pg_advisory_xact_lock(hashtext(${`aihub-chat:${subject}`}))
+    SELECT pg_advisory_xact_lock(hashtext(${`orcasynapse-chat:${subject}`}))
   `;
 }
 
@@ -188,7 +188,7 @@ function numberSetting(
 
 export class PrismaChatManager implements ChatManager {
   constructor(
-    private readonly prisma: AIHubPrismaClient,
+    private readonly prisma: OrcaSynapsePrismaClient,
     private readonly connectionStore: ConnectionDiagnosticStore,
     private readonly client = new OpenAICompatibleInferenceClient(),
     private readonly knowledgeRetriever?: KnowledgeRetriever,
@@ -218,7 +218,7 @@ export class PrismaChatManager implements ChatManager {
     const runtime = await this.resolveInference();
     if (input.modelAlias && input.modelAlias !== runtime.modelAlias) {
       throw new ChatConfigurationError(
-        `Model '${input.modelAlias}' is not available through the active AIHub route.`,
+        `Model '${input.modelAlias}' is not available through the active OrcaSynapse route.`,
       );
     }
     const conversation = await this.prisma.$transaction(async (transaction) => {
@@ -386,7 +386,7 @@ export class PrismaChatManager implements ChatManager {
       }
       if (conversation.modelAlias !== runtime.modelAlias) {
         throw new ChatConfigurationError(
-          `Model '${conversation.modelAlias}' is no longer assigned to the active vLLM route.`,
+          `Model '${conversation.modelAlias}' is no longer assigned to the active inference route.`,
         );
       }
       const generation = conversation.generation + 1;
@@ -441,7 +441,7 @@ export class PrismaChatManager implements ChatManager {
             connectionId: runtime.connectionId,
             guardrailPolicyId: runtime.guardrailPolicyId,
             guardrailPolicyVersion: runtime.guardrailPolicyVersion,
-            enforcementPlane: "AIHUB",
+            enforcementPlane: "ORCASYNAPSE",
             promptTemplateId: runtime.promptTemplateId,
             promptTemplateVersion: runtime.promptTemplateVersion,
             promptContentChecksum: runtime.promptContentChecksum,
@@ -537,7 +537,7 @@ export class PrismaChatManager implements ChatManager {
               knowledgeSourceCount: sources.length,
               guardrailPolicyId: runtime.guardrailPolicyId,
               guardrailPolicyVersion: runtime.guardrailPolicyVersion,
-              enforcementPlane: "AIHUB",
+              enforcementPlane: "ORCASYNAPSE",
               promptTemplateId: runtime.promptTemplateId,
               promptTemplateVersion: runtime.promptTemplateVersion,
               promptContentChecksum: runtime.promptContentChecksum,
@@ -566,7 +566,7 @@ export class PrismaChatManager implements ChatManager {
         ? "Generation was cancelled."
         : error instanceof InferenceRequestError
           ? error.message
-          : "AIHub could not complete the model response.";
+          : "OrcaSynapse could not complete the model response.";
       await this.prisma.$transaction(async (transaction) => {
         await transaction.chatMessage.updateMany({
           where: { id: assistantMessageId, status: "PENDING" },
@@ -672,26 +672,26 @@ export class PrismaChatManager implements ChatManager {
     const route = routes[0];
     const candidates = await this.prisma.serviceConnection.findMany({
       where: route
-        ? { id: route.connectionId, kind: "VLLM", enabled: true }
-        : { kind: "VLLM", enabled: true },
+        ? { id: route.connectionId, kind: "INFERENCE", enabled: true }
+        : { kind: "INFERENCE", enabled: true },
       orderBy: [{ environment: "desc" }, { updatedAt: "desc" }],
       select: { id: true, status: true },
       take: 2,
     });
     if (candidates.length === 0) {
-      throw new ChatConfigurationError("Configure and enable one vLLM connection before using chat.");
+      throw new ChatConfigurationError("Configure and enable one inference server before using chat.");
     }
     if (candidates.length > 1) {
-      throw new ChatConfigurationError("Exactly one vLLM connection must be enabled for the direct chat route.");
+      throw new ChatConfigurationError("Exactly one inference server must be enabled for the direct chat route.");
     }
     const candidate = candidates[0]!;
     if (candidate.status !== "HEALTHY") {
-      throw new ChatConfigurationError("Test the enabled vLLM connection successfully before using chat.");
+      throw new ChatConfigurationError("Test the enabled inference server successfully before using chat.");
     }
     const connection: ResolvedConnection = await this.connectionStore.resolveForDiagnostic(candidate.id);
     const modelAlias = route?.modelAlias ?? connection.configuration.modelAlias;
     if (!connection.baseUrl || typeof modelAlias !== "string" || modelAlias.length === 0) {
-      throw new ChatConfigurationError("The vLLM endpoint and primary model alias are required for chat.");
+      throw new ChatConfigurationError("The inference server endpoint and primary model alias are required for chat.");
     }
     const chatPath = connection.configuration.chatPath;
     return {

@@ -1,4 +1,4 @@
-import type { ConnectionStatus, ConnectionTestResult, ServiceKind } from "@aihub/contracts";
+import type { ConnectionStatus, ConnectionTestResult, ServiceKind } from "@orcasynapse/contracts";
 import type { AdminActor } from "../connection-manager.js";
 
 export interface ResolvedConnection {

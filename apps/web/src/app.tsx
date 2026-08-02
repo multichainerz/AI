@@ -9,14 +9,17 @@ import type {
   EnterpriseSession,
   OidcStatus,
   ChatMetrics,
-} from "@aihub/contracts";
+  InferenceDiscoveryRequest,
+  InferenceDiscoveryResult,
+} from "@orcasynapse/contracts";
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import {
-  AIHubApiError,
+  OrcaSynapseApiError,
   changeLocalAdministratorPassword,
   createInstallationKeyRecoverySession,
   createLocalAdministratorSession,
   createConnection,
+  discoverInferenceServer,
   getAdministratorSession,
   getEnterpriseSession,
   getOidcStatus,
@@ -103,6 +106,19 @@ function Glyph({ name }: { name: string }) {
   return <svg viewBox="0 0 24 24" aria-hidden="true">{glyphs[name]}</svg>;
 }
 
+function OrcaSynapseMark() {
+  return (
+    <svg viewBox="0 0 32 32" aria-hidden="true">
+      <path d="M7 20.5c2.2-7 7-10.2 14.5-9.8 2.5.2 4.5 1 6 2.4-2.4.2-4.4 1.1-5.8 2.8-2.3 2.7-5.1 4.4-8.4 5.2-2.2.5-4.3.3-6.3-.6Z" />
+      <path d="M21.2 10.8c.2-2 1.3-3.6 3.2-4.8.2 2.3-.5 4.2-2.1 5.7" />
+      <circle cx="10" cy="13.4" r="1.4" />
+      <circle cx="16.1" cy="9.4" r="1.2" />
+      <circle cx="22.7" cy="16.2" r="1.2" />
+      <path className="synapse-link" d="m10.9 12.4 4.2-2.3m2.2.1 4.4 5.1" />
+    </svg>
+  );
+}
+
 function connectionState(connection: ServiceConnectionSummary | undefined) {
   if (!connection) return { label: "Not configured", tone: "unconfigured" };
   if (!connection.enabled) return { label: "Saved, disabled", tone: "disabled" };
@@ -131,7 +147,7 @@ function App() {
   const [managedConnections, setManagedConnections] = useState<ServiceConnectionSummary[]>([]);
   const [connectionMonitoring, setConnectionMonitoring] = useState<ConnectionMonitoringControl | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [drawerKind, setDrawerKind] = useState<ServiceKind>("VLLM");
+  const [drawerKind, setDrawerKind] = useState<ServiceKind>("INFERENCE");
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [diagnostic, setDiagnostic] = useState<ConnectionTestResult | null>(null);
@@ -228,7 +244,7 @@ function App() {
           }
         } catch (error) {
           if (active && sessionGeneration.current === generation) {
-            if (error instanceof AIHubApiError && error.status === 401) {
+            if (error instanceof OrcaSynapseApiError && error.status === 401) {
               setAdminSession(null);
             } else {
               setSettingsError("The administrator session is active, but connections could not be loaded.");
@@ -253,35 +269,83 @@ function App() {
   const healthyConnections = managedConnections.filter(({ status }) => status === "HEALTHY").length;
   const healthyConnection = (kind: ServiceKind) => managedConnections.some((connection) =>
     connection.kind === kind && connection.enabled && connection.status === "HEALTHY");
+  const connectionFor = (kind: ServiceKind) => managedConnections.find((connection) => connection.kind === kind);
+  const inferenceConnection = connectionFor("INFERENCE");
+  const hermesConnection = connectionFor("HERMES");
+  const supermemoryConnection = connectionFor("SUPERMEMORY");
+  const oidcConnection = connectionFor("OIDC");
+  const agenticReady = healthyConnection("HERMES") && healthyConnection("SUPERMEMORY");
+  const agenticConfigured = Boolean(hermesConnection || supermemoryConnection);
+  const agenticState = !unlocked
+    ? { label: "Unlock to view", tone: "disabled" }
+    : agenticReady
+      ? { label: "Healthy", tone: "healthy" }
+      : agenticConfigured
+        ? { label: "Needs attention", tone: "degraded" }
+        : { label: "Not configured", tone: "unconfigured" };
+  const agenticActionKind: ServiceKind = !hermesConnection || !healthyConnection("HERMES") ? "HERMES" : "SUPERMEMORY";
+  const platformLayers = [
+    {
+      key: "inference",
+      name: "AI Inference",
+      role: "Enterprise model serving",
+      mark: "AI",
+      tone: "blue",
+      state: unlocked ? connectionState(inferenceConnection) : { label: "Unlock to view", tone: "disabled" },
+      actionKind: "INFERENCE" as ServiceKind,
+      components: undefined,
+    },
+    {
+      key: "agentic",
+      name: "Agentic System",
+      role: "Hermes execution and Supermemory",
+      mark: "AS",
+      tone: "violet",
+      state: agenticState,
+      actionKind: agenticActionKind,
+      components: unlocked ? [
+        { name: "Hermes", ...connectionState(hermesConnection) },
+        { name: "Memory", ...connectionState(supermemoryConnection) },
+      ] : undefined,
+    },
+    {
+      key: "access",
+      name: "Enterprise Access",
+      role: "OIDC, Microsoft Entra ID and RBAC · tenant isolation planned",
+      mark: "EA",
+      tone: "rose",
+      state: unlocked
+        ? oidcStatus?.configured
+          ? { label: "Configured", tone: "healthy" }
+          : connectionState(oidcConnection)
+        : { label: "Unlock to view", tone: "disabled" },
+      actionKind: "OIDC" as ServiceKind,
+      components: undefined,
+    },
+  ];
   const readinessChecks = [
     {
-      label: "Inference",
-      detail: healthyConnection("VLLM") ? "vLLM route is reachable" : "Connect and verify a vLLM route",
-      ready: healthyConnection("VLLM"),
+      label: "AI Inference",
+      detail: healthyConnection("INFERENCE") ? "Approved model serving is reachable" : "Connect and verify model serving",
+      ready: healthyConnection("INFERENCE"),
       action: "Models" as ActiveView,
     },
     {
-      label: "Agent runtime",
-      detail: healthyConnection("HERMES") ? "Hermes endpoint is reachable" : "Enroll or connect Hermes",
-      ready: healthyConnection("HERMES"),
+      label: "Agentic System",
+      detail: agenticReady ? "Hermes and durable memory are reachable" : "Enroll the Hermes and Supermemory runtime",
+      ready: agenticReady,
       action: "Deployment" as ActiveView,
     },
     {
-      label: "Durable memory",
-      detail: healthyConnection("SUPERMEMORY") ? "Supermemory is reachable" : "Connect Supermemory",
-      ready: healthyConnection("SUPERMEMORY"),
-      action: "Memory" as ActiveView,
-    },
-    {
       label: "Enterprise access",
-      detail: oidcStatus?.configured ? "Enterprise sign-in is configured" : "Configure enterprise OIDC",
+      detail: oidcStatus?.configured ? "Enterprise identity and RBAC are configured" : "Configure OIDC or Microsoft Entra ID",
       ready: oidcStatus?.configured === true,
       action: "Deployment" as ActiveView,
     },
   ];
   const readyWorkloads = readinessChecks.filter(({ ready }) => ready).length;
 
-  const openConnectionSettings = (kind: ServiceKind = "VLLM") => {
+  const openConnectionSettings = (kind: ServiceKind = "INFERENCE") => {
     setDrawerKind(kind);
     setSettingsError(null);
     setDiagnostic(null);
@@ -289,7 +353,7 @@ function App() {
   };
 
   const handleAdminError = (error: unknown, fallback: string): string => {
-    if (error instanceof AIHubApiError && error.status === 401) {
+    if (error instanceof OrcaSynapseApiError && error.status === 401) {
       sessionGeneration.current += 1;
       setAdminSession(null);
     }
@@ -425,6 +489,22 @@ function App() {
     }
   };
 
+  const discoverInference = async (
+    input: InferenceDiscoveryRequest,
+  ): Promise<InferenceDiscoveryResult | null> => {
+    if (!adminSession) return null;
+    setSettingsBusy(true);
+    setSettingsError(null);
+    try {
+      return await discoverInferenceServer(input);
+    } catch (error) {
+      setSettingsError(handleAdminError(error, "Unable to discover the AI Inference endpoint."));
+      return null;
+    } finally {
+      setSettingsBusy(false);
+    }
+  };
+
   const saveConnectionMonitoring = async (input: { enabled: boolean; intervalSeconds: number; reason: string }) => {
     if (!adminSession) return;
     setSettingsBusy(true);
@@ -495,10 +575,10 @@ function App() {
 
   return (
     <div className="app-shell">
-      <aside className="sidebar" aria-label="AIHub navigation">
+      <aside className="sidebar" aria-label="OrcaSynapse navigation">
         <div className="brand">
-          <div className="brand-mark">M</div>
-          <div><strong>MPM AIHub</strong><span>On-prem AI control plane</span></div>
+          <div className="brand-mark"><OrcaSynapseMark /></div>
+          <div><strong>OrcaSynapse</strong><span>On-prem AI control plane</span></div>
         </div>
         <nav aria-label="Primary navigation">
           {navigationGroups.map((group) => (
@@ -539,7 +619,7 @@ function App() {
       </aside>
 
       <main className={activeView === "Chat" ? "chat-page" : undefined}>
-        <div className="mobile-brand"><span className="brand-mark">M</span><strong>MPM AIHub</strong></div>
+        <div className="mobile-brand"><span className="brand-mark"><OrcaSynapseMark /></span><strong>OrcaSynapse</strong></div>
         <Suspense fallback={<section className="view-loading" aria-live="polite"><span className="setup-spinner" />Loading workspace...</section>}>
         {activeView === "Chat" ? (
           <ChatView
@@ -559,7 +639,7 @@ function App() {
           <ModelsView
             session={adminSession}
             connections={managedConnections}
-            onConfigureConnections={() => openConnectionSettings("VLLM")}
+            onConfigureConnections={() => openConnectionSettings("INFERENCE")}
             onOpenOperations={() => selectView("Operations")}
             onSessionExpired={() => {
               sessionGeneration.current += 1;
@@ -570,7 +650,7 @@ function App() {
           <PromptsView
             session={adminSession}
             onOpenOperations={() => selectView("Operations")}
-            onOpenSettings={() => openConnectionSettings("VLLM")}
+            onOpenSettings={() => openConnectionSettings("INFERENCE")}
             onSessionExpired={() => {
               sessionGeneration.current += 1;
               setAdminSession(null);
@@ -624,7 +704,7 @@ function App() {
         ) : activeView === "Guardrails" ? (
           <GuardrailsView
             session={adminSession}
-            onConfigureInference={() => openConnectionSettings("VLLM")}
+            onConfigureInference={() => openConnectionSettings("INFERENCE")}
             onOpenOperations={() => selectView("Operations")}
             onSessionExpired={() => {
               sessionGeneration.current += 1;
@@ -678,43 +758,41 @@ function App() {
             </section>
 
             <section className="metrics" aria-label="Platform summary">
-              <article><span>Configured services</span><strong>{unlocked ? managedConnections.length : "—"}</strong><small>{unlocked ? `${connectionDefinitions.length} supported in this release` : "Unlock to view"}</small></article>
+              <article><span>Configured endpoints</span><strong>{unlocked ? managedConnections.length : "—"}</strong><small>{unlocked ? `${connectionDefinitions.length} managed connectors across 3 layers` : "Unlock to view"}</small></article>
               <article><span>Healthy connections</span><strong>{unlocked ? healthyConnections : "—"}</strong><small>{connectionMonitoring?.enabled ? monitoringCadence(connectionMonitoring.intervalSeconds) : "Credential-aware checks"}</small></article>
-              <article><span>Enabled connections</span><strong>{unlocked ? enabledConnections : "—"}</strong><small>Available to AIHub services</small></article>
+              <article><span>Enabled connections</span><strong>{unlocked ? enabledConnections : "—"}</strong><small>Available to OrcaSynapse services</small></article>
               <article><span>Tool posture</span><strong className="metric-posture">Default deny</strong><small>No access without an explicit grant</small></article>
             </section>
 
             <div className="content-grid">
               <section className="panel connections-panel">
                 <div className="panel-heading">
-                  <div><p className="section-kicker">Infrastructure</p><h2>Service connections</h2><p>Endpoints and credentials are managed in AIHub's encrypted credential store.</p></div>
-                  <button className="text-button" type="button" onClick={() => openConnectionSettings()}>Manage connections</button>
+                  <div><p className="section-kicker">Platform foundation</p><h2>AI operating layers</h2><p>Three layers take the installation from model serving to governed agents and enterprise access.</p></div>
+                  <button className="text-button" type="button" onClick={() => openConnectionSettings()}>Manage platform</button>
                 </div>
                 <div className="connection-list">
-                  {connectionDefinitions.map((definition) => {
-                    const saved = managedConnections.find(({ kind }) => kind === definition.kind);
-                    const state = unlocked ? connectionState(saved) : { label: "Unlock to view", tone: "disabled" };
-                    return (
-                      <article className="connection" key={definition.name}>
-                        <div className={`connection-mark ${definition.tone}`}>{definition.name.slice(0, 2).toUpperCase()}</div>
-                        <div className="connection-copy"><strong>{definition.name}</strong><span>{saved?.baseUrl ?? definition.role}</span></div>
-                        <span className={`connection-status ${state.tone}`}><i />{state.label}</span>
-                        <button type="button" aria-label={`Configure ${definition.name}`} onClick={() => openConnectionSettings(definition.kind)}>{unlocked ? saved ? "Edit" : "Configure" : "Unlock"}</button>
-                      </article>
-                    );
-                  })}
+                  {platformLayers.map((layer) => <article className="connection connection-layer" key={layer.key}>
+                    <div className={`connection-mark ${layer.tone}`}>{layer.mark}</div>
+                    <div className="connection-copy">
+                      <strong>{layer.name}</strong>
+                      <span>{layer.role}</span>
+                      {layer.components && <div className="connection-components">{layer.components.map((component) => <small key={component.name}><i className={component.tone} />{component.name}: {component.label}</small>)}</div>}
+                    </div>
+                    <span className={`connection-status ${layer.state.tone}`}><i />{layer.state.label}</span>
+                    <button type="button" aria-label={`Manage ${layer.name}`} onClick={() => openConnectionSettings(layer.actionKind)}>{unlocked ? layer.state.tone === "unconfigured" ? "Configure" : "Manage" : "Unlock"}</button>
+                  </article>)}
                 </div>
               </section>
 
               <section className="panel architecture-panel">
-                <div className="panel-heading"><div><p className="section-kicker">Runtime trust boundary</p><h2>Target execution path</h2><p>Hermes stays isolated while AIHub mediates identity, policy, model access, and approved integrations.</p></div><span className="phase-tag">Default deny</span></div>
+                <div className="panel-heading"><div><p className="section-kicker">Runtime trust boundary</p><h2>Target execution path</h2><p>Hermes stays isolated while OrcaSynapse mediates identity, policy, model access, and approved integrations.</p></div><span className="phase-tag">Default deny</span></div>
                 <ol className="runtime-flow">
-                  <li><span>1</span><div><strong>AIHub</strong><small>Identity and orchestration</small></div></li>
+                  <li><span>1</span><div><strong>OrcaSynapse</strong><small>Identity and orchestration</small></div></li>
                   <li><span>2</span><div><strong>Hermes</strong><small>Isolated agent runtime</small></div></li>
-                  <li><span>3</span><div><strong>AIHub gateway</strong><small>Model policy and audit</small></div></li>
-                  <li><span>4</span><div><strong>vLLM</strong><small>Local model inference</small></div></li>
+                  <li><span>3</span><div><strong>OrcaSynapse gateway</strong><small>Model policy and audit</small></div></li>
+                  <li><span>4</span><div><strong>AI Inference</strong><small>Approved local model serving</small></div></li>
                 </ol>
-                <div className="boundary-note"><Glyph name="guardrails" /><div><strong>Secrets terminate at AIHub</strong><p>Hermes receives bounded runtime access; database and enterprise connector credentials remain in the control plane.</p></div></div>
+                <div className="boundary-note"><Glyph name="guardrails" /><div><strong>Secrets terminate at OrcaSynapse</strong><p>Hermes receives bounded runtime access; database and enterprise connector credentials remain in the control plane.</p></div></div>
               </section>
 
               <section className="panel readiness-panel">
@@ -760,6 +838,7 @@ function App() {
         }}
         onSave={saveConnection}
         onTest={runConnectionTest}
+        onDiscoverInference={discoverInference}
         onUpdateMonitoring={saveConnectionMonitoring}
         onLogin={loginAdministrator}
         onStartRecovery={startAdministratorRecovery}

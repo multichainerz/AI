@@ -1,5 +1,5 @@
-import type { AIHubPrismaClient } from "@aihub/database";
-import { hashLocalPassword } from "@aihub/security";
+import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
+import { hashLocalPassword } from "@orcasynapse/security";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { InstallationKeyVerifier } from "./installation-key-auth.js";
 import {
@@ -90,7 +90,7 @@ describe("PrismaAdminSessionManager", () => {
       },
       auditEvent: { create: vi.fn(async () => ({})) },
     };
-    const prisma = { $transaction: vi.fn(async (callback: (client: typeof transaction) => unknown) => callback(transaction)) } as unknown as AIHubPrismaClient;
+    const prisma = { $transaction: vi.fn(async (callback: (client: typeof transaction) => unknown) => callback(transaction)) } as unknown as OrcaSynapsePrismaClient;
 
     const issued = await new PrismaAdminSessionManager(prisma, { verify: () => false })
       .createLocalPasswordSession("ADMIN", "temporary-password", { sourceIp: "127.0.0.1" });
@@ -129,13 +129,13 @@ describe("PrismaAdminSessionManager", () => {
     const prisma = {
       $transaction: vi.fn(async (callback: (client: typeof transaction) => unknown) =>
         callback(transaction)),
-    } as unknown as AIHubPrismaClient;
+    } as unknown as OrcaSynapsePrismaClient;
     const authenticator: InstallationKeyVerifier = { verify: (key) => key === "valid-installation-key" };
 
     const issued = await new PrismaAdminSessionManager(prisma, authenticator)
       .createInstallationKeySession("valid-installation-key", {
         sourceIp: "127.0.0.1",
-        userAgent: "AIHub test",
+        userAgent: "OrcaSynapse test",
       });
 
     expect(issued?.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
@@ -171,7 +171,7 @@ describe("PrismaAdminSessionManager", () => {
       },
       auditEvent: { create: vi.fn(async () => ({})) },
     };
-    const prisma = { $transaction: vi.fn(async (callback: (client: typeof transaction) => unknown) => callback(transaction)) } as unknown as AIHubPrismaClient;
+    const prisma = { $transaction: vi.fn(async (callback: (client: typeof transaction) => unknown) => callback(transaction)) } as unknown as OrcaSynapsePrismaClient;
 
     await expect(new PrismaAdminSessionManager(prisma, { verify: (candidate) => candidate === token })
       .createInstallationKeySession(token, {})).resolves.toMatchObject({ principal: { role: "PLATFORM_ADMIN" } });
@@ -191,7 +191,7 @@ describe("PrismaAdminSessionManager", () => {
     };
     const prisma = {
       $transaction: vi.fn(async (callback: (client: typeof transaction) => unknown) => callback(transaction)),
-    } as unknown as AIHubPrismaClient;
+    } as unknown as OrcaSynapsePrismaClient;
     const issued = await new PrismaAdminSessionManager(prisma, { verify: () => false })
       .issueFederatedSession(`oidc:${"b".repeat(64)}`, "AUDITOR", { sourceIp: "127.0.0.1" });
 
@@ -215,7 +215,7 @@ describe("PrismaAdminSessionManager", () => {
         })),
         updateMany,
       },
-    } as unknown as AIHubPrismaClient;
+    } as unknown as OrcaSynapsePrismaClient;
 
     const principal = await new PrismaAdminSessionManager(prisma, { verify: () => false })
       .authenticate(SESSION_TOKEN);
@@ -238,7 +238,7 @@ describe("PrismaAdminSessionManager", () => {
         findUnique: vi.fn(async () => storedSession()),
         updateMany: vi.fn(async () => ({ count: 0 })),
       },
-    } as unknown as AIHubPrismaClient;
+    } as unknown as OrcaSynapsePrismaClient;
 
     const principal = await new PrismaAdminSessionManager(prisma, { verify: () => false })
       .authenticate(SESSION_TOKEN);

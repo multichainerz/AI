@@ -12,7 +12,7 @@ const input = {
   workload: "AGENT" as const,
   connectionId: "5277951c-7d22-4cec-8d46-fad3afba37dd",
   version: "2.1-nvfp4",
-  license: "MPM approved",
+  license: "OrcaSynapse approved",
   contextWindowTokens: 131_072,
   maxOutputTokens: 8_192,
   maxConcurrentRequests: 2,
@@ -43,7 +43,7 @@ describe("model catalogue contracts", () => {
       connection: {
         id: input.connectionId,
         displayName: "vLLM Primary",
-        kind: "VLLM",
+        kind: "INFERENCE",
         environment: "PRODUCTION",
         enabled: true,
         status: "HEALTHY",

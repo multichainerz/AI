@@ -6,10 +6,10 @@ import type {
   OnboardingStepKey,
   ServiceConnectionSummary,
   ServiceKind,
-} from "@aihub/contracts";
+} from "@orcasynapse/contracts";
 import { useEffect, useMemo, useState, type ChangeEvent, type CSSProperties, type FormEvent } from "react";
 import {
-  AIHubApiError,
+  OrcaSynapseApiError,
   completeOnboarding,
   exportCredentialRecoveryKit,
   getOnboardingSnapshot,
@@ -34,12 +34,12 @@ type WorkspaceTab = "journey" | "nodes" | "readiness" | "architecture" | "eviden
 type SetupMode = "quick" | "advanced";
 
 const serviceActions: Partial<Record<string, Array<{ kind: ServiceKind; label: string }>>> = {
-  "identity-recovery": [{ kind: "OIDC", label: "Configure OIDC" }],
+  "identity-recovery": [{ kind: "OIDC", label: "Enterprise Access" }],
   "ai-services": [
-    { kind: "VLLM", label: "vLLM" },
+    { kind: "INFERENCE", label: "AI Inference" },
     { kind: "SUPERMEMORY", label: "Supermemory" },
   ],
-  "hermes-profiles": [{ kind: "HERMES", label: "Hermes connection" }],
+  "hermes-profiles": [{ kind: "HERMES", label: "Hermes runtime" }],
 };
 
 function label(value: string): string {
@@ -89,8 +89,8 @@ export function OnboardingView({ connections, unlocked, oidcConfigured, onConfig
   const [completionReason, setCompletionReason] = useState("The automated gate and recorded external authorities approve this environment activation.");
 
   const fail = (cause: unknown) => {
-    if (cause instanceof AIHubApiError && cause.status === 401) onUnauthorized();
-    setError(cause instanceof Error ? cause.message : "AIHub could not update deployment setup.");
+    if (cause instanceof OrcaSynapseApiError && cause.status === 401) onUnauthorized();
+    setError(cause instanceof Error ? cause.message : "OrcaSynapse could not update deployment setup.");
   };
 
   const applySnapshot = (next: OnboardingSnapshot) => {
@@ -156,7 +156,7 @@ export function OnboardingView({ connections, unlocked, oidcConfigured, onConfig
     setComponentVersion(component.observedVersion ?? "");
     setComponentEvidence(component.evidenceRef ?? "");
     setComponentAuthority("");
-    setComponentNote(component.note ?? "Customer authority supplied evidence for a control AIHub cannot exercise directly.");
+    setComponentNote(component.note ?? "Customer authority supplied evidence for a control OrcaSynapse cannot exercise directly.");
   };
 
   const saveAttestation = async (event: FormEvent) => {
@@ -223,7 +223,7 @@ export function OnboardingView({ connections, unlocked, oidcConfigured, onConfig
     return <section className="setup-locked">
       <div className="setup-lock-symbol" aria-hidden="true">01</div>
       <p className="page-kicker">Administrator access</p>
-      <h1>Sign in to this AIHub installation</h1>
+      <h1>Sign in to this OrcaSynapse installation</h1>
       <p>Use the local administrator account provisioned by the installer. Keep the separate Installation Key offline in your organization vault for account recovery only.</p>
       <div className="setup-lock-actions">
         {oidcConfigured && <button className="primary-button" type="button" onClick={onSignIn}>Sign in with enterprise identity</button>}
@@ -235,10 +235,13 @@ export function OnboardingView({ connections, unlocked, oidcConfigured, onConfig
   const connectionFor = (kind: ServiceKind) => connections.find((connection) => connection.kind === kind);
   const supermemory = connectionFor("SUPERMEMORY");
   const hermes = connectionFor("HERMES");
-  const vllm = connectionFor("VLLM");
+  const inferenceServer = connectionFor("INFERENCE");
+  const enterpriseAccess = connectionFor("OIDC");
   const isHealthy = (connection: ServiceConnectionSummary | undefined) => connection?.enabled === true && connection.status === "HEALTHY";
-  const vllmReady = isHealthy(vllm);
+  const inferenceReady = isHealthy(inferenceServer);
   const supermemoryReady = isHealthy(supermemory);
+  const hermesReady = isHealthy(hermes);
+  const agenticReady = hermesReady && supermemoryReady;
 
   if (setupMode === "quick") {
     const services: Array<{
@@ -252,39 +255,36 @@ export function OnboardingView({ connections, unlocked, oidcConfigured, onConfig
       kind?: ServiceKind;
     }> = [
       {
-        key: "postgresql",
-        name: "PostgreSQL",
-        description: "AIHub configuration, audit records, sessions, and durable jobs",
-        detail: "Installed with the AIHub stack and responding.",
-        state: "Ready",
-        ready: true,
+        key: "inference",
+        name: "AI Inference",
+        description: "Enterprise model serving for Chat and governed agents",
+        detail: inferenceServer?.baseUrl ?? "Choose vLLM, llama.cpp, SGLang, Ollama, TGI, or another OpenAI-compatible endpoint.",
+        state: inferenceReady ? "Healthy" : inferenceServer ? label(inferenceServer.status) : "Not configured",
+        ready: inferenceReady,
+        kind: "INFERENCE",
       },
       {
-        key: "vllm",
-        name: "vLLM",
-        description: "The on-prem model endpoint used by AIHub and Hermes",
-        detail: vllm?.baseUrl ?? "Add the endpoint, served model name, and optional API key.",
-        state: vllmReady ? "Healthy" : vllm ? label(vllm.status) : "Not configured",
-        ready: vllmReady,
-        kind: "VLLM",
-      },
-      {
-        key: "supermemory",
-        name: "Supermemory on the Hermes node",
-        description: "Durable agent memory and normalized document knowledge",
-        detail: supermemory?.baseUrl ?? "Enrolling the isolated Hermes VM installs and registers its local Supermemory service.",
-        state: supermemoryReady ? "Healthy" : supermemory ? label(supermemory.status) : "Not configured",
-        ready: supermemoryReady,
-        kind: "SUPERMEMORY",
-      },
-      {
-        key: "hermes",
-        name: "Hermes",
-        description: "Isolated agent runtime for the full AIHub experience",
-        detail: hermes?.baseUrl ?? "Use the Hermes-node enrollment bundle on the second VM; no standing SSH credential is retained.",
-        state: isHealthy(hermes) ? "Healthy" : hermes ? label(hermes.status) : "Not configured",
-        ready: isHealthy(hermes),
+        key: "agentic",
+        name: "Agentic System",
+        description: "Hermes execution with durable Supermemory",
+        detail: hermes && supermemory
+          ? `Hermes ${label(hermes.status)} · Memory ${label(supermemory.status)}`
+          : "One OrcaSynapse-hosted installer provisions Hermes and Supermemory together on the isolated VM.",
+        state: agenticReady ? "Healthy" : hermes || supermemory ? "Needs attention" : "Not configured",
+        ready: agenticReady,
         kind: "HERMES",
+      },
+      {
+        key: "access",
+        name: "Enterprise Access",
+        description: "OIDC, Microsoft Entra ID and role-based access",
+        detail: oidcConfigured
+          ? enterpriseAccess?.baseUrl ?? "Enterprise sign-in is configured."
+          : "Configure workforce identity now; tenant data isolation remains a planned phase.",
+        state: oidcConfigured ? "Configured" : "Optional",
+        ready: oidcConfigured,
+        optional: true,
+        kind: "OIDC",
       },
     ];
 
@@ -292,8 +292,8 @@ export function OnboardingView({ connections, unlocked, oidcConfigured, onConfig
       <header className="setup-quick-hero">
         <div>
           <p className="page-kicker">Development quick start</p>
-          <h1>Connect vLLM, then enroll the agent runtime</h1>
-          <p>PostgreSQL is already part of AIHub. A healthy vLLM route enables direct Chat; one enrollment installs the isolated Hermes and Supermemory runtime that adds agents and durable knowledge.</p>
+          <h1>AI Inference, Agentic System, Enterprise Access</h1>
+          <p>OrcaSynapse and PostgreSQL are already installed. Connect enterprise model serving, enroll the combined Hermes and Supermemory runtime, then add workforce identity and RBAC.</p>
         </div>
         <button className="secondary-button" type="button" onClick={() => setSetupMode("advanced")}>Production setup</button>
       </header>
@@ -309,32 +309,32 @@ export function OnboardingView({ connections, unlocked, oidcConfigured, onConfig
           <div className="setup-quick-service-action">
             <span className={`document-status ${service.ready ? "ready" : "neutral"}`}>{service.state}</span>
             {service.kind && <button className="text-button" type="button" onClick={() => {
-              if (!service.ready && (service.key === "hermes" || service.key === "supermemory")) {
+              if (!service.ready && service.key === "agentic") {
                 setTab("nodes");
                 setSetupMode("advanced");
                 return;
               }
               onConfigure(service.kind);
-            }}>{service.key === "vllm" && !vllm ? "Configure directly" : service.ready ? "Review" : service.key === "hermes" || service.key === "supermemory" ? "Enroll runtime" : "Configure"}</button>}
+            }}>{service.key === "inference" && !inferenceServer ? "Configure directly" : service.ready ? "Review" : service.key === "agentic" ? "Enroll runtime" : "Configure"}</button>}
           </div>
         </article>)}
       </section>
 
       <section className="setup-quick-launch">
-        <article className={vllmReady ? "ready" : undefined}>
+        <article className={inferenceReady ? "ready" : undefined}>
           <div className="setup-quick-launch-icon" aria-hidden="true">C</div>
-          <div><p className="section-kicker">Workspace</p><h2>Chat</h2><p>Direct Chat can use vLLM immediately. Enroll Hermes for governed agent runs and durable memory; reviewed tools and subagents are a later opt-in.</p></div>
-          <button className="primary-button" type="button" disabled={!vllmReady} onClick={() => onOpenWorkspace("Chat")}>{vllmReady ? "Start chatting" : "Connect vLLM first"}</button>
+          <div><p className="section-kicker">Workspace</p><h2>Chat</h2><p>Direct Chat can use approved AI Inference immediately. Enroll the Agentic System for governed runs and durable memory; reviewed tools and subagents are a later opt-in.</p></div>
+          <button className="primary-button" type="button" disabled={!inferenceReady} onClick={() => onOpenWorkspace("Chat")}>{inferenceReady ? "Start chatting" : "Set up AI Inference first"}</button>
         </article>
         <article className={supermemoryReady ? "ready" : undefined}>
           <div className="setup-quick-launch-icon" aria-hidden="true">D</div>
           <div><p className="section-kicker">Workspace</p><h2>Documents</h2><p>UTF-8 TXT ingestion publishes normalized knowledge to Supermemory. Rich documents and scanned images are not accepted by this release.</p></div>
-          <button className="primary-button" type="button" disabled={!supermemoryReady} onClick={() => onOpenWorkspace("Documents")}>{supermemoryReady ? "Open documents" : "Connect Supermemory first"}</button>
+          <button className="primary-button" type="button" disabled={!supermemoryReady} onClick={() => onOpenWorkspace("Documents")}>{supermemoryReady ? "Open documents" : "Enroll Agentic System first"}</button>
         </article>
       </section>
 
       <aside className="setup-quick-deferred">
-        <div><p className="section-kicker">Deferred without blocking development</p><h2>Production controls remain available when you need them</h2><p>Enterprise OIDC, governed MCP tools, recovery evidence, compatibility attestations, and activation gates remain available in Production setup.</p></div>
+        <div><p className="section-kicker">Deferred without blocking development</p><h2>Production controls remain available when you need them</h2><p>Tenant isolation, governed MCP tools, recovery evidence, compatibility attestations, and activation gates remain available in Production setup.</p></div>
         <button className="text-button" type="button" onClick={() => setSetupMode("advanced")}>Review production controls</button>
       </aside>
     </section>;
@@ -410,7 +410,7 @@ export function OnboardingView({ connections, unlocked, oidcConfigured, onConfig
     {tab === "nodes" && <RuntimeNodesPanel targetEnvironment={architecture.targetEnvironment} onUnauthorized={onUnauthorized} />}
 
     {tab === "readiness" && <div className="setup-contract-groups">
-      <section className="setup-advanced-note"><div><strong>Advanced readiness</strong><p>AIHub-generated checks are authoritative for testable controls. Use external attestation only when the control belongs to a customer authority outside AIHub.</p></div><button className="secondary-button" disabled={busy !== null} type="button" onClick={() => void validate()}>Refresh automated evidence</button></section>
+      <section className="setup-advanced-note"><div><strong>Advanced readiness</strong><p>OrcaSynapse-generated checks are authoritative for testable controls. Use external attestation only when the control belongs to a customer authority outside OrcaSynapse.</p></div><button className="secondary-button" disabled={busy !== null} type="button" onClick={() => void validate()}>Refresh automated evidence</button></section>
       {groupedComponents.map(([category, components]) => <section className="panel" key={category}>
         <div className="document-section-heading"><div><p className="section-kicker">{category}</p><h2>{category} contracts</h2></div><span>{components.filter((item) => item.status === "PASSED").length}/{components.filter((item) => item.required).length || components.length} passed</span></div>
         <div className="setup-contract-list">{components.map((component) => <article key={component.key}>
@@ -424,13 +424,13 @@ export function OnboardingView({ connections, unlocked, oidcConfigured, onConfig
     {tab === "architecture" && <form className="setup-architecture panel" onSubmit={(event) => void saveArchitecture(event)}>
       <div className="document-section-heading"><div><p className="section-kicker">Customer deployment</p><h2>Topology and activation target</h2></div><span>Revision {architecture.revision}</span></div>
       <div className="setup-topology-options">
-        {(["COMPACT", "CONTROL_PLANE", "SEGMENTED_PRODUCTION"] as const).map((mode) => <label className={architecture.topologyMode === mode ? "selected" : undefined} key={mode}><input type="radio" name="topology" checked={architecture.topologyMode === mode} onChange={() => setArchitecture({ ...architecture, topologyMode: mode })}/><span><strong>{mode === "COMPACT" ? "Compact" : mode === "CONTROL_PLANE" ? "Control-plane only" : "Segmented production"}</strong><small>{mode === "COMPACT" ? "One server with a hardened Hermes container. Best for evaluation and smaller installations." : mode === "CONTROL_PLANE" ? "AIHub on this server, connected to customer-operated AI service APIs." : "Separate trust zones for AIHub, Hermes, and inference/GPU services."}</small></span></label>)}
+        {(["COMPACT", "CONTROL_PLANE", "SEGMENTED_PRODUCTION"] as const).map((mode) => <label className={architecture.topologyMode === mode ? "selected" : undefined} key={mode}><input type="radio" name="topology" checked={architecture.topologyMode === mode} onChange={() => setArchitecture({ ...architecture, topologyMode: mode })}/><span><strong>{mode === "COMPACT" ? "Compact" : mode === "CONTROL_PLANE" ? "Control-plane only" : "Segmented production"}</strong><small>{mode === "COMPACT" ? "One server with a hardened Hermes container. Best for evaluation and smaller installations." : mode === "CONTROL_PLANE" ? "OrcaSynapse on this server, connected to customer-operated AI service APIs." : "Separate trust zones for OrcaSynapse, Hermes, and inference/GPU services."}</small></span></label>)}
       </div>
       <div className="setup-architecture-grid">
         <label><span>Activation target</span><select value={architecture.targetEnvironment} onChange={(event) => setArchitecture({ ...architecture, targetEnvironment: event.target.value as ArchitectureDecision["targetEnvironment"] })}><option value="DEVELOPMENT">Development</option><option value="PILOT">Pilot</option><option value="PRODUCTION">Production</option></select><small>Production adds OIDC, complete compatibility, recovery, and approval gates.</small></label>
-        <label><span>Installation path</span><input value="AIHub signed release-bundle installer" readOnly /><small>The installer starts AIHub and PostgreSQL. The dashboard then connects the approved vLLM route and enrolls the isolated Hermes + Supermemory runtime.</small></label>
+        <label><span>Installation path</span><input value="Public OrcaSynapse bootstrap + private runtime enrollment" readOnly /><small>The GitHub bootstrap starts OrcaSynapse and PostgreSQL. The dashboard then connects AI Inference and serves the customer-bound Agentic System installer.</small></label>
       </div>
-      <div className="setup-architecture-note"><strong>Fixed service ownership</strong><p>AIHub owns policy and the inference gateway. vLLM owns model serving. Hermes owns agent execution and uses its scoped Supermemory provider for durable memory. Internal Supermemory storage and embeddings are deployment details, not onboarding choices.</p></div>
+      <div className="setup-architecture-note"><strong>Fixed service ownership</strong><p>OrcaSynapse owns policy and the inference gateway. The selected inference backend owns model serving. Hermes owns agent execution and uses its scoped Supermemory provider for durable memory. Internal Supermemory storage and embeddings are deployment details, not onboarding choices.</p></div>
       <label className="setup-architecture-reason"><span>Decision rationale</span><textarea minLength={3} maxLength={1000} value={architectureReason} onChange={(event) => setArchitectureReason(event.target.value)} /></label>
       <footer><span>Changing topology or target reopens activation and recalculates required contracts.</span><button className="primary-button" disabled={busy !== null || architectureReason.trim().length < 3} type="submit">{busy === "architecture" ? "Saving…" : "Save deployment decision"}</button></footer>
     </form>}
@@ -442,9 +442,9 @@ export function OnboardingView({ connections, unlocked, oidcConfigured, onConfig
 
     {componentEditor && <div className="agent-editor-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setComponentEditor(null); }}><form className="setup-evidence-editor" onSubmit={(event) => void saveAttestation(event)}>
       <header><div><p className="section-kicker">External authority only</p><h2>{componentEditor.displayName}</h2></div><button type="button" aria-label="Close" onClick={() => setComponentEditor(null)}>×</button></header>
-      <p>Use this only when AIHub cannot execute the customer-owned control. Automated validation remains visibly distinct.</p>
+      <p>Use this only when OrcaSynapse cannot execute the customer-owned control. Automated validation remains visibly distinct.</p>
       <label>Decision<select value={componentStatus} onChange={(event) => setComponentStatus(event.target.value as ComponentCompatibilityStatus)}><option value="IN_PROGRESS">In progress</option><option value="PASSED">Passed</option><option value="FAILED">Failed</option><option value="BLOCKED">Blocked</option></select></label>
-      <label>Authority<input value={componentAuthority} maxLength={160} placeholder="MPM Security, Infrastructure, or named owner" onChange={(event) => setComponentAuthority(event.target.value)} /></label>
+      <label>Authority<input value={componentAuthority} maxLength={160} placeholder="OrcaSynapse Security, Infrastructure, or named owner" onChange={(event) => setComponentAuthority(event.target.value)} /></label>
       <label>Observed version<input value={componentVersion} maxLength={240} placeholder="Exact version, revision, or image digest" onChange={(event) => setComponentVersion(event.target.value)} /></label>
       <label>Immutable evidence reference<input value={componentEvidence} maxLength={500} placeholder="Signed report, ticket, or retained evidence URI" onChange={(event) => setComponentEvidence(event.target.value)} /></label>
       <label>Rationale<textarea value={componentNote} minLength={3} maxLength={1000} onChange={(event) => setComponentNote(event.target.value)} /></label>
@@ -453,7 +453,7 @@ export function OnboardingView({ connections, unlocked, oidcConfigured, onConfig
 
     {recoveryOpen && <div className="agent-editor-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setRecoveryOpen(false); }}><section className="setup-evidence-editor setup-recovery-editor">
       <header><div><p className="section-kicker">Off-host recovery</p><h2>Credential-encryption recovery kit</h2></div><button type="button" aria-label="Close" onClick={() => setRecoveryOpen(false)}>×</button></header>
-      <p>The kit is encrypted before it reaches this browser. Store it outside the AIHub server. AIHub stores only its checksum and key fingerprint.</p>
+      <p>The kit is encrypted before it reaches this browser. Store it outside the OrcaSynapse server. OrcaSynapse stores only its checksum and key fingerprint.</p>
       <form onSubmit={(event) => void exportRecovery(event)}>
         <label>Recovery owner<input value={recoveryOwner} minLength={2} maxLength={160} placeholder="Infrastructure recovery team" onChange={(event) => setRecoveryOwner(event.target.value)} /></label>
         <label>Recovery passphrase<input type="password" autoComplete="new-password" value={recoveryPassphrase} minLength={16} maxLength={1024} onChange={(event) => setRecoveryPassphrase(event.target.value)} /></label>
@@ -462,10 +462,10 @@ export function OnboardingView({ connections, unlocked, oidcConfigured, onConfig
         <button className="primary-button" disabled={busy !== null || recoveryOwner.trim().length < 2 || recoveryPassphrase.length < 16 || recoveryPassphrase !== recoveryConfirm} type="submit">{busy === "recovery-export" ? "Encrypting…" : "Export encrypted recovery kit"}</button>
       </form>
       <div className="setup-recovery-divider"><span>Verify retained copy</span></div>
-      <label className="setup-file-field"><span>{recoveryFileName || "Select the recovery kit saved outside AIHub"}</span><input type="file" accept="application/json,.json" onChange={(event) => void selectRecoveryFile(event)} /></label>
+      <label className="setup-file-field"><span>{recoveryFileName || "Select the recovery kit saved outside OrcaSynapse"}</span><input type="file" accept="application/json,.json" onChange={(event) => void selectRecoveryFile(event)} /></label>
       <label>Recovery passphrase<input type="password" autoComplete="off" value={recoveryPassphrase} minLength={16} maxLength={1024} onChange={(event) => setRecoveryPassphrase(event.target.value)} /></label>
       <button className="secondary-button" disabled={busy !== null || !recoveryKit || recoveryPassphrase.length < 16} type="button" onClick={() => void verifyRecovery()}>{busy === "recovery-verify" ? "Verifying…" : "Verify recovery kit"}</button>
-      <small>AIHub never stores the kit or recovery passphrase. Losing every key copy makes encrypted connector credentials unrecoverable.</small>
+      <small>OrcaSynapse never stores the kit or recovery passphrase. Losing every key copy makes encrypted connector credentials unrecoverable.</small>
     </section></div>}
   </section>;
 }

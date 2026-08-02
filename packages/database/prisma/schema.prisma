@@ -10,7 +10,7 @@ datasource db {
 }
 
 enum ServiceKind {
-  VLLM
+  INFERENCE
   HERMES
   SUPERMEMORY
   MCP
@@ -765,6 +765,7 @@ model HermesNodeEnrollment {
   nodeId           String                     @db.Uuid
   tokenHash        Bytes                      @unique
   controlPlaneUrl  String?                    @db.Text
+  hermesImage      String?                    @db.Text
   status           HermesNodeEnrollmentStatus @default(ISSUED)
   expiresAt        DateTime                   @db.Timestamptz(6)
   consumedAt       DateTime?                  @db.Timestamptz(6)

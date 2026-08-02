@@ -8,7 +8,7 @@ import { EncryptedFileSystemDocumentScratchStore } from "./scratch-store.js";
 const roots: string[] = [];
 
 async function fixture() {
-  const root = await mkdtemp(join(tmpdir(), "aihub-scratch-test-"));
+  const root = await mkdtemp(join(tmpdir(), "orcasynapse-scratch-test-"));
   roots.push(root);
   return { root, store: new EncryptedFileSystemDocumentScratchStore(root, Buffer.alloc(32, 7)) };
 }

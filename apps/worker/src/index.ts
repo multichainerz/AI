@@ -1,14 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
-import { createPrismaClient, readBootstrapSecret } from "@aihub/database";
-import { decodeMasterKey, EnvelopeEncryption, RunCapabilityIssuer } from "@aihub/security";
+import { createPrismaClient, readBootstrapSecret } from "@orcasynapse/database";
+import { decodeMasterKey, EnvelopeEncryption, RunCapabilityIssuer } from "@orcasynapse/security";
 import {
   PrismaRuntimeConnectionResolver,
   documentScratchDirectory,
   EncryptedFileSystemDocumentScratchStore,
   HermesClient,
   SupermemoryClient,
-} from "@aihub/document-runtime";
+} from "@orcasynapse/document-runtime";
 import { WorkerRuntime } from "./worker-runtime.js";
 import { PrismaWorkerRegistry } from "./worker-registry.js";
 import { PrismaDocumentProcessor } from "./document-processor.js";
@@ -16,10 +16,10 @@ import { PrismaMemoryProcessor } from "./memory-processor.js";
 import { PrismaAgentProcessor, WorkerAgentKnowledgeRetriever } from "./agent-processor.js";
 import { PrismaToolActionProcessor } from "./tool-action-processor.js";
 
-const databaseUrl = readBootstrapSecret("aihub_database_url");
+const databaseUrl = readBootstrapSecret("orcasynapse_database_url");
 const prisma = createPrismaClient(databaseUrl);
 const workerId = randomUUID();
-const masterKey = decodeMasterKey(readBootstrapSecret("aihub_master_key"));
+const masterKey = decodeMasterKey(readBootstrapSecret("orcasynapse_master_key"));
 const encryption = new EnvelopeEncryption({ masterKey });
 const documentResolver = new PrismaRuntimeConnectionResolver(prisma, encryption);
 const documentStore = new EncryptedFileSystemDocumentScratchStore(documentScratchDirectory(), masterKey);
@@ -59,13 +59,13 @@ const shutdown = async () => {
   try {
     await runtime.stop();
   } catch (error) {
-    console.error("AIHub worker shutdown was incomplete.", error);
+    console.error("OrcaSynapse worker shutdown was incomplete.", error);
     process.exitCode = 1;
   } finally {
     try {
       await prisma.$disconnect();
     } catch (error) {
-      console.error("AIHub worker database disconnect failed.", error);
+      console.error("OrcaSynapse worker database disconnect failed.", error);
       process.exitCode = 1;
     }
   }
@@ -77,9 +77,9 @@ process.once("SIGINT", () => void shutdown());
 try {
   await runtime.start();
 } catch (error) {
-  console.error("AIHub worker failed to start.", error);
+  console.error("OrcaSynapse worker failed to start.", error);
   await prisma.$disconnect().catch((disconnectError) =>
-    console.error("AIHub worker database disconnect failed.", disconnectError),
+    console.error("OrcaSynapse worker database disconnect failed.", disconnectError),
   );
   process.exitCode = 1;
 }

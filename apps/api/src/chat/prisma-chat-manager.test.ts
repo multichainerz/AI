@@ -1,4 +1,4 @@
-import type { AIHubPrismaClient } from "@aihub/database";
+import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
 import { describe, expect, it, vi } from "vitest";
 import type { ConnectionDiagnosticStore } from "../connections/diagnostics/types.js";
 import { ChatConfigurationError, ChatPolicyViolationError } from "./chat-manager.js";
@@ -16,7 +16,7 @@ describe("chat context bounding", () => {
     expect(executeRaw).toHaveBeenCalledTimes(1);
     const call = executeRaw.mock.calls[0];
     expect((call?.[0] as TemplateStringsArray).join(" ")).toContain("pg_advisory_xact_lock");
-    expect(call?.[1]).toBe("aihub-chat:user:pilot");
+    expect(call?.[1]).toBe("orcasynapse-chat:user:pilot");
   });
 
   it("keeps the newest complete messages within the character budget and restores chronology", () => {
@@ -43,7 +43,7 @@ describe("chat context bounding", () => {
         count: vi.fn(async () => 1),
         findMany: vi.fn(async () => []),
       },
-    } as unknown as AIHubPrismaClient;
+    } as unknown as OrcaSynapsePrismaClient;
     const manager = new PrismaChatManager(prisma, {} as ConnectionDiagnosticStore);
 
     await expect(manager.create({
@@ -67,7 +67,7 @@ describe("chat context bounding", () => {
         findMany: vi.fn(async () => []),
       },
       modelDeployment: { count: vi.fn(), findMany: vi.fn() },
-    } as unknown as AIHubPrismaClient;
+    } as unknown as OrcaSynapsePrismaClient;
     const manager = new PrismaChatManager(prisma, {} as ConnectionDiagnosticStore);
 
     await expect(manager.create({
@@ -84,7 +84,7 @@ describe("chat context bounding", () => {
       promptTemplate: { count: vi.fn(async () => 1), findMany: vi.fn(async () => []) },
       guardrailPolicy: { count: vi.fn(), findMany: vi.fn() },
       modelDeployment: { count: vi.fn(), findMany: vi.fn() },
-    } as unknown as AIHubPrismaClient;
+    } as unknown as OrcaSynapsePrismaClient;
     const manager = new PrismaChatManager(prisma, {} as ConnectionDiagnosticStore);
 
     await expect(manager.create({
@@ -117,11 +117,11 @@ describe("chat context bounding", () => {
       serviceConnection: { findMany: vi.fn(async () => [{ id: "5277951c-7d22-4cec-8d46-fad3afba37dd", status: "HEALTHY" }]) },
       chatConversation: { findFirst: vi.fn(async () => ({ id: "814f06ec-7e6f-47f4-93e9-a0c7c0d3acfd" })) },
       auditEvent: { create: auditCreate },
-    } as unknown as AIHubPrismaClient;
+    } as unknown as OrcaSynapsePrismaClient;
     const connections = {
       resolveForDiagnostic: vi.fn(async () => ({
         id: "5277951c-7d22-4cec-8d46-fad3afba37dd",
-        baseUrl: "https://vllm.mpm.internal",
+        baseUrl: "https://vllm.orcasynapse.internal",
         configuration: {},
         secrets: { apiKey: "secret" },
       })),

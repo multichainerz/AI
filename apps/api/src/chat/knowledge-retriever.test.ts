@@ -1,5 +1,5 @@
-import type { AIHubPrismaClient } from "@aihub/database";
-import type { SupermemoryClient } from "@aihub/document-runtime";
+import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
+import type { SupermemoryClient } from "@orcasynapse/document-runtime";
 import { describe, expect, it, vi } from "vitest";
 import { SupermemoryKnowledgeRetriever } from "./knowledge-retriever.js";
 
@@ -16,21 +16,21 @@ describe("SupermemoryKnowledgeRetriever", () => {
           classification: "CONFIDENTIAL",
         }]),
       },
-    } as unknown as AIHubPrismaClient;
+    } as unknown as OrcaSynapsePrismaClient;
     const client = {
       search: vi.fn(async () => [
         {
           externalDocumentId: "sm-allowed",
           score: 0.92,
           title: null,
-          metadata: { aihubDocumentId: ALLOWED_ID },
+          metadata: { orcasynapseDocumentId: ALLOWED_ID },
           chunks: [{ content: "Approved policy excerpt", score: 0.9 }],
         },
         {
           externalDocumentId: "sm-denied",
           score: 0.99,
           title: null,
-          metadata: { aihubDocumentId: DENIED_ID },
+          metadata: { orcasynapseDocumentId: DENIED_ID },
           chunks: [{ content: "Another user's private source", score: 0.99 }],
         },
       ]),

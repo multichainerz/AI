@@ -1,6 +1,6 @@
 import { Readable } from "node:stream";
-import type { AIHubPrismaClient } from "@aihub/database";
-import type { DocumentScratchStore } from "@aihub/document-runtime";
+import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
+import type { DocumentScratchStore } from "@orcasynapse/document-runtime";
 import { describe, expect, it, vi } from "vitest";
 import { DocumentConflictError, DocumentStorageError, DocumentValidationError } from "./document-manager.js";
 import { PrismaDocumentManager } from "./prisma-document-manager.js";
@@ -17,7 +17,7 @@ describe("PrismaDocumentManager upload boundaries", () => {
       }),
       deletePrefix: vi.fn(async () => undefined),
     } as unknown as DocumentScratchStore;
-    const manager = new PrismaDocumentManager({} as AIHubPrismaClient, store);
+    const manager = new PrismaDocumentManager({} as OrcaSynapsePrismaClient, store);
 
     await expect(manager.upload({
       id: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb",
@@ -48,7 +48,7 @@ describe("PrismaDocumentManager deletion boundaries", () => {
           memoryPublication: { status: "PROCESSING" },
         })),
       },
-    } as unknown as AIHubPrismaClient;
+    } as unknown as OrcaSynapsePrismaClient;
     const store = { deletePrefix: vi.fn() } as unknown as DocumentScratchStore;
     const manager = new PrismaDocumentManager(prisma, store);
 
@@ -76,7 +76,7 @@ describe("PrismaDocumentManager deletion boundaries", () => {
         update: vi.fn(async () => ({})),
       },
       auditEvent: { create: vi.fn(async () => ({})) },
-    } as unknown as AIHubPrismaClient;
+    } as unknown as OrcaSynapsePrismaClient;
     const store = {
       deletePrefix: vi.fn(async () => { throw new Error("volume unavailable"); }),
     } as unknown as DocumentScratchStore;
@@ -107,7 +107,7 @@ describe("PrismaDocumentManager quarantine boundaries", () => {
     };
     const prisma = {
       $transaction: vi.fn(async (work: (client: typeof transaction) => unknown) => work(transaction)),
-    } as unknown as AIHubPrismaClient;
+    } as unknown as OrcaSynapsePrismaClient;
     const store = { deletePrefix: vi.fn() } as unknown as DocumentScratchStore;
     const manager = new PrismaDocumentManager(prisma, store);
 

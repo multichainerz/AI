@@ -1,5 +1,5 @@
-import { createPrismaClient, readBootstrapSecret } from "@aihub/database";
-import { hashLocalPassword, localPasswordIsValid } from "@aihub/security";
+import { createPrismaClient, readBootstrapSecret } from "@orcasynapse/database";
+import { hashLocalPassword, localPasswordIsValid } from "@orcasynapse/security";
 
 function argument(name: string): string | undefined {
   const index = process.argv.indexOf(name);
@@ -25,10 +25,10 @@ if (!localPasswordIsValid(password)) {
   throw new Error("The temporary local administrator password is invalid.");
 }
 
-const prisma = createPrismaClient(readBootstrapSecret("aihub_database_url"));
+const prisma = createPrismaClient(readBootstrapSecret("orcasynapse_database_url"));
 try {
   const result = await prisma.$transaction(async (transaction) => {
-    await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`aihub-local-admin:${username}`}, 0))`;
+    await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`orcasynapse-local-admin:${username}`}, 0))`;
     const existing = await transaction.localAdministrator.findUnique({ where: { username } });
     if (existing) return { created: false, username: existing.username };
 

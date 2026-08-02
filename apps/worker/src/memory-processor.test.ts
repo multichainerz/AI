@@ -1,5 +1,5 @@
-import type { AIHubPrismaClient } from "@aihub/database";
-import type { DocumentScratchStore, SupermemoryClient } from "@aihub/document-runtime";
+import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
+import type { DocumentScratchStore, SupermemoryClient } from "@orcasynapse/document-runtime";
 import { describe, expect, it, vi } from "vitest";
 import { PrismaMemoryProcessor } from "./memory-processor.js";
 
@@ -43,7 +43,7 @@ describe("PrismaMemoryProcessor", () => {
       auditEvent: { create: vi.fn(async () => ({})) },
       document: { updateMany: vi.fn(async () => ({ count: 1 })) },
       $transaction: vi.fn(),
-    } as unknown as AIHubPrismaClient;
+    } as unknown as OrcaSynapsePrismaClient;
     const client = {
       publish: vi.fn(async () => "sm-document-1"),
       delete: vi.fn(),
@@ -80,7 +80,7 @@ describe("PrismaMemoryProcessor", () => {
   it("skips a stale generation before making a remote call", async () => {
     const prisma = {
       documentMemoryPublication: { findUnique: vi.fn(async () => publication()) },
-    } as unknown as AIHubPrismaClient;
+    } as unknown as OrcaSynapsePrismaClient;
     const client = {
       publish: vi.fn(),
       delete: vi.fn(),
@@ -105,7 +105,7 @@ describe("PrismaMemoryProcessor", () => {
     };
     const prisma = {
       documentMemoryPublication: { findUnique: vi.fn(async () => deleted) },
-    } as unknown as AIHubPrismaClient;
+    } as unknown as OrcaSynapsePrismaClient;
     const client = {
       publish: vi.fn(),
       delete: vi.fn(),

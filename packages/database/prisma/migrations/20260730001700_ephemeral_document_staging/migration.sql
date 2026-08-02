@@ -1,4 +1,4 @@
--- AIHub no longer owns a durable document object store. Existing object-store
+-- OrcaSynapse no longer owns a durable document object store. Existing object-store
 -- references cannot be carried into encrypted transient staging, so preserve
 -- already-published knowledge and require a fresh source for anything else.
 ALTER TABLE "Document"
@@ -84,7 +84,7 @@ UPDATE "ProductionReadinessControl"
 SET
   "key" = 'recovery-supermemory-restore',
   "title" = 'Supermemory knowledge restore exercise',
-  "description" = 'Durable normalized knowledge is restored in Supermemory and reconciled against PostgreSQL provenance without relying on AIHub transient document staging.',
+  "description" = 'Durable normalized knowledge is restored in Supermemory and reconciled against PostgreSQL provenance without relying on OrcaSynapse transient document staging.',
   "updatedAt" = CURRENT_TIMESTAMP,
   "revision" = "revision" + 1
 WHERE "key" = 'recovery-s3-restore';

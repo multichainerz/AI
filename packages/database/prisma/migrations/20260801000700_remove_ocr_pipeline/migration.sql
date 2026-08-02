@@ -3,7 +3,7 @@ UPDATE "Document"
 SET
   "status" = 'FAILED',
   "failureCode" = 'EXTRACTOR_REMOVED',
-  "failureMessage" = 'Rich-document extraction is not available in this AIHub release.',
+  "failureMessage" = 'Rich-document extraction is not available in this OrcaSynapse release.',
   "completedAt" = NULL
 WHERE "status" IN ('OCR_PENDING', 'OCR_PROCESSING');
 

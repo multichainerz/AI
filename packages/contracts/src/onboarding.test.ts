@@ -16,7 +16,7 @@ describe("onboarding contracts", () => {
     }).success).toBe(false);
     expect(updateComponentCompatibilitySchema.safeParse({
       status: "PASSED", observedVersion: "24.18.0", evidenceRef: "report:node-runtime:42",
-      attestationAuthority: "MPM Infrastructure", note: "Validated in the target deployment.", expectedRevision: 0,
+      attestationAuthority: "OrcaSynapse Infrastructure", note: "Validated in the target deployment.", expectedRevision: 0,
     }).success).toBe(true);
   });
 
@@ -34,14 +34,14 @@ describe("onboarding contracts", () => {
       topologyMode: "SEGMENTED_PRODUCTION", reason: "Isolate the agent runtime from the control plane.", expectedRevision: 2,
     }).success).toBe(true);
     expect(updateArchitectureDecisionSchema.safeParse({ reason: "No actual decision.", expectedRevision: 2 }).success).toBe(false);
-    expect(completeOnboardingSchema.safeParse({ reason: "Evidence accepted by MPM.", expectedRevision: 4 }).success).toBe(true);
+    expect(completeOnboardingSchema.safeParse({ reason: "Evidence accepted by OrcaSynapse.", expectedRevision: 4 }).success).toBe(true);
   });
 
   it("bounds automated validation and customer-held recovery payloads", () => {
     expect(runOnboardingValidationSchema.safeParse({ stageKey: "system-topology" }).success).toBe(true);
     expect(runOnboardingValidationSchema.safeParse({ stageKey: "invented-stage" }).success).toBe(false);
-    expect(exportRecoveryKitSchema.safeParse({ recoveryOwner: "MPM Infrastructure", passphrase: "short", expectedRevision: 0 }).success).toBe(false);
-    expect(exportRecoveryKitSchema.safeParse({ recoveryOwner: "MPM Infrastructure", passphrase: "a-long-customer-held-secret", expectedRevision: 0 }).success).toBe(true);
+    expect(exportRecoveryKitSchema.safeParse({ recoveryOwner: "OrcaSynapse Infrastructure", passphrase: "short", expectedRevision: 0 }).success).toBe(false);
+    expect(exportRecoveryKitSchema.safeParse({ recoveryOwner: "OrcaSynapse Infrastructure", passphrase: "a-long-customer-held-secret", expectedRevision: 0 }).success).toBe(true);
     expect(verifyRecoveryKitSchema.safeParse({ serializedKit: "{}", passphrase: "a-long-customer-held-secret", expectedRevision: 1 }).success).toBe(false);
     expect(verifyRecoveryKitSchema.safeParse({ serializedKit: "{" + "x".repeat(120) + "}", passphrase: "a-long-customer-held-secret", expectedRevision: 1 }).success).toBe(true);
   });

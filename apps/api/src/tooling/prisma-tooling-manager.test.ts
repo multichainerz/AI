@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { AIHubPrismaClient } from "@aihub/database";
+import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
 import { describe, expect, it, vi } from "vitest";
 import { ToolingConflictError, ToolingDeniedError } from "./tooling-manager.js";
 import { PrismaToolingManager } from "./prisma-tooling-manager.js";
@@ -17,11 +17,11 @@ const now = new Date("2026-07-30T00:00:00.000Z");
 function hash(value: string) { return createHash("sha256").update(value).digest(); }
 describe("PrismaToolingManager", () => {
   it("authenticates a revocable gateway credential by prefix and constant-time digest", async () => {
-    const token = `aihub_mcp_${"a".repeat(43)}`;
+    const token = `orcasynapse_mcp_${"a".repeat(43)}`;
     const update = vi.fn(async () => ({}));
     const prisma = { mcpGatewayCredential: {
       findUnique: vi.fn(async () => ({ id: TOOL_ID, enabled: true, revokedAt: null, tokenHash: hash(token) })), update,
-    } } as unknown as AIHubPrismaClient;
+    } } as unknown as OrcaSynapsePrismaClient;
     const manager = new PrismaToolingManager(prisma);
     await expect(manager.authenticateGateway(token)).resolves.toBe(true);
     await expect(manager.authenticateGateway("bad-token")).resolves.toBe(false);
@@ -33,7 +33,7 @@ describe("PrismaToolingManager", () => {
       governedToolCall: { findUnique: vi.fn(async () => null) },
       toolRuntimeControl: { findUnique: vi.fn(async () => ({ enabled: false, reason: "Acceptance pending" })) },
       agentRun: { findUnique: vi.fn() }, governedTool: { findUnique: vi.fn() },
-    } as unknown as AIHubPrismaClient;
+    } as unknown as OrcaSynapsePrismaClient;
     const manager = new PrismaToolingManager(prisma);
     await expect(manager.invoke("document_metadata_read", {
       authorization: `${RUN_ID}.${capability}`, requestId: REQUEST_ID, arguments: { documentId: DOCUMENT_ID },
@@ -54,7 +54,7 @@ describe("PrismaToolingManager", () => {
         version: { toolGrants: [] },
       })) },
       governedTool: { findUnique: vi.fn(async () => null) },
-    } as unknown as AIHubPrismaClient;
+    } as unknown as OrcaSynapsePrismaClient;
     const manager = new PrismaToolingManager(prisma);
 
     await expect(manager.invoke("document_metadata_read", {
@@ -94,7 +94,7 @@ describe("PrismaToolingManager", () => {
       auditEvent: { create: auditCreate },
     };
     prismaBase.$transaction = vi.fn(async (value: unknown) => Array.isArray(value) ? Promise.all(value) : (value as (tx: unknown) => Promise<unknown>)(prismaBase));
-    const manager = new PrismaToolingManager(prismaBase as AIHubPrismaClient);
+    const manager = new PrismaToolingManager(prismaBase as OrcaSynapsePrismaClient);
 
     await expect(manager.listToolsForRun(`${RUN_ID}.${capability}`)).resolves.toMatchObject({
       items: [{ slug: "document_metadata_read" }],
@@ -110,7 +110,7 @@ describe("PrismaToolingManager", () => {
     const prisma = {
       mcpGatewayCredential: { count: vi.fn(async () => 1) }, agentToolGrant: { count: vi.fn(async () => 0) },
       auditEvent: { create: vi.fn(async () => ({})) },
-    } as unknown as AIHubPrismaClient;
+    } as unknown as OrcaSynapsePrismaClient;
     const manager = new PrismaToolingManager(prisma);
     await expect(manager.updateRuntimeControl({ id: SESSION_ID, subject: "admin" }, {
       enabled: true, reason: "Pilot approved", approvalTtlMinutes: 15,
@@ -123,7 +123,7 @@ describe("PrismaToolingManager", () => {
       mcpGatewayCredential: { count: vi.fn(async () => 1) },
       agentToolGrant: { count: vi.fn(async () => 1) },
       auditEvent: { create: auditCreate },
-    } as unknown as AIHubPrismaClient;
+    } as unknown as OrcaSynapsePrismaClient;
     const boundary = { assertGovernedToolBoundary: vi.fn(async () => { throw new Error("unsupported"); }) };
     const manager = new PrismaToolingManager(prisma, boundary);
     await expect(manager.updateRuntimeControl({ id: SESSION_ID, subject: "admin" }, {
@@ -206,7 +206,7 @@ describe("PrismaToolingManager", () => {
       auditEvent: { create: vi.fn(async () => ({})) },
     };
     prismaBase.$transaction = vi.fn(async (callback: (transaction: unknown) => Promise<unknown>) => callback(prismaBase));
-    const manager = new PrismaToolingManager(prismaBase as AIHubPrismaClient);
+    const manager = new PrismaToolingManager(prismaBase as OrcaSynapsePrismaClient);
 
     await expect(manager.decideApproval(
       { id: SESSION_ID, subject: "platform-admin" },
@@ -249,7 +249,7 @@ describe("PrismaToolingManager", () => {
     };
     prismaBase.$transaction = vi.fn(async (callback: (transaction: unknown) => Promise<unknown>) => callback(prismaBase));
 
-    await expect(new PrismaToolingManager(prismaBase as AIHubPrismaClient).decideApproval(
+    await expect(new PrismaToolingManager(prismaBase as OrcaSynapsePrismaClient).decideApproval(
       { id: SESSION_ID, subject: "platform-admin" }, APPROVAL_ID,
       { decision: "APPROVE", reason: "Approved for the pilot." },
     )).rejects.toThrow("originating agent run is no longer authorized");

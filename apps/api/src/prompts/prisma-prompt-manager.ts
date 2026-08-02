@@ -5,8 +5,8 @@ import type {
   PromptTemplate,
   PromptTemplateList,
   UpdatePromptTemplate,
-} from "@aihub/contracts";
-import { Prisma, type AIHubPrismaClient } from "@aihub/database";
+} from "@orcasynapse/contracts";
+import { Prisma, type OrcaSynapsePrismaClient } from "@orcasynapse/database";
 import type { AdminPrincipal } from "../auth/admin-session.js";
 import { PromptConflictError, PromptNotFoundError, type PromptManager } from "./prompt-manager.js";
 
@@ -38,7 +38,7 @@ function dto(prompt: StoredPrompt): PromptTemplate {
 }
 
 export class PrismaPromptManager implements PromptManager {
-  constructor(private readonly prisma: AIHubPrismaClient) {}
+  constructor(private readonly prisma: OrcaSynapsePrismaClient) {}
 
   async list(): Promise<PromptTemplateList> {
     const items = await this.prisma.promptTemplate.findMany({
@@ -82,7 +82,7 @@ export class PrismaPromptManager implements PromptManager {
   async update(principal: AdminPrincipal, id: string, input: UpdatePromptTemplate): Promise<PromptTemplate> {
     return this.prisma.$transaction(async (transaction) => {
       const { expectedRevision, ...changes } = input;
-      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`aihub-prompt:${id}`}, 0))`;
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`orcasynapse-prompt:${id}`}, 0))`;
       const current = await transaction.promptTemplate.findUnique({ where: { id } });
       if (!current) throw new PromptNotFoundError();
       if (current.status === "ACTIVE") {
@@ -126,11 +126,11 @@ export class PrismaPromptManager implements PromptManager {
 
   async activate(principal: AdminPrincipal, id: string, input: ChangePromptTemplateState): Promise<PromptTemplate> {
     return this.prisma.$transaction(async (transaction) => {
-      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`aihub-prompt:${id}`}, 0))`;
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`orcasynapse-prompt:${id}`}, 0))`;
       const current = await transaction.promptTemplate.findUnique({ where: { id } });
       if (!current) throw new PromptNotFoundError();
       if (current.status === "ACTIVE") throw new PromptConflictError("The prompt is already active.");
-      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`aihub-prompt-active:${current.purpose}`}, 0))`;
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`orcasynapse-prompt-active:${current.purpose}`}, 0))`;
       const existing = await transaction.promptTemplate.findFirst({
         where: { purpose: current.purpose, status: "ACTIVE", id: { not: id } },
         select: { displayName: true },
@@ -184,7 +184,7 @@ export class PrismaPromptManager implements PromptManager {
 
   async suspend(principal: AdminPrincipal, id: string, input: ChangePromptTemplateState): Promise<PromptTemplate> {
     return this.prisma.$transaction(async (transaction) => {
-      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`aihub-prompt:${id}`}, 0))`;
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`orcasynapse-prompt:${id}`}, 0))`;
       const current = await transaction.promptTemplate.findUnique({ where: { id } });
       if (!current) throw new PromptNotFoundError();
       if (current.status !== "ACTIVE") throw new PromptConflictError("Only an active prompt can be suspended.");

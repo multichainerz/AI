@@ -1,14 +1,14 @@
 import type {
   DocumentConversionJobPayload,
-} from "@aihub/contracts";
-import { type AIHubPrismaClient } from "@aihub/database";
+} from "@orcasynapse/contracts";
+import { type OrcaSynapsePrismaClient } from "@orcasynapse/database";
 import {
   documentGenerationPrefix,
   documentNormalizedKey,
   documentScratchPrefix,
   sharedKnowledgeScopeTag,
   type DocumentScratchStore,
-} from "@aihub/document-runtime";
+} from "@orcasynapse/document-runtime";
 import { randomUUID } from "node:crypto";
 
 const MAX_NORMALIZED_CHARACTERS = 20_000_000;
@@ -22,7 +22,7 @@ function safeFailure(error: unknown): string {
 
 export class PrismaDocumentProcessor {
   constructor(
-    private readonly prisma: AIHubPrismaClient,
+    private readonly prisma: OrcaSynapsePrismaClient,
     private readonly store: DocumentScratchStore,
   ) {}
 
@@ -96,7 +96,7 @@ export class PrismaDocumentProcessor {
         return { documentId: document.id, generation: payload.generation, pageCount: 1, directText: true };
       }
 
-      throw new Error("Only UTF-8 plain-text documents are supported by this AIHub release.");
+      throw new Error("Only UTF-8 plain-text documents are supported by this OrcaSynapse release.");
     } catch (error) {
       await this.markFailed(payload.documentId, payload.generation, "CONVERSION_FAILED", error, workerId);
       throw error;

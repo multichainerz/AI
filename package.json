@@ -1,5 +1,5 @@
 {
-  "name": "mpm-aihub",
+  "name": "orcasynapse",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -15,17 +15,17 @@
   },
   "scripts": {
     "build": "pnpm -r --if-present build",
-    "dev": "concurrently --kill-others --names api,web \"pnpm --filter @aihub/api dev\" \"pnpm --filter @aihub/web dev\"",
-    "dev:worker": "pnpm --filter @aihub/worker dev",
-    "pretypecheck": "pnpm --filter @aihub/contracts --filter @aihub/database --filter @aihub/security --filter @aihub/document-runtime build",
+    "dev": "concurrently --kill-others --names api,web \"pnpm --filter @orcasynapse/api dev\" \"pnpm --filter @orcasynapse/web dev\"",
+    "dev:worker": "pnpm --filter @orcasynapse/worker dev",
+    "pretypecheck": "pnpm --filter @orcasynapse/contracts --filter @orcasynapse/database --filter @orcasynapse/security --filter @orcasynapse/document-runtime build",
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",
     "verify": "pnpm typecheck && pnpm test && pnpm build && pnpm db:validate",
     "security:audit": "pnpm audit --prod --audit-level high",
     "admin:provision": "node scripts/provision-local-admin.mjs",
-    "db:generate": "pnpm --filter @aihub/database prisma:generate",
-    "db:validate": "pnpm --filter @aihub/database prisma:validate",
-    "verify:postgres": "pnpm --filter @aihub/database verify:postgres"
+    "db:generate": "pnpm --filter @orcasynapse/database prisma:generate",
+    "db:validate": "pnpm --filter @orcasynapse/database prisma:validate",
+    "verify:postgres": "pnpm --filter @orcasynapse/database verify:postgres"
   },
   "devDependencies": {
     "@types/node": "24.13.3",

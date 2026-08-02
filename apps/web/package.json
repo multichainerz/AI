@@ -1,5 +1,5 @@
 {
-  "name": "@aihub/web",
+  "name": "@orcasynapse/web",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -10,7 +10,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@aihub/contracts": "workspace:*",
+    "@orcasynapse/contracts": "workspace:*",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },

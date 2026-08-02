@@ -12,7 +12,7 @@ RUN pnpm install --frozen-lockfile
 COPY apps/web apps/web
 COPY packages/contracts packages/contracts
 
-RUN pnpm --filter @aihub/web... build
+RUN pnpm --filter @orcasynapse/web... build
 
 FROM nginx:1.29-alpine
 

@@ -8,14 +8,14 @@ import type {
   DocumentSummary,
   DocumentUploadMetadata,
   QuarantineDecision,
-} from "@aihub/contracts";
-import { type AIHubPrismaClient } from "@aihub/database";
+} from "@orcasynapse/contracts";
+import { type OrcaSynapsePrismaClient } from "@orcasynapse/database";
 import {
   DOCUMENT_SCRATCH_TTL_MS,
   documentOriginalKey,
   documentScratchPrefix,
   type DocumentScratchStore,
-} from "@aihub/document-runtime";
+} from "@orcasynapse/document-runtime";
 import {
   DocumentConflictError,
   DocumentNotFoundError,
@@ -94,7 +94,7 @@ function cleanFileName(value: string): string {
 function detectedMediaType(sniff: Uint8Array, fileName: string): string {
   const extension = extname(fileName).toLowerCase();
   if (extension === ".txt" && !sniff.includes(0)) return "text/plain";
-  throw new DocumentValidationError("This AIHub release accepts UTF-8 .txt documents only.");
+  throw new DocumentValidationError("This OrcaSynapse release accepts UTF-8 .txt documents only.");
 }
 
 function visibility(principal: DocumentPrincipal) {
@@ -103,7 +103,7 @@ function visibility(principal: DocumentPrincipal) {
 
 export class PrismaDocumentManager implements DocumentManager {
   constructor(
-    private readonly prisma: AIHubPrismaClient,
+    private readonly prisma: OrcaSynapsePrismaClient,
     private readonly store: DocumentScratchStore,
   ) {}
 
@@ -157,7 +157,7 @@ export class PrismaDocumentManager implements DocumentManager {
         await this.store.putStream(stagingKey, measuredUpload);
       } catch (error) {
         if (error instanceof DocumentValidationError) throw error;
-        throw new DocumentStorageError("AIHub could not stage the document for transient processing.");
+        throw new DocumentStorageError("OrcaSynapse could not stage the document for transient processing.");
       }
       if (sizeBytes === 0) throw new DocumentValidationError("Document is empty.");
       const mediaType = detectedMediaType(Buffer.concat(sniffChunks), fileName);
@@ -270,7 +270,7 @@ export class PrismaDocumentManager implements DocumentManager {
             },
           }),
         ]).catch(() => undefined);
-        throw new DocumentStorageError("AIHub rejected the document but could not purge transient staging; cleanup will retry.");
+        throw new DocumentStorageError("OrcaSynapse rejected the document but could not purge transient staging; cleanup will retry.");
       }
       const updated = await this.prisma.document.update({
         where: { id: documentId },
@@ -342,7 +342,7 @@ export class PrismaDocumentManager implements DocumentManager {
           },
         },
       }).catch(() => undefined);
-      throw new DocumentStorageError("AIHub could not purge the transient document staging area.");
+      throw new DocumentStorageError("OrcaSynapse could not purge the transient document staging area.");
     }
     await this.prisma.$transaction([
       this.prisma.document.update({

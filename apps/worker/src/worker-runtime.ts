@@ -1,5 +1,5 @@
-import type { AgentRunJobPayload, DocumentConversionJobPayload, MemoryIndexJobPayload } from "@aihub/contracts";
-import type { AIHubPrismaClient } from "@aihub/database";
+import type { AgentRunJobPayload, DocumentConversionJobPayload, MemoryIndexJobPayload } from "@orcasynapse/contracts";
+import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
 import type { WorkerIdentity, WorkerRegistry } from "./worker-registry.js";
 
 export interface WorkerLogger {
@@ -42,7 +42,7 @@ export class WorkerRuntime {
   private started = false;
 
   constructor(
-    private readonly prisma: AIHubPrismaClient,
+    private readonly prisma: OrcaSynapsePrismaClient,
     private readonly registry: WorkerRegistry,
     private readonly identity: WorkerIdentity,
     private readonly logger: WorkerLogger,

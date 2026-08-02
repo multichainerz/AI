@@ -11,7 +11,7 @@ import {
   updateAgentProfileSchema,
   updateAgentRuntimeControlSchema,
   type AdminScope,
-} from "@aihub/contracts";
+} from "@orcasynapse/contracts";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { adminSessionToken, type AdminSessionManager } from "../auth/admin-session.js";
 import { enterpriseSessionToken, type EnterpriseIdentityManager } from "../identity/enterprise-session.js";
@@ -54,10 +54,10 @@ async function requirePrincipal(
     }
   }
   if (!options.sessionManager && !options.identityManager) {
-    await reply.code(423).send({ error: "PLATFORM_LOCKED", message: "AIHub identity services are not ready." });
+    await reply.code(423).send({ error: "PLATFORM_LOCKED", message: "OrcaSynapse identity services are not ready." });
     return null;
   }
-  await reply.code(401).send({ error: "UNAUTHORIZED", message: "An active AIHub session is required." });
+  await reply.code(401).send({ error: "UNAUTHORIZED", message: "An active OrcaSynapse session is required." });
   return null;
 }
 

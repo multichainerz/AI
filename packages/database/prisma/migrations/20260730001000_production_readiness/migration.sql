@@ -56,8 +56,8 @@ CREATE INDEX "ProductionReadinessApproval_role_recordedAt_idx" ON "ProductionRea
 CREATE INDEX "ProductionReadinessApproval_decision_recordedAt_idx" ON "ProductionReadinessApproval"("decision", "recordedAt");
 
 INSERT INTO "ProductionReadinessControl" ("key", "title", "domain", "description", "updatedAt") VALUES
-  ('security-threat-model', 'Threat model and security review', 'SECURITY', 'MPM Security reviews trust boundaries, data flows, abuse cases, and residual risks for the intended pilot scope.', CURRENT_TIMESTAMP),
-  ('security-dependency-review', 'Dependency and license review', 'SECURITY', 'Production images and JavaScript dependencies are scanned, triaged, and approved under the MPM vulnerability and license policy.', CURRENT_TIMESTAMP),
+  ('security-threat-model', 'Threat model and security review', 'SECURITY', 'OrcaSynapse Security reviews trust boundaries, data flows, abuse cases, and residual risks for the intended pilot scope.', CURRENT_TIMESTAMP),
+  ('security-dependency-review', 'Dependency and license review', 'SECURITY', 'Production images and JavaScript dependencies are scanned, triaged, and approved under the OrcaSynapse vulnerability and license policy.', CURRENT_TIMESTAMP),
   ('security-penetration-test', 'Penetration and adversarial test', 'SECURITY', 'The deployed boundary is tested for authentication, authorization, injection, data exposure, and agent or tool abuse.', CURRENT_TIMESTAMP),
   ('infrastructure-coolify-network-tls', 'Coolify, network, DNS, and TLS validation', 'INFRASTRUCTURE', 'The production topology, internal DNS, TLS termination, segmentation, ingress, egress, and persistent storage are verified.', CURRENT_TIMESTAMP),
   ('recovery-postgresql-restore', 'PostgreSQL restore exercise', 'RECOVERY', 'A representative encrypted PostgreSQL backup is restored and measured against the approved recovery objectives.', CURRENT_TIMESTAMP),

@@ -1,15 +1,15 @@
 # Model Control Runbook
 
-AIHub's Models workspace is the approved workload catalogue. It does not download, load, or reconfigure models on a GPU server.
+OrcaSynapse's Models workspace is the approved workload catalogue. It does not download, load, or reconfigure models on a GPU server.
 
 ## Workloads
 
 | Workload | Serving connection | Use |
 | --- | --- | --- |
-| Chat | vLLM | default route for direct AIHub Chat |
-| Agent | vLLM | alias pinned by the internal gateway for Hermes and Supermemory |
+| Chat | Inference Server | default route for direct OrcaSynapse Chat |
+| Agent | Inference Server | alias pinned by the internal gateway for Hermes and Supermemory |
 
-Chat and Agent routes must use vLLM. Supermemory's local embedding model is a Supermemory deployment concern and does not create an AIHub model route or vector plane.
+Chat and Agent routes must use an approved OpenAI-compatible Inference Server connection. Supermemory's local embedding model is a Supermemory deployment concern and does not create an OrcaSynapse model route or vector plane.
 
 ## Lifecycle
 
@@ -20,15 +20,15 @@ Chat and Agent routes must use vLLM. Supermemory's local embedding model is a Su
 5. Activate with a reason; select one default Chat route and one active Agent route.
 6. Suspend on incident, failed evaluation, or incompatible upstream change.
 
-After first activation for a workload, AIHub fails closed if its governed active route disappears. It does not fall back to a free-form connection alias.
+After first activation for a workload, OrcaSynapse fails closed if its governed active route disappears. It does not fall back to a free-form connection alias.
 
 ## Runtime behavior
 
-Direct Chat uses the active default Chat alias. The internal runtime gateway uses the active Agent alias and replaces any caller-supplied model. It caps requested output tokens to the route and connection limits. The vLLM API key is decrypted only in the API process and is never returned to the browser, Hermes, or Supermemory.
+Direct Chat uses the active default Chat alias. The internal runtime gateway uses the active Agent alias and replaces any caller-supplied model. It caps requested output tokens to the route and connection limits. The upstream inference API key is decrypted only in the API process and is never returned to the browser, Hermes, or Supermemory.
 
 ## Acceptance
 
-Against the exact production vLLM/model build, retain evidence for:
+Against the exact production inference-backend/model build, retain evidence for:
 
 - `/v1/models` and `/v1/chat/completions` compatibility;
 - the exact chat template, reasoning parser, and tool-call parser;

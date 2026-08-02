@@ -7,7 +7,7 @@ function resolver(configuration: Record<string, unknown> = {}): PrismaRuntimeCon
     resolveOne: vi.fn(async () => ({
       id: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb",
       kind: "HERMES",
-      baseUrl: "https://hermes.mpm.internal/",
+      baseUrl: "https://hermes.orcasynapse.internal/",
       configuration,
       secrets: { apiKey: "strong-hermes-key" },
     })),
@@ -45,34 +45,34 @@ describe("HermesClient", () => {
 
   it("accepts governed tools only through the exact private run-context contract", async () => {
     const configured = resolver({
-      governedMcpUrl: "https://aihub.internal/api/v1/mcp/",
-      governedToolsetName: "aihub-governed-tools",
+      governedMcpUrl: "https://orcasynapse.internal/api/v1/mcp/",
+      governedToolsetName: "orcasynapse-governed-tools",
     });
     vi.mocked(configured.resolveOne).mockResolvedValue({
       id: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb",
       kind: "HERMES",
-      baseUrl: "https://hermes.mpm.internal/",
+      baseUrl: "https://hermes.orcasynapse.internal/",
       configuration: {
-        governedMcpUrl: "https://aihub.internal/api/v1/mcp/",
-        governedToolsetName: "aihub-governed-tools",
+        governedMcpUrl: "https://orcasynapse.internal/api/v1/mcp/",
+        governedToolsetName: "orcasynapse-governed-tools",
       },
-      secrets: { apiKey: "strong-hermes-key", mcpGatewayToken: `aihub_mcp_${"g".repeat(43)}` },
+      secrets: { apiKey: "strong-hermes-key", mcpGatewayToken: `orcasynapse_mcp_${"g".repeat(43)}` },
     });
     const fetcher = vi.fn<typeof fetch>(async (input, init) => {
-      if (input.toString().startsWith("https://aihub.internal/")) {
-        expect(init?.headers).toEqual(expect.objectContaining({ authorization: `Bearer aihub_mcp_${"g".repeat(43)}` }));
+      if (input.toString().startsWith("https://orcasynapse.internal/")) {
+        expect(init?.headers).toEqual(expect.objectContaining({ authorization: `Bearer orcasynapse_mcp_${"g".repeat(43)}` }));
         return new Response(JSON.stringify({
-          jsonrpc: "2.0", id: "aihub-hermes-preflight",
-          result: { serverInfo: { name: "mpm-aihub-governed-tools", version: "0.1.0" } },
+          jsonrpc: "2.0", id: "orcasynapse-hermes-preflight",
+          result: { serverInfo: { name: "orcasynapse-governed-tools", version: "0.1.0" } },
         }), { status: 200 });
       }
       return new Response(JSON.stringify(input.toString().endsWith("/v1/capabilities")
         ? {
           ...capabilities,
           runtime: { ...capabilities.runtime, private_context_redacted: true, private_context_prompt_visible: false },
-          features: { ...capabilities.features, private_run_context: "aihub_mcp_headers_v1" },
+          features: { ...capabilities.features, private_run_context: "orcasynapse_mcp_headers_v1" },
         }
-        : { object: "list", platform: "api_server", data: [{ name: "aihub-governed-tools", enabled: true }] }), { status: 200 });
+        : { object: "list", platform: "api_server", data: [{ name: "orcasynapse-governed-tools", enabled: true }] }), { status: 200 });
     });
 
     await expect(new HermesClient(configured, fetcher).assertGovernedToolBoundary()).resolves.toBeUndefined();
@@ -83,7 +83,7 @@ describe("HermesClient", () => {
     const fetcher = vi.fn<typeof fetch>(async (input) => new Response(JSON.stringify(
       input.toString().endsWith("/v1/capabilities")
         ? capabilities
-        : { object: "list", platform: "api_server", data: [{ name: "aihub-governed-tools", enabled: true }] },
+        : { object: "list", platform: "api_server", data: [{ name: "orcasynapse-governed-tools", enabled: true }] },
     ), { status: 200 }));
     await expect(new HermesClient(resolver(), fetcher).assertGovernedToolBoundary()).rejects.toThrow("private, redacted");
   });
@@ -119,48 +119,48 @@ describe("HermesClient", () => {
 
   it("submits governed credentials only in private context, never in model-visible instructions", async () => {
     const configured = resolver({
-      governedMcpUrl: "https://aihub.internal/api/v1/mcp/",
-      governedToolsetName: "aihub-governed-tools",
+      governedMcpUrl: "https://orcasynapse.internal/api/v1/mcp/",
+      governedToolsetName: "orcasynapse-governed-tools",
     });
     vi.mocked(configured.resolveOne).mockResolvedValue({
       id: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb",
       kind: "HERMES",
-      baseUrl: "https://hermes.mpm.internal/",
+      baseUrl: "https://hermes.orcasynapse.internal/",
       configuration: {
-        governedMcpUrl: "https://aihub.internal/api/v1/mcp/",
-        governedToolsetName: "aihub-governed-tools",
+        governedMcpUrl: "https://orcasynapse.internal/api/v1/mcp/",
+        governedToolsetName: "orcasynapse-governed-tools",
       },
-      secrets: { apiKey: "strong-hermes-key", mcpGatewayToken: `aihub_mcp_${"g".repeat(43)}` },
+      secrets: { apiKey: "strong-hermes-key", mcpGatewayToken: `orcasynapse_mcp_${"g".repeat(43)}` },
     });
     const authorization = `8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d.${"r".repeat(43)}`;
     const fetcher = vi.fn<typeof fetch>(async (input, init) => {
-      if (input.toString().startsWith("https://aihub.internal/")) {
+      if (input.toString().startsWith("https://orcasynapse.internal/")) {
         return new Response(JSON.stringify({
-          jsonrpc: "2.0", id: "aihub-hermes-preflight",
-          result: { serverInfo: { name: "mpm-aihub-governed-tools", version: "0.1.0" } },
+          jsonrpc: "2.0", id: "orcasynapse-hermes-preflight",
+          result: { serverInfo: { name: "orcasynapse-governed-tools", version: "0.1.0" } },
         }), { status: 200 });
       }
       if (input.toString().endsWith("/v1/capabilities")) {
         return new Response(JSON.stringify({
           ...capabilities,
           runtime: { ...capabilities.runtime, private_context_redacted: true, private_context_prompt_visible: false },
-          features: { ...capabilities.features, private_run_context: "aihub_mcp_headers_v1" },
+          features: { ...capabilities.features, private_run_context: "orcasynapse_mcp_headers_v1" },
         }), { status: 200 });
       }
       if (input.toString().endsWith("/v1/toolsets")) {
         return new Response(JSON.stringify({
-          object: "list", platform: "api_server", data: [{ name: "aihub-governed-tools", enabled: true }],
+          object: "list", platform: "api_server", data: [{ name: "orcasynapse-governed-tools", enabled: true }],
         }), { status: 200 });
       }
       const body = JSON.parse(String(init?.body));
       expect(body.instructions).toBe("Stay bounded");
       expect(body.instructions).not.toContain(authorization);
       expect(body.private_context).toMatchObject({
-        protocol: "aihub_mcp_headers_v1",
+        protocol: "orcasynapse_mcp_headers_v1",
         mcp: {
-          name: "aihub-governed-tools",
-          url: "https://aihub.internal/api/v1/mcp/",
-          headers: { "aihub-run-authorization": authorization },
+          name: "orcasynapse-governed-tools",
+          url: "https://orcasynapse.internal/api/v1/mcp/",
+          headers: { "orcasynapse-run-authorization": authorization },
         },
       });
       return new Response(JSON.stringify({ run_id: "run_external_1" }), { status: 202 });

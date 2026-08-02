@@ -14,8 +14,8 @@ const SCRYPT_N = 16_384;
 const SCRYPT_R = 8;
 const SCRYPT_P = 1;
 const SCRYPT_MAX_MEMORY = 64 * 1024 * 1024;
-const FORMAT = "AIHUB-CREDENTIAL-RECOVERY";
-const AAD = "aihub:credential-recovery-kit:v1";
+const FORMAT = "ORCASYNAPSE-CREDENTIAL-RECOVERY";
+const AAD = "orcasynapse:credential-recovery-kit:v1";
 
 export interface CredentialRecoveryKitV1 {
   format: typeof FORMAT;
@@ -71,7 +71,7 @@ function deriveKey(passphrase: string, salt: Uint8Array): Promise<Buffer> {
 
 function validateMasterKey(masterKey: Uint8Array): void {
   if (masterKey.byteLength !== KEY_BYTES) {
-    throw new Error("Credential recovery requires the active 32-byte AIHub encryption key.");
+    throw new Error("Credential recovery requires the active 32-byte OrcaSynapse encryption key.");
   }
 }
 
@@ -168,10 +168,10 @@ export async function verifyCredentialRecoveryKit(
     decipher.setAuthTag(authTag);
     recovered = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
     if (recovered.byteLength !== KEY_BYTES || credentialKeyFingerprint(recovered) !== kit.keyFingerprint) {
-      throw new Error("Recovery kit did not yield a valid AIHub encryption key.");
+      throw new Error("Recovery kit did not yield a valid OrcaSynapse encryption key.");
     }
     if (credentialKeyFingerprint(expectedMasterKey) !== kit.keyFingerprint) {
-      throw new Error("Recovery kit does not match the active AIHub encryption key.");
+      throw new Error("Recovery kit does not match the active OrcaSynapse encryption key.");
     }
     return kit;
   } catch {

@@ -170,7 +170,7 @@ export class HermesClient {
     const { toolsets } = await this.assertBaseBoundary(connection);
     for (const toolset of toolsets) {
       if (toolset.enabled) {
-        throw new Error("Hermes has an enabled toolset; AIHub requires a zero-tool boundary for this run.");
+        throw new Error("Hermes has an enabled toolset; OrcaSynapse requires a zero-tool boundary for this run.");
       }
     }
   }
@@ -185,21 +185,21 @@ export class HermesClient {
     const features = capabilities.features as Record<string, unknown>;
     const runtime = capabilities.runtime as Record<string, unknown>;
     if (
-      features.private_run_context !== "aihub_mcp_headers_v1" ||
+      features.private_run_context !== "orcasynapse_mcp_headers_v1" ||
       runtime.private_context_redacted !== true ||
       runtime.private_context_prompt_visible !== false
     ) {
-      throw new Error("Hermes does not advertise AIHub's private, redacted per-run MCP handoff contract.");
+      throw new Error("Hermes does not advertise OrcaSynapse's private, redacted per-run MCP handoff contract.");
     }
     const governedMcpUrl = stringSetting(connection, "governedMcpUrl", "");
-    const governedToolsetName = stringSetting(connection, "governedToolsetName", "aihub-governed-tools");
+    const governedToolsetName = stringSetting(connection, "governedToolsetName", "orcasynapse-governed-tools");
     const gatewayToken = connection.secrets.mcpGatewayToken;
-    if (!governedMcpUrl || !gatewayToken?.startsWith("aihub_mcp_")) {
+    if (!governedMcpUrl || !gatewayToken?.startsWith("orcasynapse_mcp_")) {
       throw new Error("Hermes governed MCP endpoint or gateway credential is not configured.");
     }
     const enabled = toolsets.filter((toolset) => toolset.enabled);
     if (enabled.length !== 1 || enabled[0]?.name !== governedToolsetName) {
-      throw new Error("Hermes must enable exactly the configured AIHub governed toolset and no other toolset.");
+      throw new Error("Hermes must enable exactly the configured OrcaSynapse governed toolset and no other toolset.");
     }
     await this.assertGovernedGateway(connection, governedMcpUrl, gatewayToken);
   }
@@ -246,7 +246,7 @@ export class HermesClient {
         typeof (toolset as { name?: unknown }).name !== "string" ||
         typeof (toolset as { enabled?: unknown }).enabled !== "boolean"
       ) {
-        throw new Error("Hermes toolset discovery contained an unrecognized entry; AIHub denies execution fail-closed.");
+        throw new Error("Hermes toolset discovery contained an unrecognized entry; OrcaSynapse denies execution fail-closed.");
       }
       return toolset as { name: string; enabled: boolean };
     });
@@ -284,9 +284,9 @@ export class HermesClient {
     governedMcp: NonNullable<HermesRunSubmission["governedMcp"]>,
   ): Record<string, unknown> {
     const url = stringSetting(connection, "governedMcpUrl", "");
-    const toolset = stringSetting(connection, "governedToolsetName", "aihub-governed-tools");
+    const toolset = stringSetting(connection, "governedToolsetName", "orcasynapse-governed-tools");
     const gatewayToken = connection.secrets.mcpGatewayToken;
-    if (!url || !gatewayToken?.startsWith("aihub_mcp_")) {
+    if (!url || !gatewayToken?.startsWith("orcasynapse_mcp_")) {
       throw new Error("Hermes governed MCP endpoint or gateway credential is not configured.");
     }
     const parsedUrl = new URL(url);
@@ -294,14 +294,14 @@ export class HermesClient {
       throw new Error("Hermes governed MCP endpoint is invalid.");
     }
     return {
-      protocol: "aihub_mcp_headers_v1",
+      protocol: "orcasynapse_mcp_headers_v1",
       expires_at: governedMcp.expiresAt.toISOString(),
       mcp: {
         name: toolset,
         url: parsedUrl.toString(),
         headers: {
           authorization: `Bearer ${gatewayToken}`,
-          "aihub-run-authorization": governedMcp.authorization,
+          "orcasynapse-run-authorization": governedMcp.authorization,
         },
       },
     };
@@ -331,17 +331,17 @@ export class HermesClient {
         },
         body: JSON.stringify({
           jsonrpc: "2.0",
-          id: "aihub-hermes-preflight",
+          id: "orcasynapse-hermes-preflight",
           method: "initialize",
           params: {
             protocolVersion: "2025-11-25",
             capabilities: {},
-            clientInfo: { name: "aihub-hermes-preflight", version: "1" },
+            clientInfo: { name: "orcasynapse-hermes-preflight", version: "1" },
           },
         }),
       });
       const body = await boundedJson(response);
-      if (!response.ok) throw new Error("AIHub governed MCP gateway rejected the configured Hermes credential.");
+      if (!response.ok) throw new Error("OrcaSynapse governed MCP gateway rejected the configured Hermes credential.");
       const result = body && typeof body === "object" && !Array.isArray(body)
         ? (body as Record<string, unknown>).result
         : null;
@@ -350,9 +350,9 @@ export class HermesClient {
         : null;
       if (
         !serverInfo || typeof serverInfo !== "object" || Array.isArray(serverInfo) ||
-        (serverInfo as Record<string, unknown>).name !== "mpm-aihub-governed-tools"
+        (serverInfo as Record<string, unknown>).name !== "orcasynapse-governed-tools"
       ) {
-        throw new Error("Configured governed MCP endpoint is not the AIHub tool gateway.");
+        throw new Error("Configured governed MCP endpoint is not the OrcaSynapse tool gateway.");
       }
     } finally {
       clearTimeout(timeout);

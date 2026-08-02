@@ -4,10 +4,10 @@ import type {
   ModelDeployment,
   ModelWorkload,
   ServiceConnectionSummary,
-} from "@aihub/contracts";
+} from "@orcasynapse/contracts";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import {
-  AIHubApiError,
+  OrcaSynapseApiError,
   changeModelDeploymentState,
   createModelDeployment,
   getModelDeployments,
@@ -38,8 +38,8 @@ const initialDraft: ModelDraft = {
 };
 
 const connectionKinds: Readonly<Record<ModelWorkload, readonly string[]>> = {
-  CHAT: ["VLLM"],
-  AGENT: ["VLLM"],
+  CHAT: ["INFERENCE"],
+  AGENT: ["INFERENCE"],
 };
 
 function compactNumber(value: number): string {
@@ -80,7 +80,7 @@ export function ModelsView({
       setModels((await getModelDeployments()).items);
       setError(null);
     } catch (loadError) {
-      if (loadError instanceof AIHubApiError && loadError.status === 401) onSessionExpired();
+      if (loadError instanceof OrcaSynapseApiError && loadError.status === 401) onSessionExpired();
       else setError(loadError instanceof Error ? loadError.message : "Unable to load model routes.");
     }
   };
@@ -94,7 +94,7 @@ export function ModelsView({
 
   const startCreate = () => {
     setEditing(null);
-    setDraft({ ...initialDraft, connectionId: connections.find(({ kind }) => kind === "VLLM")?.id ?? "" });
+    setDraft({ ...initialDraft, connectionId: connections.find(({ kind }) => kind === "INFERENCE")?.id ?? "" });
     setShowEditor(true);
     setError(null);
     setMessage(null);
@@ -150,7 +150,7 @@ export function ModelsView({
       setEditing(null);
       await load();
     } catch (saveError) {
-      if (saveError instanceof AIHubApiError && saveError.status === 401) onSessionExpired();
+      if (saveError instanceof OrcaSynapseApiError && saveError.status === 401) onSessionExpired();
       else setError(saveError instanceof Error ? saveError.message : "Unable to save the model route.");
     } finally {
       setBusy(false);
@@ -175,7 +175,7 @@ export function ModelsView({
       setDecision(null);
       await load();
     } catch (decisionError) {
-      if (decisionError instanceof AIHubApiError && decisionError.status === 401) onSessionExpired();
+      if (decisionError instanceof OrcaSynapseApiError && decisionError.status === 401) onSessionExpired();
       else setError(decisionError instanceof Error ? decisionError.message : "Unable to change the model route state.");
     } finally {
       setBusy(false);
@@ -187,7 +187,7 @@ export function ModelsView({
       <header className="models-header"><div><p className="page-kicker">Inference control</p><h1>Models</h1><p>Central model routes, workload assignments, limits, and release evidence.</p></div></header>
       <section className="models-lock panel">
         <span className="models-lock-mark">M</span>
-        <div><strong>Administrator session required</strong><p>Claim or sign in to AIHub to view or change model routes. Serving credentials remain inside the encrypted credential store.</p></div>
+        <div><strong>Administrator session required</strong><p>Claim or sign in to OrcaSynapse to view or change model routes. Serving credentials remain inside the encrypted credential store.</p></div>
         <button className="primary-button" type="button" onClick={onConfigureConnections}>Open platform settings</button>
       </section>
     </div>;
@@ -199,7 +199,7 @@ export function ModelsView({
 
   return <div className="models-workspace">
     <header className="models-header">
-      <div><p className="page-kicker">Inference control</p><h1>Models</h1><p>Approve Chat and Hermes aliases on healthy vLLM connections.</p></div>
+      <div><p className="page-kicker">AI Inference control</p><h1>Models</h1><p>Approve Chat and Hermes aliases on healthy model-serving connections.</p></div>
       <div className="model-header-actions">
         <button type="button" onClick={onOpenOperations}>Evaluation evidence</button>
         {canManage && <button className="primary-button" type="button" onClick={startCreate}>New model route</button>}
@@ -214,7 +214,7 @@ export function ModelsView({
     </section>
 
     <section className="model-boundary panel">
-      <div><span>Control boundary</span><strong>AIHub approves routes; vLLM remains the serving plane.</strong><p>Activation never modifies upstream configuration. The alias must already exist at the selected endpoint and the exact model version must have promoted evaluation evidence.</p></div>
+      <div><span>Control boundary</span><strong>OrcaSynapse approves routes; AI Inference remains the serving plane.</strong><p>Activation never modifies upstream configuration. The alias must already exist at the selected endpoint and the exact model version must have promoted evaluation evidence.</p></div>
       <button type="button" onClick={onConfigureConnections}>Manage serving connections</button>
     </section>
 

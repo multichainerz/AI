@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import type {
   ConnectionMonitoringControl,
   UpdateConnectionMonitoringControl,
-} from "@aihub/contracts";
-import type { AIHubPrismaClient } from "@aihub/database";
+} from "@orcasynapse/contracts";
+import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
 import type { AdminActor } from "./connection-manager.js";
 import type { ConnectionTestService } from "./diagnostics/connection-test-service.js";
 
@@ -31,7 +31,7 @@ export class ConnectionMonitorRuntime implements ConnectionMonitorService {
   private started = false;
 
   constructor(
-    private readonly prisma: AIHubPrismaClient,
+    private readonly prisma: OrcaSynapsePrismaClient,
     private readonly tester: ConnectionTestService,
     private readonly logger: ConnectionMonitorLogger,
     private readonly instanceId: string = randomUUID(),

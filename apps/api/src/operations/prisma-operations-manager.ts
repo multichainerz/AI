@@ -3,8 +3,8 @@ import {
   type RuntimeOperationsSnapshot,
   type RuntimeExecutorSnapshot,
   type RuntimeWorkloadName,
-} from "@aihub/contracts";
-import type { AIHubPrismaClient } from "@aihub/database";
+} from "@orcasynapse/contracts";
+import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
 import type { OperationsManager } from "./operations-manager.js";
 
 const STALE_AFTER_MS = 45_000;
@@ -20,7 +20,7 @@ function isWorkload(value: string): value is RuntimeWorkloadName {
 }
 
 export class PrismaOperationsManager implements OperationsManager {
-  constructor(private readonly prisma: AIHubPrismaClient) {}
+  constructor(private readonly prisma: OrcaSynapsePrismaClient) {}
 
   async start(): Promise<void> {
     await this.prisma.workerNode.deleteMany({

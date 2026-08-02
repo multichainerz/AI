@@ -1,6 +1,6 @@
-import type { ServiceKind } from "@aihub/contracts";
-import type { AIHubPrismaClient } from "@aihub/database";
-import { EnvelopeEncryption } from "@aihub/security";
+import type { ServiceKind } from "@orcasynapse/contracts";
+import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
+import { EnvelopeEncryption } from "@orcasynapse/security";
 
 export interface RuntimeConnection {
   id: string;
@@ -19,7 +19,7 @@ export class RuntimeConnectionError extends Error {
 
 export class PrismaRuntimeConnectionResolver {
   constructor(
-    private readonly prisma: AIHubPrismaClient,
+    private readonly prisma: OrcaSynapsePrismaClient,
     private readonly encryption: EnvelopeEncryption,
   ) {}
 

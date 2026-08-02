@@ -2,9 +2,9 @@
 
 ## Purpose and boundary
 
-AIHub Prompt Control governs the system instruction used by the direct AIHub chat runtime. It does not replace an agent profile's separately versioned Hermes instruction, configure vLLM, or allow prompt text to grant infrastructure, MCP, tool, memory, or data-access permissions.
+OrcaSynapse Prompt Control governs the system instruction used by the direct OrcaSynapse chat runtime. It does not replace an agent profile's separately versioned Hermes instruction, configure the inference server, or allow prompt text to grant infrastructure, MCP, tool, memory, or data-access permissions.
 
-PostgreSQL is the source of truth for prompt content, lifecycle, evaluation binding, operator decisions, and audit provenance. Prompt content must not contain credentials or secret values. Service keys and endpoints remain in AIHub's encrypted credential store.
+PostgreSQL is the source of truth for prompt content, lifecycle, evaluation binding, operator decisions, and audit provenance. Prompt content must not contain credentials or secret values. Service keys and endpoints remain in OrcaSynapse's encrypted credential store.
 
 ## Lifecycle
 
@@ -27,7 +27,7 @@ Activation requires a promoted evaluation with all of the following exact values
 
 Before any prompt has ever been activated, chat uses the built-in system instruction for backward-compatible adoption. The first successful activation permanently enables governed mode. From then on, no active prompt, more than one active prompt, or an inconsistent record makes chat fail closed before model or guardrail resolution.
 
-AIHub places the active prompt before approved retrieval context and conversation history. Runtime audit events retain the prompt identifier, version, and checksum rather than copying the prompt body. The checksum establishes exact-content provenance; it is not a signature or proof of evaluation quality.
+OrcaSynapse places the active prompt before approved retrieval context and conversation history. Runtime audit events retain the prompt identifier, version, and checksum rather than copying the prompt body. The checksum establishes exact-content provenance; it is not a signature or proof of evaluation quality.
 
 Prompt instructions never expand authorization. Identity scopes, local retrieval reauthorization, agent profiles, MCP grants, approvals, model routes, and guardrail policies remain independent enforcement layers.
 

@@ -1,4 +1,4 @@
-import { ADMIN_SCOPES, type EnterpriseSession, type OidcStatus } from "@aihub/contracts";
+import { ADMIN_SCOPES, type EnterpriseSession, type OidcStatus } from "@orcasynapse/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.js";
 import { ADMIN_SESSION_COOKIE } from "../auth/admin-session.js";
@@ -17,7 +17,7 @@ const USER_ID = "fb8c1e58-10d6-4ac7-aafe-e259763a6f63";
 const session: EnterpriseSession = {
   id: SESSION_ID,
   identityMode: "ENTERPRISE",
-  user: { id: USER_ID, displayName: "Pilot User", email: "pilot@mpm.example" },
+  user: { id: USER_ID, displayName: "Pilot User", email: "pilot@orcasynapse.example" },
   scopes: ["chat:use", "documents:use", "agents:use"],
   createdAt: "2026-07-30T00:00:00.000Z",
   idleExpiresAt: "2026-07-30T08:00:00.000Z",
@@ -42,7 +42,7 @@ function memoryIdentityManager(): EnterpriseIdentityManager {
       message: "Enterprise sign-in is configured.",
     })),
     startLogin: vi.fn(async () => ({
-      authorizationUrl: "https://identity.mpm.example/authorize?client_id=aihub",
+      authorizationUrl: "https://identity.orcasynapse.example/authorize?client_id=orcasynapse",
       stateToken: STATE,
     })),
     completeLogin: vi.fn(async () => ({
@@ -88,7 +88,7 @@ describe("enterprise identity routes", () => {
       url: "/api/v1/auth/oidc/start?returnTo=%2F%23chat",
     });
     expect(response.statusCode).toBe(302);
-    expect(response.headers.location).toContain("https://identity.mpm.example/authorize");
+    expect(response.headers.location).toContain("https://identity.orcasynapse.example/authorize");
     expect(response.headers["set-cookie"]).toContain(`${OIDC_STATE_COOKIE}=${STATE}`);
     expect(response.headers["set-cookie"]).toContain("HttpOnly");
     expect(manager.startLogin).toHaveBeenCalledWith("/#chat", expect.any(Object));

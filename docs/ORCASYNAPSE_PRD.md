@@ -1,10 +1,10 @@
-# MPM AIHub Product Requirements
+# OrcaSynapse Product Requirements
 
 ## Product outcome
 
-AIHub gives MPM one on-premises dashboard for local-AI chat, document knowledge, Hermes agents, model routes, policies, integrations, and operational evidence without turning the agent runtime into an infrastructure administrator.
+OrcaSynapse gives an organization one on-premises dashboard for local-AI chat, document knowledge, Hermes agents, model routes, policies, integrations, and operational evidence without turning the agent runtime into an infrastructure administrator.
 
-The product should feel usable after two actions: install AIHub on the control-plane host, then use the dashboard to connect vLLM and enroll the isolated Hermes/Supermemory host.
+The product should feel usable after two actions: install OrcaSynapse on the control-plane host, then use the dashboard to connect an OpenAI-compatible inference server and enroll the isolated Hermes/Supermemory host.
 
 ## Users
 
@@ -22,13 +22,13 @@ The responsive React application provides Chat, Documents, Agents, Models, Guard
 
 ### Chat
 
-AIHub provides streaming Chat through an approved vLLM route. It persists conversations, final responses, token usage, time-to-first-token/latency where available, cancellation/failure state, feedback, and sanitized audit data in PostgreSQL. The browser never receives the vLLM credential.
+OrcaSynapse provides streaming Chat through an approved inference route. It persists conversations, final responses, token usage, time-to-first-token/latency where available, cancellation/failure state, feedback, and sanitized audit data in PostgreSQL. The browser never receives the upstream serving credential.
 
-Agentic Chat and governed tasks use Hermes. AIHub shows run status, projected tool/subagent activity, sources, cancellation, and final output without storing hidden reasoning, raw tool secrets, or unrestricted event payloads.
+Agentic Chat and governed tasks use Hermes. OrcaSynapse shows run status, projected tool/subagent activity, sources, cancellation, and final output without storing hidden reasoning, raw tool secrets, or unrestricted event payloads.
 
 ### Documents and knowledge
 
-AIHub is a content-extraction and publication workflow, not a permanent file server.
+OrcaSynapse is a content-extraction and publication workflow, not a permanent file server.
 
 - Original enterprise systems remain authoritative.
 - Uploaded bytes exist only in encrypted transient staging.
@@ -41,33 +41,33 @@ AIHub is a content-extraction and publication workflow, not a permanent file ser
 
 ### Hermes agents
 
-AIHub manages immutable Profile Distributions: behavior instruction, selected model alias, Skill references, limits, memory policy, tool grants, and guardrails. Profiles move through draft, standby, active, and suspended states with exact-version evidence.
+OrcaSynapse manages immutable Profile Distributions: behavior instruction, selected model alias, Skill references, limits, memory policy, tool grants, and guardrails. Profiles move through draft, standby, active, and suspended states with exact-version evidence.
 
 Hermes runs in an isolated environment and can reach only:
 
-- AIHub's authenticated inference gateway;
+- OrcaSynapse's authenticated inference gateway;
 - its local scoped Supermemory service;
-- the AIHub-governed MCP gateway when an approved profile grants it;
+- the OrcaSynapse-governed MCP gateway when an approved profile grants it;
 - explicitly allowlisted runtime destinations.
 
-AIHub does not give Hermes PostgreSQL credentials, Docker control, host filesystem access, enterprise-storage administration, or unrestricted outbound access.
+OrcaSynapse does not give Hermes PostgreSQL credentials, Docker control, host filesystem access, enterprise-storage administration, or unrestricted outbound access.
 
 ### Memory
 
-Self-hosted Supermemory Local is the semantic-memory plane. Hermes gets a profile-scoped `mpm-agent-{identity}` container. AIHub publishes governed document knowledge to `mpm-knowledge`; Hermes receives that knowledge only through AIHub's authorization boundary.
+Self-hosted Supermemory Local is the semantic-memory plane. Hermes gets a profile-scoped `orcasynapse-agent-{identity}` container. OrcaSynapse publishes governed document knowledge to `orcasynapse-knowledge`; Hermes receives that knowledge only through OrcaSynapse's authorization boundary.
 
-Hermes's native bounded memory remains active alongside Supermemory. AIHub must preserve and document both recovery domains.
+Hermes's native bounded memory remains active alongside Supermemory. OrcaSynapse must preserve and document both recovery domains.
 
 ### Inference and guardrails
 
-vLLM is the only model-serving dependency. AIHub calls it directly and exposes a private OpenAI-compatible gateway to enrolled runtimes. The gateway must:
+One OpenAI-compatible inference server is the only model-serving dependency. The backend may be vLLM, llama.cpp, SGLang, Ollama, TGI, or a custom compatible implementation. OrcaSynapse calls it directly and exposes a private OpenAI-compatible gateway to enrolled runtimes. The gateway must:
 
-- authenticate a node-scoped bearer secret stored encrypted by AIHub;
+- authenticate a node-scoped bearer secret stored encrypted by OrcaSynapse;
 - ignore caller-selected model IDs and pin the active approved Agent alias;
 - enforce bounded messages and token limits;
 - reject configured unsafe control characters and recognizable credential patterns;
 - enforce PostgreSQL-backed request limits;
-- keep the vLLM key server-side;
+- keep the upstream inference key server-side;
 - sanitize upstream failures;
 - support bounded streaming and cancellation.
 
@@ -75,28 +75,28 @@ The initial guardrail layer is deterministic and auditable. Semantic classifiers
 
 ### Operations
 
-AIHub records connection health, model/prompt/policy revisions, evaluations, incidents, durable workflow state, agent runs, document lifecycle, onboarding evidence, and recovery state. Monitoring distinguishes live automated evidence from manual or stale attestations.
+OrcaSynapse records connection health, model/prompt/policy revisions, evaluations, incidents, durable workflow state, agent runs, document lifecycle, onboarding evidence, and recovery state. Monitoring distinguishes live automated evidence from manual or stale attestations.
 
 ## Installation experience
 
-### AIHub host
+### OrcaSynapse host
 
-The signed release-bundle installer starts PostgreSQL, migrations, API, runtime executor, and web with Docker Compose. It provisions a PostgreSQL-backed local administrator with a one-time temporary password, generates a separate credential-encryption master key and offline Installation Key, and requires the customer to replace the password at first sign-in and retain the recovery key in an organizational vault. The dashboard owns routine endpoint and credential entry; OIDC, including Microsoft Entra ID, is an optional post-activation identity layer.
+The public GitHub bootstrap resolves an immutable OrcaSynapse commit and starts PostgreSQL, migrations, API, runtime executor, and web with Docker Compose. It provisions a PostgreSQL-backed local administrator with a one-time temporary password, generates a separate credential-encryption master key and offline Installation Key, and requires the customer to replace the password at first sign-in and retain the recovery key in an organizational vault. The dashboard owns routine endpoint and credential entry; OIDC, including Microsoft Entra ID, is an optional post-activation identity layer. Production publication additionally requires a publisher-signed release manifest and pinned image digests.
 
 ### Agent host
 
-The dashboard creates a short-lived one-use enrollment bundle. The customer executes one script on a clean Debian/Ubuntu VM. The script:
+The dashboard creates a short-lived one-use enrollment claim. The customer downloads one script from their own OrcaSynapse origin and executes it on a clean Debian/Ubuntu VM. The script resolves the non-secret installation profile from OrcaSynapse, then:
 
 1. creates an Ed25519 runtime identity;
 2. starts a constrained official Hermes container;
-3. enrolls it with AIHub;
-4. receives an AIHub inference-gateway route, alias, and node key;
+3. enrolls it with OrcaSynapse;
+4. receives an OrcaSynapse inference-gateway route, alias, and node key;
 5. installs checksum-verified Supermemory Local with local embeddings;
 6. configures Hermes's native Supermemory provider with a profile-scoped tag;
-7. registers Supermemory with AIHub;
+7. registers Supermemory with OrcaSynapse;
 8. enables signed heartbeats.
 
-AIHub retains no SSH password/key and no remote Docker socket. Upgrades use a separately signed/pinned release workflow rather than standing remote administration.
+OrcaSynapse retains no SSH password/key and no remote Docker socket. Upgrades use a separately signed/pinned release workflow rather than standing remote administration.
 
 ## Security requirements
 
@@ -117,7 +117,7 @@ AIHub retains no SSH password/key and no remote Docker socket. Upgrades use a se
 - replacing enterprise document repositories;
 - administering arbitrary GPU hosts or downloading models;
 - implementing a general provider router comparable to LiteLLM;
-- maintaining an AIHub pgvector index or duplicate embedding plane;
+- maintaining an OrcaSynapse pgvector index or duplicate embedding plane;
 - requiring Redis, Valkey, or S3-compatible object storage;
 - exposing unrestricted Hermes capabilities to users;
 - claiming production readiness without customer-environment tests.

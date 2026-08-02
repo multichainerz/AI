@@ -94,7 +94,7 @@ export class OpenAICompatibleInferenceClient {
         throw new Error("Unsupported inference URL.");
       }
     } catch {
-      throw new InferenceRequestError("INVALID_ENDPOINT", "The vLLM endpoint is invalid.");
+      throw new InferenceRequestError("INVALID_ENDPOINT", "The inference server endpoint is invalid.");
     }
 
     const timeoutSignal = AbortSignal.timeout(input.timeoutMs);
@@ -125,10 +125,10 @@ export class OpenAICompatibleInferenceClient {
       if (timeoutSignal.aborted) {
         throw new InferenceRequestError(
           "INFERENCE_TIMEOUT",
-          `vLLM did not complete the response within ${input.timeoutMs} ms.`,
+          `The inference server did not complete the response within ${input.timeoutMs} ms.`,
         );
       }
-      throw new InferenceRequestError("INFERENCE_UNREACHABLE", "vLLM could not be reached.");
+      throw new InferenceRequestError("INFERENCE_UNREACHABLE", "The inference server could not be reached.");
     }
 
     if (!response.ok) {
@@ -140,14 +140,14 @@ export class OpenAICompatibleInferenceClient {
       throw new InferenceRequestError(
         code,
         response.status === 429
-          ? "vLLM is currently at its request limit."
+          ? "The inference server is currently at its request limit."
           : response.status === 401 || response.status === 403
-            ? "vLLM rejected the configured credential."
-            : `vLLM rejected the request with status ${response.status}.`,
+            ? "The inference server rejected the configured credential."
+            : `The inference server rejected the request with status ${response.status}.`,
       );
     }
     if (!response.body) {
-      throw new InferenceRequestError("INFERENCE_EMPTY_STREAM", "vLLM returned no response stream.");
+      throw new InferenceRequestError("INFERENCE_EMPTY_STREAM", "The inference server returned no response stream.");
     }
 
     const reader = response.body.getReader();
@@ -171,7 +171,7 @@ export class OpenAICompatibleInferenceClient {
       } catch {
         throw new InferenceRequestError(
           "INFERENCE_INVALID_STREAM",
-          "vLLM returned a malformed streaming response.",
+          "The inference server returned a malformed streaming response.",
         );
       }
       const chunk = parseChunk(parsed);
@@ -179,7 +179,7 @@ export class OpenAICompatibleInferenceClient {
         if (content.length + chunk.delta.length > maxResponseCharacters) {
           throw new InferenceRequestError(
             "INFERENCE_RESPONSE_TOO_LARGE",
-            "The model response exceeded AIHub's configured safety limit.",
+            "The model response exceeded OrcaSynapse's configured safety limit.",
           );
         }
         content += chunk.delta;
@@ -206,13 +206,13 @@ export class OpenAICompatibleInferenceClient {
       if (timeoutSignal.aborted) {
         throw new InferenceRequestError(
           "INFERENCE_TIMEOUT",
-          `vLLM did not complete the response within ${input.timeoutMs} ms.`,
+          `The inference server did not complete the response within ${input.timeoutMs} ms.`,
         );
       }
       if (error instanceof InferenceRequestError) throw error;
       throw new InferenceRequestError(
         "INFERENCE_STREAM_INTERRUPTED",
-        "The vLLM response stream ended unexpectedly.",
+        "The inference server response stream ended unexpectedly.",
       );
     } finally {
       reader.releaseLock();
@@ -221,7 +221,7 @@ export class OpenAICompatibleInferenceClient {
     if (!content) {
       throw new InferenceRequestError(
         "INFERENCE_EMPTY_RESPONSE",
-        "vLLM completed without returning assistant content.",
+        "The inference server completed without returning assistant content.",
       );
     }
 

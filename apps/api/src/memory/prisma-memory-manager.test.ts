@@ -1,4 +1,4 @@
-import type { AIHubPrismaClient } from "@aihub/database";
+import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
 import { describe, expect, it, vi } from "vitest";
 import { PrismaMemoryManager } from "./prisma-memory-manager.js";
 
@@ -21,7 +21,7 @@ function harness(status: "READY" | "DELETED") {
     },
     auditEvent: { create: vi.fn(async () => ({})) },
     $transaction: vi.fn(async (actions: Array<Promise<unknown>>) => Promise.all(actions)),
-  } as unknown as AIHubPrismaClient;
+  } as unknown as OrcaSynapsePrismaClient;
   return { prisma, manager: new PrismaMemoryManager(prisma) };
 }
 

@@ -5,7 +5,7 @@ import type {
   RollbackConfigurationResult,
   ServiceConnectionSummary,
   UpdateServiceConnection,
-} from "@aihub/contracts";
+} from "@orcasynapse/contracts";
 
 export interface AdminActor {
   id: string;

@@ -6,4 +6,4 @@ export function createPrismaClient(connectionString: string): PrismaClient {
   return new PrismaClient({ adapter });
 }
 
-export type AIHubPrismaClient = PrismaClient;
+export type OrcaSynapsePrismaClient = PrismaClient;

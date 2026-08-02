@@ -3,22 +3,22 @@ import { fileURLToPath } from "node:url";
 import pg from "pg";
 
 const { Client } = pg;
-const configuredUrl = process.env.AIHUB_INTEGRATION_DATABASE_URL?.trim();
+const configuredUrl = process.env.ORCASYNAPSE_INTEGRATION_DATABASE_URL?.trim();
 if (!configuredUrl) {
-  throw new Error("AIHUB_INTEGRATION_DATABASE_URL must point to a disposable PostgreSQL integration database.");
+  throw new Error("ORCASYNAPSE_INTEGRATION_DATABASE_URL must point to a disposable PostgreSQL integration database.");
 }
 
 const baseUrl = new URL(configuredUrl);
 if (!new Set(["postgres:", "postgresql:"]).has(baseUrl.protocol)) {
-  throw new Error("AIHUB_INTEGRATION_DATABASE_URL must use PostgreSQL.");
+  throw new Error("ORCASYNAPSE_INTEGRATION_DATABASE_URL must use PostgreSQL.");
 }
 const localHosts = new Set(["localhost", "127.0.0.1", "::1", "[::1]", "postgres"]);
-if (!localHosts.has(baseUrl.hostname) && process.env.AIHUB_ALLOW_REMOTE_INTEGRATION_DATABASE !== "1") {
-  throw new Error("Remote integration databases require AIHUB_ALLOW_REMOTE_INTEGRATION_DATABASE=1.");
+if (!localHosts.has(baseUrl.hostname) && process.env.ORCASYNAPSE_ALLOW_REMOTE_INTEGRATION_DATABASE !== "1") {
+  throw new Error("Remote integration databases require ORCASYNAPSE_ALLOW_REMOTE_INTEGRATION_DATABASE=1.");
 }
 
-const schema = `aihub_verify_${Date.now()}_${process.pid}`;
-if (!/^aihub_verify_[0-9]+_[0-9]+$/.test(schema)) throw new Error("Generated integration schema is unsafe.");
+const schema = `orcasynapse_verify_${Date.now()}_${process.pid}`;
+if (!/^orcasynapse_verify_[0-9]+_[0-9]+$/.test(schema)) throw new Error("Generated integration schema is unsafe.");
 const administrativeUrl = new URL(baseUrl);
 administrativeUrl.searchParams.delete("schema");
 const migrationUrl = new URL(baseUrl);
@@ -38,8 +38,8 @@ try {
     cwd: fileURLToPath(new URL("..", import.meta.url)),
     env: {
       ...process.env,
-      AIHUB_INTEGRATION_MODE: "1",
-      AIHUB_INTEGRATION_DATABASE_URL: migrationUrl.toString(),
+      ORCASYNAPSE_INTEGRATION_MODE: "1",
+      ORCASYNAPSE_INTEGRATION_DATABASE_URL: migrationUrl.toString(),
     },
     encoding: "utf8",
   });
@@ -69,6 +69,17 @@ try {
     FROM information_schema.columns
     WHERE table_schema = $1 AND table_name = 'LocalAdministrator'
   `, [schema]);
+  const serviceKinds = await verifier.query(`
+    SELECT enumlabel
+    FROM pg_enum
+    JOIN pg_type ON pg_type.oid = pg_enum.enumtypid
+    JOIN pg_namespace ON pg_namespace.oid = pg_type.typnamespace
+    WHERE pg_namespace.nspname = $1 AND pg_type.typname = 'ServiceKind'
+  `, [schema]);
+  const inferenceComponent = await verifier.query(
+    'SELECT "displayName" FROM "ComponentCompatibility" WHERE "key" = $1',
+    ["inference-server"],
+  );
   if (migrations.rows[0]?.count < 1) throw new Error("No completed Prisma migrations were recorded.");
   if (canonicalSteps.rowCount !== 8 || canonicalSteps.rows.some((row) => row.required !== true)) {
     throw new Error("The canonical onboarding stages were not migrated correctly.");
@@ -78,6 +89,13 @@ try {
   }
   if (!new Set(localAdministratorColumns.rows.map((row) => row.column_name)).has("passwordHash")) {
     throw new Error("The local administrator credential schema was not migrated correctly.");
+  }
+  const serviceKindLabels = new Set(serviceKinds.rows.map((row) => row.enumlabel));
+  if (!serviceKindLabels.has("INFERENCE") || serviceKindLabels.has("VLLM")) {
+    throw new Error("The provider-neutral inference service kind was not migrated correctly.");
+  }
+  if (inferenceComponent.rows[0]?.displayName !== "Inference Server") {
+    throw new Error("The inference-server onboarding contract was not migrated correctly.");
   }
   process.stdout.write(`PostgreSQL integration verification passed in disposable schema ${schema}.\n`);
 } finally {

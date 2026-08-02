@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const platformMetaSchema = z.object({
-  product: z.literal("MPM AIHub"),
+  product: z.literal("OrcaSynapse"),
   version: z.string(),
   phase: z.string(),
   configurationMode: z.literal("dashboard"),

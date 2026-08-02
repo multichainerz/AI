@@ -57,4 +57,28 @@ describe("committed PostgreSQL migrations", () => {
     expect(sql).toContain("'INSTALLATION_KEY_RECOVERY'");
     expect(sql).toContain('"passwordChangeRequired" = true');
   });
+
+  it("migrates vLLM connections into the provider-neutral inference server contract", () => {
+    const directory = migrationDirectories.find((name) => name.endsWith("_generalize_inference_server"));
+    expect(directory).toBeTruthy();
+    const sql = readFileSync(resolve(migrationsRoot, directory!, "migration.sql"), "utf8");
+    expect(sql).toContain("RENAME VALUE 'VLLM' TO 'INFERENCE'");
+    expect(sql).toContain("'{inferenceBackend}'");
+    expect(sql).toContain("'inference-server'");
+  });
+
+  it("persists the approved Hermes image for direct VM2 bootstrap", () => {
+    const directory = migrationDirectories.find((name) => name.endsWith("_runtime_node_bootstrap"));
+    expect(directory).toBeTruthy();
+    const sql = readFileSync(resolve(migrationsRoot, directory!, "migration.sql"), "utf8");
+    expect(sql).toContain('ADD COLUMN "hermesImage" TEXT');
+  });
+
+  it("upserts the provider-neutral inference compatibility row for fresh databases", () => {
+    const directory = migrationDirectories.find((name) => name.endsWith("_repair_inference_compatibility"));
+    expect(directory).toBeTruthy();
+    const sql = readFileSync(resolve(migrationsRoot, directory!, "migration.sql"), "utf8");
+    expect(sql).toContain("'inference-server'");
+    expect(sql).toContain('ON CONFLICT ("key") DO UPDATE');
+  });
 });

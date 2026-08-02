@@ -6,10 +6,10 @@ const shutdown = async (signal: string) => {
   if (shuttingDown) return;
   shuttingDown = true;
   try {
-    app?.log.info({ signal }, "AIHub API shutdown started");
+    app?.log.info({ signal }, "OrcaSynapse API shutdown started");
     await app?.close();
   } catch (error) {
-    app?.log.error(error, "AIHub API shutdown was incomplete");
+    app?.log.error(error, "OrcaSynapse API shutdown was incomplete");
     process.exitCode = 1;
   }
 };
@@ -25,7 +25,7 @@ try {
     app.log.error(error);
     await app.close().catch((closeError) => app?.log.error(closeError));
   } else {
-    console.error("AIHub API failed to initialize.", error);
+    console.error("OrcaSynapse API failed to initialize.", error);
   }
   process.exitCode = 1;
 }

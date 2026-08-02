@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { ADMIN_SCOPES, type AdministratorSession, type PromptTemplate } from "@aihub/contracts";
+import { ADMIN_SCOPES, type AdministratorSession, type PromptTemplate } from "@orcasynapse/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.js";
 import { ADMIN_SESSION_COOKIE, type AdminSessionManager } from "../auth/admin-session.js";
@@ -7,7 +7,7 @@ import type { PromptManager } from "./prompt-manager.js";
 
 const TOKEN = "a".repeat(43);
 const PROMPT_ID = "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d";
-const CONTENT = "You are the approved MPM assistant. State uncertainty and protect private data.";
+const CONTENT = "You are the approved OrcaSynapse assistant. State uncertainty and protect private data.";
 const session: AdministratorSession = {
   id: "ac369dab-cad5-4fd9-83ed-b4fbf528028a",
   subject: "platform-admin",
@@ -19,8 +19,8 @@ const session: AdministratorSession = {
 };
 const activePrompt: PromptTemplate = {
   id: PROMPT_ID,
-  slug: "mpm-chat-system",
-  displayName: "MPM chat system",
+  slug: "orcasynapse-chat-system",
+  displayName: "OrcaSynapse chat system",
   description: "Approved employee chat behavior.",
   purpose: "CHAT_SYSTEM",
   version: "1.0.0",
@@ -72,7 +72,7 @@ describe("prompt control routes", () => {
   it("lists prompts and validates activation decisions", async () => {
     const { app, promptManager } = await promptApp();
     const headers = { cookie: `${ADMIN_SESSION_COOKIE}=${TOKEN}` };
-    expect((await app.inject({ method: "GET", url: "/api/v1/admin/prompts", headers })).json()).toMatchObject({ items: [{ slug: "mpm-chat-system" }] });
+    expect((await app.inject({ method: "GET", url: "/api/v1/admin/prompts", headers })).json()).toMatchObject({ items: [{ slug: "orcasynapse-chat-system" }] });
     expect((await app.inject({ method: "POST", url: `/api/v1/admin/prompts/${PROMPT_ID}/activate`, headers, payload: { expectedRevision: 1, reason: "x" } })).statusCode).toBe(400);
     expect((await app.inject({ method: "POST", url: `/api/v1/admin/prompts/${PROMPT_ID}/activate`, headers, payload: { expectedRevision: 1, reason: "Pilot approval" } })).statusCode).toBe(200);
     expect(promptManager.activate).toHaveBeenCalledWith(expect.objectContaining({ id: session.id }), PROMPT_ID, expect.objectContaining({ reason: "Pilot approval" }));

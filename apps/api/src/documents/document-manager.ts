@@ -5,7 +5,7 @@ import type {
   DocumentSummary,
   DocumentUploadMetadata,
   QuarantineDecision,
-} from "@aihub/contracts";
+} from "@orcasynapse/contracts";
 import type { Readable } from "node:stream";
 
 export interface DocumentPrincipal {

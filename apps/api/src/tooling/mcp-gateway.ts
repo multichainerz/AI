@@ -1,4 +1,4 @@
-import type { GovernedTool } from "@aihub/contracts";
+import type { GovernedTool } from "@orcasynapse/contracts";
 import {
   ToolingDeniedError,
   type GovernedToolResult,
@@ -7,7 +7,7 @@ import {
 
 export const MCP_MODERN_VERSION = "2026-07-28";
 export const MCP_LEGACY_VERSION = "2025-11-25";
-const SERVER_INFO = { name: "mpm-aihub-governed-tools", version: "0.1.0" } as const;
+const SERVER_INFO = { name: "orcasynapse-governed-tools", version: "0.1.0" } as const;
 
 interface JsonRpcRequest {
   jsonrpc: "2.0";
@@ -139,7 +139,7 @@ export class McpGateway {
             resultType: "complete",
             supportedVersions: [MCP_MODERN_VERSION, MCP_LEGACY_VERSION],
             capabilities: { tools: { listChanged: false } },
-            instructions: "Every tool call is re-authorized by AIHub. Consequential actions enter the human approval inbox.",
+            instructions: "Every tool call is re-authorized by OrcaSynapse. Consequential actions enter the human approval inbox.",
             ttlMs: 60_000,
             cacheScope: "private",
             _meta: resultMeta(),
@@ -159,7 +159,7 @@ export class McpGateway {
             protocolVersion: MCP_LEGACY_VERSION,
             capabilities: { tools: { listChanged: false } },
             serverInfo: SERVER_INFO,
-            instructions: "Every tool call is re-authorized by AIHub. Consequential actions enter the human approval inbox.",
+            instructions: "Every tool call is re-authorized by OrcaSynapse. Consequential actions enter the human approval inbox.",
           },
         },
       };

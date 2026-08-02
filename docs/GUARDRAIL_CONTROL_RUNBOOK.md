@@ -1,6 +1,6 @@
 # Guardrail Control Runbook
 
-AIHub owns the guardrail policy applied to direct Chat and to runtime requests crossing `/internal/v1`. No separate LiteLLM policy plane is present.
+OrcaSynapse owns the guardrail policy applied to direct Chat and to runtime requests crossing `/internal/v1`. No separate LiteLLM policy plane is present.
 
 ## Policy fields
 
@@ -23,9 +23,9 @@ After the first governed policy is activated, missing or suspended policy state 
 
 ## Enforcement
 
-Before inference, AIHub applies the active policy to user/developer/tool text that can enter the model request. The internal runtime gateway also ignores caller-selected model IDs, caps output tokens, applies PostgreSQL-backed request limits, and keeps vLLM credentials server-side.
+Before inference, OrcaSynapse applies the active policy to user/developer/tool text that can enter the model request. The internal runtime gateway also ignores caller-selected model IDs, caps output tokens, applies PostgreSQL-backed request limits, and keeps upstream inference credentials server-side.
 
-For non-streamed results, AIHub enforces the output character ceiling before returning content. For streamed results, the proxy enforces a bounded byte ceiling and terminates overflow. Rejections and upstream failures are sanitized; raw credentials, prompts, or provider bodies are not copied into audit metadata.
+For non-streamed results, OrcaSynapse enforces the output character ceiling before returning content. For streamed results, the proxy enforces a bounded byte ceiling and terminates overflow. Rejections and upstream failures are sanitized; raw credentials, prompts, or provider bodies are not copied into audit metadata.
 
 ## Acceptance
 
@@ -40,4 +40,4 @@ Test at least:
 - suspended/missing policy behavior after governance adoption;
 - audit content for absence of submitted text and secrets.
 
-If MPM later adds a semantic classifier or specialist DLP service, model it as an optional, separately versioned check with explicit timeout/failure behavior. It may narrow a request but cannot grant identity, knowledge, model, or tool access.
+If OrcaSynapse later adds a semantic classifier or specialist DLP service, model it as an optional, separately versioned check with explicit timeout/failure behavior. It may narrow a request but cannot grant identity, knowledge, model, or tool access.

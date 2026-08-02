@@ -1,7 +1,7 @@
-import type { AgentMetrics, AgentProfile, AgentRun, AgentRunEvent, AgentRuntimeControl, AgentSkillReference, CreateAgentProfile } from "@aihub/contracts";
+import type { AgentMetrics, AgentProfile, AgentRun, AgentRunEvent, AgentRuntimeControl, AgentSkillReference, CreateAgentProfile } from "@orcasynapse/contracts";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
-  AIHubApiError,
+  OrcaSynapseApiError,
   cancelAgentRun,
   createAgentProfile,
   getAgentMetrics,
@@ -32,7 +32,7 @@ const blankProfile: CreateAgentProfile = {
   displayName: "Hermes Analyst",
   purpose: "A bounded on-premise assistant for internal analysis and document-grounded answers.",
   instructions: "Provide concise, evidence-based answers. Clearly distinguish retrieved facts from analysis and state uncertainty.",
-  soulMd: "You are a careful MPM analyst. Be calm, precise, evidence-led, and candid about uncertainty.",
+  soulMd: "You are a careful OrcaSynapse analyst. Be calm, precise, evidence-led, and candid about uncertainty.",
   skills: [],
   modelAlias: "hermes-agent",
   maxTurns: 1,
@@ -115,8 +115,8 @@ export function AgentsView({ unlocked, administrator, oidcConfigured, onSignIn, 
   const selectedRun = useMemo(() => runs.find(({ id }) => id === selectedRunId) ?? runs[0] ?? null, [runs, selectedRunId]);
 
   const fail = (cause: unknown) => {
-    if (cause instanceof AIHubApiError && cause.status === 401) onUnauthorized();
-    setError(cause instanceof Error ? cause.message : "AIHub could not complete the agent operation.");
+    if (cause instanceof OrcaSynapseApiError && cause.status === 401) onUnauthorized();
+    setError(cause instanceof Error ? cause.message : "OrcaSynapse could not complete the agent operation.");
   };
 
   const load = async () => {
@@ -219,7 +219,7 @@ export function AgentsView({ unlocked, administrator, oidcConfigured, onSignIn, 
   return (
     <section className="agents-workspace">
       <header className="documents-header agents-header">
-        <div><p className="page-kicker">Hardened orchestration</p><h1>Hermes Profiles</h1><p>Immutable Profile Distributions, scoped knowledge, optional AIHub-governed MCP actions, safe activity events, and an operator kill switch.</p></div>
+        <div><p className="page-kicker">Hardened orchestration</p><h1>Hermes Profiles</h1><p>Immutable Profile Distributions, scoped knowledge, optional OrcaSynapse-governed MCP actions, safe activity events, and an operator kill switch.</p></div>
         <div className="agent-header-actions"><button className="secondary-button" type="button" onClick={() => void load()}>Refresh</button>{administrator && <button className="primary-button" type="button" onClick={() => { setEditingId(null); setProfileDraft(blankProfile); setSkillsDraft(""); setEditorOpen(true); }}>New profile</button>}</div>
       </header>
 
@@ -277,7 +277,7 @@ export function AgentsView({ unlocked, administrator, oidcConfigured, onSignIn, 
           <div className="agent-runs-scroll">{runs.length === 0 && <div className="document-empty"><strong>No runs yet</strong><span>Queued work will appear here with its complete lifecycle.</span></div>}{runs.map((run) => <button className={selectedRun?.id === run.id ? "selected" : undefined} key={run.id} type="button" onClick={() => setSelectedRunId(run.id)}><span className={`document-status ${statusTone(run.status)}`}>{run.status.replaceAll("_", " ").toLowerCase()}</span><strong>{run.profileName}</strong><p>{run.input}</p><small>v{run.profileVersion} · {friendlyTime(run.createdAt)}</small></button>)}</div>
         </section>
         <section className="agent-run-detail panel">
-          {!selectedRun ? <div className="document-empty"><strong>Select a run</strong><span>Input, output, sources, and failure information remain in the AIHub execution ledger.</span></div> : <>
+          {!selectedRun ? <div className="document-empty"><strong>Select a run</strong><span>Input, output, sources, and failure information remain in the OrcaSynapse execution ledger.</span></div> : <>
             <div className="agent-run-detail-head"><div><p className="section-kicker">Run detail</p><h2>{selectedRun.profileName}</h2><span>{selectedRun.profileSlug} · version {selectedRun.profileVersion}</span></div><span className={`document-status ${statusTone(selectedRun.status)}`}>{selectedRun.status.replaceAll("_", " ").toLowerCase()}</span></div>
             <dl className="agent-run-times"><div><dt>Queued</dt><dd>{friendlyTime(selectedRun.queuedAt)}</dd></div><div><dt>Started</dt><dd>{friendlyTime(selectedRun.startedAt)}</dd></div><div><dt>Completed</dt><dd>{friendlyTime(selectedRun.completedAt)}</dd></div></dl>
             <div className="agent-distribution-pin"><span>Profile Distribution</span><code>{selectedRun.profileDistributionDigest ?? "Legacy run — no distribution digest"}</code></div>

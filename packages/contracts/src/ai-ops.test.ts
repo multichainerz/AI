@@ -56,17 +56,17 @@ describe("AI operations contracts", () => {
   });
 
   it("requires retained evidence and ownership before a readiness control is accepted", () => {
-    const base = { owner: "MPM Security", evidenceRefs: ["evidence/security-review.pdf"], note: "Review completed.", expectedRevision: 2 };
+    const base = { owner: "OrcaSynapse Security", evidenceRefs: ["evidence/security-review.pdf"], note: "Review completed.", expectedRevision: 2 };
     expect(updateProductionReadinessControlSchema.safeParse({ ...base, status: "VERIFIED" }).success).toBe(true);
     expect(updateProductionReadinessControlSchema.safeParse({ ...base, status: "VERIFIED", evidenceRefs: [] }).success).toBe(false);
     expect(updateProductionReadinessControlSchema.safeParse({ ...base, status: "IN_PROGRESS", owner: null, note: null }).success).toBe(false);
   });
 
-  it("distinguishes the external approving authority from the AIHub recorder", () => {
+  it("distinguishes the external approving authority from the OrcaSynapse recorder", () => {
     expect(recordProductionReadinessApprovalSchema.safeParse({
       role: "SECURITY",
       decision: "APPROVED",
-      authority: "MPM Security Review Board",
+      authority: "OrcaSynapse Security Review Board",
       evidenceRef: "approvals/security/2026-07-30",
       reason: "Approved for the bounded pilot scope.",
     }).success).toBe(true);

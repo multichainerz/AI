@@ -1,4 +1,4 @@
-import type { GovernedTool } from "@aihub/contracts";
+import type { GovernedTool } from "@orcasynapse/contracts";
 import { describe, expect, it, vi } from "vitest";
 import { McpGateway } from "./mcp-gateway.js";
 import { ToolingDeniedError, type ToolingManager } from "./tooling-manager.js";
@@ -37,7 +37,7 @@ describe("McpGateway", () => {
     const listed = await gateway.handle({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }, "legacy", authorization);
     expect(initialized.body).toMatchObject({ result: { protocolVersion: "2025-11-25", capabilities: { tools: { listChanged: false } } } });
     expect(listed.body).toMatchObject({ result: { tools: [{ name: "document_metadata_read", annotations: { readOnlyHint: true } }] } });
-    expect(JSON.stringify(listed.body)).not.toContain("_aihubAuthorization");
+    expect(JSON.stringify(listed.body)).not.toContain("_orcasynapseAuthorization");
   });
 
   it("implements stateless modern discovery and cache-safe list results", async () => {
@@ -62,7 +62,7 @@ describe("McpGateway", () => {
     } });
     expect(listed.body).toMatchObject({ result: {
       resultType: "complete", ttlMs: 30_000, cacheScope: "private",
-      _meta: { "io.modelcontextprotocol/serverInfo": { name: "mpm-aihub-governed-tools" } },
+      _meta: { "io.modelcontextprotocol/serverInfo": { name: "orcasynapse-governed-tools" } },
     } });
   });
 

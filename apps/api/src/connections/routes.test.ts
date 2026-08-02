@@ -6,7 +6,7 @@ import type {
   RollbackConfigurationResult,
   ServiceConnectionSummary,
   UpdateServiceConnection,
-} from "@aihub/contracts";
+} from "@orcasynapse/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 import { createApp } from "../app.js";
 import {
@@ -15,6 +15,7 @@ import {
 } from "../auth/admin-session.js";
 import type { ConnectionManager } from "./connection-manager.js";
 import { ConnectionTestService } from "./diagnostics/connection-test-service.js";
+import { InferenceDiscoveryService } from "./diagnostics/inference-discovery-service.js";
 import type { ConnectionDiagnosticStore } from "./diagnostics/types.js";
 import type { ConnectionMonitorService } from "./connection-monitor.js";
 
@@ -146,6 +147,7 @@ async function authenticatedApp(
   tester?: ConnectionTestService,
   sessionManager: AdminSessionManager = new MemorySessionManager(),
   monitor?: ConnectionMonitorService,
+  discoverer?: InferenceDiscoveryService,
 ) {
   const app = await createApp({
     logger: false,
@@ -155,6 +157,7 @@ async function authenticatedApp(
       connectionManager: manager,
       ...(tester ? { connectionTestService: tester } : {}),
       ...(monitor ? { connectionMonitor: monitor } : {}),
+      ...(discoverer ? { inferenceDiscoveryService: discoverer } : {}),
     },
   });
   apps.push(app);
@@ -162,6 +165,36 @@ async function authenticatedApp(
 }
 
 describe("administrator connection routes", () => {
+  it("discovers inference compatibility without persisting guessed configuration", async () => {
+    const fetchMock = async (input: string | URL | Request) => {
+      const path = new URL(String(input)).pathname;
+      if (path === "/v1/models") return Response.json({ data: [{ id: "hermes-primary" }] });
+      if (path === "/version") return Response.json({ version: "0.9.2" });
+      if (path === "/health") return Response.json({ status: "ok" });
+      return Response.json({ error: "not found" }, { status: 404 });
+    };
+    const discoverer = new InferenceDiscoveryService(undefined, fetchMock as typeof fetch);
+    const { app, manager } = await authenticatedApp(
+      new MemoryConnectionManager(), undefined, new MemorySessionManager(), undefined, discoverer,
+    );
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/admin/connections/inference/discover",
+      headers: sessionHeaders,
+      payload: { baseUrl: "http://gpu.internal:8000/v1" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      status: "READY",
+      normalizedBaseUrl: "http://gpu.internal:8000",
+      backend: "VLLM",
+      models: [{ id: "hermes-primary" }],
+    });
+    expect(manager.items).toHaveLength(0);
+  });
+
   it("reads and updates the scheduled monitoring control with scoped administration", async () => {
     let control: ConnectionMonitoringControl = {
       enabled: false,
@@ -258,9 +291,9 @@ describe("administrator connection routes", () => {
       payload: {
         slug: "vllm-primary",
         displayName: "vLLM Primary",
-        kind: "VLLM",
+        kind: "INFERENCE",
         environment: "PRODUCTION",
-        baseUrl: "https://vllm.mpm.internal",
+        baseUrl: "https://vllm.orcasynapse.internal",
         enabled: true,
         configuration: { modelAlias: "hermes-primary" },
         secrets: { apiKey: "must-never-be-returned" },
@@ -286,9 +319,9 @@ describe("administrator connection routes", () => {
       payload: {
         slug: "vllm-primary",
         displayName: "vLLM Primary",
-        kind: "VLLM",
+        kind: "INFERENCE",
         environment: "PRODUCTION",
-        baseUrl: "https://vllm.mpm.internal",
+        baseUrl: "https://vllm.orcasynapse.internal",
         configuration: { documentsPath: "/v3/documents" },
       },
     });
@@ -322,8 +355,8 @@ describe("administrator connection routes", () => {
       resolveForDiagnostic: async () => ({
         id: CONNECTION_ID,
         activeRevision: 1,
-        kind: "VLLM",
-        baseUrl: "https://vllm.mpm.internal",
+        kind: "INFERENCE",
+        baseUrl: "https://vllm.orcasynapse.internal",
         configuration: {},
         secrets: { apiKey: "must-never-be-returned" },
       }),
@@ -332,7 +365,7 @@ describe("administrator connection routes", () => {
     const tester = new ConnectionTestService(diagnosticStore, () => ({
       test: async () => ({
         status: "HEALTHY",
-        message: "vLLM is reachable and authenticated.",
+        message: "Inference server is reachable and authenticated.",
         details: { modelCount: 1, modelIds: ["hermes-primary"] },
       }),
     }));
@@ -358,9 +391,9 @@ describe("administrator connection routes", () => {
     await manager.create({
       slug: "vllm-primary",
       displayName: "vLLM Primary",
-      kind: "VLLM",
+      kind: "INFERENCE",
       environment: "PRODUCTION",
-      baseUrl: "https://vllm.mpm.internal",
+      baseUrl: "https://vllm.orcasynapse.internal",
       enabled: true,
       configuration: {},
       secrets: { apiKey: "current-secret" },

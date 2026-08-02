@@ -1,4 +1,4 @@
-import type { AIHubPrismaClient } from "@aihub/database";
+import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
 import { describe, expect, it, vi } from "vitest";
 import { AgentConflictError, AgentRuntimeDisabledError, type AgentPrincipal } from "./agent-manager.js";
 import { PrismaAgentManager } from "./prisma-agent-manager.js";
@@ -49,7 +49,7 @@ describe("PrismaAgentManager", () => {
       id: PROFILE_ID, slug: "hermes-analyst", status: "ACTIVE", currentVersion: 2, activeVersion: 1,
       createdAt: now, updatedAt: now, versions: [version(2), version(1)],
     };
-    const prisma = { agentProfile: { findMany: vi.fn(async () => [profile]) } } as unknown as AIHubPrismaClient;
+    const prisma = { agentProfile: { findMany: vi.fn(async () => [profile]) } } as unknown as OrcaSynapsePrismaClient;
     const manager = new PrismaAgentManager(prisma);
 
     await expect(manager.listProfiles(principal, true)).resolves.toMatchObject({ items: [{ version: { version: 2 }, activeVersionConfiguration: { version: 1 } }] });
@@ -68,7 +68,7 @@ describe("PrismaAgentManager", () => {
     const prisma = {
       $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)),
       agentRun: { update: vi.fn(async () => ({ ...storedRun(), jobId: "f9558542-48f4-4b96-a536-65036114af6c" })) },
-    } as unknown as AIHubPrismaClient;
+    } as unknown as OrcaSynapsePrismaClient;
     const manager = new PrismaAgentManager(prisma);
 
     await expect(manager.submitRun(principal, { profileId: PROFILE_ID, input: "Analyze policy" })).resolves.toMatchObject({
@@ -88,7 +88,7 @@ describe("PrismaAgentManager", () => {
     };
     const prisma = {
       $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)),
-    } as unknown as AIHubPrismaClient;
+    } as unknown as OrcaSynapsePrismaClient;
     const manager = new PrismaAgentManager(prisma);
 
     await expect(manager.submitRun(principal, { profileId: PROFILE_ID, input: "Analyze policy" })).rejects.toBeInstanceOf(AgentRuntimeDisabledError);
@@ -105,7 +105,7 @@ describe("PrismaAgentManager", () => {
       $transaction: transaction,
       auditEvent: { create: auditCreate },
       toolRuntimeControl: { findUnique: vi.fn(async () => ({ enabled: false })) },
-    } as unknown as AIHubPrismaClient;
+    } as unknown as OrcaSynapsePrismaClient;
     const manager = new PrismaAgentManager(prisma, boundaryVerifier);
 
     await expect(manager.updateRuntimeControl(principal, { enabled: true, reason: "Acceptance verification" })).rejects.toBeInstanceOf(AgentRuntimeDisabledError);
@@ -126,7 +126,7 @@ describe("PrismaAgentManager", () => {
       evaluationRun: { findFirst: vi.fn(async () => null) },
       auditEvent: { create: vi.fn() },
     };
-    const prisma = { $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)) } as unknown as AIHubPrismaClient;
+    const prisma = { $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)) } as unknown as OrcaSynapsePrismaClient;
 
     await expect(new PrismaAgentManager(prisma).activateProfile(principal, PROFILE_ID))
       .rejects.toBeInstanceOf(AgentConflictError);
@@ -147,7 +147,7 @@ describe("PrismaAgentManager", () => {
       evaluationRun: { findFirst: vi.fn() },
       auditEvent: { create: vi.fn() },
     };
-    const prisma = { $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)) } as unknown as AIHubPrismaClient;
+    const prisma = { $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)) } as unknown as OrcaSynapsePrismaClient;
 
     await expect(new PrismaAgentManager(prisma).standbyProfile(principal, PROFILE_ID))
       .rejects.toThrow("Run Setup and pass Hermes compatibility");
@@ -171,7 +171,7 @@ describe("PrismaAgentManager", () => {
       evaluationRun: { findFirst: vi.fn(async () => ({ id: EVALUATION_ID })) },
       auditEvent: { create: vi.fn(async () => ({})) },
     };
-    const prisma = { $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)) } as unknown as AIHubPrismaClient;
+    const prisma = { $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)) } as unknown as OrcaSynapsePrismaClient;
 
     await expect(new PrismaAgentManager(prisma).activateProfile(principal, PROFILE_ID))
       .resolves.toMatchObject({ status: "ACTIVE", activeVersion: 1 });
@@ -191,7 +191,7 @@ describe("PrismaAgentManager", () => {
       modelDeployment: { count: vi.fn(async () => 1), findFirst: vi.fn(async () => null) },
       evaluationRun: { findFirst: vi.fn(async () => ({ id: EVALUATION_ID })) },
     };
-    const prisma = { $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)) } as unknown as AIHubPrismaClient;
+    const prisma = { $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)) } as unknown as OrcaSynapsePrismaClient;
 
     await expect(new PrismaAgentManager(prisma).activateProfile(principal, PROFILE_ID))
       .rejects.toThrow("Activate the 'hermes-agent' agent model route");

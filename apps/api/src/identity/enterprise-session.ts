@@ -5,9 +5,9 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import { isIP } from "node:net";
-import type { AdminRole, EnterpriseSession, OidcStatus } from "@aihub/contracts";
-import type { AIHubPrismaClient } from "@aihub/database";
-import { EnvelopeEncryption } from "@aihub/security";
+import type { AdminRole, EnterpriseSession, OidcStatus } from "@orcasynapse/contracts";
+import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
+import { EnvelopeEncryption } from "@orcasynapse/security";
 import {
   createLocalJWKSet,
   jwtVerify,
@@ -17,8 +17,8 @@ import {
 import type { ConnectionDiagnosticStore, ResolvedConnection } from "../connections/diagnostics/types.js";
 import type { AdminSessionManager, IssuedAdminSession } from "../auth/admin-session.js";
 
-export const ENTERPRISE_SESSION_COOKIE = "aihub_user_session";
-export const OIDC_STATE_COOKIE = "aihub_oidc_state";
+export const ENTERPRISE_SESSION_COOKIE = "orcasynapse_user_session";
+export const OIDC_STATE_COOKIE = "orcasynapse_oidc_state";
 const ENTERPRISE_SESSION_IDLE_MS = 8 * 60 * 60 * 1_000;
 const ENTERPRISE_SESSION_ABSOLUTE_MS = 12 * 60 * 60 * 1_000;
 const ENTERPRISE_SESSION_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
@@ -232,7 +232,7 @@ async function boundedJson(response: Response): Promise<unknown> {
 
 export class PrismaEnterpriseIdentityManager implements EnterpriseIdentityManager {
   constructor(
-    private readonly prisma: AIHubPrismaClient,
+    private readonly prisma: OrcaSynapsePrismaClient,
     private readonly connectionStore: ConnectionDiagnosticStore,
     private readonly encryption: EnvelopeEncryption,
     private readonly fetcher: typeof fetch = fetch,
@@ -414,7 +414,7 @@ export class PrismaEnterpriseIdentityManager implements EnterpriseIdentityManage
       ...Object.values(runtime.administratorGroups).flat(),
     ].map(normalizeGroup));
     if (allowed.size === 0 || !groups.some((group) => allowed.has(normalizeGroup(group)))) {
-      throw new EnterpriseIdentityError("OIDC_GROUP_DENIED", "Your enterprise account is not assigned to an AIHub access group.", 403);
+      throw new EnterpriseIdentityError("OIDC_GROUP_DENIED", "Your enterprise account is not assigned to an OrcaSynapse access group.", 403);
     }
     const emailValue = claimAtPath(payload, runtime.emailClaim);
     const email = typeof emailValue === "string" && emailValue.length <= 320 && /^[^@\s]+@[^@\s]+$/.test(emailValue)
@@ -423,7 +423,7 @@ export class PrismaEnterpriseIdentityManager implements EnterpriseIdentityManage
     const nameValue = claimAtPath(payload, runtime.nameClaim);
     const displayName = typeof nameValue === "string" && nameValue.trim().length > 0
       ? nameValue.trim().slice(0, 200)
-      : email ?? "MPM user";
+      : email ?? "OrcaSynapse user";
     const sessionToken = randomBytes(32).toString("base64url");
     const idleExpiresAt = new Date(now.getTime() + ENTERPRISE_SESSION_IDLE_MS);
     const absoluteExpiresAt = new Date(now.getTime() + ENTERPRISE_SESSION_ABSOLUTE_MS);
@@ -446,7 +446,7 @@ export class PrismaEnterpriseIdentityManager implements EnterpriseIdentityManage
         update: { email, displayName, groups, lastLoginAt: now },
       });
       if (!user.enabled) {
-        throw new EnterpriseIdentityError("OIDC_USER_DISABLED", "This AIHub user has been disabled.", 403);
+        throw new EnterpriseIdentityError("OIDC_USER_DISABLED", "This OrcaSynapse user has been disabled.", 403);
       }
       const created = await transaction.enterpriseUserSession.create({
         data: {

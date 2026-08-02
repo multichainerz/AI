@@ -6,8 +6,8 @@ import type {
   ModelWorkload,
   ServiceKind,
   UpdateModelDeployment,
-} from "@aihub/contracts";
-import { Prisma, type AIHubPrismaClient } from "@aihub/database";
+} from "@orcasynapse/contracts";
+import { Prisma, type OrcaSynapsePrismaClient } from "@orcasynapse/database";
 import type { AdminPrincipal } from "../auth/admin-session.js";
 import { ModelConflictError, ModelNotFoundError, type ModelManager } from "./model-manager.js";
 
@@ -26,8 +26,8 @@ type StoredModel = Prisma.ModelDeploymentGetPayload<{ include: typeof modelInclu
 type StoredConnection = StoredModel["connection"];
 
 const permittedKinds: Readonly<Record<ModelWorkload, readonly ServiceKind[]>> = {
-  CHAT: ["VLLM"],
-  AGENT: ["VLLM"],
+  CHAT: ["INFERENCE"],
+  AGENT: ["INFERENCE"],
 };
 
 function dto(model: StoredModel): ModelDeployment {
@@ -68,7 +68,7 @@ function assertLimits(contextWindowTokens: number, maxOutputTokens: number): voi
 }
 
 export class PrismaModelManager implements ModelManager {
-  constructor(private readonly prisma: AIHubPrismaClient) {}
+  constructor(private readonly prisma: OrcaSynapsePrismaClient) {}
 
   async list(): Promise<ModelDeploymentList> {
     const items = await this.prisma.modelDeployment.findMany({
@@ -116,7 +116,7 @@ export class PrismaModelManager implements ModelManager {
   async update(principal: AdminPrincipal, id: string, input: UpdateModelDeployment): Promise<ModelDeployment> {
     return this.prisma.$transaction(async (transaction) => {
       const { expectedRevision, ...changes } = input;
-      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`aihub-model:${id}`}, 0))`;
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`orcasynapse-model:${id}`}, 0))`;
       const current = await transaction.modelDeployment.findUnique({ where: { id }, include: modelInclude });
       if (!current) throw new ModelNotFoundError();
       if (current.status === "ACTIVE") {
@@ -182,7 +182,7 @@ export class PrismaModelManager implements ModelManager {
 
   async activate(principal: AdminPrincipal, id: string, input: ChangeModelDeploymentState): Promise<ModelDeployment> {
     return this.prisma.$transaction(async (transaction) => {
-      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`aihub-model:${id}`}, 0))`;
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`orcasynapse-model:${id}`}, 0))`;
       const current = await transaction.modelDeployment.findUnique({ where: { id }, include: modelInclude });
       if (!current) throw new ModelNotFoundError();
       if (current.status === "ACTIVE") throw new ModelConflictError("The model route is already active.");
@@ -203,7 +203,7 @@ export class PrismaModelManager implements ModelManager {
       if (!evaluation) {
         throw new ModelConflictError(`Activation requires promoted evaluation evidence for model:${current.slug} version ${current.version}.`);
       }
-      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`aihub-model-default:${current.workload}`}, 0))`;
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`orcasynapse-model-default:${current.workload}`}, 0))`;
       if (input.makeDefault) {
         await transaction.modelDeployment.updateMany({
           where: { workload: current.workload, isDefault: true },
@@ -238,7 +238,7 @@ export class PrismaModelManager implements ModelManager {
 
   async suspend(principal: AdminPrincipal, id: string, input: ChangeModelDeploymentState): Promise<ModelDeployment> {
     return this.prisma.$transaction(async (transaction) => {
-      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`aihub-model:${id}`}, 0))`;
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`orcasynapse-model:${id}`}, 0))`;
       const current = await transaction.modelDeployment.findUnique({ where: { id }, include: modelInclude });
       if (!current) throw new ModelNotFoundError();
       if (current.status !== "ACTIVE") throw new ModelConflictError("Only an active model route can be suspended.");

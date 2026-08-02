@@ -13,7 +13,7 @@ describe("credential recovery kits", () => {
 
     expect(created.serialized).not.toContain(masterKey.toString("base64"));
     expect(parseCredentialRecoveryKit(created.serialized)).toMatchObject({
-      format: "AIHUB-CREDENTIAL-RECOVERY",
+      format: "ORCASYNAPSE-CREDENTIAL-RECOVERY",
       version: 1,
       generatedAt: "2026-07-30T00:00:00.000Z",
     });

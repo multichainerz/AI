@@ -2,8 +2,8 @@ import type {
   ConnectionMonitoringControl,
   ModelDeployment,
   ServiceConnectionSummary,
-} from "@aihub/contracts";
-import type { AIHubPrismaClient } from "@aihub/database";
+} from "@orcasynapse/contracts";
+import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
 import { describe, expect, it, vi } from "vitest";
 import type { AdminPrincipal } from "../auth/admin-session.js";
 import { AiOpsConflictError } from "./ai-ops-manager.js";
@@ -56,7 +56,7 @@ function operationsOverviewHarness(
     evaluationRun: { groupBy: vi.fn(async () => []) },
     guardrailPolicy: { findFirst: vi.fn(async () => activeGuardrail) },
     promptTemplate: { findFirst: vi.fn(async () => activePrompt) },
-  } as unknown as AIHubPrismaClient;
+  } as unknown as OrcaSynapsePrismaClient;
   const metrics = { metrics: vi.fn(async () => ({})) };
   const dependencies = {
     connections: { list: vi.fn(async () => [connection]) },
@@ -81,9 +81,9 @@ describe("PrismaAiOpsManager scheduled connection evidence", () => {
     id: "5277951c-7d22-4cec-8d46-fad3afba37dd",
     slug: "vllm-primary",
     displayName: "vLLM Primary",
-    kind: "VLLM",
+    kind: "INFERENCE",
     environment: "PRODUCTION",
-    baseUrl: "https://vllm.mpm.internal",
+    baseUrl: "https://vllm.orcasynapse.internal",
     enabled: true,
     status: "HEALTHY",
     configuration: {},
@@ -134,7 +134,7 @@ describe("PrismaAiOpsManager scheduled connection evidence", () => {
       modelAlias: "chat-primary",
       workload: "CHAT",
       status: "ACTIVE",
-      connection: { id: "5277951c-7d22-4cec-8d46-fad3afba37dd", displayName: "vLLM Primary", kind: "VLLM", environment: "PRODUCTION", enabled: true, status: "HEALTHY" },
+      connection: { id: "5277951c-7d22-4cec-8d46-fad3afba37dd", displayName: "Inference Primary", kind: "INFERENCE", environment: "PRODUCTION", enabled: true, status: "HEALTHY" },
       version: "2.1-nvfp4",
       license: null,
       contextWindowTokens: 131_072,
@@ -159,7 +159,7 @@ describe("PrismaAiOpsManager scheduled connection evidence", () => {
     });
   });
 
-  it("reports the evaluated active AIHub policy posture", async () => {
+  it("reports the evaluated active OrcaSynapse policy posture", async () => {
     const observedAt = new Date().toISOString();
     const manager = operationsOverviewHarness(connection(observedAt), monitoring, [], {
       id: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d",
@@ -186,7 +186,7 @@ describe("PrismaAiOpsManager scheduled connection evidence", () => {
     const observedAt = new Date().toISOString();
     const manager = operationsOverviewHarness(connection(observedAt), monitoring, [], null, {
       id: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d",
-      displayName: "MPM chat system",
+      displayName: "OrcaSynapse chat system",
       purpose: "CHAT_SYSTEM",
       version: "1.0.0",
       contentChecksum: "a".repeat(64),
@@ -236,7 +236,7 @@ describe("PrismaAiOpsManager evaluation gates", () => {
     const prisma = {
       evaluationRun: { findUnique: vi.fn(async () => draftEvaluation()) },
       $transaction: vi.fn(async (callback: (client: typeof transaction) => Promise<unknown>) => callback(transaction)),
-    } as unknown as AIHubPrismaClient;
+    } as unknown as OrcaSynapsePrismaClient;
     const manager = new PrismaAiOpsManager(prisma, {} as never);
 
     const completed = await manager.completeEvaluation(principal, EVALUATION_ID, { results: [
@@ -259,7 +259,7 @@ describe("PrismaAiOpsManager evaluation gates", () => {
     const prisma = {
       evaluationRun: { findUnique: vi.fn(async () => draftEvaluation()) },
       $transaction: transaction,
-    } as unknown as AIHubPrismaClient;
+    } as unknown as OrcaSynapsePrismaClient;
     const manager = new PrismaAiOpsManager(prisma, {} as never);
 
     await expect(manager.completeEvaluation(principal, EVALUATION_ID, { results: [
@@ -285,7 +285,7 @@ describe("PrismaAiOpsManager evaluation gates", () => {
     const prisma = {
       evaluationRun: { findUnique: vi.fn(async () => draftEvaluation()) },
       $transaction: vi.fn(async (callback: (client: typeof transaction) => Promise<unknown>) => callback(transaction)),
-    } as unknown as AIHubPrismaClient;
+    } as unknown as OrcaSynapsePrismaClient;
     const manager = new PrismaAiOpsManager(prisma, {} as never);
 
     const completed = await manager.completeEvaluation(principal, EVALUATION_ID, { results: [
@@ -320,9 +320,9 @@ describe("PrismaAiOpsManager evaluation gates", () => {
     };
     const prisma = {
       $transaction: vi.fn(async (callback: (client: typeof transaction) => Promise<unknown>) => callback(transaction)),
-    } as unknown as AIHubPrismaClient;
+    } as unknown as OrcaSynapsePrismaClient;
     const manager = new PrismaAiOpsManager(prisma, {} as never);
-    const reason = "Approved for the controlled MPM pilot.";
+    const reason = "Approved for the controlled OrcaSynapse pilot.";
 
     const promoted = await manager.promoteEvaluation(principal, EVALUATION_ID, { reason });
 
@@ -342,9 +342,9 @@ describe("PrismaAiOpsManager production readiness", () => {
     key: "security-threat-model",
     title: "Threat model and security review",
     domain: "SECURITY" as const,
-    description: "MPM Security reviews the intended pilot scope.",
+    description: "OrcaSynapse Security reviews the intended pilot scope.",
     status: "VERIFIED" as const,
-    owner: "MPM Security",
+    owner: "OrcaSynapse Security",
     evidenceRefs: ["evidence/security-review.pdf"],
     note: "Review completed.",
     lastUpdatedBy: "security-admin",
@@ -359,7 +359,7 @@ describe("PrismaAiOpsManager production readiness", () => {
       id: `00000000-0000-4000-8000-00000000000${index}`,
       role,
       decision: "APPROVED" as const,
-      authority: `MPM ${role}`,
+      authority: `OrcaSynapse ${role}`,
       evidenceRef: `approvals/${role.toLowerCase()}`,
       reason: "Approved for the bounded pilot.",
       recordedBy: "platform-admin",
@@ -370,7 +370,7 @@ describe("PrismaAiOpsManager production readiness", () => {
       productionReadinessControl: { findMany: vi.fn(async () => [verifiedControl]) },
       productionReadinessApproval: { findFirst: vi.fn(async ({ where }: { where: { role: string } }) => approvals.find(({ role }) => role === where.role) ?? null) },
     };
-    const prisma = { $transaction: vi.fn(async (callback: (client: typeof transaction) => Promise<unknown>) => callback(transaction)) } as unknown as AIHubPrismaClient;
+    const prisma = { $transaction: vi.fn(async (callback: (client: typeof transaction) => Promise<unknown>) => callback(transaction)) } as unknown as OrcaSynapsePrismaClient;
     const manager = new PrismaAiOpsManager(prisma, {} as never);
 
     const readiness = await manager.productionReadiness();
@@ -391,11 +391,11 @@ describe("PrismaAiOpsManager production readiness", () => {
     };
     const prisma = {
       $transaction: vi.fn(async (callback: (client: typeof transaction) => Promise<unknown>) => callback(transaction)),
-    } as unknown as AIHubPrismaClient;
+    } as unknown as OrcaSynapsePrismaClient;
     const manager = new PrismaAiOpsManager(prisma, {} as never);
     const input = {
       status: "VERIFIED" as const,
-      owner: "MPM Security",
+      owner: "OrcaSynapse Security",
       evidenceRefs: ["evidence/security-review.pdf"],
       note: "Review completed.",
       expectedRevision: 1,
@@ -418,7 +418,7 @@ describe("PrismaAiOpsManager production readiness", () => {
       id: "c43149d0-a76d-43ee-932e-7a4d527673e8",
       role: "SECURITY" as const,
       decision: "APPROVED" as const,
-      authority: "MPM Security",
+      authority: "OrcaSynapse Security",
       evidenceRef: "approvals/security",
       reason: "Approved before the evidence changed.",
       recordedBy: "platform-admin",
@@ -429,7 +429,7 @@ describe("PrismaAiOpsManager production readiness", () => {
       productionReadinessControl: { findMany: vi.fn(async () => [verifiedControl]) },
       productionReadinessApproval: { findFirst: vi.fn(async ({ where }: { where: { role: string } }) => where.role === "SECURITY" ? staleApproval : null) },
     };
-    const prisma = { $transaction: vi.fn(async (callback: (client: typeof transaction) => Promise<unknown>) => callback(transaction)) } as unknown as AIHubPrismaClient;
+    const prisma = { $transaction: vi.fn(async (callback: (client: typeof transaction) => Promise<unknown>) => callback(transaction)) } as unknown as OrcaSynapsePrismaClient;
     const manager = new PrismaAiOpsManager(prisma, {} as never);
 
     const readiness = await manager.productionReadiness();
@@ -452,9 +452,9 @@ describe("PrismaAiOpsManager production readiness", () => {
     };
     const prisma = {
       $transaction: vi.fn(async (callback: (client: typeof transaction) => Promise<unknown>) => callback(transaction)),
-    } as unknown as AIHubPrismaClient;
+    } as unknown as OrcaSynapsePrismaClient;
     const manager = new PrismaAiOpsManager(prisma, {} as never);
-    const input = { role: "SECURITY" as const, decision: "APPROVED" as const, authority: "MPM Security", evidenceRef: "approvals/security", reason: "Approved for the bounded pilot." };
+    const input = { role: "SECURITY" as const, decision: "APPROVED" as const, authority: "OrcaSynapse Security", evidenceRef: "approvals/security", reason: "Approved for the bounded pilot." };
 
     const approval = await manager.recordReadinessApproval(principal, input);
 
@@ -470,13 +470,13 @@ describe("PrismaAiOpsManager production readiness", () => {
     };
     const prisma = {
       $transaction: vi.fn(async (callback: (client: typeof transaction) => Promise<unknown>) => callback(transaction)),
-    } as unknown as AIHubPrismaClient;
+    } as unknown as OrcaSynapsePrismaClient;
     const manager = new PrismaAiOpsManager(prisma, {} as never);
 
     await expect(manager.recordReadinessApproval(principal, {
       role: "SECURITY",
       decision: "APPROVED",
-      authority: "MPM Security",
+      authority: "OrcaSynapse Security",
       evidenceRef: "approvals/security",
       reason: "Approved for the bounded pilot.",
     })).rejects.toBeInstanceOf(AiOpsConflictError);

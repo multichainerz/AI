@@ -1,4 +1,4 @@
-import type { RuntimeOperationsSnapshot } from "@aihub/contracts";
+import type { RuntimeOperationsSnapshot } from "@orcasynapse/contracts";
 
 export interface OperationsManager {
   start(): Promise<void>;

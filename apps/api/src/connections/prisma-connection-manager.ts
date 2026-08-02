@@ -9,9 +9,9 @@ import {
   type RollbackConfigurationResult,
   type ServiceConnectionSummary,
   type UpdateServiceConnection,
-} from "@aihub/contracts";
-import { Prisma, type AIHubPrismaClient } from "@aihub/database";
-import { EnvelopeEncryption } from "@aihub/security";
+} from "@orcasynapse/contracts";
+import { Prisma, type OrcaSynapsePrismaClient } from "@orcasynapse/database";
+import { EnvelopeEncryption } from "@orcasynapse/security";
 import {
   ConnectionConflictError,
   ConnectionAuthorizationError,
@@ -141,7 +141,7 @@ export function parseStoredRevision(value: unknown): CreateServiceConnection {
 
 export class PrismaConnectionManager implements ConnectionManager, ConnectionDiagnosticStore {
   constructor(
-    private readonly prisma: AIHubPrismaClient,
+    private readonly prisma: OrcaSynapsePrismaClient,
     private readonly encryption: EnvelopeEncryption,
   ) {}
 

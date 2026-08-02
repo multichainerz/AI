@@ -1,4 +1,4 @@
-import type { MemoryMetrics, MemoryPublicationList } from "@aihub/contracts";
+import type { MemoryMetrics, MemoryPublicationList } from "@orcasynapse/contracts";
 
 export interface MemoryManager {
   list(): Promise<MemoryPublicationList>;

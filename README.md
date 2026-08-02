@@ -1,38 +1,108 @@
-# MPM AIHub
+<p align="center">
+  <img src="docs/assets/orcasynapse-wordmark.svg" alt="OrcaSynapse — on-premise AI operations and agentic control plane" width="100%" />
+</p>
 
-MPM AIHub is an on-premises control plane for governed local-AI chat, documents, agents, memory, models, tools, and operations.
+<p align="center">
+  <a href="https://github.com/multichainerz/AI/actions/workflows/verify.yml"><img alt="Build" src="https://github.com/multichainerz/AI/actions/workflows/verify.yml/badge.svg" /></a>
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-7-3178C6?logo=typescript&logoColor=white" />
+  <img alt="React" src="https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white" />
+  <img alt="PostgreSQL" src="https://img.shields.io/badge/PostgreSQL-17-4169E1?logo=postgresql&logoColor=white" />
+  <img alt="Deployment" src="https://img.shields.io/badge/deployment-on--premise-7457DF" />
+</p>
 
-The active architecture is intentionally small:
+OrcaSynapse is a self-hosted control and observability plane for private AI. It connects an enterprise-approved inference server to an isolated Hermes agent runtime, gives Hermes durable Supermemory, and centralizes chat, model routes, prompts, guardrails, knowledge, identity, audit, and operational evidence.
 
-- **AIHub host:** React/Vite dashboard, Fastify API, a lightweight runtime executor, PostgreSQL, and Prisma.
-- **Agent host:** isolated Hermes Agent plus self-hosted Supermemory Local.
-- **Inference host:** vLLM and the approved local model on the GPU server.
+The design is intentionally small: no LiteLLM tier, Redis, Valkey, pg-boss, object store, or duplicate vector database is required.
 
-AIHub calls vLLM directly for ordinary Chat. Hermes and Supermemory call the same approved model through AIHub's authenticated OpenAI-compatible inference gateway. That keeps the vLLM credential and model route in AIHub while avoiding a second inference proxy.
+## Three coherent layers
 
-The application does not require LiteLLM, Redis, Valkey, pg-boss, S3, MinIO, SeaweedFS, or an AIHub-owned pgvector index. PostgreSQL is the control, audit, session, and durable workflow system of record. Supermemory is the only semantic-memory plane.
+| Layer | Purpose | Primary components |
+| --- | --- | --- |
+| **AI Inference** | Discover, validate, select, and monitor an OpenAI-compatible model endpoint | vLLM, llama.cpp, SGLang, Ollama, TGI, or a compatible server |
+| **Agentic System** | Run isolated, governed agents with long-lived semantic memory | Hermes Agent + Supermemory Local on VM2 |
+| **Enterprise Access** | Authenticate people, assign administrative roles, and retain policy evidence | Local recovery account, OIDC / Microsoft Entra ID, PostgreSQL audit and configuration |
 
-## What is implemented
+```mermaid
+flowchart LR
+  USER["Employees and administrators"] --> ORCA["VM1 · OrcaSynapse"]
+  ORCA <--> PG["PostgreSQL"]
+  ORCA <-->|"governed runs, health, audit"| AGENT["VM2 · Hermes + Supermemory"]
+  ORCA -->|"approved Chat and agent inference"| GPU["OpenAI-compatible inference server"]
+  AGENT -->|"node-scoped inference access"| ORCA
+```
 
-- responsive desktop/mobile administration dashboard;
-- encrypted dashboard-managed service credentials and versioned configuration;
-- PostgreSQL-backed local administrator login, forced temporary-password replacement, offline Installation Key recovery, bounded sessions, optional OIDC, audits, lockout controls, and PostgreSQL domain-state reconciliation;
-- direct vLLM Chat with streaming, cancellation, bounded context, usage/latency telemetry, and feedback;
+## Install with two scripts on two VMs
+
+### 1. Install OrcaSynapse on VM1
+
+Use a clean Debian or Ubuntu host with network access and at least enough capacity for the application services and PostgreSQL. The public bootstrap is hosted free of charge through GitHub Raw:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/multichainerz/AI/main/install.sh
+less install.sh
+sudo bash install.sh
+```
+
+The bootstrap resolves the selected GitHub ref to an immutable commit, downloads that source archive from GitHub, installs it under `/opt/orcasynapse`, builds the pinned Compose application locally, and starts PostgreSQL, migrations, the API, runtime executor, and dashboard. It prints:
+
+- the initial `admin` temporary password, which must be changed at first sign-in; and
+- a permanent Installation Key for offline local-account recovery, which the customer must store in an organizational password vault.
+
+GitHub Raw hosts only the small bootstrap file; it is not an image registry or a trust substitute. For an accepted production build, pin a reviewed 40-character commit and its archive checksum:
+
+```bash
+sudo env \
+  ORCASYNAPSE_REF=<approved-commit-sha> \
+  ORCASYNAPSE_ARCHIVE_SHA256=<approved-archive-sha256> \
+  bash install.sh
+```
+
+If the repository is already checked out locally, run `sudo ./scripts/install-orcasynapse.sh` instead.
+
+### 2. Configure AI Inference
+
+Open the dashboard, sign in, and use **Deployment → AI Inference**. OrcaSynapse probes likely OpenAI-compatible paths, discovers model IDs, validates chat and streaming behavior, and saves the chosen endpoint and credential in its encrypted PostgreSQL-backed configuration store.
+
+### 3. Install the Agentic System on VM2
+
+After activating an Agent model route, use **Deployment → Agentic System → Enroll node**. OrcaSynapse generates a short-lived, single-use claim and serves the second installer from the customer-owned VM1:
+
+```bash
+curl -fsS https://orcasynapse.example.internal/install/hermes-node.sh \
+  -o install-orcasynapse-agent.sh
+sudo bash install-orcasynapse-agent.sh \
+  --connect https://orcasynapse.example.internal
+```
+
+Paste the claim at the hidden prompt. This one script installs both Hermes and Supermemory, generates the node identity on VM2, applies the approved inference route and managed guardrail baseline, registers the services, and starts signed health heartbeats. OrcaSynapse never retains VM2 SSH credentials or mounts its Docker socket.
+
+### 4. Enable Enterprise Access
+
+Configure OIDC or Microsoft Entra ID, map administrative groups to roles, validate sign-in and recovery, and retain the local administrator only as a controlled break-glass path. Tenant isolation remains an explicit production acceptance item; the current release must not be marketed as fully tenant-isolated until those controls pass end-to-end tests.
+
+## What is already implemented
+
+- responsive desktop and mobile administration dashboard;
+- direct OpenAI-compatible chat with streaming, cancellation, bounded context, token usage, latency, throughput, feedback, and sanitized audit records;
+- encrypted dashboard-managed endpoints and credentials;
 - versioned model, prompt, and deterministic guardrail controls;
-- document quarantine, classification, checksums, transient encrypted staging, publication, retrieval, retention, and deletion;
-- UTF-8 TXT ingestion with encrypted transient normalization and durable publication to Supermemory;
-- Supermemory publication in the governed `mpm-knowledge` namespace with PostgreSQL reauthorization before retrieval;
-- immutable Hermes Profile Distributions, standby/active lifecycle, governed runs, cancellation, safe event projection, and optional approved MCP tools;
-- one-time, signed Hermes-node enrollment with a node-generated Ed25519 identity and recurring signed heartbeats;
-- automatic installation and registration of Supermemory Local on the Hermes node;
-- an authenticated `/internal/v1` inference gateway for Hermes and Supermemory, with AIHub-native request policy and bounded responses;
-- readiness evidence, recovery-kit controls, service diagnostics, evaluation records, and AI-operations summaries.
+- local administrator authentication, forced temporary-password replacement, offline recovery, optional OIDC, session limits, and lockout controls;
+- transient encrypted TXT document staging with durable publication to governed Supermemory namespaces;
+- immutable Hermes profile distributions, standby/active lifecycle, governed runs, safe event projection, cancellation, and approved MCP-tool controls;
+- one-time signed node enrollment, node-generated Ed25519 identity, recurring heartbeats, recovery evidence, and service diagnostics;
+- PostgreSQL as the durable control, audit, session, configuration, authorization, and workflow system of record.
 
-The repository is an on-premises acceptance candidate, not a claim that a customer environment is production-approved. Production still requires customer PKI/TLS, firewall evidence, exact image/version pins, backups and restore drills, OIDC acceptance, GPU capacity/load tests, SIEM/monitoring integration, adversarial testing, and formal approval.
+## Security and data boundaries
+
+- Original enterprise files remain in their authoritative repositories; OrcaSynapse keeps uploaded source bytes only in encrypted ephemeral scratch space.
+- Supermemory is the semantic-memory plane. PostgreSQL does not duplicate embeddings or knowledge graphs.
+- Hermes owns its local runtime state and profile-scoped memory but receives no PostgreSQL credential, infrastructure-admin credential, or unrestricted enterprise connector.
+- Inference credentials terminate at OrcaSynapse. Enrolled runtimes receive a bounded node-scoped gateway key and an approved model alias.
+- Production requires customer-approved TLS/PKI, firewall rules, exact image and artifact pins, backup/restore drills, OIDC acceptance, GPU capacity tests, SIEM integration, and formal security approval.
 
 ## Development
 
-Requirements: Node.js 24+, pnpm 10+, PostgreSQL 17, and Docker when exercising the release topology.
+Requirements: Node.js 24+, pnpm 10+, PostgreSQL 17, and Docker for the release topology.
 
 ```bash
 pnpm install
@@ -40,61 +110,17 @@ pnpm db:generate
 pnpm dev
 ```
 
-Vite is the web build/dev server; pnpm is the package manager. They solve different problems and are both used.
-
-Run the worker separately during local development:
-
-```bash
-pnpm dev:worker
-```
-
-Verify the whole workspace:
-
-```bash
-pnpm verify
-```
-
-## AIHub installation
-
-The supported release-bundle path is a Debian/Ubuntu server with Docker Compose v2:
-
-```bash
-sudo ./scripts/install-aihub.sh
-```
-
-The script builds and starts PostgreSQL, migrations, API, runtime executor, and web. It provisions the local `admin` account, prints its one-time temporary password, and requires a password change at first sign-in. It also prints a separate permanent Installation Key; store that key offline in the organization password vault because it is only the break-glass local-account recovery credential. Routine endpoints and credentials are entered through the dashboard and encrypted in PostgreSQL with a separate root-owned master key.
-
-The Installation Key does not expire and is not used for routine sign-in. Local root authority can rotate it with `scripts/rotate-installation-key.sh`; OIDC or Microsoft Entra ID can later become the preferred enterprise identity without removing the local recovery path. See [deploy/BOOTSTRAP.md](deploy/BOOTSTRAP.md).
-
-## Hermes and Supermemory installation
-
-After vLLM is healthy and an active Agent model route exists:
-
-1. Open **Deployment → Production setup → Hermes nodes**.
-2. Create an invitation for the isolated runtime VM.
-3. Download the enrollment bundle.
-4. Copy the bundle and `scripts/install-hermes-node.sh` to that VM.
-5. Run `sudo ./install-hermes-node.sh enrollment.json`.
-
-The runtime installer starts the official Hermes container, configures it to use AIHub's inference gateway, installs Supermemory Local with local embeddings, enables the native Hermes Supermemory provider, registers both endpoints in AIHub, and starts signed heartbeats. AIHub does not retain SSH credentials or a Docker socket for the runtime VM.
-
-For production, set exact artifact versions/digests rather than `latest`, enforce TLS, and restrict network paths to the matrix in the [Hermes node enrollment runbook](docs/HERMES_NODE_ENROLLMENT_RUNBOOK.md).
-
-## Data boundaries
-
-- PostgreSQL stores governance, identity, authorization, lifecycle, audit, and job data—not embeddings or permanent source-document bytes.
-- AIHub scratch storage is encrypted and ephemeral. It is purged after confirmed publication or expiry and is excluded from backup.
-- Enterprise repositories remain authoritative for original documents.
-- Supermemory stores durable normalized knowledge and Hermes long-term memory.
-- Hermes keeps its native bounded memory and runtime state alongside, not instead of, Supermemory.
-- vLLM receives approved model requests only; it is not an authorization or memory system.
+Vite serves and builds the React application; pnpm manages the JavaScript workspace. Run the runtime executor separately with `pnpm dev:worker` and verify the complete monorepo with `pnpm verify`.
 
 ## Documentation
 
-- [Current architecture](docs/ARCHITECTURE.md)
-- [High-level product requirements](docs/AIHUB_PRD.md)
-- [Delivery and acceptance plan](docs/AIHUB_PHASED_PLAN.md)
-- [Hermes node enrollment](docs/HERMES_NODE_ENROLLMENT_RUNBOOK.md)
+- [Architecture and trust boundaries](docs/ARCHITECTURE.md)
+- [Product requirements](docs/ORCASYNAPSE_PRD.md)
+- [Delivery and acceptance plan](docs/ORCASYNAPSE_PHASED_PLAN.md)
+- [Installation and recovery](deploy/BOOTSTRAP.md)
+- [Hermes and Supermemory enrollment](docs/HERMES_NODE_ENROLLMENT_RUNBOOK.md)
 - [Model control](docs/MODEL_CONTROL_RUNBOOK.md)
 - [Guardrail control](docs/GUARDRAIL_CONTROL_RUNBOOK.md)
 - [Prompt control](docs/PROMPT_CONTROL_RUNBOOK.md)
+
+> **Release posture:** OrcaSynapse is an on-premises acceptance candidate. The repository demonstrates the product path and safety controls; customer production approval still depends on environment-specific acceptance evidence.

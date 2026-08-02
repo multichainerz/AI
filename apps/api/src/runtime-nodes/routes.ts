@@ -1,6 +1,7 @@
 import {
   createHermesNodeInvitationSchema,
   enrollHermesNodeSchema,
+  hermesNodeEnrollmentBundleSchema,
   hermesNodeEnrollmentResultSchema,
   hermesNodeHeartbeatResultSchema,
   hermesNodeHeartbeatSchema,
@@ -10,7 +11,8 @@ import {
   mutateHermesRuntimeNodeSchema,
   registerHermesNodeMemoryResultSchema,
   registerHermesNodeMemorySchema,
-} from "@aihub/contracts";
+  resolveHermesNodeInvitationSchema,
+} from "@orcasynapse/contracts";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { requireAdmin, type AdminSessionManager } from "../auth/admin-session.js";
 import {
@@ -39,9 +41,9 @@ function headerValue(value: string | string[] | undefined): string | undefined {
 
 function signatureHeaders(request: FastifyRequest): NodeSignatureHeaders {
   return {
-    timestamp: headerValue(request.headers["x-aihub-node-timestamp"]),
-    nonce: headerValue(request.headers["x-aihub-node-nonce"]),
-    signature: headerValue(request.headers["x-aihub-node-signature"]),
+    timestamp: headerValue(request.headers["x-orcasynapse-node-timestamp"]),
+    nonce: headerValue(request.headers["x-orcasynapse-node-nonce"]),
+    signature: headerValue(request.headers["x-orcasynapse-node-signature"]),
   };
 }
 
@@ -63,6 +65,20 @@ async function sendError(error: unknown, reply: FastifyReply): Promise<FastifyRe
 }
 
 export async function registerRuntimeNodeRoutes(app: FastifyInstance, options: RuntimeNodeRouteOptions): Promise<void> {
+  app.post("/bootstrap", async (request, reply) => {
+    const manager = managerOrLocked(options, reply);
+    if (!manager) return reply;
+    const input = resolveHermesNodeInvitationSchema.safeParse(request.body);
+    if (!input.success) {
+      return reply.code(400).send({ error: "INVALID_ENROLLMENT", message: input.error.issues[0]?.message });
+    }
+    try {
+      return hermesNodeEnrollmentBundleSchema.parse(await manager.resolveInvitation(input.data.token));
+    } catch (error) {
+      return sendError(error, reply);
+    }
+  });
+
   app.post("/enroll", async (request, reply) => {
     const manager = managerOrLocked(options, reply);
     if (!manager) return reply;

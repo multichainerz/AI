@@ -9,7 +9,7 @@ async function gatewayApp() {
   const gateway = {
     models: vi.fn(async (token: string | undefined) => {
       if (token !== "runtime-key") throw new InferenceGatewayError("UNAUTHORIZED", "Invalid runtime key.");
-      return { object: "list", data: [{ id: "hermes-agent", object: "model", owned_by: "mpm-aihub" }] };
+      return { object: "list", data: [{ id: "hermes-agent", object: "model", owned_by: "orcasynapse" }] };
     }),
     chat: vi.fn(async (token: string | undefined) => {
       if (token !== "runtime-key") throw new InferenceGatewayError("UNAUTHORIZED", "Invalid runtime key.");
@@ -32,7 +32,7 @@ describe("internal inference gateway routes", () => {
     expect(response.json()).toMatchObject({ error: { type: "unauthorized" } });
   });
 
-  it("proxies a bounded OpenAI-compatible request without exposing vLLM", async () => {
+  it("proxies a bounded OpenAI-compatible request without exposing the inference server", async () => {
     const { app, gateway } = await gatewayApp();
     const response = await app.inject({
       method: "POST",

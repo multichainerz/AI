@@ -4,8 +4,8 @@ import type {
   GuardrailPolicy,
   GuardrailPolicyList,
   UpdateGuardrailPolicy,
-} from "@aihub/contracts";
-import { Prisma, type AIHubPrismaClient } from "@aihub/database";
+} from "@orcasynapse/contracts";
+import { Prisma, type OrcaSynapsePrismaClient } from "@orcasynapse/database";
 import type { AdminPrincipal } from "../auth/admin-session.js";
 import { GuardrailConflictError, GuardrailNotFoundError, type GuardrailManager } from "./guardrail-manager.js";
 
@@ -34,7 +34,7 @@ function dto(policy: StoredPolicy): GuardrailPolicy {
 }
 
 export class PrismaGuardrailManager implements GuardrailManager {
-  constructor(private readonly prisma: AIHubPrismaClient) {}
+  constructor(private readonly prisma: OrcaSynapsePrismaClient) {}
 
   async list(): Promise<GuardrailPolicyList> {
     const items = await this.prisma.guardrailPolicy.findMany({
@@ -57,7 +57,7 @@ export class PrismaGuardrailManager implements GuardrailManager {
           resourceType: "GuardrailPolicy",
           resourceId: policy.id,
           outcome: "SUCCESS",
-          metadata: { slug: policy.slug, version: policy.version, enforcementPlane: "AIHUB" },
+          metadata: { slug: policy.slug, version: policy.version, enforcementPlane: "ORCASYNAPSE" },
         } });
         return policy;
       });
@@ -73,7 +73,7 @@ export class PrismaGuardrailManager implements GuardrailManager {
   async update(principal: AdminPrincipal, id: string, input: UpdateGuardrailPolicy): Promise<GuardrailPolicy> {
     return this.prisma.$transaction(async (transaction) => {
       const { expectedRevision, ...changes } = input;
-      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`aihub-guardrail:${id}`}, 0))`;
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`orcasynapse-guardrail:${id}`}, 0))`;
       const current = await transaction.guardrailPolicy.findUnique({ where: { id } });
       if (!current) throw new GuardrailNotFoundError();
       if (current.status === "ACTIVE") {
@@ -125,8 +125,8 @@ export class PrismaGuardrailManager implements GuardrailManager {
 
   async activate(principal: AdminPrincipal, id: string, input: ChangeGuardrailPolicyState): Promise<GuardrailPolicy> {
     return this.prisma.$transaction(async (transaction) => {
-      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`aihub-guardrail:${id}`}, 0))`;
-      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('aihub-guardrail-active', 0))`;
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`orcasynapse-guardrail:${id}`}, 0))`;
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('orcasynapse-guardrail-active', 0))`;
       const current = await transaction.guardrailPolicy.findUnique({ where: { id } });
       if (!current) throw new GuardrailNotFoundError();
       if (current.status === "ACTIVE") throw new GuardrailConflictError("The policy is already active.");
@@ -144,13 +144,13 @@ export class PrismaGuardrailManager implements GuardrailManager {
         select: { connection: { select: { kind: true, enabled: true, status: true } } },
       }) : null;
       const legacyConnections = catalogueEnforced ? [] : await transaction.serviceConnection.findMany({
-        where: { kind: "VLLM", enabled: true },
+        where: { kind: "INFERENCE", enabled: true },
         select: { kind: true, enabled: true, status: true },
         take: 2,
       });
       const servingConnection = modelRoute?.connection ?? (legacyConnections.length === 1 ? legacyConnections[0] : null);
-      if (!servingConnection || servingConnection.kind !== "VLLM" || !servingConnection.enabled || servingConnection.status !== "HEALTHY") {
-        throw new GuardrailConflictError("One effective vLLM chat connection must be enabled and healthy before policy activation.");
+      if (!servingConnection || servingConnection.kind !== "INFERENCE" || !servingConnection.enabled || servingConnection.status !== "HEALTHY") {
+        throw new GuardrailConflictError("One effective inference server connection must be enabled and healthy before policy activation.");
       }
 
       const evaluation = await transaction.evaluationRun.findFirst({
@@ -188,7 +188,7 @@ export class PrismaGuardrailManager implements GuardrailManager {
         resourceType: "GuardrailPolicy",
         resourceId: id,
         outcome: "SUCCESS",
-        metadata: { reason: input.reason, evaluationRunId: evaluation.id, version: current.version, enforcementPlane: "AIHUB" },
+        metadata: { reason: input.reason, evaluationRunId: evaluation.id, version: current.version, enforcementPlane: "ORCASYNAPSE" },
       } });
       return dto(saved);
     }).catch((error: unknown) => {
@@ -201,7 +201,7 @@ export class PrismaGuardrailManager implements GuardrailManager {
 
   async suspend(principal: AdminPrincipal, id: string, input: ChangeGuardrailPolicyState): Promise<GuardrailPolicy> {
     return this.prisma.$transaction(async (transaction) => {
-      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`aihub-guardrail:${id}`}, 0))`;
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`orcasynapse-guardrail:${id}`}, 0))`;
       const current = await transaction.guardrailPolicy.findUnique({ where: { id } });
       if (!current) throw new GuardrailNotFoundError();
       if (current.status !== "ACTIVE") throw new GuardrailConflictError("Only the active policy can be suspended.");

@@ -7,7 +7,7 @@ const policy = {
   blockCredentialPatterns: true,
 };
 
-describe("AIHub runtime text policy", () => {
+describe("OrcaSynapse runtime text policy", () => {
   it("allows ordinary multiline content", () => {
     expect(inspectInputText("summarize this\nwith a second line\tplease", policy)).toBeNull();
   });

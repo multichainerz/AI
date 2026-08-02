@@ -1,4 +1,4 @@
-name: Verify AIHub
+name: Verify OrcaSynapse
 
 on:
   pull_request:
@@ -15,13 +15,13 @@ jobs:
       postgres:
         image: postgres:17
         env:
-          POSTGRES_DB: aihub_test
-          POSTGRES_USER: aihub_test
-          POSTGRES_PASSWORD: aihub_test
+          POSTGRES_DB: orcasynapse_test
+          POSTGRES_USER: orcasynapse_test
+          POSTGRES_PASSWORD: orcasynapse_test
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U aihub_test -d aihub_test"
+          --health-cmd "pg_isready -U orcasynapse_test -d orcasynapse_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 12
@@ -38,4 +38,4 @@ jobs:
       - run: pnpm verify
       - run: pnpm verify:postgres
         env:
-          AIHUB_INTEGRATION_DATABASE_URL: postgresql://aihub_test:aihub_test@127.0.0.1:5432/aihub_test
+          ORCASYNAPSE_INTEGRATION_DATABASE_URL: postgresql://orcasynapse_test:orcasynapse_test@127.0.0.1:5432/orcasynapse_test

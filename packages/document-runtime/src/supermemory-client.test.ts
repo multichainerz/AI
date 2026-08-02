@@ -14,7 +14,7 @@ function resolver(configuration: Record<string, unknown> = {}): PrismaRuntimeCon
     resolveOne: vi.fn(async () => ({
       id: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb",
       kind: "SUPERMEMORY",
-      baseUrl: "https://memory.mpm.internal/api/",
+      baseUrl: "https://memory.orcasynapse.internal/api/",
       configuration,
       secrets: { apiKey: "write-only-key" },
     })),
@@ -37,7 +37,7 @@ describe("SupermemoryClient", () => {
         expect(JSON.stringify(body)).not.toContain("user:pilot");
         return new Response(JSON.stringify({ id: "sm-document-1" }), { status: 202 });
       }
-      expect(url).toBe("https://memory.mpm.internal/v3/documents/sm-document-1");
+      expect(url).toBe("https://memory.orcasynapse.internal/v3/documents/sm-document-1");
       return new Response(JSON.stringify({ status: "done" }), { status: 200 });
     });
     const client = new SupermemoryClient(resolver({ documentsPath: "/v3/documents" }), fetcher);
@@ -65,7 +65,7 @@ describe("SupermemoryClient", () => {
         documentId: "sm-document-1",
         score: 0.91,
         title: "Vehicle policy",
-        metadata: { aihubDocumentId: DOCUMENT_ID, generation: 2, nested: { ignored: true } },
+        metadata: { orcasynapseDocumentId: DOCUMENT_ID, generation: 2, nested: { ignored: true } },
         chunks: [{ content: "Keep every receipt.", score: 0.9 }],
       }] }), { status: 200 });
     });
@@ -73,13 +73,13 @@ describe("SupermemoryClient", () => {
 
     await expect(client.search("user:pilot", "vehicle policy")).resolves.toEqual([expect.objectContaining({
       externalDocumentId: "sm-document-1",
-      metadata: { aihubDocumentId: DOCUMENT_ID, generation: 2 },
+      metadata: { orcasynapseDocumentId: DOCUMENT_ID, generation: 2 },
       chunks: [{ content: "Keep every receipt.", score: 0.9 }],
     })]);
   });
 
   it("derives a stable agent-memory namespace without accepting arbitrary tags", () => {
-    expect(agentMemoryContainerTag("Primary Hermes")).toBe("mpm-agent-primary-hermes");
+    expect(agentMemoryContainerTag("Primary Hermes")).toBe("orcasynapse-agent-primary-hermes");
     expect(() => agentMemoryContainerTag("---")).toThrow("supported character");
   });
 

@@ -1,4 +1,4 @@
-import { ADMIN_SCOPES, type AdministratorSession, type ModelDeployment } from "@aihub/contracts";
+import { ADMIN_SCOPES, type AdministratorSession, type ModelDeployment } from "@orcasynapse/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.js";
 import { ADMIN_SESSION_COOKIE, type AdminSessionManager } from "../auth/admin-session.js";
@@ -24,7 +24,7 @@ const route: ModelDeployment = {
   modelAlias: "hermes-agent",
   workload: "AGENT",
   status: "ACTIVE",
-  connection: { id: CONNECTION_ID, displayName: "vLLM Primary", kind: "VLLM", environment: "PRODUCTION", enabled: true, status: "HEALTHY" },
+  connection: { id: CONNECTION_ID, displayName: "Inference Primary", kind: "INFERENCE", environment: "PRODUCTION", enabled: true, status: "HEALTHY" },
   version: "2.1-nvfp4",
   license: null,
   contextWindowTokens: 131_072,

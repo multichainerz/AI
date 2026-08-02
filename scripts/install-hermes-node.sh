@@ -3,18 +3,28 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="ai-v1.7.0"
-STATE_ROOT="${AIHUB_HERMES_STATE_ROOT:-/var/lib/aihub-hermes}"
-CONTAINER_NAME="aihub-hermes"
-HEARTBEAT_SERVICE="aihub-hermes-heartbeat"
-SUPERMEMORY_ROOT="${AIHUB_SUPERMEMORY_STATE_ROOT:-/var/lib/aihub-supermemory}"
-SUPERMEMORY_SERVICE="aihub-supermemory"
-SUPERMEMORY_USER="aihub-supermemory"
+INSTALLER_VERSION="ai-v1.10.0"
+STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
+CONTAINER_NAME="orcasynapse-hermes"
+HEARTBEAT_SERVICE="orcasynapse-hermes-heartbeat"
+SUPERMEMORY_ROOT="${ORCASYNAPSE_SUPERMEMORY_STATE_ROOT:-/var/lib/orcasynapse-supermemory}"
+SUPERMEMORY_SERVICE="orcasynapse-supermemory"
+SUPERMEMORY_USER="orcasynapse-supermemory"
+TEMPORARY_FILES=()
+RESOLVED_BUNDLE=""
 
 fail() {
   printf 'Hermes node installer error: %s\n' "$1" >&2
   exit 1
 }
+
+cleanup() {
+  local file
+  for file in "${TEMPORARY_FILES[@]:-}"; do
+    [[ -z "${file}" || ! -e "${file}" ]] || rm -f -- "${file}"
+  done
+}
+trap cleanup EXIT
 
 require_root() {
   [[ "${EUID}" -eq 0 ]] || fail "run the installer as root (for example: sudo ./install-hermes-node.sh enrollment.json)"
@@ -40,7 +50,7 @@ install_host_dependencies() {
 validate_bundle() {
   local bundle="$1"
   [[ -r "${bundle}" ]] || fail "the enrollment bundle is not readable"
-  [[ "$(jq -r '.format // empty' "${bundle}")" == "aihub-hermes-enrollment/v1" ]] \
+  [[ "$(jq -r '.format // empty' "${bundle}")" == "orcasynapse-hermes-enrollment/v1" ]] \
     || fail "the enrollment bundle format is unsupported"
   jq -e '
     (.nodeId | type == "string") and
@@ -55,7 +65,46 @@ validate_bundle() {
   local expires_at expires_epoch
   expires_at="$(jq -r '.expiresAt' "${bundle}")"
   expires_epoch="$(date --date="${expires_at}" '+%s' 2>/dev/null)" || fail "the enrollment expiry is invalid"
-  (( expires_epoch > $(date '+%s') )) || fail "the enrollment bundle has expired; issue a new invitation in AIHub"
+  (( expires_epoch > $(date '+%s') )) || fail "the enrollment bundle has expired; issue a new invitation in OrcaSynapse"
+}
+
+resolve_bundle_from_orcasynapse() {
+  local control_plane_url="$1"
+  control_plane_url="${control_plane_url%/}"
+  [[ "${control_plane_url}" =~ ^https?://[^/?#]+$ ]] \
+    || fail "--connect must be an OrcaSynapse origin without a path, query, or fragment"
+
+  local token=""
+  if [[ -n "${ORCASYNAPSE_ENROLLMENT_TOKEN_FILE:-}" ]]; then
+    [[ -r "${ORCASYNAPSE_ENROLLMENT_TOKEN_FILE}" ]] || fail "ORCASYNAPSE_ENROLLMENT_TOKEN_FILE is not readable"
+    token="$(tr -d '\r\n' < "${ORCASYNAPSE_ENROLLMENT_TOKEN_FILE}")"
+  else
+    [[ -r /dev/tty && -w /dev/tty ]] \
+      || fail "a terminal is required to enter the one-time claim; alternatively set ORCASYNAPSE_ENROLLMENT_TOKEN_FILE"
+    printf 'Paste the one-time claim shown by OrcaSynapse: ' > /dev/tty
+    IFS= read -r -s token < /dev/tty
+    printf '\n' > /dev/tty
+  fi
+  [[ ${#token} -ge 32 ]] || fail "the one-time enrollment claim is incomplete"
+
+  local request_file response_file http_status returned_control_plane
+  request_file="$(mktemp)"
+  response_file="$(mktemp)"
+  TEMPORARY_FILES+=("${request_file}" "${response_file}")
+  jq -n --arg token "${token}" '{token:$token}' > "${request_file}"
+  token=""
+  http_status="$(curl --silent --show-error --output "${response_file}" --write-out '%{http_code}' --max-time 30 \
+    -H 'Content-Type: application/json' --data-binary "@${request_file}" \
+    "${control_plane_url}/api/v1/runtime-nodes/bootstrap")"
+  if [[ "${http_status}" != "200" ]]; then
+    fail "OrcaSynapse rejected the bootstrap claim (HTTP ${http_status}): $(jq -r '.message // "unknown error"' "${response_file}" 2>/dev/null)"
+  fi
+
+  validate_bundle "${response_file}"
+  returned_control_plane="$(jq -r '.controlPlaneUrl' "${response_file}" | sed 's:/*$::')"
+  [[ "${returned_control_plane}" == "${control_plane_url}" ]] \
+    || fail "OrcaSynapse returned a bundle bound to a different control-plane origin"
+  RESOLVED_BUNDLE="${response_file}"
 }
 
 sign_node_payload() {
@@ -72,7 +121,7 @@ sign_node_payload() {
 
 install_supermemory() {
   local inference_base_url="$1" model_alias="$2" gateway_key="$3"
-  local requested_version="${AIHUB_SUPERMEMORY_VERSION:-latest}"
+  local requested_version="${ORCASYNAPSE_SUPERMEMORY_VERSION:-latest}"
   local install_dir="${SUPERMEMORY_ROOT}/install"
   local bin_dir="${SUPERMEMORY_ROOT}/bin"
 
@@ -105,7 +154,7 @@ EOF
 
   install -m 0644 /dev/stdin "/etc/systemd/system/${SUPERMEMORY_SERVICE}.service" <<EOF
 [Unit]
-Description=MPM Supermemory Local runtime
+Description=OrcaSynapse Supermemory Local runtime
 After=network-online.target
 Wants=network-online.target
 
@@ -152,12 +201,12 @@ EOF
 }
 
 write_heartbeat_client() {
-  install -d -m 0755 /usr/local/lib/aihub
-  install -m 0755 /dev/stdin /usr/local/lib/aihub/hermes-heartbeat.sh <<'HEARTBEAT'
+  install -d -m 0755 /usr/local/lib/orcasynapse
+  install -m 0755 /dev/stdin /usr/local/lib/orcasynapse/hermes-heartbeat.sh <<'HEARTBEAT'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-STATE_ROOT="${AIHUB_HERMES_STATE_ROOT:-/var/lib/aihub-hermes}"
+STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 CONTROL_PLANE_URL="$(<"${STATE_ROOT}/control-plane-url")"
 NODE_ID="$(<"${STATE_ROOT}/node-id")"
 PRIVATE_KEY="${STATE_ROOT}/identity/node.key"
@@ -191,23 +240,23 @@ signature="$(sign_request "${timestamp}" "${nonce}" "${payload}")"
 
 curl --fail --silent --show-error --max-time 15 \
   -H 'Content-Type: application/json' \
-  -H "X-AIHub-Node-Timestamp: ${timestamp}" \
-  -H "X-AIHub-Node-Nonce: ${nonce}" \
-  -H "X-AIHub-Node-Signature: ${signature}" \
+  -H "X-OrcaSynapse-Node-Timestamp: ${timestamp}" \
+  -H "X-OrcaSynapse-Node-Nonce: ${nonce}" \
+  -H "X-OrcaSynapse-Node-Signature: ${signature}" \
   --data-binary "${payload}" \
   "${CONTROL_PLANE_URL}/api/v1/runtime-nodes/${NODE_ID}/heartbeat" >/dev/null
 HEARTBEAT
 
   install -m 0644 /dev/stdin "/etc/systemd/system/${HEARTBEAT_SERVICE}.service" <<EOF
 [Unit]
-Description=AIHub Hermes runtime node heartbeat
+Description=OrcaSynapse Hermes runtime node heartbeat
 After=network-online.target docker.service
 Wants=network-online.target
 
 [Service]
 Type=oneshot
-Environment=AIHUB_HERMES_STATE_ROOT=${STATE_ROOT}
-ExecStart=/usr/local/lib/aihub/hermes-heartbeat.sh
+Environment=ORCASYNAPSE_HERMES_STATE_ROOT=${STATE_ROOT}
+ExecStart=/usr/local/lib/orcasynapse/hermes-heartbeat.sh
 User=root
 Group=root
 NoNewPrivileges=true
@@ -219,7 +268,7 @@ EOF
 
   install -m 0644 /dev/stdin "/etc/systemd/system/${HEARTBEAT_SERVICE}.timer" <<EOF
 [Unit]
-Description=Send AIHub Hermes runtime node heartbeat every minute
+Description=Send OrcaSynapse Hermes runtime node heartbeat every minute
 
 [Timer]
 OnBootSec=30s
@@ -234,13 +283,19 @@ EOF
 
 main() {
   require_root
-  [[ "$#" -eq 1 ]] || fail "usage: install-hermes-node.sh <enrollment-bundle.json>"
-  local bundle
-  bundle="$(realpath "$1")"
   install_host_dependencies
+  local bundle
+  if [[ "$#" -eq 1 && "$1" != "--connect" ]]; then
+    bundle="$(realpath "$1")"
+  elif [[ "$#" -eq 2 && "$1" == "--connect" ]]; then
+    resolve_bundle_from_orcasynapse "$2"
+    bundle="${RESOLVED_BUNDLE}"
+  else
+    fail "usage: install-hermes-node.sh <enrollment-bundle.json> | install-hermes-node.sh --connect <OrcaSynapse-origin>"
+  fi
   validate_bundle "${bundle}"
 
-  [[ ! -e "${STATE_ROOT}/node-id" ]] || fail "this host is already enrolled; revoke it in AIHub before rebuilding the node"
+  [[ ! -e "${STATE_ROOT}/node-id" ]] || fail "this host is already enrolled; revoke it in OrcaSynapse before rebuilding the node"
   docker inspect "${CONTAINER_NAME}" >/dev/null 2>&1 && fail "a container named '${CONTAINER_NAME}' already exists"
 
   local node_id token control_plane_url hermes_base_url hermes_image hostname_value public_key api_key
@@ -252,6 +307,10 @@ main() {
   hostname_value="$(hostname --fqdn 2>/dev/null || hostname)"
 
   install -d -m 0700 "${STATE_ROOT}" "${STATE_ROOT}/identity"
+  # Hermes managed scope is a root-owned, read-only policy layer. The
+  # container receives it at /etc/hermes so users cannot override the exact
+  # OrcaSynapse-pinned model route and baseline guardrails through /opt/data.
+  install -d -m 0755 "${STATE_ROOT}/managed"
   install -d -m 0750 -o 10000 -g 10000 "${STATE_ROOT}/data"
   openssl genpkey -algorithm ED25519 -out "${STATE_ROOT}/identity/node.key"
   chmod 0600 "${STATE_ROOT}/identity/node.key"
@@ -284,11 +343,13 @@ EOF
     --add-host host.docker.internal:host-gateway \
     -e HERMES_UID=10000 \
     -e HERMES_GID=10000 \
+    -e HERMES_MANAGED_DIR=/etc/hermes \
     -e API_SERVER_ENABLED=true \
     -e API_SERVER_HOST=0.0.0.0 \
     -e API_SERVER_PORT=8642 \
     -e "API_SERVER_KEY=${api_key}" \
     -v "${STATE_ROOT}/data:/opt/data" \
+    -v "${STATE_ROOT}/managed:/etc/hermes:ro" \
     -p 8642:8642 \
     "${hermes_image}" gateway run >/dev/null
 
@@ -305,7 +366,7 @@ EOF
   local request_file response_file http_status
   request_file="$(mktemp)"
   response_file="$(mktemp)"
-  trap 'rm -f "${request_file:-}" "${response_file:-}"' EXIT
+  TEMPORARY_FILES+=("${request_file}" "${response_file}")
   jq -n \
     --arg nodeId "${node_id}" \
     --arg token "${token}" \
@@ -322,7 +383,7 @@ EOF
     "${control_plane_url}/api/v1/runtime-nodes/enroll")"
   if [[ "${http_status}" != "200" ]]; then
     docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
-    fail "AIHub rejected enrollment (HTTP ${http_status}): $(jq -r '.message // "unknown error"' "${response_file}" 2>/dev/null)"
+    fail "OrcaSynapse rejected enrollment (HTTP ${http_status}): $(jq -r '.message // "unknown error"' "${response_file}" 2>/dev/null)"
   fi
 
   jq -e '
@@ -330,7 +391,7 @@ EOF
     (.modelBootstrap.baseUrl | test("^https?://")) and
     (.modelBootstrap.modelAlias | type == "string" and length > 0) and
     (.modelBootstrap.apiKey | type == "string" and length > 0)
-  ' "${response_file}" >/dev/null || fail "AIHub enrollment omitted its approved inference-gateway route"
+  ' "${response_file}" >/dev/null || fail "OrcaSynapse enrollment omitted its approved inference-gateway route"
   local model_base_url_json model_alias_json model_api_key_json
   model_base_url_json="$(jq -c '.modelBootstrap.baseUrl' "${response_file}")"
   model_alias_json="$(jq -c '.modelBootstrap.modelAlias' "${response_file}")"
@@ -358,24 +419,33 @@ EOF
 
   docker exec --user 10000:10000 "${CONTAINER_NAME}" python -c \
     'from tools.lazy_deps import ensure; ensure("memory.supermemory", prompt=False)' >/dev/null
-  install -m 0640 -o 10000 -g 10000 /dev/stdin "${STATE_ROOT}/data/config.yaml" <<EOF
+  install -m 0644 -o root -g root /dev/stdin "${STATE_ROOT}/managed/config.yaml" <<EOF
 model:
-  default: ${model_alias_json}
   provider: custom
+  model: ${model_alias_json}
   base_url: ${model_base_url_json}
+  api_key: \${OPENAI_API_KEY}
 # Hermes otherwise falls back to its broad api_server platform preset. Keep
 # the production baseline tool-free (including dynamically configured MCP
-# servers) until AIHub explicitly distributes and verifies a governed toolset.
+# servers) until OrcaSynapse explicitly distributes and verifies a governed toolset.
 platform_toolsets:
   api_server:
     - no_mcp
 memory:
   provider: supermemory
+security:
+  redact_secrets: true
+  allow_lazy_installs: false
+tool_loop_guardrails:
+  hard_stop_enabled: true
+  hard_stop_after:
+    exact_failure: 5
+    idempotent_no_progress: 5
 EOF
   install -m 0640 -o 10000 -g 10000 /dev/stdin "${STATE_ROOT}/data/supermemory.json" <<EOF
 {
   "base_url": "http://host.docker.internal:6767",
-  "container_tag": "mpm-agent-{identity}",
+  "container_tag": "orcasynapse-agent-{identity}",
   "auto_recall": true,
   "auto_capture": true,
   "search_mode": "hybrid",
@@ -395,7 +465,7 @@ EOF
   docker restart "${CONTAINER_NAME}" >/dev/null
   deadline=$((SECONDS + 180))
   until curl --fail --silent --max-time 5 http://127.0.0.1:8642/health >/dev/null 2>&1; do
-    (( SECONDS < deadline )) || fail "Hermes did not recover after applying the AIHub-managed inference route"
+    (( SECONDS < deadline )) || fail "Hermes did not recover after applying the OrcaSynapse-managed inference route"
     sleep 2
   done
 
@@ -410,12 +480,12 @@ EOF
   memory_signature="$(sign_node_payload "${memory_payload}" "${memory_timestamp}" "${memory_nonce}")"
   memory_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --max-time 30 \
     -H 'Content-Type: application/json' \
-    -H "X-AIHub-Node-Timestamp: ${memory_timestamp}" \
-    -H "X-AIHub-Node-Nonce: ${memory_nonce}" \
-    -H "X-AIHub-Node-Signature: ${memory_signature}" \
+    -H "X-OrcaSynapse-Node-Timestamp: ${memory_timestamp}" \
+    -H "X-OrcaSynapse-Node-Nonce: ${memory_nonce}" \
+    -H "X-OrcaSynapse-Node-Signature: ${memory_signature}" \
     --data-binary "${memory_payload}" \
     "${control_plane_url}/api/v1/runtime-nodes/${node_id}/memory")"
-  [[ "${memory_status}" == "200" ]] || fail "AIHub rejected the Supermemory registration (HTTP ${memory_status})"
+  [[ "${memory_status}" == "200" ]] || fail "OrcaSynapse rejected the Supermemory registration (HTTP ${memory_status})"
 
   printf '%s' "${node_id}" > "${STATE_ROOT}/node-id"
   printf '%s' "${control_plane_url}" > "${STATE_ROOT}/control-plane-url"
@@ -432,8 +502,8 @@ EOF
   printf 'Runtime API: %s\n' "${hermes_base_url}"
   printf 'Supermemory API: %s\n' "${supermemory_base_url}"
   printf 'Node identity: %s\n' "$(openssl pkey -pubin -in "${STATE_ROOT}/identity/node.pub" -outform DER | sha256sum | awk '{print $1}')"
-  printf 'The enrollment token is consumed. AIHub now monitors this node without SSH or a Docker socket.\n'
-  printf 'Enforce the VM firewall allowlist before production activation: AIHub to TCP/8642, and this node to AIHub HTTPS plus approved inference/MCP destinations.\n'
+  printf 'The enrollment token is consumed. OrcaSynapse now monitors this node without SSH or a Docker socket.\n'
+  printf 'Enforce the VM firewall allowlist before production activation: OrcaSynapse to TCP/8642, and this node to OrcaSynapse HTTPS plus approved inference/MCP destinations.\n'
 }
 
 main "$@"

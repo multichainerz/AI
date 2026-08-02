@@ -1,4 +1,4 @@
-import type { AIHubPrismaClient } from "@aihub/database";
+import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OperationsManager } from "./operations/operations-manager.js";
 import { createApp } from "./app.js";
@@ -9,7 +9,7 @@ afterEach(async () => {
   await Promise.all(apps.splice(0).map((app) => app.close()));
 });
 
-describe("AIHub API", () => {
+describe("OrcaSynapse API", () => {
   it("reports service health", async () => {
     const app = await createApp({ logger: false, runtime: { bootstrapState: "REQUIRED" } });
     apps.push(app);
@@ -17,7 +17,7 @@ describe("AIHub API", () => {
     const response = await app.inject({ method: "GET", url: "/healthz" });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({ status: "ok", service: "aihub-api" });
+    expect(response.json()).toMatchObject({ status: "ok", service: "orcasynapse-api" });
   });
 
   it("reports that dashboard configuration is enabled", async () => {
@@ -28,7 +28,7 @@ describe("AIHub API", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
-      product: "MPM AIHub",
+      product: "OrcaSynapse",
       configurationMode: "dashboard",
     });
   });
@@ -38,16 +38,16 @@ describe("AIHub API", () => {
     apps.push(unavailable);
     const locked = await unavailable.inject({ method: "GET", url: "/readyz" });
     expect(locked.statusCode).toBe(503);
-    expect(locked.json()).toMatchObject({ status: "degraded", service: "aihub-api-readiness" });
+    expect(locked.json()).toMatchObject({ status: "degraded", service: "orcasynapse-api-readiness" });
 
     const query = vi.fn(async () => [{ ready: 1 }]);
     const disconnect = vi.fn(async () => undefined);
-    const prisma = { $queryRaw: query, $disconnect: disconnect } as unknown as AIHubPrismaClient;
+    const prisma = { $queryRaw: query, $disconnect: disconnect } as unknown as OrcaSynapsePrismaClient;
     const ready = await createApp({ logger: false, runtime: { bootstrapState: "READY", prisma } });
     apps.push(ready);
     const response = await ready.inject({ method: "GET", url: "/readyz" });
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({ status: "ok", service: "aihub-api-readiness" });
+    expect(response.json()).toMatchObject({ status: "ok", service: "orcasynapse-api-readiness" });
     expect(response.headers["x-request-id"]).toBeTruthy();
     expect(query).toHaveBeenCalledOnce();
   });
@@ -61,7 +61,7 @@ describe("AIHub API", () => {
       }),
       stop,
     } as unknown as OperationsManager;
-    const prisma = { $disconnect: disconnect } as unknown as AIHubPrismaClient;
+    const prisma = { $disconnect: disconnect } as unknown as OrcaSynapsePrismaClient;
 
     await expect(createApp({
       logger: false,

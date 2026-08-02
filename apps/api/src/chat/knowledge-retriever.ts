@@ -1,6 +1,6 @@
-import { knowledgeSourceSchema, type KnowledgeSource } from "@aihub/contracts";
-import type { AIHubPrismaClient } from "@aihub/database";
-import { SupermemoryClient } from "@aihub/document-runtime";
+import { knowledgeSourceSchema, type KnowledgeSource } from "@orcasynapse/contracts";
+import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
+import { SupermemoryClient } from "@orcasynapse/document-runtime";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -10,14 +10,14 @@ export interface KnowledgeRetriever {
 
 export class SupermemoryKnowledgeRetriever implements KnowledgeRetriever {
   constructor(
-    private readonly prisma: AIHubPrismaClient,
+    private readonly prisma: OrcaSynapsePrismaClient,
     private readonly client: SupermemoryClient,
   ) {}
 
   async search(ownerSubject: string, query: string): Promise<KnowledgeSource[]> {
     const hits = await this.client.search(ownerSubject, query);
     const documentIds = [...new Set(hits.flatMap(({ metadata }) => {
-      const id = metadata.aihubDocumentId;
+      const id = metadata.orcasynapseDocumentId;
       return typeof id === "string" && UUID.test(id) ? [id] : [];
     }))];
     if (documentIds.length === 0) return [];
@@ -34,7 +34,7 @@ export class SupermemoryKnowledgeRetriever implements KnowledgeRetriever {
     const allowed = new Map(documents.map((document) => [document.id, document]));
     const seen = new Set<string>();
     return hits.flatMap((hit): KnowledgeSource[] => {
-      const id = hit.metadata.aihubDocumentId;
+      const id = hit.metadata.orcasynapseDocumentId;
       if (typeof id !== "string" || seen.has(id)) return [];
       const document = allowed.get(id);
       if (!document) return [];

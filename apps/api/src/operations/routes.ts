@@ -1,4 +1,4 @@
-import { runtimeOperationsSnapshotSchema } from "@aihub/contracts";
+import { runtimeOperationsSnapshotSchema } from "@orcasynapse/contracts";
 import type { FastifyInstance } from "fastify";
 import { requireAdmin, type AdminSessionManager } from "../auth/admin-session.js";
 import type { OperationsManager } from "./operations-manager.js";
@@ -16,7 +16,7 @@ export async function registerOperationsRoutes(
     if (!dependencies.manager || !dependencies.sessionManager) {
       return reply.code(423).send({
         error: "PLATFORM_LOCKED",
-        message: "AIHub runtime operations are not ready.",
+        message: "OrcaSynapse runtime operations are not ready.",
       });
     }
   });

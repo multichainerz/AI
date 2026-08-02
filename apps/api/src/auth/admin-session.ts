@@ -6,18 +6,18 @@ import {
   type AdminAuthenticationMethod,
   type AdminRole,
   type AdminScope,
-} from "@aihub/contracts";
-import type { AIHubPrismaClient, Prisma } from "@aihub/database";
+} from "@orcasynapse/contracts";
+import type { OrcaSynapsePrismaClient, Prisma } from "@orcasynapse/database";
 import {
   DUMMY_PASSWORD_DIGEST,
   hashLocalPassword,
   localPasswordIsValid,
   verifyLocalPassword,
-} from "@aihub/security";
+} from "@orcasynapse/security";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import type { InstallationKeyVerifier } from "./installation-key-auth.js";
 
-export const ADMIN_SESSION_COOKIE = "aihub_admin_session";
+export const ADMIN_SESSION_COOKIE = "orcasynapse_admin_session";
 export const ADMIN_SESSION_IDLE_MS = 15 * 60 * 1_000;
 export const ADMIN_SESSION_ABSOLUTE_MS = 8 * 60 * 60 * 1_000;
 const ADMIN_SESSION_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
@@ -213,7 +213,7 @@ async function createSessionRecord(
 
 export class PrismaAdminSessionManager implements AdminSessionManager {
   constructor(
-    private readonly prisma: AIHubPrismaClient,
+    private readonly prisma: OrcaSynapsePrismaClient,
     private readonly installationKeyAuthenticator: InstallationKeyVerifier,
   ) {}
 
@@ -229,7 +229,7 @@ export class PrismaAdminSessionManager implements AdminSessionManager {
     const idleExpiresAt = new Date(now.getTime() + ADMIN_SESSION_IDLE_MS);
     const absoluteExpiresAt = new Date(now.getTime() + ADMIN_SESSION_ABSOLUTE_MS);
     const session = await this.prisma.$transaction(async (transaction) => {
-      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('aihub-installation-key', 0))`;
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('orcasynapse-installation-key', 0))`;
       const keyHash = tokenDigest(installationKey);
       const existingCredential = await transaction.installationCredential.findUnique({ where: { id: "primary" } });
       if (existingCredential) {
@@ -319,7 +319,7 @@ export class PrismaAdminSessionManager implements AdminSessionManager {
     const sourceIp = context.sourceIp && isIP(context.sourceIp) ? context.sourceIp : null;
     const now = new Date();
     return this.prisma.$transaction(async (transaction) => {
-      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`aihub-local-admin:${normalizedUsername}`}, 0))`;
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`orcasynapse-local-admin:${normalizedUsername}`}, 0))`;
       const account = await transaction.localAdministrator.findUnique({ where: { username: normalizedUsername } });
       const passwordMatches = await verifyLocalPassword(password, account?.passwordHash ?? DUMMY_PASSWORD_DIGEST);
       const lockActive = Boolean(account?.lockedUntil && account.lockedUntil > now);
@@ -405,7 +405,7 @@ export class PrismaAdminSessionManager implements AdminSessionManager {
       if (!session || !activeSession(session, now) || session.authenticationMethod !== "LOCAL_PASSWORD") return null;
       const accountId = session.subject.startsWith("local-admin:") ? session.subject.slice("local-admin:".length) : "";
       if (!/^[0-9a-f-]{36}$/i.test(accountId)) return null;
-      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`aihub-local-admin-id:${accountId}`}, 0))`;
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`orcasynapse-local-admin-id:${accountId}`}, 0))`;
       const account = await transaction.localAdministrator.findUnique({ where: { id: accountId } });
       if (!account || account.disabledAt || !(await verifyLocalPassword(currentPassword, account.passwordHash))) return null;
 
@@ -470,7 +470,7 @@ export class PrismaAdminSessionManager implements AdminSessionManager {
         || !activeSession(recoverySession, now)
         || recoverySession.authenticationMethod !== "INSTALLATION_KEY_RECOVERY"
       ) return null;
-      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`aihub-local-admin:${normalizedUsername}`}, 0))`;
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`orcasynapse-local-admin:${normalizedUsername}`}, 0))`;
       const account = await transaction.localAdministrator.findUnique({ where: { username: normalizedUsername } });
       if (!account || account.disabledAt) return null;
 
@@ -668,7 +668,7 @@ export async function requireAdmin(
   if (!manager) {
     await reply.code(423).send({
       error: "PLATFORM_LOCKED",
-      message: "AIHub administrator sessions are not ready.",
+      message: "OrcaSynapse administrator sessions are not ready.",
     });
     return null;
   }
@@ -683,7 +683,7 @@ export async function requireAdmin(
   if (principal.passwordChangeRequired) {
     await reply.code(403).send({
       error: "PASSWORD_CHANGE_REQUIRED",
-      message: "Change or recover the local administrator password before using AIHub administration.",
+      message: "Change or recover the local administrator password before using OrcaSynapse administration.",
     });
     return null;
   }

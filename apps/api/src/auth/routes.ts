@@ -4,7 +4,7 @@ import {
   installationKeySessionRequestSchema,
   localAdministratorLoginRequestSchema,
   localAdministratorPasswordChangeRequestSchema,
-} from "@aihub/contracts";
+} from "@orcasynapse/contracts";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import {
   adminSessionToken,
@@ -54,7 +54,7 @@ export async function registerAdminSessionRoutes(
     if (!dependencies.sessionManager) {
       return reply.code(423).send({
         error: "PLATFORM_LOCKED",
-        message: "AIHub installation trust is not ready.",
+        message: "OrcaSynapse installation trust is not ready.",
       });
     }
     const parsed = installationKeySessionRequestSchema.safeParse(request.body);

@@ -1,4 +1,4 @@
-import type { ConnectionTestResult } from "@aihub/contracts";
+import type { ConnectionTestResult } from "@orcasynapse/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConnectionTestService } from "./connection-test-service.js";
 import type { ConnectionDiagnosticStore, ResolvedConnection } from "./types.js";
@@ -52,8 +52,8 @@ describe("ConnectionTestService", () => {
     const store = new MemoryDiagnosticStore({
       id: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d",
       activeRevision: 1,
-      kind: "VLLM",
-      baseUrl: "https://vllm.mpm.internal",
+      kind: "INFERENCE",
+      baseUrl: "https://vllm.orcasynapse.internal",
       configuration: {},
       secrets: { apiKey: "private-token" },
     });
@@ -77,7 +77,7 @@ describe("ConnectionTestService", () => {
       id: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d",
       activeRevision: 1,
       kind: "SUPERMEMORY",
-      baseUrl: "https://memory.mpm.internal",
+      baseUrl: "https://memory.orcasynapse.internal",
       configuration: {},
       secrets: { accessKeyId: "key", secretAccessKey: "secret" },
     });

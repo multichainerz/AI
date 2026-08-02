@@ -25,7 +25,7 @@ if (command.status !== 0) {
   process.stderr.write(command.stderr || "Local administrator provisioning failed.\n");
   process.exitCode = command.status ?? 1;
 } else if (command.stdout.includes('"created":true')) {
-  process.stdout.write(`Initial local administrator\n\nUsername: admin\nTemporary password: ${password}\n\nChange this password on first sign-in. It is not stored in plaintext by AIHub.\n`);
+  process.stdout.write(`Initial local administrator\n\nUsername: admin\nTemporary password: ${password}\n\nChange this password on first sign-in. It is not stored in plaintext by OrcaSynapse.\n`);
 } else {
   process.stdout.write("The existing local administrator account was preserved.\n");
 }

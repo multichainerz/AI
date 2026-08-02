@@ -1,6 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
-import type { InferenceGatewayChatRequest } from "@aihub/contracts";
-import type { AIHubPrismaClient } from "@aihub/database";
+import type { InferenceGatewayChatRequest } from "@orcasynapse/contracts";
+import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
 import type { ConnectionDiagnosticStore, ResolvedConnection } from "../connections/diagnostics/types.js";
 import { inspectInputText, type RuntimeTextPolicy } from "../guardrails/runtime-policy.js";
 
@@ -44,7 +44,7 @@ function messageText(message: InferenceGatewayChatRequest["messages"][number]): 
 }
 
 function endpointFor(connection: ResolvedConnection): URL {
-  if (!connection.baseUrl) throw new InferenceGatewayError("NOT_CONFIGURED", "The approved vLLM route has no endpoint.");
+  if (!connection.baseUrl) throw new InferenceGatewayError("NOT_CONFIGURED", "The approved inference route has no endpoint.");
   const path = typeof connection.configuration.chatPath === "string"
     ? connection.configuration.chatPath
     : "/v1/chat/completions";
@@ -53,13 +53,13 @@ function endpointFor(connection: ResolvedConnection): URL {
     if (!["http:", "https:"].includes(endpoint.protocol) || endpoint.username || endpoint.password) throw new Error();
     return endpoint;
   } catch {
-    throw new InferenceGatewayError("NOT_CONFIGURED", "The approved vLLM route is invalid.");
+    throw new InferenceGatewayError("NOT_CONFIGURED", "The approved inference route is invalid.");
   }
 }
 
 export class PrismaInferenceGateway {
   constructor(
-    private readonly prisma: AIHubPrismaClient,
+    private readonly prisma: OrcaSynapsePrismaClient,
     private readonly connections: ConnectionDiagnosticStore,
     private readonly fetcher: typeof fetch = fetch,
   ) {}
@@ -107,7 +107,7 @@ export class PrismaInferenceGateway {
       take: 2,
     });
     if (active.length !== 1) {
-      throw new InferenceGatewayError("NOT_CONFIGURED", "Exactly one evaluated AIHub guardrail policy must be active.");
+      throw new InferenceGatewayError("NOT_CONFIGURED", "Exactly one evaluated OrcaSynapse guardrail policy must be active.");
     }
     return active[0]!;
   }
@@ -127,13 +127,13 @@ export class PrismaInferenceGateway {
     const route = routes[0];
     const candidates = await this.prisma.serviceConnection.findMany({
       where: route
-        ? { id: route.connectionId, kind: "VLLM", enabled: true, status: "HEALTHY" }
-        : { kind: "VLLM", enabled: true, status: "HEALTHY" },
+        ? { id: route.connectionId, kind: "INFERENCE", enabled: true, status: "HEALTHY" }
+        : { kind: "INFERENCE", enabled: true, status: "HEALTHY" },
       select: { id: true },
       take: 2,
     });
     if (candidates.length !== 1) {
-      throw new InferenceGatewayError("NOT_CONFIGURED", "Exactly one healthy vLLM inference route is required.");
+      throw new InferenceGatewayError("NOT_CONFIGURED", "Exactly one healthy inference server route is required.");
     }
     const connection = await this.connections.resolveForDiagnostic(candidates[0]!.id);
     const configuredAlias = connection.configuration.modelAlias;
@@ -149,7 +149,7 @@ export class PrismaInferenceGateway {
 
   private async consumeRateLimit(runtimeConnectionId: string, requestsPerMinute: number, modelAlias: string): Promise<void> {
     await this.prisma.$transaction(async (transaction) => {
-      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`aihub-inference-gateway:${runtimeConnectionId}`}, 0))`;
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`orcasynapse-inference-gateway:${runtimeConnectionId}`}, 0))`;
       const recent = await transaction.auditEvent.count({
         where: {
           action: "inference.gateway_requested",
@@ -165,7 +165,7 @@ export class PrismaInferenceGateway {
         resourceType: "ServiceConnection",
         resourceId: runtimeConnectionId,
         outcome: "SUCCESS",
-        metadata: { modelAlias, enforcementPlane: "AIHUB" },
+        metadata: { modelAlias, enforcementPlane: "ORCASYNAPSE" },
       } });
     });
   }
@@ -175,7 +175,7 @@ export class PrismaInferenceGateway {
     const runtime = await this.resolveInference();
     return {
       object: "list",
-      data: [{ id: runtime.modelAlias, object: "model", owned_by: "mpm-aihub" }],
+      data: [{ id: runtime.modelAlias, object: "model", owned_by: "orcasynapse" }],
     };
   }
 
@@ -191,7 +191,7 @@ export class PrismaInferenceGateway {
       if (!text) continue;
       const violation = inspectInputText(text, policy);
       if (violation) {
-        throw new InferenceGatewayError("POLICY_REJECTED", `AIHub rejected the runtime request (${violation}).`);
+        throw new InferenceGatewayError("POLICY_REJECTED", `OrcaSynapse rejected the runtime request (${violation}).`);
       }
     }
     await this.consumeRateLimit(runtimeConnectionId, runtime.requestsPerMinute, runtime.modelAlias);
@@ -223,10 +223,10 @@ export class PrismaInferenceGateway {
         }),
       });
     } catch {
-      throw new InferenceGatewayError("UPSTREAM_FAILED", "The approved vLLM route could not be reached.");
+      throw new InferenceGatewayError("UPSTREAM_FAILED", "The approved inference server could not be reached.");
     }
     if (!response.ok) {
-      throw new InferenceGatewayError("UPSTREAM_FAILED", `The approved vLLM route returned status ${response.status}.`);
+      throw new InferenceGatewayError("UPSTREAM_FAILED", `The approved inference server returned status ${response.status}.`);
     }
     return {
       response,

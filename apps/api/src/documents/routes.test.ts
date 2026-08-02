@@ -1,4 +1,4 @@
-import { ADMIN_SCOPES, type DocumentDetail } from "@aihub/contracts";
+import { ADMIN_SCOPES, type DocumentDetail } from "@orcasynapse/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.js";
 import { ADMIN_SESSION_COOKIE, type AdminPrincipal, type AdminSessionManager } from "../auth/admin-session.js";
@@ -60,7 +60,7 @@ const identityManager: EnterpriseIdentityManager = {
       subject: "user:fb8c1e58-10d6-4ac7-aafe-e259763a6f63",
       identityMode: "ENTERPRISE",
       displayName: "Pilot User",
-      email: "pilot@mpm.example",
+      email: "pilot@orcasynapse.example",
       scopes: ["chat:use", "documents:use", "agents:use"],
       session: {
         id: SESSION_ID,
@@ -68,7 +68,7 @@ const identityManager: EnterpriseIdentityManager = {
         user: {
           id: "fb8c1e58-10d6-4ac7-aafe-e259763a6f63",
           displayName: "Pilot User",
-          email: "pilot@mpm.example",
+          email: "pilot@orcasynapse.example",
         },
         scopes: ["chat:use", "documents:use", "agents:use"],
         createdAt: "2026-07-30T00:00:00.000Z",
@@ -133,7 +133,7 @@ async function documentApp(manager: DocumentManager = memoryManager()) {
 }
 
 describe("document routes", () => {
-  it("requires an active AIHub identity", async () => {
+  it("requires an active OrcaSynapse identity", async () => {
     const app = await documentApp();
     const response = await app.inject({ method: "GET", url: "/api/v1/documents" });
     expect(response.statusCode).toBe(401);
@@ -178,13 +178,13 @@ describe("document routes", () => {
   it("accepts one bounded multipart file with query-only governance metadata", async () => {
     const manager = memoryManager();
     const app = await documentApp(manager);
-    const boundary = "aihub-document-boundary";
+    const boundary = "orcasynapse-document-boundary";
     const payload = Buffer.from([
       `--${boundary}`,
       'Content-Disposition: form-data; name="file"; filename="pilot.txt"',
       "Content-Type: text/plain",
       "",
-      "MPM pilot content",
+      "OrcaSynapse pilot content",
       `--${boundary}--`,
       "",
     ].join("\r\n"));

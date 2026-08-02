@@ -1,4 +1,4 @@
-import type { AIHubPrismaClient } from "@aihub/database";
+import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
 import { describe, expect, it, vi } from "vitest";
 import { WorkerRuntime } from "./worker-runtime.js";
 import type { WorkerIdentity, WorkerRegistry } from "./worker-registry.js";
@@ -15,7 +15,7 @@ function prisma(documentWork: Array<{ documentId: string; generation: number; co
     documentProcessingRun: { findMany: vi.fn(async () => documentWork) },
     documentMemoryPublication: { findMany: vi.fn(async () => []) },
     agentRun: { findMany: vi.fn(async () => []) },
-  } as unknown as AIHubPrismaClient;
+  } as unknown as OrcaSynapsePrismaClient;
 }
 
 function registry(): WorkerRegistry {

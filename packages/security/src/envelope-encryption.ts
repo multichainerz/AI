@@ -54,7 +54,7 @@ function decryptAesGcm(
 export function decodeMasterKey(encodedKey: string): Buffer {
   const key = Buffer.from(encodedKey.trim(), "base64");
   if (key.length !== KEY_BYTES) {
-    throw new Error("AIHub master key must be a base64-encoded 32-byte key.");
+    throw new Error("OrcaSynapse master key must be a base64-encoded 32-byte key.");
   }
   return key;
 }
@@ -74,7 +74,7 @@ export class EnvelopeEncryption {
   encrypt(value: string, context: string): EncryptedEnvelope {
     const dataKey = randomBytes(KEY_BYTES);
     const valueResult = encryptAesGcm(Buffer.from(value, "utf8"), dataKey, context);
-    const keyContext = `aihub:wrapped-data-key:v1:${this.#masterKeyVersion}`;
+    const keyContext = `orcasynapse:wrapped-data-key:v1:${this.#masterKeyVersion}`;
     const keyResult = encryptAesGcm(dataKey, this.#masterKey, keyContext);
 
     dataKey.fill(0);
@@ -94,13 +94,13 @@ export class EnvelopeEncryption {
 
   decrypt(envelope: EncryptedEnvelope, context: string): string {
     if (envelope.algorithm !== "AES-256-GCM" || envelope.encryptionVersion !== 1) {
-      throw new Error("Unsupported AIHub secret envelope format.");
+      throw new Error("Unsupported OrcaSynapse secret envelope format.");
     }
     if (envelope.masterKeyVersion !== this.#masterKeyVersion) {
       throw new Error("The requested master key version is not loaded.");
     }
 
-    const keyContext = `aihub:wrapped-data-key:v1:${envelope.masterKeyVersion}`;
+    const keyContext = `orcasynapse:wrapped-data-key:v1:${envelope.masterKeyVersion}`;
     const dataKey = decryptAesGcm(
       envelope.wrappedDataKey,
       this.#masterKey,

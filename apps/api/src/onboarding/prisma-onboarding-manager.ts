@@ -16,14 +16,14 @@ import type {
   UpdateComponentCompatibility,
   UpdateOnboardingStep,
   VerifyRecoveryKit,
-} from "@aihub/contracts";
-import { Prisma, type AIHubPrismaClient } from "@aihub/database";
+} from "@orcasynapse/contracts";
+import { Prisma, type OrcaSynapsePrismaClient } from "@orcasynapse/database";
 import {
   createCredentialRecoveryKit,
   credentialKeyFingerprint,
   recoveryKitChecksum,
   verifyCredentialRecoveryKit,
-} from "@aihub/security";
+} from "@orcasynapse/security";
 import type { AdminPrincipal } from "../auth/admin-session.js";
 import { OnboardingConflictError, OnboardingNotFoundError, type OnboardingManager } from "./onboarding-manager.js";
 
@@ -35,14 +35,14 @@ const COMPONENTS = [
   ["postgresql", "PostgreSQL", "Data", true, "Pinned PostgreSQL 17 patch passes connection, migration, backup, restore, and upgrade checks."],
   ["prisma-pg", "Prisma and pg", "Data", true, "Pinned adapter and driver pass pool, timeout, migration, and drift checks."],
   ["postgresql-runtime", "PostgreSQL runtime state", "Data", true, "Durable domain state, compare-and-set claims, restart reconciliation, and executor heartbeats pass without a separate queue broker."],
-  ["vllm-inference", "vLLM inference", "Inference", true, "The selected local serving stack passes model discovery, parser, streaming, cancellation, usage, load, and soak checks."],
+  ["inference-server", "Inference Server", "Inference", true, "The selected OpenAI-compatible inference server passes model discovery, parser, streaming, cancellation, usage, load, and soak checks."],
   ["supermemory-local", "Supermemory API", "Memory", true, "Selected Supermemory deployment passes API, isolation, deletion, telemetry, backup, and restore checks."],
   ["hermes-api", "Hermes API Server", "Agents", true, "Pinned Hermes passes capabilities, Runs, SSE, stop, Profile, Skill, Toolset, and state.db checks."],
   ["hermes-runtime-node", "Hermes runtime node", "Agents", false, "An isolated Hermes node completes one-time enrollment, proves its signing identity, and maintains a current heartbeat without standing SSH trust."],
   ["hermes-native-memory", "Hermes native Supermemory provider", "Agents", true, "The scoped native provider passes isolation, retention, deletion, backup, restore, and leakage checks."],
   ["mcp-gateway", "MCP gateway", "Tools", false, "Optional governed tools pass negotiation, discovery, calls, cancellation, authorization, and token-boundary checks."],
   ["enterprise-oidc", "Enterprise OIDC", "Identity", false, "Production identity passes discovery, signatures, PKCE, state, nonce, groups, logout, and revocation."],
-  ["signed-installer", "AIHub signed installer", "Deployment", true, "The signed release-bundle installer passes clean install, isolation, upgrade, rollback, and recovery."],
+  ["signed-installer", "OrcaSynapse signed installer", "Deployment", true, "The signed release-bundle installer passes clean install, isolation, upgrade, rollback, and recovery."],
   ["gpu-capacity", "Local GPU capacity", "Infrastructure", false, "Selected local inference stack passes admitted context, concurrency, contention, thermal, and recovery tests."],
 ] as const;
 
@@ -50,7 +50,7 @@ const STEPS = [
   ["activate-installation", 1, "Activate installation", "Confirm the local administrator account, installed release, and host identity.", "Run installation validation"],
   ["system-topology", 2, "System and topology", "Validate the host and select Compact, Control-plane only, or Segmented production.", "Save topology, then validate this host"],
   ["identity-recovery", 3, "Identity and recovery", "Configure final trust, enterprise identity, recovery ownership, and a verified encrypted recovery kit.", "Export and verify recovery; configure OIDC for Production"],
-  ["ai-services", 4, "AI services and Hermes node", "Connect vLLM, then enroll and validate the isolated Hermes + Supermemory runtime.", "Test vLLM, then enroll the Hermes VM"],
+  ["ai-services", 4, "AI services and Hermes node", "Connect an inference server, then enroll and validate the isolated Hermes + Supermemory runtime.", "Test the inference server, then enroll the Hermes VM"],
   ["knowledge-workflow", 5, "Knowledge workflow", "Validate transient extraction, publication, authorized retrieval/deletion, and scratch purge.", "Process and publish a representative document"],
   ["hermes-profiles", 6, "Hermes and Profiles", "Validate the Hermes boundary and move an immutable Profile Distribution into standby.", "Create, evaluate, and validate a standby Profile"],
   ["guardrails-tools", 7, "Guardrails and tools", "Prove conservative policy, zero-tool operation, approvals, and bounded governed tools.", "Activate a guardrail baseline and validate tool posture"],
@@ -58,7 +58,7 @@ const STEPS = [
 ] as const;
 
 const CANONICAL_STEP_KEYS = STEPS.map(([key]) => key);
-const CORE_RUNTIME_COMPONENTS = new Set(["postgresql", "vllm-inference", "supermemory-local", "hermes-api", "hermes-native-memory"]);
+const CORE_RUNTIME_COMPONENTS = new Set(["postgresql", "inference-server", "supermemory-local", "hermes-api", "hermes-native-memory"]);
 
 type StoredArchitecture = Prisma.PlatformArchitectureDecisionGetPayload<object>;
 type StoredComponent = Prisma.ComponentCompatibilityGetPayload<object>;
@@ -94,10 +94,10 @@ function componentRequirement(architecture: ArchitectureDecision, component: Sto
   let reason = required ? `${architecture.targetEnvironment.toLowerCase()} runtime baseline` : "Not required by the selected target";
   const selected: Array<[boolean, string, string]> = [
     [component.key === "enterprise-oidc" && production, "Production requires enterprise identity", "enterprise-oidc"],
-    [component.key === "signed-installer", "The supported AIHub release-bundle installer path must pass", "signed-installer"],
-    [component.key === "vllm-inference", "Direct vLLM inference is required", "vllm-inference"],
+    [component.key === "signed-installer", "The supported OrcaSynapse release-bundle installer path must pass", "signed-installer"],
+    [component.key === "inference-server", "An approved OpenAI-compatible inference server is required", "inference-server"],
     [component.key === "gpu-capacity" && production, "Production inference requires measured GPU admission", "gpu-capacity"],
-    [component.key === "hermes-runtime-node" && architecture.topologyMode !== "COMPACT", "The selected topology isolates Hermes from the AIHub control plane", "hermes-runtime-node"],
+    [component.key === "hermes-runtime-node" && architecture.topologyMode !== "COMPACT", "The selected topology isolates Hermes from the OrcaSynapse control plane", "hermes-runtime-node"],
   ];
   for (const [condition, selectedReason, key] of selected) {
     if (condition && component.key === key) {
@@ -245,7 +245,7 @@ export class PrismaOnboardingManager implements OnboardingManager {
   readonly #masterKey: Uint8Array | undefined;
 
   constructor(
-    private readonly prisma: AIHubPrismaClient,
+    private readonly prisma: OrcaSynapsePrismaClient,
     masterKey?: Uint8Array,
     private readonly readiness?: { productionReadiness(): Promise<ProductionReadiness> },
   ) {
@@ -328,7 +328,7 @@ export class PrismaOnboardingManager implements OnboardingManager {
   async updateArchitecture(principal: AdminPrincipal, input: UpdateArchitectureDecision): Promise<ArchitectureDecision> {
     await this.ensureState();
     const updated = await this.prisma.$transaction(async (transaction) => {
-      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('aihub-phase9-architecture', 0))`;
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('orcasynapse-phase9-architecture', 0))`;
       const [current, journey] = await Promise.all([
         transaction.platformArchitectureDecision.findUniqueOrThrow({ where: { id: "global" } }),
         transaction.onboardingJourney.findUniqueOrThrow({ where: { id: "global" } }),
@@ -426,7 +426,7 @@ export class PrismaOnboardingManager implements OnboardingManager {
   }
 
   async exportRecoveryKit(principal: AdminPrincipal, input: ExportRecoveryKit): Promise<RecoveryKitExport> {
-    if (!this.#masterKey) throw new OnboardingConflictError("The AIHub credential-encryption key is unavailable.");
+    if (!this.#masterKey) throw new OnboardingConflictError("The OrcaSynapse credential-encryption key is unavailable.");
     await this.ensureState();
     const created = await createCredentialRecoveryKit(this.#masterKey, input.passphrase);
     const changed = await this.prisma.credentialRecoveryControl.updateMany({
@@ -449,7 +449,7 @@ export class PrismaOnboardingManager implements OnboardingManager {
       metadata: { checksum: created.checksum, keyFingerprint: created.keyFingerprint, recoveryOwner: input.recoveryOwner },
     } });
     return {
-      fileName: `aihub-recovery-${created.keyFingerprint.slice(0, 12)}.json`,
+      fileName: `orcasynapse-recovery-${created.keyFingerprint.slice(0, 12)}.json`,
       serializedKit: created.serialized,
       checksum: created.checksum,
       keyFingerprint: created.keyFingerprint,
@@ -457,7 +457,7 @@ export class PrismaOnboardingManager implements OnboardingManager {
   }
 
   async verifyRecoveryKit(principal: AdminPrincipal, input: VerifyRecoveryKit): Promise<OnboardingSnapshot> {
-    if (!this.#masterKey) throw new OnboardingConflictError("The AIHub credential-encryption key is unavailable.");
+    if (!this.#masterKey) throw new OnboardingConflictError("The OrcaSynapse credential-encryption key is unavailable.");
     const parsed = await verifyCredentialRecoveryKit(input.serializedKit, input.passphrase, this.#masterKey);
     const checksum = recoveryKitChecksum(input.serializedKit);
     const current = await this.prisma.credentialRecoveryControl.findUniqueOrThrow({ where: { id: "global" } });
@@ -488,7 +488,7 @@ export class PrismaOnboardingManager implements OnboardingManager {
     if (stageKey === "system-topology") {
       const versionRows = await this.prisma.$queryRaw<Array<{ version: string }>>`SELECT version()`;
       return [
-        { stageKey, componentKey: "node-runtime", outcome: contractOutcome(process.versions.node.startsWith("24.")), code: "node-runtime", summary: `AIHub is running on Node ${process.versions.node}; Production still requires the retained compatibility suite.`, observedVersion: process.versions.node },
+        { stageKey, componentKey: "node-runtime", outcome: contractOutcome(process.versions.node.startsWith("24.")), code: "node-runtime", summary: `OrcaSynapse is running on Node ${process.versions.node}; Production still requires the retained compatibility suite.`, observedVersion: process.versions.node },
         { stageKey, componentKey: "postgresql", outcome: contractOutcome(Boolean(versionRows[0]?.version)), code: "postgresql-connectivity", summary: versionRows[0]?.version ? "PostgreSQL accepted a live query through Prisma; Production still requires backup, restore, and upgrade evidence." : "PostgreSQL version could not be read.", ...(versionRows[0]?.version ? { observedVersion: versionRows[0].version.slice(0, 240) } : {}) },
         { stageKey, componentKey: "prisma-pg", outcome: contractOutcome(true), code: "prisma-database-path", summary: "Prisma and the PostgreSQL driver completed the onboarding query path; Production still requires pool, timeout, and drift evidence.", observedVersion: "7.9.1" },
         { stageKey, componentKey: "fastify-api", outcome: contractOutcome(true), code: "api-runtime", summary: "The authenticated onboarding API is operational; Production still requires its retained contract and negative-security suite.", observedVersion: "0.1.0" },
@@ -515,7 +515,7 @@ export class PrismaOnboardingManager implements OnboardingManager {
     if (stageKey === "ai-services") {
       const [connections, runtimeNode] = await Promise.all([
         this.prisma.serviceConnection.findMany({
-          where: { kind: { in: ["VLLM", "SUPERMEMORY", "HERMES"] }, enabled: true },
+          where: { kind: { in: ["INFERENCE", "SUPERMEMORY", "HERMES"] }, enabled: true },
           orderBy: { updatedAt: "desc" },
         }),
         architecture.topologyMode === "COMPACT" ? Promise.resolve(null) : this.prisma.hermesRuntimeNode.findFirst({
@@ -524,8 +524,8 @@ export class PrismaOnboardingManager implements OnboardingManager {
           include: { serviceConnection: { select: { status: true } } },
         }),
       ]);
-      const required: Array<["VLLM" | "SUPERMEMORY" | "HERMES", string, string]> = [
-        ["VLLM", "vllm-inference", "vLLM"],
+      const required: Array<["INFERENCE" | "SUPERMEMORY" | "HERMES", string, string]> = [
+        ["INFERENCE", "inference-server", "Inference Server"],
         ["SUPERMEMORY", "supermemory-local", "Supermemory"], ["HERMES", "hermes-api", "Hermes"],
       ];
       const serviceChecks = required.map(([kind, componentKey, label]) => {
@@ -539,10 +539,10 @@ export class PrismaOnboardingManager implements OnboardingManager {
         outcome: runtimeNode?.serviceConnection?.status === "HEALTHY" ? contractOutcome(true) : "FAILED" as const,
         code: "hermes-node-enrollment",
         summary: runtimeNode?.serviceConnection?.status === "HEALTHY"
-          ? `Hermes node '${runtimeNode.slug}' has a verified signing identity, a current outbound heartbeat, and a healthy inbound AIHub route; Production still requires customer firewall evidence.`
+          ? `Hermes node '${runtimeNode.slug}' has a verified signing identity, a current outbound heartbeat, and a healthy inbound OrcaSynapse route; Production still requires customer firewall evidence.`
           : runtimeNode
-            ? `Hermes node '${runtimeNode.slug}' is reporting outbound, but AIHub cannot yet validate the inbound Hermes API route.`
-            : "After vLLM is healthy, enroll an isolated Hermes VM and receive a current signed heartbeat.",
+            ? `Hermes node '${runtimeNode.slug}' is reporting outbound, but OrcaSynapse cannot yet validate the inbound Hermes API route.`
+            : "After the inference server is healthy, enroll an isolated Hermes VM and receive a current signed heartbeat.",
         ...(runtimeNode?.hermesVersion ? { observedVersion: runtimeNode.hermesVersion } : {}),
         details: runtimeNode ? { nodeId: runtimeNode.id, identityFingerprint: runtimeNode.identityFingerprint } : {},
       }];

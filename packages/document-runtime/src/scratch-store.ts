@@ -6,7 +6,7 @@ import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
 const ALGORITHM = "aes-256-gcm";
-const MAGIC = Buffer.from("AIHUBS01", "ascii");
+const MAGIC = Buffer.from("ORCASYNAPSES01", "ascii");
 const NONCE_BYTES = 12;
 const AUTH_TAG_BYTES = 16;
 const ENVELOPE_BYTES = MAGIC.length + NONCE_BYTES + AUTH_TAG_BYTES;
@@ -30,7 +30,7 @@ function safeKey(key: string): string {
 
 function scratchKey(masterKey: Uint8Array): Buffer {
   if (masterKey.byteLength !== 32) throw new Error("Document scratch encryption requires a 32-byte master key.");
-  return createHmac("sha256", masterKey).update("aihub:document-scratch:v1", "utf8").digest();
+  return createHmac("sha256", masterKey).update("orcasynapse:document-scratch:v1", "utf8").digest();
 }
 
 class EncryptScratchTransform extends Transform {
@@ -82,7 +82,7 @@ export interface DocumentScratchStore {
 }
 
 export function documentScratchDirectory(): string {
-  return process.env.AIHUB_DOCUMENT_SCRATCH_DIR?.trim() || resolve(process.cwd(), ".local", "document-scratch");
+  return process.env.ORCASYNAPSE_DOCUMENT_SCRATCH_DIR?.trim() || resolve(process.cwd(), ".local", "document-scratch");
 }
 
 export function documentScratchPrefix(documentId: string): string {

@@ -1,4 +1,4 @@
-import type { AIHubPrismaClient } from "@aihub/database";
+import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PrismaOperationsManager } from "./prisma-operations-manager.js";
 
@@ -11,7 +11,7 @@ describe("PrismaOperationsManager", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-30T12:00:00.000Z"));
     const deleteMany = vi.fn(async () => ({ count: 2 }));
-    const prisma = { workerNode: { deleteMany } } as unknown as AIHubPrismaClient;
+    const prisma = { workerNode: { deleteMany } } as unknown as OrcaSynapsePrismaClient;
     await new PrismaOperationsManager(prisma).start();
     expect(deleteMany).toHaveBeenCalledWith({ where: { lastSeenAt: { lt: new Date("2026-06-30T12:00:00.000Z") } } });
   });
@@ -28,7 +28,7 @@ describe("PrismaOperationsManager", () => {
         id: "runtime-1", name: "runtime.local", version: "0.1.0", status: "ONLINE", workloads: ["documents", "agents", "legacy"],
         startedAt: new Date("2026-07-29T11:00:00.000Z"), lastSeenAt: new Date("2026-07-29T11:59:50.000Z"),
       }]) },
-    } as unknown as AIHubPrismaClient;
+    } as unknown as OrcaSynapsePrismaClient;
     const snapshot = await new PrismaOperationsManager(prisma).snapshot();
     expect(snapshot).toMatchObject({
       engine: "postgresql-state", status: "ONLINE",
@@ -46,7 +46,7 @@ describe("PrismaOperationsManager", () => {
       document: { groupBy: emptyGroups() }, documentMemoryPublication: { groupBy: emptyGroups() },
       agentRun: { groupBy: emptyGroups() }, toolActionDispatch: { groupBy: emptyGroups() },
       workerNode: { findMany: vi.fn(async () => []) },
-    } as unknown as AIHubPrismaClient;
+    } as unknown as OrcaSynapsePrismaClient;
     const snapshot = await new PrismaOperationsManager(prisma).snapshot();
     expect(snapshot.status).toBe("DEGRADED");
     expect(snapshot.statusReasons[0]).toContain("No online PostgreSQL runtime executor");

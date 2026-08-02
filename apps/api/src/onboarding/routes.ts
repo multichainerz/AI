@@ -11,7 +11,7 @@ import {
   updateComponentCompatibilitySchema,
   updateOnboardingStepSchema,
   verifyRecoveryKitSchema,
-} from "@aihub/contracts";
+} from "@orcasynapse/contracts";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { requireAdmin, type AdminSessionManager } from "../auth/admin-session.js";
 import { OnboardingConflictError, OnboardingNotFoundError, type OnboardingManager } from "./onboarding-manager.js";

@@ -14,7 +14,7 @@ import type {
   RecordProductionReadinessApproval,
   UpdateProductionReadinessControl,
   ProductionReadinessControl,
-} from "@aihub/contracts";
+} from "@orcasynapse/contracts";
 import type { AdminPrincipal } from "../auth/admin-session.js";
 
 export interface AiOpsManager {

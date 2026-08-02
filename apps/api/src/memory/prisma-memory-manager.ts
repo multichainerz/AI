@@ -1,11 +1,11 @@
-import type { MemoryMetrics, MemoryPublication, MemoryPublicationList } from "@aihub/contracts";
-import type { AIHubPrismaClient } from "@aihub/database";
-import { sharedKnowledgeScopeTag } from "@aihub/document-runtime";
+import type { MemoryMetrics, MemoryPublication, MemoryPublicationList } from "@orcasynapse/contracts";
+import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
+import { sharedKnowledgeScopeTag } from "@orcasynapse/document-runtime";
 import { randomUUID } from "node:crypto";
 import { MemoryPublicationConflictError, type MemoryManager } from "./memory-manager.js";
 
 export class PrismaMemoryManager implements MemoryManager {
-  constructor(private readonly prisma: AIHubPrismaClient) {}
+  constructor(private readonly prisma: OrcaSynapsePrismaClient) {}
 
   async list(): Promise<MemoryPublicationList> {
     const publications = await this.prisma.documentMemoryPublication.findMany({

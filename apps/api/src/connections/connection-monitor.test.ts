@@ -1,4 +1,4 @@
-import type { AIHubPrismaClient } from "@aihub/database";
+import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
 import { describe, expect, it, vi } from "vitest";
 import { ConnectionMonitorRuntime } from "./connection-monitor.js";
 import type { ConnectionTestService } from "./diagnostics/connection-test-service.js";
@@ -53,7 +53,7 @@ function harness(options: { enabled?: boolean; testError?: Error; releaseError?:
   const logger = { error: vi.fn() };
   return {
     monitor: new ConnectionMonitorRuntime(
-      prismaBase as AIHubPrismaClient,
+      prismaBase as OrcaSynapsePrismaClient,
       tester,
       logger,
       "monitor-1",

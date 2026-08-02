@@ -10,8 +10,8 @@ describe("chat contracts", () => {
     expect(createChatConversationSchema.parse({ modelAlias: "laguna-primary" })).toEqual({
       modelAlias: "laguna-primary",
     });
-    expect(sendChatMessageSchema.parse({ content: "  Hello AIHub  " })).toEqual({
-      content: "Hello AIHub",
+    expect(sendChatMessageSchema.parse({ content: "  Hello OrcaSynapse  " })).toEqual({
+      content: "Hello OrcaSynapse",
     });
   });
 

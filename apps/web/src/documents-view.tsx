@@ -4,10 +4,10 @@ import type {
   DocumentMetrics,
   DocumentStatus,
   DocumentSummary,
-} from "@aihub/contracts";
+} from "@orcasynapse/contracts";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
-  AIHubApiError,
+  OrcaSynapseApiError,
   decideDocumentQuarantine,
   deleteDocument,
   getDocument,
@@ -65,7 +65,7 @@ export function DocumentsView(props: DocumentsViewProps) {
   const validRetention = Number.isInteger(retentionDays) && retentionDays >= 1 && retentionDays <= 3_650;
 
   const handleError = (cause: unknown, fallback: string) => {
-    if (cause instanceof AIHubApiError && cause.status === 401) props.onUnauthorized();
+    if (cause instanceof OrcaSynapseApiError && cause.status === 401) props.onUnauthorized();
     setError(cause instanceof Error ? cause.message : fallback);
   };
 
@@ -192,7 +192,7 @@ export function DocumentsView(props: DocumentsViewProps) {
           <p>UTF-8 TXT uploads remain quarantined until review, then use encrypted transient staging for normalization before durable publication to Supermemory.</p>
         </div>
         <div className="document-lock-actions">
-          {props.oidcConfigured && <button className="primary-button" type="button" onClick={props.onSignIn}>Sign in with MPM</button>}
+          {props.oidcConfigured && <button className="primary-button" type="button" onClick={props.onSignIn}>Sign in with OrcaSynapse</button>}
           <button className="text-button" type="button" onClick={props.onConfigure}>Administrator setup</button>
         </div>
       </section>
@@ -202,7 +202,7 @@ export function DocumentsView(props: DocumentsViewProps) {
   return (
     <section className="documents-workspace">
       <header className="documents-header">
-        <div><p className="page-kicker">Content operations</p><h1>Documents</h1><p>Quarantine, normalize, and publish UTF-8 text knowledge without retaining source files in AIHub.</p></div>
+        <div><p className="page-kicker">Content operations</p><h1>Documents</h1><p>Quarantine, normalize, and publish UTF-8 text knowledge without retaining source files in OrcaSynapse.</p></div>
         <button className="primary-button" type="button" onClick={() => setUploadOpen((value) => !value)}>{uploadOpen ? "Close upload" : "Upload document"}</button>
       </header>
 
@@ -215,7 +215,7 @@ export function DocumentsView(props: DocumentsViewProps) {
             <small>UTF-8 TXT · up to 50 MB</small>
             <input ref={fileInput} type="file" required accept=".txt,text/plain" onChange={(event) => setFile(event.target.files?.[0] ?? null)}/>
           </label>
-          <p className="document-upload-note">AIHub encrypts this file in transient staging and purges it after Supermemory confirms publication. Keep the authoritative original in enterprise storage.</p>
+          <p className="document-upload-note">OrcaSynapse encrypts this file in transient staging and purges it after Supermemory confirms publication. Keep the authoritative original in enterprise storage.</p>
           <label>Classification<select value={classification} onChange={(event) => setClassification(event.target.value as DocumentClassification)}><option value="INTERNAL">Internal</option><option value="CONFIDENTIAL">Confidential</option><option value="RESTRICTED">Restricted</option></select></label>
           <label>Retention days<input type="number" min={1} max={3650} value={retentionDays} onChange={(event) => setRetentionDays(Number(event.target.value))}/></label>
           <button className="primary-button" type="submit" disabled={!file || !validRetention || busy}>{busy ? "Uploading…" : "Upload to quarantine"}</button>
@@ -256,10 +256,10 @@ export function DocumentsView(props: DocumentsViewProps) {
               <div className="document-staging">
                 <strong>{active.stagingPurgedAt ? "Transient staging purged" : "Transient staging active"}</strong>
                 <span>{active.stagingPurgedAt
-                  ? "The source and extraction intermediates are no longer stored by AIHub. Durable normalized knowledge remains in Supermemory."
+                  ? "The source and extraction intermediates are no longer stored by OrcaSynapse. Durable normalized knowledge remains in Supermemory."
                   : active.stagingExpiresAt
                     ? `Encrypted processing data is available until ${new Date(active.stagingExpiresAt).toLocaleString()} or successful Supermemory publication, whichever comes first.`
-                    : "AIHub does not retain a document source for this record."}</span>
+                    : "OrcaSynapse does not retain a document source for this record."}</span>
               </div>
 
               {(props.administrator || ["QUARANTINED", "READY", "FAILED", "REJECTED"].includes(active.status)) && (

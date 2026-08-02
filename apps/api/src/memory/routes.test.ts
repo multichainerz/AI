@@ -3,7 +3,7 @@ import {
   type AdministratorSession,
   type MemoryMetrics,
   type MemoryPublicationList,
-} from "@aihub/contracts";
+} from "@orcasynapse/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.js";
 import { ADMIN_SESSION_COOKIE, type AdminSessionManager } from "../auth/admin-session.js";

@@ -9,10 +9,10 @@ import type {
   ToolGrant,
   ToolMetrics,
   ToolRuntimeControl,
-} from "@aihub/contracts";
+} from "@orcasynapse/contracts";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import {
-  AIHubApiError,
+  OrcaSynapseApiError,
   decideToolApproval,
   getAgentProfiles,
   getGatewayCredentials,
@@ -83,8 +83,8 @@ export function ToolingView({ unlocked, scopes, onConfigure, onUnauthorized }: T
   }), [profiles]);
 
   const fail = (cause: unknown) => {
-    if (cause instanceof AIHubApiError && cause.status === 401) onUnauthorized();
-    setError(cause instanceof Error ? cause.message : "AIHub could not complete the governed-tool operation.");
+    if (cause instanceof OrcaSynapseApiError && cause.status === 401) onUnauthorized();
+    setError(cause instanceof Error ? cause.message : "OrcaSynapse could not complete the governed-tool operation.");
   };
 
   const load = async () => {
@@ -126,7 +126,7 @@ export function ToolingView({ unlocked, scopes, onConfigure, onUnauthorized }: T
   }
 
   return <section className="tooling-workspace">
-    <header className="documents-header tooling-header"><div><p className="page-kicker">Controlled integration plane</p><h1>Tools & approvals</h1><p>AIHub-owned MCP access with two-factor gateway authentication, exact-version grants, owner-only resources, and mandatory review for consequential actions.</p></div><button className="secondary-button" type="button" onClick={() => void load()}>Refresh</button></header>
+    <header className="documents-header tooling-header"><div><p className="page-kicker">Controlled integration plane</p><h1>Tools & approvals</h1><p>OrcaSynapse-owned MCP access with two-factor gateway authentication, exact-version grants, owner-only resources, and mandatory review for consequential actions.</p></div><button className="secondary-button" type="button" onClick={() => void load()}>Refresh</button></header>
 
     {error && <div className="documents-alert" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
     {notice && <div className="tooling-notice" role="status"><span>{notice}</span><button type="button" onClick={() => setNotice(null)}>Dismiss</button></div>}
@@ -141,7 +141,7 @@ export function ToolingView({ unlocked, scopes, onConfigure, onUnauthorized }: T
     </section>
 
     <div className="tooling-metrics" aria-label="Governed tooling summary">
-      <article><span>Active tools</span><strong>{metrics?.activeTools ?? tools.filter(({ status }) => status === "ACTIVE").length}</strong><small>AIHub handlers only</small></article>
+      <article><span>Active tools</span><strong>{metrics?.activeTools ?? tools.filter(({ status }) => status === "ACTIVE").length}</strong><small>OrcaSynapse handlers only</small></article>
       <article><span>Version grants</span><strong>{metrics?.activeGrants ?? grants.filter(({ enabled }) => enabled).length}</strong><small>exact profile revisions</small></article>
       <article><span>Pending review</span><strong>{metrics?.pendingApprovals ?? approvals.filter(({ status }) => status === "PENDING").length}</strong><small>expires automatically</small></article>
       <article><span>Action dispatch</span><strong>{metrics?.openActionDispatches ?? calls.filter(({ status }) => status === "EXECUTING").length}</strong><small>{metrics?.executingCalls ?? 0} executing / {metrics?.failedActionDispatches ?? 0} failed</small></article>
@@ -156,7 +156,7 @@ export function ToolingView({ unlocked, scopes, onConfigure, onUnauthorized }: T
         <form className="tooling-grant-form" onSubmit={(event) => void saveGrant(event)}>
           <label>Agent revision<select disabled={!canManage} value={profileVersionId} onChange={(event) => setProfileVersionId(event.target.value)}>{profileVersions.map(({ profile, version, live }) => <option key={version.id} value={version.id}>{profile.slug} · v{version.version}{live ? " · live" : " · current draft"}</option>)}</select></label>
           <label>Tool<select disabled={!canManage} value={toolId} onChange={(event) => setToolId(event.target.value)}>{tools.map((tool) => <option key={tool.id} value={tool.id}>{tool.displayName} · {tool.risk.toLowerCase().replace("_", " ")}</option>)}</select></label>
-          <label>Exact enterprise groups<input disabled={!canManage} placeholder="MPM-AI-Pilot, MPM-Ops" value={groupClaims} onChange={(event) => setGroupClaims(event.target.value)} /><small>Comma-separated, exact case-sensitive claims.</small></label>
+          <label>Exact enterprise groups<input disabled={!canManage} placeholder="OrcaSynapse-AI-Pilot, OrcaSynapse-Ops" value={groupClaims} onChange={(event) => setGroupClaims(event.target.value)} /><small>Comma-separated, exact case-sensitive claims.</small></label>
           <label>Administrator recovery role<select disabled={!canManage} value={adminRole} onChange={(event) => setAdminRole(event.target.value)}><option value="">None</option><option value="PLATFORM_ADMIN">Platform administrator</option><option value="SECURITY_ADMIN">Security administrator</option><option value="OPERATIONS_ADMIN">Operations administrator</option><option value="AUDITOR">Auditor</option></select></label>
           <button className="primary-button" disabled={!canManage || busy !== null || !profileVersionId || !toolId} type="submit">{canManage ? busy === "grant" ? "Saving…" : "Save version grant" : "Read-only access"}</button>
         </form>
@@ -166,7 +166,7 @@ export function ToolingView({ unlocked, scopes, onConfigure, onUnauthorized }: T
 
     <div className="tooling-grid credentials-row">
       <section className="panel tooling-credentials"><div className="document-section-heading"><div><p className="section-kicker">Transport authentication</p><h2>Gateway credentials</h2></div><span>write-only</span></div>
-        <form onSubmit={(event) => { event.preventDefault(); void action("credential", async () => { const issued = await issueGatewayCredential(credentialName.trim()); setIssuedCredential(issued); }, "Copy the new credential now; AIHub will not display it again."); }}><label>Client name<input disabled={!canManage} minLength={2} maxLength={120} value={credentialName} onChange={(event) => setCredentialName(event.target.value)} /></label><button className="primary-button" disabled={!canManage || busy !== null || credentialName.trim().length < 2} type="submit">{canManage ? busy === "credential" ? "Issuing…" : "Issue credential" : "Read-only access"}</button></form>
+        <form onSubmit={(event) => { event.preventDefault(); void action("credential", async () => { const issued = await issueGatewayCredential(credentialName.trim()); setIssuedCredential(issued); }, "Copy the new credential now; OrcaSynapse will not display it again."); }}><label>Client name<input disabled={!canManage} minLength={2} maxLength={120} value={credentialName} onChange={(event) => setCredentialName(event.target.value)} /></label><button className="primary-button" disabled={!canManage || busy !== null || credentialName.trim().length < 2} type="submit">{canManage ? busy === "credential" ? "Issuing…" : "Issue credential" : "Read-only access"}</button></form>
         {issuedCredential && <div className="tooling-secret"><div><strong>One-time credential</strong><span>Store this in the isolated Hermes MCP header configuration.</span></div><code>{issuedCredential.token}</code><button type="button" onClick={() => void navigator.clipboard.writeText(issuedCredential.token)}>Copy</button></div>}
         <div className="tooling-credential-list">{credentials.map((credential) => <article key={credential.id}><div><strong>{credential.name}</strong><code>{credential.tokenPrefix}…</code></div><span>Last used {when(credential.lastUsedAt)}</span><span className={`document-status ${credential.enabled ? "ready" : "neutral"}`}>{credential.enabled ? "active" : "revoked"}</span>{credential.enabled && <button type="button" disabled={!canManage || busy !== null} onClick={() => void action(`credential-${credential.id}`, () => revokeGatewayCredential(credential.id))}>{canManage ? "Revoke" : "View only"}</button>}</article>)}</div>
       </section>

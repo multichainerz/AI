@@ -10,8 +10,8 @@ import type {
   ToolStatus,
   UpdateToolRuntimeControl,
   UpsertToolGrant,
-} from "@aihub/contracts";
-import { Prisma, type AIHubPrismaClient } from "@aihub/database";
+} from "@orcasynapse/contracts";
+import { Prisma, type OrcaSynapsePrismaClient } from "@orcasynapse/database";
 import {
   ToolingConflictError,
   ToolingDeniedError,
@@ -24,7 +24,7 @@ import {
 } from "./tooling-manager.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const GATEWAY_TOKEN = /^aihub_mcp_([A-Za-z0-9_-]{43})$/;
+const GATEWAY_TOKEN = /^orcasynapse_mcp_([A-Za-z0-9_-]{43})$/;
 const RUN_AUTHORIZATION = /^([0-9a-f-]{36})\.([A-Za-z0-9_-]{43})$/i;
 
 const callInclude = {
@@ -159,7 +159,7 @@ function approvalDto(approval: {
 
 export class PrismaToolingManager implements ToolingManager {
   constructor(
-    private readonly prisma: AIHubPrismaClient,
+    private readonly prisma: OrcaSynapsePrismaClient,
     private readonly boundaryVerifier?: ToolBoundaryVerifier,
   ) {}
 
@@ -254,7 +254,7 @@ export class PrismaToolingManager implements ToolingManager {
 
   async issueCredential(principal: ToolingPrincipal, name: string) {
     const secret = randomBytes(32).toString("base64url");
-    const token = `aihub_mcp_${secret}`;
+    const token = `orcasynapse_mcp_${secret}`;
     const tokenPrefix = token.slice(0, 20);
     const credential = await this.prisma.$transaction(async (transaction) => {
       const saved = await transaction.mcpGatewayCredential.create({ data: {
@@ -401,7 +401,7 @@ export class PrismaToolingManager implements ToolingManager {
     let expired = false;
     let revokedReason: string | null = null;
     await this.prisma.$transaction(async (transaction) => {
-      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`aihub-tool-approval:${approvalId}`}, 0))`;
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`orcasynapse-tool-approval:${approvalId}`}, 0))`;
       const found = await transaction.toolApproval.findUnique({ where: { id: approvalId }, include: approvalInclude });
       if (!found) throw new ToolingNotFoundError("The approval request does not exist.");
       if (found.status !== "PENDING") throw new ToolingConflictError("Only a pending approval can be decided.");

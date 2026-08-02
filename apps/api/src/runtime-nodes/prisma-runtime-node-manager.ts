@@ -8,6 +8,7 @@ import {
 import type {
   CreateHermesNodeInvitation,
   EnrollHermesNode,
+  HermesNodeEnrollmentBundle,
   HermesNodeEnrollmentResult,
   HermesNodeHeartbeat,
   HermesNodeHeartbeatResult,
@@ -16,9 +17,9 @@ import type {
   MutateHermesRuntimeNode,
   RegisterHermesNodeMemory,
   RegisterHermesNodeMemoryResult,
-} from "@aihub/contracts";
-import { Prisma, type AIHubPrismaClient } from "@aihub/database";
-import { EnvelopeEncryption } from "@aihub/security";
+} from "@orcasynapse/contracts";
+import { Prisma, type OrcaSynapsePrismaClient } from "@orcasynapse/database";
+import { EnvelopeEncryption } from "@orcasynapse/security";
 import type { AdminPrincipal } from "../auth/admin-session.js";
 import type { ConnectionTestService } from "../connections/diagnostics/connection-test-service.js";
 import {
@@ -184,7 +185,7 @@ export function verifyNodeRequestSignature(
 
 export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager {
   constructor(
-    private readonly prisma: AIHubPrismaClient,
+    private readonly prisma: OrcaSynapsePrismaClient,
     private readonly encryption: EnvelopeEncryption,
     private readonly connectionTester?: ConnectionTestService,
   ) {}
@@ -199,10 +200,10 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
 
   async createInvitation(principal: AdminPrincipal, input: CreateHermesNodeInvitation): Promise<HermesNodeInvitation> {
     const inferenceCount = await this.prisma.serviceConnection.count({
-      where: { kind: "VLLM", enabled: true, status: "HEALTHY" },
+      where: { kind: "INFERENCE", enabled: true, status: "HEALTHY" },
     });
     if (inferenceCount !== 1) {
-      throw new RuntimeNodeConflictError("Configure and test exactly one healthy vLLM connection before enrolling Hermes.");
+      throw new RuntimeNodeConflictError("Configure and test exactly one healthy inference server before enrolling Hermes.");
     }
     const token = randomBytes(32).toString("base64url");
     const tokenHash = digest(token);
@@ -243,6 +244,7 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
             nodeId: pending.id,
             tokenHash,
             controlPlaneUrl: input.controlPlaneUrl.replace(/\/$/, ""),
+            hermesImage: input.hermesImage,
             expiresAt,
             createdBy: principal.id,
           },
@@ -263,7 +265,7 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
       return {
         node: summarize(node as StoredNode),
         bundle: {
-          format: "aihub-hermes-enrollment/v1",
+          format: "orcasynapse-hermes-enrollment/v1",
           nodeId: node.id,
           nodeSlug: node.slug,
           token,
@@ -282,13 +284,53 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
     }
   }
 
+  async resolveInvitation(token: string): Promise<HermesNodeEnrollmentBundle> {
+    const tokenHash = digest(token);
+    const enrollment = await this.prisma.hermesNodeEnrollment.findUnique({
+      where: { tokenHash },
+      include: { node: true },
+    });
+    if (!enrollment) {
+      throw new RuntimeNodeEnrollmentError("The enrollment claim is invalid.", "INVALID");
+    }
+    if (enrollment.status === "CONSUMED") {
+      throw new RuntimeNodeEnrollmentError("The enrollment claim has already been used.", "CONSUMED");
+    }
+    if (enrollment.status !== "ISSUED") {
+      throw new RuntimeNodeEnrollmentError("The enrollment claim is no longer active.", "INVALID");
+    }
+    if (enrollment.expiresAt <= new Date()) {
+      await this.prisma.hermesNodeEnrollment.updateMany({
+        where: { id: enrollment.id, status: "ISSUED" },
+        data: { status: "EXPIRED" },
+      });
+      throw new RuntimeNodeEnrollmentError("The enrollment claim has expired.", "EXPIRED");
+    }
+    if (!enrollment.controlPlaneUrl || !enrollment.hermesImage) {
+      throw new RuntimeNodeEnrollmentError(
+        "This invitation predates direct VM2 bootstrap; use its downloaded enrollment JSON or issue a new invitation.",
+        "INVALID",
+      );
+    }
+    return {
+      format: "orcasynapse-hermes-enrollment/v1",
+      nodeId: enrollment.node.id,
+      nodeSlug: enrollment.node.slug,
+      token,
+      controlPlaneUrl: enrollment.controlPlaneUrl,
+      hermesBaseUrl: enrollment.node.baseUrl,
+      hermesImage: enrollment.hermesImage,
+      expiresAt: enrollment.expiresAt.toISOString(),
+    };
+  }
+
   async enroll(input: EnrollHermesNode, sourceIp?: string): Promise<HermesNodeEnrollmentResult> {
     const identity = parseIdentity(input.publicKeyPem);
     const tokenHash = digest(input.token);
     const now = new Date();
 
     const enrolled = await this.prisma.$transaction(async (transaction) => {
-      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('aihub-hermes-primary-runtime', 0))`;
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('orcasynapse-hermes-primary-runtime', 0))`;
       const enrollment = await transaction.hermesNodeEnrollment.findUnique({
         where: { tokenHash },
         include: { node: true },
@@ -320,11 +362,11 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
         select: { slug: true },
       });
       if (activeRuntime) {
-        throw new RuntimeNodeEnrollmentError(`Hermes runtime '${activeRuntime.slug}' is already the active AIHub execution boundary.`, "INVALID");
+        throw new RuntimeNodeEnrollmentError(`Hermes runtime '${activeRuntime.slug}' is already the active OrcaSynapse execution boundary.`, "INVALID");
       }
 
       const inferenceConnections = await transaction.serviceConnection.findMany({
-        where: { kind: "VLLM", enabled: true, status: "HEALTHY" },
+        where: { kind: "INFERENCE", enabled: true, status: "HEALTHY" },
         take: 2,
       });
       const inference = inferenceConnections[0];
@@ -332,7 +374,7 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
         ? inference.configuration as Record<string, unknown>
         : {};
       if (inferenceConnections.length !== 1 || !inference?.baseUrl || typeof inferenceSettings.modelAlias !== "string") {
-        throw new RuntimeNodeEnrollmentError("Exactly one healthy vLLM route with a model alias is required.", "INVALID");
+        throw new RuntimeNodeEnrollmentError("Exactly one healthy inference server route with a model alias is required.", "INVALID");
       }
       const gatewayKey = randomBytes(32).toString("base64url");
       const modelBootstrap = {
@@ -520,7 +562,7 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
     const slug = `supermemory-node-${node.slug}`.slice(0, 64);
     const now = new Date();
     const connectionId = await this.prisma.$transaction(async (transaction) => {
-      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`aihub-supermemory-node:${nodeId}`}, 0))`;
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`orcasynapse-supermemory-node:${nodeId}`}, 0))`;
       const existing = await transaction.serviceConnection.findUnique({ where: { slug } });
       if (existing && existing.kind !== "SUPERMEMORY") {
         throw new RuntimeNodeConflictError("The managed Supermemory connection slug is already used by another service kind.");

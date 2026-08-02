@@ -1,6 +1,6 @@
-import type { CreateServiceConnection } from "@aihub/contracts";
-import type { AIHubPrismaClient } from "@aihub/database";
-import { EnvelopeEncryption } from "@aihub/security";
+import type { CreateServiceConnection } from "@orcasynapse/contracts";
+import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
+import { EnvelopeEncryption } from "@orcasynapse/security";
 import { describe, expect, it } from "vitest";
 import { ConnectionAuthorizationError } from "./connection-manager.js";
 import { parseStoredRevision, PrismaConnectionManager } from "./prisma-connection-manager.js";
@@ -8,9 +8,9 @@ import { parseStoredRevision, PrismaConnectionManager } from "./prisma-connectio
 const revision = {
   slug: "inference-primary",
   displayName: "Inference Primary",
-  kind: "VLLM",
+  kind: "INFERENCE",
   environment: "PRODUCTION",
-  baseUrl: "https://vllm.mpm.internal",
+  baseUrl: "https://vllm.orcasynapse.internal",
   enabled: true,
   configuration: { healthPath: "/health", modelsPath: "/v1/models" },
   secretFieldNames: ["apiKey"],
@@ -19,7 +19,7 @@ const revision = {
 describe("parseStoredRevision", () => {
   it("reads an immutable revision for a supported connection kind", () => {
     expect(parseStoredRevision(revision)).toMatchObject({
-      kind: "VLLM",
+      kind: "INFERENCE",
       configuration: { healthPath: "/health", modelsPath: "/v1/models" },
     });
   });
@@ -37,12 +37,12 @@ const oidcConnection: CreateServiceConnection = {
   baseUrl: "https://identity.example.internal",
   enabled: true,
   configuration: {
-    clientId: "aihub",
-    redirectUri: "https://aihub.example.internal/api/v1/auth/oidc/callback",
+    clientId: "orcasynapse",
+    redirectUri: "https://orcasynapse.example.internal/api/v1/auth/oidc/callback",
     scopes: ["openid", "profile", "email", "groups"],
     groupsClaim: "groups",
-    allowedGroups: ["AIHub-Users"],
-    platformAdminGroups: ["AIHub-Platform-Admins"],
+    allowedGroups: ["OrcaSynapse-Users"],
+    platformAdminGroups: ["OrcaSynapse-Platform-Admins"],
   },
   secrets: { clientSecret: "write-only-secret" },
 };
@@ -50,7 +50,7 @@ const oidcConnection: CreateServiceConnection = {
 describe("PrismaConnectionManager identity authority", () => {
   it("prevents a Security Administrator from assigning Platform Administrator groups", async () => {
     const manager = new PrismaConnectionManager(
-      {} as AIHubPrismaClient,
+      {} as OrcaSynapsePrismaClient,
       new EnvelopeEncryption({ masterKey: new Uint8Array(32).fill(7) }),
     );
 

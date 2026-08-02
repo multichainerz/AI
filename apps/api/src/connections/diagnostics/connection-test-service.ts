@@ -1,4 +1,4 @@
-import type { ConnectionTestResult } from "@aihub/contracts";
+import type { ConnectionTestResult } from "@orcasynapse/contracts";
 import { ConnectionNotFoundError, type AdminActor } from "../connection-manager.js";
 import { adapterFor } from "./adapter-registry.js";
 import type {

@@ -1,4 +1,4 @@
-import { ADMIN_SCOPES, type AdministratorSession, type AgentProfile, type AgentRun } from "@aihub/contracts";
+import { ADMIN_SCOPES, type AdministratorSession, type AgentProfile, type AgentRun } from "@orcasynapse/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.js";
 import { ADMIN_SESSION_COOKIE, type AdminSessionManager } from "../auth/admin-session.js";

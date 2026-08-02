@@ -1,11 +1,11 @@
-import type { MemoryIndexJobPayload } from "@aihub/contracts";
-import type { AIHubPrismaClient } from "@aihub/database";
+import type { MemoryIndexJobPayload } from "@orcasynapse/contracts";
+import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
 import {
   documentNormalizedKey,
   documentScratchPrefix,
   type DocumentScratchStore,
   SupermemoryClient,
-} from "@aihub/document-runtime";
+} from "@orcasynapse/document-runtime";
 
 function safeFailure(error: unknown): string {
   return error instanceof Error
@@ -15,7 +15,7 @@ function safeFailure(error: unknown): string {
 
 export class PrismaMemoryProcessor {
   constructor(
-    private readonly prisma: AIHubPrismaClient,
+    private readonly prisma: OrcaSynapsePrismaClient,
     private readonly client: SupermemoryClient,
     private readonly store: DocumentScratchStore,
   ) {}

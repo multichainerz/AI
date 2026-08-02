@@ -1,19 +1,19 @@
-name: mpm-aihub
+name: orcasynapse
 
 services:
   postgres:
     image: postgres:17-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_DB: aihub
-      POSTGRES_USER: aihub
+      POSTGRES_DB: orcasynapse
+      POSTGRES_USER: orcasynapse
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
     secrets:
       - postgres_password
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U aihub -d aihub"]
+      test: ["CMD-SHELL", "pg_isready -U orcasynapse -d orcasynapse"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -28,7 +28,7 @@ services:
       postgres:
         condition: service_healthy
     secrets:
-      - aihub_database_url
+      - orcasynapse_database_url
     command:
       - "node"
       - "packages/database/node_modules/prisma/build/index.js"
@@ -48,13 +48,13 @@ services:
       migrate:
         condition: service_completed_successfully
     secrets:
-      - aihub_database_url
-      - aihub_master_key
-      - aihub_installation_key
+      - orcasynapse_database_url
+      - orcasynapse_master_key
+      - orcasynapse_installation_key
     environment:
-      AIHUB_DOCUMENT_SCRATCH_DIR: /var/lib/aihub-document-scratch
+      ORCASYNAPSE_DOCUMENT_SCRATCH_DIR: /var/lib/orcasynapse-document-scratch
     volumes:
-      - document_scratch:/var/lib/aihub-document-scratch
+      - document_scratch:/var/lib/orcasynapse-document-scratch
     networks:
       - application
       - data
@@ -73,12 +73,12 @@ services:
       migrate:
         condition: service_completed_successfully
     secrets:
-      - aihub_database_url
-      - aihub_master_key
+      - orcasynapse_database_url
+      - orcasynapse_master_key
     environment:
-      AIHUB_DOCUMENT_SCRATCH_DIR: /var/lib/aihub-document-scratch
+      ORCASYNAPSE_DOCUMENT_SCRATCH_DIR: /var/lib/orcasynapse-document-scratch
     volumes:
-      - document_scratch:/var/lib/aihub-document-scratch
+      - document_scratch:/var/lib/orcasynapse-document-scratch
     networks:
       - application
       - data
@@ -92,7 +92,7 @@ services:
       api:
         condition: service_healthy
     ports:
-      - "${AIHUB_HTTP_PORT:-8080}:8080"
+      - "${ORCASYNAPSE_HTTP_PORT:-8080}:8080"
     networks:
       - application
     healthcheck:
@@ -104,12 +104,12 @@ services:
 secrets:
   postgres_password:
     file: ./.local/secrets/postgres_password
-  aihub_database_url:
-    file: ./.local/secrets/aihub_database_url
-  aihub_master_key:
-    file: ./.local/secrets/aihub_master_key
-  aihub_installation_key:
-    file: ./.local/secrets/aihub_installation_key
+  orcasynapse_database_url:
+    file: ./.local/secrets/orcasynapse_database_url
+  orcasynapse_master_key:
+    file: ./.local/secrets/orcasynapse_master_key
+  orcasynapse_installation_key:
+    file: ./.local/secrets/orcasynapse_installation_key
 
 volumes:
   postgres_data:

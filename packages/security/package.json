@@ -1,5 +1,5 @@
 {
-  "name": "@aihub/security",
+  "name": "@orcasynapse/security",
   "version": "0.1.0",
   "private": true,
   "type": "module",

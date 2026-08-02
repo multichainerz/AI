@@ -62,7 +62,7 @@ async function boundedJson(response: Response): Promise<unknown> {
   }
 }
 
-export const SHARED_KNOWLEDGE_CONTAINER_TAG = "mpm-knowledge";
+export const SHARED_KNOWLEDGE_CONTAINER_TAG = "orcasynapse-knowledge";
 
 export function sharedKnowledgeScopeTag(): string {
   return SHARED_KNOWLEDGE_CONTAINER_TAG;
@@ -71,11 +71,11 @@ export function sharedKnowledgeScopeTag(): string {
 export function agentMemoryContainerTag(identity: string): string {
   const normalized = identity.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48);
   if (!normalized) throw new Error("Agent memory identity must contain a supported character.");
-  return `mpm-agent-${normalized}`;
+  return `orcasynapse-agent-${normalized}`;
 }
 
 export function knowledgeDocumentCustomId(documentId: string): string {
-  return `aihub_doc_${documentId.replaceAll("-", "")}`;
+  return `orcasynapse_doc_${documentId.replaceAll("-", "")}`;
 }
 
 export interface SupermemoryPublicationInput {
@@ -112,11 +112,11 @@ export class SupermemoryClient {
         customId: knowledgeDocumentCustomId(input.documentId),
         taskType: "superrag",
         metadata: {
-          aihubDocumentId: input.documentId,
+          orcasynapseDocumentId: input.documentId,
           fileName: input.fileName,
           classification: input.classification,
           generation: input.generation,
-          source: "aihub",
+          source: "orcasynapse",
         },
       }),
     });

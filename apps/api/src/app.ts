@@ -2,7 +2,7 @@ import {
   healthResponseSchema,
   platformMetaSchema,
   SERVICE_KINDS,
-} from "@aihub/contracts";
+} from "@orcasynapse/contracts";
 import helmet from "@fastify/helmet";
 import Fastify, { type FastifyInstance } from "fastify";
 import { registerConnectionRoutes } from "./connections/routes.js";
@@ -54,7 +54,7 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
               censor: "[REDACTED]",
             },
           },
-    // AIHub's Compose topology exposes only the adjacent Nginx proxy. Trusting
+    // OrcaSynapse's Compose topology exposes only the adjacent Nginx proxy. Trusting
     // exactly one hop prevents client-supplied forwarding chains from becoming
     // security or audit metadata.
     trustProxy: 1,
@@ -116,7 +116,7 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
     void reply.header("cache-control", "no-store");
     return healthResponseSchema.parse({
       status: "ok",
-      service: "aihub-api",
+      service: "orcasynapse-api",
       timestamp: new Date().toISOString(),
     });
   });
@@ -125,7 +125,7 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
     void reply.header("cache-control", "no-store");
     const response = (status: "ok" | "degraded") => healthResponseSchema.parse({
       status,
-      service: "aihub-api-readiness",
+      service: "orcasynapse-api-readiness",
       timestamp: new Date().toISOString(),
     });
     if (runtime.bootstrapState !== "READY" || !runtime.prisma) {
@@ -141,7 +141,7 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
 
   app.get("/api/v1/platform", async () =>
     platformMetaSchema.parse({
-      product: "MPM AIHub",
+      product: "OrcaSynapse",
       version: "0.1.0",
       phase: "streamlined on-prem acceptance candidate",
       configurationMode: "dashboard",
@@ -287,6 +287,7 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
         ...(runtime.sessionManager ? { sessionManager: runtime.sessionManager } : {}),
         ...(runtime.connectionManager ? { manager: runtime.connectionManager } : {}),
         ...(runtime.connectionTestService ? { tester: runtime.connectionTestService } : {}),
+        ...(runtime.inferenceDiscoveryService ? { discoverer: runtime.inferenceDiscoveryService } : {}),
         ...(runtime.connectionMonitor ? { monitor: runtime.connectionMonitor } : {}),
       }),
     { prefix: "/api/v1/admin/connections" },
@@ -329,17 +330,17 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
   );
 
   app.setErrorHandler(async (error, request, reply) => {
-    request.log.error({ error }, "AIHub request failed");
+    request.log.error({ error }, "OrcaSynapse request failed");
     await reply.code(500).send({
       error: "INTERNAL_ERROR",
-      message: "AIHub could not complete the request.",
+      message: "OrcaSynapse could not complete the request.",
     });
   });
 
   app.setNotFoundHandler(async (_request, reply) => {
     await reply.code(404).send({
       error: "NOT_FOUND",
-      message: "The requested AIHub API resource does not exist.",
+      message: "The requested OrcaSynapse API resource does not exist.",
     });
   });
 

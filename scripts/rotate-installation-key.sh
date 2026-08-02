@@ -3,13 +3,13 @@ set -Eeuo pipefail
 
 umask 077
 
-AIHUB_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
-AIHUB_HTTP_PORT="${AIHUB_HTTP_PORT:-8080}"
-AIHUB_SECRET_DIR="${AIHUB_ROOT}/.local/secrets"
-export AIHUB_HTTP_PORT
+ORCASYNAPSE_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+ORCASYNAPSE_HTTP_PORT="${ORCASYNAPSE_HTTP_PORT:-8080}"
+ORCASYNAPSE_SECRET_DIR="${ORCASYNAPSE_ROOT}/.local/secrets"
+export ORCASYNAPSE_HTTP_PORT
 
 fail() {
-  printf 'AIHub key rotation error: %s\n' "$1" >&2
+  printf 'OrcaSynapse key rotation error: %s\n' "$1" >&2
   exit 1
 }
 
@@ -20,28 +20,28 @@ command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1 || f
 command -v openssl >/dev/null 2>&1 || fail "OpenSSL is required"
 command -v curl >/dev/null 2>&1 || fail "curl is required"
 
-for secret in postgres_password aihub_database_url aihub_master_key aihub_installation_key; do
-  [[ -s "${AIHUB_SECRET_DIR}/${secret}" ]] || fail "the protected AIHub secret set is incomplete"
+for secret in postgres_password orcasynapse_database_url orcasynapse_master_key orcasynapse_installation_key; do
+  [[ -s "${ORCASYNAPSE_SECRET_DIR}/${secret}" ]] || fail "the protected OrcaSynapse secret set is incomplete"
 done
 
-cd "${AIHUB_ROOT}"
+cd "${ORCASYNAPSE_ROOT}"
 new_key="$(openssl rand -base64 32 | tr -d '\n=' | tr '+/' '-_')"
-key_tmp="$(mktemp "${AIHUB_SECRET_DIR}/.installation-key.XXXXXX")"
+key_tmp="$(mktemp "${ORCASYNAPSE_SECRET_DIR}/.installation-key.XXXXXX")"
 trap 'rm -f -- "${key_tmp:-}"' EXIT
 printf '%s' "${new_key}" > "${key_tmp}"
 chmod 0600 "${key_tmp}"
 
 docker compose stop api
-mv -f -- "${key_tmp}" "${AIHUB_SECRET_DIR}/aihub_installation_key"
+mv -f -- "${key_tmp}" "${ORCASYNAPSE_SECRET_DIR}/orcasynapse_installation_key"
 trap - EXIT
-docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U aihub -d aihub \
+docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U orcasynapse -d orcasynapse \
   -c "UPDATE \"AdministratorSession\" SET \"revokedAt\" = CURRENT_TIMESTAMP WHERE \"authenticationMethod\" = 'INSTALLATION_KEY_RECOVERY' AND \"revokedAt\" IS NULL" \
   >/dev/null
 docker compose up -d --no-build --force-recreate api web
 
 deadline=$((SECONDS + 180))
-until curl --fail --silent "http://127.0.0.1:${AIHUB_HTTP_PORT}/readyz" >/dev/null 2>&1; do
-  (( SECONDS < deadline )) || fail "AIHub did not become ready after key rotation; inspect docker compose logs"
+until curl --fail --silent "http://127.0.0.1:${ORCASYNAPSE_HTTP_PORT}/readyz" >/dev/null 2>&1; do
+  (( SECONDS < deadline )) || fail "OrcaSynapse did not become ready after key rotation; inspect docker compose logs"
   sleep 2
 done
 

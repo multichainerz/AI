@@ -3,10 +3,10 @@ import type {
   ChatConversationSummary,
   ChatMessage,
   ChatStreamEvent,
-} from "@aihub/contracts";
+} from "@orcasynapse/contracts";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
-  AIHubApiError,
+  OrcaSynapseApiError,
   createChatConversation,
   getChatConversation,
   getChatConversations,
@@ -121,7 +121,7 @@ export function ChatView({
   const messageEnd = useRef<HTMLDivElement>(null);
 
   const handleError = (cause: unknown, fallback: string) => {
-    if (cause instanceof AIHubApiError && cause.status === 401) onUnauthorized();
+    if (cause instanceof OrcaSynapseApiError && cause.status === 401) onUnauthorized();
     setError(cause instanceof Error ? cause.message : fallback);
   };
 
@@ -323,12 +323,12 @@ export function ChatView({
       <section className="chat-locked">
         <div className="chat-lock-mark" aria-hidden="true">AI</div>
         <p className="page-kicker">Governed on-premise AI</p>
-        <h1>{oidcConfigured ? "Sign in to MPM AIHub" : "Enterprise access is not configured"}</h1>
+        <h1>{oidcConfigured ? "Sign in to OrcaSynapse" : "Enterprise access is not configured"}</h1>
         <p>{oidcConfigured
-          ? "Use your approved MPM identity. AIHub checks the configured group allowlist before creating a local session."
+          ? "Use your approved OrcaSynapse identity. OrcaSynapse checks the configured group allowlist before creating a local session."
           : "An administrator must configure and successfully test the enterprise OIDC connection before employees can enter Chat."}</p>
         <div className="chat-lock-actions">
-          {oidcConfigured && <button className="primary-button" type="button" onClick={onSignIn}>Sign in with MPM</button>}
+          {oidcConfigured && <button className="primary-button" type="button" onClick={onSignIn}>Sign in with OrcaSynapse</button>}
           <button className={oidcConfigured ? "text-button" : "primary-button"} type="button" onClick={onConfigure}>Administrator setup</button>
         </div>
       </section>
@@ -369,7 +369,7 @@ export function ChatView({
         <div className="chat-preview-note">
           <div className="chat-preview-identity">
             <i aria-hidden="true" />
-            <div><span>Identity mode</span><strong>{identityMode === "ENTERPRISE" ? "Enterprise OIDC" : "Administrator preview"}</strong><small>{displayName ?? "Active AIHub session"}</small></div>
+            <div><span>Identity mode</span><strong>{identityMode === "ENTERPRISE" ? "Enterprise Access" : "Administrator preview"}</strong><small>{displayName ?? "Active OrcaSynapse session"}</small></div>
           </div>
           <dl>
             <div><dt>Route</dt><dd>{active?.modelAlias ?? "Automatic"}</dd></div>
@@ -397,7 +397,7 @@ export function ChatView({
           {!active || active.messages.length === 0 ? (
             <div className="chat-welcome">
               <div className="chat-welcome-mark">M</div>
-              <p className="page-kicker">MPM AIHub</p>
+              <p className="page-kicker">OrcaSynapse</p>
               <h2>How can I help?</h2>
               <p>Responses stay on the configured on-premise inference route and include approved document context when relevant. Tools remain disabled.</p>
               <div className="chat-suggestions">
@@ -411,7 +411,7 @@ export function ChatView({
                 <div className="message-avatar">{message.role === "USER" ? "You" : "M"}</div>
                 <div className="message-body">
                   <div className="message-heading">
-                    <div><strong>{message.role === "USER" ? "You" : "MPM AIHub"}</strong><time dateTime={message.createdAt}>{formatMessageTime(message.createdAt)}</time></div>
+                    <div><strong>{message.role === "USER" ? "You" : "OrcaSynapse"}</strong><time dateTime={message.createdAt}>{formatMessageTime(message.createdAt)}</time></div>
                     <div className="message-heading-tags">
                       {message.role === "ASSISTANT" && <span className="model">{message.modelAlias ?? active.modelAlias}</span>}
                       {message.status !== "COMPLETED" && <span className={`status ${message.status.toLowerCase()}`}>{message.status.toLowerCase()}</span>}
@@ -438,7 +438,7 @@ export function ChatView({
                   {message.role === "ASSISTANT" && message.status === "COMPLETED" && (
                     <>
                       <section className="message-telemetry" aria-label="Response performance">
-                        <header><div><strong>Response telemetry</strong><small>Reported by vLLM and measured by AIHub</small></div>{message.sources.length > 0 && <span>{message.sources.length} knowledge source{message.sources.length === 1 ? "" : "s"}</span>}</header>
+                        <header><div><strong>Response telemetry</strong><small>Reported by AI Inference and measured by OrcaSynapse</small></div>{message.sources.length > 0 && <span>{message.sources.length} knowledge source{message.sources.length === 1 ? "" : "s"}</span>}</header>
                         <dl>{chatMessageTelemetry(message).map((metric) => (
                           <div className={metric.key === "throughput" ? "primary" : undefined} key={metric.key}>
                             <dt>{metric.label}</dt><dd>{metric.value}</dd>
@@ -506,7 +506,7 @@ export function ChatView({
           <div className="chat-composer-status">
             <span className={busy ? "generating" : "ready"}><i aria-hidden="true" />{busy ? "Model is generating" : "Inference route ready"}</span>
             <span>{identityMode === "ENTERPRISE" ? "Enterprise session" : "Administrator preview"}</span>
-            <span>AIHub gateway · governed knowledge · tools disabled</span>
+            <span>OrcaSynapse gateway · governed knowledge · tools disabled</span>
           </div>
         </div>
       </div>

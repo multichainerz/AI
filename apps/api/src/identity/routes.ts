@@ -1,4 +1,4 @@
-import { enterpriseSessionSchema, oidcStatusSchema } from "@aihub/contracts";
+import { enterpriseSessionSchema, oidcStatusSchema } from "@orcasynapse/contracts";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { sessionCookie } from "../auth/admin-session.js";
 import {

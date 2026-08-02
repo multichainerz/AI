@@ -1,6 +1,6 @@
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
-import type { AIHubPrismaClient } from "@aihub/database";
-import { EnvelopeEncryption } from "@aihub/security";
+import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
+import { EnvelopeEncryption } from "@orcasynapse/security";
 import { describe, expect, it } from "vitest";
 import { RuntimeNodeAuthenticationError } from "./runtime-node-manager.js";
 import {
@@ -44,13 +44,48 @@ describe("Hermes runtime-node signatures", () => {
 
 describe("Hermes inference bootstrap URL", () => {
   it("adds the OpenAI-compatible prefix to the bound control-plane origin", () => {
-    expect(inferenceGatewayBaseUrl("https://aihub.internal")).toBe("https://aihub.internal/internal/v1");
+    expect(inferenceGatewayBaseUrl("https://orcasynapse.internal")).toBe("https://orcasynapse.internal/internal/v1");
     expect(inferenceGatewayBaseUrl("https://gateway.internal/"))
       .toBe("https://gateway.internal/internal/v1");
   });
 });
 
 describe("Hermes enrollment invitation binding", () => {
+  it("resolves a live claim into the VM2 bootstrap profile without consuming it", async () => {
+    const expiresAt = new Date(Date.now() + 60_000);
+    const prisma = {
+      hermesNodeEnrollment: {
+        findUnique: async () => ({
+          id: "12d67490-e502-4831-a2de-31d1bf4f1c36",
+          status: "ISSUED",
+          controlPlaneUrl: "https://orcasynapse.internal",
+          hermesImage: "nousresearch/hermes-agent:latest",
+          expiresAt,
+          node: {
+            id: "9de260d7-bc51-4558-9d20-06916d393072",
+            slug: "hermes-01",
+            baseUrl: "http://10.0.0.12:8642",
+          },
+        }),
+      },
+    } as unknown as OrcaSynapsePrismaClient;
+    const manager = new PrismaHermesRuntimeNodeManager(
+      prisma,
+      new EnvelopeEncryption({ masterKey: new Uint8Array(32).fill(7) }),
+    );
+
+    await expect(manager.resolveInvitation("t".repeat(43))).resolves.toEqual({
+      format: "orcasynapse-hermes-enrollment/v1",
+      nodeId: "9de260d7-bc51-4558-9d20-06916d393072",
+      nodeSlug: "hermes-01",
+      token: "t".repeat(43),
+      controlPlaneUrl: "https://orcasynapse.internal",
+      hermesBaseUrl: "http://10.0.0.12:8642",
+      hermesImage: "nousresearch/hermes-agent:latest",
+      expiresAt: expiresAt.toISOString(),
+    });
+  });
+
   it("rejects a control-plane origin that differs from the issued invitation before creating credentials", async () => {
     const { publicKey } = generateKeyPairSync("ed25519");
     const transaction = {
@@ -58,7 +93,7 @@ describe("Hermes enrollment invitation binding", () => {
       hermesNodeEnrollment: {
         findUnique: async () => ({
           nodeId: "9de260d7-bc51-4558-9d20-06916d393072",
-          controlPlaneUrl: "https://aihub.internal",
+          controlPlaneUrl: "https://orcasynapse.internal",
           status: "ISSUED",
           expiresAt: new Date(Date.now() + 60_000),
           node: { expectedHostname: null },
@@ -68,7 +103,7 @@ describe("Hermes enrollment invitation binding", () => {
     };
     const prisma = {
       $transaction: async (callback: (client: typeof transaction) => Promise<unknown>) => callback(transaction),
-    } as unknown as AIHubPrismaClient;
+    } as unknown as OrcaSynapsePrismaClient;
     const manager = new PrismaHermesRuntimeNodeManager(
       prisma,
       new EnvelopeEncryption({ masterKey: new Uint8Array(32).fill(7) }),

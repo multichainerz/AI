@@ -1,5 +1,5 @@
-import type { InferenceGatewayChatRequest } from "@aihub/contracts";
-import type { AIHubPrismaClient } from "@aihub/database";
+import type { InferenceGatewayChatRequest } from "@orcasynapse/contracts";
+import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
 import { describe, expect, it, vi } from "vitest";
 import type { ConnectionDiagnosticStore } from "../connections/diagnostics/types.js";
 import { InferenceGatewayError, PrismaInferenceGateway } from "./inference-gateway.js";
@@ -31,7 +31,7 @@ function harness(fetcher: typeof fetch = vi.fn(async () => new Response(JSON.str
     modelDeployment: { count: vi.fn(async () => 0), findMany: vi.fn(async () => []) },
     guardrailPolicy: { count: vi.fn(async () => 0), findMany: vi.fn(async () => []) },
     $transaction: vi.fn(async (callback: (value: typeof transaction) => Promise<unknown>) => callback(transaction)),
-  } as unknown as AIHubPrismaClient;
+  } as unknown as OrcaSynapsePrismaClient;
   const connections = {
     resolveForDiagnostic: vi.fn(async (id: string) => id.startsWith("1111") ? {
       id,
@@ -43,7 +43,7 @@ function harness(fetcher: typeof fetch = vi.fn(async () => new Response(JSON.str
     } : {
       id,
       activeRevision: 1,
-      kind: "VLLM" as const,
+      kind: "INFERENCE" as const,
       baseUrl: "https://vllm.internal",
       configuration: { modelAlias: "approved-agent", maxOutputTokens: 4_096 },
       secrets: { apiKey: "upstream-key" },
@@ -61,7 +61,7 @@ describe("PrismaInferenceGateway", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
-  it("rewrites model selection, caps output, and keeps the vLLM key server-side", async () => {
+  it("rewrites model selection, caps output, and keeps the inference key server-side", async () => {
     const { gateway, fetcher, transaction } = harness();
     await gateway.chat("runtime-key", request, new AbortController().signal);
     expect(fetcher).toHaveBeenCalledWith(new URL("https://vllm.internal/v1/chat/completions"), expect.objectContaining({
@@ -74,11 +74,11 @@ describe("PrismaInferenceGateway", () => {
       user: "hermes:11111111-1111-4111-8111-111111111111",
     });
     expect(transaction.auditEvent.create).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ action: "inference.gateway_requested", metadata: { modelAlias: "approved-agent", enforcementPlane: "AIHUB" } }),
+      data: expect.objectContaining({ action: "inference.gateway_requested", metadata: { modelAlias: "approved-agent", enforcementPlane: "ORCASYNAPSE" } }),
     }));
   });
 
-  it("normalizes max_completion_tokens to vLLM's bounded max_tokens field", async () => {
+  it("normalizes max_completion_tokens to the backend's bounded max_tokens field", async () => {
     const { gateway, fetcher } = harness();
     await gateway.chat("runtime-key", {
       ...request,
@@ -90,7 +90,7 @@ describe("PrismaInferenceGateway", () => {
     expect(JSON.parse(String(options.body))).not.toHaveProperty("max_completion_tokens");
   });
 
-  it("blocks recognizable credentials before calling vLLM", async () => {
+  it("blocks recognizable credentials before calling the inference server", async () => {
     const { gateway, fetcher } = harness();
     await expect(gateway.chat("runtime-key", {
       ...request,

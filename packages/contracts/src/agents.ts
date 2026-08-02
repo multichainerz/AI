@@ -49,7 +49,7 @@ export const agentVersionConfigurationSchema = z.object({
   skills: z.array(agentSkillReferenceSchema).max(20),
   modelAlias: agentModelAliasSchema,
   // The current production baseline remains a single Hermes turn. Tools, when
-  // enabled, are exposed only through AIHub's separately governed MCP path.
+  // enabled, are exposed only through OrcaSynapse's separately governed MCP path.
   maxTurns: z.literal(1),
   timeoutSeconds: z.number().int().min(30).max(3_600),
   maxConcurrentRuns: z.number().int().min(1).max(20),

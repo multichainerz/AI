@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  AIHubApiError,
+  OrcaSynapseApiError,
   changeLocalAdministratorPassword,
   createInstallationKeyRecoverySession,
   createLocalAdministratorSession,
@@ -26,6 +26,7 @@ import {
   getPromptTemplates,
   changePromptTemplateState,
   testConnection,
+  discoverInferenceServer,
 } from "./api.js";
 
 afterEach(() => vi.restoreAllMocks());
@@ -37,7 +38,7 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-describe("AIHub browser API", () => {
+describe("OrcaSynapse browser API", () => {
   it("uses local credentials for routine administrator login", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({
       id: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb",
@@ -56,7 +57,7 @@ describe("AIHub browser API", () => {
     const [url, options] = fetchMock.mock.calls[0]!;
     expect(url).toBe("/api/v1/admin/session/local");
     expect(options).toMatchObject({ method: "POST", credentials: "same-origin" });
-    expect(new Headers(options?.headers).has("x-aihub-installation-key")).toBe(false);
+    expect(new Headers(options?.headers).has("x-orcasynapse-installation-key")).toBe(false);
     expect(JSON.parse(String(options?.body))).toEqual({ username: "admin", password: "temporary-password" });
   });
 
@@ -120,6 +121,46 @@ describe("AIHub browser API", () => {
     expect(new Headers(options?.headers).has("content-type")).toBe(false);
   });
 
+  it("submits transient inference discovery without persisting the supplied credential", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({
+      status: "READY",
+      message: "Discovered one available model and a compatible model API.",
+      normalizedBaseUrl: "http://gpu.internal:8000",
+      backend: "VLLM",
+      backendConfidence: "HIGH",
+      backendEvidence: ["vLLM 0.9.2 responded at /version."],
+      models: [{ id: "hermes-primary" }],
+      recommended: {
+        baseUrl: "http://gpu.internal:8000",
+        inferenceBackend: "VLLM",
+        healthPath: "/health",
+        modelsPath: "/v1/models",
+        chatPath: "/v1/chat/completions",
+        modelAlias: "hermes-primary",
+      },
+      probes: [{
+        key: "models-openai",
+        label: "OpenAI model discovery",
+        path: "/v1/models",
+        status: "PASSED",
+        httpStatus: 200,
+        latencyMs: 8,
+        message: "OpenAI model discovery responded successfully.",
+      }],
+    }));
+
+    await discoverInferenceServer({
+      baseUrl: "http://gpu.internal:8000/v1",
+      apiKey: "temporary-key",
+      timeoutMs: 8000,
+    });
+
+    const [url, options] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("/api/v1/admin/connections/inference/discover");
+    expect(options).toMatchObject({ method: "POST", credentials: "same-origin" });
+    expect(JSON.parse(String(options?.body))).toMatchObject({ apiKey: "temporary-key" });
+  });
+
   it("reads and updates the dashboard-owned connection monitoring control", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(jsonResponse({
@@ -156,7 +197,7 @@ describe("AIHub browser API", () => {
       modelAlias: "hermes-agent",
       workload: "AGENT",
       status: "ACTIVE",
-      connection: { id: "5277951c-7d22-4cec-8d46-fad3afba37dd", displayName: "vLLM Primary", kind: "VLLM", environment: "PRODUCTION", enabled: true, status: "HEALTHY" },
+      connection: { id: "5277951c-7d22-4cec-8d46-fad3afba37dd", displayName: "Inference Primary", kind: "INFERENCE", environment: "PRODUCTION", enabled: true, status: "HEALTHY" },
       version: "2.1-nvfp4",
       license: null,
       contextWindowTokens: 131072,
@@ -222,13 +263,13 @@ describe("AIHub browser API", () => {
   it("reads prompts and sends an evidence-bound prompt activation", async () => {
     const prompt = {
       id: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d",
-      slug: "mpm-chat-system",
-      displayName: "MPM chat system",
+      slug: "orcasynapse-chat-system",
+      displayName: "OrcaSynapse chat system",
       description: "Approved employee chat behavior.",
       purpose: "CHAT_SYSTEM",
       version: "1.0.0",
       status: "ACTIVE",
-      content: "You are the approved MPM assistant. State uncertainty and protect private data.",
+      content: "You are the approved OrcaSynapse assistant. State uncertainty and protect private data.",
       contentChecksum: "a".repeat(64),
       activationEvaluationId: "de44bc5d-0355-4c3f-872e-1af99f356d19",
       firstActivatedAt: "2026-07-30T00:00:00.000Z",
@@ -257,7 +298,7 @@ describe("AIHub browser API", () => {
       user: {
         id: "fb8c1e58-10d6-4ac7-aafe-e259763a6f63",
         displayName: "Pilot User",
-        email: "pilot@mpm.example",
+        email: "pilot@orcasynapse.example",
       },
       scopes: ["chat:use", "documents:use", "agents:use"],
       createdAt: "2026-07-30T00:00:00.000Z",
@@ -288,9 +329,9 @@ describe("AIHub browser API", () => {
         id: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d",
         slug: "vllm-primary",
         displayName: "vLLM Primary",
-        kind: "VLLM",
+        kind: "INFERENCE",
         environment: "PRODUCTION",
-        baseUrl: "https://vllm.mpm.internal",
+        baseUrl: "https://vllm.orcasynapse.internal",
         enabled: true,
         status: "NOT_TESTED",
         configuration: {},
@@ -321,10 +362,10 @@ describe("AIHub browser API", () => {
     );
 
     await expect(getConnections()).rejects.toEqual(
-      expect.objectContaining<Partial<AIHubApiError>>({
-        name: "AIHubApiError",
+      expect.objectContaining<Partial<OrcaSynapseApiError>>({
+        name: "OrcaSynapseApiError",
         status: 502,
-        message: "AIHub API returned 502 Bad Gateway",
+        message: "OrcaSynapse API returned 502 Bad Gateway",
       }),
     );
   });
@@ -398,7 +439,7 @@ describe("AIHub browser API", () => {
       profileSlug: "hermes-ops",
       toolSlug: "document_memory_resync",
       toolName: "Document memory resync",
-      requestedBySubject: "pilot@mpm.example",
+      requestedBySubject: "pilot@orcasynapse.example",
       arguments: { documentId: "b78784ba-9156-4d42-8066-18f30217d42d" },
       status: "REJECTED",
       expiresAt: "2026-07-30T00:30:00.000Z",
@@ -459,7 +500,7 @@ describe("AIHub browser API", () => {
 
   it("submits the operator rationale to the separate promotion endpoint", async () => {
     const evaluationId = "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d";
-    const reason = "Approved for the controlled MPM pilot.";
+    const reason = "Approved for the controlled OrcaSynapse pilot.";
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({
       id: evaluationId,
       name: "Hermes v3",
@@ -493,9 +534,9 @@ describe("AIHub browser API", () => {
       key: "security-threat-model",
       title: "Threat model and security review",
       domain: "SECURITY",
-      description: "MPM Security reviews the intended pilot scope.",
+      description: "OrcaSynapse Security reviews the intended pilot scope.",
       status: "VERIFIED",
-      owner: "MPM Security",
+      owner: "OrcaSynapse Security",
       evidenceRefs: ["evidence/security-review.pdf"],
       note: "Review completed.",
       lastUpdatedBy: "security-admin",
@@ -507,7 +548,7 @@ describe("AIHub browser API", () => {
       id: "c43149d0-a76d-43ee-932e-7a4d527673e8",
       role: "SECURITY",
       decision: "APPROVED",
-      authority: "MPM Security Review Board",
+      authority: "OrcaSynapse Security Review Board",
       evidenceRef: "approval/security/2026-07-30",
       reason: "Approved for the bounded pilot scope.",
       recordedBy: "platform-admin",
@@ -519,7 +560,7 @@ describe("AIHub browser API", () => {
       .mockResolvedValueOnce(jsonResponse(approval, 201));
     const decision = {
       status: "VERIFIED" as const,
-      owner: "MPM Security",
+      owner: "OrcaSynapse Security",
       evidenceRefs: ["evidence/security-review.pdf"],
       note: "Review completed.",
       expectedRevision: 1,

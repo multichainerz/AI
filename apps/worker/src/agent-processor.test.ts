@@ -1,4 +1,4 @@
-import type { AIHubPrismaClient } from "@aihub/database";
+import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
 import { describe, expect, it, vi } from "vitest";
 import { PrismaAgentProcessor, type AgentHermesRuntime, type AgentKnowledgeRetriever } from "./agent-processor.js";
 
@@ -40,7 +40,7 @@ function runtime(status = "completed"): AgentHermesRuntime {
 
 const capabilities = { issue: vi.fn(() => ({ token: "r".repeat(43), tokenHash: new Uint8Array(32) })) };
 
-function database(record = runRecord(), enabled = true, toolEnabled = false): AIHubPrismaClient {
+function database(record = runRecord(), enabled = true, toolEnabled = false): OrcaSynapsePrismaClient {
   const state = { ...record };
   const agentRun = {
     findUnique: vi.fn(async () => ({ ...state })),
@@ -54,7 +54,7 @@ function database(record = runRecord(), enabled = true, toolEnabled = false): AI
     auditEvent: { create: vi.fn(async () => ({})) },
     $transaction: vi.fn(async (operations: Array<Promise<unknown>>) => Promise.all(operations)),
   };
-  return prisma as unknown as AIHubPrismaClient;
+  return prisma as unknown as OrcaSynapsePrismaClient;
 }
 
 const source = {

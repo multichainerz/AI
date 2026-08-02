@@ -15,7 +15,7 @@ import {
   updateToolStatusSchema,
   upsertToolGrantSchema,
   type AdminScope,
-} from "@aihub/contracts";
+} from "@orcasynapse/contracts";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { adminSessionToken, type AdminSessionManager } from "../auth/admin-session.js";
 import {
@@ -161,11 +161,11 @@ export async function registerMcpGatewayRoutes(app: FastifyInstance, options: To
     const authorization = request.headers.authorization;
     const token = typeof authorization === "string" && authorization.startsWith("Bearer ") ? authorization.slice(7) : undefined;
     if (!(await options.manager.authenticateGateway(token))) {
-      return reply.code(401).header("www-authenticate", "Bearer").send({ error: "UNAUTHORIZED", message: "A valid AIHub MCP gateway credential is required." });
+      return reply.code(401).header("www-authenticate", "Bearer").send({ error: "UNAUTHORIZED", message: "A valid OrcaSynapse MCP gateway credential is required." });
     }
     const era = await validateMcpTransport(request, reply);
     if (!era) return;
-    const runAuthorizationHeader = request.headers["aihub-run-authorization"];
+    const runAuthorizationHeader = request.headers["orcasynapse-run-authorization"];
     const runAuthorization = typeof runAuthorizationHeader === "string" ? runAuthorizationHeader : undefined;
     const response = await gateway.handle(request.body, era, runAuthorization);
     reply.code(response.status).header("mcp-protocol-version", era === "modern" ? MCP_MODERN_VERSION : MCP_LEGACY_VERSION);

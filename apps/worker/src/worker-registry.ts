@@ -1,4 +1,4 @@
-import type { AIHubPrismaClient } from "@aihub/database";
+import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
 
 export interface WorkerIdentity {
   id: string;
@@ -14,7 +14,7 @@ export interface WorkerRegistry {
 }
 
 export class PrismaWorkerRegistry implements WorkerRegistry {
-  constructor(private readonly prisma: AIHubPrismaClient) {}
+  constructor(private readonly prisma: OrcaSynapsePrismaClient) {}
 
   async markStarted(identity: WorkerIdentity): Promise<void> {
     const now = new Date();

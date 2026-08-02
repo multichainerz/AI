@@ -1,6 +1,6 @@
-# AIHub Delivery and Acceptance Plan
+# OrcaSynapse Delivery and Acceptance Plan
 
-This plan replaces the earlier component-heavy phase history. The target architecture is AIHub/PostgreSQL, isolated Hermes/Supermemory, and vLLM.
+This plan replaces the earlier component-heavy phase history. The target architecture is OrcaSynapse/PostgreSQL, isolated Hermes/Supermemory, and one approved OpenAI-compatible inference server.
 
 ## Phase A — Simplified foundation
 
@@ -17,10 +17,10 @@ Exit: `pnpm verify`, clean-database migrations, repeatable local-account provisi
 
 Status: implemented; real endpoint acceptance remains environment-dependent.
 
-- vLLM is the only Chat/Agent serving connection.
+- one provider-neutral Inference Server connection serves Chat and Agent workloads.
 - versioned model catalogue, prompts, deterministic guardrails, streaming/cancellation, usage telemetry, feedback, and PostgreSQL limits.
 - authenticated internal inference gateway for Hermes and Supermemory.
-- caller model selection is replaced with the approved active Agent alias; vLLM secrets never leave AIHub.
+- caller model selection is replaced with the approved active Agent alias; upstream inference secrets never leave OrcaSynapse.
 
 Exit: representative Qwen/Laguna route passes chat template, reasoning/tool-call, streaming, cancellation, context, concurrency, and error-mapping tests on the RTX 6000 PRO 96 GB server.
 
@@ -31,7 +31,7 @@ Status: implemented for UTF-8 TXT ingestion and Supermemory publication.
 - encrypted transient scratch, quarantine, classification, checksums, retention, purge, and audited deletion.
 - direct TXT normalization.
 - explicit rejection of rich files and images until a future extraction requirement is reviewed.
-- durable normalized publication to `mpm-knowledge` in Supermemory.
+- durable normalized publication to `orcasynapse-knowledge` in Supermemory.
 - PostgreSQL reauthorization of every retrieved enterprise result.
 
 Exit: real files demonstrate success, malformed-input failure, retry/expiry, publication, owner isolation, deletion, and zero source bytes after purge.
@@ -40,11 +40,11 @@ Exit: real files demonstrate success, malformed-input failure, retry/expiry, pub
 
 Status: implemented and source-verified; clean-VM acceptance remains.
 
-- one-time enrollment bundle, node-generated Ed25519 identity, signed replay-protected heartbeats, lifecycle actions, and dashboard status.
-- official Hermes container using AIHub's inference gateway.
+- one-time enrollment claim resolved through the customer-owned OrcaSynapse origin, with JSON-bundle fallback, node-generated Ed25519 identity, signed replay-protected heartbeats, lifecycle actions, and dashboard status.
+- official Hermes container using OrcaSynapse's inference gateway.
 - checksum-verified Supermemory Local installation with local embeddings.
-- native Hermes Supermemory provider using `mpm-agent-{identity}`.
-- automatic endpoint registration in AIHub without standing SSH trust.
+- native Hermes Supermemory provider using `orcasynapse-agent-{identity}`.
+- automatic endpoint registration in OrcaSynapse without standing SSH trust.
 - immutable Profile Distribution and governed agent-run lifecycle.
 
 Exit: a clean isolated VM enrolls end to end; agent memory survives restarts; profile namespaces cannot cross; revocation disables Hermes and its managed Supermemory route; backups restore Hermes and Supermemory consistently.
@@ -55,7 +55,7 @@ Status: implemented behind fail-closed controls; production disabled until accep
 
 - MCP protocol boundary, short-lived run capability, registered tools, profile grants, risk classification, approval records, cancellation, and revocation.
 - zero-tool is the default posture.
-- the VM installer explicitly writes Hermes `platform_toolsets.api_server: [no_mcp]`; AIHub verifies the resolved `/v1/toolsets` surface before each run.
+- the VM installer explicitly writes Hermes `platform_toolsets.api_server: [no_mcp]`; OrcaSynapse verifies the resolved `/v1/toolsets` surface before each run.
 - prompts, Skills, or Hermes memory cannot grant a tool or broaden a profile grant.
 
 Exit: protocol, authorization, argument validation, approval, replay, timeout, cancellation, output redaction, and post-approval revocation tests pass with the exact hardened Hermes build.
@@ -64,30 +64,42 @@ Exit: protocol, authorization, argument validation, approval, replay, timeout, c
 
 Status: dashboard controls implemented; customer evidence remains.
 
-- quick-start path for PostgreSQL + vLLM and a single Hermes/Supermemory enrollment.
+- public GitHub VM1 bootstrap plus one OrcaSynapse-hosted VM2 script that installs and enrolls Hermes and Supermemory.
+- quick-start path for PostgreSQL + an inference server and a single Hermes/Supermemory enrollment.
 - advanced target-environment gate, connection checks, compatibility evidence, model/prompt/policy evaluations, incidents, scheduled monitoring, recovery controls, and activation record.
 - dashboard-generated evidence remains distinct from customer attestations.
 
 Production exit requires:
 
-- exact AIHub, PostgreSQL, Node.js, Hermes image, Supermemory binary/SDK, vLLM, model, driver, and CUDA pins;
+- exact OrcaSynapse, PostgreSQL, Node.js, Hermes image, Supermemory binary/SDK, inference backend, model, driver, and CUDA pins;
 - customer-approved TLS or mTLS and firewall matrix;
 - enterprise OIDC group mappings and retained login/logout/revocation tests;
 - PostgreSQL point-in-time recovery and consistent Hermes/Supermemory restore drills;
 - GPU context/concurrency/thermal/cancellation/soak evidence;
-- representative MPM model, memory, document, guardrail, and adversarial evaluations;
+- representative OrcaSynapse model, memory, document, guardrail, and adversarial evaluations;
 - monitoring, alert routing, SIEM retention, runbooks, training, and named owners;
 - formal Pilot and Production approval.
+
+## Phase G — Enterprise identity and tenant isolation
+
+Status: instance-wide OIDC/RBAC is implemented; true multi-tenancy remains future work.
+
+- current: PostgreSQL local administrator with Installation Key recovery, OIDC discovery, PKCE, issuer/JWK validation, allowed-group checks, and mappings to platform roles;
+- supported identity path: Microsoft Entra ID, AD FS, or another enterprise identity provider when it exposes an OpenID Connect issuer;
+- not implemented: direct LDAP bind/domain-join authentication;
+- not implemented: a Tenant/Organization/Workspace domain boundary with tenant-scoped database keys, queries, audit records, agent profiles, memory namespaces, quotas, and administrative delegation.
+
+Exit: a tenant identifier is mandatory on every tenant-owned record and authorization decision; cross-tenant negative tests cover APIs, jobs, audits, profiles, documents, Chat, and Supermemory identity namespaces; provisioning/deprovisioning and OIDC group changes are demonstrated end to end.
 
 ## Architecture invariants
 
 These are not optional phase choices:
 
-1. AIHub is the enterprise authorization and policy boundary.
-2. vLLM serves models; it does not own routing policy or credentials exposed to runtimes.
+1. OrcaSynapse is the enterprise authorization and policy boundary.
+2. The selected inference backend serves models; it does not own routing policy or credentials exposed to runtimes.
 3. Hermes executes agents only in its constrained environment.
 4. Supermemory is the sole semantic graph/vector plane.
-5. PostgreSQL owns AIHub control/audit/job state, not embeddings.
-6. Original enterprise files remain in enterprise systems; AIHub staging is ephemeral.
-7. No LiteLLM, Redis, Valkey, S3, SeaweedFS, MinIO, or AIHub pgvector dependency is introduced without a new reviewed requirement.
+5. PostgreSQL owns OrcaSynapse control/audit/job state, not embeddings.
+6. Original enterprise files remain in enterprise systems; OrcaSynapse staging is ephemeral.
+7. No LiteLLM, Redis, Valkey, S3, SeaweedFS, MinIO, or OrcaSynapse pgvector dependency is introduced without a new reviewed requirement.
 8. Environment-dependent controls are reported as unproven until evidence exists.

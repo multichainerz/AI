@@ -25,8 +25,8 @@ import {
   type ModelDeployment,
   type ServiceKind,
   type UpdateProductionReadinessControl,
-} from "@aihub/contracts";
-import { Prisma, type AIHubPrismaClient } from "@aihub/database";
+} from "@orcasynapse/contracts";
+import { Prisma, type OrcaSynapsePrismaClient } from "@orcasynapse/database";
 import type { AgentManager } from "../agents/agent-manager.js";
 import type { AdminPrincipal } from "../auth/admin-session.js";
 import type { ChatManager } from "../chat/chat-manager.js";
@@ -118,7 +118,7 @@ interface StoredReadinessApproval {
 const READINESS_APPROVAL_ROLES = ["SECURITY", "INFRASTRUCTURE", "PRODUCT", "BUSINESS"] as const;
 
 const serviceMetadata: Record<ServiceKind, { label: string; workflows: AiOpsWorkflow[] }> = {
-  VLLM: { label: "vLLM inference", workflows: ["CHAT", "AGENTS"] },
+  INFERENCE: { label: "Inference server", workflows: ["CHAT", "AGENTS"] },
   HERMES: { label: "Hermes runtime", workflows: ["AGENTS", "TOOLS"] },
   SUPERMEMORY: { label: "Supermemory", workflows: ["CHAT", "MEMORY", "AGENTS"] },
   MCP: { label: "MCP gateway", workflows: ["AGENTS", "TOOLS"] },
@@ -158,8 +158,8 @@ function guardrailPosture(active: ActiveGuardrailPolicy | null): GuardrailContro
     label: "Input boundary",
     status: "PARTIAL",
     summary: active
-      ? `Schema, identity, rate, and ${active.maxInputCharacters.toLocaleString("en-US")}-character chat limits are locally enforced with ${enabledChecks} AIHub-native content check${enabledChecks === 1 ? "" : "s"}.`
-      : "Schema, size, identity, and rate constraints are enforced; no evaluated AIHub guardrail policy is active.",
+      ? `Schema, identity, rate, and ${active.maxInputCharacters.toLocaleString("en-US")}-character chat limits are locally enforced with ${enabledChecks} OrcaSynapse-native content check${enabledChecks === 1 ? "" : "s"}.`
+      : "Schema, size, identity, and rate constraints are enforced; no evaluated OrcaSynapse guardrail policy is active.",
     evidence: active
       ? `Policy ${active.id} is evaluation-gated in PostgreSQL; semantic safety classification remains outside this deterministic baseline.`
       : "API contracts and identity-scoped request limits are enforced in the chat, document, agent, and tool routes.",
@@ -169,7 +169,7 @@ function guardrailPosture(active: ActiveGuardrailPolicy | null): GuardrailContro
     label: "Output boundary",
     status: active ? "PARTIAL" : "NOT_VERIFIED",
     summary: active
-      ? `AIHub caps streamed responses at ${active.maxOutputCharacters.toLocaleString("en-US")} characters; semantic output classification is not claimed.`
+      ? `OrcaSynapse caps streamed responses at ${active.maxOutputCharacters.toLocaleString("en-US")} characters; semantic output classification is not claimed.`
       : "Provider responses are structurally bounded, but no evaluated output guardrail assignment is active.",
     evidence: active
       ? "Streaming failures and response-limit rejections are retained as sanitized audit events; representative model safety still requires deployment evidence."
@@ -186,7 +186,7 @@ function guardrailPosture(active: ActiveGuardrailPolicy | null): GuardrailContro
     layer: "MODEL_ACCESS",
     label: "Model access",
     status: "ENFORCED",
-    summary: "Users and agents call dashboard-approved aliases through AIHub; provider credentials remain backend-only.",
+    summary: "Users and agents call dashboard-approved aliases through OrcaSynapse; provider credentials remain backend-only.",
     evidence: "Versioned model routes require healthy serving connections and exact promoted evaluation evidence before activation.",
   },
   {
@@ -200,7 +200,7 @@ function guardrailPosture(active: ActiveGuardrailPolicy | null): GuardrailContro
     layer: "DATA_EGRESS",
     label: "Data egress",
     status: "PARTIAL",
-    summary: "AIHub uses configured internal endpoints, while infrastructure-level egress enforcement remains an on-prem acceptance gate.",
+    summary: "OrcaSynapse uses configured internal endpoints, while infrastructure-level egress enforcement remains an on-prem acceptance gate.",
     evidence: "Application credentials are isolated; network policy and SIEM forwarding have not been proven locally.",
   },
   ];
@@ -428,7 +428,7 @@ async function settled<T>(promise: Promise<T>): Promise<T | null> {
 
 export class PrismaAiOpsManager implements AiOpsManager {
   constructor(
-    private readonly prisma: AIHubPrismaClient,
+    private readonly prisma: OrcaSynapsePrismaClient,
     private readonly dependencies: AiOpsDependencies,
   ) {}
 
@@ -508,7 +508,7 @@ export class PrismaAiOpsManager implements AiOpsManager {
         id: `guardrail:${activeGuardrail.id}`,
         label: activeGuardrail.displayName,
         status: "HEALTHY",
-        summary: `AIHub-native runtime limits and ${Number(activeGuardrail.blockControlCharacters) + Number(activeGuardrail.blockCredentialPatterns)} content checks are active with promoted policy evidence.`,
+        summary: `OrcaSynapse-native runtime limits and ${Number(activeGuardrail.blockControlCharacters) + Number(activeGuardrail.blockCredentialPatterns)} content checks are active with promoted policy evidence.`,
         source: "CONFIGURATION",
         observedAt: activeGuardrail.updatedAt.toISOString(),
         latencyMs: null,

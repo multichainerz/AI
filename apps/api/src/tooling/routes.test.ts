@@ -1,11 +1,11 @@
-import { ADMIN_SCOPES, type AdministratorSession } from "@aihub/contracts";
+import { ADMIN_SCOPES, type AdministratorSession } from "@orcasynapse/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.js";
 import { ADMIN_SESSION_COOKIE, type AdminSessionManager } from "../auth/admin-session.js";
 import type { ToolingManager } from "./tooling-manager.js";
 
 const SESSION_TOKEN = "s".repeat(43);
-const GATEWAY_TOKEN = `aihub_mcp_${"g".repeat(43)}`;
+const GATEWAY_TOKEN = `orcasynapse_mcp_${"g".repeat(43)}`;
 const session: AdministratorSession = {
   id: "ac369dab-cad5-4fd9-83ed-b4fbf528028a", subject: "platform-admin", role: "PLATFORM_ADMIN",
   scopes: [...ADMIN_SCOPES], createdAt: "2026-07-30T00:00:00.000Z", idleExpiresAt: "2026-07-30T01:00:00.000Z", absoluteExpiresAt: "2026-07-30T08:00:00.000Z",
@@ -63,7 +63,7 @@ describe("governed tooling routes", () => {
     const initialized = await app.inject({ method: "POST", url: "/api/v1/mcp/", headers: { authorization: `Bearer ${GATEWAY_TOKEN}` }, payload });
     expect(initialized.statusCode).toBe(200);
     expect(initialized.headers["mcp-protocol-version"]).toBe("2025-11-25");
-    expect(initialized.json()).toMatchObject({ result: { serverInfo: { name: "mpm-aihub-governed-tools" } } });
+    expect(initialized.json()).toMatchObject({ result: { serverInfo: { name: "orcasynapse-governed-tools" } } });
   });
 
   it("validates stateless MCP headers against per-request metadata", async () => {
@@ -105,7 +105,7 @@ describe("governed tooling routes", () => {
     const listed = await app.inject({
       method: "POST",
       url: "/api/v1/mcp/",
-      headers: { authorization: `Bearer ${GATEWAY_TOKEN}`, "aihub-run-authorization": runAuthorization },
+      headers: { authorization: `Bearer ${GATEWAY_TOKEN}`, "orcasynapse-run-authorization": runAuthorization },
       payload: { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },
     });
     expect(listed.statusCode).toBe(200);

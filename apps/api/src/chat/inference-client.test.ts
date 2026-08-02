@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { InferenceRequestError, OpenAICompatibleInferenceClient } from "./inference-client.js";
 
 const input = {
-  baseUrl: "https://vllm.mpm.internal",
+  baseUrl: "https://vllm.orcasynapse.internal",
   chatPath: "/v1/chat/completions",
   apiKey: "write-only-key",
   model: "laguna-primary",
@@ -13,7 +13,7 @@ const input = {
   user: "pseudonymous-user",
 };
 
-describe("OpenAI-compatible vLLM streaming client", () => {
+describe("OpenAI-compatible inference streaming client", () => {
   it("parses split SSE chunks and usage without sending proxy-specific fields", async () => {
     const encoder = new TextEncoder();
     const body = new ReadableStream<Uint8Array>({
@@ -64,7 +64,7 @@ describe("OpenAI-compatible vLLM streaming client", () => {
     ).rejects.toEqual(
       expect.objectContaining<Partial<InferenceRequestError>>({
         code: "INFERENCE_AUTHENTICATION_FAILED",
-        message: "vLLM rejected the configured credential.",
+        message: "The inference server rejected the configured credential.",
       }),
     );
   });
@@ -79,7 +79,7 @@ describe("OpenAI-compatible vLLM streaming client", () => {
       ),
     ).rejects.toEqual(expect.objectContaining<Partial<InferenceRequestError>>({
       code: "INFERENCE_REJECTED",
-      message: "vLLM rejected the request with status 400.",
+      message: "The inference server rejected the request with status 400.",
     }));
   });
 });

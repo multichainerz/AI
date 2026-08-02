@@ -2,10 +2,10 @@ import type {
   AdministratorSession,
   CreateGuardrailPolicy,
   GuardrailPolicy,
-} from "@aihub/contracts";
+} from "@orcasynapse/contracts";
 import { useEffect, useState, type FormEvent } from "react";
 import {
-  AIHubApiError,
+  OrcaSynapseApiError,
   changeGuardrailPolicyState,
   createGuardrailPolicy,
   getGuardrailPolicies,
@@ -24,7 +24,7 @@ type PolicyDraft = CreateGuardrailPolicy;
 const initialDraft: PolicyDraft = {
   slug: "chat-safety",
   displayName: "Chat safety",
-  description: "Approved input and output controls for internal AIHub chat.",
+  description: "Approved input and output controls for internal OrcaSynapse chat.",
   version: "1.0.0",
   maxInputCharacters: 12_000,
   maxOutputCharacters: 200_000,
@@ -64,7 +64,7 @@ export function GuardrailsView({
       setPolicies((await getGuardrailPolicies()).items);
       setError(null);
     } catch (cause) {
-      if (cause instanceof AIHubApiError && cause.status === 401) onSessionExpired();
+      if (cause instanceof OrcaSynapseApiError && cause.status === 401) onSessionExpired();
       else setError(cause instanceof Error ? cause.message : "Unable to load guardrail policies.");
     }
   };
@@ -122,7 +122,7 @@ export function GuardrailsView({
       setShowEditor(false);
       await load();
     } catch (cause) {
-      if (cause instanceof AIHubApiError && cause.status === 401) onSessionExpired();
+      if (cause instanceof OrcaSynapseApiError && cause.status === 401) onSessionExpired();
       else setError(cause instanceof Error ? cause.message : "Unable to save the guardrail policy.");
     } finally {
       setBusy(false);
@@ -148,7 +148,7 @@ export function GuardrailsView({
       setDecision(null);
       await load();
     } catch (cause) {
-      if (cause instanceof AIHubApiError && cause.status === 401) onSessionExpired();
+      if (cause instanceof OrcaSynapseApiError && cause.status === 401) onSessionExpired();
       else setError(cause instanceof Error ? cause.message : "Unable to change the guardrail policy state.");
     } finally {
       setBusy(false);
@@ -157,8 +157,8 @@ export function GuardrailsView({
 
   if (!session) {
     return <div className="guardrails-workspace">
-      <header className="guardrails-header"><div><p className="page-kicker">Policy control</p><h1>Guardrails</h1><p>Evaluated request boundaries enforced by AIHub.</p></div></header>
-      <section className="guardrails-lock panel"><span className="guardrails-lock-mark">G</span><div><strong>Administrator session required</strong><p>Claim or sign in to AIHub to inspect policy versions and activation evidence.</p></div><button className="primary-button" type="button" onClick={onConfigureInference}>Open platform settings</button></section>
+      <header className="guardrails-header"><div><p className="page-kicker">Policy control</p><h1>Guardrails</h1><p>Evaluated request boundaries enforced by OrcaSynapse.</p></div></header>
+      <section className="guardrails-lock panel"><span className="guardrails-lock-mark">G</span><div><strong>Administrator session required</strong><p>Claim or sign in to OrcaSynapse to inspect policy versions and activation evidence.</p></div><button className="primary-button" type="button" onClick={onConfigureInference}>Open platform settings</button></section>
     </div>;
   }
 
@@ -170,27 +170,27 @@ export function GuardrailsView({
 
   return <div className="guardrails-workspace">
     <header className="guardrails-header">
-      <div><p className="page-kicker">Policy control</p><h1>Guardrails</h1><p>Release evaluated limits and deterministic safety checks enforced inside AIHub.</p></div>
+      <div><p className="page-kicker">Policy control</p><h1>Guardrails</h1><p>Release evaluated limits and deterministic safety checks enforced inside OrcaSynapse.</p></div>
       <div className="guardrail-header-actions"><button type="button" onClick={onOpenOperations}>Evaluation evidence</button>{canManage && <button className="primary-button" type="button" onClick={startCreate}>New policy</button>}</div>
     </header>
 
     <section className="guardrail-metrics" aria-label="Guardrail policy summary">
       <article><span>Policy records</span><strong>{policies.length}</strong><small>Version controlled</small></article>
       <article><span>Active boundary</span><strong>{active ? "1" : "0"}</strong><small>{active ? active.displayName : activatedBefore ? "Fail closed" : "Legacy mode"}</small></article>
-      <article><span>Active checks</span><strong>{enabledControls}</strong><small>AIHub-native detectors</small></article>
+      <article><span>Active checks</span><strong>{enabledControls}</strong><small>OrcaSynapse-native detectors</small></article>
       <article><span>Input ceiling</span><strong>{active ? new Intl.NumberFormat("en", { notation: "compact" }).format(active.maxInputCharacters) : "—"}</strong><small>Characters per message</small></article>
     </section>
 
     <section className={`guardrail-boundary panel ${active ? "active" : activatedBefore ? "blocked" : "staged"}`}>
-      <div><span>Runtime boundary</span><strong>{active ? `${active.displayName} v${active.version} is enforcing chat.` : activatedBefore ? "Chat policy enforcement is paused and fails closed." : "Drafts do not change current chat behavior."}</strong><p>AIHub applies request size, response size, control-character, and credential-pattern checks before traffic reaches the approved vLLM route.</p></div>
-      <button type="button" onClick={onConfigureInference}>Manage vLLM connection</button>
+      <div><span>Runtime boundary</span><strong>{active ? `${active.displayName} v${active.version} is enforcing chat.` : activatedBefore ? "Chat policy enforcement is paused and fails closed." : "Drafts do not change current chat behavior."}</strong><p>OrcaSynapse applies request size, response size, control-character, and credential-pattern checks before traffic reaches the approved inference route.</p></div>
+      <button type="button" onClick={onConfigureInference}>Manage AI Inference</button>
     </section>
 
     {error && <div className="workspace-notice error" role="alert">{error}</div>}
     {message && <div className="workspace-notice success">{message}</div>}
 
     {showEditor && <form className="guardrail-editor panel" onSubmit={(event) => void save(event)}>
-      <div className="section-toolbar"><div><h2>{editing ? `Edit ${editing.displayName}` : "New chat policy"}</h2><p>These controls run locally in AIHub and are versioned with evaluation evidence.</p></div><button type="button" onClick={() => setShowEditor(false)}>Cancel</button></div>
+      <div className="section-toolbar"><div><h2>{editing ? `Edit ${editing.displayName}` : "New chat policy"}</h2><p>These controls run locally in OrcaSynapse and are versioned with evaluation evidence.</p></div><button type="button" onClick={() => setShowEditor(false)}>Cancel</button></div>
       <div className="guardrail-editor-grid">
         <label><span>Display name</span><input value={draft.displayName} minLength={2} maxLength={120} required onChange={(event) => setDraft({ ...draft, displayName: event.target.value })} /></label>
         <label><span>Policy slug</span><input value={draft.slug} disabled={Boolean(editing)} required onChange={(event) => setDraft({ ...draft, slug: event.target.value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") })} /></label>
@@ -209,7 +209,7 @@ export function GuardrailsView({
       {policies.map((policy) => <article className="guardrail-card panel" key={policy.id}>
         <header><span className="guardrail-version">v{policy.version}</span><span className={`connection-status ${tone(policy)}`}><i />{policy.status.toLowerCase()}</span></header>
         <div className="guardrail-card-title"><span>{policy.displayName.slice(0, 2).toUpperCase()}</span><div><h2>{policy.displayName}</h2><p>{policy.description}</p></div></div>
-        <div className="guardrail-tags"><code>AIHub native</code>{policy.blockControlCharacters && <code>control chars</code>}{policy.blockCredentialPatterns && <code>credentials</code>}</div>
+        <div className="guardrail-tags"><code>OrcaSynapse native</code>{policy.blockControlCharacters && <code>control chars</code>}{policy.blockCredentialPatterns && <code>credentials</code>}</div>
         <dl><div><dt>Input ceiling</dt><dd>{policy.maxInputCharacters.toLocaleString("en-US")} chars</dd></div><div><dt>Output ceiling</dt><dd>{policy.maxOutputCharacters.toLocaleString("en-US")} chars</dd></div><div><dt>Safety evidence</dt><dd>{policy.activationEvaluationId ? "Promoted" : "Required"}</dd></div><div><dt>Last updated</dt><dd>{when(policy.updatedAt)}</dd></div></dl>
         <footer><span>Revision {policy.revision}</span>{canManage && <div>{policy.status !== "ACTIVE" && <button type="button" onClick={() => startEdit(policy)}>Edit</button>}<button type="button" onClick={() => setDecision({ id: policy.id, action: policy.status === "ACTIVE" ? "suspend" : "activate", reason: "" })}>{policy.status === "ACTIVE" ? "Suspend" : "Activate"}</button></div>}</footer>
         {decision?.id === policy.id && <form className="guardrail-decision" onSubmit={(event) => void applyDecision(event)}><div><strong>{decision.action === "activate" ? "Activate evaluated policy" : "Suspend active policy"}</strong><span>{decision.action === "activate" ? `Requires a promoted POLICY evaluation for policy:${policy.slug}, version ${policy.version}, including SAFETY.` : "Because this policy has previously enforced chat, suspension deliberately makes chat fail closed."}</span></div><label><span>Operator reason</span><input value={decision.reason} minLength={3} maxLength={500} required onChange={(event) => setDecision({ ...decision, reason: event.target.value })} /></label><div><button type="button" onClick={() => setDecision(null)}>Cancel</button><button className="primary-button" type="submit" disabled={busy || decision.reason.trim().length < 3}>{busy ? "Applying…" : "Confirm"}</button></div></form>}

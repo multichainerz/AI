@@ -5,7 +5,7 @@ import {
   documentUploadMetadataSchema,
   quarantineDecisionSchema,
   type AdminScope,
-} from "@aihub/contracts";
+} from "@orcasynapse/contracts";
 import multipart from "@fastify/multipart";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import {
@@ -77,10 +77,10 @@ async function requireDocumentPrincipal(
     }
   }
   if (!options.identityManager && !options.sessionManager) {
-    await reply.code(423).send({ error: "PLATFORM_LOCKED", message: "AIHub identity services are not ready." });
+    await reply.code(423).send({ error: "PLATFORM_LOCKED", message: "OrcaSynapse identity services are not ready." });
     return null;
   }
-  await reply.code(401).send({ error: "UNAUTHORIZED", message: "An active AIHub session is required." });
+  await reply.code(401).send({ error: "UNAUTHORIZED", message: "An active OrcaSynapse session is required." });
   return null;
 }
 

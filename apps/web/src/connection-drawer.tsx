@@ -5,12 +5,14 @@ import type {
   ConnectionTestResult,
   ConfigurationRevisionList,
   Environment,
+  InferenceDiscoveryRequest,
+  InferenceDiscoveryResult,
   ServiceConnectionConfiguration,
   ServiceConnectionSummary,
   ServiceKind,
-} from "@aihub/contracts";
+} from "@orcasynapse/contracts";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { connectionDefinitions } from "./connection-definitions.js";
+import { connectionDefinitions, inferenceEndpointPresets } from "./connection-definitions.js";
 
 export interface ConnectionDraft extends CreateServiceConnection {
   existingId?: string;
@@ -31,6 +33,7 @@ interface ConnectionDrawerProps {
   onClose: () => void;
   onSave: (draft: ConnectionDraft) => Promise<void>;
   onTest: (id: string) => Promise<void>;
+  onDiscoverInference: (input: InferenceDiscoveryRequest) => Promise<InferenceDiscoveryResult | null>;
   onUpdateMonitoring: (input: { enabled: boolean; intervalSeconds: number; reason: string }) => Promise<void>;
   onLogin: (username: string, password: string) => Promise<boolean>;
   onStartRecovery: (installationKey: string) => Promise<boolean>;
@@ -52,6 +55,14 @@ function slugFor(name: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "")
     .slice(0, 64);
+}
+
+function endpointOrigin(value: string | null | undefined): string | null {
+  try {
+    return value ? new URL(value).origin : null;
+  } catch {
+    return null;
+  }
 }
 
 function configurationDefaults(
@@ -86,6 +97,8 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
   const [monitoringEnabled, setMonitoringEnabled] = useState(false);
   const [monitoringInterval, setMonitoringInterval] = useState(300);
   const [monitoringReason, setMonitoringReason] = useState("Enable scheduled credential-aware checks.");
+  const [inferenceDiscovery, setInferenceDiscovery] = useState<InferenceDiscoveryResult | null>(null);
+  const [inferenceAdvancedOpen, setInferenceAdvancedOpen] = useState(false);
 
   const definition = useMemo(
     () => connectionDefinitions.find(({ kind }) => kind === selectedKind) ?? connectionDefinitions[0]!,
@@ -94,6 +107,16 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
   const existing = props.connections.find(({ kind }) => kind === selectedKind);
   const diagnostic =
     existing && props.diagnostic?.connectionId === existing.id ? props.diagnostic : null;
+  const inferenceBackend = configuration.inferenceBackend ?? "CUSTOM_OPENAI_COMPATIBLE";
+  const inferencePreset = inferenceEndpointPresets.find(({ backend }) => backend === inferenceBackend)
+    ?? inferenceEndpointPresets.at(-1)!;
+  const storedInferenceKeyReusable = Boolean(
+    existing?.secretFieldNames.includes("apiKey") &&
+    endpointOrigin(existing.baseUrl) === endpointOrigin(baseUrl),
+  );
+  const operationalFields = definition.configurationFields.filter(
+    ({ name }) => selectedKind !== "INFERENCE" || name !== "inferenceBackend",
+  );
 
   useEffect(() => setSelectedKind(props.initialKind), [props.initialKind]);
 
@@ -148,6 +171,8 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
       ...(existing?.configuration ?? {}),
     });
     setSecrets({});
+    setInferenceDiscovery(null);
+    setInferenceAdvancedOpen(false);
     setRollbackCandidate(null);
   }, [definition, existing]);
 
@@ -195,6 +220,33 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
     });
   };
 
+  const discoverInference = async () => {
+    if (!baseUrl.trim()) return;
+    const apiKey = secrets.apiKey?.trim();
+    const result = await props.onDiscoverInference({
+      baseUrl: baseUrl.trim(),
+      ...(existing ? { connectionId: existing.id } : {}),
+      ...(apiKey ? { apiKey } : {}),
+      timeoutMs: typeof configuration.timeoutMs === "number" ? configuration.timeoutMs : 8000,
+    });
+    if (!result) return;
+
+    setInferenceDiscovery(result);
+    setBaseUrl(result.recommended.baseUrl);
+    setConfiguration((current) => {
+      const next: ServiceConnectionConfiguration = {
+        ...current,
+        inferenceBackend: result.recommended.inferenceBackend,
+        modelsPath: result.recommended.modelsPath,
+        chatPath: result.recommended.chatPath,
+        ...(result.recommended.modelAlias ? { modelAlias: result.recommended.modelAlias } : {}),
+      };
+      if (result.recommended.healthPath) next.healthPath = result.recommended.healthPath;
+      else delete next.healthPath;
+      return next;
+    });
+  };
+
   return (
     <div className="drawer-backdrop" role="presentation" onMouseDown={(event) => {
       if (event.currentTarget === event.target) props.onClose();
@@ -211,7 +263,7 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
         {!props.session ? (
           <form className="unlock-form" onSubmit={submitAccess}>
             <div className="lock-mark" aria-hidden="true">M</div>
-            <h3>{accessMode === "LOGIN" ? "Sign in to AIHub" : "Recover local administrator"}</h3>
+            <h3>{accessMode === "LOGIN" ? "Sign in to OrcaSynapse" : "Recover local administrator"}</h3>
             <p>{accessMode === "LOGIN"
               ? "Use the local administrator account provisioned during installation. Credentials establish a protected HttpOnly session and are never stored by the browser."
               : "Use the offline Installation Key only when the local administrator password cannot be recovered normally."}</p>
@@ -257,7 +309,7 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
               <div>
                 <small>Continuous health evidence</small>
                 <strong>{monitoringEnabled ? "Scheduled monitoring enabled" : "Scheduled monitoring disabled"}</strong>
-                <span>Checks use encrypted connector credentials inside AIHub and never expose them to the browser.</span>
+                <span>Checks use encrypted connector credentials inside OrcaSynapse and never expose them to the browser.</span>
               </div>
               <label className="monitoring-toggle"><input type="checkbox" checked={monitoringEnabled} onChange={(event) => setMonitoringEnabled(event.target.checked)} /><span>Run scheduled checks</span></label>
               <label>Cadence
@@ -317,15 +369,109 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
             <div className="form-grid">
               <label>Display name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} required minLength={2}/></label>
               <label>Slug<input value={slug} onChange={(event) => setSlug(slugFor(event.target.value))} required disabled={Boolean(existing)}/></label>
-              <label className="wide">{definition.endpointLabel ?? "Endpoint URL"}<input type="url" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder={selectedKind === "OIDC" ? "https://identity.mpm.internal" : "https://service.mpm.internal"}/></label>
+              {selectedKind !== "INFERENCE" && <label className="wide">{definition.endpointLabel ?? "Endpoint URL"}<input type="url" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder={selectedKind === "OIDC" ? "https://identity.orcasynapse.internal" : "https://service.orcasynapse.internal"}/></label>}
               <label>Environment<select value={environment} onChange={(event) => setEnvironment(event.target.value as Environment)}><option value="DEVELOPMENT">Development</option><option value="STAGING">Staging</option><option value="PRODUCTION">Production</option></select></label>
               <label className="switch-label"><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)}/><span>Enable after saving</span></label>
             </div>
 
-            <div className="configuration-section">
+            {selectedKind === "INFERENCE" && <section className="inference-discovery-section" aria-labelledby="inference-discovery-title">
+              <header>
+                <div><small>Guided setup</small><strong id="inference-discovery-title">Connect and discover</strong><span>Enter one address. OrcaSynapse will identify the server, working routes, and available models.</span></div>
+                <em>{inferenceDiscovery ? "Step 3 of 3" : "Step 1 of 3"}</em>
+              </header>
+              <div className="inference-connect-grid">
+                <label>AI Inference address
+                  <input
+                    type="text"
+                    inputMode="url"
+                    value={baseUrl}
+                    onChange={(event) => {
+                      setBaseUrl(event.target.value);
+                      setInferenceDiscovery(null);
+                    }}
+                    placeholder="http://gpu-server.internal:8000 or .../v1"
+                    required
+                  />
+                  <small>Paste the address you already use. OrcaSynapse safely normalizes `/v1`, `/v1/models`, and similar paths.</small>
+                </label>
+                <label>API key
+                  <span className="secret-input-label">{storedInferenceKeyReusable ? "Stored key will be used" : "Optional"}</span>
+                  <input
+                    type="password"
+                    value={secrets.apiKey ?? ""}
+                    onChange={(event) => {
+                      setSecrets((current) => ({ ...current, apiKey: event.target.value }));
+                      setInferenceDiscovery(null);
+                    }}
+                    autoComplete="new-password"
+                    placeholder={storedInferenceKeyReusable ? "Leave blank to use stored key" : "Enter only if the server requires one"}
+                  />
+                </label>
+                <button
+                  className="primary-button inference-discover-button"
+                  type="button"
+                  disabled={props.busy || baseUrl.trim().length === 0}
+                  onClick={() => void discoverInference()}
+                >{props.busy ? "Discovering…" : "Discover server"}</button>
+              </div>
+
+              {!inferenceDiscovery ? <ol className="inference-discovery-steps" aria-label="Inference discovery steps">
+                <li className="active"><span>1</span><div><strong>Connect</strong><small>Supply one reachable address</small></div></li>
+                <li><span>2</span><div><strong>Discover</strong><small>Identify backend, health, and models</small></div></li>
+                <li><span>3</span><div><strong>Activate</strong><small>Review evidence and save</small></div></li>
+              </ol> : <div className={`inference-discovery-result ${inferenceDiscovery.status.toLowerCase()}`}>
+                <div className="inference-discovery-summary">
+                  <span className="discovery-status-mark" aria-hidden="true">{inferenceDiscovery.status === "READY" ? "✓" : "!"}</span>
+                  <div><small>{inferenceDiscovery.status.replaceAll("_", " ")}</small><strong>{inferenceDiscovery.message}</strong><span>Normalized to {inferenceDiscovery.normalizedBaseUrl}</span></div>
+                  <em>{inferenceDiscovery.backendConfidence.toLowerCase()} confidence</em>
+                </div>
+                <div className="inference-discovery-facts">
+                  <span><small>Implementation</small><strong>{inferenceEndpointPresets.find(({ backend }) => backend === inferenceDiscovery.backend)?.label ?? "OpenAI compatible"}</strong></span>
+                  <span><small>Health</small><strong>{inferenceDiscovery.recommended.healthPath ?? "Model API"}</strong></span>
+                  <span><small>Models found</small><strong>{inferenceDiscovery.models.length}</strong></span>
+                </div>
+                {inferenceDiscovery.models.length > 0 && <label className="discovered-model-select">Model OrcaSynapse should use
+                  <select
+                    value={configuration.modelAlias ?? inferenceDiscovery.models[0]?.id ?? ""}
+                    onChange={(event) => setConfiguration((current) => ({ ...current, modelAlias: event.target.value }))}
+                  >
+                    {inferenceDiscovery.models.map(({ id }) => <option key={id} value={id}>{id}</option>)}
+                  </select>
+                  <small>Loaded directly from the server; no model name needs to be typed manually.</small>
+                </label>}
+                <details className="discovery-evidence">
+                  <summary>View discovery evidence</summary>
+                  <div>
+                    {inferenceDiscovery.backendEvidence.map((item) => <p key={item}>{item}</p>)}
+                    {inferenceDiscovery.probes.map((probe) => <p key={probe.key} className={probe.status.toLowerCase()}><span>{probe.status === "PASSED" ? "✓" : probe.status === "WARNING" ? "!" : "×"}</span><strong>{probe.label}</strong><small>{probe.path} · {probe.httpStatus ?? "No response"} · {probe.latencyMs} ms</small></p>)}
+                  </div>
+                </details>
+              </div>}
+            </section>}
+
+            {selectedKind === "INFERENCE" && <button
+              className="advanced-configuration-toggle"
+              type="button"
+              aria-expanded={inferenceAdvancedOpen}
+              onClick={() => setInferenceAdvancedOpen((current) => !current)}
+            ><span><strong>Advanced configuration</strong><small>Manual backend, paths, limits, and timeouts</small></span><b>{inferenceAdvancedOpen ? "−" : "+"}</b></button>}
+
+            {(selectedKind !== "INFERENCE" || inferenceAdvancedOpen) && <div className="configuration-section">
               <div><strong>Operational settings</strong><span>Validated non-secret values</span></div>
               <div className="configuration-grid">
-                {definition.configurationFields.map((field) => {
+                {selectedKind === "INFERENCE" && <label>Serving implementation
+                  <select
+                    value={inferenceBackend}
+                    onChange={(event) => setConfiguration((current) => ({
+                      ...current,
+                      inferenceBackend: event.target.value as typeof inferenceBackend,
+                    }))}
+                  >
+                    {inferenceEndpointPresets.map((preset) => <option key={preset.backend} value={preset.backend}>{preset.label}</option>)}
+                  </select>
+                  <small>{inferencePreset.description}</small>
+                </label>}
+                {operationalFields.map((field) => {
                   const value = configuration[field.name];
                   if (field.type === "checkbox") {
                     return (
@@ -402,9 +548,9 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
                   );
                 })}
               </div>
-            </div>
+            </div>}
 
-            <div className="secret-section">
+            {selectedKind !== "INFERENCE" && <div className="secret-section">
               <div><strong>Credentials</strong><span>Write-only encrypted values</span></div>
               {definition.secretFields.map((field) => {
                 const stored = existing?.secretFieldNames.includes(field.name) ?? false;
@@ -422,7 +568,7 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
                   </label>
                 );
               })}
-            </div>
+            </div>}
 
             {existing && (
               <section className="revision-section" aria-labelledby="revision-history-title">
@@ -490,7 +636,11 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
             {props.error && <p className="form-error">{props.error}</p>}
             <div className="drawer-actions">
               <button type="button" onClick={props.onClose}>Cancel</button>
-              <button className="primary-button" type="submit" disabled={props.busy}>{props.busy ? "Saving…" : existing ? "Save new revision" : "Create connection"}</button>
+              <button className="primary-button" type="submit" disabled={props.busy}>{props.busy
+                ? "Saving…"
+                : selectedKind === "INFERENCE" && inferenceDiscovery?.status === "READY"
+                  ? "Save discovered configuration"
+                  : existing ? "Save new revision" : "Create connection"}</button>
             </div>
           </form>
         )}

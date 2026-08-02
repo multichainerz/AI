@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { Prisma, type AIHubPrismaClient } from "@aihub/database";
-import { sharedKnowledgeScopeTag } from "@aihub/document-runtime";
+import { Prisma, type OrcaSynapsePrismaClient } from "@orcasynapse/database";
+import { sharedKnowledgeScopeTag } from "@orcasynapse/document-runtime";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_ATTEMPTS = 8;
@@ -31,7 +31,7 @@ function safeFailure(error: unknown): string {
 }
 
 export class PrismaToolActionProcessor {
-  constructor(private readonly prisma: AIHubPrismaClient) {}
+  constructor(private readonly prisma: OrcaSynapsePrismaClient) {}
 
   async processAvailable(workerId: string, limit = 10): Promise<number> {
     let processed = 0;

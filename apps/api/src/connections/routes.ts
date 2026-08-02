@@ -3,6 +3,8 @@ import {
   connectionMonitoringControlSchema,
   configurationRevisionListSchema,
   createServiceConnectionSchema,
+  inferenceDiscoveryRequestSchema,
+  inferenceDiscoveryResultSchema,
   rollbackConfigurationRequestSchema,
   rollbackConfigurationResultSchema,
   serviceConnectionIdentifierSchema,
@@ -10,7 +12,7 @@ import {
   serviceConnectionSummarySchema,
   updateServiceConnectionSchema,
   updateConnectionMonitoringControlSchema,
-} from "@aihub/contracts";
+} from "@orcasynapse/contracts";
 import type { FastifyInstance } from "fastify";
 import { requireAdmin, type AdminSessionManager } from "../auth/admin-session.js";
 import {
@@ -23,11 +25,13 @@ import {
 } from "./connection-manager.js";
 import type { ConnectionTestService } from "./diagnostics/connection-test-service.js";
 import type { ConnectionMonitoringManager } from "./connection-monitor.js";
+import type { InferenceDiscoveryService } from "./diagnostics/inference-discovery-service.js";
 
 interface ConnectionRouteDependencies {
   sessionManager?: AdminSessionManager;
   manager?: ConnectionManager;
   tester?: ConnectionTestService;
+  discoverer?: InferenceDiscoveryService;
   monitor?: ConnectionMonitoringManager;
 }
 
@@ -39,7 +43,7 @@ export async function registerConnectionRoutes(
     if (!dependencies.manager || !dependencies.sessionManager) {
       await reply.code(423).send({
         error: "PLATFORM_LOCKED",
-        message: "AIHub installation trust is not ready.",
+        message: "OrcaSynapse installation trust is not ready.",
       });
       return reply;
     }
@@ -82,6 +86,32 @@ export async function registerConnectionRoutes(
       });
     }
     return connectionMonitoringControlSchema.parse(await dependencies.monitor.updateControl(principal, input.data));
+  });
+
+  app.post("/inference/discover", async (request, reply) => {
+    if (!(await requireAdmin(request, reply, dependencies.sessionManager, "connections:test"))) return reply;
+    if (!dependencies.discoverer) {
+      return reply.code(503).send({
+        error: "DISCOVERY_UNAVAILABLE",
+        message: "Inference discovery is not available.",
+      });
+    }
+    const input = inferenceDiscoveryRequestSchema.safeParse(request.body);
+    if (!input.success) {
+      return reply.code(400).send({
+        error: "INVALID_DISCOVERY_REQUEST",
+        message: "A valid inference endpoint is required.",
+        issues: input.error.issues,
+      });
+    }
+    try {
+      return inferenceDiscoveryResultSchema.parse(await dependencies.discoverer.discover(input.data));
+    } catch (error) {
+      if (error instanceof ConnectionNotFoundError) {
+        return reply.code(404).send({ error: "NOT_FOUND", message: error.message });
+      }
+      throw error;
+    }
   });
 
   app.post("/", async (request, reply) => {

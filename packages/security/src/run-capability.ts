@@ -21,14 +21,14 @@ export class RunCapabilityIssuer {
       throw new Error("Run capability issuance requires a 32-byte master key.");
     }
     this.#capabilityKey = createHmac("sha256", masterKey)
-      .update("aihub:run-capability:key:v1", "utf8")
+      .update("orcasynapse:run-capability:key:v1", "utf8")
       .digest();
   }
 
   issue(runId: string): RunCapability {
     if (!UUID.test(runId)) throw new Error("Run capability issuance requires a valid run ID.");
     const token = createHmac("sha256", this.#capabilityKey)
-      .update(`aihub:run-capability:v1:${runId}`, "utf8")
+      .update(`orcasynapse:run-capability:v1:${runId}`, "utf8")
       .digest("base64url");
     const digest = createHash("sha256").update(token, "utf8").digest();
     const tokenHash = new Uint8Array(digest.length);

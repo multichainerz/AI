@@ -68,7 +68,7 @@ export const createHermesNodeInvitationSchema = z.object({
 }).strict();
 
 export const hermesNodeEnrollmentBundleSchema = z.object({
-  format: z.literal("aihub-hermes-enrollment/v1"),
+  format: z.literal("orcasynapse-hermes-enrollment/v1"),
   nodeId: z.uuid(),
   nodeSlug: nodeSlugSchema,
   token: z.string().min(32).max(512),
@@ -81,6 +81,10 @@ export const hermesNodeEnrollmentBundleSchema = z.object({
 export const hermesNodeInvitationSchema = z.object({
   node: hermesRuntimeNodeSchema,
   bundle: hermesNodeEnrollmentBundleSchema,
+}).strict();
+
+export const resolveHermesNodeInvitationSchema = z.object({
+  token: z.string().min(32).max(512),
 }).strict();
 
 export const enrollHermesNodeSchema = z.object({
@@ -140,6 +144,8 @@ export type HermesRuntimeNode = z.infer<typeof hermesRuntimeNodeSchema>;
 export type HermesRuntimeNodeList = z.infer<typeof hermesRuntimeNodeListSchema>;
 export type CreateHermesNodeInvitation = z.infer<typeof createHermesNodeInvitationSchema>;
 export type HermesNodeInvitation = z.infer<typeof hermesNodeInvitationSchema>;
+export type ResolveHermesNodeInvitation = z.infer<typeof resolveHermesNodeInvitationSchema>;
+export type HermesNodeEnrollmentBundle = z.infer<typeof hermesNodeEnrollmentBundleSchema>;
 export type EnrollHermesNode = z.infer<typeof enrollHermesNodeSchema>;
 export type HermesNodeEnrollmentResult = z.infer<typeof hermesNodeEnrollmentResultSchema>;
 export type HermesNodeHeartbeat = z.infer<typeof hermesNodeHeartbeatSchema>;

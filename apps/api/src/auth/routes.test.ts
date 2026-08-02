@@ -1,4 +1,4 @@
-import type { AdministratorSession } from "@aihub/contracts";
+import type { AdministratorSession } from "@orcasynapse/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.js";
 import {

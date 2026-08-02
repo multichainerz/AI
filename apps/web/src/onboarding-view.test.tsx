@@ -1,4 +1,4 @@
-import type { ServiceConnectionSummary, ServiceKind } from "@aihub/contracts";
+import type { ServiceConnectionSummary, ServiceKind } from "@orcasynapse/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { OnboardingView } from "./onboarding-view.js";
@@ -28,7 +28,7 @@ describe("OnboardingView", () => {
       {...callbacks}
     />);
 
-    expect(html).toContain("Sign in to this AIHub installation");
+    expect(html).toContain("Sign in to this OrcaSynapse installation");
     expect(html).toContain("account recovery only");
     expect(html).not.toContain("Development quick start");
   });
@@ -36,7 +36,7 @@ describe("OnboardingView", () => {
   it("opens on the lean development path once the installation is claimed", () => {
     const html = renderToStaticMarkup(<OnboardingView
       connections={[
-        connection("VLLM", "http://vllm.internal:8000"),
+        connection("INFERENCE", "http://vllm.internal:8000"),
         connection("SUPERMEMORY", "http://supermemory.internal:6767"),
       ]}
       unlocked
@@ -47,9 +47,11 @@ describe("OnboardingView", () => {
     expect(html).toContain("Development quick start");
     expect(html).toContain("Start chatting");
     expect(html).toContain("Open documents");
-    expect(html).toContain("Isolated agent runtime for the full AIHub experience");
+    expect(html).toContain("AI Inference, Agentic System, Enterprise Access");
+    expect(html).toContain("Hermes execution with durable Supermemory");
+    expect(html).toContain("tenant data isolation remains a planned phase");
     expect(html).toContain("Enroll runtime");
-    expect(html).toContain("The on-prem model endpoint used by AIHub and Hermes");
+    expect(html).toContain("Enterprise model serving for Chat and governed agents");
     expect(html).not.toContain("Guided journey");
   });
 
@@ -61,9 +63,9 @@ describe("OnboardingView", () => {
       {...callbacks}
     />);
 
-    expect(html).toContain("Connect vLLM first");
-    expect(html).toContain("Connect Supermemory first");
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Connect vLLM first<\/button>/);
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Connect Supermemory first<\/button>/);
+    expect(html).toContain("Set up AI Inference first");
+    expect(html).toContain("Enroll Agentic System first");
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Set up AI Inference first<\/button>/);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Enroll Agentic System first<\/button>/);
   });
 });

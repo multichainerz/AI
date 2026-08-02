@@ -2,7 +2,7 @@ import {
   ADMIN_SCOPES,
   type AdministratorSession,
   type HermesRuntimeNode,
-} from "@aihub/contracts";
+} from "@orcasynapse/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.js";
 import { ADMIN_SESSION_COOKIE, type AdminSessionManager } from "../auth/admin-session.js";
@@ -52,7 +52,7 @@ function manager(): HermesRuntimeNodeManager {
     createInvitation: vi.fn(async (_principal, input) => ({
       node,
       bundle: {
-        format: "aihub-hermes-enrollment/v1" as const,
+        format: "orcasynapse-hermes-enrollment/v1" as const,
         nodeId: NODE_ID,
         nodeSlug: node.slug,
         token: "t".repeat(43),
@@ -62,10 +62,20 @@ function manager(): HermesRuntimeNodeManager {
         expiresAt: "2026-07-30T00:30:00.000Z",
       },
     })),
+    resolveInvitation: vi.fn(async (token) => ({
+      format: "orcasynapse-hermes-enrollment/v1" as const,
+      nodeId: NODE_ID,
+      nodeSlug: node.slug,
+      token,
+      controlPlaneUrl: "https://orcasynapse.internal",
+      hermesBaseUrl: node.baseUrl,
+      hermesImage: "nousresearch/hermes-agent:latest",
+      expiresAt: "2026-07-30T00:30:00.000Z",
+    })),
     enroll: vi.fn(async () => ({
       node: { ...node, hostname: "hermes-01.internal", enrolledAt: NOW, identityFingerprint: "a".repeat(64) },
       heartbeatPath: `/api/v1/runtime-nodes/${NODE_ID}/heartbeat`,
-      modelBootstrap: { provider: "custom" as const, baseUrl: "https://aihub.internal/internal/v1", modelAlias: "hermes-agent", apiKey: "g".repeat(64) },
+      modelBootstrap: { provider: "custom" as const, baseUrl: "https://orcasynapse.internal/internal/v1", modelAlias: "hermes-agent", apiKey: "g".repeat(64) },
     })),
     heartbeat: vi.fn(async () => ({ accepted: true as const, serverTime: NOW })),
     registerMemory: vi.fn(async () => ({ accepted: true as const, connectionId: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb" })),
@@ -97,14 +107,23 @@ describe("Hermes runtime-node routes", () => {
         slug: "hermes-runtime-01",
         displayName: "Hermes Runtime 01",
         baseUrl: "http://10.0.0.12:8642",
-        controlPlaneUrl: "https://aihub.internal",
+        controlPlaneUrl: "https://orcasynapse.internal",
         hermesImage: "nousresearch/hermes-agent:latest",
         expiresInMinutes: 30,
       },
     });
     expect(invitation.statusCode).toBe(201);
-    expect(invitation.json()).toMatchObject({ bundle: { format: "aihub-hermes-enrollment/v1", token: "t".repeat(43) } });
+    expect(invitation.json()).toMatchObject({ bundle: { format: "orcasynapse-hermes-enrollment/v1", token: "t".repeat(43) } });
     expect(runtimeNodeManager.createInvitation).toHaveBeenCalledWith(expect.objectContaining({ id: ADMIN_ID }), expect.objectContaining({ slug: node.slug }));
+
+    const bootstrap = await app.inject({
+      method: "POST",
+      url: "/api/v1/runtime-nodes/bootstrap",
+      payload: { token: "t".repeat(43) },
+    });
+    expect(bootstrap.statusCode, bootstrap.body).toBe(200);
+    expect(bootstrap.json()).toMatchObject({ nodeId: NODE_ID, controlPlaneUrl: "https://orcasynapse.internal" });
+    expect(runtimeNodeManager.resolveInvitation).toHaveBeenCalledWith("t".repeat(43));
 
     const enrollment = await app.inject({
       method: "POST",
@@ -114,7 +133,7 @@ describe("Hermes runtime-node routes", () => {
         token: "t".repeat(43),
         hostname: "hermes-01.internal",
         publicKeyPem: `-----BEGIN PUBLIC KEY-----\n${"A".repeat(80)}\n-----END PUBLIC KEY-----`,
-        controlPlaneUrl: "https://aihub.internal",
+        controlPlaneUrl: "https://orcasynapse.internal",
         apiKey: "k".repeat(64),
         hermesVersion: "nousresearch/hermes-agent:latest",
         installerVersion: "ai-v1.7.0",
@@ -133,9 +152,9 @@ describe("Hermes runtime-node routes", () => {
       method: "POST",
       url: `/api/v1/runtime-nodes/${NODE_ID}/heartbeat`,
       headers: {
-        "x-aihub-node-timestamp": NOW,
-        "x-aihub-node-nonce": "b6b4dc94-bcfc-41c4-bbd2-5d8e3dbc3dac",
-        "x-aihub-node-signature": "invalid",
+        "x-orcasynapse-node-timestamp": NOW,
+        "x-orcasynapse-node-nonce": "b6b4dc94-bcfc-41c4-bbd2-5d8e3dbc3dac",
+        "x-orcasynapse-node-signature": "invalid",
       },
       payload: { observedAt: NOW, status: "ONLINE", hermesVersion: "0.1.0", capabilities: [] },
     });

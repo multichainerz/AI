@@ -9,7 +9,7 @@ import {
   sendChatMessageSchema,
   setChatFeedbackSchema,
   updateChatConversationSchema,
-} from "@aihub/contracts";
+} from "@orcasynapse/contracts";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import {
   adminSessionToken,
@@ -65,7 +65,7 @@ async function requireChatPrincipal(
   if (!options.identityManager && !options.sessionManager) {
     await reply.code(423).send({
       error: "PLATFORM_LOCKED",
-      message: "AIHub identity services are not ready.",
+      message: "OrcaSynapse identity services are not ready.",
     });
     return null;
   }

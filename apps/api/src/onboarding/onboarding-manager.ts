@@ -9,7 +9,7 @@ import type {
   UpdateComponentCompatibility,
   UpdateOnboardingStep,
   VerifyRecoveryKit,
-} from "@aihub/contracts";
+} from "@orcasynapse/contracts";
 import type { AdminPrincipal } from "../auth/admin-session.js";
 
 export interface OnboardingManager {

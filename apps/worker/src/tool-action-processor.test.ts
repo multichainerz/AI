@@ -1,4 +1,4 @@
-import type { AIHubPrismaClient } from "@aihub/database";
+import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
 import { describe, expect, it, vi } from "vitest";
 import { PrismaToolActionProcessor } from "./tool-action-processor.js";
 
@@ -97,7 +97,7 @@ function harness(options: {
     return Promise.all(value);
   });
   return {
-    processor: new PrismaToolActionProcessor(prismaBase as AIHubPrismaClient),
+    processor: new PrismaToolActionProcessor(prismaBase as OrcaSynapsePrismaClient),
     dispatchUpdateMany,
     callUpdate,
     callUpdateMany,

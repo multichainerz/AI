@@ -2,9 +2,9 @@ import {
   createPrismaClient,
   hasBootstrapSecret,
   readBootstrapSecret,
-  type AIHubPrismaClient,
-} from "@aihub/database";
-import { decodeMasterKey, EnvelopeEncryption } from "@aihub/security";
+  type OrcaSynapsePrismaClient,
+} from "@orcasynapse/database";
+import { decodeMasterKey, EnvelopeEncryption } from "@orcasynapse/security";
 import { InstallationKeyAuthenticator } from "./auth/installation-key-auth.js";
 import {
   PrismaAdminSessionManager,
@@ -13,6 +13,7 @@ import {
 import type { ConnectionManager } from "./connections/connection-manager.js";
 import { PrismaConnectionManager } from "./connections/prisma-connection-manager.js";
 import { ConnectionTestService } from "./connections/diagnostics/connection-test-service.js";
+import { InferenceDiscoveryService } from "./connections/diagnostics/inference-discovery-service.js";
 import { ConnectionMonitorRuntime, type ConnectionMonitorService } from "./connections/connection-monitor.js";
 import type { OperationsManager } from "./operations/operations-manager.js";
 import { PrismaOperationsManager } from "./operations/prisma-operations-manager.js";
@@ -28,7 +29,7 @@ import {
   EncryptedFileSystemDocumentScratchStore,
   HermesClient,
   SupermemoryClient,
-} from "@aihub/document-runtime";
+} from "@orcasynapse/document-runtime";
 import type { DocumentManager } from "./documents/document-manager.js";
 import { PrismaDocumentManager } from "./documents/prisma-document-manager.js";
 import { SupermemoryKnowledgeRetriever } from "./chat/knowledge-retriever.js";
@@ -59,6 +60,7 @@ export interface RuntimeServices {
   sessionManager?: AdminSessionManager;
   connectionManager?: ConnectionManager;
   connectionTestService?: ConnectionTestService;
+  inferenceDiscoveryService?: InferenceDiscoveryService;
   connectionMonitor?: ConnectionMonitorService;
   operationsManager?: OperationsManager;
   chatManager?: ChatManager;
@@ -74,23 +76,23 @@ export interface RuntimeServices {
   onboardingManager?: OnboardingManager;
   runtimeNodeManager?: HermesRuntimeNodeManager;
   inferenceGateway?: PrismaInferenceGateway;
-  prisma?: AIHubPrismaClient;
+  prisma?: OrcaSynapsePrismaClient;
 }
 
 export function getBootstrapState(): BootstrapState {
-  const names = ["aihub_database_url", "aihub_master_key", "aihub_installation_key"] as const;
+  const names = ["orcasynapse_database_url", "orcasynapse_master_key", "orcasynapse_installation_key"] as const;
   const available = names.map((name) => hasBootstrapSecret(name));
 
   if (available.every((value) => !value)) return "REQUIRED";
   if (!available.every(Boolean)) return "LOCKED";
 
   try {
-    const databaseUrl = new URL(readBootstrapSecret("aihub_database_url"));
+    const databaseUrl = new URL(readBootstrapSecret("orcasynapse_database_url"));
     if (databaseUrl.protocol !== "postgresql:" && databaseUrl.protocol !== "postgres:") {
       return "LOCKED";
     }
-    decodeMasterKey(readBootstrapSecret("aihub_master_key"));
-    if (readBootstrapSecret("aihub_installation_key").length < 32) return "LOCKED";
+    decodeMasterKey(readBootstrapSecret("orcasynapse_master_key"));
+    if (readBootstrapSecret("orcasynapse_installation_key").length < 32) return "LOCKED";
     return "READY";
   } catch {
     return "LOCKED";
@@ -102,16 +104,17 @@ export function createRuntimeServices(): RuntimeServices {
   if (bootstrapState !== "READY") return { bootstrapState };
 
   try {
-    const databaseUrl = readBootstrapSecret("aihub_database_url");
+    const databaseUrl = readBootstrapSecret("orcasynapse_database_url");
     const prisma = createPrismaClient(databaseUrl);
-    const masterKey = decodeMasterKey(readBootstrapSecret("aihub_master_key"));
+    const masterKey = decodeMasterKey(readBootstrapSecret("orcasynapse_master_key"));
     const encryption = new EnvelopeEncryption({ masterKey });
     const authenticator = new InstallationKeyAuthenticator(
-      readBootstrapSecret("aihub_installation_key"),
+      readBootstrapSecret("orcasynapse_installation_key"),
     );
 
     const connectionManager = new PrismaConnectionManager(prisma, encryption);
     const connectionTestService = new ConnectionTestService(connectionManager);
+    const inferenceDiscoveryService = new InferenceDiscoveryService(connectionManager);
     const connectionMonitor = new ConnectionMonitorRuntime(
       prisma,
       connectionTestService,
@@ -157,6 +160,7 @@ export function createRuntimeServices(): RuntimeServices {
       sessionManager,
       connectionManager,
       connectionTestService,
+      inferenceDiscoveryService,
       connectionMonitor,
       operationsManager,
       chatManager,

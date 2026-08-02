@@ -1,7 +1,7 @@
-import type { ArchitectureDecision, ComponentCompatibility, OnboardingStep } from "@aihub/contracts";
+import type { ArchitectureDecision, ComponentCompatibility, OnboardingStep } from "@orcasynapse/contracts";
 import { describe, expect, it } from "vitest";
 import { vi } from "vitest";
-import type { AIHubPrismaClient } from "@aihub/database";
+import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
 import { calculateOnboardingGate, PrismaOnboardingManager } from "./prisma-onboarding-manager.js";
 
 const architecture: ArchitectureDecision = {
@@ -98,7 +98,7 @@ describe("production onboarding gate", () => {
     };
     const prisma = {
       $transaction: vi.fn(async (callback: (client: typeof transaction) => Promise<unknown>) => callback(transaction)),
-    } as unknown as AIHubPrismaClient;
+    } as unknown as OrcaSynapsePrismaClient;
 
     await new PrismaOnboardingManager(prisma).updateArchitecture({ id: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb" } as any, {
       expectedRevision: 0,

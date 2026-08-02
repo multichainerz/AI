@@ -11,7 +11,20 @@ import type {
 
 interface OpenAICompatibleAdapterOptions {
   serviceName: string;
-  defaultHealthPath: string;
+  defaultHealthPath?: string;
+}
+
+function discoveredModelIds(payload: Record<string, unknown>): string[] {
+  const candidates = [
+    ...(Array.isArray(payload.data) ? payload.data : []),
+    ...(Array.isArray(payload.models) ? payload.models : []),
+  ];
+  return [...new Set(candidates.flatMap((candidate) => {
+    if (!candidate || typeof candidate !== "object") return [];
+    const record = candidate as Record<string, unknown>;
+    const id = [record.id, record.model, record.name].find((value) => typeof value === "string");
+    return typeof id === "string" ? [id] : [];
+  }))].slice(0, 50);
 }
 
 export class OpenAICompatibleAdapter implements ConnectionDiagnosticAdapter {
@@ -21,15 +34,14 @@ export class OpenAICompatibleAdapter implements ConnectionDiagnosticAdapter {
     const healthPath = stringConfiguration(connection, "healthPath") ?? this.options.defaultHealthPath;
     const modelsPath = stringConfiguration(connection, "modelsPath") ?? "/v1/models";
 
-    const health = await healthFetch(connection, healthPath, signal);
-    if (!health.ok) return failedHttpOutcome(this.options.serviceName, health);
-
     const models = await healthFetch(connection, modelsPath, signal);
     if (!models.ok) return failedHttpOutcome(this.options.serviceName, models);
 
-    let payload: { data?: Array<{ id?: unknown }> };
+    let payload: Record<string, unknown>;
     try {
-      payload = (await models.json()) as { data?: Array<{ id?: unknown }> };
+      const value = await models.json() as unknown;
+      if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid payload");
+      payload = value as Record<string, unknown>;
     } catch {
       return {
         status: "DEGRADED",
@@ -37,19 +49,15 @@ export class OpenAICompatibleAdapter implements ConnectionDiagnosticAdapter {
         details: { failure: "invalid_models_response" },
       };
     }
-    const modelIds = Array.isArray(payload.data)
-      ? payload.data
-          .map(({ id }) => id)
-          .filter((id): id is string => typeof id === "string")
-          .slice(0, 50)
-      : [];
+    const modelIds = discoveredModelIds(payload);
     const modelAlias = stringConfiguration(connection, "modelAlias");
+    const inferenceBackend = stringConfiguration(connection, "inferenceBackend");
 
     if (modelIds.length === 0) {
       return {
         status: "DEGRADED",
         message: `${this.options.serviceName} is reachable but reported no available models.`,
-        details: { modelCount: 0 },
+        details: { modelCount: 0, ...(inferenceBackend ? { inferenceBackend } : {}) },
       };
     }
 
@@ -57,16 +65,24 @@ export class OpenAICompatibleAdapter implements ConnectionDiagnosticAdapter {
       return {
         status: "DEGRADED",
         message: `${this.options.serviceName} is reachable but the configured model alias is unavailable.`,
-        details: { modelAlias, modelCount: modelIds.length, modelIds },
+        details: { modelAlias, modelCount: modelIds.length, modelIds, ...(inferenceBackend ? { inferenceBackend } : {}) },
       };
     }
 
+    const health = healthPath ? await healthFetch(connection, healthPath, signal) : null;
+    const healthWarning = health && !health.ok
+      ? ` Optional health endpoint ${healthPath} returned HTTP ${health.status}.`
+      : "";
+
     return {
       status: "HEALTHY",
-      message: `${this.options.serviceName} is reachable and authenticated.`,
+      message: `${this.options.serviceName} model discovery is reachable and authenticated.${healthWarning}`,
       details: {
         modelCount: modelIds.length,
         modelIds,
+        modelsPath,
+        ...(healthPath ? { healthPath, healthHttpStatus: health?.status ?? null } : {}),
+        ...(inferenceBackend ? { inferenceBackend } : {}),
         ...(modelAlias ? { modelAlias } : {}),
       },
     };

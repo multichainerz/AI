@@ -13,7 +13,7 @@ describe("Hermes runtime-node contracts", () => {
       slug: "hermes-runtime-01",
       displayName: "Hermes Runtime 01",
       baseUrl: "http://10.0.0.12:8642",
-      controlPlaneUrl: "https://aihub.internal",
+      controlPlaneUrl: "https://orcasynapse.internal",
       hermesImage: `nousresearch/hermes-agent@sha256:${"a".repeat(64)}`,
       expiresInMinutes: 30,
     }).success).toBe(true);
@@ -21,14 +21,14 @@ describe("Hermes runtime-node contracts", () => {
       slug: "Hermes Runtime",
       displayName: "Hermes Runtime 01",
       baseUrl: "ssh://10.0.0.12",
-      controlPlaneUrl: "https://aihub.internal",
+      controlPlaneUrl: "https://orcasynapse.internal",
       hermesImage: "nousresearch/hermes-agent",
     }).success).toBe(false);
     expect(createHermesNodeInvitationSchema.safeParse({
       slug: "hermes-runtime-01",
       displayName: "Hermes Runtime 01",
       baseUrl: "http://10.0.0.12:8642/admin",
-      controlPlaneUrl: "https://aihub.internal/setup?token=unsafe",
+      controlPlaneUrl: "https://orcasynapse.internal/setup?token=unsafe",
       hermesImage: "nousresearch/hermes-agent",
     }).success).toBe(false);
   });
@@ -39,7 +39,7 @@ describe("Hermes runtime-node contracts", () => {
       token: "t".repeat(43),
       hostname: "hermes-01.internal",
       publicKeyPem: `-----BEGIN PUBLIC KEY-----\n${"A".repeat(80)}\n-----END PUBLIC KEY-----`,
-      controlPlaneUrl: "https://aihub.internal",
+      controlPlaneUrl: "https://orcasynapse.internal",
       apiKey: "k".repeat(64),
       hermesVersion: "nousresearch/hermes-agent:latest",
       installerVersion: "ai-v1.7.0",

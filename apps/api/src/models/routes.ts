@@ -5,7 +5,7 @@ import {
   modelDeploymentIdentifierSchema,
   modelDeploymentSchema,
   updateModelDeploymentSchema,
-} from "@aihub/contracts";
+} from "@orcasynapse/contracts";
 import type { FastifyInstance } from "fastify";
 import { requireAdmin, type AdminSessionManager } from "../auth/admin-session.js";
 import { ModelConflictError, ModelNotFoundError, type ModelManager } from "./model-manager.js";
@@ -18,7 +18,7 @@ interface ModelRouteDependencies {
 export async function registerModelRoutes(app: FastifyInstance, dependencies: ModelRouteDependencies): Promise<void> {
   app.addHook("preHandler", async (_request, reply) => {
     if (!dependencies.sessionManager || !dependencies.manager) {
-      return reply.code(423).send({ error: "PLATFORM_LOCKED", message: "AIHub installation trust is not ready." });
+      return reply.code(423).send({ error: "PLATFORM_LOCKED", message: "OrcaSynapse installation trust is not ready." });
     }
   });
 

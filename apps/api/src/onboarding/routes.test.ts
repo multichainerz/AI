@@ -1,4 +1,4 @@
-import { ADMIN_SCOPES, type AdministratorSession, type OnboardingSnapshot } from "@aihub/contracts";
+import { ADMIN_SCOPES, type AdministratorSession, type OnboardingSnapshot } from "@orcasynapse/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.js";
 import { ADMIN_SESSION_COOKIE, type AdminSessionManager } from "../auth/admin-session.js";
@@ -82,7 +82,7 @@ describe("production onboarding routes", () => {
     expect(invalid.statusCode).toBe(400);
     const valid = await app.inject({
       method: "PATCH", url: "/api/v1/admin/onboarding/components/hermes-api", headers,
-      payload: { status: "PASSED", observedVersion: "0.13.0", evidenceRef: "report:hermes:42", attestationAuthority: "MPM Security", note: "Checked the target.", expectedRevision: 0 },
+      payload: { status: "PASSED", observedVersion: "0.13.0", evidenceRef: "report:hermes:42", attestationAuthority: "OrcaSynapse Security", note: "Checked the target.", expectedRevision: 0 },
     });
     expect(valid.statusCode).toBe(200);
     expect(onboardingManager.updateComponent).toHaveBeenCalledWith(expect.objectContaining({ id: ADMIN_ID }), "hermes-api", expect.objectContaining({ status: "PASSED" }));
@@ -120,7 +120,7 @@ describe("production onboarding routes", () => {
     const passphrase = "a-customer-held-recovery-passphrase";
     const exported = await app.inject({
       method: "POST", url: "/api/v1/admin/onboarding/recovery/export", headers,
-      payload: { recoveryOwner: "MPM Infrastructure", passphrase, expectedRevision: 0 },
+      payload: { recoveryOwner: "OrcaSynapse Infrastructure", passphrase, expectedRevision: 0 },
     });
     const verified = await app.inject({
       method: "POST", url: "/api/v1/admin/onboarding/recovery/verify", headers,
@@ -132,7 +132,7 @@ describe("production onboarding routes", () => {
     expect(verified.statusCode).toBe(200);
     expect(onboardingManager.exportRecoveryKit).toHaveBeenCalledWith(
       expect.objectContaining({ id: ADMIN_ID }),
-      expect.objectContaining({ recoveryOwner: "MPM Infrastructure", passphrase }),
+      expect.objectContaining({ recoveryOwner: "OrcaSynapse Infrastructure", passphrase }),
     );
     expect(onboardingManager.verifyRecoveryKit).toHaveBeenCalledWith(
       expect.objectContaining({ id: ADMIN_ID }),

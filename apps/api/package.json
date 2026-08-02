@@ -1,5 +1,5 @@
 {
-  "name": "@aihub/api",
+  "name": "@orcasynapse/api",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -12,10 +12,10 @@
     "test": "vitest run --exclude dist/**"
   },
   "dependencies": {
-    "@aihub/contracts": "workspace:*",
-    "@aihub/database": "workspace:*",
-    "@aihub/document-runtime": "workspace:*",
-    "@aihub/security": "workspace:*",
+    "@orcasynapse/contracts": "workspace:*",
+    "@orcasynapse/database": "workspace:*",
+    "@orcasynapse/document-runtime": "workspace:*",
+    "@orcasynapse/security": "workspace:*",
     "@fastify/helmet": "13.1.0",
     "@fastify/multipart": "9.3.0",
     "fastify": "5.10.0",

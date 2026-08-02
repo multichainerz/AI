@@ -26,24 +26,24 @@ importers:
 
   apps/api:
     dependencies:
-      '@aihub/contracts':
-        specifier: workspace:*
-        version: link:../../packages/contracts
-      '@aihub/database':
-        specifier: workspace:*
-        version: link:../../packages/database
-      '@aihub/document-runtime':
-        specifier: workspace:*
-        version: link:../../packages/document-runtime
-      '@aihub/security':
-        specifier: workspace:*
-        version: link:../../packages/security
       '@fastify/helmet':
         specifier: 13.1.0
         version: 13.1.0
       '@fastify/multipart':
         specifier: 9.3.0
         version: 9.3.0
+      '@orcasynapse/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@orcasynapse/database':
+        specifier: workspace:*
+        version: link:../../packages/database
+      '@orcasynapse/document-runtime':
+        specifier: workspace:*
+        version: link:../../packages/document-runtime
+      '@orcasynapse/security':
+        specifier: workspace:*
+        version: link:../../packages/security
       fastify:
         specifier: 5.10.0
         version: 5.10.0
@@ -57,7 +57,7 @@ importers:
 
   apps/web:
     dependencies:
-      '@aihub/contracts':
+      '@orcasynapse/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
       react:
@@ -82,16 +82,16 @@ importers:
 
   apps/worker:
     dependencies:
-      '@aihub/contracts':
+      '@orcasynapse/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
-      '@aihub/database':
+      '@orcasynapse/database':
         specifier: workspace:*
         version: link:../../packages/database
-      '@aihub/document-runtime':
+      '@orcasynapse/document-runtime':
         specifier: workspace:*
         version: link:../../packages/document-runtime
-      '@aihub/security':
+      '@orcasynapse/security':
         specifier: workspace:*
         version: link:../../packages/security
     devDependencies:
@@ -126,13 +126,13 @@ importers:
 
   packages/document-runtime:
     dependencies:
-      '@aihub/contracts':
+      '@orcasynapse/contracts':
         specifier: workspace:*
         version: link:../contracts
-      '@aihub/database':
+      '@orcasynapse/database':
         specifier: workspace:*
         version: link:../database
-      '@aihub/security':
+      '@orcasynapse/security':
         specifier: workspace:*
         version: link:../security
 

@@ -81,7 +81,7 @@ export const gatewayCredentialSchema = z.object({
 export const gatewayCredentialListSchema = z.object({ items: z.array(gatewayCredentialSchema) });
 export const issueGatewayCredentialSchema = z.object({ name: z.string().trim().min(2).max(120) }).strict();
 export const issuedGatewayCredentialSchema = gatewayCredentialSchema.extend({
-  token: z.string().regex(/^aihub_mcp_[A-Za-z0-9_-]{43}$/),
+  token: z.string().regex(/^orcasynapse_mcp_[A-Za-z0-9_-]{43}$/),
 });
 
 export const toolCallSchema = z.object({

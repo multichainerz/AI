@@ -1,4 +1,4 @@
-import type { AIHubPrismaClient } from "@aihub/database";
+import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
 import { describe, expect, it, vi } from "vitest";
 import type { AdminPrincipal } from "../auth/admin-session.js";
 import { ModelConflictError } from "./model-manager.js";
@@ -21,7 +21,7 @@ const principal = {
 const connection = {
   id: CONNECTION_ID,
   displayName: "vLLM Primary",
-  kind: "VLLM" as const,
+  kind: "INFERENCE" as const,
   environment: "PRODUCTION" as const,
   enabled: true,
   status: "HEALTHY" as const,
@@ -37,7 +37,7 @@ function model(overrides: Record<string, unknown> = {}) {
     status: "DRAFT" as const,
     connectionId: CONNECTION_ID,
     version: "2.1-nvfp4",
-    license: "MPM approved",
+    license: "OrcaSynapse approved",
     contextWindowTokens: 131_072,
     maxOutputTokens: 8_192,
     maxConcurrentRequests: 2,
@@ -58,7 +58,7 @@ describe("PrismaModelManager", () => {
   it("rejects a workload connected to the wrong service type", async () => {
     const prisma = {
       serviceConnection: { findUnique: vi.fn(async () => ({ ...connection, kind: "OIDC" })) },
-    } as unknown as AIHubPrismaClient;
+    } as unknown as OrcaSynapsePrismaClient;
     const manager = new PrismaModelManager(prisma);
 
     await expect(manager.create(principal, {
@@ -85,7 +85,7 @@ describe("PrismaModelManager", () => {
     };
     const prisma = {
       $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)),
-    } as unknown as AIHubPrismaClient;
+    } as unknown as OrcaSynapsePrismaClient;
     const manager = new PrismaModelManager(prisma);
 
     await expect(manager.update(principal, MODEL_ID, {
@@ -103,7 +103,7 @@ describe("PrismaModelManager", () => {
     };
     const prisma = {
       $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)),
-    } as unknown as AIHubPrismaClient;
+    } as unknown as OrcaSynapsePrismaClient;
 
     await expect(new PrismaModelManager(prisma).activate(principal, MODEL_ID, {
       expectedRevision: 1,
@@ -134,7 +134,7 @@ describe("PrismaModelManager", () => {
     };
     const prisma = {
       $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)),
-    } as unknown as AIHubPrismaClient;
+    } as unknown as OrcaSynapsePrismaClient;
 
     await expect(new PrismaModelManager(prisma).activate(principal, MODEL_ID, {
       expectedRevision: 1,

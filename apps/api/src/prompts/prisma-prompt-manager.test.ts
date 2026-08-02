@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { AIHubPrismaClient } from "@aihub/database";
+import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
 import { describe, expect, it, vi } from "vitest";
 import type { AdminPrincipal } from "../auth/admin-session.js";
 import { PromptConflictError } from "./prompt-manager.js";
@@ -8,7 +8,7 @@ import { PrismaPromptManager } from "./prisma-prompt-manager.js";
 const PROMPT_ID = "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d";
 const EVALUATION_ID = "de44bc5d-0355-4c3f-872e-1af99f356d19";
 const ADMIN_ID = "ac369dab-cad5-4fd9-83ed-b4fbf528028a";
-const CONTENT = "You are the approved MPM assistant. State uncertainty and protect private data.";
+const CONTENT = "You are the approved OrcaSynapse assistant. State uncertainty and protect private data.";
 const now = new Date("2026-07-30T00:00:00.000Z");
 const principal = {
   id: ADMIN_ID,
@@ -23,8 +23,8 @@ const principal = {
 function prompt(overrides: Record<string, unknown> = {}) {
   return {
     id: PROMPT_ID,
-    slug: "mpm-chat-system",
-    displayName: "MPM chat system",
+    slug: "orcasynapse-chat-system",
+    displayName: "OrcaSynapse chat system",
     description: "Approved employee chat behavior.",
     purpose: "CHAT_SYSTEM" as const,
     version: "1.0.0",
@@ -63,7 +63,7 @@ describe("PrismaPromptManager", () => {
       $executeRaw: vi.fn(async () => 1),
       promptTemplate: { findUnique: vi.fn(async () => prompt({ status: "SUSPENDED" })), updateMany: vi.fn() },
     };
-    const prisma = { $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)) } as unknown as AIHubPrismaClient;
+    const prisma = { $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)) } as unknown as OrcaSynapsePrismaClient;
 
     await expect(new PrismaPromptManager(prisma).update(principal, PROMPT_ID, {
       content: `${CONTENT} New behavior.`,
@@ -74,16 +74,16 @@ describe("PrismaPromptManager", () => {
 
   it("requires exact promoted chat and safety evidence", async () => {
     const transaction = activationTransaction({ evaluationRun: { findFirst: vi.fn(async () => null) } });
-    const prisma = { $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)) } as unknown as AIHubPrismaClient;
+    const prisma = { $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)) } as unknown as OrcaSynapsePrismaClient;
 
     await expect(new PrismaPromptManager(prisma).activate(principal, PROMPT_ID, {
       expectedRevision: 1,
       reason: "Release evaluated prompt",
-    })).rejects.toThrow("prompt:mpm-chat-system version 1.0.0");
+    })).rejects.toThrow("prompt:orcasynapse-chat-system version 1.0.0");
     expect(transaction.evaluationRun.findFirst).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({
         targetType: "PROMPT",
-        targetReference: "prompt:mpm-chat-system",
+        targetReference: "prompt:orcasynapse-chat-system",
         targetVersion: "1.0.0",
         status: "PROMOTED",
         requiredCategories: { hasEvery: ["CHAT", "SAFETY"] },
@@ -93,7 +93,7 @@ describe("PrismaPromptManager", () => {
 
   it("activates atomically and audits checksum rather than prompt content", async () => {
     const transaction = activationTransaction();
-    const prisma = { $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)) } as unknown as AIHubPrismaClient;
+    const prisma = { $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)) } as unknown as OrcaSynapsePrismaClient;
 
     await expect(new PrismaPromptManager(prisma).activate(principal, PROMPT_ID, {
       expectedRevision: 1,
@@ -111,7 +111,7 @@ describe("PrismaPromptManager", () => {
         findFirst: vi.fn(async () => ({ displayName: "Existing prompt" })),
       },
     });
-    const prisma = { $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)) } as unknown as AIHubPrismaClient;
+    const prisma = { $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)) } as unknown as OrcaSynapsePrismaClient;
     await expect(new PrismaPromptManager(prisma).activate(principal, PROMPT_ID, {
       expectedRevision: 1,
       reason: "Release evaluated prompt",
