@@ -9,6 +9,26 @@ export ORCASYNAPSE_HERMES_STATE_ROOT="${TEST_ROOT}/hermes"
 # shellcheck source=install-agentic-node.sh
 source "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 
+mkdir -p "${STATE_ROOT}/identity"
+openssl genpkey -algorithm ED25519 -out "${STATE_ROOT}/identity/node.key"
+openssl pkey -in "${STATE_ROOT}/identity/node.key" -pubout -out "${STATE_ROOT}/identity/node.pub"
+signature_body='{"status":"ONLINE"}'
+signature_timestamp='2026-08-03T00:00:00Z'
+signature_nonce='c634de85-7087-426a-b4f5-f4c2857f55c2'
+signature_value="$(sign_node_payload "${signature_body}" "${signature_timestamp}" "${signature_nonce}")"
+[[ "${signature_value}" =~ ^[A-Za-z0-9_-]{86}$ ]]
+signature_digest="$(printf '%s' "${signature_body}" | sha256sum | awk '{print $1}')"
+printf '%s\n%s\n%s' "${signature_timestamp}" "${signature_nonce}" "${signature_digest}" \
+  > "${TEST_ROOT}/signature-message"
+printf '%s==' "${signature_value}" \
+  | tr '_-' '/+' \
+  | openssl base64 -d -A \
+  > "${TEST_ROOT}/signature-bytes"
+openssl pkeyutl -verify -rawin -pubin \
+  -inkey "${STATE_ROOT}/identity/node.pub" \
+  -in "${TEST_ROOT}/signature-message" \
+  -sigfile "${TEST_ROOT}/signature-bytes" >/dev/null
+
 valid_state="${TEST_ROOT}/valid.json"
 jq -n \
   --arg apiKey "$(printf 'a%.0s' {1..64})" \

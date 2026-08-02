@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="ai-v1.15.2"
+INSTALLER_VERSION="ai-v1.15.3"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 CONTAINER_NAME="orcasynapse-hermes"
 HEARTBEAT_SERVICE="orcasynapse-hermes-heartbeat"
@@ -388,14 +388,21 @@ resolve_bundle_from_orcasynapse() {
 
 sign_node_payload() {
   local body="$1" timestamp="$2" nonce="$3"
-  local body_digest message
+  local body_digest message_file signature sign_status=0
   body_digest="$(printf '%s' "${body}" | sha256sum | awk '{print $1}')"
-  message="$(printf '%s\n%s\n%s' "${timestamp}" "${nonce}" "${body_digest}")"
-  printf '%s' "${message}" \
-    | openssl pkeyutl -sign -rawin -inkey "${STATE_ROOT}/identity/node.key" \
-    | openssl base64 -A \
-    | tr '+/' '-_' \
-    | tr -d '='
+  message_file="$(mktemp /tmp/orcasynapse-node-signature.XXXXXX)"
+  printf '%s\n%s\n%s' "${timestamp}" "${nonce}" "${body_digest}" > "${message_file}"
+  signature="$(
+    openssl pkeyutl -sign -rawin \
+      -inkey "${STATE_ROOT}/identity/node.key" \
+      -in "${message_file}" \
+      | openssl base64 -A \
+      | tr '+/' '-_' \
+      | tr -d '='
+  )" || sign_status=$?
+  rm -f -- "${message_file}"
+  (( sign_status == 0 )) || return "${sign_status}"
+  printf '%s' "${signature}"
 }
 
 install_supermemory_binary() {
@@ -646,14 +653,21 @@ IMAGE_REFERENCE="$(<"${STATE_ROOT}/image-reference")"
 
 sign_request() {
   local timestamp="$1" nonce="$2" body="$3"
-  local body_digest message
+  local body_digest message_file signature sign_status=0
   body_digest="$(printf '%s' "${body}" | sha256sum | awk '{print $1}')"
-  message="$(printf '%s\n%s\n%s' "${timestamp}" "${nonce}" "${body_digest}")"
-  printf '%s' "${message}" \
-    | openssl pkeyutl -sign -rawin -inkey "${PRIVATE_KEY}" \
-    | openssl base64 -A \
-    | tr '+/' '-_' \
-    | tr -d '='
+  message_file="$(mktemp /tmp/orcasynapse-heartbeat-signature.XXXXXX)"
+  printf '%s\n%s\n%s' "${timestamp}" "${nonce}" "${body_digest}" > "${message_file}"
+  signature="$(
+    openssl pkeyutl -sign -rawin \
+      -inkey "${PRIVATE_KEY}" \
+      -in "${message_file}" \
+      | openssl base64 -A \
+      | tr '+/' '-_' \
+      | tr -d '='
+  )" || sign_status=$?
+  rm -f -- "${message_file}"
+  (( sign_status == 0 )) || return "${sign_status}"
+  printf '%s' "${signature}"
 }
 
 hermes_status="DEGRADED"
