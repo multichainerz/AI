@@ -9,6 +9,7 @@ import {
   hermesRuntimeNodeListSchema,
   hermesRuntimeNodeSchema,
   mutateHermesRuntimeNodeSchema,
+  removeHermesRuntimeNodeSchema,
   registerHermesNodeMemoryResultSchema,
   registerHermesNodeMemorySchema,
   resolveHermesNodeInvitationSchema,
@@ -31,6 +32,7 @@ export interface RuntimeNodeRouteOptions {
 }
 
 const AGENTIC_NODE_INSTALLER_PATH = new URL("../../../../scripts/install-agentic-node.sh", import.meta.url);
+const AGENTIC_NODE_REMOVER_PATH = new URL("../../../../scripts/remove-agentic-node.sh", import.meta.url);
 
 function managerOrLocked(options: RuntimeNodeRouteOptions, reply: FastifyReply): HermesRuntimeNodeManager | null {
   if (options.manager) return options.manager;
@@ -94,6 +96,15 @@ export async function registerRuntimeNodeInstallerRoutes(
       .header("content-disposition", "inline; filename=install-agentic-node.sh")
       .type("text/x-shellscript; charset=utf-8")
       .send(installer);
+  });
+
+  app.get("/remove-agentic-node.sh", async (_request, reply) => {
+    const remover = await readFile(AGENTIC_NODE_REMOVER_PATH, "utf8");
+    return reply
+      .header("cache-control", "no-store")
+      .header("content-disposition", "inline; filename=remove-agentic-node.sh")
+      .type("text/x-shellscript; charset=utf-8")
+      .send(remover);
   });
 }
 
@@ -193,6 +204,22 @@ export async function registerAdminRuntimeNodeRoutes(app: FastifyInstance, optio
     }
     try {
       return hermesRuntimeNodeSchema.parse(await manager.mutate(principal, request.params.nodeId, input.data));
+    } catch (error) {
+      return sendError(error, reply);
+    }
+  });
+
+  app.delete<{ Params: { nodeId: string } }>("/:nodeId", async (request, reply) => {
+    const principal = await requireAdmin(request, reply, options.sessionManager, "readiness:manage");
+    const manager = managerOrLocked(options, reply);
+    if (!principal || !manager) return reply;
+    const input = removeHermesRuntimeNodeSchema.safeParse(request.body);
+    if (!input.success) {
+      return reply.code(400).send({ error: "INVALID_NODE_REMOVAL", message: input.error.issues[0]?.message });
+    }
+    try {
+      await manager.remove(principal, request.params.nodeId, input.data);
+      return reply.code(204).send();
     } catch (error) {
       return sendError(error, reply);
     }

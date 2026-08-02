@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="ai-v1.14.3"
+INSTALLER_VERSION="ai-v1.15.0"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 CONTAINER_NAME="orcasynapse-hermes"
 HEARTBEAT_SERVICE="orcasynapse-hermes-heartbeat"
@@ -727,6 +727,8 @@ EOF
       || fail "could not pull the approved Hermes image '${hermes_image}'"
     run_with_spinner "Launch hardened Hermes container" docker run -d \
     --name "${CONTAINER_NAME}" \
+    --label io.orcasynapse.managed=true \
+    --label io.orcasynapse.component=agentic-runtime \
     --restart unless-stopped \
     --memory "${HERMES_MEMORY_LIMIT:-4g}" \
     --cpus "${HERMES_CPU_LIMIT:-2}" \

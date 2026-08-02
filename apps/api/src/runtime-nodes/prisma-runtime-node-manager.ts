@@ -15,6 +15,7 @@ import type {
   HermesNodeInvitation,
   HermesRuntimeNode,
   MutateHermesRuntimeNode,
+  RemoveHermesRuntimeNode,
   RegisterHermesNodeMemory,
   RegisterHermesNodeMemoryResult,
 } from "@orcasynapse/contracts";
@@ -768,5 +769,55 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
       return transaction.hermesRuntimeNode.findUniqueOrThrow({ where: { id: nodeId } });
     });
     return summarize(result as StoredNode);
+  }
+
+  async remove(principal: AdminPrincipal, nodeId: string, input: RemoveHermesRuntimeNode): Promise<void> {
+    const current = await this.prisma.hermesRuntimeNode.findUnique({ where: { id: nodeId } });
+    if (!current) throw new RuntimeNodeNotFoundError();
+    if (current.status !== "REVOKED") {
+      throw new RuntimeNodeConflictError("Revoke the runtime node before permanently removing its control-plane record.");
+    }
+    if (current.revision !== input.expectedRevision) {
+      throw new RuntimeNodeConflictError("The runtime node changed before permanent removal was confirmed.");
+    }
+    if (input.confirmation !== current.slug) {
+      throw new RuntimeNodeConflictError(`Type '${current.slug}' to confirm permanent removal.`);
+    }
+
+    const supermemorySlug = `supermemory-node-${current.slug}`.slice(0, 64);
+    await this.prisma.$transaction(async (transaction) => {
+      const removed = await transaction.hermesRuntimeNode.deleteMany({
+        where: { id: nodeId, status: "REVOKED", revision: input.expectedRevision },
+      });
+      if (removed.count !== 1) {
+        throw new RuntimeNodeConflictError("The runtime node changed before permanent removal was applied.");
+      }
+
+      const generatedConnections = [
+        ...(current.serviceConnectionId ? [{ id: current.serviceConnectionId }] : []),
+        { slug: supermemorySlug, kind: "SUPERMEMORY" as const },
+      ];
+      const removedConnections = await transaction.serviceConnection.deleteMany({
+        where: { OR: generatedConnections },
+      });
+      await transaction.auditEvent.create({
+        data: {
+          actorType: "USER",
+          actorId: principal.id,
+          action: "hermes.node.removed",
+          resourceType: "HermesRuntimeNode",
+          resourceId: nodeId,
+          outcome: "SUCCESS",
+          metadata: {
+            reason: input.reason,
+            slug: current.slug,
+            displayName: current.displayName,
+            identityFingerprint: current.identityFingerprint,
+            removedConnections: removedConnections.count,
+            hostDestruction: "OPERATOR_ATTESTED",
+          },
+        },
+      });
+    });
   }
 }

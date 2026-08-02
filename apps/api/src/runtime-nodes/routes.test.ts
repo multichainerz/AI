@@ -88,6 +88,7 @@ function manager(): HermesRuntimeNodeManager {
     heartbeat: vi.fn(async () => ({ accepted: true as const, serverTime: NOW })),
     registerMemory: vi.fn(async () => ({ accepted: true as const, connectionId: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb" })),
     mutate: vi.fn(async () => ({ ...node, status: "DRAINING" as const, revision: 1 })),
+    remove: vi.fn(async () => undefined),
   };
 }
 
@@ -114,6 +115,14 @@ describe("Hermes runtime-node routes", () => {
     expect(ready.headers["content-disposition"]).toBe("inline; filename=install-agentic-node.sh");
     expect(ready.body).toContain("#!/usr/bin/env bash");
     expect((await app.inject({ method: "GET", url: "/install/hermes-node.sh" })).statusCode).toBe(404);
+    const remover = await app.inject({ method: "GET", url: "/install/remove-agentic-node.sh" });
+    expect(remover.statusCode, remover.body).toBe(200);
+    expect(remover.headers["content-disposition"]).toBe("inline; filename=remove-agentic-node.sh");
+    expect(remover.body).toContain("VM2 SECURE DECOMMISSION");
+    expect(remover.body).toContain("Type %bDESTROY%b to continue");
+    expect(remover.body).toContain("validate_container_ownership");
+    expect(remover.body).toContain('rm -rf --one-file-system -- "${STATE_ROOT}" "${SUPERMEMORY_ROOT}"');
+    expect(remover.body).not.toMatch(/docker system prune|apt(?:-get)? remove|rm -rf \/(?:\s|$)/);
 
     for (const state of [
       { ready: false, dashboardReady: false, inferenceReady: true, invitationReady: true },
@@ -124,12 +133,37 @@ describe("Hermes runtime-node routes", () => {
       expect(blocked.statusCode).toBe(404);
       expect(blocked.json()).toMatchObject({ error: "AGENTIC_INSTALLER_UNAVAILABLE" });
       expect(blocked.body).not.toContain("#!/usr/bin/env bash");
+      expect((await app.inject({ method: "GET", url: "/install/remove-agentic-node.sh" })).statusCode).toBe(200);
     }
 
     runtimeNodeManager.installerReadiness = vi.fn(async () => ({
       ready: true, dashboardReady: true, inferenceReady: true, invitationReady: false,
     }));
     expect((await app.inject({ method: "GET", url: "/install/agentic-node.sh" })).statusCode).toBe(200);
+  });
+
+  it("requires a protected admin session and forwards explicit permanent-removal confirmation", async () => {
+    const { app, runtimeNodeManager } = await testApp();
+    const payload = {
+      confirmation: node.slug,
+      reason: "VM2 host purge completed by the platform administrator.",
+      expectedRevision: 4,
+    };
+    expect((await app.inject({ method: "DELETE", url: `/api/v1/admin/runtime-nodes/${NODE_ID}`, payload })).statusCode)
+      .toBe(401);
+
+    const removed = await app.inject({
+      method: "DELETE",
+      url: `/api/v1/admin/runtime-nodes/${NODE_ID}`,
+      headers: { cookie: `${ADMIN_SESSION_COOKIE}=${TOKEN}` },
+      payload,
+    });
+    expect(removed.statusCode, removed.body).toBe(204);
+    expect(runtimeNodeManager.remove).toHaveBeenCalledWith(
+      expect.objectContaining({ id: ADMIN_ID }),
+      NODE_ID,
+      payload,
+    );
   });
 
   it("protects fleet administration while allowing one-time node enrollment", async () => {

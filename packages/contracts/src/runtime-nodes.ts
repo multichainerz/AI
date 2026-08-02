@@ -148,6 +148,12 @@ export const mutateHermesRuntimeNodeSchema = z.object({
   expectedRevision: z.number().int().nonnegative(),
 }).strict();
 
+export const removeHermesRuntimeNodeSchema = z.object({
+  confirmation: nodeSlugSchema,
+  reason: z.string().trim().min(3).max(1_000),
+  expectedRevision: z.number().int().nonnegative(),
+}).strict();
+
 export type HermesRuntimeNodeStatus = z.infer<typeof hermesRuntimeNodeStatusSchema>;
 export type HermesRuntimeNode = z.infer<typeof hermesRuntimeNodeSchema>;
 export type HermesRuntimeNodeList = z.infer<typeof hermesRuntimeNodeListSchema>;
@@ -162,3 +168,4 @@ export type HermesNodeHeartbeatResult = z.infer<typeof hermesNodeHeartbeatResult
 export type RegisterHermesNodeMemory = z.infer<typeof registerHermesNodeMemorySchema>;
 export type RegisterHermesNodeMemoryResult = z.infer<typeof registerHermesNodeMemoryResultSchema>;
 export type MutateHermesRuntimeNode = z.infer<typeof mutateHermesRuntimeNodeSchema>;
+export type RemoveHermesRuntimeNode = z.infer<typeof removeHermesRuntimeNodeSchema>;

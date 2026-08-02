@@ -8,6 +8,7 @@ import type {
   HermesNodeInvitation,
   HermesRuntimeNode,
   MutateHermesRuntimeNode,
+  RemoveHermesRuntimeNode,
   RegisterHermesNodeMemory,
   RegisterHermesNodeMemoryResult,
 } from "@orcasynapse/contracts";
@@ -43,6 +44,7 @@ export interface HermesRuntimeNodeManager {
     input: RegisterHermesNodeMemory,
   ): Promise<RegisterHermesNodeMemoryResult>;
   mutate(principal: AdminPrincipal, nodeId: string, input: MutateHermesRuntimeNode): Promise<HermesRuntimeNode>;
+  remove(principal: AdminPrincipal, nodeId: string, input: RemoveHermesRuntimeNode): Promise<void>;
 }
 
 export class RuntimeNodeNotFoundError extends Error {

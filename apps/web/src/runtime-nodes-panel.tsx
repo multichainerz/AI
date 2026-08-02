@@ -11,6 +11,7 @@ import {
   createHermesNodeInvitation,
   getHermesRuntimeNodes,
   mutateHermesRuntimeNode,
+  removeHermesRuntimeNode,
 } from "./api.js";
 
 interface RuntimeNodesPanelProps {
@@ -45,6 +46,11 @@ export function agenticNodeInstallCommand(controlPlaneUrl: string): string {
   return `curl -fsSL ${origin}/install/agentic-node.sh | sudo bash -s -- --connect ${origin}`;
 }
 
+export function agenticNodeRemovalCommand(controlPlaneUrl: string): string {
+  const origin = controlPlaneUrl.replace(/\/+$/, "");
+  return `curl -fsSL ${origin}/install/remove-agentic-node.sh | sudo bash`;
+}
+
 function defaultForm(): CreateHermesNodeInvitation {
   return {
     slug: "hermes-runtime-01",
@@ -67,6 +73,9 @@ export function RuntimeNodesPanel({
   const [form, setForm] = useState<CreateHermesNodeInvitation>(defaultForm);
   const [editorOpen, setEditorOpen] = useState(false);
   const [invitation, setInvitation] = useState<HermesNodeInvitation | null>(null);
+  const [removalNode, setRemovalNode] = useState<HermesRuntimeNode | null>(null);
+  const [removalConfirmation, setRemovalConfirmation] = useState("");
+  const [hostDestructionConfirmed, setHostDestructionConfirmed] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const unpinned = !form.hermesImage.includes("@sha256:");
@@ -139,6 +148,37 @@ export function RuntimeNodesPanel({
     saveFile(`orcasynapse-${invitation.node.slug}-enrollment.json`, `${JSON.stringify(invitation.bundle, null, 2)}\n`, "application/json");
   };
 
+  const openRemoval = (node: HermesRuntimeNode) => {
+    setError(null);
+    setRemovalConfirmation("");
+    setHostDestructionConfirmed(false);
+    setRemovalNode(node);
+  };
+
+  const remove = async () => {
+    if (!removalNode || busy || removalConfirmation !== removalNode.slug) return;
+    if (removalNode.enrolledAt && !hostDestructionConfirmed) return;
+    setBusy(`REMOVE-${removalNode.id}`);
+    setError(null);
+    try {
+      await removeHermesRuntimeNode(removalNode.id, {
+        confirmation: removalConfirmation,
+        reason: removalNode.enrolledAt
+          ? "Operator confirmed the VM2 Agentic System purge completed before permanent record removal."
+          : "Unused enrollment record permanently removed before VM2 enrollment.",
+        expectedRevision: removalNode.revision,
+      });
+      setRemovalNode(null);
+      setRemovalConfirmation("");
+      setHostDestructionConfirmed(false);
+      await load();
+    } catch (cause) {
+      fail(cause);
+    } finally {
+      setBusy(null);
+    }
+  };
+
   return <div className="runtime-nodes-layout">
     <section className="panel runtime-nodes-overview">
       <div className="document-section-heading">
@@ -160,6 +200,7 @@ export function RuntimeNodesPanel({
           {node.status === "DRAINING" || node.status === "SUSPENDED" ? <button className="text-button" type="button" disabled={busy !== null} onClick={() => void act(node, "RESUME")}>Resume</button> : <button className="text-button" type="button" disabled={busy !== null || node.status === "PENDING" || node.status === "OFFLINE"} onClick={() => void act(node, "DRAIN")}>Drain</button>}
           {!["PENDING", "SUSPENDED", "REVOKED"].includes(node.status) && <button className="text-button danger" type="button" disabled={busy !== null} onClick={() => { if (window.confirm(`Suspend ${node.displayName}? Active work will be stopped and new work will be denied until you resume it.`)) void act(node, "SUSPEND"); }}>Suspend</button>}
           {node.status !== "REVOKED" && <button className="text-button danger" type="button" disabled={busy !== null} onClick={() => { if (window.confirm(`Permanently revoke ${node.displayName}? The node must be re-enrolled to reconnect.`)) void act(node, "REVOKE"); }}>Revoke</button>}
+          {node.status === "REVOKED" && <button className="text-button danger" type="button" disabled={busy !== null} onClick={() => openRemoval(node)}>Remove</button>}
         </div>
       </article>)}</div>}
     </section>
@@ -196,6 +237,18 @@ export function RuntimeNodesPanel({
         <div className="runtime-network-note"><strong>What happens next</strong><p>VM2 generates its own private identity, installs Hermes and Supermemory, exchanges the claim once, and appears Online here. OrcaSynapse never receives the private signing key or a reusable VM credential.</p></div>
         <footer><button className="secondary-button" type="button" onClick={() => setInvitation(null)}>Issue another</button><button className="primary-button" type="button" onClick={() => { setEditorOpen(false); void load(); }}>Done</button></footer>
       </div>}
+    </section></div>}
+
+    {removalNode && <div className="agent-editor-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && busy === null) setRemovalNode(null); }}><section className="setup-evidence-editor runtime-node-editor runtime-removal-editor" role="dialog" aria-modal="true" aria-labelledby="runtime-removal-title">
+      <header><div><p className="section-kicker">Permanent decommission</p><h2 id="runtime-removal-title">Remove {removalNode.displayName}</h2></div><button type="button" aria-label="Close" disabled={busy !== null} onClick={() => setRemovalNode(null)}>×</button></header>
+      <div className="runtime-removal-warning"><strong>This cannot be undone</strong><p>Revocation stopped future trust. Decommissioning now destroys the VM2 runtime and then erases its control-plane identity, enrollment history, nonces, and generated Hermes/Supermemory connections. The audit record remains.</p></div>
+      {removalNode.enrolledAt ? <ol className="runtime-removal-steps">
+        <li><span>1</span><div><strong>Run the purge on the enrolled VM2</strong><small>The script shows its exact scope and requires typing <code>DESTROY</code>. It does not uninstall Docker or touch unrelated containers.</small><code>{agenticNodeRemovalCommand(typeof window === "undefined" ? "https://orcasynapse.internal" : window.location.origin)}</code><button className="secondary-button" type="button" onClick={() => void navigator.clipboard.writeText(agenticNodeRemovalCommand(window.location.origin))}>Copy command</button></div></li>
+        <li><span>2</span><div><strong>Confirm the host-side result</strong><small>OrcaSynapse deliberately has no standing SSH or Docker access, so this confirmation is your administrative attestation.</small><label className="runtime-removal-attestation"><input type="checkbox" checked={hostDestructionConfirmed} onChange={(event) => setHostDestructionConfirmed(event.target.checked)} /><span>The remover reported “Agentic System removed from this VM,” or the VM was destroyed.</span></label></div></li>
+      </ol> : <div className="runtime-development-note">This record never completed enrollment, so there is no managed VM2 installation to purge.</div>}
+      <label>Type <code>{removalNode.slug}</code> to remove it permanently<input autoComplete="off" spellCheck={false} value={removalConfirmation} onChange={(event) => setRemovalConfirmation(event.target.value)} /></label>
+      {error && <div className="documents-alert" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
+      <footer><button className="secondary-button" type="button" disabled={busy !== null} onClick={() => setRemovalNode(null)}>Cancel</button><button className="danger-button" type="button" disabled={busy !== null || removalConfirmation !== removalNode.slug || (Boolean(removalNode.enrolledAt) && !hostDestructionConfirmed)} onClick={() => void remove()}>{busy === `REMOVE-${removalNode.id}` ? "Removing…" : "Remove permanently"}</button></footer>
     </section></div>}
   </div>;
 }

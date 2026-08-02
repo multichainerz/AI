@@ -1666,6 +1666,22 @@ button:disabled { opacity: .48; cursor: not-allowed; }
 .runtime-install-steps li button { margin-top: 9px; }
 .runtime-install-steps li code { display: block; overflow-x: auto; padding: 10px; margin-top: 7px; border: 1px solid var(--border-soft); border-radius: 6px; background: #0d131a; line-height: 1.6; white-space: pre; }
 .runtime-install-steps footer { display: flex; justify-content: flex-end; gap: 9px; margin-top: 5px; }
+.runtime-removal-editor { width: min(100%, 540px); }
+.runtime-removal-warning { padding: 13px; border: 1px solid #71404a; border-radius: 8px; background: #2a1a20; }
+.runtime-removal-warning strong { color: #f0adb4; font-size: 10px; }
+.runtime-removal-warning p { margin: 5px 0 0; color: #c89ca2; font-size: 8px; line-height: 1.55; }
+.runtime-removal-steps { display: grid; gap: 14px; padding: 0; margin: 0; list-style: none; }
+.runtime-removal-steps > li { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 10px; }
+.runtime-removal-steps > li > span { width: 24px; height: 24px; display: grid; place-items: center; color: #f0bdc2; border: 1px solid #69414a; border-radius: 50%; background: #2b1c22; font-size: 8px; font-weight: 700; }
+.runtime-removal-steps strong, .runtime-removal-steps small { display: block; }
+.runtime-removal-steps strong { font-size: 9px; }
+.runtime-removal-steps small { margin-top: 4px; color: var(--text-faint); font-size: 8px; line-height: 1.5; }
+.runtime-removal-steps code { display: block; overflow-x: auto; padding: 10px; margin-top: 8px; border: 1px solid var(--border-soft); border-radius: 6px; background: #0d131a; line-height: 1.6; white-space: pre; }
+.runtime-removal-steps button { margin-top: 8px; }
+.runtime-removal-attestation { grid-template-columns: auto minmax(0, 1fr) !important; align-items: start; gap: 8px !important; padding: 10px; margin-top: 8px; border: 1px solid #3e4957; border-radius: 7px; background: #10171f; cursor: pointer; }
+.setup-evidence-editor .runtime-removal-attestation input { width: 14px; min-height: 14px; margin: 1px 0 0; accent-color: var(--accent); }
+.runtime-removal-attestation span { color: var(--text-muted); font-size: 8px; font-weight: 500; line-height: 1.45; }
+.runtime-removal-editor footer .danger-button:disabled { cursor: not-allowed; opacity: .45; }
 .field-error { color: #f0a3aa; font-size: 8px; }
 .setup-evidence-log { padding: 0; overflow: hidden; }
 .setup-evidence-log ol { padding: 0; margin: 0; list-style: none; }

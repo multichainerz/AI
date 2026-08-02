@@ -36,6 +36,15 @@ For production, enter a Hermes image digest and exact Supermemory release in the
 
 For an offline administrative transfer, download the JSON bundle and run `sudo bash install-agentic-node.sh enrollment.json` instead. Do not place the claim in a URL, command argument, or shell history.
 
+## Decommission a VM2 node
+
+Revocation and destruction are intentionally separate. Revoke the node first to disable its runtime credential and generated service connections. Then select **Remove** beside the revoked node and follow the dashboard's two-stage flow:
+
+1. Run the displayed `remove-agentic-node.sh` command on VM2 and type `DESTROY` at its local terminal. It stops and removes the managed Hermes container, Supermemory runtime and durable data, node identity, managed policy, heartbeat units, and the dedicated service account. It preserves Docker, unrelated containers, Ubuntu packages, and external backups.
+2. Confirm the host-side result, type the exact node slug, and choose **Remove permanently**. OrcaSynapse transactionally removes the runtime-node record, enrollment claims, replay nonces, and generated Hermes/Supermemory connections. The security audit event remains.
+
+OrcaSynapse has no standing SSH credential or Docker socket on VM2, so host destruction is an explicit operator-attested action. If the VM has already been destroyed by the infrastructure platform, use that destruction event as the host-side evidence. Snapshot and backup retirement remains the infrastructure operator's responsibility.
+
 ## What the script does
 
 1. validates the bundle and expiry;

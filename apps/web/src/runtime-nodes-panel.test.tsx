@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { RuntimeNodesPanel, agenticNodeInstallCommand } from "./runtime-nodes-panel.js";
+import { RuntimeNodesPanel, agenticNodeInstallCommand, agenticNodeRemovalCommand } from "./runtime-nodes-panel.js";
 
 describe("RuntimeNodesPanel", () => {
   it("builds one canonical Agentic System command from origins with or without a trailing slash", () => {
@@ -8,6 +8,13 @@ describe("RuntimeNodesPanel", () => {
     expect(agenticNodeInstallCommand("https://orcasynapse.internal")).toBe(expected);
     expect(agenticNodeInstallCommand("https://orcasynapse.internal/")).toBe(expected);
     expect(expected).not.toContain("hermes-node.sh");
+  });
+
+  it("builds a canonical interactive VM2 removal command without embedding node credentials", () => {
+    const expected = "curl -fsSL https://orcasynapse.internal/install/remove-agentic-node.sh | sudo bash";
+    expect(agenticNodeRemovalCommand("https://orcasynapse.internal")).toBe(expected);
+    expect(agenticNodeRemovalCommand("https://orcasynapse.internal/")).toBe(expected);
+    expect(expected).not.toMatch(/token|claim|nodeId/i);
   });
 
   it("keeps VM2 enrollment and installer guidance hidden until AI Inference is ready", () => {

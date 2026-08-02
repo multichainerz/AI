@@ -3,7 +3,7 @@ import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
 import { EnvelopeEncryption } from "@orcasynapse/security";
 import { describe, expect, it, vi } from "vitest";
 import type { AdminPrincipal } from "../auth/admin-session.js";
-import { RuntimeNodeAuthenticationError } from "./runtime-node-manager.js";
+import { RuntimeNodeAuthenticationError, RuntimeNodeConflictError } from "./runtime-node-manager.js";
 import {
   inferenceGatewayBaseUrl,
   PrismaHermesRuntimeNodeManager,
@@ -132,6 +132,82 @@ describe("Agentic System installer readiness", () => {
       inferenceReady: false,
       invitationReady: true,
     });
+  });
+});
+
+describe("Hermes runtime-node permanent removal", () => {
+  const revokedNode = {
+    id: "9de260d7-bc51-4558-9d20-06916d393072",
+    slug: "hermes-runtime-01",
+    displayName: "Hermes Runtime 01",
+    status: "REVOKED",
+    revision: 7,
+    serviceConnectionId: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb",
+    identityFingerprint: "a".repeat(64),
+  } as const;
+
+  it("deletes the revoked node, cascaded enrollment state, and both generated connections in one transaction", async () => {
+    const deleteNode = vi.fn(async () => ({ count: 1 }));
+    const deleteConnections = vi.fn(async () => ({ count: 2 }));
+    const createAudit = vi.fn(async () => ({}));
+    const transaction = {
+      hermesRuntimeNode: { deleteMany: deleteNode },
+      serviceConnection: { deleteMany: deleteConnections },
+      auditEvent: { create: createAudit },
+    };
+    const prisma = {
+      hermesRuntimeNode: { findUnique: vi.fn(async () => revokedNode) },
+      $transaction: vi.fn(async (callback: (client: typeof transaction) => Promise<void>) => callback(transaction)),
+    } as unknown as OrcaSynapsePrismaClient;
+    const manager = new PrismaHermesRuntimeNodeManager(
+      prisma,
+      new EnvelopeEncryption({ masterKey: new Uint8Array(32).fill(7) }),
+    );
+
+    await manager.remove(principal, revokedNode.id, {
+      confirmation: revokedNode.slug,
+      reason: "Host-side Agentic System purge completed.",
+      expectedRevision: revokedNode.revision,
+    });
+
+    expect(deleteNode).toHaveBeenCalledWith({
+      where: { id: revokedNode.id, status: "REVOKED", revision: revokedNode.revision },
+    });
+    expect(deleteConnections).toHaveBeenCalledWith({
+      where: { OR: [
+        { id: revokedNode.serviceConnectionId },
+        { slug: "supermemory-node-hermes-runtime-01", kind: "SUPERMEMORY" },
+      ] },
+    });
+    expect(createAudit).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ action: "hermes.node.removed", resourceId: revokedNode.id }),
+    }));
+  });
+
+  it("refuses removal before revocation or when typed confirmation does not match", async () => {
+    const transaction = vi.fn();
+    const prisma = {
+      hermesRuntimeNode: { findUnique: vi.fn(async () => ({ ...revokedNode, status: "OFFLINE" })) },
+      $transaction: transaction,
+    } as unknown as OrcaSynapsePrismaClient;
+    const manager = new PrismaHermesRuntimeNodeManager(
+      prisma,
+      new EnvelopeEncryption({ masterKey: new Uint8Array(32).fill(7) }),
+    );
+    await expect(manager.remove(principal, revokedNode.id, {
+      confirmation: revokedNode.slug,
+      reason: "Host-side Agentic System purge completed.",
+      expectedRevision: revokedNode.revision,
+    })).rejects.toBeInstanceOf(RuntimeNodeConflictError);
+    expect(transaction).not.toHaveBeenCalled();
+
+    prisma.hermesRuntimeNode.findUnique = vi.fn(async () => revokedNode) as never;
+    await expect(manager.remove(principal, revokedNode.id, {
+      confirmation: "another-node",
+      reason: "Host-side Agentic System purge completed.",
+      expectedRevision: revokedNode.revision,
+    })).rejects.toThrow(`Type '${revokedNode.slug}'`);
+    expect(transaction).not.toHaveBeenCalled();
   });
 });
 

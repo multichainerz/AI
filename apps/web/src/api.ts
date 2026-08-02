@@ -159,6 +159,7 @@ import {
   type HermesRuntimeNode,
   type HermesRuntimeNodeList,
   type MutateHermesRuntimeNode,
+  type RemoveHermesRuntimeNode,
 } from "@orcasynapse/contracts";
 
 export class OrcaSynapseApiError extends Error {
@@ -992,4 +993,14 @@ export async function mutateHermesRuntimeNode(
     method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
   });
   return hermesRuntimeNodeSchema.parse(await parsedResponse(response));
+}
+
+export async function removeHermesRuntimeNode(
+  id: string,
+  input: RemoveHermesRuntimeNode,
+): Promise<void> {
+  const response = await fetch(`/api/v1/admin/runtime-nodes/${encodeURIComponent(id)}`, {
+    method: "DELETE", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  await parsedResponse(response);
 }
