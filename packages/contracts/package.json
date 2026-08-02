@@ -14,7 +14,7 @@
   "scripts": {
     "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run --exclude dist/**"
+    "test": "vitest run --exclude=dist/**"
   },
   "dependencies": {
     "zod": "4.4.3"
