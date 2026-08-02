@@ -49,6 +49,12 @@ class Sessions implements AdminSessionManager {
 function manager(): HermesRuntimeNodeManager {
   return {
     list: vi.fn(async () => [node]),
+    installerReadiness: vi.fn(async () => ({
+      ready: true,
+      dashboardReady: true,
+      inferenceReady: true,
+      invitationReady: true,
+    })),
     createInvitation: vi.fn(async (_principal, input) => ({
       node,
       bundle: {
@@ -96,6 +102,28 @@ async function testApp(runtimeNodeManager = manager()) {
 }
 
 describe("Hermes runtime-node routes", () => {
+  it("serves the VM2 installer only after dashboard, inference, and invitation readiness", async () => {
+    const runtimeNodeManager = manager();
+    const { app } = await testApp(runtimeNodeManager);
+    const ready = await app.inject({ method: "GET", url: "/install/hermes-node.sh" });
+    expect(ready.statusCode, ready.body).toBe(200);
+    expect(ready.headers["content-type"]).toContain("text/x-shellscript");
+    expect(ready.headers["cache-control"]).toBe("no-store");
+    expect(ready.body).toContain("#!/usr/bin/env bash");
+
+    for (const state of [
+      { ready: false, dashboardReady: false, inferenceReady: true, invitationReady: true },
+      { ready: false, dashboardReady: true, inferenceReady: false, invitationReady: true },
+      { ready: false, dashboardReady: true, inferenceReady: true, invitationReady: false },
+    ] as const) {
+      runtimeNodeManager.installerReadiness = vi.fn(async () => state);
+      const blocked = await app.inject({ method: "GET", url: "/install/hermes-node.sh" });
+      expect(blocked.statusCode).toBe(404);
+      expect(blocked.json()).toMatchObject({ error: "AGENTIC_INSTALLER_UNAVAILABLE" });
+      expect(blocked.body).not.toContain("#!/usr/bin/env bash");
+    }
+  });
+
   it("protects fleet administration while allowing one-time node enrollment", async () => {
     const { app, runtimeNodeManager } = await testApp();
     expect((await app.inject({ method: "GET", url: "/api/v1/admin/runtime-nodes/" })).statusCode).toBe(401);

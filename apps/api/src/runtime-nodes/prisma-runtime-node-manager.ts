@@ -27,6 +27,7 @@ import {
   RuntimeNodeConflictError,
   RuntimeNodeEnrollmentError,
   RuntimeNodeNotFoundError,
+  type HermesNodeInstallerReadiness,
   type HermesRuntimeNodeManager,
   type NodeSignatureHeaders,
 } from "./runtime-node-manager.js";
@@ -56,6 +57,28 @@ type StoredNode = {
   createdAt: Date;
   updatedAt: Date;
 };
+
+type RuntimePrerequisites = {
+  dashboardReady: boolean;
+  inferenceReady: boolean;
+};
+
+type InferenceSeedCandidate = {
+  baseUrl: string | null;
+  configuration: unknown;
+};
+
+export function seedableInferenceModelAlias(connections: readonly InferenceSeedCandidate[]): string | null {
+  if (connections.length !== 1 || !connections[0]?.baseUrl) return null;
+  const configuration = connections[0].configuration
+    && typeof connections[0].configuration === "object"
+    && !Array.isArray(connections[0].configuration)
+    ? connections[0].configuration as Record<string, unknown>
+    : {};
+  return typeof configuration.modelAlias === "string" && configuration.modelAlias.trim().length > 0
+    ? configuration.modelAlias.trim()
+    : null;
+}
 
 function canonicalize(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
@@ -198,12 +221,45 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
     return nodes.map((node) => summarize(node as StoredNode));
   }
 
+  private async runtimePrerequisites(): Promise<RuntimePrerequisites> {
+    const [configuredAdministrators, inferenceConnections] = await Promise.all([
+      this.prisma.localAdministrator.count({
+        where: { disabledAt: null, passwordChangeRequired: false },
+      }),
+      this.prisma.serviceConnection.findMany({
+        where: { kind: "INFERENCE", enabled: true, status: "HEALTHY" },
+        select: { baseUrl: true, configuration: true },
+        take: 2,
+      }),
+    ]);
+    return {
+      dashboardReady: configuredAdministrators > 0,
+      inferenceReady: seedableInferenceModelAlias(inferenceConnections) !== null,
+    };
+  }
+
+  async installerReadiness(): Promise<HermesNodeInstallerReadiness> {
+    const [prerequisites, activeInvitations] = await Promise.all([
+      this.runtimePrerequisites(),
+      this.prisma.hermesNodeEnrollment.count({
+        where: { status: "ISSUED", expiresAt: { gt: new Date() } },
+      }),
+    ]);
+    const invitationReady = activeInvitations > 0;
+    return {
+      ...prerequisites,
+      invitationReady,
+      ready: prerequisites.dashboardReady && prerequisites.inferenceReady && invitationReady,
+    };
+  }
+
   async createInvitation(principal: AdminPrincipal, input: CreateHermesNodeInvitation): Promise<HermesNodeInvitation> {
-    const inferenceCount = await this.prisma.serviceConnection.count({
-      where: { kind: "INFERENCE", enabled: true, status: "HEALTHY" },
-    });
-    if (inferenceCount !== 1) {
-      throw new RuntimeNodeConflictError("Configure and test exactly one healthy inference server before enrolling Hermes.");
+    const prerequisites = await this.runtimePrerequisites();
+    if (!prerequisites.dashboardReady) {
+      throw new RuntimeNodeConflictError("Complete the dashboard administrator setup before enrolling the Agentic System.");
+    }
+    if (!prerequisites.inferenceReady) {
+      throw new RuntimeNodeConflictError("Configure and test exactly one healthy AI Inference route with a served model before enrolling Hermes.");
     }
     const token = randomBytes(32).toString("base64url");
     const tokenHash = digest(token);
@@ -369,18 +425,15 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
         where: { kind: "INFERENCE", enabled: true, status: "HEALTHY" },
         take: 2,
       });
-      const inference = inferenceConnections[0];
-      const inferenceSettings = inference?.configuration && typeof inference.configuration === "object" && !Array.isArray(inference.configuration)
-        ? inference.configuration as Record<string, unknown>
-        : {};
-      if (inferenceConnections.length !== 1 || !inference?.baseUrl || typeof inferenceSettings.modelAlias !== "string") {
+      const modelAlias = seedableInferenceModelAlias(inferenceConnections);
+      if (!modelAlias) {
         throw new RuntimeNodeEnrollmentError("Exactly one healthy inference server route with a model alias is required.", "INVALID");
       }
       const gatewayKey = randomBytes(32).toString("base64url");
       const modelBootstrap = {
         provider: "custom" as const,
         baseUrl: inferenceGatewayBaseUrl(input.controlPlaneUrl),
-        modelAlias: inferenceSettings.modelAlias,
+        modelAlias,
         apiKey: gatewayKey,
       };
 

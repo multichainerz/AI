@@ -35,6 +35,7 @@ COPY --from=builder /app/packages ./packages
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/pnpm-workspace.yaml ./pnpm-workspace.yaml
 COPY --from=builder /app/pnpm-lock.yaml ./pnpm-lock.yaml
+COPY scripts/install-hermes-node.sh ./scripts/install-hermes-node.sh
 
 RUN install -d -o node -g node -m 0700 /var/lib/orcasynapse-document-scratch
 

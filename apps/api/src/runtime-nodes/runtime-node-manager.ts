@@ -19,8 +19,16 @@ export interface NodeSignatureHeaders {
   signature?: string | undefined;
 }
 
+export interface HermesNodeInstallerReadiness {
+  ready: boolean;
+  dashboardReady: boolean;
+  inferenceReady: boolean;
+  invitationReady: boolean;
+}
+
 export interface HermesRuntimeNodeManager {
   list(): Promise<HermesRuntimeNode[]>;
+  installerReadiness(): Promise<HermesNodeInstallerReadiness>;
   createInvitation(principal: AdminPrincipal, input: CreateHermesNodeInvitation): Promise<HermesNodeInvitation>;
   resolveInvitation(token: string): Promise<HermesNodeEnrollmentBundle>;
   enroll(input: EnrollHermesNode, sourceIp?: string): Promise<HermesNodeEnrollmentResult>;

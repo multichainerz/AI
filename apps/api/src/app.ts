@@ -20,7 +20,11 @@ import { registerModelRoutes } from "./models/routes.js";
 import { registerGuardrailRoutes } from "./guardrails/routes.js";
 import { registerPromptRoutes } from "./prompts/routes.js";
 import { registerOnboardingRoutes } from "./onboarding/routes.js";
-import { registerAdminRuntimeNodeRoutes, registerRuntimeNodeRoutes } from "./runtime-nodes/routes.js";
+import {
+  registerAdminRuntimeNodeRoutes,
+  registerRuntimeNodeInstallerRoutes,
+  registerRuntimeNodeRoutes,
+} from "./runtime-nodes/routes.js";
 import { registerInferenceGatewayRoutes } from "./inference/routes.js";
 
 export interface AppOptions {
@@ -76,6 +80,7 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
       || request.url.startsWith("/api/v1/mcp")
       || request.url.startsWith("/api/v1/runtime-nodes")
       || request.url.startsWith("/internal/v1/")
+      || request.url.startsWith("/install/")
     ) {
       void reply.header("cache-control", "no-store");
     }
@@ -167,6 +172,13 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
         ...(runtime.onboardingManager ? { manager: runtime.onboardingManager } : {}),
       }),
     { prefix: "/api/v1/admin/onboarding" },
+  );
+
+  await app.register(
+    async (runtimeInstaller) => registerRuntimeNodeInstallerRoutes(runtimeInstaller, {
+      ...(runtime.runtimeNodeManager ? { manager: runtime.runtimeNodeManager } : {}),
+    }),
+    { prefix: "/install" },
   );
 
   await app.register(

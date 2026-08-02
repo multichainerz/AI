@@ -39,7 +39,9 @@ The installer refuses to overwrite any partial secret set. A complete existing s
 
 ## Enroll an isolated Hermes VM
 
-For Control-plane only or Segmented production, prepare a second Debian or Ubuntu VM with private network reachability in both directions. In the dashboard, open **Deployment > Hermes nodes**, enter the VM2 API address and the OrcaSynapse address visible from VM2, then issue the short-lived enrollment claim.
+For Control-plane only or Segmented production, prepare a second Debian or Ubuntu VM with private network reachability in both directions. First replace the temporary dashboard password and configure exactly one healthy AI Inference route with a discovered model. Then open **Deployment > Hermes nodes**, enter the VM2 API address and the OrcaSynapse address visible from VM2, and issue the short-lived enrollment claim.
+
+The VM2 installer is not a permanently public static asset. OrcaSynapse serves it through a readiness-gated API only while dashboard setup is complete, AI Inference is healthy and seedable, and a live one-time invitation exists. The dashboard reveals the command only after those checks pass.
 
 On VM2, run the installer served by the customer-owned OrcaSynapse host against that same origin:
 

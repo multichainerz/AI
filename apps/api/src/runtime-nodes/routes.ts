@@ -13,6 +13,7 @@ import {
   registerHermesNodeMemorySchema,
   resolveHermesNodeInvitationSchema,
 } from "@orcasynapse/contracts";
+import { readFile } from "node:fs/promises";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { requireAdmin, type AdminSessionManager } from "../auth/admin-session.js";
 import {
@@ -28,6 +29,8 @@ export interface RuntimeNodeRouteOptions {
   sessionManager?: AdminSessionManager;
   manager?: HermesRuntimeNodeManager;
 }
+
+const HERMES_NODE_INSTALLER_PATH = new URL("../../../../scripts/install-hermes-node.sh", import.meta.url);
 
 function managerOrLocked(options: RuntimeNodeRouteOptions, reply: FastifyReply): HermesRuntimeNodeManager | null {
   if (options.manager) return options.manager;
@@ -62,6 +65,36 @@ async function sendError(error: unknown, reply: FastifyReply): Promise<FastifyRe
     return reply.code(status).send({ error: `ENROLLMENT_${error.code}`, message: error.message });
   }
   throw error;
+}
+
+export async function registerRuntimeNodeInstallerRoutes(
+  app: FastifyInstance,
+  options: RuntimeNodeRouteOptions,
+): Promise<void> {
+  app.get("/hermes-node.sh", async (_request, reply) => {
+    const manager = options.manager;
+    if (!manager) {
+      return reply.code(404).send({
+        error: "AGENTIC_INSTALLER_UNAVAILABLE",
+        message: "No Agentic System installer is currently available.",
+      });
+    }
+
+    const readiness = await manager.installerReadiness();
+    if (!readiness.ready) {
+      return reply.code(404).send({
+        error: "AGENTIC_INSTALLER_UNAVAILABLE",
+        message: "No Agentic System installer is currently available.",
+      });
+    }
+
+    const installer = await readFile(HERMES_NODE_INSTALLER_PATH, "utf8");
+    return reply
+      .header("cache-control", "no-store")
+      .header("content-disposition", "inline; filename=orcasynapse-agentic-system.sh")
+      .type("text/x-shellscript; charset=utf-8")
+      .send(installer);
+  });
 }
 
 export async function registerRuntimeNodeRoutes(app: FastifyInstance, options: RuntimeNodeRouteOptions): Promise<void> {

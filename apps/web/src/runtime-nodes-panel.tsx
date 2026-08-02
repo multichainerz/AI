@@ -15,6 +15,8 @@ import {
 
 interface RuntimeNodesPanelProps {
   targetEnvironment: OnboardingTargetEnvironment;
+  inferenceReady: boolean;
+  onConfigureInference: () => void;
   onUnauthorized: () => void;
 }
 
@@ -43,13 +45,18 @@ function defaultForm(): CreateHermesNodeInvitation {
     slug: "hermes-runtime-01",
     displayName: "Hermes Runtime 01",
     baseUrl: "http://10.0.0.12:8642",
-    controlPlaneUrl: window.location.origin,
+    controlPlaneUrl: typeof window === "undefined" ? "https://orcasynapse.internal" : window.location.origin,
     hermesImage: "nousresearch/hermes-agent:latest",
     expiresInMinutes: 30,
   };
 }
 
-export function RuntimeNodesPanel({ targetEnvironment, onUnauthorized }: RuntimeNodesPanelProps) {
+export function RuntimeNodesPanel({
+  targetEnvironment,
+  inferenceReady,
+  onConfigureInference,
+  onUnauthorized,
+}: RuntimeNodesPanelProps) {
   const [nodes, setNodes] = useState<HermesRuntimeNode[]>([]);
   const [form, setForm] = useState<CreateHermesNodeInvitation>(defaultForm);
   const [editorOpen, setEditorOpen] = useState(false);
@@ -83,7 +90,7 @@ export function RuntimeNodesPanel({ targetEnvironment, onUnauthorized }: Runtime
 
   const issueInvitation = async (event: FormEvent) => {
     event.preventDefault();
-    if (busy) return;
+    if (busy || !inferenceReady) return;
     setBusy("invite");
     setError(null);
     try {
@@ -127,7 +134,7 @@ export function RuntimeNodesPanel({ targetEnvironment, onUnauthorized }: Runtime
     <section className="panel runtime-nodes-overview">
       <div className="document-section-heading">
         <div><p className="section-kicker">Hermes trust zone</p><h2>Runtime nodes</h2></div>
-        <div className="runtime-node-heading-actions"><button className="secondary-button" type="button" disabled={busy !== null} onClick={() => void load()}>Refresh</button><button className="primary-button" type="button" disabled={activeRuntimeExists} title={activeRuntimeExists ? "Revoke the active execution boundary before enrolling its replacement." : undefined} onClick={() => { setInvitation(null); setEditorOpen(true); }}>Enroll node</button></div>
+        <div className="runtime-node-heading-actions"><button className="secondary-button" type="button" disabled={busy !== null} onClick={() => void load()}>Refresh</button><button className="primary-button" type="button" disabled={activeRuntimeExists || !inferenceReady} title={!inferenceReady ? "Configure and test AI Inference before enrolling the Agentic System." : activeRuntimeExists ? "Revoke the active execution boundary before enrolling its replacement." : undefined} onClick={() => { setInvitation(null); setEditorOpen(true); }}>Enroll node</button></div>
       </div>
       <div className="runtime-node-principles">
         <article><strong>{nodes.length}</strong><span>Registered nodes</span></article>
@@ -136,7 +143,7 @@ export function RuntimeNodesPanel({ targetEnvironment, onUnauthorized }: Runtime
         <div><strong>No standing SSH trust</strong><span>Enrollment is single-use. Agent Profiles remain versioned in OrcaSynapse and are injected per governed Run.</span></div>
       </div>
       {error && <div className="documents-alert" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
-      {nodes.length === 0 ? <div className="setup-empty"><strong>No Hermes runtime node enrolled</strong><p>For a two-VM deployment, issue an invitation here and run the installer once on the isolated Hermes VM.</p><button className="primary-button" type="button" onClick={() => setEditorOpen(true)}>Enroll the first node</button></div> : <div className="runtime-node-list">{nodes.map((node) => <article key={node.id}>
+      {nodes.length === 0 && !inferenceReady ? <div className="setup-empty"><strong>AI Inference must be ready first</strong><p>Connect and successfully test one served model. OrcaSynapse will then unlock a customer-bound VM2 invitation and pre-seed Hermes with the governed inference route.</p><button className="primary-button" type="button" onClick={onConfigureInference}>Configure AI Inference</button></div> : nodes.length === 0 ? <div className="setup-empty"><strong>No Hermes runtime node enrolled</strong><p>Issue an invitation here and run the generated installer once on the isolated VM. The enrollment response supplies Hermes with the approved model alias, gateway route, and baseline policy.</p><button className="primary-button" type="button" onClick={() => setEditorOpen(true)}>Enroll the first node</button></div> : <div className="runtime-node-list">{nodes.map((node) => <article key={node.id}>
         <div className={`runtime-node-state ${nodeTone(node.status)}`}><span /></div>
         <div className="runtime-node-copy"><div><strong>{node.displayName}</strong><span className={`document-status ${nodeTone(node.status)}`}>{humanize(node.status)}</span></div><p>{node.baseUrl}</p><small>{node.hostname ?? node.expectedHostname ?? "Awaiting hostname"} · {node.hermesVersion ?? "Version pending"}</small></div>
         <dl><div><dt>Last heartbeat</dt><dd>{node.lastSeenAt ? new Date(node.lastSeenAt).toLocaleString() : "Never"}</dd></div><div><dt>OrcaSynapse → Hermes</dt><dd>{node.serviceConnectionStatus ? humanize(node.serviceConnectionStatus) : "Pending"}</dd></div><div><dt>Identity</dt><dd>{node.identityFingerprint ? `${node.identityFingerprint.slice(0, 12)}…` : "Not enrolled"}</dd></div></dl>
@@ -153,10 +160,10 @@ export function RuntimeNodesPanel({ targetEnvironment, onUnauthorized }: Runtime
       <div className="runtime-network-note"><strong>The installer does not manage your firewall.</strong><p>Apply customer network policy before Production activation. Do not expose port 8642 to user or internet networks.</p></div>
     </aside>
 
-    {editorOpen && <div className="agent-editor-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setEditorOpen(false); }}><section className="setup-evidence-editor runtime-node-editor">
+    {editorOpen && inferenceReady && <div className="agent-editor-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setEditorOpen(false); }}><section className="setup-evidence-editor runtime-node-editor">
       <header><div><p className="section-kicker">Two-VM enrollment</p><h2>{invitation ? "Install the Hermes node" : "Create runtime invitation"}</h2></div><button type="button" aria-label="Close" onClick={() => setEditorOpen(false)}>×</button></header>
       {!invitation ? <form onSubmit={(event) => void issueInvitation(event)}>
-        <p className="runtime-form-intro">Define the address OrcaSynapse will use to reach VM2. Healthy AI Inference is required; enrollment installs Hermes and Supermemory, then gives that runtime a scoped OrcaSynapse gateway key. No upstream inference key, SSH password, or private key enters the browser.</p>
+        <p className="runtime-form-intro">Define the address OrcaSynapse will use to reach VM2. The healthy AI Inference route selected during dashboard onboarding is injected automatically; enrollment installs Hermes and Supermemory with its approved model alias and a scoped OrcaSynapse gateway key. No upstream inference key, SSH password, or private key enters the browser.</p>
         <label>Node name<input required minLength={2} maxLength={120} value={form.displayName} onChange={(event) => setForm({ ...form, displayName: event.target.value })} /></label>
         <label>Node slug<input required pattern="[a-z0-9]+(?:-[a-z0-9]+)*" minLength={2} maxLength={64} value={form.slug} onChange={(event) => setForm({ ...form, slug: event.target.value })} /></label>
         <label>Hermes API address<input required type="url" value={form.baseUrl} onChange={(event) => setForm({ ...form, baseUrl: event.target.value })} /><small>Use the private VM2 address reachable from OrcaSynapse, normally port 8642.</small></label>

@@ -310,12 +310,16 @@ export function OnboardingView({ connections, unlocked, oidcConfigured, onConfig
             <span className={`document-status ${service.ready ? "ready" : "neutral"}`}>{service.state}</span>
             {service.kind && <button className="text-button" type="button" onClick={() => {
               if (!service.ready && service.key === "agentic") {
+                if (!inferenceReady) {
+                  onConfigure("INFERENCE");
+                  return;
+                }
                 setTab("nodes");
                 setSetupMode("advanced");
                 return;
               }
               onConfigure(service.kind);
-            }}>{service.key === "inference" && !inferenceServer ? "Configure directly" : service.ready ? "Review" : service.key === "agentic" ? "Enroll runtime" : "Configure"}</button>}
+            }}>{service.key === "inference" && !inferenceServer ? "Configure directly" : service.ready ? "Review" : service.key === "agentic" ? inferenceReady ? "Enroll runtime" : "Set up AI Inference first" : "Configure"}</button>}
           </div>
         </article>)}
       </section>
@@ -390,7 +394,7 @@ export function OnboardingView({ connections, unlocked, oidcConfigured, onConfig
               <div className="setup-stage-copy"><div><strong>{step.title}</strong>{!step.required && <em>Recommended</em>}</div><p>{step.description}</p><small>{step.action} · {step.evidenceRefs.length} generated evidence record{step.evidenceRefs.length === 1 ? "" : "s"}</small>
                 {serviceActions[step.key] && <div className="setup-inline-actions">{serviceActions[step.key]?.map((action) => <button className="text-button" key={action.kind} type="button" onClick={() => onConfigure(action.kind)}>{action.label}</button>)}</div>}
                 {step.key === "system-topology" && <div className="setup-inline-actions"><button className="text-button" type="button" onClick={() => setTab("architecture")}>Review topology</button></div>}
-                {step.key === "ai-services" && architecture.topologyMode !== "COMPACT" && <div className="setup-inline-actions"><button className="text-button" type="button" onClick={() => setTab("nodes")}>Enroll Hermes VM</button></div>}
+                {step.key === "ai-services" && architecture.topologyMode !== "COMPACT" && <div className="setup-inline-actions"><button className="text-button" type="button" onClick={() => inferenceReady ? setTab("nodes") : onConfigure("INFERENCE")}>{inferenceReady ? "Enroll Hermes VM" : "Set up AI Inference first"}</button></div>}
                 {step.key === "identity-recovery" && <div className="setup-inline-actions"><button className="text-button" type="button" onClick={() => setRecoveryOpen(true)}>Recovery kit</button></div>}
               </div>
               <div className="setup-stage-controls"><span className={`document-status ${tone(step.status)}`}>{label(step.status)}</span><button className="secondary-button" disabled={busy !== null} type="button" onClick={() => void validate(step.key)}>{busy === `validate-${step.key}` ? "Checking…" : "Run check"}</button></div>
@@ -407,7 +411,12 @@ export function OnboardingView({ connections, unlocked, oidcConfigured, onConfig
       </aside>
     </div>}
 
-    {tab === "nodes" && <RuntimeNodesPanel targetEnvironment={architecture.targetEnvironment} onUnauthorized={onUnauthorized} />}
+    {tab === "nodes" && <RuntimeNodesPanel
+      targetEnvironment={architecture.targetEnvironment}
+      inferenceReady={inferenceReady}
+      onConfigureInference={() => onConfigure("INFERENCE")}
+      onUnauthorized={onUnauthorized}
+    />}
 
     {tab === "readiness" && <div className="setup-contract-groups">
       <section className="setup-advanced-note"><div><strong>Advanced readiness</strong><p>OrcaSynapse-generated checks are authoritative for testable controls. Use external attestation only when the control belongs to a customer authority outside OrcaSynapse.</p></div><button className="secondary-button" disabled={busy !== null} type="button" onClick={() => void validate()}>Refresh automated evidence</button></section>

@@ -62,10 +62,10 @@ No LiteLLM tier, Redis, Valkey, pg-boss, object store, or duplicate vector datab
 
 1. **Install VM1** with the one-line command above and sign in to OrcaSynapse.
 2. **Connect AI Inference** from the dashboard. OrcaSynapse discovers compatible API paths and available models instead of asking you to guess endpoint URLs.
-3. **Enroll VM2** from **Deployment > Agentic System**. The dashboard generates a one-time claim and an OrcaSynapse-hosted command that installs Hermes and Supermemory together.
+3. **Enroll VM2** from **Deployment > Agentic System**. Only after administrator setup and AI Inference validation does the dashboard generate a one-time claim and unlock the OrcaSynapse-hosted installer that provisions Hermes and Supermemory together.
 4. **Add Enterprise Access** when ready by connecting OIDC or Microsoft Entra ID and mapping groups to administrative roles.
 
-The VM2 installer creates its identity locally, consumes the claim once, receives only a scoped inference route, applies the managed guardrail baseline, and starts signed health reporting. OrcaSynapse never needs the VM's SSH password or Docker socket.
+The VM2 installer creates its identity locally, consumes the claim once, receives the dashboard-selected model alias through a scoped OrcaSynapse inference route, applies the managed guardrail baseline, and starts signed health reporting. The installer URL returns no script until these prerequisites and a live invitation exist. OrcaSynapse never needs the VM's SSH password or Docker socket.
 
 ## What you get
 

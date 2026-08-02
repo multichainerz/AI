@@ -8,9 +8,9 @@ The installer follows the current upstream integration model: Hermes runs its of
 
 ## Prerequisites
 
-- OrcaSynapse is installed and claimed.
+- OrcaSynapse is installed and the temporary local-administrator password has been replaced.
 - PostgreSQL is healthy.
-- exactly one Inference Server connection is enabled and healthy;
+- exactly one AI Inference connection is enabled, healthy, and has a selected served model;
 - an evaluated Agent model route is active;
 - VM2 is a clean supported Linux host with outbound access to OrcaSynapse and the artifact sources during installation;
 - OrcaSynapse can reach the VM2 Hermes address on TCP 8642 and Supermemory address on TCP 6767;
@@ -23,7 +23,7 @@ For production, use a Hermes image digest and set `ORCASYNAPSE_SUPERMEMORY_VERSI
 1. Open **Deployment → Production setup → Hermes nodes**.
 2. Create an invitation with the runtime display name, slug, reachable Hermes base URL, approved image reference, and short TTL.
 3. Copy the one-time claim. OrcaSynapse stores only its digest.
-4. On VM2, download the installer from the OrcaSynapse URL shown by the dashboard.
+4. On VM2, download the installer from the OrcaSynapse URL shown by the dashboard. The route is unavailable before dashboard setup, healthy AI Inference, and a live invitation are all present.
 5. Run it against the same OrcaSynapse origin, then paste the claim at the hidden prompt:
 
    ```bash
@@ -44,7 +44,7 @@ For an offline administrative transfer, download the JSON bundle and run `sudo b
 3. creates a local Ed25519 identity;
 4. starts the constrained official Hermes container with persistent `/opt/data` and read-only `/etc/hermes` managed scope;
 5. enrolls with the single-use claim;
-6. receives the OrcaSynapse `/internal/v1` URL, approved model alias, and a node-scoped bearer key;
+6. receives the OrcaSynapse `/internal/v1` URL, dashboard-selected model alias, and a node-scoped bearer key;
 7. installs the checksum-verified Supermemory Local binary and starts it under a dedicated system user;
 8. configures Supermemory to use the OrcaSynapse gateway and local embeddings;
 9. installs/enables Hermes's native Supermemory provider with `orcasynapse-agent-{identity}` and custom containers disabled;

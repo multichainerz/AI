@@ -6,6 +6,7 @@ import { RuntimeNodeAuthenticationError } from "./runtime-node-manager.js";
 import {
   inferenceGatewayBaseUrl,
   PrismaHermesRuntimeNodeManager,
+  seedableInferenceModelAlias,
   verifyNodeRequestSignature,
 } from "./prisma-runtime-node-manager.js";
 
@@ -47,6 +48,79 @@ describe("Hermes inference bootstrap URL", () => {
     expect(inferenceGatewayBaseUrl("https://orcasynapse.internal")).toBe("https://orcasynapse.internal/internal/v1");
     expect(inferenceGatewayBaseUrl("https://gateway.internal/"))
       .toBe("https://gateway.internal/internal/v1");
+  });
+
+  it("selects only one healthy connection with a concrete dashboard model alias", () => {
+    expect(seedableInferenceModelAlias([{
+      baseUrl: "http://inference.internal:8000/v1",
+      configuration: { modelAlias: "  hermes-primary  " },
+    }])).toBe("hermes-primary");
+    expect(seedableInferenceModelAlias([{
+      baseUrl: "http://inference.internal:8000/v1",
+      configuration: { modelAlias: "" },
+    }])).toBeNull();
+    expect(seedableInferenceModelAlias([
+      { baseUrl: "http://inference-a.internal:8000/v1", configuration: { modelAlias: "a" } },
+      { baseUrl: "http://inference-b.internal:8000/v1", configuration: { modelAlias: "b" } },
+    ])).toBeNull();
+  });
+});
+
+describe("Agentic System installer readiness", () => {
+  it("requires completed dashboard setup, one healthy served model, and a live invitation", async () => {
+    const prisma = {
+      localAdministrator: {
+        count: async () => 1,
+      },
+      serviceConnection: {
+        findMany: async () => [{
+          baseUrl: "http://inference.internal:8000/v1",
+          configuration: { modelAlias: "hermes-primary" },
+        }],
+      },
+      hermesNodeEnrollment: {
+        count: async () => 1,
+      },
+    } as unknown as OrcaSynapsePrismaClient;
+    const manager = new PrismaHermesRuntimeNodeManager(
+      prisma,
+      new EnvelopeEncryption({ masterKey: new Uint8Array(32).fill(7) }),
+    );
+
+    await expect(manager.installerReadiness()).resolves.toEqual({
+      ready: true,
+      dashboardReady: true,
+      inferenceReady: true,
+      invitationReady: true,
+    });
+  });
+
+  it("does not treat a healthy endpoint without a selected model as seedable inference", async () => {
+    const prisma = {
+      localAdministrator: {
+        count: async () => 1,
+      },
+      serviceConnection: {
+        findMany: async () => [{
+          baseUrl: "http://inference.internal:8000/v1",
+          configuration: {},
+        }],
+      },
+      hermesNodeEnrollment: {
+        count: async () => 1,
+      },
+    } as unknown as OrcaSynapsePrismaClient;
+    const manager = new PrismaHermesRuntimeNodeManager(
+      prisma,
+      new EnvelopeEncryption({ masterKey: new Uint8Array(32).fill(7) }),
+    );
+
+    await expect(manager.installerReadiness()).resolves.toMatchObject({
+      ready: false,
+      dashboardReady: true,
+      inferenceReady: false,
+      invitationReady: true,
+    });
   });
 });
 
