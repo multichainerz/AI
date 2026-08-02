@@ -333,8 +333,35 @@ export class PrismaAgentProcessor {
   }
 
   private async boundaryState(run: LoadedRun): Promise<{ code: string; message: string } | null> {
-    const control = await this.prisma.agentRuntimeControl.findUnique({ where: { id: "global" } });
+    const [control, runtimeNodes] = await Promise.all([
+      this.prisma.agentRuntimeControl.findUnique({ where: { id: "global" } }),
+      this.prisma.hermesRuntimeNode.findMany({
+        where: { enrolledAt: { not: null }, status: { not: "REVOKED" } },
+        select: {
+          status: true,
+          lastSeenAt: true,
+          serviceConnection: { select: { enabled: true, status: true } },
+        },
+        take: 2,
+      }),
+    ]);
     if (!control?.enabled) return { code: "RUNTIME_DISABLED", message: control?.reason ?? "Agent execution is disabled fail-closed." };
+    const runtimeNode = runtimeNodes[0];
+    if (runtimeNodes.length !== 1 || !runtimeNode) {
+      return { code: "HERMES_RUNTIME_UNAVAILABLE", message: "Exactly one enrolled Hermes runtime is required." };
+    }
+    if (runtimeNode.status === "DRAINING" && !run.externalRunId) {
+      return { code: "HERMES_RUNTIME_DRAINING", message: "The Hermes runtime is draining and cannot start new work." };
+    }
+    if (runtimeNode.status !== "ONLINE" && runtimeNode.status !== "DRAINING") {
+      return { code: "HERMES_RUNTIME_UNAVAILABLE", message: `The Hermes runtime is ${runtimeNode.status.toLowerCase()} and cannot execute this run.` };
+    }
+    if (!runtimeNode.lastSeenAt || Date.now() - runtimeNode.lastSeenAt.getTime() >= 180_000) {
+      return { code: "HERMES_RUNTIME_OFFLINE", message: "The Hermes runtime heartbeat is stale." };
+    }
+    if (runtimeNode.serviceConnection?.enabled !== true || runtimeNode.serviceConnection.status !== "HEALTHY") {
+      return { code: "HERMES_CONNECTION_UNHEALTHY", message: "The governed Hermes service connection is not healthy." };
+    }
     if (run.profile.status !== "ACTIVE") return { code: "PROFILE_SUSPENDED", message: "The agent profile is no longer active." };
     if (run.profile.activeVersion !== run.profileVersion) return { code: "PROFILE_VERSION_REVOKED", message: "The run's agent version is no longer active." };
     if (!run.version.safeMode || run.version.maxTurns !== 1) return { code: "UNSAFE_PROFILE", message: "The agent configuration does not satisfy the single-turn safe-mode boundary." };

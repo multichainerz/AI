@@ -1,7 +1,8 @@
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
 import { EnvelopeEncryption } from "@orcasynapse/security";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { AdminPrincipal } from "../auth/admin-session.js";
 import { RuntimeNodeAuthenticationError } from "./runtime-node-manager.js";
 import {
   inferenceGatewayBaseUrl,
@@ -9,6 +10,16 @@ import {
   seedableInferenceModelAlias,
   verifyNodeRequestSignature,
 } from "./prisma-runtime-node-manager.js";
+
+const principal: AdminPrincipal = {
+  id: "ac369dab-cad5-4fd9-83ed-b4fbf528028a",
+  subject: "admin",
+  role: "PLATFORM_ADMIN",
+  scopes: ["readiness:manage"],
+  createdAt: "2026-08-02T00:00:00.000Z",
+  idleExpiresAt: "2026-08-02T01:00:00.000Z",
+  absoluteExpiresAt: "2026-08-02T08:00:00.000Z",
+};
 
 function canonicalize(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
@@ -67,7 +78,7 @@ describe("Hermes inference bootstrap URL", () => {
 });
 
 describe("Agentic System installer readiness", () => {
-  it("requires completed dashboard setup, one healthy served model, and a live invitation", async () => {
+  it("requires completed dashboard setup and one healthy served model while reporting invitation state separately", async () => {
     const prisma = {
       localAdministrator: {
         count: async () => 1,
@@ -79,7 +90,7 @@ describe("Agentic System installer readiness", () => {
         }],
       },
       hermesNodeEnrollment: {
-        count: async () => 1,
+        count: async () => 0,
       },
     } as unknown as OrcaSynapsePrismaClient;
     const manager = new PrismaHermesRuntimeNodeManager(
@@ -91,7 +102,7 @@ describe("Agentic System installer readiness", () => {
       ready: true,
       dashboardReady: true,
       inferenceReady: true,
-      invitationReady: true,
+      invitationReady: false,
     });
   });
 
@@ -125,6 +136,32 @@ describe("Agentic System installer readiness", () => {
 });
 
 describe("Hermes enrollment invitation binding", () => {
+  it("rejects mutable Agentic System artifacts in Production before issuing a claim", async () => {
+    const prisma = {
+      localAdministrator: { count: vi.fn(async () => 1) },
+      serviceConnection: { findMany: vi.fn(async () => [{
+        baseUrl: "http://inference.internal:8000/v1", configuration: { modelAlias: "hermes-primary" },
+      }]) },
+      platformArchitectureDecision: { findUnique: vi.fn(async () => ({ targetEnvironment: "PRODUCTION" })) },
+      $transaction: vi.fn(),
+    } as unknown as OrcaSynapsePrismaClient;
+    const manager = new PrismaHermesRuntimeNodeManager(
+      prisma,
+      new EnvelopeEncryption({ masterKey: new Uint8Array(32).fill(7) }),
+    );
+
+    await expect(manager.createInvitation(principal, {
+      slug: "hermes-01",
+      displayName: "Hermes 01",
+      baseUrl: "http://10.0.0.12:8642",
+      controlPlaneUrl: "https://orcasynapse.internal",
+      hermesImage: "nousresearch/hermes-agent:latest",
+      supermemoryVersion: "latest",
+      expiresInMinutes: 30,
+    })).rejects.toThrow("digest-pinned");
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
   it("resolves a live claim into the VM2 bootstrap profile without consuming it", async () => {
     const expiresAt = new Date(Date.now() + 60_000);
     const prisma = {
@@ -134,6 +171,7 @@ describe("Hermes enrollment invitation binding", () => {
           status: "ISSUED",
           controlPlaneUrl: "https://orcasynapse.internal",
           hermesImage: "nousresearch/hermes-agent:latest",
+          supermemoryVersion: "v1.2.3",
           expiresAt,
           node: {
             id: "9de260d7-bc51-4558-9d20-06916d393072",
@@ -156,6 +194,7 @@ describe("Hermes enrollment invitation binding", () => {
       controlPlaneUrl: "https://orcasynapse.internal",
       hermesBaseUrl: "http://10.0.0.12:8642",
       hermesImage: "nousresearch/hermes-agent:latest",
+      supermemoryVersion: "v1.2.3",
       expiresAt: expiresAt.toISOString(),
     });
   });
@@ -197,5 +236,60 @@ describe("Hermes enrollment invitation binding", () => {
       code: "INVALID",
       message: "The enrollment control-plane origin does not match the invitation.",
     });
+  });
+
+  it("rechecks production artifact policy when a previously issued claim is enrolled", async () => {
+    const { publicKey } = generateKeyPairSync("ed25519");
+    const createConnection = vi.fn();
+    const transaction = {
+      $executeRaw: async () => 1,
+      hermesNodeEnrollment: {
+        findUnique: async () => ({
+          id: "12d67490-e502-4831-a2de-31d1bf4f1c36",
+          nodeId: "9de260d7-bc51-4558-9d20-06916d393072",
+          controlPlaneUrl: "https://orcasynapse.internal",
+          hermesImage: "nousresearch/hermes-agent:latest",
+          supermemoryVersion: "latest",
+          status: "ISSUED",
+          expiresAt: new Date(Date.now() + 60_000),
+          node: {
+            id: "9de260d7-bc51-4558-9d20-06916d393072",
+            slug: "hermes-01",
+            displayName: "Hermes 01",
+            baseUrl: "http://10.0.0.12:8642",
+            expectedHostname: null,
+          },
+        }),
+      },
+      hermesRuntimeNode: { findFirst: async () => null },
+      serviceConnection: {
+        findMany: async () => [{
+          baseUrl: "http://inference.internal:8000/v1",
+          configuration: { modelAlias: "hermes-primary" },
+        }],
+        create: createConnection,
+      },
+      platformArchitectureDecision: { findUnique: async () => ({ targetEnvironment: "PRODUCTION" }) },
+    };
+    const prisma = {
+      $transaction: async (callback: (client: typeof transaction) => Promise<unknown>) => callback(transaction),
+    } as unknown as OrcaSynapsePrismaClient;
+    const manager = new PrismaHermesRuntimeNodeManager(
+      prisma,
+      new EnvelopeEncryption({ masterKey: new Uint8Array(32).fill(7) }),
+    );
+
+    await expect(manager.enroll({
+      nodeId: "9de260d7-bc51-4558-9d20-06916d393072",
+      token: "t".repeat(43),
+      hostname: "hermes-01.internal",
+      publicKeyPem: publicKey.export({ type: "spki", format: "pem" }).toString(),
+      controlPlaneUrl: "https://orcasynapse.internal",
+      apiKey: "k".repeat(64),
+      hermesVersion: "nousresearch/hermes-agent:latest",
+      installerVersion: "ai-v1.13.0",
+      capabilities: ["gateway-api"],
+    })).rejects.toMatchObject({ code: "INVALID", message: expect.stringContaining("digest-pinned") });
+    expect(createConnection).not.toHaveBeenCalled();
   });
 });

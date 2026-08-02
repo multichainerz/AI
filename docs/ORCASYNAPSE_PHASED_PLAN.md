@@ -42,9 +42,10 @@ Status: implemented and source-verified; clean-VM acceptance remains.
 
 - one-time enrollment claim resolved through the customer-owned OrcaSynapse origin, with JSON-bundle fallback, node-generated Ed25519 identity, signed replay-protected heartbeats, lifecycle actions, and dashboard status.
 - official Hermes container using OrcaSynapse's inference gateway.
-- checksum-verified Supermemory Local installation with local embeddings.
+- checksum-verified Supermemory Local installation with CPU-local `Xenova/bge-m3` embeddings (1024 dimensions).
 - native Hermes Supermemory provider using `orcasynapse-agent-{identity}`.
 - automatic endpoint registration in OrcaSynapse without standing SSH trust.
+- protected post-enrollment recovery journal and idempotent resume after memory or policy bootstrap failure.
 - immutable Profile Distribution and governed agent-run lifecycle.
 
 Exit: a clean isolated VM enrolls end to end; agent memory survives restarts; profile namespaces cannot cross; revocation disables Hermes and its managed Supermemory route; backups restore Hermes and Supermemory consistently.

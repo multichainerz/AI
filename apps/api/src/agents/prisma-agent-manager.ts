@@ -407,11 +407,37 @@ export class PrismaAgentManager implements AgentManager {
   async submitRun(principal: AgentPrincipal, input: SubmitAgentRun): Promise<AgentRun> {
     const run = await this.prisma.$transaction(async (transaction) => {
       await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`orcasynapse-agent-submit:${input.profileId}`}, 0))`;
-      const [control, profile] = await Promise.all([
+      const [control, profile, runtimeNodes] = await Promise.all([
         transaction.agentRuntimeControl.findUnique({ where: { id: "global" } }),
         transaction.agentProfile.findUnique({ where: { id: input.profileId } }),
+        transaction.hermesRuntimeNode.findMany({
+          where: { enrolledAt: { not: null }, status: { not: "REVOKED" } },
+          select: {
+            status: true,
+            lastSeenAt: true,
+            serviceConnection: { select: { enabled: true, status: true } },
+          },
+          take: 2,
+        }),
       ]);
       if (!control?.enabled) throw new AgentRuntimeDisabledError(control?.reason ?? undefined);
+      const runtimeNode = runtimeNodes[0];
+      const heartbeatIsFresh = runtimeNode?.lastSeenAt
+        && Date.now() - runtimeNode.lastSeenAt.getTime() < 180_000;
+      if (
+        runtimeNodes.length !== 1
+        || runtimeNode?.status !== "ONLINE"
+        || !heartbeatIsFresh
+        || runtimeNode.serviceConnection?.enabled !== true
+        || runtimeNode.serviceConnection.status !== "HEALTHY"
+      ) {
+        const reason = runtimeNode?.status === "DRAINING"
+          ? "The Hermes runtime is draining and cannot accept new work."
+          : runtimeNode?.status === "SUSPENDED"
+            ? "The Hermes runtime is suspended."
+            : "Exactly one online, recently observed, and healthy Hermes runtime is required.";
+        throw new AgentRuntimeDisabledError(reason);
+      }
       if (!profile || profile.status !== "ACTIVE" || profile.activeVersion === null) {
         throw new AgentConflictError("Only an active agent profile can accept runs.");
       }

@@ -9,7 +9,7 @@ OrcaSynapse's Models workspace is the approved workload catalogue. It does not d
 | Chat | Inference Server | default route for direct OrcaSynapse Chat |
 | Agent | Inference Server | alias pinned by the internal gateway for Hermes and Supermemory |
 
-Chat and Agent routes must use an approved OpenAI-compatible Inference Server connection. Supermemory's local embedding model is a Supermemory deployment concern and does not create an OrcaSynapse model route or vector plane.
+Chat and Agent routes must use an approved OpenAI-compatible Inference Server connection. Supermemory's CPU-local `Xenova/bge-m3` embedding model (1024 dimensions) is a Supermemory deployment concern and does not create an OrcaSynapse model route or vector plane.
 
 ## Lifecycle
 

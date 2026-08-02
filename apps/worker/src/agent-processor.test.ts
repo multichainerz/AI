@@ -40,7 +40,7 @@ function runtime(status = "completed"): AgentHermesRuntime {
 
 const capabilities = { issue: vi.fn(() => ({ token: "r".repeat(43), tokenHash: new Uint8Array(32) })) };
 
-function database(record = runRecord(), enabled = true, toolEnabled = false): OrcaSynapsePrismaClient {
+function database(record = runRecord(), enabled = true, toolEnabled = false, runtimeStatus = "ONLINE"): OrcaSynapsePrismaClient {
   const state = { ...record };
   const agentRun = {
     findUnique: vi.fn(async () => ({ ...state })),
@@ -50,6 +50,11 @@ function database(record = runRecord(), enabled = true, toolEnabled = false): Or
   const prisma = {
     agentRun,
     agentRuntimeControl: { findUnique: vi.fn(async () => ({ enabled, reason: enabled ? "Verified" : "Maintenance" })) },
+    hermesRuntimeNode: { findMany: vi.fn(async () => [{
+      status: runtimeStatus,
+      lastSeenAt: new Date(),
+      serviceConnection: { enabled: true, status: "HEALTHY" },
+    }]) },
     toolRuntimeControl: { findUnique: vi.fn(async () => ({ enabled: toolEnabled, reason: toolEnabled ? "Pilot" : "Disabled" })) },
     auditEvent: { create: vi.fn(async () => ({})) },
     $transaction: vi.fn(async (operations: Array<Promise<unknown>>) => Promise.all(operations)),
@@ -94,6 +99,34 @@ describe("PrismaAgentProcessor", () => {
     expect(hermes.assertZeroToolBoundary).not.toHaveBeenCalled();
     expect(hermes.start).not.toHaveBeenCalled();
     expect(knowledge.search).not.toHaveBeenCalled();
+  });
+
+  it("does not start queued work while the Hermes runtime is draining", async () => {
+    const prisma = database(runRecord(), true, false, "DRAINING");
+    const hermes = runtime();
+    const processor = new PrismaAgentProcessor(prisma, hermes, { search: vi.fn() }, capabilities);
+
+    await expect(processor.process({ runId: RUN_ID }, "job-1", "worker-1")).resolves.toMatchObject({ status: "DENIED" });
+    expect(hermes.start).not.toHaveBeenCalled();
+  });
+
+  it("allows an existing Hermes run to finish while the runtime is draining", async () => {
+    const prisma = database(runRecord("RUNNING", "run_external_1", "job-1"), true, false, "DRAINING");
+    const hermes = runtime();
+    const processor = new PrismaAgentProcessor(prisma, hermes, { search: vi.fn() }, capabilities);
+
+    await expect(processor.process({ runId: RUN_ID }, "job-1", "worker-1")).resolves.toMatchObject({ status: "COMPLETED" });
+    expect(hermes.status).toHaveBeenCalledWith("run_external_1");
+  });
+
+  it("stops an existing Hermes run when the runtime is suspended", async () => {
+    const prisma = database(runRecord("RUNNING", "run_external_1", "job-1"), true, false, "SUSPENDED");
+    const hermes = runtime();
+    const processor = new PrismaAgentProcessor(prisma, hermes, { search: vi.fn() }, capabilities);
+
+    await expect(processor.process({ runId: RUN_ID }, "job-1", "worker-1")).resolves.toMatchObject({ status: "DENIED" });
+    expect(hermes.stop).toHaveBeenCalledWith("run_external_1");
+    expect(hermes.status).not.toHaveBeenCalled();
   });
 
   it("hands a scoped capability to compatible Hermes without placing it in instructions", async () => {

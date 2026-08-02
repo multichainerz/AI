@@ -61,6 +61,9 @@ describe("PrismaAgentManager", () => {
       $executeRaw: vi.fn(async () => 1),
       agentRuntimeControl: { findUnique: vi.fn(async () => ({ enabled: true, reason: "Verified" })) },
       agentProfile: { findUnique: vi.fn(async () => ({ id: PROFILE_ID, status: "ACTIVE", activeVersion: 1 })) },
+      hermesRuntimeNode: { findMany: vi.fn(async () => [{
+        status: "ONLINE", lastSeenAt: new Date(), serviceConnection: { enabled: true, status: "HEALTHY" },
+      }]) },
       agentProfileVersion: { findUnique: vi.fn(async () => version(1)) },
       agentRun: { count: vi.fn(async () => 0), create: vi.fn(async () => storedRun()) },
       auditEvent: { create: vi.fn(async () => ({})) },
@@ -85,6 +88,7 @@ describe("PrismaAgentManager", () => {
       $executeRaw: vi.fn(async () => 1),
       agentRuntimeControl: { findUnique: vi.fn(async () => null) },
       agentProfile: { findUnique: vi.fn(async () => ({ id: PROFILE_ID, status: "ACTIVE", activeVersion: 1 })) },
+      hermesRuntimeNode: { findMany: vi.fn(async () => []) },
     };
     const prisma = {
       $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)),
@@ -92,6 +96,23 @@ describe("PrismaAgentManager", () => {
     const manager = new PrismaAgentManager(prisma);
 
     await expect(manager.submitRun(principal, { profileId: PROFILE_ID, input: "Analyze policy" })).rejects.toBeInstanceOf(AgentRuntimeDisabledError);
+  });
+
+  it("rejects new work while the Hermes runtime is draining", async () => {
+    const transaction = {
+      $executeRaw: vi.fn(async () => 1),
+      agentRuntimeControl: { findUnique: vi.fn(async () => ({ enabled: true, reason: "Verified" })) },
+      agentProfile: { findUnique: vi.fn(async () => ({ id: PROFILE_ID, status: "ACTIVE", activeVersion: 1 })) },
+      hermesRuntimeNode: { findMany: vi.fn(async () => [{
+        status: "DRAINING", lastSeenAt: new Date(), serviceConnection: { enabled: true, status: "HEALTHY" },
+      }]) },
+    };
+    const prisma = {
+      $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)),
+    } as unknown as OrcaSynapsePrismaClient;
+
+    await expect(new PrismaAgentManager(prisma).submitRun(principal, { profileId: PROFILE_ID, input: "Analyze policy" }))
+      .rejects.toThrow("draining");
   });
 
   it("requires the authenticated zero-tool boundary before enabling execution", async () => {

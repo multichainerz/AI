@@ -81,4 +81,11 @@ describe("committed PostgreSQL migrations", () => {
     expect(sql).toContain("'inference-server'");
     expect(sql).toContain('ON CONFLICT ("key") DO UPDATE');
   });
+
+  it("persists the dashboard-selected Supermemory release with each node invitation", () => {
+    const directory = migrationDirectories.find((name) => name.endsWith("_pin_agentic_artifacts"));
+    expect(directory).toBeTruthy();
+    const sql = readFileSync(resolve(migrationsRoot, directory!, "migration.sql"), "utf8");
+    expect(sql).toContain('ADD COLUMN "supermemoryVersion" VARCHAR(120)');
+  });
 });

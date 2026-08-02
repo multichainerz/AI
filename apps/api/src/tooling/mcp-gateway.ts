@@ -1,4 +1,4 @@
-import type { GovernedTool } from "@orcasynapse/contracts";
+import { ORCASYNAPSE_VERSION, type GovernedTool } from "@orcasynapse/contracts";
 import {
   ToolingDeniedError,
   type GovernedToolResult,
@@ -7,7 +7,7 @@ import {
 
 export const MCP_MODERN_VERSION = "2026-07-28";
 export const MCP_LEGACY_VERSION = "2025-11-25";
-const SERVER_INFO = { name: "orcasynapse-governed-tools", version: "0.1.0" } as const;
+const SERVER_INFO = { name: "orcasynapse-governed-tools", version: ORCASYNAPSE_VERSION } as const;
 
 interface JsonRpcRequest {
   jsonrpc: "2.0";

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
+import { ORCASYNAPSE_VERSION } from "@orcasynapse/contracts";
 import { createPrismaClient, readBootstrapSecret } from "@orcasynapse/database";
 import { decodeMasterKey, EnvelopeEncryption, RunCapabilityIssuer } from "@orcasynapse/security";
 import {
@@ -33,7 +34,7 @@ const runtime = new WorkerRuntime(
   {
     id: workerId,
     name: hostname(),
-    version: "0.1.0",
+    version: ORCASYNAPSE_VERSION,
     workloads: ["documents", "memory", "agents", "tool-actions"],
   },
   {

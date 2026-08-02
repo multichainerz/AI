@@ -91,10 +91,12 @@ The dashboard creates a short-lived one-use enrollment claim. The customer downl
 2. starts a constrained official Hermes container;
 3. enrolls it with OrcaSynapse;
 4. receives an OrcaSynapse inference-gateway route, alias, and node key;
-5. installs checksum-verified Supermemory Local with local embeddings;
+5. installs checksum-verified Supermemory Local with CPU-local `Xenova/bge-m3` embeddings (1024 dimensions);
 6. configures Hermes's native Supermemory provider with a profile-scoped tag;
 7. registers Supermemory with OrcaSynapse;
 8. enables signed heartbeats.
+
+The node persists a root-only recovery journal immediately after enrollment so all subsequent provisioning steps can be resumed without issuing another claim. Production invitations require a digest-pinned Hermes image, an exact Supermemory release, and an HTTPS OrcaSynapse origin.
 
 OrcaSynapse retains no SSH password/key and no remote Docker socket. Upgrades use a separately signed/pinned release workflow rather than standing remote administration.
 

@@ -44,7 +44,7 @@ Development may co-locate services, but production acceptance assumes separate t
 | PostgreSQL | OrcaSynapse control data, audit, sessions, durable domain workflow state, authorization provenance | embeddings, source bytes, Hermes runtime state |
 | Runtime executor | idempotent reconciliation of unfinished PostgreSQL domain rows | independent queue state, semantic memory |
 | Hermes | agent loop, tools/subagents, sessions, built-in bounded memory, native Supermemory integration | enterprise authorization, inference-server credentials, OrcaSynapse database access |
-| Supermemory Local | semantic graph, normalized knowledge, long-term agent memory, local embeddings | OrcaSynapse authorization decisions, original-file authority |
+| Supermemory Local | semantic graph, normalized knowledge, long-term agent memory, CPU-local `Xenova/bge-m3` embeddings (1024d) | OrcaSynapse authorization decisions, original-file authority |
 | Inference Server | OpenAI-compatible inference for approved models; concrete backend is an operational choice | routing authority, enterprise policy, durable memory |
 
 There is no LiteLLM tier. OrcaSynapse's internal gateway is deliberately narrow: it authenticates enrolled runtimes, pins the active Agent model alias, applies deterministic request checks and response bounds, rate-limits requests in PostgreSQL, and forwards to the selected OpenAI-compatible inference server. It is not a general multi-provider proxy or backend-specific control plane.
@@ -59,6 +59,8 @@ There is no LiteLLM tier. OrcaSynapse's internal gateway is deliberately narrow:
 Hermes's `MEMORY.md` and `USER.md` remain active because the official external-memory-provider model is additive. They hold small curated runtime facts; Supermemory provides deeper cross-session semantic memory.
 
 The installed baseline uses Hermes's root-owned managed scope to pin the approved model route, Supermemory provider, secret redaction, loop circuit breakers, and the `api_server` platform to `no_mcp`; it exposes no native model-callable toolsets. This does not disable automatic Supermemory recall/capture. Managed scope prevents an ordinary runtime user from overriding pinned keys, but it is not a substitute for VM isolation or network policy. Tools and subagent delegation are capabilities of Hermes, but they are not part of the production trust boundary until an OrcaSynapse-reviewed distribution explicitly enables and verifies them.
+
+Node lifecycle is an execution boundary: Drain rejects new agent work while allowing already-submitted Hermes runs to finish; Suspend denies both new and active work; Resume restores admission only when the signed heartbeat and managed Hermes connection are healthy; Revoke permanently disables the node-scoped inference, Hermes, and Supermemory routes.
 
 ## Document lifecycle
 

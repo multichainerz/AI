@@ -17,6 +17,7 @@ import type {
   UpdateOnboardingStep,
   VerifyRecoveryKit,
 } from "@orcasynapse/contracts";
+import { ORCASYNAPSE_VERSION } from "@orcasynapse/contracts";
 import { Prisma, type OrcaSynapsePrismaClient } from "@orcasynapse/database";
 import {
   createCredentialRecoveryKit,
@@ -491,7 +492,7 @@ export class PrismaOnboardingManager implements OnboardingManager {
         { stageKey, componentKey: "node-runtime", outcome: contractOutcome(process.versions.node.startsWith("24.")), code: "node-runtime", summary: `OrcaSynapse is running on Node ${process.versions.node}; Production still requires the retained compatibility suite.`, observedVersion: process.versions.node },
         { stageKey, componentKey: "postgresql", outcome: contractOutcome(Boolean(versionRows[0]?.version)), code: "postgresql-connectivity", summary: versionRows[0]?.version ? "PostgreSQL accepted a live query through Prisma; Production still requires backup, restore, and upgrade evidence." : "PostgreSQL version could not be read.", ...(versionRows[0]?.version ? { observedVersion: versionRows[0].version.slice(0, 240) } : {}) },
         { stageKey, componentKey: "prisma-pg", outcome: contractOutcome(true), code: "prisma-database-path", summary: "Prisma and the PostgreSQL driver completed the onboarding query path; Production still requires pool, timeout, and drift evidence.", observedVersion: "7.9.1" },
-        { stageKey, componentKey: "fastify-api", outcome: contractOutcome(true), code: "api-runtime", summary: "The authenticated onboarding API is operational; Production still requires its retained contract and negative-security suite.", observedVersion: "0.1.0" },
+        { stageKey, componentKey: "fastify-api", outcome: contractOutcome(true), code: "api-runtime", summary: "The authenticated onboarding API is operational; Production still requires its retained contract and negative-security suite.", observedVersion: ORCASYNAPSE_VERSION },
         { stageKey, outcome: architecture.reason ? "PASSED" : "FAILED", code: "topology-decision", summary: architecture.reason ? `${architecture.topologyMode.toLowerCase().replaceAll("_", " ")} topology is recorded for ${architecture.targetEnvironment.toLowerCase()}.` : "Save a topology decision and rationale before validation." },
       ];
     }

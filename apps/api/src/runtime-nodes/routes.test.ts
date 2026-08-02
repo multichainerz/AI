@@ -65,6 +65,7 @@ function manager(): HermesRuntimeNodeManager {
         controlPlaneUrl: input.controlPlaneUrl,
         hermesBaseUrl: input.baseUrl,
         hermesImage: input.hermesImage,
+        supermemoryVersion: input.supermemoryVersion,
         expiresAt: "2026-07-30T00:30:00.000Z",
       },
     })),
@@ -76,6 +77,7 @@ function manager(): HermesRuntimeNodeManager {
       controlPlaneUrl: "https://orcasynapse.internal",
       hermesBaseUrl: node.baseUrl,
       hermesImage: "nousresearch/hermes-agent:latest",
+      supermemoryVersion: "latest",
       expiresAt: "2026-07-30T00:30:00.000Z",
     })),
     enroll: vi.fn(async () => ({
@@ -102,7 +104,7 @@ async function testApp(runtimeNodeManager = manager()) {
 }
 
 describe("Hermes runtime-node routes", () => {
-  it("serves the VM2 installer only after dashboard, inference, and invitation readiness", async () => {
+  it("serves the VM2 installer after dashboard and inference readiness so enrollment can resume", async () => {
     const runtimeNodeManager = manager();
     const { app } = await testApp(runtimeNodeManager);
     const ready = await app.inject({ method: "GET", url: "/install/hermes-node.sh" });
@@ -114,7 +116,6 @@ describe("Hermes runtime-node routes", () => {
     for (const state of [
       { ready: false, dashboardReady: false, inferenceReady: true, invitationReady: true },
       { ready: false, dashboardReady: true, inferenceReady: false, invitationReady: true },
-      { ready: false, dashboardReady: true, inferenceReady: true, invitationReady: false },
     ] as const) {
       runtimeNodeManager.installerReadiness = vi.fn(async () => state);
       const blocked = await app.inject({ method: "GET", url: "/install/hermes-node.sh" });
@@ -122,6 +123,11 @@ describe("Hermes runtime-node routes", () => {
       expect(blocked.json()).toMatchObject({ error: "AGENTIC_INSTALLER_UNAVAILABLE" });
       expect(blocked.body).not.toContain("#!/usr/bin/env bash");
     }
+
+    runtimeNodeManager.installerReadiness = vi.fn(async () => ({
+      ready: true, dashboardReady: true, inferenceReady: true, invitationReady: false,
+    }));
+    expect((await app.inject({ method: "GET", url: "/install/hermes-node.sh" })).statusCode).toBe(200);
   });
 
   it("protects fleet administration while allowing one-time node enrollment", async () => {

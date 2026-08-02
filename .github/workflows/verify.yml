@@ -30,7 +30,9 @@ jobs:
       - name: Validate installer scripts
         run: bash -n install.sh scripts/*.sh
       - name: Verify installer recovery paths
-        run: bash scripts/test-public-installer-recovery.sh
+        run: |
+          bash scripts/test-public-installer-recovery.sh
+          bash scripts/test-hermes-installer-recovery.sh
       - name: Verify Linux container secret access
         run: sudo bash scripts/test-installer-secret-permissions.sh
       - uses: pnpm/action-setup@v4

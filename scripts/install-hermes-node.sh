@@ -3,15 +3,20 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="ai-v1.12.0"
+INSTALLER_VERSION="ai-v1.13.0"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 CONTAINER_NAME="orcasynapse-hermes"
 HEARTBEAT_SERVICE="orcasynapse-hermes-heartbeat"
 SUPERMEMORY_ROOT="${ORCASYNAPSE_SUPERMEMORY_STATE_ROOT:-/var/lib/orcasynapse-supermemory}"
 SUPERMEMORY_SERVICE="orcasynapse-supermemory"
 SUPERMEMORY_USER="orcasynapse-supermemory"
+SUPERMEMORY_EMBEDDING_MODEL="Xenova/bge-m3"
+SUPERMEMORY_EMBEDDING_DIMENSIONS="1024"
+SUPERMEMORY_START_TIMEOUT_SECONDS=600
+ENROLLMENT_STATE="${STATE_ROOT}/enrollment-state.json"
 TEMPORARY_FILES=()
 RESOLVED_BUNDLE=""
+INSTALLATION_COMPLETED=0
 
 if [[ -t 1 && "${TERM:-dumb}" != "dumb" ]]; then
   UI_INTERACTIVE=1
@@ -138,11 +143,17 @@ fail() {
 }
 
 cleanup() {
+  local status=$?
   (( UI_INTERACTIVE )) && printf '\033[?25h'
   local file
   for file in "${TEMPORARY_FILES[@]:-}"; do
     [[ -z "${file}" || ! -e "${file}" ]] || rm -f -- "${file}"
   done
+  if (( status != 0 )) && [[ -s "${ENROLLMENT_STATE}" ]] && (( INSTALLATION_COMPLETED == 0 )); then
+    printf '\n%b[RECOVERY]%b Protected enrollment state was retained. Rerun the same installer command to resume safely.\n' \
+      "${UI_AMBER}${UI_BOLD}" "${UI_RESET}" >&2
+  fi
+  return "${status}"
 }
 trap cleanup EXIT
 
@@ -183,6 +194,7 @@ validate_bundle() {
     (.controlPlaneUrl | test("^https?://")) and
     (.hermesBaseUrl | test("^https?://")) and
     (.hermesImage | type == "string" and length >= 3) and
+    (.supermemoryVersion | type == "string" and length > 0) and
     (.expiresAt | type == "string")
   ' "${bundle}" >/dev/null || fail "the enrollment bundle is incomplete"
 
@@ -190,6 +202,34 @@ validate_bundle() {
   expires_at="$(jq -r '.expiresAt' "${bundle}")"
   expires_epoch="$(date --date="${expires_at}" '+%s' 2>/dev/null)" || fail "the enrollment expiry is invalid"
   (( expires_epoch > $(date '+%s') )) || fail "the enrollment bundle has expired; issue a new invitation in OrcaSynapse"
+}
+
+validate_resume_state() {
+  local state_file="$1"
+  [[ -r "${state_file}" ]] || return 1
+  jq -e '
+    (.format == "orcasynapse-hermes-resume/v1") and
+    (.nodeId | type == "string" and length > 0) and
+    (.controlPlaneUrl | test("^https?://")) and
+    (.hermesBaseUrl | test("^https?://")) and
+    (.hermesImage | type == "string" and length > 0) and
+    (.supermemoryVersion | type == "string" and length > 0) and
+    (.hostname | type == "string" and length > 0) and
+    (.apiKey | type == "string" and length >= 32) and
+    (.modelBootstrap.baseUrl | test("^https?://")) and
+    (.modelBootstrap.modelAlias | type == "string" and length > 0) and
+    (.modelBootstrap.apiKey | type == "string" and length > 0)
+  ' "${state_file}" >/dev/null
+}
+
+supermemory_release_matches() {
+  local requested_version="$1" installed_version="$2"
+  [[ "${requested_version}" == "latest" || "${installed_version#v}" == "${requested_version#v}" ]]
+}
+
+normalize_supermemory_release() {
+  local requested_version="$1"
+  [[ "${requested_version}" == "latest" ]] && printf 'latest' || printf '%s' "${requested_version#v}"
 }
 
 resolve_bundle_from_orcasynapse() {
@@ -246,17 +286,18 @@ sign_node_payload() {
 
 install_supermemory_binary() {
   local requested_version="$1" install_dir="$2" bin_dir="$3"
+  local install_target
+  install_target="$(normalize_supermemory_release "${requested_version}")"
   curl -fsSL https://supermemory.ai/install \
     | SUPERMEMORY_INSTALL_DIR="${install_dir}" \
       SUPERMEMORY_BIN_DIR="${bin_dir}" \
       SUPERMEMORY_NO_START=1 \
       SUPERMEMORY_NO_PROMPT=1 \
-      bash -s -- "${requested_version}"
+      bash -s -- "${install_target}"
 }
 
 install_supermemory() {
-  local inference_base_url="$1" model_alias="$2" gateway_key="$3"
-  local requested_version="${ORCASYNAPSE_SUPERMEMORY_VERSION:-latest}"
+  local inference_base_url="$1" model_alias="$2" gateway_key="$3" requested_version="$4"
   local install_dir="${SUPERMEMORY_ROOT}/install"
   local bin_dir="${SUPERMEMORY_ROOT}/bin"
 
@@ -266,9 +307,18 @@ install_supermemory() {
   install -d -m 0750 -o "${SUPERMEMORY_USER}" -g "${SUPERMEMORY_USER}" \
     "${SUPERMEMORY_ROOT}" "${SUPERMEMORY_ROOT}/data" "${install_dir}" "${bin_dir}"
 
-  run_with_spinner "Install Supermemory Local (${requested_version})" \
-    install_supermemory_binary "${requested_version}" "${install_dir}" "${bin_dir}" \
-    || fail "Supermemory Local installation failed"
+  if [[ -x "${install_dir}/bin/supermemory-server" && -s "${install_dir}/bin/supermemory-server.version" ]]; then
+    local installed_version
+    installed_version="$(<"${install_dir}/bin/supermemory-server.version")"
+    if ! supermemory_release_matches "${requested_version}" "${installed_version}"; then
+      fail "the retained Supermemory release '${installed_version}' does not match the dashboard-pinned release '${requested_version}'"
+    fi
+    info "Reusing the protected Supermemory Local installation already present on this node."
+  else
+    run_with_spinner "Install Supermemory Local (${requested_version})" \
+      install_supermemory_binary "${requested_version}" "${install_dir}" "${bin_dir}" \
+      || fail "Supermemory Local installation failed"
+  fi
   chown -R "${SUPERMEMORY_USER}:${SUPERMEMORY_USER}" "${SUPERMEMORY_ROOT}"
 
   install -m 0600 -o "${SUPERMEMORY_USER}" -g "${SUPERMEMORY_USER}" /dev/stdin "${SUPERMEMORY_ROOT}/runtime.env" <<EOF
@@ -280,6 +330,8 @@ OPENAI_TEXT_MODEL=${model_alias}
 SUPERMEMORY_DATA_DIR=${SUPERMEMORY_ROOT}/data
 SUPERMEMORY_PORT=6767
 SUPERMEMORY_EMBEDDING_PROVIDER=local
+SUPERMEMORY_EMBEDDING_MODEL=${SUPERMEMORY_EMBEDDING_MODEL}
+SUPERMEMORY_EMBEDDING_DIMENSIONS=${SUPERMEMORY_EMBEDDING_DIMENSIONS}
 SUPERMEMORY_DISABLE_TELEMETRY=1
 EOF
 
@@ -307,29 +359,35 @@ ReadWritePaths=${SUPERMEMORY_ROOT}
 [Install]
 WantedBy=multi-user.target
 EOF
+  info "Supermemory will download and prewarm ${SUPERMEMORY_EMBEDDING_MODEL} locally on VM2."
   systemctl daemon-reload
   systemctl enable --now "${SUPERMEMORY_SERVICE}.service"
 
-  local deadline=$((SECONDS + 180))
+  local deadline=$((SECONDS + SUPERMEMORY_START_TIMEOUT_SECONDS))
   until curl --fail --silent --max-time 5 http://127.0.0.1:6767/health >/dev/null 2>&1; do
     if (( SECONDS >= deadline )); then
       journalctl -u "${SUPERMEMORY_SERVICE}.service" --no-pager -n 100 >&2 || true
-      fail "Supermemory Local did not become healthy within three minutes"
+      fail "Supermemory Local did not become healthy within ten minutes"
     fi
     sleep 2
   done
 
   local memory_api_key=""
-  while [[ -z "${memory_api_key}" && ${SECONDS} -lt ${deadline} ]]; do
-    memory_api_key="$(journalctl -u "${SUPERMEMORY_SERVICE}.service" --no-pager -o cat 2>/dev/null \
-      | grep -Eo 'sm_[A-Za-z0-9_-]{20,}' | tail -1 || true)"
-    [[ -n "${memory_api_key}" ]] || sleep 1
-  done
+  if [[ -s "${SUPERMEMORY_ROOT}/api-key" ]]; then
+    memory_api_key="$(<"${SUPERMEMORY_ROOT}/api-key")"
+  else
+    local key_deadline=$((SECONDS + 120))
+    while [[ -z "${memory_api_key}" && ${SECONDS} -lt ${key_deadline} ]]; do
+      memory_api_key="$(journalctl -u "${SUPERMEMORY_SERVICE}.service" --no-pager -o cat 2>/dev/null \
+        | grep -Eo 'sm_[A-Za-z0-9_-]{20,}' | tail -1 || true)"
+      [[ -n "${memory_api_key}" ]] || sleep 1
+    done
+  fi
   [[ -n "${memory_api_key}" ]] || fail "Supermemory Local started but its first-boot API key could not be captured"
   printf '%s' "${memory_api_key}" > "${SUPERMEMORY_ROOT}/api-key"
   chown root:root "${SUPERMEMORY_ROOT}/api-key"
   chmod 0600 "${SUPERMEMORY_ROOT}/api-key"
-  success "Supermemory Local is healthy and its API key is protected."
+  success "Supermemory Local is healthy with ${SUPERMEMORY_EMBEDDING_MODEL} (${SUPERMEMORY_EMBEDDING_DIMENSIONS} dimensions)."
 }
 
 wait_for_hermes() {
@@ -436,43 +494,70 @@ main() {
   install_host_dependencies
   success "Docker, OpenSSL, curl, and jq are ready."
 
-  step 2 7 "Resolve the one-time enrollment"
-  local bundle
-  if [[ "$#" -eq 1 && "$1" != "--connect" ]]; then
-    bundle="$(realpath "$1")"
-  elif [[ "$#" -eq 2 && "$1" == "--connect" ]]; then
-    resolve_bundle_from_orcasynapse "$2"
-    bundle="${RESOLVED_BUNDLE}"
+  step 2 7 "Resolve or resume the protected enrollment"
+  local bundle="" resuming=0
+  local node_id token control_plane_url hermes_base_url hermes_image supermemory_release hostname_value public_key api_key
+  if [[ -s "${ENROLLMENT_STATE}" ]]; then
+    validate_resume_state "${ENROLLMENT_STATE}" || fail "the protected enrollment recovery state is invalid"
+    resuming=1
+    node_id="$(jq -r '.nodeId' "${ENROLLMENT_STATE}")"
+    control_plane_url="$(jq -r '.controlPlaneUrl' "${ENROLLMENT_STATE}" | sed 's:/*$::')"
+    hermes_base_url="$(jq -r '.hermesBaseUrl' "${ENROLLMENT_STATE}" | sed 's:/*$::')"
+    hermes_image="$(jq -r '.hermesImage' "${ENROLLMENT_STATE}")"
+    supermemory_release="$(jq -r '.supermemoryVersion' "${ENROLLMENT_STATE}")"
+    hostname_value="$(jq -r '.hostname' "${ENROLLMENT_STATE}")"
+    api_key="$(jq -r '.apiKey' "${ENROLLMENT_STATE}")"
+    if [[ "$#" -eq 2 && "$1" == "--connect" ]]; then
+      [[ "${2%/}" == "${control_plane_url}" ]] || fail "the resume command points to a different OrcaSynapse origin"
+    elif [[ "$#" -eq 1 && "$1" != "--connect" ]]; then
+      [[ -r "$1" ]] || fail "the original enrollment bundle is not readable"
+      [[ "$(jq -r '.nodeId // empty' "$1")" == "${node_id}" ]] \
+        || fail "the enrollment bundle belongs to a different runtime node"
+    else
+      fail "resume with the same --connect command or the original enrollment-bundle path"
+    fi
+    success "Protected enrollment state found; continuing without another claim."
   else
-    fail "usage: install-hermes-node.sh <enrollment-bundle.json> | install-hermes-node.sh --connect <OrcaSynapse-origin>"
+    [[ ! -e "${STATE_ROOT}/node-id" ]] || fail "this host is already enrolled; revoke it in OrcaSynapse before rebuilding the node"
+    if [[ "$#" -eq 1 && "$1" != "--connect" ]]; then
+      bundle="$(realpath "$1")"
+    elif [[ "$#" -eq 2 && "$1" == "--connect" ]]; then
+      resolve_bundle_from_orcasynapse "$2"
+      bundle="${RESOLVED_BUNDLE}"
+    else
+      fail "usage: install-hermes-node.sh <enrollment-bundle.json> | install-hermes-node.sh --connect <OrcaSynapse-origin>"
+    fi
+    validate_bundle "${bundle}"
+    node_id="$(jq -r '.nodeId' "${bundle}")"
+    token="$(jq -r '.token' "${bundle}")"
+    control_plane_url="$(jq -r '.controlPlaneUrl' "${bundle}" | sed 's:/*$::')"
+    hermes_base_url="$(jq -r '.hermesBaseUrl' "${bundle}" | sed 's:/*$::')"
+    hermes_image="$(jq -r '.hermesImage' "${bundle}")"
+    supermemory_release="$(jq -r '.supermemoryVersion' "${bundle}")"
+    hostname_value="$(hostname --fqdn 2>/dev/null || hostname)"
+    docker inspect "${CONTAINER_NAME}" >/dev/null 2>&1 && fail "a container named '${CONTAINER_NAME}' already exists without resumable enrollment state"
+    success "Enrollment bundle is valid, unexpired, and bound to OrcaSynapse."
   fi
-  validate_bundle "${bundle}"
-  success "Enrollment bundle is valid, unexpired, and bound to OrcaSynapse."
-
-  [[ ! -e "${STATE_ROOT}/node-id" ]] || fail "this host is already enrolled; revoke it in OrcaSynapse before rebuilding the node"
-  docker inspect "${CONTAINER_NAME}" >/dev/null 2>&1 && fail "a container named '${CONTAINER_NAME}' already exists"
-
-  local node_id token control_plane_url hermes_base_url hermes_image hostname_value public_key api_key
-  node_id="$(jq -r '.nodeId' "${bundle}")"
-  token="$(jq -r '.token' "${bundle}")"
-  control_plane_url="$(jq -r '.controlPlaneUrl' "${bundle}" | sed 's:/*$::')"
-  hermes_base_url="$(jq -r '.hermesBaseUrl' "${bundle}" | sed 's:/*$::')"
-  hermes_image="$(jq -r '.hermesImage' "${bundle}")"
-  hostname_value="$(hostname --fqdn 2>/dev/null || hostname)"
 
   step 3 7 "Create the node identity"
-  info "Generating an Ed25519 identity locally; the private key never leaves VM2."
   install -d -m 0700 "${STATE_ROOT}" "${STATE_ROOT}/identity"
   # Hermes managed scope is a root-owned, read-only policy layer. The
   # container receives it at /etc/hermes so users cannot override the exact
   # OrcaSynapse-pinned model route and baseline guardrails through /opt/data.
   install -d -m 0755 "${STATE_ROOT}/managed"
   install -d -m 0750 -o 10000 -g 10000 "${STATE_ROOT}/data"
-  openssl genpkey -algorithm ED25519 -out "${STATE_ROOT}/identity/node.key"
-  chmod 0600 "${STATE_ROOT}/identity/node.key"
-  openssl pkey -in "${STATE_ROOT}/identity/node.key" -pubout -out "${STATE_ROOT}/identity/node.pub"
+  if (( resuming )); then
+    [[ -s "${STATE_ROOT}/identity/node.key" && -s "${STATE_ROOT}/identity/node.pub" ]] \
+      || fail "the retained enrollment state is missing its node identity"
+    info "Reusing the protected Ed25519 identity created before enrollment."
+  else
+    info "Generating an Ed25519 identity locally; the private key never leaves VM2."
+    openssl genpkey -algorithm ED25519 -out "${STATE_ROOT}/identity/node.key"
+    chmod 0600 "${STATE_ROOT}/identity/node.key"
+    openssl pkey -in "${STATE_ROOT}/identity/node.key" -pubout -out "${STATE_ROOT}/identity/node.pub"
+    api_key="$(openssl rand -hex 32)"
+  fi
   public_key="$(<"${STATE_ROOT}/identity/node.pub")"
-  api_key="$(openssl rand -hex 32)"
   success "Node identity and protected runtime state created."
 
   install -m 0600 /dev/stdin "${STATE_ROOT}/data/.env" <<EOF
@@ -484,9 +569,15 @@ EOF
   chown 10000:10000 "${STATE_ROOT}/data/.env"
 
   step 4 7 "Start the hardened Hermes runtime"
-  run_with_spinner "Pull approved Hermes image" docker pull "${hermes_image}" \
-    || fail "could not pull the approved Hermes image '${hermes_image}'"
-  run_with_spinner "Launch hardened Hermes container" docker run -d \
+  if docker inspect "${CONTAINER_NAME}" >/dev/null 2>&1; then
+    (( resuming )) || fail "a container named '${CONTAINER_NAME}' already exists"
+    docker start "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+    run_with_spinner "Verify retained Hermes runtime" wait_for_hermes 0 \
+      || fail "the retained Hermes runtime is not healthy"
+  else
+    run_with_spinner "Pull approved Hermes image" docker pull "${hermes_image}" \
+      || fail "could not pull the approved Hermes image '${hermes_image}'"
+    run_with_spinner "Launch hardened Hermes container" docker run -d \
     --name "${CONTAINER_NAME}" \
     --restart unless-stopped \
     --memory "${HERMES_MEMORY_LIMIT:-4g}" \
@@ -509,19 +600,32 @@ EOF
     -v "${STATE_ROOT}/data:/opt/data" \
     -v "${STATE_ROOT}/managed:/etc/hermes:ro" \
     -p 8642:8642 \
-    "${hermes_image}" gateway run \
-    || fail "the hardened Hermes container could not start"
+      "${hermes_image}" gateway run \
+      || fail "the hardened Hermes container could not start"
 
-  run_with_spinner "Verify Hermes runtime health" wait_for_hermes 1 \
-    || fail "Hermes did not become healthy within three minutes"
+    run_with_spinner "Verify Hermes runtime health" wait_for_hermes 1 \
+      || fail "Hermes did not become healthy within three minutes"
+  fi
 
   step 5 7 "Enroll with the OrcaSynapse control plane"
-  info "Registering the public node identity and requesting the approved inference route."
-  local request_file response_file http_status
-  request_file="$(mktemp)"
-  response_file="$(mktemp)"
-  TEMPORARY_FILES+=("${request_file}" "${response_file}")
-  jq -n \
+  local model_base_url_json model_alias_json model_api_key_json
+  local model_base_url model_alias model_api_key
+  if (( resuming )); then
+    model_base_url_json="$(jq -c '.modelBootstrap.baseUrl' "${ENROLLMENT_STATE}")"
+    model_alias_json="$(jq -c '.modelBootstrap.modelAlias' "${ENROLLMENT_STATE}")"
+    model_api_key_json="$(jq -c '.modelBootstrap.apiKey' "${ENROLLMENT_STATE}")"
+    model_base_url="$(jq -r '.modelBootstrap.baseUrl' "${ENROLLMENT_STATE}")"
+    model_alias="$(jq -r '.modelBootstrap.modelAlias' "${ENROLLMENT_STATE}")"
+    model_api_key="$(jq -r '.modelBootstrap.apiKey' "${ENROLLMENT_STATE}")"
+    success "Enrollment is already complete; recovered its scoped inference configuration."
+  else
+    info "Registering the public node identity and requesting the approved inference route."
+    local request_file response_file http_status resume_file
+    request_file="$(mktemp)"
+    response_file="$(mktemp)"
+    resume_file="$(mktemp)"
+    TEMPORARY_FILES+=("${request_file}" "${response_file}" "${resume_file}")
+    jq -n \
     --arg nodeId "${node_id}" \
     --arg token "${token}" \
     --arg hostname "${hostname_value}" \
@@ -535,29 +639,37 @@ EOF
   http_status="$(curl --silent --show-error --output "${response_file}" --write-out '%{http_code}' --max-time 30 \
     -H 'Content-Type: application/json' --data-binary "@${request_file}" \
     "${control_plane_url}/api/v1/runtime-nodes/enroll")"
-  if [[ "${http_status}" != "200" ]]; then
-    docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
-    fail "OrcaSynapse rejected enrollment (HTTP ${http_status}): $(jq -r '.message // "unknown error"' "${response_file}" 2>/dev/null)"
-  fi
+    if [[ "${http_status}" != "200" ]]; then
+      docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+      fail "OrcaSynapse rejected enrollment (HTTP ${http_status}): $(jq -r '.message // "unknown error"' "${response_file}" 2>/dev/null)"
+    fi
 
-  jq -e '
+    jq -e '
     (.modelBootstrap.provider == "custom") and
     (.modelBootstrap.baseUrl | test("^https?://")) and
     (.modelBootstrap.modelAlias | type == "string" and length > 0) and
     (.modelBootstrap.apiKey | type == "string" and length > 0)
-  ' "${response_file}" >/dev/null || fail "OrcaSynapse enrollment omitted its approved inference-gateway route"
-  local model_base_url_json model_alias_json model_api_key_json
-  model_base_url_json="$(jq -c '.modelBootstrap.baseUrl' "${response_file}")"
-  model_alias_json="$(jq -c '.modelBootstrap.modelAlias' "${response_file}")"
-  model_api_key_json="$(jq -c '.modelBootstrap.apiKey' "${response_file}")"
-  local model_base_url model_alias model_api_key
-  model_base_url="$(jq -r '.modelBootstrap.baseUrl' "${response_file}")"
-  model_alias="$(jq -r '.modelBootstrap.modelAlias' "${response_file}")"
-  model_api_key="$(jq -r '.modelBootstrap.apiKey' "${response_file}")"
-  success "Node enrolled and scoped inference configuration received."
+    ' "${response_file}" >/dev/null || fail "OrcaSynapse enrollment omitted its approved inference-gateway route"
+    model_base_url_json="$(jq -c '.modelBootstrap.baseUrl' "${response_file}")"
+    model_alias_json="$(jq -c '.modelBootstrap.modelAlias' "${response_file}")"
+    model_api_key_json="$(jq -c '.modelBootstrap.apiKey' "${response_file}")"
+    model_base_url="$(jq -r '.modelBootstrap.baseUrl' "${response_file}")"
+    model_alias="$(jq -r '.modelBootstrap.modelAlias' "${response_file}")"
+    model_api_key="$(jq -r '.modelBootstrap.apiKey' "${response_file}")"
+    jq -n \
+      --arg nodeId "${node_id}" --arg controlPlaneUrl "${control_plane_url}" \
+      --arg hermesBaseUrl "${hermes_base_url}" --arg hermesImage "${hermes_image}" \
+      --arg supermemoryVersion "${supermemory_release}" \
+      --arg hostname "${hostname_value}" --arg apiKey "${api_key}" \
+      --argjson modelBootstrap "$(jq -c '.modelBootstrap' "${response_file}")" \
+      '{format:"orcasynapse-hermes-resume/v1",nodeId:$nodeId,controlPlaneUrl:$controlPlaneUrl,hermesBaseUrl:$hermesBaseUrl,hermesImage:$hermesImage,supermemoryVersion:$supermemoryVersion,hostname:$hostname,apiKey:$apiKey,modelBootstrap:$modelBootstrap}' \
+      > "${resume_file}"
+    install -m 0600 -o root -g root "${resume_file}" "${ENROLLMENT_STATE}"
+    success "Node enrolled; protected recovery state was saved before continuing."
+  fi
 
   step 6 7 "Install memory and managed policy"
-  install_supermemory "${model_base_url}" "${model_alias}" "${model_api_key}"
+  install_supermemory "${model_base_url}" "${model_alias}" "${model_api_key}" "${supermemory_release}"
   local supermemory_api_key supermemory_version runtime_authority runtime_host supermemory_base_url
   supermemory_api_key="$(<"${SUPERMEMORY_ROOT}/api-key")"
   supermemory_version="$(<"${SUPERMEMORY_ROOT}/install/bin/supermemory-server.version")"
@@ -580,7 +692,7 @@ EOF
   install -m 0644 -o root -g root /dev/stdin "${STATE_ROOT}/managed/config.yaml" <<EOF
 model:
   provider: custom
-  model: ${model_alias_json}
+  default: ${model_alias_json}
   base_url: ${model_base_url_json}
   api_key: \${OPENAI_API_KEY}
 # Hermes otherwise falls back to its broad api_server platform preset. Keep
@@ -658,6 +770,8 @@ EOF
   local node_fingerprint
   node_fingerprint="$(openssl pkey -pubin -in "${STATE_ROOT}/identity/node.pub" -outform DER | sha256sum | awk '{print $1}')"
   success "Signed heartbeat monitoring is active."
+  rm -f -- "${ENROLLMENT_STATE}"
+  INSTALLATION_COMPLETED=1
 
   printf '\n%b+======================================================================+%b\n' "${UI_GREEN}${UI_BOLD}" "${UI_RESET}"
   printf '%b|  %-68s|%b\n' "${UI_GREEN}${UI_BOLD}" "AGENTIC SYSTEM IS READY" "${UI_RESET}"

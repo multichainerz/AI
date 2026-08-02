@@ -9,12 +9,24 @@ import {
 
 describe("Hermes runtime-node contracts", () => {
   it("accepts a bounded one-time invitation definition", () => {
-    expect(createHermesNodeInvitationSchema.safeParse({
+    const invitation = createHermesNodeInvitationSchema.safeParse({
       slug: "hermes-runtime-01",
       displayName: "Hermes Runtime 01",
       baseUrl: "http://10.0.0.12:8642",
       controlPlaneUrl: "https://orcasynapse.internal",
       hermesImage: `nousresearch/hermes-agent@sha256:${"a".repeat(64)}`,
+      supermemoryVersion: "v1.2.3",
+      expiresInMinutes: 30,
+    });
+    expect(invitation.success).toBe(true);
+    if (invitation.success) expect(invitation.data.supermemoryVersion).toBe("v1.2.3");
+    expect(createHermesNodeInvitationSchema.safeParse({
+      slug: "hermes-runtime-mirror",
+      displayName: "Hermes Runtime Mirror",
+      baseUrl: "http://10.0.0.13:8642",
+      controlPlaneUrl: "https://orcasynapse.internal",
+      hermesImage: `registry.internal:5000/nous/hermes:accepted@sha256:${"b".repeat(64)}`,
+      supermemoryVersion: "0.0.5",
       expiresInMinutes: 30,
     }).success).toBe(true);
     expect(createHermesNodeInvitationSchema.safeParse({
@@ -23,6 +35,7 @@ describe("Hermes runtime-node contracts", () => {
       baseUrl: "ssh://10.0.0.12",
       controlPlaneUrl: "https://orcasynapse.internal",
       hermesImage: "nousresearch/hermes-agent",
+      supermemoryVersion: "rolling",
     }).success).toBe(false);
     expect(createHermesNodeInvitationSchema.safeParse({
       slug: "hermes-runtime-01",

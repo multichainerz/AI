@@ -47,6 +47,7 @@ function defaultForm(): CreateHermesNodeInvitation {
     baseUrl: "http://10.0.0.12:8642",
     controlPlaneUrl: typeof window === "undefined" ? "https://orcasynapse.internal" : window.location.origin,
     hermesImage: "nousresearch/hermes-agent:latest",
+    supermemoryVersion: "latest",
     expiresInMinutes: 30,
   };
 }
@@ -64,7 +65,10 @@ export function RuntimeNodesPanel({
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const unpinned = !form.hermesImage.includes("@sha256:");
+  const unpinnedSupermemory = form.supermemoryVersion === "latest";
   const insecureControlPlane = !form.controlPlaneUrl.startsWith("https://");
+  const productionArtifactBlocked = targetEnvironment === "PRODUCTION"
+    && (unpinned || unpinnedSupermemory || insecureControlPlane);
   const activeRuntimeExists = nodes.some((node) => node.enrolledAt && node.status !== "REVOKED");
 
   const fail = (cause: unknown) => {
@@ -114,7 +118,7 @@ export function RuntimeNodesPanel({
     try {
       await mutateHermesRuntimeNode(node.id, {
         action,
-        reason: `${action === "REVOKE" ? "Revoked" : "Changed"} by the OrcaSynapse runtime-fleet administrator.`,
+        reason: `${action === "DRAIN" ? "New work drained" : action === "SUSPEND" ? "Execution suspended" : action === "RESUME" ? "Run admission resumed" : "Permanently revoked"} by the OrcaSynapse runtime-fleet administrator.`,
         expectedRevision: node.revision,
       });
       await load();
@@ -148,7 +152,8 @@ export function RuntimeNodesPanel({
         <div className="runtime-node-copy"><div><strong>{node.displayName}</strong><span className={`document-status ${nodeTone(node.status)}`}>{humanize(node.status)}</span></div><p>{node.baseUrl}</p><small>{node.hostname ?? node.expectedHostname ?? "Awaiting hostname"} · {node.hermesVersion ?? "Version pending"}</small></div>
         <dl><div><dt>Last heartbeat</dt><dd>{node.lastSeenAt ? new Date(node.lastSeenAt).toLocaleString() : "Never"}</dd></div><div><dt>OrcaSynapse → Hermes</dt><dd>{node.serviceConnectionStatus ? humanize(node.serviceConnectionStatus) : "Pending"}</dd></div><div><dt>Identity</dt><dd>{node.identityFingerprint ? `${node.identityFingerprint.slice(0, 12)}…` : "Not enrolled"}</dd></div></dl>
         <div className="runtime-node-actions">
-          {node.status === "DRAINING" || node.status === "SUSPENDED" || node.status === "OFFLINE" ? <button className="text-button" type="button" disabled={busy !== null} onClick={() => void act(node, "RESUME")}>Resume</button> : <button className="text-button" type="button" disabled={busy !== null || node.status === "PENDING"} onClick={() => void act(node, "DRAIN")}>Drain</button>}
+          {node.status === "DRAINING" || node.status === "SUSPENDED" ? <button className="text-button" type="button" disabled={busy !== null} onClick={() => void act(node, "RESUME")}>Resume</button> : <button className="text-button" type="button" disabled={busy !== null || node.status === "PENDING" || node.status === "OFFLINE"} onClick={() => void act(node, "DRAIN")}>Drain</button>}
+          {!["PENDING", "SUSPENDED", "REVOKED"].includes(node.status) && <button className="text-button danger" type="button" disabled={busy !== null} onClick={() => { if (window.confirm(`Suspend ${node.displayName}? Active work will be stopped and new work will be denied until you resume it.`)) void act(node, "SUSPEND"); }}>Suspend</button>}
           {node.status !== "REVOKED" && <button className="text-button danger" type="button" disabled={busy !== null} onClick={() => { if (window.confirm(`Permanently revoke ${node.displayName}? The node must be re-enrolled to reconnect.`)) void act(node, "REVOKE"); }}>Revoke</button>}
         </div>
       </article>)}</div>}
@@ -170,8 +175,9 @@ export function RuntimeNodesPanel({
         <label>Expected VM hostname <em>Optional</em><input maxLength={253} value={form.expectedHostname ?? ""} placeholder="hermes-01.internal" onChange={(event) => setForm({ ...form, expectedHostname: event.target.value })} /><small>When set, enrollment fails if VM2 reports a different hostname.</small></label>
         <label>OrcaSynapse address visible to VM2<input required type="url" value={form.controlPlaneUrl} onChange={(event) => setForm({ ...form, controlPlaneUrl: event.target.value })} /></label>
         <label>Hermes image<input required maxLength={500} value={form.hermesImage} onChange={(event) => setForm({ ...form, hermesImage: event.target.value })} /><small>Pin with <code>@sha256:…</code> after acceptance testing.</small></label>
-        {(unpinned || insecureControlPlane) && <div className="runtime-invite-warning"><strong>{targetEnvironment === "PRODUCTION" ? "Production hardening required" : "Pre-production warning"}</strong><ul>{unpinned && <li>The Hermes image is tagged, not digest-pinned.</li>}{insecureControlPlane && <li>The OrcaSynapse enrollment route uses HTTP rather than HTTPS.</li>}</ul></div>}
-        <footer><button className="secondary-button" type="button" onClick={() => setEditorOpen(false)}>Cancel</button><button className="primary-button" disabled={busy !== null} type="submit">{busy === "invite" ? "Issuing…" : "Issue one-time invitation"}</button></footer>
+        <label>Supermemory release<input required maxLength={120} pattern="(?:latest|v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)" value={form.supermemoryVersion} onChange={(event) => setForm({ ...form, supermemoryVersion: event.target.value })} /><small>Use <code>latest</code> only during development; Production requires an exact release.</small></label>
+        {(unpinned || unpinnedSupermemory || insecureControlPlane) && <div className="runtime-invite-warning"><strong>{targetEnvironment === "PRODUCTION" ? "Production hardening required" : "Pre-production warning"}</strong><ul>{unpinned && <li>The Hermes image is tagged, not digest-pinned.</li>}{unpinnedSupermemory && <li>The Supermemory release is not pinned.</li>}{insecureControlPlane && <li>The OrcaSynapse enrollment route uses HTTP rather than HTTPS.</li>}</ul></div>}
+        <footer><button className="secondary-button" type="button" onClick={() => setEditorOpen(false)}>Cancel</button><button className="primary-button" disabled={busy !== null || productionArtifactBlocked} type="submit">{busy === "invite" ? "Issuing…" : productionArtifactBlocked ? "Pin production artifacts" : "Issue one-time invitation"}</button></footer>
       </form> : <div className="runtime-install-steps">
         <div className="runtime-success-mark">✓</div><p>The enrollment claim expires <strong>{new Date(invitation.bundle.expiresAt).toLocaleString()}</strong> and can be used only once.</p>
         <ol><li><span>1</span><div><strong>Run one command on VM2</strong><small>OrcaSynapse serves the installer directly; it connects back only to this control-plane origin.</small><code>curl -fsSL {invitation.bundle.controlPlaneUrl}/install/hermes-node.sh | sudo bash -s -- --connect {invitation.bundle.controlPlaneUrl}</code></div></li><li><span>2</span><div><strong>Paste the claim when prompted</strong><small>The installer reads it from the terminal with hidden input and sends it in a redacted POST body—not in the URL or shell history.</small><code>{invitation.bundle.token}</code><button className="secondary-button" type="button" onClick={() => void navigator.clipboard.writeText(invitation.bundle.token)}>Copy claim</button></div></li><li><span>3</span><div><strong>Watch the node come online</strong><small>OrcaSynapse installs Hermes and Supermemory, applies the approved route and policy, then starts signed health reporting.</small><button className="secondary-button" type="button" onClick={downloadBundle}>Download JSON fallback</button></div></li></ol>

@@ -1,5 +1,6 @@
 import {
   healthResponseSchema,
+  ORCASYNAPSE_VERSION,
   platformMetaSchema,
   SERVICE_KINDS,
 } from "@orcasynapse/contracts";
@@ -147,7 +148,7 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
   app.get("/api/v1/platform", async () =>
     platformMetaSchema.parse({
       product: "OrcaSynapse",
-      version: "0.1.0",
+      version: ORCASYNAPSE_VERSION,
       phase: "streamlined on-prem acceptance candidate",
       configurationMode: "dashboard",
       bootstrapState: runtime.bootstrapState,

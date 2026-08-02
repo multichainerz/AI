@@ -162,6 +162,17 @@ function connectionEnvironment(target: "DEVELOPMENT" | "PILOT" | "PRODUCTION") {
   return "DEVELOPMENT" as const;
 }
 
+function productionArtifactViolation(
+  target: "DEVELOPMENT" | "PILOT" | "PRODUCTION" | undefined,
+  artifacts: { hermesImage: string | null; supermemoryVersion: string; controlPlaneUrl: string | null },
+): string | null {
+  if (target !== "PRODUCTION") return null;
+  if (!artifacts.hermesImage?.includes("@sha256:")) return "Production enrollment requires a digest-pinned Hermes image.";
+  if (artifacts.supermemoryVersion === "latest") return "Production enrollment requires an exact Supermemory release.";
+  if (!artifacts.controlPlaneUrl?.startsWith("https://")) return "Production enrollment requires an HTTPS OrcaSynapse origin.";
+  return null;
+}
+
 function parseIdentity(publicKeyPem: string): { normalizedPem: string; fingerprint: string } {
   try {
     const key = createPublicKey(publicKeyPem);
@@ -249,7 +260,10 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
     return {
       ...prerequisites,
       invitationReady,
-      ready: prerequisites.dashboardReady && prerequisites.inferenceReady && invitationReady,
+      // The installer contains no claim or reusable credential. Keep it
+      // available after enrollment so a partially installed node can rerun the
+      // exact same command and resume from its protected local journal.
+      ready: prerequisites.dashboardReady && prerequisites.inferenceReady,
     };
   }
 
@@ -261,6 +275,12 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
     if (!prerequisites.inferenceReady) {
       throw new RuntimeNodeConflictError("Configure and test exactly one healthy AI Inference route with a served model before enrolling Hermes.");
     }
+    const architecture = await this.prisma.platformArchitectureDecision.findUnique({
+      where: { id: "global" },
+      select: { targetEnvironment: true },
+    });
+    const productionViolation = productionArtifactViolation(architecture?.targetEnvironment, input);
+    if (productionViolation) throw new RuntimeNodeConflictError(productionViolation);
     const token = randomBytes(32).toString("base64url");
     const tokenHash = digest(token);
     const expiresAt = new Date(Date.now() + input.expiresInMinutes * 60_000);
@@ -301,6 +321,7 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
             tokenHash,
             controlPlaneUrl: input.controlPlaneUrl.replace(/\/$/, ""),
             hermesImage: input.hermesImage,
+            supermemoryVersion: input.supermemoryVersion,
             expiresAt,
             createdBy: principal.id,
           },
@@ -328,6 +349,7 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
           controlPlaneUrl: input.controlPlaneUrl.replace(/\/$/, ""),
           hermesBaseUrl: input.baseUrl.replace(/\/$/, ""),
           hermesImage: input.hermesImage,
+          supermemoryVersion: input.supermemoryVersion,
           expiresAt: expiresAt.toISOString(),
         },
       };
@@ -376,6 +398,7 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
       controlPlaneUrl: enrollment.controlPlaneUrl,
       hermesBaseUrl: enrollment.node.baseUrl,
       hermesImage: enrollment.hermesImage,
+      supermemoryVersion: enrollment.supermemoryVersion,
       expiresAt: enrollment.expiresAt.toISOString(),
     };
   }
@@ -438,6 +461,10 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
       };
 
       const architecture = await transaction.platformArchitectureDecision.findUnique({ where: { id: "global" } });
+      const productionViolation = productionArtifactViolation(architecture?.targetEnvironment, enrollment);
+      if (productionViolation) {
+        throw new RuntimeNodeEnrollmentError(productionViolation, "INVALID");
+      }
       const environment = connectionEnvironment(architecture?.targetEnvironment ?? "DEVELOPMENT");
       const connectionId = randomUUID();
       const configuration = {

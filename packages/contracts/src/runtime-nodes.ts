@@ -27,8 +27,12 @@ const runtimeOriginSchema = serviceEndpointSchema.regex(
   "Runtime service addresses must be origins without a path, query, or fragment.",
 );
 const imageReferenceSchema = z.string().trim().min(3).max(500).regex(
-  /^[a-zA-Z0-9._/-]+(?::[a-zA-Z0-9._-]+|@sha256:[a-f0-9]{64})$/,
+  /^(?:[a-zA-Z0-9.-]+(?::\d+)?\/)?(?:[a-zA-Z0-9._-]+\/)*[a-zA-Z0-9._-]+(?::[a-zA-Z0-9._-]+(?:@sha256:[a-f0-9]{64})?|@sha256:[a-f0-9]{64})$/,
   "Use a tagged or digest-pinned container image reference.",
+);
+const releaseVersionSchema = z.string().trim().min(1).max(120).regex(
+  /^(?:latest|v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)$/,
+  "Use 'latest' for development or an exact release version for controlled environments.",
 );
 
 export const hermesRuntimeNodeSchema = z.object({
@@ -64,6 +68,7 @@ export const createHermesNodeInvitationSchema = z.object({
   expectedHostname: z.string().trim().min(1).max(253).optional(),
   controlPlaneUrl: runtimeOriginSchema,
   hermesImage: imageReferenceSchema.default("nousresearch/hermes-agent:latest"),
+  supermemoryVersion: releaseVersionSchema.default("latest"),
   expiresInMinutes: z.number().int().min(10).max(1_440).default(30),
 }).strict();
 
@@ -75,6 +80,7 @@ export const hermesNodeEnrollmentBundleSchema = z.object({
   controlPlaneUrl: runtimeOriginSchema,
   hermesBaseUrl: runtimeOriginSchema,
   hermesImage: imageReferenceSchema,
+  supermemoryVersion: releaseVersionSchema,
   expiresAt: z.iso.datetime(),
 }).strict();
 
