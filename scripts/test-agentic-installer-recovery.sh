@@ -12,6 +12,7 @@ source "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 mkdir -p "${STATE_ROOT}/identity"
 openssl genpkey -algorithm ED25519 -out "${STATE_ROOT}/identity/node.key"
 openssl pkey -in "${STATE_ROOT}/identity/node.key" -pubout -out "${STATE_ROOT}/identity/node.pub"
+[[ "$(public_identity_fingerprint)" == "$(private_identity_fingerprint)" ]]
 signature_body='{"apiKey":"sm_test_registration_key_0123456789","baseUrl":"http://10.0.0.12:6767","observedVersion":"0.0.5"}'
 signature_timestamp='2026-08-03T00:00:00Z'
 signature_nonce='c634de85-7087-426a-b4f5-f4c2857f55c2'
@@ -66,6 +67,7 @@ jq -n \
     supermemoryVersion:"v1.2.3",
     hostname:"hermes-01.internal",
     apiKey:$apiKey,
+    identityFingerprint:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     modelBootstrap:{baseUrl:"https://orcasynapse.internal/internal/v1",modelAlias:"hermes-agent",apiKey:$gatewayKey}
   }' > "${valid_state}"
 
@@ -116,6 +118,8 @@ grep -Fq 'allow_lazy_installs: true' "${REPOSITORY_ROOT}/scripts/install-agentic
 grep -Fq 'allow_lazy_installs: false' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 grep -Fq 'activate_durable_lazy_target' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 grep -Fq 'Local identity fingerprint:' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq 'VM1 accepted the signed VM2 trust handshake.' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq 'The retained VM2 state and dashboard record no longer share the same trust binding.' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 if grep -Fq '/dev/stdin' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"; then
   printf 'Agentic System installer still depends on non-portable /dev/stdin file copies\n' >&2
   exit 1

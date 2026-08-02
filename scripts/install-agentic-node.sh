@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="ai-v1.15.4"
+INSTALLER_VERSION="ai-v1.15.5"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 CONTAINER_NAME="orcasynapse-hermes"
 HEARTBEAT_SERVICE="orcasynapse-hermes-heartbeat"
@@ -321,6 +321,7 @@ validate_resume_state() {
     (.supermemoryVersion | type == "string" and length > 0) and
     (.hostname | type == "string" and length > 0) and
     (.apiKey | type == "string" and length >= 32) and
+    ((.identityFingerprint == null) or (.identityFingerprint | test("^[a-f0-9]{64}$"))) and
     (.modelBootstrap.baseUrl | test("^https?://")) and
     (.modelBootstrap.modelAlias | type == "string" and length > 0) and
     (.modelBootstrap.apiKey | type == "string" and length > 0)
@@ -403,6 +404,55 @@ sign_node_payload() {
   rm -f -- "${message_file}"
   (( sign_status == 0 )) || return "${sign_status}"
   printf '%s' "${signature}"
+}
+
+public_identity_fingerprint() {
+  openssl pkey -pubin -in "${STATE_ROOT}/identity/node.pub" -outform DER 2>/dev/null \
+    | sha256sum \
+    | awk '{print $1}'
+}
+
+private_identity_fingerprint() {
+  openssl pkey -in "${STATE_ROOT}/identity/node.key" -pubout -outform DER 2>/dev/null \
+    | sha256sum \
+    | awk '{print $1}'
+}
+
+verify_enrolled_identity() {
+  local node_id="$1" control_plane_url="$2" hermes_image="$3" node_fingerprint="$4"
+  local observed_at node_status payload nonce signature response_file http_status response_error
+  node_status="DEGRADED"
+  if curl --fail --silent --max-time 5 http://127.0.0.1:8642/health >/dev/null; then
+    node_status="ONLINE"
+  fi
+  observed_at="$(date --utc '+%Y-%m-%dT%H:%M:%SZ')"
+  payload="$(jq -cS -n \
+    --arg observedAt "${observed_at}" \
+    --arg status "${node_status}" \
+    --arg version "${hermes_image}" \
+    '{observedAt:$observedAt,status:$status,hermesVersion:$version,capabilities:["gateway-api","signed-heartbeat"]}')"
+  nonce="$(cat /proc/sys/kernel/random/uuid)"
+  signature="$(sign_node_payload "${payload}" "${observed_at}" "${nonce}")"
+  response_file="$(mktemp)"
+  TEMPORARY_FILES+=("${response_file}")
+  http_status="$(curl --silent --show-error --output "${response_file}" --write-out '%{http_code}' --max-time 30 \
+    -H 'Content-Type: application/json' \
+    -H "X-OrcaSynapse-Node-Timestamp: ${observed_at}" \
+    -H "X-OrcaSynapse-Node-Nonce: ${nonce}" \
+    -H "X-OrcaSynapse-Node-Signature: ${signature}" \
+    --data-binary "${payload}" \
+    "${control_plane_url}/api/v1/runtime-nodes/${node_id}/heartbeat")"
+  if [[ "${http_status}" == "200" ]]; then
+    return 0
+  fi
+  response_error="$(jq -r '.message // .error // empty' "${response_file}" 2>/dev/null \
+    | LC_ALL=C tr -cd '[:print:]' || true)"
+  response_error="${response_error:0:400}"
+  [[ -n "${response_error}" ]] || response_error="The control plane returned no diagnostic message."
+  if [[ "${http_status}" == "401" ]]; then
+    fail "VM1 rejected the enrolled VM2 identity ${node_fingerprint} for node ${node_id}. The retained VM2 state and dashboard record no longer share the same trust binding. Revoke and decommission the stale Agentic System node in the dashboard, run 'curl -fsSL ${control_plane_url}/install/remove-agentic-node.sh | sudo bash' on VM2, then issue a fresh installer claim. Server response: ${response_error}"
+  fi
+  fail "VM1 could not verify the enrolled VM2 trust binding (HTTP ${http_status}): ${response_error}"
 }
 
 install_supermemory_binary() {
@@ -738,6 +788,7 @@ main() {
   step 2 7 "Resolve or resume the protected enrollment"
   local bundle="" resuming=0
   local node_id token control_plane_url hermes_base_url hermes_image supermemory_release hostname_value public_key api_key
+  local node_fingerprint private_fingerprint retained_fingerprint enrolled_fingerprint
   if [[ -s "${ENROLLMENT_STATE}" ]]; then
     validate_resume_state "${ENROLLMENT_STATE}" || fail "the protected enrollment recovery state is invalid"
     resuming=1
@@ -798,8 +849,20 @@ main() {
     openssl pkey -in "${STATE_ROOT}/identity/node.key" -pubout -out "${STATE_ROOT}/identity/node.pub"
     api_key="$(openssl rand -hex 32)"
   fi
+  node_fingerprint="$(public_identity_fingerprint)" \
+    || fail "the VM2 public identity is unreadable"
+  private_fingerprint="$(private_identity_fingerprint)" \
+    || fail "the VM2 private identity is unreadable"
+  [[ "${node_fingerprint}" == "${private_fingerprint}" ]] \
+    || fail "the retained VM2 private and public identity files do not belong to the same Ed25519 keypair"
+  if (( resuming )); then
+    retained_fingerprint="$(jq -r '.identityFingerprint // empty' "${ENROLLMENT_STATE}")"
+    if [[ -n "${retained_fingerprint}" && "${retained_fingerprint}" != "${node_fingerprint}" ]]; then
+      fail "the protected enrollment receipt belongs to identity ${retained_fingerprint}, but this VM2 now holds ${node_fingerprint}; do not continue with mixed trust state"
+    fi
+  fi
   public_key="$(<"${STATE_ROOT}/identity/node.pub")"
-  success "Node identity and protected runtime state created."
+  success "Node identity and protected runtime state verified (${node_fingerprint:0:16}...)."
 
   install_hermes_file_from_stdin 0600 "${STATE_ROOT}/data/.env" <<EOF
 API_SERVER_ENABLED=true
@@ -898,17 +961,24 @@ EOF
     model_base_url="$(jq -r '.modelBootstrap.baseUrl' "${response_file}")"
     model_alias="$(jq -r '.modelBootstrap.modelAlias' "${response_file}")"
     model_api_key="$(jq -r '.modelBootstrap.apiKey' "${response_file}")"
+    enrolled_fingerprint="$(jq -r '.node.identityFingerprint // empty' "${response_file}")"
+    [[ "${enrolled_fingerprint}" == "${node_fingerprint}" ]] \
+      || fail "OrcaSynapse enrolled identity '${enrolled_fingerprint:-missing}' instead of the VM2 identity '${node_fingerprint}'"
     jq -n \
       --arg nodeId "${node_id}" --arg controlPlaneUrl "${control_plane_url}" \
       --arg hermesBaseUrl "${hermes_base_url}" --arg hermesImage "${hermes_image}" \
       --arg supermemoryVersion "${supermemory_release}" \
       --arg hostname "${hostname_value}" --arg apiKey "${api_key}" \
+      --arg identityFingerprint "${node_fingerprint}" \
       --argjson modelBootstrap "$(jq -c '.modelBootstrap' "${response_file}")" \
-      '{format:"orcasynapse-hermes-resume/v1",nodeId:$nodeId,controlPlaneUrl:$controlPlaneUrl,hermesBaseUrl:$hermesBaseUrl,hermesImage:$hermesImage,supermemoryVersion:$supermemoryVersion,hostname:$hostname,apiKey:$apiKey,modelBootstrap:$modelBootstrap}' \
+      '{format:"orcasynapse-hermes-resume/v1",nodeId:$nodeId,controlPlaneUrl:$controlPlaneUrl,hermesBaseUrl:$hermesBaseUrl,hermesImage:$hermesImage,supermemoryVersion:$supermemoryVersion,hostname:$hostname,apiKey:$apiKey,identityFingerprint:$identityFingerprint,modelBootstrap:$modelBootstrap}' \
       > "${resume_file}"
     install -m 0600 -o root -g root "${resume_file}" "${ENROLLMENT_STATE}"
     success "Node enrolled; protected recovery state was saved before continuing."
   fi
+
+  verify_enrolled_identity "${node_id}" "${control_plane_url}" "${hermes_image}" "${node_fingerprint}"
+  success "VM1 accepted the signed VM2 trust handshake."
 
   step 6 7 "Install memory and managed policy"
   install_supermemory "${model_base_url}" "${model_alias}" "${model_api_key}" "${supermemory_release}"
@@ -976,7 +1046,6 @@ EOF
     -H "X-OrcaSynapse-Node-Signature: ${memory_signature}" \
     --data-binary "${memory_payload}" \
     "${control_plane_url}/api/v1/runtime-nodes/${node_id}/memory")"
-  node_fingerprint="$(openssl pkey -pubin -in "${STATE_ROOT}/identity/node.pub" -outform DER | sha256sum | awk '{print $1}')"
   if [[ "${memory_status}" != "200" ]]; then
     memory_error="$(jq -r '.message // .error // empty' "${memory_response_file}" 2>/dev/null \
       | LC_ALL=C tr -cd '[:print:]' || true)"
