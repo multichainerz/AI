@@ -44,4 +44,11 @@ fi
 grep -Fq 'default: ${model_alias_json}' "${REPOSITORY_ROOT}/scripts/install-hermes-node.sh"
 grep -Fq 'local key_deadline=' "${REPOSITORY_ROOT}/scripts/install-hermes-node.sh"
 
+piped_output="$(
+  sed 's/^  main .*$/  printf '\''piped entrypoint invoked\\n'\''/' \
+    "${REPOSITORY_ROOT}/scripts/install-hermes-node.sh" \
+    | bash -s -- --connect https://orcasynapse.internal
+)"
+[[ "${piped_output}" == "piped entrypoint invoked" ]]
+
 printf 'Hermes installer recovery checks passed.\n'
