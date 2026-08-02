@@ -52,6 +52,12 @@ enum AdministratorRole {
   AUDITOR
 }
 
+enum AdministratorAuthenticationMethod {
+  LOCAL_PASSWORD
+  INSTALLATION_KEY_RECOVERY
+  OIDC
+}
+
 enum ChatConversationStatus {
   ACTIVE
   ARCHIVED
@@ -314,10 +320,30 @@ model AdministratorSession {
   revokedAt         DateTime?         @db.Timestamptz(6)
   sourceIp          String?           @db.Inet
   userAgentHash     String?           @db.VarChar(64)
+  authenticationMethod AdministratorAuthenticationMethod @default(LOCAL_PASSWORD)
+  passwordChangeRequired Boolean      @default(false)
 
   @@index([revokedAt, idleExpiresAt])
   @@index([absoluteExpiresAt])
   @@index([subject, createdAt])
+}
+
+model LocalAdministrator {
+  id                     String            @id @default(uuid()) @db.Uuid
+  username               String            @unique @db.VarChar(64)
+  displayName            String            @db.VarChar(120)
+  passwordHash           String            @db.Text
+  role                   AdministratorRole @default(PLATFORM_ADMIN)
+  passwordChangeRequired Boolean           @default(true)
+  failedLoginCount       Int               @default(0)
+  lockedUntil            DateTime?         @db.Timestamptz(6)
+  lastLoginAt            DateTime?         @db.Timestamptz(6)
+  passwordChangedAt      DateTime           @default(now()) @db.Timestamptz(6)
+  disabledAt             DateTime?         @db.Timestamptz(6)
+  createdAt              DateTime           @default(now()) @db.Timestamptz(6)
+  updatedAt              DateTime           @updatedAt @db.Timestamptz(6)
+
+  @@index([disabledAt, lockedUntil])
 }
 
 model ServiceConnection {

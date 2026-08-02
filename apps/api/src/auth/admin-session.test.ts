@@ -1,9 +1,12 @@
 import type { AIHubPrismaClient } from "@aihub/database";
+import { hashLocalPassword } from "@aihub/security";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { InstallationKeyVerifier } from "./installation-key-auth.js";
 import {
   ADMIN_SESSION_IDLE_MS,
   PrismaAdminSessionManager,
+  requireAdmin,
+  type AdminSessionManager,
 } from "./admin-session.js";
 
 const SESSION_ID = "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb";
@@ -24,11 +27,84 @@ function storedSession(overrides: Record<string, unknown> = {}) {
     revokedAt: null,
     sourceIp: "127.0.0.1",
     userAgentHash: null,
+    authenticationMethod: "INSTALLATION_KEY_RECOVERY" as const,
+    passwordChangeRequired: true,
     ...overrides,
   };
 }
 
 describe("PrismaAdminSessionManager", () => {
+  it("blocks recovery and temporary-password sessions from operational scopes", async () => {
+    const recoveryPrincipal = {
+      id: SESSION_ID,
+      subject: "installation-key-administrator",
+      role: "PLATFORM_ADMIN" as const,
+      scopes: ["sessions:manage" as const],
+      createdAt: "2026-07-30T00:00:00.000Z",
+      idleExpiresAt: "2026-07-30T00:15:00.000Z",
+      absoluteExpiresAt: "2026-07-30T08:00:00.000Z",
+      authenticationMethod: "INSTALLATION_KEY_RECOVERY" as const,
+      passwordChangeRequired: true,
+    };
+    const manager = {
+      createInstallationKeySession: vi.fn(async () => null),
+      authenticate: vi.fn(async () => recoveryPrincipal),
+      revoke: vi.fn(async () => true),
+    } satisfies AdminSessionManager;
+    const send = vi.fn(async () => undefined);
+    const reply = { code: vi.fn(() => ({ send })) };
+
+    const result = await requireAdmin({ headers: {} } as any, reply as any, manager, "connections:read");
+
+    expect(result).toBeNull();
+    expect(reply.code).toHaveBeenCalledWith(403);
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ error: "PASSWORD_CHANGE_REQUIRED" }));
+  });
+
+  it("authenticates the PostgreSQL-backed local administrator and preserves the first-login password gate", async () => {
+    const passwordHash = await hashLocalPassword("temporary-password", Buffer.alloc(16, 3));
+    const account = {
+      id: SESSION_ID,
+      username: "admin",
+      displayName: "Local Administrator",
+      passwordHash,
+      role: "PLATFORM_ADMIN" as const,
+      passwordChangeRequired: true,
+      failedLoginCount: 0,
+      lockedUntil: null,
+      lastLoginAt: null,
+      passwordChangedAt: new Date(),
+      disabledAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const transaction = {
+      $executeRaw: vi.fn(async () => 1),
+      localAdministrator: {
+        findUnique: vi.fn(async () => account),
+        update: vi.fn(async () => account),
+      },
+      administratorSession: {
+        deleteMany: vi.fn(async () => ({ count: 0 })),
+        create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => storedSession(data)),
+      },
+      auditEvent: { create: vi.fn(async () => ({})) },
+    };
+    const prisma = { $transaction: vi.fn(async (callback: (client: typeof transaction) => unknown) => callback(transaction)) } as unknown as AIHubPrismaClient;
+
+    const issued = await new PrismaAdminSessionManager(prisma, { verify: () => false })
+      .createLocalPasswordSession("ADMIN", "temporary-password", { sourceIp: "127.0.0.1" });
+
+    expect(issued).toMatchObject({
+      principal: {
+        subject: `local-admin:${SESSION_ID}`,
+        authenticationMethod: "LOCAL_PASSWORD",
+        passwordChangeRequired: true,
+      },
+    });
+    expect(transaction.localAdministrator.findUnique).toHaveBeenCalledWith({ where: { username: "admin" } });
+  }, 20_000);
+
   it("issues a 256-bit opaque token and stores only its digest", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-30T00:00:00.000Z"));
@@ -66,7 +142,11 @@ describe("PrismaAdminSessionManager", () => {
     expect(storedData?.tokenHash).toBeInstanceOf(Uint8Array);
     expect((storedData?.tokenHash as Uint8Array).byteLength).toBe(32);
     expect(JSON.stringify(storedData)).not.toContain(issued?.token);
-    expect(issued?.principal).toMatchObject({ role: "PLATFORM_ADMIN" });
+    expect(issued?.principal).toMatchObject({
+      role: "PLATFORM_ADMIN",
+      authenticationMethod: "INSTALLATION_KEY_RECOVERY",
+      passwordChangeRequired: true,
+    });
     expect(deleteMany).toHaveBeenCalledOnce();
     expect(transaction.installationCredential.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ lastSessionId: SESSION_ID, activatedAt: new Date("2026-07-30T00:00:00.000Z") }),
@@ -74,7 +154,7 @@ describe("PrismaAdminSessionManager", () => {
     expect(auditCreate).toHaveBeenCalledOnce();
   });
 
-  it("reuses the permanent Installation Key for a new bounded session", async () => {
+  it("reuses the offline Installation Key for a new bounded recovery session", async () => {
     const token = "a-secure-permanent-installation-key";
     const transaction = {
       $executeRaw: vi.fn(async () => 1),
@@ -105,7 +185,7 @@ describe("PrismaAdminSessionManager", () => {
     const transaction = {
       administratorSession: {
         deleteMany: vi.fn(async () => ({ count: 0 })),
-        create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => storedSession({ ...data, role: "AUDITOR", subject: `oidc:${"b".repeat(64)}` })),
+        create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => storedSession({ ...data, role: "AUDITOR", subject: `oidc:${"b".repeat(64)}`, authenticationMethod: "OIDC", passwordChangeRequired: false })),
       },
       auditEvent: { create: vi.fn(async () => ({})) },
     };

@@ -16,7 +16,7 @@ The application does not require LiteLLM, Redis, Valkey, pg-boss, S3, MinIO, Sea
 
 - responsive desktop/mobile administration dashboard;
 - encrypted dashboard-managed service credentials and versioned configuration;
-- permanent Installation Key activation, bounded administrator sessions, optional OIDC sessions, audits, rate limits, and PostgreSQL domain-state reconciliation;
+- PostgreSQL-backed local administrator login, forced temporary-password replacement, offline Installation Key recovery, bounded sessions, optional OIDC, audits, lockout controls, and PostgreSQL domain-state reconciliation;
 - direct vLLM Chat with streaming, cancellation, bounded context, usage/latency telemetry, and feedback;
 - versioned model, prompt, and deterministic guardrail controls;
 - document quarantine, classification, checksums, transient encrypted staging, publication, retrieval, retention, and deletion;
@@ -62,9 +62,9 @@ The supported release-bundle path is a Debian/Ubuntu server with Docker Compose 
 sudo ./scripts/install-aihub.sh
 ```
 
-The script builds and starts PostgreSQL, migrations, API, runtime executor, and web. It generates and prints a permanent Installation Key. Store that key in the organization password vault, open the dashboard, unlock local administrator access, and configure vLLM. Routine endpoints and credentials are entered through the dashboard and encrypted in PostgreSQL with a separate root-owned master key.
+The script builds and starts PostgreSQL, migrations, API, runtime executor, and web. It provisions the local `admin` account, prints its one-time temporary password, and requires a password change at first sign-in. It also prints a separate permanent Installation Key; store that key offline in the organization password vault because it is only the break-glass local-account recovery credential. Routine endpoints and credentials are entered through the dashboard and encrypted in PostgreSQL with a separate root-owned master key.
 
-The Installation Key does not expire. Local root authority can rotate it with `scripts/rotate-installation-key.sh`; OIDC or Microsoft Entra ID can then provide routine enterprise identity without removing the local recovery path. See [deploy/BOOTSTRAP.md](deploy/BOOTSTRAP.md).
+The Installation Key does not expire and is not used for routine sign-in. Local root authority can rotate it with `scripts/rotate-installation-key.sh`; OIDC or Microsoft Entra ID can later become the preferred enterprise identity without removing the local recovery path. See [deploy/BOOTSTRAP.md](deploy/BOOTSTRAP.md).
 
 ## Hermes and Supermemory installation
 

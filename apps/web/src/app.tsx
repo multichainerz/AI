@@ -13,7 +13,9 @@ import type {
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   AIHubApiError,
-  createAdministratorSession,
+  changeLocalAdministratorPassword,
+  createInstallationKeyRecoverySession,
+  createLocalAdministratorSession,
   createConnection,
   getAdministratorSession,
   getEnterpriseSession,
@@ -25,6 +27,7 @@ import {
   getPlatformMeta,
   revokeAdministratorSession,
   revokeEnterpriseSession,
+  recoverLocalAdministrator,
   rollbackConfiguration,
   testConnection,
   updateConnection,
@@ -208,6 +211,10 @@ function App() {
         const session = await getAdministratorSession();
         if (!active || sessionGeneration.current !== generation) return;
         setAdminSession(session);
+        if (session.passwordChangeRequired) {
+          setDrawerOpen(true);
+          return;
+        }
         try {
           const connections = await getConnections();
           if (active && sessionGeneration.current === generation) {
@@ -237,7 +244,8 @@ function App() {
   }, []);
 
   const bootstrapState = platform?.bootstrapState ?? (apiAvailable ? "REQUIRED" : "LOCKED");
-  const unlocked = adminSession !== null;
+  const passwordChangePending = adminSession?.passwordChangeRequired === true;
+  const unlocked = adminSession !== null && adminSession.passwordChangeRequired !== true;
   const chatUnlocked = enterpriseSession !== null || unlocked;
   const documentsUnlocked = unlocked || enterpriseSession?.scopes.includes("documents:use") === true;
   const agentsUnlocked = unlocked || enterpriseSession?.scopes.includes("agents:use") === true;
@@ -288,17 +296,25 @@ function App() {
     return error instanceof Error ? error.message : fallback;
   };
 
-  const unlockSettings = async (installationKey: string) => {
+  const establishAdministratorSession = async (
+    issue: () => Promise<AdministratorSession>,
+    fallback: string,
+  ) => {
     const generation = ++sessionGeneration.current;
     let createdSession = false;
     setSettingsBusy(true);
     setSettingsError(null);
     try {
-      const session = await createAdministratorSession(installationKey);
+      const session = await issue();
       createdSession = true;
-      const response = await getConnections();
       if (sessionGeneration.current !== generation) return false;
       setAdminSession(session);
+      if (session.passwordChangeRequired) {
+        setDrawerOpen(true);
+        return true;
+      }
+      const response = await getConnections();
+      if (sessionGeneration.current !== generation) return false;
       setManagedConnections(response.items);
       void getConnectionMonitoring().then(setConnectionMonitoring).catch(() => setConnectionMonitoring(null));
       void getChatMetrics().then(setChatMetrics).catch(() => setChatMetrics(null));
@@ -308,13 +324,63 @@ function App() {
       if (createdSession) await revokeAdministratorSession().catch(() => undefined);
       if (sessionGeneration.current === generation) {
         setAdminSession(null);
-        setSettingsError(handleAdminError(error, "Unable to unlock settings."));
+        setSettingsError(handleAdminError(error, fallback));
       }
       return false;
     } finally {
       setSettingsBusy(false);
     }
   };
+
+  const loginAdministrator = (username: string, password: string) =>
+    establishAdministratorSession(
+      () => createLocalAdministratorSession(username, password),
+      "Unable to sign in with the supplied local account.",
+    );
+
+  const startAdministratorRecovery = (installationKey: string) =>
+    establishAdministratorSession(
+      () => createInstallationKeyRecoverySession(installationKey),
+      "Unable to start local-account recovery.",
+    );
+
+  const completeAdministratorPassword = async (
+    action: () => Promise<AdministratorSession>,
+    fallback: string,
+  ) => {
+    setSettingsBusy(true);
+    setSettingsError(null);
+    try {
+      const session = await action();
+      setAdminSession(session);
+      try {
+        const response = await getConnections();
+        setManagedConnections(response.items);
+        void getConnectionMonitoring().then(setConnectionMonitoring).catch(() => setConnectionMonitoring(null));
+        void getChatMetrics().then(setChatMetrics).catch(() => setChatMetrics(null));
+      } catch {
+        setSettingsError("The password was saved, but connection state could not be refreshed.");
+      }
+      return true;
+    } catch (error) {
+      setSettingsError(handleAdminError(error, fallback));
+      return false;
+    } finally {
+      setSettingsBusy(false);
+    }
+  };
+
+  const changeAdministratorPassword = (currentPassword: string, newPassword: string) =>
+    completeAdministratorPassword(
+      () => changeLocalAdministratorPassword(currentPassword, newPassword),
+      "Unable to change the local administrator password.",
+    );
+
+  const recoverAdministrator = (username: string, newPassword: string) =>
+    completeAdministratorPassword(
+      () => recoverLocalAdministrator(username, newPassword),
+      "Unable to recover the local administrator account.",
+    );
 
   const saveConnection = async (draft: ConnectionDraft) => {
     if (!adminSession) return;
@@ -464,7 +530,7 @@ function App() {
           <div className="operator">
             <div className="avatar">{adminSession ? "SA" : enterpriseSession ? enterpriseSession.user.displayName.slice(0, 2).toUpperCase() : "SA"}</div>
             <div>
-              <strong>{adminSession ? "System administrator" : enterpriseSession?.user.displayName ?? "Not signed in"}</strong>
+              <strong>{passwordChangePending ? "Password change required" : adminSession ? "System administrator" : enterpriseSession?.user.displayName ?? "Not signed in"}</strong>
               <span>{adminSession ? adminSession.role.replaceAll("_", " ").toLowerCase() : enterpriseSession ? "Enterprise user" : "No active session"}</span>
             </div>
             {(adminSession || enterpriseSession) && <button type="button" onClick={() => void signOut()}>Sign out</button>}
@@ -478,8 +544,8 @@ function App() {
         {activeView === "Chat" ? (
           <ChatView
             unlocked={chatUnlocked}
-            identityMode={adminSession ? "ADMINISTRATOR_PREVIEW" : enterpriseSession ? "ENTERPRISE" : null}
-            displayName={adminSession ? "System administrator" : enterpriseSession?.user.displayName ?? null}
+            identityMode={unlocked && adminSession ? "ADMINISTRATOR_PREVIEW" : enterpriseSession ? "ENTERPRISE" : null}
+            displayName={unlocked && adminSession ? "System administrator" : enterpriseSession?.user.displayName ?? null}
             oidcConfigured={oidcStatus?.configured === true}
             onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23chat")}
             onConfigure={() => openConnectionSettings("OIDC")}
@@ -605,8 +671,8 @@ function App() {
             <section className={`setup-banner ${bootstrapState.toLowerCase()}`}>
               <div className="banner-icon"><Glyph name="guardrails" /></div>
               <div>
-                <strong>{bootstrapState === "READY" ? unlocked ? "Administrator workspace active" : "Installation Key ready" : bootstrapState === "REQUIRED" ? "Installation required" : "Installation trust locked"}</strong>
-                <p>{bootstrapState === "READY" ? unlocked ? `${readyWorkloads} of ${readinessChecks.length} core capabilities are ready.` : "Unlock a local administrator session to manage encrypted endpoints and credentials." : "Run the protected host installer before configuring services."}</p>
+                <strong>{bootstrapState === "READY" ? unlocked ? "Administrator workspace active" : passwordChangePending ? "Password change required" : "Local sign-in ready" : bootstrapState === "REQUIRED" ? "Installation required" : "Installation trust locked"}</strong>
+                <p>{bootstrapState === "READY" ? unlocked ? `${readyWorkloads} of ${readinessChecks.length} core capabilities are ready.` : passwordChangePending ? "Replace the temporary password before opening administrative operations." : "Sign in with the local administrator account to manage encrypted endpoints and credentials." : "Run the protected host installer before configuring services."}</p>
               </div>
               <button type="button" onClick={() => bootstrapState === "READY" ? openConnectionSettings() : selectView("Deployment")}>{bootstrapState === "READY" ? "Open connections" : "Review setup"}</button>
             </section>
@@ -686,14 +752,19 @@ function App() {
         error={settingsError}
         initialKind={drawerKind}
         open={drawerOpen}
-        unlocked={unlocked}
+        session={adminSession}
         revisionConnectionId={revisionConnectionId}
         revisionHistory={revisionHistory}
-        onClose={() => setDrawerOpen(false)}
+        onClose={() => {
+          if (!adminSession?.passwordChangeRequired) setDrawerOpen(false);
+        }}
         onSave={saveConnection}
         onTest={runConnectionTest}
         onUpdateMonitoring={saveConnectionMonitoring}
-        onUnlock={unlockSettings}
+        onLogin={loginAdministrator}
+        onStartRecovery={startAdministratorRecovery}
+        onChangePassword={changeAdministratorPassword}
+        onRecover={recoverAdministrator}
         onLoadRevisions={loadRevisions}
         onRollback={restoreRevision}
         onSignOut={signOut}

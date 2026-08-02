@@ -47,7 +47,7 @@ const COMPONENTS = [
 ] as const;
 
 const STEPS = [
-  ["activate-installation", 1, "Activate installation", "Confirm the permanent Installation Key, installed release, and host identity.", "Run installation validation"],
+  ["activate-installation", 1, "Activate installation", "Confirm the local administrator account, installed release, and host identity.", "Run installation validation"],
   ["system-topology", 2, "System and topology", "Validate the host and select Compact, Control-plane only, or Segmented production.", "Save topology, then validate this host"],
   ["identity-recovery", 3, "Identity and recovery", "Configure final trust, enterprise identity, recovery ownership, and a verified encrypted recovery kit.", "Export and verify recovery; configure OIDC for Production"],
   ["ai-services", 4, "AI services and Hermes node", "Connect vLLM, then enroll and validate the isolated Hermes + Supermemory runtime.", "Test vLLM, then enroll the Hermes VM"],
@@ -288,12 +288,12 @@ export class PrismaOnboardingManager implements OnboardingManager {
 
   async snapshot(): Promise<OnboardingSnapshot> {
     await this.ensureState();
-    const [architecture, journey, components, steps, installationCredential, recovery, evidence] = await Promise.all([
+    const [architecture, journey, components, steps, localAdministrator, recovery, evidence] = await Promise.all([
       this.prisma.platformArchitectureDecision.findUniqueOrThrow({ where: { id: "global" } }),
       this.prisma.onboardingJourney.findUniqueOrThrow({ where: { id: "global" } }),
       this.prisma.componentCompatibility.findMany({ orderBy: [{ category: "asc" }, { displayName: "asc" }] }),
       this.prisma.onboardingStep.findMany({ where: { key: { in: CANONICAL_STEP_KEYS } }, orderBy: { ordinal: "asc" } }),
-      this.prisma.installationCredential.findUnique({ where: { id: "primary" } }),
+      this.prisma.localAdministrator.findFirst({ where: { disabledAt: null }, orderBy: { createdAt: "asc" } }),
       this.prisma.credentialRecoveryControl.findUniqueOrThrow({ where: { id: "global" } }),
       this.prisma.onboardingEvidence.findMany({ orderBy: { createdAt: "desc" }, take: 100 }),
     ]);
@@ -314,7 +314,7 @@ export class PrismaOnboardingManager implements OnboardingManager {
     }
     return {
       generatedAt: new Date().toISOString(),
-      installation: { status: installationCredential?.activatedAt ? "ACTIVATED" : "UNKNOWN", activatedAt: installationCredential?.activatedAt?.toISOString() ?? null },
+      installation: { status: localAdministrator ? "ACTIVATED" : "UNKNOWN", activatedAt: localAdministrator?.createdAt.toISOString() ?? null },
       architecture: architectureValue,
       recovery: recoveryValue,
       journey: journeyDto(journey),
@@ -482,8 +482,8 @@ export class PrismaOnboardingManager implements OnboardingManager {
       ? architecture.targetEnvironment === "PRODUCTION" ? "WARNING" : "PASSED"
       : "FAILED";
     if (stageKey === "activate-installation") {
-      const credential = await this.prisma.installationCredential.findUnique({ where: { id: "primary" } });
-      return [{ stageKey, outcome: credential?.activatedAt ? "PASSED" : "FAILED", code: "installation-key", summary: credential?.activatedAt ? "The permanent Installation Key has activated local administrator access." : "The Installation Key has not been used to activate local administrator access." }];
+      const localAdministrator = await this.prisma.localAdministrator.findFirst({ where: { disabledAt: null }, orderBy: { createdAt: "asc" } });
+      return [{ stageKey, outcome: localAdministrator ? "PASSED" : "FAILED", code: "local-administrator", summary: localAdministrator ? "The installer-provisioned local administrator account is active." : "No active local administrator account has been provisioned." }];
     }
     if (stageKey === "system-topology") {
       const versionRows = await this.prisma.$queryRaw<Array<{ version: string }>>`SELECT version()`;

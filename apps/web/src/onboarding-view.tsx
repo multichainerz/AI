@@ -222,12 +222,12 @@ export function OnboardingView({ connections, unlocked, oidcConfigured, onConfig
   if (!unlocked) {
     return <section className="setup-locked">
       <div className="setup-lock-symbol" aria-hidden="true">01</div>
-      <p className="page-kicker">Installation Key</p>
-      <h1>Unlock this AIHub installation</h1>
-      <p>Use the permanent Installation Key printed by the installer. Keep it in your organization password vault; AIHub uses it only to establish protected local administrator sessions.</p>
+      <p className="page-kicker">Administrator access</p>
+      <h1>Sign in to this AIHub installation</h1>
+      <p>Use the local administrator account provisioned by the installer. Keep the separate Installation Key offline in your organization vault for account recovery only.</p>
       <div className="setup-lock-actions">
         {oidcConfigured && <button className="primary-button" type="button" onClick={onSignIn}>Sign in with enterprise identity</button>}
-        <button className={oidcConfigured ? "secondary-button" : "primary-button"} type="button" onClick={() => onConfigure()}>Use Installation Key</button>
+        <button className={oidcConfigured ? "secondary-button" : "primary-button"} type="button" onClick={() => onConfigure()}>Sign in locally</button>
       </div>
     </section>;
   }

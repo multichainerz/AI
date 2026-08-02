@@ -6,7 +6,7 @@ An intact AIHub release bundle contains the application, Compose manifest, migra
 sudo ./scripts/install-aihub.sh
 ```
 
-The installer checks or installs Docker Compose v2, OpenSSL, and curl; builds the release; generates the database password, credential-encryption key, and permanent Installation Key with root-only permissions; starts the stack; waits for readiness; and prints the Installation Key. Store it in the organization password vault before closing the terminal. It establishes bounded HttpOnly administrator sessions and remains the local recovery credential.
+The installer checks or installs Docker Compose v2, OpenSSL, and curl; builds the release; generates the database password, credential-encryption key, and permanent Installation Key with root-only permissions; starts the stack; waits for readiness; and provisions a PostgreSQL-backed local `admin` account. It prints the one-time temporary password and requires replacement at first sign-in. It separately prints the Installation Key, which must be stored offline in the organization vault and is accepted only for local-account recovery.
 
 Set `AIHUB_HTTP_PORT` before invoking the script to use a port other than `8080`. Terminate TLS at a customer-approved reverse proxy or load balancer before using AIHub outside a protected deployment network. That upstream proxy must overwrite `X-Forwarded-Proto`, and direct access to the AIHub HTTP port must remain restricted; AIHub's bundled Nginx discards inbound forwarding chains and reports only its direct peer to the API.
 
@@ -31,10 +31,10 @@ Before Production, replace tagged images and unpinned Supermemory versions with 
 If the retained Installation Key must be replaced, a customer with local root authority can invoke the break-glass rotation flow:
 
 ```bash
-sudo ./scripts/rotate-installation-key.sh --confirm-revoke-local-sessions
+sudo ./scripts/rotate-installation-key.sh --confirm-revoke-recovery-sessions
 ```
 
-This replaces the root-owned key file and recreates the API. The next successful use records the new verifier in PostgreSQL and revokes prior local-key sessions. Federated OIDC sessions are not revoked. Routine administration may use mapped OIDC groups, including Microsoft Entra ID; the Installation Key remains the on-premises recovery path.
+This replaces the root-owned key file, immediately revokes recovery sessions, and recreates the API. The next recovery use records the new verifier in PostgreSQL. Local-password and federated OIDC sessions are otherwise independent. Routine administration uses the local account or mapped OIDC groups, including Microsoft Entra ID; the Installation Key remains the on-premises break-glass path.
 
 ## Manual development flow
 
@@ -44,18 +44,19 @@ For a developer workstation with Node.js and Docker already installed:
 docker compose build
 node scripts/generate-bootstrap.mjs
 docker compose up -d --no-build
+pnpm admin:provision
 ```
 
-Read `.local/secrets/aihub_installation_key` through an approved local secret-reading workflow and store it in a password vault; the development generator deliberately does not print secret material to logs.
+The provisioning command prints the temporary `admin` password only when it creates the account. Read `.local/secrets/aihub_installation_key` through an approved local secret-reading workflow and store it offline in a password vault; the development generator deliberately does not print secret material to logs.
 
 The generator writes the following files under the Git-ignored `.local/secrets` directory and refuses to replace any existing file:
 
 - `postgres_password`
 - `aihub_database_url`
 - `aihub_master_key`
-- `aihub_installation_key` (permanent local administrator activation and recovery credential)
+- `aihub_installation_key` (permanent, offline local-account recovery credential)
 
-After activation, use **Deployment > Identity and recovery** to export the encrypted recovery kit, move it off the AIHub host, and verify the retained copy in the dashboard. The Installation Key and credential-encryption master key have separate purposes: possession of the dashboard key never decrypts stored connector secrets. The recovery kit and its passphrase must be held separately according to customer policy.
+After first sign-in, use **Deployment > Identity and recovery** to export the encrypted recovery kit, move it off the AIHub host, and verify the retained copy in the dashboard. The local password, Installation Key, and credential-encryption master key have separate purposes: possession of either authentication credential never decrypts stored connector secrets. The recovery kit and its passphrase must be held separately according to customer policy.
 
 Routine service endpoints, API keys, model aliases, operational settings, and connectors are entered through the dashboard and encrypted in PostgreSQL. AIHub does not deploy HashiCorp Vault, use environment files for routine connectors, accept reusable server credentials, or keep source documents as a permanent file store.
 

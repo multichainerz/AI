@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AIHubApiError,
-  createAdministratorSession,
+  changeLocalAdministratorPassword,
+  createInstallationKeyRecoverySession,
+  createLocalAdministratorSession,
+  recoverLocalAdministrator,
   getConnections,
   getConnectionMonitoring,
   getEnterpriseSession,
@@ -35,26 +38,54 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 describe("AIHub browser API", () => {
-  it("exchanges the Installation Key without reusing it as an API header", async () => {
+  it("uses local credentials for routine administrator login", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({
       id: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb",
-      subject: "installation-key-administrator",
+      subject: "local-admin:6cf6ce1b-a8c6-49d7-b6aa-019d35888acb",
       role: "PLATFORM_ADMIN",
       scopes: ["connections:read"],
       createdAt: "2026-07-30T00:00:00.000Z",
       idleExpiresAt: "2026-07-30T00:15:00.000Z",
       absoluteExpiresAt: "2026-07-30T08:00:00.000Z",
+      authenticationMethod: "LOCAL_PASSWORD",
+      passwordChangeRequired: false,
     }, 201));
 
-    await createAdministratorSession("a-secure-installation-key-with-more-than-32-characters");
+    await createLocalAdministratorSession("admin", "temporary-password");
 
     const [url, options] = fetchMock.mock.calls[0]!;
-    expect(url).toBe("/api/v1/admin/session/installation-key");
+    expect(url).toBe("/api/v1/admin/session/local");
     expect(options).toMatchObject({ method: "POST", credentials: "same-origin" });
     expect(new Headers(options?.headers).has("x-aihub-installation-key")).toBe(false);
-    expect(JSON.parse(String(options?.body))).toEqual({
-      installationKey: "a-secure-installation-key-with-more-than-32-characters",
-    });
+    expect(JSON.parse(String(options?.body))).toEqual({ username: "admin", password: "temporary-password" });
+  });
+
+  it("keeps Installation Key use and password maintenance on recovery-specific endpoints", async () => {
+    const session = {
+      id: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb",
+      subject: "installation-key-administrator",
+      role: "PLATFORM_ADMIN",
+      scopes: ["sessions:manage"],
+      createdAt: "2026-07-30T00:00:00.000Z",
+      idleExpiresAt: "2026-07-30T00:15:00.000Z",
+      absoluteExpiresAt: "2026-07-30T08:00:00.000Z",
+      authenticationMethod: "INSTALLATION_KEY_RECOVERY",
+      passwordChangeRequired: true,
+    };
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse(session, 201))
+      .mockResolvedValueOnce(jsonResponse({ ...session, authenticationMethod: "LOCAL_PASSWORD", passwordChangeRequired: false }))
+      .mockResolvedValueOnce(jsonResponse({ ...session, authenticationMethod: "LOCAL_PASSWORD", passwordChangeRequired: false }));
+
+    await createInstallationKeyRecoverySession("a-secure-installation-key-with-more-than-32-characters");
+    await recoverLocalAdministrator("admin", "replacement-password");
+    await changeLocalAdministratorPassword("replacement-password", "another-secure-password");
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "/api/v1/admin/session/installation-key",
+      "/api/v1/admin/session/recovery",
+      "/api/v1/admin/session/password",
+    ]);
   });
 
   it("uses the server session cookie for subsequent administration requests", async () => {

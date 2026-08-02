@@ -3,10 +3,17 @@ import { isIP } from "node:net";
 import {
   ADMIN_SCOPES,
   type AdministratorSession,
+  type AdminAuthenticationMethod,
   type AdminRole,
   type AdminScope,
 } from "@aihub/contracts";
-import type { AIHubPrismaClient } from "@aihub/database";
+import type { AIHubPrismaClient, Prisma } from "@aihub/database";
+import {
+  DUMMY_PASSWORD_DIGEST,
+  hashLocalPassword,
+  localPasswordIsValid,
+  verifyLocalPassword,
+} from "@aihub/security";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import type { InstallationKeyVerifier } from "./installation-key-auth.js";
 
@@ -14,6 +21,8 @@ export const ADMIN_SESSION_COOKIE = "aihub_admin_session";
 export const ADMIN_SESSION_IDLE_MS = 15 * 60 * 1_000;
 export const ADMIN_SESSION_ABSOLUTE_MS = 8 * 60 * 60 * 1_000;
 const ADMIN_SESSION_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
+const LOCAL_LOGIN_FAILURE_LIMIT = 5;
+const LOCAL_LOGIN_LOCK_MS = 15 * 60 * 1_000;
 
 const ROLE_SCOPES: Readonly<Record<AdminRole, readonly AdminScope[]>> = {
   PLATFORM_ADMIN: ADMIN_SCOPES,
@@ -91,6 +100,23 @@ export interface AdminSessionManager {
     installationKey: string | undefined,
     context: AdminRequestContext,
   ): Promise<IssuedAdminSession | null>;
+  createLocalPasswordSession?(
+    username: string,
+    password: string,
+    context: AdminRequestContext,
+  ): Promise<IssuedAdminSession | null>;
+  changeLocalPassword?(
+    token: string | undefined,
+    currentPassword: string,
+    newPassword: string,
+    context: AdminRequestContext,
+  ): Promise<IssuedAdminSession | null>;
+  recoverLocalAdministrator?(
+    token: string | undefined,
+    username: string,
+    newPassword: string,
+    context: AdminRequestContext,
+  ): Promise<IssuedAdminSession | null>;
   issueFederatedSession?(
     subject: string,
     role: AdminRole,
@@ -122,16 +148,67 @@ function principalFromRecord(record: {
   createdAt: Date;
   idleExpiresAt: Date;
   absoluteExpiresAt: Date;
+  authenticationMethod: AdminAuthenticationMethod;
+  passwordChangeRequired: boolean;
 }): AdminPrincipal {
   return {
     id: record.id,
     subject: record.subject,
     role: record.role,
-    scopes: [...ROLE_SCOPES[record.role]],
+    scopes: record.authenticationMethod === "INSTALLATION_KEY_RECOVERY"
+      ? ["sessions:manage"]
+      : [...ROLE_SCOPES[record.role]],
     createdAt: record.createdAt.toISOString(),
     idleExpiresAt: record.idleExpiresAt.toISOString(),
     absoluteExpiresAt: record.absoluteExpiresAt.toISOString(),
+    authenticationMethod: record.authenticationMethod,
+    passwordChangeRequired: record.passwordChangeRequired,
   };
+}
+
+function normalizedLocalUsername(username: string): string | null {
+  const normalized = username.trim().toLowerCase();
+  return /^[a-z0-9._-]{1,64}$/.test(normalized) ? normalized : null;
+}
+
+function activeSession(record: {
+  revokedAt: Date | null;
+  idleExpiresAt: Date;
+  absoluteExpiresAt: Date;
+}, now: Date): boolean {
+  return !record.revokedAt && record.idleExpiresAt > now && record.absoluteExpiresAt > now;
+}
+
+async function createSessionRecord(
+  transaction: Prisma.TransactionClient,
+  input: {
+    token: string;
+    subject: string;
+    role: AdminRole;
+    authenticationMethod: AdminAuthenticationMethod;
+    passwordChangeRequired: boolean;
+    context: AdminRequestContext;
+    now: Date;
+  },
+) {
+  const absoluteExpiresAt = new Date(input.now.getTime() + ADMIN_SESSION_ABSOLUTE_MS);
+  await transaction.administratorSession.deleteMany({
+    where: { absoluteExpiresAt: { lt: new Date(input.now.getTime() - ADMIN_SESSION_RETENTION_MS) } },
+  });
+  return transaction.administratorSession.create({
+    data: {
+      tokenHash: tokenDigest(input.token),
+      subject: input.subject,
+      role: input.role,
+      authenticationMethod: input.authenticationMethod,
+      passwordChangeRequired: input.passwordChangeRequired,
+      lastSeenAt: input.now,
+      idleExpiresAt: new Date(input.now.getTime() + ADMIN_SESSION_IDLE_MS),
+      absoluteExpiresAt,
+      sourceIp: input.context.sourceIp && isIP(input.context.sourceIp) ? input.context.sourceIp : null,
+      userAgentHash: userAgentDigest(input.context.userAgent) ?? null,
+    },
+  });
 }
 
 export class PrismaAdminSessionManager implements AdminSessionManager {
@@ -182,6 +259,8 @@ export class PrismaAdminSessionManager implements AdminSessionManager {
           tokenHash: tokenDigest(token),
           subject: "installation-key-administrator",
           role: "PLATFORM_ADMIN",
+          authenticationMethod: "INSTALLATION_KEY_RECOVERY",
+          passwordChangeRequired: true,
           lastSeenAt: now,
           idleExpiresAt,
           absoluteExpiresAt,
@@ -219,13 +298,223 @@ export class PrismaAdminSessionManager implements AdminSessionManager {
           resourceId: created.id,
           outcome: "SUCCESS",
           sourceIp,
-          metadata: { role: created.role, authenticationMethod: "permanent-installation-key" },
+          metadata: { role: created.role, authenticationMethod: "installation-key-recovery" },
         },
       });
       return created;
     });
 
     return session ? { token, principal: principalFromRecord(session) } : null;
+  }
+
+  async createLocalPasswordSession(
+    username: string,
+    password: string,
+    context: AdminRequestContext,
+  ): Promise<IssuedAdminSession | null> {
+    const normalizedUsername = normalizedLocalUsername(username);
+    if (!normalizedUsername || !localPasswordIsValid(password)) return null;
+
+    const token = randomBytes(32).toString("base64url");
+    const sourceIp = context.sourceIp && isIP(context.sourceIp) ? context.sourceIp : null;
+    const now = new Date();
+    return this.prisma.$transaction(async (transaction) => {
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`aihub-local-admin:${normalizedUsername}`}, 0))`;
+      const account = await transaction.localAdministrator.findUnique({ where: { username: normalizedUsername } });
+      const passwordMatches = await verifyLocalPassword(password, account?.passwordHash ?? DUMMY_PASSWORD_DIGEST);
+      const lockActive = Boolean(account?.lockedUntil && account.lockedUntil > now);
+      const accepted = Boolean(account && !account.disabledAt && !lockActive && passwordMatches);
+
+      if (!accepted) {
+        if (account && !account.disabledAt && !lockActive) {
+          const priorFailures = account.lockedUntil && account.lockedUntil <= now ? 0 : account.failedLoginCount;
+          const failedLoginCount = priorFailures + 1;
+          await transaction.localAdministrator.update({
+            where: { id: account.id },
+            data: {
+              failedLoginCount,
+              lockedUntil: failedLoginCount >= LOCAL_LOGIN_FAILURE_LIMIT
+                ? new Date(now.getTime() + LOCAL_LOGIN_LOCK_MS)
+                : null,
+            },
+          });
+        }
+        await transaction.auditEvent.create({ data: {
+          actorType: "USER",
+          actorId: account?.id ?? null,
+          action: "administrator.local_login_failed",
+          resourceType: "LocalAdministrator",
+          resourceId: account?.id ?? null,
+          outcome: "FAILED",
+          sourceIp,
+          metadata: { authenticationMethod: "local-password" },
+        } });
+        return null;
+      }
+
+      await transaction.localAdministrator.update({
+        where: { id: account!.id },
+        data: { failedLoginCount: 0, lockedUntil: null, lastLoginAt: now },
+      });
+      const created = await createSessionRecord(transaction, {
+        token,
+        subject: `local-admin:${account!.id}`,
+        role: account!.role,
+        authenticationMethod: "LOCAL_PASSWORD",
+        passwordChangeRequired: account!.passwordChangeRequired,
+        context,
+        now,
+      });
+      await transaction.auditEvent.create({ data: {
+        actorType: "USER",
+        actorId: account!.id,
+        action: "administrator.session_created",
+        resourceType: "AdministratorSession",
+        resourceId: created.id,
+        outcome: "SUCCESS",
+        sourceIp,
+        metadata: { role: created.role, authenticationMethod: "local-password" },
+      } });
+      return { token, principal: principalFromRecord(created) };
+    });
+  }
+
+  async changeLocalPassword(
+    token: string | undefined,
+    currentPassword: string,
+    newPassword: string,
+    context: AdminRequestContext,
+  ): Promise<IssuedAdminSession | null> {
+    if (
+      !sessionTokenIsValid(token)
+      || !localPasswordIsValid(currentPassword)
+      || !localPasswordIsValid(newPassword)
+      || currentPassword === newPassword
+    ) return null;
+    const now = new Date();
+    const preliminarySession = await this.prisma.administratorSession.findUnique({ where: { tokenHash: tokenDigest(token) } });
+    if (
+      !preliminarySession
+      || !activeSession(preliminarySession, now)
+      || preliminarySession.authenticationMethod !== "LOCAL_PASSWORD"
+    ) return null;
+    const replacementToken = randomBytes(32).toString("base64url");
+    const newPasswordHash = await hashLocalPassword(newPassword);
+    return this.prisma.$transaction(async (transaction) => {
+      const session = await transaction.administratorSession.findUnique({ where: { tokenHash: tokenDigest(token) } });
+      if (!session || !activeSession(session, now) || session.authenticationMethod !== "LOCAL_PASSWORD") return null;
+      const accountId = session.subject.startsWith("local-admin:") ? session.subject.slice("local-admin:".length) : "";
+      if (!/^[0-9a-f-]{36}$/i.test(accountId)) return null;
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`aihub-local-admin-id:${accountId}`}, 0))`;
+      const account = await transaction.localAdministrator.findUnique({ where: { id: accountId } });
+      if (!account || account.disabledAt || !(await verifyLocalPassword(currentPassword, account.passwordHash))) return null;
+
+      await transaction.localAdministrator.update({
+        where: { id: account.id },
+        data: {
+          passwordHash: newPasswordHash,
+          passwordChangeRequired: false,
+          passwordChangedAt: now,
+          failedLoginCount: 0,
+          lockedUntil: null,
+        },
+      });
+      await transaction.administratorSession.updateMany({
+        where: { subject: session.subject, revokedAt: null },
+        data: { revokedAt: now },
+      });
+      const created = await createSessionRecord(transaction, {
+        token: replacementToken,
+        subject: session.subject,
+        role: account.role,
+        authenticationMethod: "LOCAL_PASSWORD",
+        passwordChangeRequired: false,
+        context,
+        now,
+      });
+      await transaction.auditEvent.create({ data: {
+        actorType: "USER",
+        actorId: account.id,
+        action: "administrator.local_password_changed",
+        resourceType: "LocalAdministrator",
+        resourceId: account.id,
+        outcome: "SUCCESS",
+        metadata: { revokedOtherSessions: true },
+      } });
+      return { token: replacementToken, principal: principalFromRecord(created) };
+    });
+  }
+
+  async recoverLocalAdministrator(
+    token: string | undefined,
+    username: string,
+    newPassword: string,
+    context: AdminRequestContext,
+  ): Promise<IssuedAdminSession | null> {
+    const normalizedUsername = normalizedLocalUsername(username);
+    if (!sessionTokenIsValid(token) || !normalizedUsername || !localPasswordIsValid(newPassword)) return null;
+    const now = new Date();
+    const preliminarySession = await this.prisma.administratorSession.findUnique({ where: { tokenHash: tokenDigest(token) } });
+    if (
+      !preliminarySession
+      || !activeSession(preliminarySession, now)
+      || preliminarySession.authenticationMethod !== "INSTALLATION_KEY_RECOVERY"
+    ) return null;
+    const newPasswordHash = await hashLocalPassword(newPassword);
+    const replacementToken = randomBytes(32).toString("base64url");
+    const sourceIp = context.sourceIp && isIP(context.sourceIp) ? context.sourceIp : null;
+    return this.prisma.$transaction(async (transaction) => {
+      const recoverySession = await transaction.administratorSession.findUnique({ where: { tokenHash: tokenDigest(token) } });
+      if (
+        !recoverySession
+        || !activeSession(recoverySession, now)
+        || recoverySession.authenticationMethod !== "INSTALLATION_KEY_RECOVERY"
+      ) return null;
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`aihub-local-admin:${normalizedUsername}`}, 0))`;
+      const account = await transaction.localAdministrator.findUnique({ where: { username: normalizedUsername } });
+      if (!account || account.disabledAt) return null;
+
+      await transaction.localAdministrator.update({
+        where: { id: account.id },
+        data: {
+          passwordHash: newPasswordHash,
+          passwordChangeRequired: false,
+          passwordChangedAt: now,
+          failedLoginCount: 0,
+          lockedUntil: null,
+        },
+      });
+      await transaction.administratorSession.updateMany({
+        where: {
+          revokedAt: null,
+          OR: [
+            { subject: `local-admin:${account.id}` },
+            { authenticationMethod: "INSTALLATION_KEY_RECOVERY" },
+          ],
+        },
+        data: { revokedAt: now },
+      });
+      const created = await createSessionRecord(transaction, {
+        token: replacementToken,
+        subject: `local-admin:${account.id}`,
+        role: account.role,
+        authenticationMethod: "LOCAL_PASSWORD",
+        passwordChangeRequired: false,
+        context,
+        now,
+      });
+      await transaction.auditEvent.create({ data: {
+        actorType: "USER",
+        actorId: account.id,
+        action: "administrator.local_password_recovered",
+        resourceType: "LocalAdministrator",
+        resourceId: account.id,
+        outcome: "SUCCESS",
+        sourceIp,
+        metadata: { authenticationMethod: "installation-key-recovery", revokedOtherSessions: true },
+      } });
+      return { token: replacementToken, principal: principalFromRecord(created) };
+    });
   }
 
   async issueFederatedSession(
@@ -247,6 +536,7 @@ export class PrismaAdminSessionManager implements AdminSessionManager {
         data: {
           tokenHash: tokenDigest(token), subject, role, lastSeenAt: now, idleExpiresAt,
           absoluteExpiresAt, sourceIp, userAgentHash: userAgentDigest(context.userAgent) ?? null,
+          authenticationMethod: "OIDC", passwordChangeRequired: false,
         },
       });
       await transaction.auditEvent.create({ data: {
@@ -283,7 +573,9 @@ export class PrismaAdminSessionManager implements AdminSessionManager {
       return null;
     }
 
-    const scopes = ROLE_SCOPES[session.role];
+    const scopes: readonly AdminScope[] = session.authenticationMethod === "INSTALLATION_KEY_RECOVERY"
+      ? ["sessions:manage"]
+      : ROLE_SCOPES[session.role];
     if (requiredScope && !scopes.includes(requiredScope)) return null;
 
     const idleExpiresAt = new Date(
@@ -385,6 +677,13 @@ export async function requireAdmin(
     await reply.code(401).send({
       error: "UNAUTHORIZED",
       message: "An active administrator session with the required scope is required.",
+    });
+    return null;
+  }
+  if (principal.passwordChangeRequired) {
+    await reply.code(403).send({
+      error: "PASSWORD_CHANGE_REQUIRED",
+      message: "Change or recover the local administrator password before using AIHub administration.",
     });
     return null;
   }

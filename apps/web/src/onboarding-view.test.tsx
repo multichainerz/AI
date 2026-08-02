@@ -20,7 +20,7 @@ const callbacks = {
 };
 
 describe("OnboardingView", () => {
-  it("keeps the Installation Key as the only pre-session gate", () => {
+  it("uses the installer-provisioned local account as the routine pre-session gate", () => {
     const html = renderToStaticMarkup(<OnboardingView
       connections={[]}
       unlocked={false}
@@ -28,7 +28,8 @@ describe("OnboardingView", () => {
       {...callbacks}
     />);
 
-    expect(html).toContain("Unlock this AIHub installation");
+    expect(html).toContain("Sign in to this AIHub installation");
+    expect(html).toContain("account recovery only");
     expect(html).not.toContain("Development quick start");
   });
 

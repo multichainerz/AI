@@ -60,16 +60,24 @@ try {
     WHERE "key" = ANY($1::TEXT[])
     ORDER BY "ordinal"
   `, [[
-    "claim-installation", "system-topology", "identity-recovery", "ai-services",
+    "activate-installation", "system-topology", "identity-recovery", "ai-services",
     "knowledge-workflow", "hermes-profiles", "guardrails-tools", "validate-activate",
   ]]);
   const legacyProfileStep = await verifier.query('SELECT "required" FROM "OnboardingStep" WHERE "key" = $1', ["profile-setup"]);
+  const localAdministratorColumns = await verifier.query(`
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_schema = $1 AND table_name = 'LocalAdministrator'
+  `, [schema]);
   if (migrations.rows[0]?.count < 1) throw new Error("No completed Prisma migrations were recorded.");
   if (canonicalSteps.rowCount !== 8 || canonicalSteps.rows.some((row) => row.required !== true)) {
     throw new Error("The canonical onboarding stages were not migrated correctly.");
   }
   if (legacyProfileStep.rows.some((row) => row.required !== false)) {
     throw new Error("The legacy profile-setup stage remains release-blocking.");
+  }
+  if (!new Set(localAdministratorColumns.rows.map((row) => row.column_name)).has("passwordHash")) {
+    throw new Error("The local administrator credential schema was not migrated correctly.");
   }
   process.stdout.write(`PostgreSQL integration verification passed in disposable schema ${schema}.\n`);
 } finally {

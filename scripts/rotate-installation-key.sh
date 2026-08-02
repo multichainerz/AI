@@ -14,8 +14,8 @@ fail() {
 }
 
 [[ "${EUID}" -eq 0 ]] || fail "run this break-glass command as root"
-[[ "${1:-}" == "--confirm-revoke-local-sessions" ]] \
-  || fail "explicit confirmation is required: sudo ./scripts/rotate-installation-key.sh --confirm-revoke-local-sessions"
+[[ "${1:-}" == "--confirm-revoke-recovery-sessions" || "${1:-}" == "--confirm-revoke-local-sessions" ]] \
+  || fail "explicit confirmation is required: sudo ./scripts/rotate-installation-key.sh --confirm-revoke-recovery-sessions"
 command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 is required"
 command -v openssl >/dev/null 2>&1 || fail "OpenSSL is required"
 command -v curl >/dev/null 2>&1 || fail "curl is required"
@@ -34,6 +34,9 @@ chmod 0600 "${key_tmp}"
 docker compose stop api
 mv -f -- "${key_tmp}" "${AIHUB_SECRET_DIR}/aihub_installation_key"
 trap - EXIT
+docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U aihub -d aihub \
+  -c "UPDATE \"AdministratorSession\" SET \"revokedAt\" = CURRENT_TIMESTAMP WHERE \"authenticationMethod\" = 'INSTALLATION_KEY_RECOVERY' AND \"revokedAt\" IS NULL" \
+  >/dev/null
 docker compose up -d --no-build --force-recreate api web
 
 deadline=$((SECONDS + 180))
@@ -42,6 +45,6 @@ until curl --fail --silent "http://127.0.0.1:${AIHUB_HTTP_PORT}/readyz" >/dev/nu
   sleep 2
 done
 
-printf '\nThe permanent Installation Key was rotated. Existing local-key sessions will be revoked when the new key is first used.\n'
-printf 'New Installation Key:\n\n%s\n\n' "${new_key}"
-printf 'Store it in your organization password vault now. Federated OIDC administrator sessions were not revoked.\n'
+printf '\nThe offline Installation Key was rotated and existing recovery sessions were revoked.\n'
+printf 'New offline recovery Installation Key:\n\n%s\n\n' "${new_key}"
+printf 'Store it in your organization password vault now. Local-password and federated OIDC administrator sessions were not revoked.\n'

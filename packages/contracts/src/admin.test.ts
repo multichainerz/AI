@@ -1,13 +1,23 @@
 import { describe, expect, it } from "vitest";
 import {
   administratorSessionSchema,
+  installationKeyRecoveryRequestSchema,
   installationKeySessionRequestSchema,
+  localAdministratorLoginRequestSchema,
+  localAdministratorPasswordChangeRequestSchema,
 } from "./admin.js";
 
 describe("administrator contracts", () => {
   it("requires a sufficiently strong Installation Key payload", () => {
     expect(installationKeySessionRequestSchema.safeParse({ installationKey: "short" }).success).toBe(false);
     expect(installationKeySessionRequestSchema.safeParse({ installationKey: "a".repeat(32) }).success).toBe(true);
+  });
+
+  it("validates bounded local administrator credentials and recovery requests", () => {
+    expect(localAdministratorLoginRequestSchema.safeParse({ username: "admin", password: "temporary-password" }).success).toBe(true);
+    expect(localAdministratorLoginRequestSchema.safeParse({ username: "admin", password: "short" }).success).toBe(false);
+    expect(localAdministratorPasswordChangeRequestSchema.safeParse({ currentPassword: "temporary-password", newPassword: "replacement-password" }).success).toBe(true);
+    expect(installationKeyRecoveryRequestSchema.safeParse({ username: "admin", newPassword: "replacement-password" }).success).toBe(true);
   });
 
   it("rejects invented roles and scopes from a session response", () => {

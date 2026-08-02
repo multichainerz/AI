@@ -47,4 +47,14 @@ describe("committed PostgreSQL migrations", () => {
     expect(sql).toContain("'activate-installation'");
     expect(sql).toContain("'installation-key-administrator'");
   });
+
+  it("adds local administrator credentials and restricts Installation Key sessions to recovery", () => {
+    const directory = migrationDirectories.find((name) => name.endsWith("_local_administrator_accounts"));
+    expect(directory).toBeTruthy();
+    const sql = readFileSync(resolve(migrationsRoot, directory!, "migration.sql"), "utf8");
+    expect(sql).toContain('CREATE TABLE "LocalAdministrator"');
+    expect(sql).toContain('"passwordHash" TEXT NOT NULL');
+    expect(sql).toContain("'INSTALLATION_KEY_RECOVERY'");
+    expect(sql).toContain('"passwordChangeRequired" = true');
+  });
 });

@@ -8,10 +8,10 @@ Status: implemented and source-verified; all migrations pass against a fresh Pos
 
 - Node.js/TypeScript monorepo with React/Vite, Fastify, Prisma, and PostgreSQL domain-state reconciliation.
 - Docker Compose release topology for web, API, worker, migrations, and PostgreSQL.
-- encrypted configuration, permanent Installation Key activation, recovery-kit controls, bounded administrator sessions, optional OIDC, audits, and responsive dashboard.
+- encrypted configuration, PostgreSQL-backed local administrator login, forced first-password replacement, offline Installation Key recovery, recovery-kit controls, bounded sessions, optional OIDC, audits, and responsive dashboard.
 - no Redis/Valkey, object-store dependency, or duplicate vector plane.
 
-Exit: `pnpm verify`, clean-database migrations, repeatable Installation Key activation, key rotation, and backup ownership are demonstrated.
+Exit: `pnpm verify`, clean-database migrations, repeatable local-account provisioning, Installation Key recovery/rotation, and backup ownership are demonstrated.
 
 ## Phase B — Direct inference and governed Chat
 

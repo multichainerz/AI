@@ -1,4 +1,5 @@
 import type {
+  AdministratorSession,
   CreateServiceConnection,
   ConnectionMonitoringControl,
   ConnectionTestResult,
@@ -24,14 +25,17 @@ interface ConnectionDrawerProps {
   diagnostic: ConnectionTestResult | null;
   initialKind: ServiceKind;
   open: boolean;
-  unlocked: boolean;
+  session: AdministratorSession | null;
   revisionConnectionId: string | null;
   revisionHistory: ConfigurationRevisionList | null;
   onClose: () => void;
   onSave: (draft: ConnectionDraft) => Promise<void>;
   onTest: (id: string) => Promise<void>;
   onUpdateMonitoring: (input: { enabled: boolean; intervalSeconds: number; reason: string }) => Promise<void>;
-  onUnlock: (installationKey: string) => Promise<boolean>;
+  onLogin: (username: string, password: string) => Promise<boolean>;
+  onStartRecovery: (installationKey: string) => Promise<boolean>;
+  onChangePassword: (currentPassword: string, newPassword: string) => Promise<boolean>;
+  onRecover: (username: string, newPassword: string) => Promise<boolean>;
   onLoadRevisions: (connectionId: string) => Promise<void>;
   onRollback: (
     connectionId: string,
@@ -63,7 +67,13 @@ function configurationDefaults(
 export function ConnectionDrawer(props: ConnectionDrawerProps) {
   const closeButton = useRef<HTMLButtonElement>(null);
   const dialogPanel = useRef<HTMLElement>(null);
+  const [accessMode, setAccessMode] = useState<"LOGIN" | "RECOVERY">("LOGIN");
+  const [username, setUsername] = useState("admin");
+  const [password, setPassword] = useState("");
   const [installationKey, setInstallationKey] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmedPassword, setConfirmedPassword] = useState("");
   const [selectedKind, setSelectedKind] = useState<ServiceKind>(props.initialKind);
   const [displayName, setDisplayName] = useState("");
   const [slug, setSlug] = useState("");
@@ -143,9 +153,28 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
 
   if (!props.open) return null;
 
-  const submitUnlock = async (event: FormEvent) => {
+  const submitAccess = async (event: FormEvent) => {
     event.preventDefault();
-    if (await props.onUnlock(installationKey)) setInstallationKey("");
+    if (accessMode === "RECOVERY") {
+      if (await props.onStartRecovery(installationKey)) setInstallationKey("");
+      return;
+    }
+    if (await props.onLogin(username, password)) setPassword("");
+  };
+
+  const submitPassword = async (event: FormEvent) => {
+    event.preventDefault();
+    if (newPassword !== confirmedPassword) return;
+    const recovered = props.session?.authenticationMethod === "INSTALLATION_KEY_RECOVERY";
+    const completed = recovered
+      ? await props.onRecover(username, newPassword)
+      : await props.onChangePassword(currentPassword, newPassword);
+    if (completed) {
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmedPassword("");
+      setAccessMode("LOGIN");
+    }
   };
 
   const submitConnection = (event: FormEvent) => {
@@ -174,34 +203,52 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
         <header>
           <div><p className="page-kicker">Secure configuration</p><h2 id="connection-drawer-title">Platform connections</h2></div>
           <div className="drawer-header-actions">
-            {props.unlocked && <button type="button" onClick={() => void props.onSignOut()}>Sign out</button>}
-            <button ref={closeButton} className="drawer-close" type="button" onClick={props.onClose} aria-label="Close settings">×</button>
+            {props.session && <button type="button" onClick={() => void props.onSignOut()}>Sign out</button>}
+            {!props.session?.passwordChangeRequired && <button ref={closeButton} className="drawer-close" type="button" onClick={props.onClose} aria-label="Close settings">×</button>}
           </div>
         </header>
 
-        {!props.unlocked ? (
-          <form className="unlock-form" onSubmit={submitUnlock}>
+        {!props.session ? (
+          <form className="unlock-form" onSubmit={submitAccess}>
             <div className="lock-mark" aria-hidden="true">M</div>
-            <h3>Unlock administrator access</h3>
-            <p>Your permanent Installation Key creates a protected HttpOnly administrator session. The browser never stores it, and it remains available for local recovery.</p>
+            <h3>{accessMode === "LOGIN" ? "Sign in to AIHub" : "Recover local administrator"}</h3>
+            <p>{accessMode === "LOGIN"
+              ? "Use the local administrator account provisioned during installation. Credentials establish a protected HttpOnly session and are never stored by the browser."
+              : "Use the offline Installation Key only when the local administrator password cannot be recovered normally."}</p>
             {props.bootstrapState !== "READY" && (
               <div className="form-notice">Installation trust is {props.bootstrapState.toLowerCase()}. Complete the host installer first.</div>
             )}
-            <label>
-              Installation Key
-              <input
-                type="password"
-                value={installationKey}
-                onChange={(event) => setInstallationKey(event.target.value)}
-                autoComplete="off"
-                required
-                minLength={32}
-                placeholder="Paste the Installation Key printed by the installer"
-              />
-            </label>
+            {accessMode === "LOGIN" ? <>
+              <label>Username<input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" required maxLength={64} /></label>
+              <label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required minLength={12} maxLength={1024} /></label>
+            </> : <label>
+              Offline Installation Key
+              <input type="password" value={installationKey} onChange={(event) => setInstallationKey(event.target.value)} autoComplete="off" required minLength={32} placeholder="Paste the recovery key stored in your vault" />
+            </label>}
             {props.error && <p className="form-error">{props.error}</p>}
             <button className="primary-button drawer-submit" type="submit" disabled={props.busy || props.bootstrapState !== "READY"}>
-              {props.busy ? "Unlocking…" : "Unlock AIHub"}
+              {props.busy ? "Verifying…" : accessMode === "LOGIN" ? "Sign in" : "Continue recovery"}
+            </button>
+            <button className="text-button" type="button" onClick={() => setAccessMode(accessMode === "LOGIN" ? "RECOVERY" : "LOGIN")}>
+              {accessMode === "LOGIN" ? "Use offline recovery key" : "Return to local sign in"}
+            </button>
+          </form>
+        ) : props.session.passwordChangeRequired ? (
+          <form className="unlock-form" onSubmit={submitPassword}>
+            <div className="lock-mark" aria-hidden="true">M</div>
+            <h3>{props.session.authenticationMethod === "INSTALLATION_KEY_RECOVERY" ? "Reset local administrator" : "Change temporary password"}</h3>
+            <p>{props.session.authenticationMethod === "INSTALLATION_KEY_RECOVERY"
+              ? "The recovery key has been verified. Set a new local password; all other local and recovery sessions will be revoked."
+              : "Set a permanent password before accessing dashboard operations. All other sessions for this account will be revoked."}</p>
+            {props.session.authenticationMethod === "INSTALLATION_KEY_RECOVERY"
+              ? <label>Username<input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" required maxLength={64} /></label>
+              : <label>Temporary password<input type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} autoComplete="current-password" required minLength={12} maxLength={1024} /></label>}
+            <label>New password<input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} autoComplete="new-password" required minLength={12} maxLength={1024} /></label>
+            <label>Confirm new password<input type="password" value={confirmedPassword} onChange={(event) => setConfirmedPassword(event.target.value)} autoComplete="new-password" required minLength={12} maxLength={1024} /></label>
+            {confirmedPassword && newPassword !== confirmedPassword && <p className="form-error">The new passwords do not match.</p>}
+            {props.error && <p className="form-error">{props.error}</p>}
+            <button className="primary-button drawer-submit" type="submit" disabled={props.busy || newPassword !== confirmedPassword}>
+              {props.busy ? "Saving…" : props.session.authenticationMethod === "INSTALLATION_KEY_RECOVERY" ? "Reset and sign in" : "Change password"}
             </button>
           </form>
         ) : (

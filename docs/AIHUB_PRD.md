@@ -81,7 +81,7 @@ AIHub records connection health, model/prompt/policy revisions, evaluations, inc
 
 ### AIHub host
 
-The signed release-bundle installer starts PostgreSQL, migrations, API, runtime executor, and web with Docker Compose. It generates a separate credential-encryption master key and permanent Installation Key, then requires the customer to retain the Installation Key in an organizational password vault. The dashboard owns routine endpoint and credential entry; OIDC, including Microsoft Entra ID, is an optional post-activation identity layer.
+The signed release-bundle installer starts PostgreSQL, migrations, API, runtime executor, and web with Docker Compose. It provisions a PostgreSQL-backed local administrator with a one-time temporary password, generates a separate credential-encryption master key and offline Installation Key, and requires the customer to replace the password at first sign-in and retain the recovery key in an organizational vault. The dashboard owns routine endpoint and credential entry; OIDC, including Microsoft Entra ID, is an optional post-activation identity layer.
 
 ### Agent host
 
@@ -103,7 +103,7 @@ AIHub retains no SSH password/key and no remote Docker socket. Upgrades use a se
 - default deny and least privilege across every workspace;
 - separate scoped administrator roles and enterprise-user sessions;
 - encrypted credentials with an off-host recovery procedure;
-- permanent Installation Key verification stored as a digest, with separate one-time Hermes enrollment invitations;
+- salted, slow-hashed local passwords, bounded sessions and lockout controls, plus permanent Installation Key verification restricted to break-glass recovery and separate one-time Hermes enrollment invitations;
 - signed, replay-protected runtime-node requests;
 - TLS and customer network controls for every cross-host connection;
 - no secrets in browser payloads, logs, audits, or model context;

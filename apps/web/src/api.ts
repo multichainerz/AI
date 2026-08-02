@@ -202,12 +202,45 @@ function adminHeaders(): HeadersInit {
   };
 }
 
-export async function createAdministratorSession(installationKey: string): Promise<AdministratorSession> {
+export async function createLocalAdministratorSession(username: string, password: string): Promise<AdministratorSession> {
+  const response = await fetch("/api/v1/admin/session/local", {
+    method: "POST",
+    headers: adminHeaders(),
+    credentials: "same-origin",
+    body: JSON.stringify({ username, password }),
+  });
+  return administratorSessionSchema.parse(await parsedResponse(response));
+}
+
+export async function createInstallationKeyRecoverySession(installationKey: string): Promise<AdministratorSession> {
   const response = await fetch("/api/v1/admin/session/installation-key", {
     method: "POST",
     headers: adminHeaders(),
     credentials: "same-origin",
     body: JSON.stringify({ installationKey }),
+  });
+  return administratorSessionSchema.parse(await parsedResponse(response));
+}
+
+export async function changeLocalAdministratorPassword(
+  currentPassword: string,
+  newPassword: string,
+): Promise<AdministratorSession> {
+  const response = await fetch("/api/v1/admin/session/password", {
+    method: "PUT",
+    headers: adminHeaders(),
+    credentials: "same-origin",
+    body: JSON.stringify({ currentPassword, newPassword }),
+  });
+  return administratorSessionSchema.parse(await parsedResponse(response));
+}
+
+export async function recoverLocalAdministrator(username: string, newPassword: string): Promise<AdministratorSession> {
+  const response = await fetch("/api/v1/admin/session/recovery", {
+    method: "PUT",
+    headers: adminHeaders(),
+    credentials: "same-origin",
+    body: JSON.stringify({ username, newPassword }),
   });
   return administratorSessionSchema.parse(await parsedResponse(response));
 }

@@ -46,6 +46,29 @@ export const ADMIN_SCOPES = [
 export const adminRoleSchema = z.enum(ADMIN_ROLES);
 export const adminScopeSchema = z.enum(ADMIN_SCOPES);
 
+export const ADMIN_AUTHENTICATION_METHODS = [
+  "LOCAL_PASSWORD",
+  "INSTALLATION_KEY_RECOVERY",
+  "OIDC",
+] as const;
+
+export const adminAuthenticationMethodSchema = z.enum(ADMIN_AUTHENTICATION_METHODS);
+
+export const localAdministratorLoginRequestSchema = z.object({
+  username: z.string().trim().min(1).max(64),
+  password: z.string().min(12).max(1_024),
+}).strict();
+
+export const localAdministratorPasswordChangeRequestSchema = z.object({
+  currentPassword: z.string().min(12).max(1_024),
+  newPassword: z.string().min(12).max(1_024),
+}).strict();
+
+export const installationKeyRecoveryRequestSchema = z.object({
+  username: z.string().trim().min(1).max(64),
+  newPassword: z.string().min(12).max(1_024),
+}).strict();
+
 export const installationKeySessionRequestSchema = z.object({
   installationKey: z.string().min(32).max(4_096),
 }).strict();
@@ -58,9 +81,15 @@ export const administratorSessionSchema = z.object({
   createdAt: z.iso.datetime(),
   idleExpiresAt: z.iso.datetime(),
   absoluteExpiresAt: z.iso.datetime(),
+  authenticationMethod: adminAuthenticationMethodSchema.optional(),
+  passwordChangeRequired: z.boolean().optional(),
 });
 
 export type AdminRole = z.infer<typeof adminRoleSchema>;
 export type AdminScope = z.infer<typeof adminScopeSchema>;
+export type AdminAuthenticationMethod = z.infer<typeof adminAuthenticationMethodSchema>;
+export type LocalAdministratorLoginRequest = z.infer<typeof localAdministratorLoginRequestSchema>;
+export type LocalAdministratorPasswordChangeRequest = z.infer<typeof localAdministratorPasswordChangeRequestSchema>;
+export type InstallationKeyRecoveryRequest = z.infer<typeof installationKeyRecoveryRequestSchema>;
 export type InstallationKeySessionRequest = z.infer<typeof installationKeySessionRequestSchema>;
 export type AdministratorSession = z.infer<typeof administratorSessionSchema>;

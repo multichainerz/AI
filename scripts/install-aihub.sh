@@ -113,6 +113,21 @@ wait_for_aihub() {
   done
 }
 
+provision_local_administrator() {
+  local temporary_password result
+  temporary_password="$(openssl rand -base64 24 | tr -d '\n=' | tr '+/' '-_')"
+  result="$(printf '%s' "${temporary_password}" \
+    | docker compose --project-directory "${AIHUB_ROOT}" exec -T api \
+      node apps/api/dist/auth/provision-local-admin.js --username admin --display-name 'Local Administrator')" \
+    || fail "local administrator provisioning failed"
+  if [[ "${result}" == *'"created":true'* ]]; then
+    printf '\nInitial local administrator:\n\nUsername: admin\nTemporary password: %s\n\n' "${temporary_password}"
+    printf 'Store this temporary password until first login. AIHub requires it to be changed immediately and does not retain a plaintext copy.\n'
+  else
+    printf '\nThe existing local administrator account was preserved.\n'
+  fi
+}
+
 main() {
   require_root
   install_host_dependencies
@@ -120,16 +135,18 @@ main() {
   cd "${AIHUB_ROOT}"
   migrate_legacy_installation_secret
 
+  printf 'Building the pinned AIHub release...\n'
+  docker compose build
+
   if all_secrets_exist; then
     printf 'AIHub bootstrap material already exists; preserving it.\n'
   else
-    printf 'Building the pinned AIHub release before creating protected installation material...\n'
-    docker compose build
     generate_secrets
   fi
 
   docker compose up -d --no-build
   wait_for_aihub
+  provision_local_administrator
 
   local host_ip installation_key
   host_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
@@ -137,8 +154,8 @@ main() {
   installation_key="$(<"$(secret_file aihub_installation_key)")"
 
   printf '\nAIHub is ready at http://%s:%s/\n' "${host_ip}" "${AIHUB_HTTP_PORT}"
-  printf 'Permanent Installation Key:\n\n%s\n\n' "${installation_key}"
-  printf 'Store this key in your organization password vault before closing this terminal. It permanently unlocks local AIHub administration and does not expire.\n'
+  printf 'Offline recovery Installation Key:\n\n%s\n\n' "${installation_key}"
+  printf 'Store this key in your organization password vault before closing this terminal. It is only for local-account recovery and does not expire; it is not the routine dashboard login.\n'
   printf 'The separate root-owned master key encrypts connector secrets in PostgreSQL and is never accepted by the dashboard. Export and verify the encrypted recovery kit before production activation.\n'
 }
 

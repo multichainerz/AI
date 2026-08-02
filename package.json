@@ -22,6 +22,7 @@
     "test": "pnpm -r --if-present test",
     "verify": "pnpm typecheck && pnpm test && pnpm build && pnpm db:validate",
     "security:audit": "pnpm audit --prod --audit-level high",
+    "admin:provision": "node scripts/provision-local-admin.mjs",
     "db:generate": "pnpm --filter @aihub/database prisma:generate",
     "db:validate": "pnpm --filter @aihub/database prisma:validate",
     "verify:postgres": "pnpm --filter @aihub/database verify:postgres"
