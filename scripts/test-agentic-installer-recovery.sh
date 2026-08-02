@@ -66,11 +66,21 @@ if grep -Fq 'supermemory_base_url}/health' "${REPOSITORY_ROOT}/scripts/install-a
   printf 'Agentic System installer still probes the nonexistent Supermemory /health route\n' >&2
   exit 1
 fi
-grep -Fq 'chown "${HERMES_UID}:${HERMES_GID}" "${destination}"' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq 'write_file_from_stdin()' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+if grep -Fq '/dev/stdin' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"; then
+  printf 'Agentic System installer still depends on non-portable /dev/stdin file copies\n' >&2
+  exit 1
+fi
 if grep -Eq 'install .*-[og] (10000|"?\$\{HERMES_(UID|GID)\})' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"; then
   printf 'Agentic System installer passes a numeric identity through install -o/-g\n' >&2
   exit 1
 fi
+
+atomic_write_root="${TEST_ROOT}/atomic-write"
+mkdir -p "${atomic_write_root}"
+printf 'protected=true\n' | write_file_from_stdin 0640 "$(id -u)" "$(id -g)" "${atomic_write_root}/runtime.env"
+[[ "$(<"${atomic_write_root}/runtime.env")" == "protected=true" ]]
+[[ "$(stat -c '%a' "${atomic_write_root}/runtime.env")" == "640" ]]
 
 if [[ "${EUID}" -eq 0 ]]; then
   ownership_root="${TEST_ROOT}/numeric-ownership"

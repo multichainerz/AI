@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="ai-v1.15.0"
+INSTALLER_VERSION="ai-v1.15.1"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 CONTAINER_NAME="orcasynapse-hermes"
 HEARTBEAT_SERVICE="orcasynapse-hermes-heartbeat"
@@ -182,10 +182,23 @@ install_hermes_directory() {
   chown "${HERMES_UID}:${HERMES_GID}" "${destination}"
 }
 
+write_file_from_stdin() {
+  local mode="$1" owner="$2" group="$3" destination="$4" parent temporary
+  parent="${destination%/*}"
+  [[ -d "${parent}" ]] || fail "managed-file parent directory '${parent}' does not exist"
+  temporary="$(mktemp "${parent}/.orcasynapse-write.XXXXXX")" \
+    || fail "could not create a protected temporary file in '${parent}'"
+  TEMPORARY_FILES+=("${temporary}")
+  cat > "${temporary}" || fail "could not write managed file '${destination}'"
+  chmod "${mode}" "${temporary}"
+  chown "${owner}:${group}" "${temporary}"
+  mv -f -- "${temporary}" "${destination}" \
+    || fail "could not atomically replace managed file '${destination}'"
+}
+
 install_hermes_file_from_stdin() {
   local mode="$1" destination="$2"
-  install -m "${mode}" /dev/stdin "${destination}"
-  chown "${HERMES_UID}:${HERMES_GID}" "${destination}"
+  write_file_from_stdin "${mode}" "${HERMES_UID}" "${HERMES_GID}" "${destination}"
 }
 
 install_host_dependencies() {
@@ -203,7 +216,7 @@ install_host_dependencies() {
   docker info >/dev/null 2>&1 || fail "the Docker daemon is not reachable after startup"
 
   local required_command
-  for required_command in install chown useradd journalctl sha256sum awk sed grep date hostname; do
+  for required_command in install chown useradd journalctl sha256sum awk sed grep date hostname mktemp cat chmod mv; do
     command -v "${required_command}" >/dev/null 2>&1 \
       || fail "the Ubuntu host is missing required command '${required_command}'"
   done
@@ -461,7 +474,7 @@ install_supermemory() {
   assert_supermemory_release_usable "${installed_version}"
   chown -R "${SUPERMEMORY_USER}:${SUPERMEMORY_USER}" "${SUPERMEMORY_ROOT}"
 
-  install -m 0600 -o "${SUPERMEMORY_USER}" -g "${SUPERMEMORY_USER}" /dev/stdin "${SUPERMEMORY_ROOT}/runtime.env" <<EOF
+  write_file_from_stdin 0600 "${SUPERMEMORY_USER}" "${SUPERMEMORY_USER}" "${SUPERMEMORY_ROOT}/runtime.env" <<EOF
 OPENAI_BASE_URL=${inference_base_url}
 OPENAI_API_KEY=${gateway_key}
 OPENAI_MODEL=${model_alias}
@@ -475,7 +488,7 @@ SUPERMEMORY_EMBEDDING_DIMENSIONS=${SUPERMEMORY_EMBEDDING_DIMENSIONS}
 SUPERMEMORY_DISABLE_TELEMETRY=1
 EOF
 
-  install -m 0644 /dev/stdin "/etc/systemd/system/${SUPERMEMORY_SERVICE}.service" <<EOF
+  write_file_from_stdin 0644 root root "/etc/systemd/system/${SUPERMEMORY_SERVICE}.service" <<EOF
 [Unit]
 Description=OrcaSynapse Supermemory Local runtime
 After=network-online.target
@@ -556,7 +569,7 @@ wait_for_hermes() {
 
 write_heartbeat_client() {
   install -d -m 0755 /usr/local/lib/orcasynapse
-  install -m 0755 /dev/stdin /usr/local/lib/orcasynapse/hermes-heartbeat.sh <<'HEARTBEAT'
+  write_file_from_stdin 0755 root root /usr/local/lib/orcasynapse/hermes-heartbeat.sh <<'HEARTBEAT'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
@@ -601,7 +614,7 @@ curl --fail --silent --show-error --max-time 15 \
   "${CONTROL_PLANE_URL}/api/v1/runtime-nodes/${NODE_ID}/heartbeat" >/dev/null
 HEARTBEAT
 
-  install -m 0644 /dev/stdin "/etc/systemd/system/${HEARTBEAT_SERVICE}.service" <<EOF
+  write_file_from_stdin 0644 root root "/etc/systemd/system/${HEARTBEAT_SERVICE}.service" <<EOF
 [Unit]
 Description=OrcaSynapse Hermes runtime node heartbeat
 After=network-online.target docker.service
@@ -620,7 +633,7 @@ ProtectSystem=strict
 ReadOnlyPaths=${STATE_ROOT}
 EOF
 
-  install -m 0644 /dev/stdin "/etc/systemd/system/${HEARTBEAT_SERVICE}.timer" <<EOF
+  write_file_from_stdin 0644 root root "/etc/systemd/system/${HEARTBEAT_SERVICE}.timer" <<EOF
 [Unit]
 Description=Send OrcaSynapse Hermes runtime node heartbeat every minute
 
@@ -839,7 +852,10 @@ EOF
     docker exec --user "${HERMES_UID}:${HERMES_GID}" "${CONTAINER_NAME}" python -c \
       'from tools.lazy_deps import ensure; ensure("memory.supermemory", prompt=False)' \
     || fail "Hermes could not load its governed Supermemory provider"
-  install -m 0644 -o root -g root /dev/stdin "${STATE_ROOT}/managed/config.yaml" <<EOF
+  install -d -m 0755 "${STATE_ROOT}/managed"
+  chown root:root "${STATE_ROOT}/managed"
+  install_hermes_directory 0750 "${STATE_ROOT}/data"
+  write_file_from_stdin 0644 root root "${STATE_ROOT}/managed/config.yaml" <<EOF
 model:
   provider: custom
   default: ${model_alias_json}
