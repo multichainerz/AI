@@ -10,6 +10,7 @@ ORCASYNAPSE_ARCHIVE_SHA256="${ORCASYNAPSE_ARCHIVE_SHA256:-}"
 
 temporary_root=""
 staging_dir=""
+backup_dir=""
 
 if [[ -t 1 && "${TERM:-dumb}" != "dumb" ]]; then
   UI_INTERACTIVE=1
@@ -88,6 +89,10 @@ success() {
   printf '  %b[ OK ]%b %s\n' "${UI_GREEN}${UI_BOLD}" "${UI_RESET}" "$1"
 }
 
+warning() {
+  printf '  %b[WARN]%b %s\n' "${UI_AMBER}${UI_BOLD}" "${UI_RESET}" "$1" >&2
+}
+
 run_with_spinner() {
   local label="$1"
   shift
@@ -134,6 +139,13 @@ cleanup() {
   (( UI_INTERACTIVE )) && printf '\033[?25h'
   [[ -z "${temporary_root}" || ! -d "${temporary_root}" ]] || rm -rf -- "${temporary_root}"
   [[ -z "${staging_dir}" || ! -d "${staging_dir}" ]] || rm -rf -- "${staging_dir}"
+  if [[ -n "${backup_dir}" && -d "${backup_dir}" ]]; then
+    if [[ ! -e "${ORCASYNAPSE_INSTALL_DIR}" ]]; then
+      mv -- "${backup_dir}" "${ORCASYNAPSE_INSTALL_DIR}" || true
+    else
+      warning "A protected source backup remains at ${backup_dir}; inspect it before removal."
+    fi
+  fi
 }
 trap cleanup EXIT
 
@@ -213,20 +225,8 @@ download_release_source() {
   success "Archive verified (sha256: ${actual_checksum})."
 }
 
-install_source_tree() {
+stage_source_tree() {
   local commit="$1" source_dir="$2"
-  local marker="${ORCASYNAPSE_INSTALL_DIR}/.orcasynapse-source-commit"
-
-  if [[ -d "${ORCASYNAPSE_INSTALL_DIR}" ]]; then
-    if [[ -r "${marker}" && "$(<"${marker}")" == "${commit}" \
-      && -r "${ORCASYNAPSE_INSTALL_DIR}/scripts/install-orcasynapse.sh" ]]; then
-      success "The same verified source is already installed; existing data and secrets will be preserved."
-      export ORCASYNAPSE_BOOTSTRAP_BRANDED=1
-      exec bash "${ORCASYNAPSE_INSTALL_DIR}/scripts/install-orcasynapse.sh"
-    fi
-    fail "${ORCASYNAPSE_INSTALL_DIR} already exists with different or unverified source; refusing to overwrite application or secret material"
-  fi
-
   local install_parent install_name
   install_parent="$(dirname -- "${ORCASYNAPSE_INSTALL_DIR}")"
   install_name="$(basename -- "${ORCASYNAPSE_INSTALL_DIR}")"
@@ -237,6 +237,161 @@ install_source_tree() {
   cp -a -- "${source_dir}/." "${staging_dir}/"
   printf '%s' "${commit}" > "${staging_dir}/.orcasynapse-source-commit"
   chmod 0600 "${staging_dir}/.orcasynapse-source-commit"
+}
+
+existing_install_is_verified() {
+  local marker="${ORCASYNAPSE_INSTALL_DIR}/.orcasynapse-source-commit" existing_commit=""
+  [[ -d "${ORCASYNAPSE_INSTALL_DIR}" && ! -L "${ORCASYNAPSE_INSTALL_DIR}" ]] || return 1
+  [[ -f "${marker}" && ! -L "${marker}" && -r "${marker}" ]] || return 1
+  existing_commit="$(<"${marker}")"
+  [[ "${existing_commit}" =~ ^[a-f0-9]{40}$ ]] || return 1
+  [[ -f "${ORCASYNAPSE_INSTALL_DIR}/compose.yaml" \
+    && -f "${ORCASYNAPSE_INSTALL_DIR}/scripts/install-orcasynapse.sh" ]] || return 1
+}
+
+choose_existing_install_action() {
+  local verified="$1" requested_commit="$2"
+  local configured_action="${ORCASYNAPSE_EXISTING_INSTALL_ACTION:-}" choice=""
+
+  if [[ -n "${configured_action}" ]]; then
+    case "${configured_action}" in
+      upgrade)
+        [[ "${verified}" == "1" ]] || fail "cannot upgrade an unverified directory; use an empty path or explicitly choose erase"
+        printf 'upgrade'
+        return
+        ;;
+      erase)
+        [[ "${ORCASYNAPSE_CONFIRM_ERASE:-}" == "ERASE" ]] \
+          || fail "automated erase requires ORCASYNAPSE_CONFIRM_ERASE=ERASE"
+        printf 'erase'
+        return
+        ;;
+      abort)
+        printf 'abort'
+        return
+        ;;
+      *) fail "ORCASYNAPSE_EXISTING_INSTALL_ACTION must be upgrade, erase, or abort" ;;
+    esac
+  fi
+
+  [[ -r /dev/tty && -w /dev/tty ]] \
+    || fail "${ORCASYNAPSE_INSTALL_DIR} already exists; an interactive terminal or ORCASYNAPSE_EXISTING_INSTALL_ACTION is required"
+
+  {
+    printf '\n%b+======================================================================+%b\n' "${UI_AMBER}${UI_BOLD}" "${UI_RESET}"
+    printf '%b|  %-68s|%b\n' "${UI_AMBER}${UI_BOLD}" "EXISTING INSTALLATION DETECTED" "${UI_RESET}"
+    printf '%b+======================================================================+%b\n' "${UI_AMBER}${UI_BOLD}" "${UI_RESET}"
+    printf '   Location:  %s\n' "${ORCASYNAPSE_INSTALL_DIR}"
+    if [[ "${verified}" == "1" ]]; then
+      printf '   Installed: %.12s\n' "$(<"${ORCASYNAPSE_INSTALL_DIR}/.orcasynapse-source-commit")"
+      printf '   Requested: %.12s\n\n' "${requested_commit}"
+      printf '   %b1%b  Update application source; preserve PostgreSQL and secrets %b[recommended]%b\n' \
+        "${UI_CYAN}${UI_BOLD}" "${UI_RESET}" "${UI_GREEN}" "${UI_RESET}"
+      printf '   %b2%b  Clean reinstall; permanently erase containers, volumes, accounts, and secrets\n' \
+        "${UI_RED}${UI_BOLD}" "${UI_RESET}"
+      printf '   %b3%b  Exit without changes\n' "${UI_DIM}" "${UI_RESET}"
+      printf '\n   Select an action [1]: '
+    else
+      printf '   This directory is not a verified OrcaSynapse source tree.\n\n'
+      printf '   %b1%b  Clean the directory and install from scratch\n' "${UI_RED}${UI_BOLD}" "${UI_RESET}"
+      printf '   %b2%b  Exit without changes\n' "${UI_DIM}" "${UI_RESET}"
+      printf '\n   Select an action [2]: '
+    fi
+  } > /dev/tty
+
+  IFS= read -r choice < /dev/tty
+  if [[ "${verified}" == "1" ]]; then
+    case "${choice:-1}" in
+      1) printf 'upgrade'; return ;;
+      2) choice="erase" ;;
+      3) printf 'abort'; return ;;
+      *) fail "invalid existing-installation selection" ;;
+    esac
+  else
+    case "${choice:-2}" in
+      1) choice="erase" ;;
+      2) printf 'abort'; return ;;
+      *) fail "invalid existing-directory selection" ;;
+    esac
+  fi
+
+  printf '\n   %bDESTRUCTIVE ACTION%b\n' "${UI_RED}${UI_BOLD}" "${UI_RESET}" > /dev/tty
+  printf '   Type ERASE to permanently remove this installation and its data: ' > /dev/tty
+  IFS= read -r choice < /dev/tty
+  printf '\n' > /dev/tty
+  [[ "${choice}" == "ERASE" ]] || fail "clean reinstall cancelled; no data was removed"
+  printf 'erase'
+}
+
+clean_existing_install() {
+  local resolved_target
+  resolved_target="$(realpath -m -- "${ORCASYNAPSE_INSTALL_DIR}")"
+  [[ "${resolved_target}" == "${ORCASYNAPSE_INSTALL_DIR}" && "${resolved_target}" != "/" ]] \
+    || fail "refusing to clean an unresolved or filesystem-root installation path"
+
+  if [[ -f "${ORCASYNAPSE_INSTALL_DIR}/compose.yaml" ]] \
+    && command -v docker >/dev/null 2>&1 \
+    && docker compose version >/dev/null 2>&1; then
+    run_with_spinner "Remove existing containers and data volumes" \
+      docker compose --project-directory "${ORCASYNAPSE_INSTALL_DIR}" down --remove-orphans --volumes \
+      || fail "Docker could not cleanly remove the existing OrcaSynapse stack"
+  fi
+
+  rm -rf --one-file-system -- "${resolved_target}"
+  [[ ! -e "${resolved_target}" ]] || fail "the existing installation directory could not be removed"
+  success "Existing application files, local secrets, and managed data volumes were removed."
+}
+
+upgrade_source_tree() {
+  local install_parent install_name
+  install_parent="$(dirname -- "${ORCASYNAPSE_INSTALL_DIR}")"
+  install_name="$(basename -- "${ORCASYNAPSE_INSTALL_DIR}")"
+
+  if [[ -e "${ORCASYNAPSE_INSTALL_DIR}/.local" ]]; then
+    [[ -d "${ORCASYNAPSE_INSTALL_DIR}/.local" && ! -L "${ORCASYNAPSE_INSTALL_DIR}/.local" ]] \
+      || fail "the existing protected local-state path is not a regular directory"
+    cp -a -- "${ORCASYNAPSE_INSTALL_DIR}/.local" "${staging_dir}/.local"
+  fi
+
+  backup_dir="${install_parent}/.${install_name}.backup.$$"
+  [[ ! -e "${backup_dir}" ]] || fail "temporary source-backup path already exists: ${backup_dir}"
+  mv -- "${ORCASYNAPSE_INSTALL_DIR}" "${backup_dir}"
+  mv -- "${staging_dir}" "${ORCASYNAPSE_INSTALL_DIR}"
+  staging_dir=""
+  rm -rf --one-file-system -- "${backup_dir}"
+  backup_dir=""
+  success "Application source updated; PostgreSQL volumes and protected local secrets were preserved."
+}
+
+install_source_tree() {
+  local commit="$1" source_dir="$2" action="" verified=0
+  local marker="${ORCASYNAPSE_INSTALL_DIR}/.orcasynapse-source-commit"
+
+  if [[ -e "${ORCASYNAPSE_INSTALL_DIR}" || -L "${ORCASYNAPSE_INSTALL_DIR}" ]]; then
+    if existing_install_is_verified; then
+      verified=1
+      if [[ "$(<"${marker}")" == "${commit}" ]]; then
+        success "The same verified source is already installed; existing data and secrets will be preserved."
+        export ORCASYNAPSE_BOOTSTRAP_BRANDED=1
+        exec bash "${ORCASYNAPSE_INSTALL_DIR}/scripts/install-orcasynapse.sh"
+      fi
+    fi
+
+    action="$(choose_existing_install_action "${verified}" "${commit}")"
+    case "${action}" in
+      abort) fail "installation cancelled; no changes were made" ;;
+      erase) clean_existing_install ;;
+      upgrade) ;;
+      *) fail "existing-installation action could not be resolved" ;;
+    esac
+  fi
+
+  stage_source_tree "${commit}" "${source_dir}"
+  if [[ "${action}" == "upgrade" ]]; then
+    upgrade_source_tree
+    return
+  fi
+
   mv -- "${staging_dir}" "${ORCASYNAPSE_INSTALL_DIR}"
   staging_dir=""
 }
@@ -272,4 +427,6 @@ main() {
   exec bash "${ORCASYNAPSE_INSTALL_DIR}/scripts/install-orcasynapse.sh"
 }
 
-main "$@"
+if [[ "${ORCASYNAPSE_INSTALLER_LIBRARY_ONLY:-0}" != "1" ]]; then
+  main "$@"
+fi

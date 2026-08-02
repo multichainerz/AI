@@ -29,6 +29,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate installer scripts
         run: bash -n install.sh scripts/*.sh
+      - name: Verify installer recovery paths
+        run: bash scripts/test-public-installer-recovery.sh
       - name: Verify Linux container secret access
         run: sudo bash scripts/test-installer-secret-permissions.sh
       - uses: pnpm/action-setup@v4

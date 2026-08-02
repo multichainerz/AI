@@ -17,11 +17,13 @@ sudo bash orcasynapse-install.sh
 
 The one-line form is the default convenience path; the inspect-first form is available for controlled environments without opening a terminal pager. The installer automatically uses plain output when no interactive terminal is attached, and `NO_COLOR=1` disables terminal colors.
 
-The bootstrap resolves `ORCASYNAPSE_REF` (default `main`) to an immutable Git commit, downloads that commit from GitHub, records the source identity under `/opt/orcasynapse`, and refuses to overwrite a different installation. An acceptance environment should set an approved commit and checksum explicitly:
+The bootstrap resolves `ORCASYNAPSE_REF` (default `main`) to an immutable Git commit, downloads that commit from GitHub, records the source identity under `/opt/orcasynapse`, and handles an existing path through the guarded recovery flow below. An acceptance environment should set an approved commit and checksum explicitly:
 
 ```bash
 sudo env ORCASYNAPSE_REF=<40-character-commit> ORCASYNAPSE_ARCHIVE_SHA256=<sha256> bash install.sh
 ```
+
+When `/opt/orcasynapse` already exists, the installer distinguishes a verified earlier installation from unknown residue. A verified installation offers a default in-place source update that preserves PostgreSQL volumes, protected secrets, and recovery material. A clean reinstall is also available, but only after a separate `ERASE` confirmation because it permanently removes the Compose stack, named data volumes, accounts, and local secrets. Unknown directories cannot use the preservation path. Non-interactive automation must explicitly set `ORCASYNAPSE_EXISTING_INSTALL_ACTION=upgrade|erase|abort`; automated erase additionally requires `ORCASYNAPSE_CONFIRM_ERASE=ERASE`.
 
 From an intact local release bundle, the equivalent host command is:
 
