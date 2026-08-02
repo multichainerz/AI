@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="ai-v1.15.1"
+INSTALLER_VERSION="ai-v1.15.2"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 CONTAINER_NAME="orcasynapse-hermes"
 HEARTBEAT_SERVICE="orcasynapse-hermes-heartbeat"
@@ -20,6 +20,7 @@ ENROLLMENT_STATE="${STATE_ROOT}/enrollment-state.json"
 TEMPORARY_FILES=()
 RESOLVED_BUNDLE=""
 INSTALLATION_COMPLETED=0
+HERMES_BOOTSTRAP_MANAGED_DIR="${STATE_ROOT}/data/.orcasynapse-bootstrap-managed"
 
 if [[ -t 1 && "${TERM:-dumb}" != "dumb" ]]; then
   UI_INTERACTIVE=1
@@ -147,6 +148,7 @@ fail() {
 cleanup() {
   local status=$?
   (( UI_INTERACTIVE )) && printf '\033[?25h'
+  remove_hermes_bootstrap_policy
   local file
   for file in "${TEMPORARY_FILES[@]:-}"; do
     [[ -z "${file}" || ! -e "${file}" ]] || rm -f -- "${file}"
@@ -199,6 +201,69 @@ write_file_from_stdin() {
 install_hermes_file_from_stdin() {
   local mode="$1" destination="$2"
   write_file_from_stdin "${mode}" "${HERMES_UID}" "${HERMES_GID}" "${destination}"
+}
+
+remove_hermes_bootstrap_policy() {
+  rm -f -- "${HERMES_BOOTSTRAP_MANAGED_DIR}/config.yaml"
+  rmdir -- "${HERMES_BOOTSTRAP_MANAGED_DIR}" 2>/dev/null || true
+}
+
+write_hermes_managed_policy() {
+  local model_alias_json="$1" model_base_url_json="$2"
+  install -d -m 0755 "${STATE_ROOT}/managed"
+  chown root:root "${STATE_ROOT}/managed"
+  write_file_from_stdin 0644 root root "${STATE_ROOT}/managed/config.yaml" <<EOF
+model:
+  provider: custom
+  default: ${model_alias_json}
+  base_url: ${model_base_url_json}
+  api_key: \${OPENAI_API_KEY}
+# Hermes otherwise falls back to its broad api_server platform preset. Keep
+# the production baseline tool-free (including dynamically configured MCP
+# servers) until OrcaSynapse explicitly distributes and verifies a governed toolset.
+platform_toolsets:
+  api_server:
+    - no_mcp
+memory:
+  provider: supermemory
+security:
+  redact_secrets: true
+  allow_lazy_installs: false
+tool_loop_guardrails:
+  hard_stop_enabled: true
+  hard_stop_after:
+    exact_failure: 5
+    idempotent_no_progress: 5
+EOF
+}
+
+install_hermes_memory_provider() {
+  # Hermes' immutable Docker image deliberately redirects allowlisted optional
+  # dependencies into /opt/data/lazy-packages. Use a process-local managed
+  # scope for that one installation; the live /etc/hermes policy remains
+  # fail-closed even if this installer is interrupted.
+  remove_hermes_bootstrap_policy
+  install -d -m 0755 -o root -g root "${HERMES_BOOTSTRAP_MANAGED_DIR}"
+  write_file_from_stdin 0644 root root "${HERMES_BOOTSTRAP_MANAGED_DIR}/config.yaml" <<'EOF'
+security:
+  allow_lazy_installs: true
+EOF
+
+  local install_status=0
+  run_with_spinner "Install the governed Hermes memory provider" \
+    docker exec \
+      --env HERMES_MANAGED_DIR=/opt/data/.orcasynapse-bootstrap-managed \
+      --user "${HERMES_UID}:${HERMES_GID}" \
+      "${CONTAINER_NAME}" python -c \
+      'from tools.lazy_deps import ensure; ensure("memory.supermemory", prompt=False)' \
+    || install_status=$?
+  remove_hermes_bootstrap_policy
+  (( install_status == 0 )) || return "${install_status}"
+
+  run_with_spinner "Verify the locked Hermes memory provider" \
+    docker exec --user "${HERMES_UID}:${HERMES_GID}" "${CONTAINER_NAME}" python -c \
+      'from tools.lazy_deps import activate_durable_lazy_target, feature_missing; activate_durable_lazy_target(); missing = feature_missing("memory.supermemory"); assert not missing, f"missing dependencies: {missing}"; import supermemory' \
+    || return $?
 }
 
 install_host_dependencies() {
@@ -848,36 +913,10 @@ EOF
   supermemory_ready "${supermemory_base_url}" \
     || fail "Supermemory is ready on loopback but is not reachable through the invited runtime host on TCP 6767"
 
-  run_with_spinner "Load the governed Hermes memory provider" \
-    docker exec --user "${HERMES_UID}:${HERMES_GID}" "${CONTAINER_NAME}" python -c \
-      'from tools.lazy_deps import ensure; ensure("memory.supermemory", prompt=False)' \
-    || fail "Hermes could not load its governed Supermemory provider"
-  install -d -m 0755 "${STATE_ROOT}/managed"
-  chown root:root "${STATE_ROOT}/managed"
   install_hermes_directory 0750 "${STATE_ROOT}/data"
-  write_file_from_stdin 0644 root root "${STATE_ROOT}/managed/config.yaml" <<EOF
-model:
-  provider: custom
-  default: ${model_alias_json}
-  base_url: ${model_base_url_json}
-  api_key: \${OPENAI_API_KEY}
-# Hermes otherwise falls back to its broad api_server platform preset. Keep
-# the production baseline tool-free (including dynamically configured MCP
-# servers) until OrcaSynapse explicitly distributes and verifies a governed toolset.
-platform_toolsets:
-  api_server:
-    - no_mcp
-memory:
-  provider: supermemory
-security:
-  redact_secrets: true
-  allow_lazy_installs: false
-tool_loop_guardrails:
-  hard_stop_enabled: true
-  hard_stop_after:
-    exact_failure: 5
-    idempotent_no_progress: 5
-EOF
+  write_hermes_managed_policy "${model_alias_json}" "${model_base_url_json}"
+  install_hermes_memory_provider \
+    || fail "Hermes could not install and verify its governed Supermemory provider"
   install_hermes_file_from_stdin 0640 "${STATE_ROOT}/data/supermemory.json" <<EOF
 {
   "base_url": "http://host.docker.internal:6767",

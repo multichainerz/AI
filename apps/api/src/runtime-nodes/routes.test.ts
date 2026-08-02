@@ -115,6 +115,10 @@ describe("Hermes runtime-node routes", () => {
     expect(ready.headers["content-disposition"]).toBe("inline; filename=install-agentic-node.sh");
     expect(ready.body).toContain("#!/usr/bin/env bash");
     expect(ready.body).toContain("write_file_from_stdin()");
+    expect(ready.body).toContain("HERMES_MANAGED_DIR=/opt/data/.orcasynapse-bootstrap-managed");
+    expect(ready.body).toContain("allow_lazy_installs: true");
+    expect(ready.body).toContain("allow_lazy_installs: false");
+    expect(ready.body).toContain("activate_durable_lazy_target");
     expect(ready.body).not.toContain("/dev/stdin");
     expect((await app.inject({ method: "GET", url: "/install/hermes-node.sh" })).statusCode).toBe(404);
     const remover = await app.inject({ method: "GET", url: "/install/remove-agentic-node.sh" });

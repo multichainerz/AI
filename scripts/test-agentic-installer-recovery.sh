@@ -67,6 +67,10 @@ if grep -Fq 'supermemory_base_url}/health' "${REPOSITORY_ROOT}/scripts/install-a
   exit 1
 fi
 grep -Fq 'write_file_from_stdin()' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq 'HERMES_MANAGED_DIR=/opt/data/.orcasynapse-bootstrap-managed' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq 'allow_lazy_installs: true' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq 'allow_lazy_installs: false' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq 'activate_durable_lazy_target' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 if grep -Fq '/dev/stdin' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"; then
   printf 'Agentic System installer still depends on non-portable /dev/stdin file copies\n' >&2
   exit 1
