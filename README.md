@@ -1,5 +1,11 @@
 <p align="center">
-  <img src="docs/assets/orcasynapse-wordmark.svg" alt="OrcaSynapse — on-premise AI operations and agentic control plane" width="100%" />
+  <img src="docs/assets/orcasynapse-wordmark.svg" alt="OrcaSynapse - private AI operations and agentic control plane" width="100%" />
+</p>
+
+<h3 align="center">Your private AI. One control plane. Fully on-premises.</h3>
+
+<p align="center">
+  Connect any OpenAI-compatible inference server to governed Hermes agents with durable Supermemory, enterprise access, and end-to-end operational visibility.
 </p>
 
 <p align="center">
@@ -7,113 +13,83 @@
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-7-3178C6?logo=typescript&logoColor=white" />
   <img alt="React" src="https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white" />
   <img alt="PostgreSQL" src="https://img.shields.io/badge/PostgreSQL-17-4169E1?logo=postgresql&logoColor=white" />
-  <img alt="Deployment" src="https://img.shields.io/badge/deployment-on--premise-7457DF" />
+  <img alt="Deployment" src="https://img.shields.io/badge/deployment-on--premises-7457DF" />
 </p>
 
-OrcaSynapse is a self-hosted control and observability plane for private AI. It connects an enterprise-approved inference server to an isolated Hermes agent runtime, gives Hermes durable Supermemory, and centralizes chat, model routes, prompts, guardrails, knowledge, identity, audit, and operational evidence.
+## Install OrcaSynapse
 
-The design is intentionally small: no LiteLLM tier, Redis, Valkey, pg-boss, object store, or duplicate vector database is required.
+Start with one clean Debian or Ubuntu VM. The installer provisions Docker, PostgreSQL, the API, worker, dashboard, encrypted secrets, and the first local administrator.
 
-## Three coherent layers
+```bash
+curl -fsSL https://raw.githubusercontent.com/multichainerz/AI/main/install.sh | sudo bash
+```
 
-| Layer | Purpose | Primary components |
+Open the dashboard URL printed by the installer. That is the only command needed on VM1.
+
+<details>
+<summary>Prefer to inspect the bootstrap first?</summary>
+
+```bash
+curl -fsSLo orcasynapse-install.sh https://raw.githubusercontent.com/multichainerz/AI/main/install.sh
+sed -n '1,260p' orcasynapse-install.sh
+sudo bash orcasynapse-install.sh
+```
+
+Production environments can pin an approved commit and archive checksum. See the [installation and recovery guide](deploy/BOOTSTRAP.md).
+</details>
+
+## Private AI without the infrastructure maze
+
+OrcaSynapse turns three clear layers into one governed experience:
+
+| Layer | What the administrator does | What OrcaSynapse manages |
 | --- | --- | --- |
-| **AI Inference** | Discover, validate, select, and monitor an OpenAI-compatible model endpoint | vLLM, llama.cpp, SGLang, Ollama, TGI, or a compatible server |
-| **Agentic System** | Run isolated, governed agents with long-lived semantic memory | Hermes Agent + Supermemory Local on VM2 |
-| **Enterprise Access** | Authenticate people, assign administrative roles, and retain policy evidence | Local recovery account, OIDC / Microsoft Entra ID, PostgreSQL audit and configuration |
+| **AI Inference** | Select an existing inference endpoint | Discovery, model validation, routing, credentials, health, and usage |
+| **Agentic System** | Enroll one isolated VM | Hermes, Supermemory, managed policy, node identity, and observability |
+| **Enterprise Access** | Connect organizational identity | Local recovery, OIDC / Microsoft Entra ID, roles, sessions, and audit |
 
 ```mermaid
 flowchart LR
-  USER["Employees and administrators"] --> ORCA["VM1 · OrcaSynapse"]
-  ORCA <--> PG["PostgreSQL"]
-  ORCA <-->|"governed runs, health, audit"| AGENT["VM2 · Hermes + Supermemory"]
-  ORCA -->|"approved Chat and agent inference"| GPU["OpenAI-compatible inference server"]
-  AGENT -->|"node-scoped inference access"| ORCA
+  PEOPLE["Employees and administrators"] --> ORCA["VM1: OrcaSynapse + PostgreSQL"]
+  ORCA --> INFERENCE["AI Inference: vLLM, llama.cpp, SGLang, Ollama, TGI"]
+  ORCA <-->|"governed runs and telemetry"| AGENTS["VM2: Hermes + Supermemory"]
+  AGENTS -->|"node-scoped model access"| ORCA
 ```
 
-## Install with two scripts on two VMs
+No LiteLLM tier, Redis, Valkey, pg-boss, object store, or duplicate vector database is required.
 
-### 1. Install OrcaSynapse on VM1
+## From two empty VMs to governed agents
 
-Use a clean Debian or Ubuntu host with network access and enough capacity for the application services and PostgreSQL. The public bootstrap is hosted free of charge through GitHub Raw. Installation is two commands:
+1. **Install VM1** with the one-line command above and sign in to OrcaSynapse.
+2. **Connect AI Inference** from the dashboard. OrcaSynapse discovers compatible API paths and available models instead of asking you to guess endpoint URLs.
+3. **Enroll VM2** from **Deployment > Agentic System**. The dashboard generates a one-time claim and an OrcaSynapse-hosted command that installs Hermes and Supermemory together.
+4. **Add Enterprise Access** when ready by connecting OIDC or Microsoft Entra ID and mapping groups to administrative roles.
 
-```bash
-curl --proto '=https' --tlsv1.2 -fsSLo orcasynapse-install.sh \
-  https://raw.githubusercontent.com/multichainerz/AI/main/install.sh
-sudo bash orcasynapse-install.sh
-```
+The VM2 installer creates its identity locally, consumes the claim once, receives only a scoped inference route, applies the managed guardrail baseline, and starts signed health reporting. OrcaSynapse never needs the VM's SSH password or Docker socket.
 
-The previous `less install.sh` instruction opened a full-screen terminal pager, which can resemble Vim. It was only for inspection and was never part of the installer. To review the script without opening a pager, download it and print it directly:
+## What you get
 
-```bash
-curl --proto '=https' --tlsv1.2 -fsSLo orcasynapse-install.sh \
-  https://raw.githubusercontent.com/multichainerz/AI/main/install.sh
-sed -n '1,240p' orcasynapse-install.sh
-sudo bash orcasynapse-install.sh
-```
+- Responsive Chat with streaming, cancellation, token usage, latency, throughput, feedback, and retained conversations.
+- Smart inference discovery for vLLM, llama.cpp, SGLang, Ollama, TGI, and compatible OpenAI-style servers.
+- Governed Hermes profiles, skills, tools, prompts, guardrails, lifecycle states, runs, and safe event projections.
+- Durable semantic memory through self-hosted Supermemory Local without a second vector plane in OrcaSynapse.
+- Ephemeral document processing with durable knowledge publication and no permanent source-file repository.
+- Encrypted PostgreSQL-backed configuration, sessions, authorization, workflow state, audit, and operational evidence.
+- Local recovery plus optional OIDC / Microsoft Entra ID for enterprise administration.
 
-The installer uses a branded, color-aware terminal interface when attached to a terminal and plain log-safe output in automation. Set `NO_COLOR=1` to disable ANSI colors explicitly.
+## Trust boundaries that stay understandable
 
-The bootstrap resolves the selected GitHub ref to an immutable commit, downloads that source archive from GitHub, installs it under `/opt/orcasynapse`, builds the pinned Compose application locally, and starts PostgreSQL, migrations, the API, runtime executor, and dashboard. It prints:
+- **OrcaSynapse** owns identity, authorization, policy, encrypted configuration, audit, and inference access.
+- **PostgreSQL** owns control-plane state—not embeddings, model weights, or original enterprise files.
+- **Hermes** runs in an isolated environment with only approved model, memory, and tool capabilities.
+- **Supermemory** owns long-lived semantic memory; enterprise knowledge retrieval remains governed by OrcaSynapse.
+- **Inference credentials** remain on VM1. Agent nodes receive a bounded node-scoped gateway credential.
 
-- the initial `admin` temporary password, which must be changed at first sign-in; and
-- a permanent Installation Key for offline local-account recovery, which the customer must store in an organizational password vault.
-
-GitHub Raw hosts only the small bootstrap file; it is not an image registry or a trust substitute. For an accepted production build, pin a reviewed 40-character commit and its archive checksum:
-
-```bash
-sudo env \
-  ORCASYNAPSE_REF=<approved-commit-sha> \
-  ORCASYNAPSE_ARCHIVE_SHA256=<approved-archive-sha256> \
-  bash install.sh
-```
-
-If the repository is already checked out locally, run `sudo ./scripts/install-orcasynapse.sh` instead.
-
-### 2. Configure AI Inference
-
-Open the dashboard, sign in, and use **Deployment → AI Inference**. OrcaSynapse probes likely OpenAI-compatible paths, discovers model IDs, validates chat and streaming behavior, and saves the chosen endpoint and credential in its encrypted PostgreSQL-backed configuration store.
-
-### 3. Install the Agentic System on VM2
-
-After activating an Agent model route, use **Deployment → Agentic System → Enroll node**. OrcaSynapse generates a short-lived, single-use claim and serves the second installer from the customer-owned VM1:
-
-```bash
-curl -fsS https://orcasynapse.example.internal/install/hermes-node.sh \
-  -o install-orcasynapse-agent.sh
-sudo bash install-orcasynapse-agent.sh \
-  --connect https://orcasynapse.example.internal
-```
-
-Paste the claim at the hidden prompt. This one script installs both Hermes and Supermemory, generates the node identity on VM2, applies the approved inference route and managed guardrail baseline, registers the services, and starts signed health heartbeats. OrcaSynapse never retains VM2 SSH credentials or mounts its Docker socket.
-
-### 4. Enable Enterprise Access
-
-Configure OIDC or Microsoft Entra ID, map administrative groups to roles, validate sign-in and recovery, and retain the local administrator only as a controlled break-glass path. Tenant isolation remains an explicit production acceptance item; the current release must not be marketed as fully tenant-isolated until those controls pass end-to-end tests.
-
-## What is already implemented
-
-- responsive desktop and mobile administration dashboard;
-- direct OpenAI-compatible chat with streaming, cancellation, bounded context, token usage, latency, throughput, feedback, and sanitized audit records;
-- encrypted dashboard-managed endpoints and credentials;
-- versioned model, prompt, and deterministic guardrail controls;
-- local administrator authentication, forced temporary-password replacement, offline recovery, optional OIDC, session limits, and lockout controls;
-- transient encrypted TXT document staging with durable publication to governed Supermemory namespaces;
-- immutable Hermes profile distributions, standby/active lifecycle, governed runs, safe event projection, cancellation, and approved MCP-tool controls;
-- one-time signed node enrollment, node-generated Ed25519 identity, recurring heartbeats, recovery evidence, and service diagnostics;
-- PostgreSQL as the durable control, audit, session, configuration, authorization, and workflow system of record.
-
-## Security and data boundaries
-
-- Original enterprise files remain in their authoritative repositories; OrcaSynapse keeps uploaded source bytes only in encrypted ephemeral scratch space.
-- Supermemory is the semantic-memory plane. PostgreSQL does not duplicate embeddings or knowledge graphs.
-- Hermes owns its local runtime state and profile-scoped memory but receives no PostgreSQL credential, infrastructure-admin credential, or unrestricted enterprise connector.
-- Inference credentials terminate at OrcaSynapse. Enrolled runtimes receive a bounded node-scoped gateway key and an approved model alias.
-- Production requires customer-approved TLS/PKI, firewall rules, exact image and artifact pins, backup/restore drills, OIDC acceptance, GPU capacity tests, SIEM integration, and formal security approval.
+Production acceptance still requires customer-approved TLS/PKI, firewall policy, exact artifact pins, backup and restore testing, identity acceptance, GPU capacity testing, and security approval.
 
 ## Development
 
-Requirements: Node.js 24+, pnpm 10+, PostgreSQL 17, and Docker for the release topology.
+Requirements: Node.js 24+, pnpm 10+, PostgreSQL 17, and Docker.
 
 ```bash
 pnpm install
@@ -121,17 +97,14 @@ pnpm db:generate
 pnpm dev
 ```
 
-Vite serves and builds the React application; pnpm manages the JavaScript workspace. Run the runtime executor separately with `pnpm dev:worker` and verify the complete monorepo with `pnpm verify`.
+Vite serves the React dashboard; pnpm manages the TypeScript workspace. Run the worker separately with `pnpm dev:worker`, or verify the complete monorepo with `pnpm verify`.
 
 ## Documentation
 
 - [Architecture and trust boundaries](docs/ARCHITECTURE.md)
-- [Product requirements](docs/ORCASYNAPSE_PRD.md)
-- [Delivery and acceptance plan](docs/ORCASYNAPSE_PHASED_PLAN.md)
 - [Installation and recovery](deploy/BOOTSTRAP.md)
 - [Hermes and Supermemory enrollment](docs/HERMES_NODE_ENROLLMENT_RUNBOOK.md)
-- [Model control](docs/MODEL_CONTROL_RUNBOOK.md)
-- [Guardrail control](docs/GUARDRAIL_CONTROL_RUNBOOK.md)
-- [Prompt control](docs/PROMPT_CONTROL_RUNBOOK.md)
+- [Product requirements](docs/ORCASYNAPSE_PRD.md)
+- [Delivery and acceptance plan](docs/ORCASYNAPSE_PHASED_PLAN.md)
 
-> **Release posture:** OrcaSynapse is an on-premises acceptance candidate. The repository demonstrates the product path and safety controls; customer production approval still depends on environment-specific acceptance evidence.
+> OrcaSynapse is currently an on-premises acceptance candidate. Production approval remains environment-specific.

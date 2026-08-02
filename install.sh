@@ -11,12 +11,19 @@ ORCASYNAPSE_ARCHIVE_SHA256="${ORCASYNAPSE_ARCHIVE_SHA256:-}"
 temporary_root=""
 staging_dir=""
 
-if [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-dumb}" != "dumb" ]]; then
+if [[ -t 1 && "${TERM:-dumb}" != "dumb" ]]; then
+  UI_INTERACTIVE=1
+else
+  UI_INTERACTIVE=0
+fi
+
+if (( UI_INTERACTIVE )) && [[ -z "${NO_COLOR:-}" ]]; then
   UI_BOLD=$'\033[1m'
   UI_DIM=$'\033[2m'
   UI_BLUE=$'\033[38;5;75m'
   UI_CYAN=$'\033[38;5;80m'
   UI_GREEN=$'\033[38;5;78m'
+  UI_AMBER=$'\033[38;5;214m'
   UI_RED=$'\033[38;5;203m'
   UI_RESET=$'\033[0m'
 else
@@ -25,27 +32,52 @@ else
   UI_BLUE=""
   UI_CYAN=""
   UI_GREEN=""
+  UI_AMBER=""
   UI_RED=""
   UI_RESET=""
 fi
+
+ui_pause() {
+  (( UI_INTERACTIVE )) && sleep "${1:-0.08}"
+  return 0
+}
 
 banner() {
   printf '%b' "${UI_BLUE}${UI_BOLD}"
   cat <<'EOF'
 
-       __
-  ____/ /_________ ____
- / __  / ___/ ___/ __ \       ORCASYNAPSE
-/ /_/ / /  / /__/ /_/ /       Private AI. Governed locally.
-\__,_/_/   \___/\____/
+     ____                _____
+    / __ \___________ _ / ___/__  ______  ____ _____  ________
+   / / / / ___/ ___/  '/\__ \/ / / / __ \/ __ `/ __ \/ ___/ _ \
+  / /_/ / /  / /__/ /| |__/ / /_/ / / / / /_/ / /_/ (__  )  __/
+  \____/_/   \___/_/ |_/____/\__, /_/ /_/\__,_/ .___/____/\___/
+                             /____/            /_/
 
 EOF
-  printf '%b\n' "${UI_RESET}${UI_DIM}  Secure control-plane bootstrap  |  PostgreSQL  |  Docker Compose${UI_RESET}"
+  printf '%b\n' "${UI_RESET}${UI_DIM}  PRIVATE AI CONTROL PLANE  /  SECURE HOST BOOTSTRAP${UI_RESET}"
+  printf '%b\n' "${UI_DIM}  ----------------------------------------------------------------------${UI_RESET}"
+  if (( UI_INTERACTIVE )); then
+    local dots
+    printf '  Initializing verified installation'
+    for dots in 1 2 3; do
+      printf '%b.%b' "${UI_CYAN}" "${UI_RESET}"
+      ui_pause 0.12
+    done
+    printf ' %bREADY%b\n' "${UI_GREEN}${UI_BOLD}" "${UI_RESET}"
+  fi
 }
 
 step() {
-  printf '\n%b[%s/%s]%b %b%s%b\n' \
-    "${UI_CYAN}${UI_BOLD}" "$1" "$2" "${UI_RESET}" "${UI_BOLD}" "$3" "${UI_RESET}"
+  local current="$1" total="$2" label="$3" width=28 filled empty progress remainder
+  filled=$((current * width / total))
+  empty=$((width - filled))
+  printf -v progress '%*s' "${filled}" ''
+  printf -v remainder '%*s' "${empty}" ''
+  progress="${progress// /#}"
+  remainder="${remainder// /.}"
+  printf '\n%b  STEP %02d OF %02d%b  %b%s%b\n' \
+    "${UI_CYAN}${UI_BOLD}" "${current}" "${total}" "${UI_RESET}" "${UI_BOLD}" "${label}" "${UI_RESET}"
+  printf '  %b[%s%s]%b %3d%%\n' "${UI_BLUE}" "${progress}" "${remainder}" "${UI_RESET}" "$((current * 100 / total))"
 }
 
 info() {
@@ -53,7 +85,44 @@ info() {
 }
 
 success() {
-  printf '      %bOK%b %s\n' "${UI_GREEN}${UI_BOLD}" "${UI_RESET}" "$1"
+  printf '  %b[ OK ]%b %s\n' "${UI_GREEN}${UI_BOLD}" "${UI_RESET}" "$1"
+}
+
+run_with_spinner() {
+  local label="$1"
+  shift
+  if (( ! UI_INTERACTIVE )); then
+    info "${label}"
+    "$@"
+    success "${label}"
+    return
+  fi
+
+  local log_file pid status=0 frame_index=0 started elapsed
+  local frames=('|' '/' '-' '\')
+  log_file="$(mktemp /tmp/orcasynapse-command.XXXXXX)"
+  started="${SECONDS}"
+  "$@" >"${log_file}" 2>&1 &
+  pid=$!
+  printf '\033[?25l'
+  while kill -0 "${pid}" 2>/dev/null; do
+    elapsed=$((SECONDS - started))
+    printf '\r  %b[%s]%b %-48s %4ss' "${UI_CYAN}${UI_BOLD}" "${frames[frame_index]}" "${UI_RESET}" "${label}" "${elapsed}"
+    frame_index=$(((frame_index + 1) % ${#frames[@]}))
+    sleep 0.12
+  done
+  if wait "${pid}"; then status=0; else status=$?; fi
+  printf '\r\033[2K\033[?25h'
+  if (( status == 0 )); then
+    rm -f -- "${log_file}"
+    success "${label}"
+    return 0
+  fi
+
+  printf '  %b[FAIL]%b %s\n' "${UI_RED}${UI_BOLD}" "${UI_RESET}" "${label}" >&2
+  tail -n 120 "${log_file}" >&2 || true
+  rm -f -- "${log_file}"
+  return "${status}"
 }
 
 fail() {
@@ -62,6 +131,7 @@ fail() {
 }
 
 cleanup() {
+  (( UI_INTERACTIVE )) && printf '\033[?25h'
   [[ -z "${temporary_root}" || ! -d "${temporary_root}" ]] || rm -rf -- "${temporary_root}"
   [[ -z "${staging_dir}" || ! -d "${staging_dir}" ]] || rm -rf -- "${staging_dir}"
 }
@@ -85,8 +155,11 @@ install_bootstrap_dependencies() {
     *) fail "automatic dependency installation supports Debian and Ubuntu; install curl, tar, and sha256sum first" ;;
   esac
 
-  apt-get update
-  DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl tar coreutils
+  run_with_spinner "Refresh operating-system packages" apt-get update \
+    || fail "could not refresh operating-system packages"
+  run_with_spinner "Install bootstrap dependencies" env DEBIAN_FRONTEND=noninteractive \
+    apt-get install -y ca-certificates curl tar coreutils \
+    || fail "could not install curl, tar, and checksum utilities"
 }
 
 validate_inputs() {
@@ -126,10 +199,11 @@ resolve_commit() {
 
 download_release_source() {
   local commit="$1" archive="$2"
-  info "Downloading '${ORCASYNAPSE_REF}' at immutable commit ${commit:0:12}."
-  curl --fail --silent --show-error --location --retry 3 --max-time 300 \
+  run_with_spinner "Download immutable source ${commit:0:12}" \
+    curl --fail --silent --show-error --location --retry 3 --max-time 300 \
     "https://codeload.github.com/${ORCASYNAPSE_GITHUB_REPOSITORY}/tar.gz/${commit}" \
-    --output "${archive}"
+    --output "${archive}" \
+    || fail "GitHub source download failed"
 
   local actual_checksum
   actual_checksum="$(sha256sum "${archive}" | awk '{print $1}')"

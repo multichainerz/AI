@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="ai-v1.11.0"
+INSTALLER_VERSION="ai-v1.11.1"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 CONTAINER_NAME="orcasynapse-hermes"
 HEARTBEAT_SERVICE="orcasynapse-hermes-heartbeat"
@@ -13,7 +13,13 @@ SUPERMEMORY_USER="orcasynapse-supermemory"
 TEMPORARY_FILES=()
 RESOLVED_BUNDLE=""
 
-if [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-dumb}" != "dumb" ]]; then
+if [[ -t 1 && "${TERM:-dumb}" != "dumb" ]]; then
+  UI_INTERACTIVE=1
+else
+  UI_INTERACTIVE=0
+fi
+
+if (( UI_INTERACTIVE )) && [[ -z "${NO_COLOR:-}" ]]; then
   UI_BOLD=$'\033[1m'
   UI_DIM=$'\033[2m'
   UI_BLUE=$'\033[38;5;75m'
@@ -33,23 +39,47 @@ else
   UI_RESET=""
 fi
 
+ui_pause() {
+  (( UI_INTERACTIVE )) && sleep "${1:-0.08}"
+  return 0
+}
+
 banner() {
   printf '%b' "${UI_BLUE}${UI_BOLD}"
   cat <<'EOF'
 
-       __
-  ____/ /_________ ____
- / __  / ___/ ___/ __ \       ORCASYNAPSE
-/ /_/ / /  / /__/ /_/ /       Private AI. Governed locally.
-\__,_/_/   \___/\____/
+     ____                _____
+    / __ \___________ _ / ___/__  ______  ____ _____  ________
+   / / / / ___/ ___/  '/\__ \/ / / / __ \/ __ `/ __ \/ ___/ _ \
+  / /_/ / /  / /__/ /| |__/ / /_/ / / / / /_/ / /_/ (__  )  __/
+  \____/_/   \___/_/ |_/____/\__, /_/ /_/\__,_/ .___/____/\___/
+                             /____/            /_/
 
 EOF
-  printf '%b\n' "${UI_RESET}${UI_DIM}  Agentic System installer  |  Hermes Agent  |  Supermemory Local${UI_RESET}"
+  printf '%b\n' "${UI_RESET}${UI_DIM}  AGENTIC SYSTEM  /  VM2 SECURE ENROLLMENT${UI_RESET}"
+  printf '%b\n' "${UI_DIM}  ----------------------------------------------------------------------${UI_RESET}"
+  if (( UI_INTERACTIVE )); then
+    local dots
+    printf '  Establishing node enrollment context'
+    for dots in 1 2 3; do
+      printf '%b.%b' "${UI_CYAN}" "${UI_RESET}"
+      ui_pause 0.12
+    done
+    printf ' %bREADY%b\n' "${UI_GREEN}${UI_BOLD}" "${UI_RESET}"
+  fi
 }
 
 step() {
-  printf '\n%b[%s/%s]%b %b%s%b\n' \
-    "${UI_CYAN}${UI_BOLD}" "$1" "$2" "${UI_RESET}" "${UI_BOLD}" "$3" "${UI_RESET}"
+  local current="$1" total="$2" label="$3" width=28 filled empty progress remainder
+  filled=$((current * width / total))
+  empty=$((width - filled))
+  printf -v progress '%*s' "${filled}" ''
+  printf -v remainder '%*s' "${empty}" ''
+  progress="${progress// /#}"
+  remainder="${remainder// /.}"
+  printf '\n%b  STEP %02d OF %02d%b  %b%s%b\n' \
+    "${UI_CYAN}${UI_BOLD}" "${current}" "${total}" "${UI_RESET}" "${UI_BOLD}" "${label}" "${UI_RESET}"
+  printf '  %b[%s%s]%b %3d%%\n' "${UI_BLUE}" "${progress}" "${remainder}" "${UI_RESET}" "$((current * 100 / total))"
 }
 
 info() {
@@ -57,11 +87,49 @@ info() {
 }
 
 success() {
-  printf '      %bOK%b %s\n' "${UI_GREEN}${UI_BOLD}" "${UI_RESET}" "$1"
+  printf '  %b[ OK ]%b %s\n' "${UI_GREEN}${UI_BOLD}" "${UI_RESET}" "$1"
 }
 
 warning() {
-  printf '      %b!%b %s\n' "${UI_AMBER}${UI_BOLD}" "${UI_RESET}" "$1" >&2
+  printf '  %b[WARN]%b %s\n' "${UI_AMBER}${UI_BOLD}" "${UI_RESET}" "$1" >&2
+}
+
+run_with_spinner() {
+  local label="$1"
+  shift
+  if (( ! UI_INTERACTIVE )); then
+    info "${label}"
+    "$@"
+    success "${label}"
+    return
+  fi
+
+  local log_file pid status=0 frame_index=0 started elapsed
+  local frames=('|' '/' '-' '\')
+  log_file="$(mktemp /tmp/orcasynapse-command.XXXXXX)"
+  TEMPORARY_FILES+=("${log_file}")
+  started="${SECONDS}"
+  "$@" >"${log_file}" 2>&1 &
+  pid=$!
+  printf '\033[?25l'
+  while kill -0 "${pid}" 2>/dev/null; do
+    elapsed=$((SECONDS - started))
+    printf '\r  %b[%s]%b %-48s %4ss' "${UI_CYAN}${UI_BOLD}" "${frames[frame_index]}" "${UI_RESET}" "${label}" "${elapsed}"
+    frame_index=$(((frame_index + 1) % ${#frames[@]}))
+    sleep 0.12
+  done
+  if wait "${pid}"; then status=0; else status=$?; fi
+  printf '\r\033[2K\033[?25h'
+  if (( status == 0 )); then
+    rm -f -- "${log_file}"
+    success "${label}"
+    return 0
+  fi
+
+  printf '  %b[FAIL]%b %s\n' "${UI_RED}${UI_BOLD}" "${UI_RESET}" "${label}" >&2
+  tail -n 120 "${log_file}" >&2 || true
+  rm -f -- "${log_file}"
+  return "${status}"
 }
 
 fail() {
@@ -70,6 +138,7 @@ fail() {
 }
 
 cleanup() {
+  (( UI_INTERACTIVE )) && printf '\033[?25h'
   local file
   for file in "${TEMPORARY_FILES[@]:-}"; do
     [[ -z "${file}" || ! -e "${file}" ]] || rm -f -- "${file}"
@@ -93,9 +162,13 @@ install_host_dependencies() {
     debian|ubuntu) ;;
     *) fail "automatic dependency installation supports Debian and Ubuntu; install Docker, OpenSSL, curl, and jq first" ;;
   esac
-  apt-get update
-  DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl jq openssl docker.io
-  systemctl enable --now docker
+  run_with_spinner "Refresh operating-system packages" apt-get update \
+    || fail "could not refresh operating-system packages"
+  run_with_spinner "Install runtime security dependencies" env DEBIAN_FRONTEND=noninteractive \
+    apt-get install -y ca-certificates curl jq openssl docker.io \
+    || fail "could not install Docker and runtime security dependencies"
+  run_with_spinner "Enable the Docker service" systemctl enable --now docker \
+    || fail "could not enable the Docker service"
 }
 
 validate_bundle() {
@@ -171,6 +244,16 @@ sign_node_payload() {
     | tr -d '='
 }
 
+install_supermemory_binary() {
+  local requested_version="$1" install_dir="$2" bin_dir="$3"
+  curl -fsSL https://supermemory.ai/install \
+    | SUPERMEMORY_INSTALL_DIR="${install_dir}" \
+      SUPERMEMORY_BIN_DIR="${bin_dir}" \
+      SUPERMEMORY_NO_START=1 \
+      SUPERMEMORY_NO_PROMPT=1 \
+      bash -s -- "${requested_version}"
+}
+
 install_supermemory() {
   local inference_base_url="$1" model_alias="$2" gateway_key="$3"
   local requested_version="${ORCASYNAPSE_SUPERMEMORY_VERSION:-latest}"
@@ -183,13 +266,9 @@ install_supermemory() {
   install -d -m 0750 -o "${SUPERMEMORY_USER}" -g "${SUPERMEMORY_USER}" \
     "${SUPERMEMORY_ROOT}" "${SUPERMEMORY_ROOT}/data" "${install_dir}" "${bin_dir}"
 
-  info "Installing checksum-verified Supermemory Local (${requested_version})."
-  curl -fsSL https://supermemory.ai/install \
-    | SUPERMEMORY_INSTALL_DIR="${install_dir}" \
-      SUPERMEMORY_BIN_DIR="${bin_dir}" \
-      SUPERMEMORY_NO_START=1 \
-      SUPERMEMORY_NO_PROMPT=1 \
-      bash -s -- "${requested_version}"
+  run_with_spinner "Install Supermemory Local (${requested_version})" \
+    install_supermemory_binary "${requested_version}" "${install_dir}" "${bin_dir}" \
+    || fail "Supermemory Local installation failed"
   chown -R "${SUPERMEMORY_USER}:${SUPERMEMORY_USER}" "${SUPERMEMORY_ROOT}"
 
   install -m 0600 -o "${SUPERMEMORY_USER}" -g "${SUPERMEMORY_USER}" /dev/stdin "${SUPERMEMORY_ROOT}/runtime.env" <<EOF
@@ -251,6 +330,21 @@ EOF
   chown root:root "${SUPERMEMORY_ROOT}/api-key"
   chmod 0600 "${SUPERMEMORY_ROOT}/api-key"
   success "Supermemory Local is healthy and its API key is protected."
+}
+
+wait_for_hermes() {
+  local remove_on_failure="${1:-0}"
+  local deadline=$((SECONDS + 180))
+  until curl --fail --silent --max-time 5 http://127.0.0.1:8642/health >/dev/null 2>&1; do
+    if (( SECONDS >= deadline )); then
+      docker logs --tail 100 "${CONTAINER_NAME}" >&2 || true
+      if [[ "${remove_on_failure}" == "1" ]]; then
+        docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+      fi
+      return 1
+    fi
+    sleep 2
+  done
 }
 
 write_heartbeat_client() {
@@ -390,9 +484,9 @@ EOF
   chown 10000:10000 "${STATE_ROOT}/data/.env"
 
   step 4 7 "Start the hardened Hermes runtime"
-  info "Pulling approved Hermes image ${hermes_image}."
-  docker pull "${hermes_image}"
-  docker run -d \
+  run_with_spinner "Pull approved Hermes image" docker pull "${hermes_image}" \
+    || fail "could not pull the approved Hermes image '${hermes_image}'"
+  run_with_spinner "Launch hardened Hermes container" docker run -d \
     --name "${CONTAINER_NAME}" \
     --restart unless-stopped \
     --memory "${HERMES_MEMORY_LIMIT:-4g}" \
@@ -415,18 +509,11 @@ EOF
     -v "${STATE_ROOT}/data:/opt/data" \
     -v "${STATE_ROOT}/managed:/etc/hermes:ro" \
     -p 8642:8642 \
-    "${hermes_image}" gateway run >/dev/null
+    "${hermes_image}" gateway run \
+    || fail "the hardened Hermes container could not start"
 
-  local deadline=$((SECONDS + 180))
-  until curl --fail --silent --max-time 5 http://127.0.0.1:8642/health >/dev/null 2>&1; do
-    if (( SECONDS >= deadline )); then
-      docker logs --tail 100 "${CONTAINER_NAME}" >&2 || true
-      docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
-      fail "Hermes did not become healthy within three minutes"
-    fi
-    sleep 2
-  done
-  success "Hermes is healthy on the isolated runtime host."
+  run_with_spinner "Verify Hermes runtime health" wait_for_hermes 1 \
+    || fail "Hermes did not become healthy within three minutes"
 
   step 5 7 "Enroll with the OrcaSynapse control plane"
   info "Registering the public node identity and requesting the approved inference route."
@@ -486,8 +573,10 @@ EOF
   curl --fail --silent --max-time 5 "${supermemory_base_url}/health" >/dev/null 2>&1 \
     || fail "Supermemory is healthy on loopback but is not reachable through the invited runtime host on TCP 6767"
 
-  docker exec --user 10000:10000 "${CONTAINER_NAME}" python -c \
-    'from tools.lazy_deps import ensure; ensure("memory.supermemory", prompt=False)' >/dev/null
+  run_with_spinner "Load the governed Hermes memory provider" \
+    docker exec --user 10000:10000 "${CONTAINER_NAME}" python -c \
+      'from tools.lazy_deps import ensure; ensure("memory.supermemory", prompt=False)' \
+    || fail "Hermes could not load its governed Supermemory provider"
   install -m 0644 -o root -g root /dev/stdin "${STATE_ROOT}/managed/config.yaml" <<EOF
 model:
   provider: custom
@@ -531,13 +620,10 @@ OPENAI_BASE_URL=${model_base_url_json}
 OPENAI_API_KEY=${model_api_key_json}
 SUPERMEMORY_API_KEY=${supermemory_api_key}
 EOF
-  docker restart "${CONTAINER_NAME}" >/dev/null
-  deadline=$((SECONDS + 180))
-  until curl --fail --silent --max-time 5 http://127.0.0.1:8642/health >/dev/null 2>&1; do
-    (( SECONDS < deadline )) || fail "Hermes did not recover after applying the OrcaSynapse-managed inference route"
-    sleep 2
-  done
-  success "Hermes is using the managed inference, memory, and guardrail baseline."
+  run_with_spinner "Apply the managed runtime policy" docker restart "${CONTAINER_NAME}" \
+    || fail "Hermes could not restart with its managed policy"
+  run_with_spinner "Verify governed runtime recovery" wait_for_hermes 0 \
+    || fail "Hermes did not recover after applying the OrcaSynapse-managed inference route"
 
   step 7 7 "Register memory and enable monitoring"
   local memory_payload memory_timestamp memory_nonce memory_signature memory_status
@@ -584,6 +670,10 @@ EOF
   info "The one-time enrollment claim has been consumed."
   info "OrcaSynapse now monitors this node without SSH or a Docker socket."
   warning "Before production, allow OrcaSynapse to reach TCP/8642 and restrict VM2 egress to OrcaSynapse HTTPS plus approved inference and MCP destinations."
+  printf '\n%b  NEXT%b  Return to OrcaSynapse and confirm this node reports Healthy.\n' \
+    "${UI_CYAN}${UI_BOLD}" "${UI_RESET}"
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

@@ -3,9 +3,7 @@
 On a clean Debian or Ubuntu server, run the public bootstrap from the OrcaSynapse repository:
 
 ```bash
-curl --proto '=https' --tlsv1.2 -fsSLo orcasynapse-install.sh \
-  https://raw.githubusercontent.com/multichainerz/AI/main/install.sh
-sudo bash orcasynapse-install.sh
+curl -fsSL https://raw.githubusercontent.com/multichainerz/AI/main/install.sh | sudo bash
 ```
 
 For an inspect-first workflow that does not open a full-screen pager:
@@ -17,7 +15,7 @@ sed -n '1,240p' orcasynapse-install.sh
 sudo bash orcasynapse-install.sh
 ```
 
-`less install.sh` only displayed the file in a terminal pager; it was not an installation step. Pressing `q` exits `less`. The installer automatically uses plain output when no interactive terminal is attached, and `NO_COLOR=1` explicitly disables terminal colors.
+The one-line form is the default convenience path; the inspect-first form is available for controlled environments without opening a terminal pager. The installer automatically uses plain output when no interactive terminal is attached, and `NO_COLOR=1` disables terminal colors.
 
 The bootstrap resolves `ORCASYNAPSE_REF` (default `main`) to an immutable Git commit, downloads that commit from GitHub, records the source identity under `/opt/orcasynapse`, and refuses to overwrite a different installation. An acceptance environment should set an approved commit and checksum explicitly:
 
@@ -31,7 +29,7 @@ From an intact local release bundle, the equivalent host command is:
 sudo ./scripts/install-orcasynapse.sh
 ```
 
-The installer checks or installs Docker Compose v2, OpenSSL, and curl; builds the release; generates the database password, credential-encryption key, and permanent Installation Key with root-only permissions; starts the stack; waits for readiness; and provisions a PostgreSQL-backed local `admin` account. It prints the one-time temporary password and requires replacement at first sign-in. It separately prints the Installation Key, which must be stored offline in the organization vault and is accepted only for local-account recovery.
+The installer checks or installs Docker Compose v2, OpenSSL, and curl; builds the release; generates the database password, credential-encryption key, and permanent Installation Key in a root-only host directory; starts the stack; waits for readiness; and provisions a PostgreSQL-backed local `admin` account. Application-secret files use a narrowly scoped container group so the non-root API, worker, and migration processes can read only the secrets explicitly mounted into them. It prints the one-time temporary password and requires replacement at first sign-in. It separately prints the Installation Key, which must be stored offline in the organization vault and is accepted only for local-account recovery.
 
 Set `ORCASYNAPSE_HTTP_PORT` before invoking the script to use a port other than `8080`. Terminate TLS at a customer-approved reverse proxy or load balancer before using OrcaSynapse outside a protected deployment network. That upstream proxy must overwrite `X-Forwarded-Proto`, and direct access to the OrcaSynapse HTTP port must remain restricted; OrcaSynapse's bundled Nginx discards inbound forwarding chains and reports only its direct peer to the API.
 
@@ -41,11 +39,11 @@ The installer refuses to overwrite any partial secret set. A complete existing s
 
 For Control-plane only or Segmented production, prepare a second Debian or Ubuntu VM with private network reachability in both directions. In the dashboard, open **Deployment > Hermes nodes**, enter the VM2 API address and the OrcaSynapse address visible from VM2, then issue the short-lived enrollment claim.
 
-On VM2, download the installer from the customer-owned OrcaSynapse host and run it against that same origin:
+On VM2, run the installer served by the customer-owned OrcaSynapse host against that same origin:
 
 ```bash
-curl -fsS https://orcasynapse.example.internal/install/hermes-node.sh -o install-hermes-node.sh
-sudo bash install-hermes-node.sh --connect https://orcasynapse.example.internal
+curl -fsSL https://orcasynapse.example.internal/install/hermes-node.sh \
+  | sudo bash -s -- --connect https://orcasynapse.example.internal
 ```
 
 Paste the short-lived claim displayed by the dashboard at the hidden prompt. The token is submitted in a redacted POST body rather than a URL or shell-history argument. The downloaded JSON bundle remains an offline fallback: `sudo bash install-hermes-node.sh enrollment.json`.

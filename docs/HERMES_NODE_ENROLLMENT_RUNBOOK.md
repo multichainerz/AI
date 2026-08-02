@@ -27,9 +27,9 @@ For production, use a Hermes image digest and set `ORCASYNAPSE_SUPERMEMORY_VERSI
 5. Run it against the same OrcaSynapse origin, then paste the claim at the hidden prompt:
 
    ```bash
-   curl -fsS https://orcasynapse.example.internal/install/hermes-node.sh -o orcasynapse-node-install.sh
-   sudo env ORCASYNAPSE_SUPERMEMORY_VERSION=<exact-version> \
-     bash orcasynapse-node-install.sh --connect https://orcasynapse.example.internal
+   curl -fsSL https://orcasynapse.example.internal/install/hermes-node.sh \
+     | sudo env ORCASYNAPSE_SUPERMEMORY_VERSION=<exact-version> \
+       bash -s -- --connect https://orcasynapse.example.internal
    ```
 
 6. Return to the dashboard and verify that Hermes, Supermemory, and the signed heartbeat are healthy.

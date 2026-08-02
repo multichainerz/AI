@@ -6,9 +6,16 @@ umask 077
 ORCASYNAPSE_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 ORCASYNAPSE_HTTP_PORT="${ORCASYNAPSE_HTTP_PORT:-8080}"
 ORCASYNAPSE_SECRET_DIR="${ORCASYNAPSE_ROOT}/.local/secrets"
+ORCASYNAPSE_APPLICATION_SECRET_GID=1000
 export ORCASYNAPSE_HTTP_PORT
 
-if [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-dumb}" != "dumb" ]]; then
+if [[ -t 1 && "${TERM:-dumb}" != "dumb" ]]; then
+  UI_INTERACTIVE=1
+else
+  UI_INTERACTIVE=0
+fi
+
+if (( UI_INTERACTIVE )) && [[ -z "${NO_COLOR:-}" ]]; then
   UI_BOLD=$'\033[1m'
   UI_DIM=$'\033[2m'
   UI_BLUE=$'\033[38;5;75m'
@@ -28,23 +35,47 @@ else
   UI_RESET=""
 fi
 
+ui_pause() {
+  (( UI_INTERACTIVE )) && sleep "${1:-0.08}"
+  return 0
+}
+
 banner() {
   printf '%b' "${UI_BLUE}${UI_BOLD}"
   cat <<'EOF'
 
-       __
-  ____/ /_________ ____
- / __  / ___/ ___/ __ \       ORCASYNAPSE
-/ /_/ / /  / /__/ /_/ /       Private AI. Governed locally.
-\__,_/_/   \___/\____/
+     ____                _____
+    / __ \___________ _ / ___/__  ______  ____ _____  ________
+   / / / / ___/ ___/  '/\__ \/ / / / __ \/ __ `/ __ \/ ___/ _ \
+  / /_/ / /  / /__/ /| |__/ / /_/ / / / / /_/ / /_/ (__  )  __/
+  \____/_/   \___/_/ |_/____/\__, /_/ /_/\__,_/ .___/____/\___/
+                             /____/            /_/
 
 EOF
-  printf '%b\n' "${UI_RESET}${UI_DIM}  Secure control-plane installer  |  PostgreSQL  |  Docker Compose${UI_RESET}"
+  printf '%b\n' "${UI_RESET}${UI_DIM}  PRIVATE AI CONTROL PLANE  /  VM1 PROVISIONING${UI_RESET}"
+  printf '%b\n' "${UI_DIM}  ----------------------------------------------------------------------${UI_RESET}"
+  if (( UI_INTERACTIVE )); then
+    local dots
+    printf '  Establishing secure installation context'
+    for dots in 1 2 3; do
+      printf '%b.%b' "${UI_CYAN}" "${UI_RESET}"
+      ui_pause 0.12
+    done
+    printf ' %bREADY%b\n' "${UI_GREEN}${UI_BOLD}" "${UI_RESET}"
+  fi
 }
 
 step() {
-  printf '\n%b[%s/%s]%b %b%s%b\n' \
-    "${UI_CYAN}${UI_BOLD}" "$1" "$2" "${UI_RESET}" "${UI_BOLD}" "$3" "${UI_RESET}"
+  local current="$1" total="$2" label="$3" width=28 filled empty progress remainder
+  filled=$((current * width / total))
+  empty=$((width - filled))
+  printf -v progress '%*s' "${filled}" ''
+  printf -v remainder '%*s' "${empty}" ''
+  progress="${progress// /#}"
+  remainder="${remainder// /.}"
+  printf '\n%b  STEP %02d OF %02d%b  %b%s%b\n' \
+    "${UI_CYAN}${UI_BOLD}" "${current}" "${total}" "${UI_RESET}" "${UI_BOLD}" "${label}" "${UI_RESET}"
+  printf '  %b[%s%s]%b %3d%%\n' "${UI_BLUE}" "${progress}" "${remainder}" "${UI_RESET}" "$((current * 100 / total))"
 }
 
 info() {
@@ -52,11 +83,48 @@ info() {
 }
 
 success() {
-  printf '      %bOK%b %s\n' "${UI_GREEN}${UI_BOLD}" "${UI_RESET}" "$1"
+  printf '  %b[ OK ]%b %s\n' "${UI_GREEN}${UI_BOLD}" "${UI_RESET}" "$1"
 }
 
 warning() {
-  printf '      %b!%b %s\n' "${UI_AMBER}${UI_BOLD}" "${UI_RESET}" "$1" >&2
+  printf '  %b[WARN]%b %s\n' "${UI_AMBER}${UI_BOLD}" "${UI_RESET}" "$1" >&2
+}
+
+run_with_spinner() {
+  local label="$1"
+  shift
+  if (( ! UI_INTERACTIVE )); then
+    info "${label}"
+    "$@"
+    success "${label}"
+    return
+  fi
+
+  local log_file pid status=0 frame_index=0 started elapsed
+  local frames=('|' '/' '-' '\')
+  log_file="$(mktemp /tmp/orcasynapse-command.XXXXXX)"
+  started="${SECONDS}"
+  "$@" >"${log_file}" 2>&1 &
+  pid=$!
+  printf '\033[?25l'
+  while kill -0 "${pid}" 2>/dev/null; do
+    elapsed=$((SECONDS - started))
+    printf '\r  %b[%s]%b %-48s %4ss' "${UI_CYAN}${UI_BOLD}" "${frames[frame_index]}" "${UI_RESET}" "${label}" "${elapsed}"
+    frame_index=$(((frame_index + 1) % ${#frames[@]}))
+    sleep 0.12
+  done
+  if wait "${pid}"; then status=0; else status=$?; fi
+  printf '\r\033[2K\033[?25h'
+  if (( status == 0 )); then
+    rm -f -- "${log_file}"
+    success "${label}"
+    return 0
+  fi
+
+  printf '  %b[FAIL]%b %s\n' "${UI_RED}${UI_BOLD}" "${UI_RESET}" "${label}" >&2
+  tail -n 120 "${log_file}" >&2 || true
+  rm -f -- "${log_file}"
+  return "${status}"
 }
 
 fail() {
@@ -84,12 +152,17 @@ install_host_dependencies() {
     *) fail "automatic dependency installation supports Debian and Ubuntu; install Docker Compose v2, OpenSSL, and curl first" ;;
   esac
 
-  apt-get update
-  DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl openssl docker.io
-  if ! apt-get install -y docker-compose-v2; then
-    apt-get install -y docker-compose-plugin
+  run_with_spinner "Refresh operating-system packages" apt-get update \
+    || fail "could not refresh operating-system packages"
+  run_with_spinner "Install Docker and security dependencies" env DEBIAN_FRONTEND=noninteractive \
+    apt-get install -y ca-certificates curl openssl docker.io \
+    || fail "could not install Docker and security dependencies"
+  if ! run_with_spinner "Install Docker Compose v2" apt-get install -y docker-compose-v2; then
+    run_with_spinner "Install Docker Compose plugin" apt-get install -y docker-compose-plugin \
+      || fail "could not install Docker Compose v2"
   fi
-  systemctl enable --now docker
+  run_with_spinner "Enable the Docker service" systemctl enable --now docker \
+    || fail "could not enable the Docker service"
 }
 
 validate_inputs() {
@@ -106,7 +179,7 @@ secret_file() {
 all_secrets_exist() {
   local name
   for name in postgres_password orcasynapse_database_url orcasynapse_master_key orcasynapse_installation_key; do
-    [[ -s "$(secret_file "${name}")" ]] || return 1
+    [[ -f "$(secret_file "${name}")" && ! -L "$(secret_file "${name}")" && -s "$(secret_file "${name}")" ]] || return 1
   done
 }
 
@@ -124,6 +197,27 @@ write_secret() {
   ( set -o noclobber; printf '%s' "${value}" > "$(secret_file "${name}")" ) \
     || fail "refusing to replace existing secret '${name}'"
   chmod 0600 "$(secret_file "${name}")"
+}
+
+protect_secret_files() {
+  local name path
+  install -d -o root -g root -m 0700 "${ORCASYNAPSE_SECRET_DIR}"
+
+  path="$(secret_file postgres_password)"
+  [[ -f "${path}" && ! -L "${path}" ]] || fail "the PostgreSQL secret is not a protected regular file"
+  chown root:root "${path}"
+  chmod 0600 "${path}"
+
+  for name in orcasynapse_database_url orcasynapse_master_key orcasynapse_installation_key; do
+    path="$(secret_file "${name}")"
+    [[ -f "${path}" && ! -L "${path}" ]] || fail "application secret '${name}' is not a protected regular file"
+    # node:24-bookworm-slim defines the unprivileged node group as GID 1000.
+    # The root-only parent directory keeps these files inaccessible to host
+    # users, while this group assignment makes the individual Docker secret
+    # mounts readable by the non-root API, worker, and migration processes.
+    chown "root:${ORCASYNAPSE_APPLICATION_SECRET_GID}" "${path}"
+    chmod 0640 "${path}"
+  done
 }
 
 generate_secrets() {
@@ -154,8 +248,7 @@ migrate_legacy_installation_secret() {
 }
 
 start_stack() {
-  if docker compose up -d --no-build; then
-    success "Application services started."
+  if run_with_spinner "Start PostgreSQL and application services" docker compose up -d --no-build; then
     return
   fi
 
@@ -203,7 +296,8 @@ main() {
   if [[ "${ORCASYNAPSE_BOOTSTRAP_BRANDED:-0}" != "1" ]]; then
     banner
   else
-    printf '\n%bORCASYNAPSE HOST PROVISIONING%b\n' "${UI_BLUE}${UI_BOLD}" "${UI_RESET}"
+    printf '\n%b  CONTROL PLANE PROVISIONING%b\n' "${UI_BLUE}${UI_BOLD}" "${UI_RESET}"
+    printf '%b\n' "${UI_DIM}  ----------------------------------------------------------------------${UI_RESET}"
   fi
 
   step 1 5 "Validate the host"
@@ -215,22 +309,23 @@ main() {
   migrate_legacy_installation_secret
 
   step 2 5 "Build the pinned release"
-  info "Building application images locally."
-  docker compose build
-  success "Application images built."
+  run_with_spinner "Build verified application images" docker compose build \
+    || fail "application image build failed"
 
   step 3 5 "Protect installation secrets"
   if all_secrets_exist; then
     success "Existing bootstrap material found and preserved."
   else
     generate_secrets
-    success "Database and recovery secrets generated with root-only permissions."
+    success "Database and recovery secrets generated."
   fi
+  protect_secret_files
+  success "Secrets are host-protected and readable only by their intended container identities."
 
   step 4 5 "Migrate PostgreSQL and start services"
   start_stack
-  wait_for_orcasynapse
-  success "Readiness checks passed."
+  run_with_spinner "Wait for control-plane readiness" wait_for_orcasynapse \
+    || fail "control-plane readiness checks failed"
 
   step 5 5 "Provision administrator access"
   provision_local_administrator
@@ -250,6 +345,10 @@ main() {
   warning "Store the Installation Key in your organization password vault before closing this terminal."
   info "It is for offline local-account recovery, does not expire, and is not the routine dashboard login."
   info "Export and verify the encrypted recovery kit before production activation."
+  printf '\n%b  NEXT%b  Open the dashboard, change the temporary password, then connect AI Inference.\n' \
+    "${UI_CYAN}${UI_BOLD}" "${UI_RESET}"
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

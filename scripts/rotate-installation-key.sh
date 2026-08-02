@@ -29,7 +29,8 @@ new_key="$(openssl rand -base64 32 | tr -d '\n=' | tr '+/' '-_')"
 key_tmp="$(mktemp "${ORCASYNAPSE_SECRET_DIR}/.installation-key.XXXXXX")"
 trap 'rm -f -- "${key_tmp:-}"' EXIT
 printf '%s' "${new_key}" > "${key_tmp}"
-chmod 0600 "${key_tmp}"
+chown root:1000 "${key_tmp}"
+chmod 0640 "${key_tmp}"
 
 docker compose stop api
 mv -f -- "${key_tmp}" "${ORCASYNAPSE_SECRET_DIR}/orcasynapse_installation_key"
