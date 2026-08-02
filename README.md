@@ -35,13 +35,24 @@ flowchart LR
 
 ### 1. Install OrcaSynapse on VM1
 
-Use a clean Debian or Ubuntu host with network access and at least enough capacity for the application services and PostgreSQL. The public bootstrap is hosted free of charge through GitHub Raw:
+Use a clean Debian or Ubuntu host with network access and enough capacity for the application services and PostgreSQL. The public bootstrap is hosted free of charge through GitHub Raw. Installation is two commands:
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/multichainerz/AI/main/install.sh
-less install.sh
-sudo bash install.sh
+curl --proto '=https' --tlsv1.2 -fsSLo orcasynapse-install.sh \
+  https://raw.githubusercontent.com/multichainerz/AI/main/install.sh
+sudo bash orcasynapse-install.sh
 ```
+
+The previous `less install.sh` instruction opened a full-screen terminal pager, which can resemble Vim. It was only for inspection and was never part of the installer. To review the script without opening a pager, download it and print it directly:
+
+```bash
+curl --proto '=https' --tlsv1.2 -fsSLo orcasynapse-install.sh \
+  https://raw.githubusercontent.com/multichainerz/AI/main/install.sh
+sed -n '1,240p' orcasynapse-install.sh
+sudo bash orcasynapse-install.sh
+```
+
+The installer uses a branded, color-aware terminal interface when attached to a terminal and plain log-safe output in automation. Set `NO_COLOR=1` to disable ANSI colors explicitly.
 
 The bootstrap resolves the selected GitHub ref to an immutable commit, downloads that source archive from GitHub, installs it under `/opt/orcasynapse`, builds the pinned Compose application locally, and starts PostgreSQL, migrations, the API, runtime executor, and dashboard. It prints:
 

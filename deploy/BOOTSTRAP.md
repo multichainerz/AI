@@ -1,12 +1,23 @@
 # OrcaSynapse Installation Bootstrap
 
-On a clean Debian or Ubuntu server, download and inspect the public bootstrap from the OrcaSynapse repository:
+On a clean Debian or Ubuntu server, run the public bootstrap from the OrcaSynapse repository:
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/multichainerz/AI/main/install.sh
-less install.sh
-sudo bash install.sh
+curl --proto '=https' --tlsv1.2 -fsSLo orcasynapse-install.sh \
+  https://raw.githubusercontent.com/multichainerz/AI/main/install.sh
+sudo bash orcasynapse-install.sh
 ```
+
+For an inspect-first workflow that does not open a full-screen pager:
+
+```bash
+curl --proto '=https' --tlsv1.2 -fsSLo orcasynapse-install.sh \
+  https://raw.githubusercontent.com/multichainerz/AI/main/install.sh
+sed -n '1,240p' orcasynapse-install.sh
+sudo bash orcasynapse-install.sh
+```
+
+`less install.sh` only displayed the file in a terminal pager; it was not an installation step. Pressing `q` exits `less`. The installer automatically uses plain output when no interactive terminal is attached, and `NO_COLOR=1` explicitly disables terminal colors.
 
 The bootstrap resolves `ORCASYNAPSE_REF` (default `main`) to an immutable Git commit, downloads that commit from GitHub, records the source identity under `/opt/orcasynapse`, and refuses to overwrite a different installation. An acceptance environment should set an approved commit and checksum explicitly:
 

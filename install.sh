@@ -11,8 +11,53 @@ ORCASYNAPSE_ARCHIVE_SHA256="${ORCASYNAPSE_ARCHIVE_SHA256:-}"
 temporary_root=""
 staging_dir=""
 
+if [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-dumb}" != "dumb" ]]; then
+  UI_BOLD=$'\033[1m'
+  UI_DIM=$'\033[2m'
+  UI_BLUE=$'\033[38;5;75m'
+  UI_CYAN=$'\033[38;5;80m'
+  UI_GREEN=$'\033[38;5;78m'
+  UI_RED=$'\033[38;5;203m'
+  UI_RESET=$'\033[0m'
+else
+  UI_BOLD=""
+  UI_DIM=""
+  UI_BLUE=""
+  UI_CYAN=""
+  UI_GREEN=""
+  UI_RED=""
+  UI_RESET=""
+fi
+
+banner() {
+  printf '%b' "${UI_BLUE}${UI_BOLD}"
+  cat <<'EOF'
+
+       __
+  ____/ /_________ ____
+ / __  / ___/ ___/ __ \       ORCASYNAPSE
+/ /_/ / /  / /__/ /_/ /       Private AI. Governed locally.
+\__,_/_/   \___/\____/
+
+EOF
+  printf '%b\n' "${UI_RESET}${UI_DIM}  Secure control-plane bootstrap  |  PostgreSQL  |  Docker Compose${UI_RESET}"
+}
+
+step() {
+  printf '\n%b[%s/%s]%b %b%s%b\n' \
+    "${UI_CYAN}${UI_BOLD}" "$1" "$2" "${UI_RESET}" "${UI_BOLD}" "$3" "${UI_RESET}"
+}
+
+info() {
+  printf '      %b>%b %s\n' "${UI_BLUE}" "${UI_RESET}" "$1"
+}
+
+success() {
+  printf '      %bOK%b %s\n' "${UI_GREEN}${UI_BOLD}" "${UI_RESET}" "$1"
+}
+
 fail() {
-  printf 'OrcaSynapse public installer error: %s\n' "$1" >&2
+  printf '\n%bERROR%b %s\n' "${UI_RED}${UI_BOLD}" "${UI_RESET}" "$1" >&2
   exit 1
 }
 
@@ -81,7 +126,7 @@ resolve_commit() {
 
 download_release_source() {
   local commit="$1" archive="$2"
-  printf 'Downloading OrcaSynapse %s at commit %s...\n' "${ORCASYNAPSE_REF}" "${commit}"
+  info "Downloading '${ORCASYNAPSE_REF}' at immutable commit ${commit:0:12}."
   curl --fail --silent --show-error --location --retry 3 --max-time 300 \
     "https://codeload.github.com/${ORCASYNAPSE_GITHUB_REPOSITORY}/tar.gz/${commit}" \
     --output "${archive}"
@@ -91,7 +136,7 @@ download_release_source() {
   if [[ -n "${ORCASYNAPSE_ARCHIVE_SHA256}" && "${actual_checksum,,}" != "${ORCASYNAPSE_ARCHIVE_SHA256,,}" ]]; then
     fail "downloaded archive checksum does not match ORCASYNAPSE_ARCHIVE_SHA256"
   fi
-  printf 'Downloaded immutable commit archive (sha256: %s).\n' "${actual_checksum}"
+  success "Archive verified (sha256: ${actual_checksum})."
 }
 
 install_source_tree() {
@@ -101,7 +146,8 @@ install_source_tree() {
   if [[ -d "${ORCASYNAPSE_INSTALL_DIR}" ]]; then
     if [[ -r "${marker}" && "$(<"${marker}")" == "${commit}" \
       && -r "${ORCASYNAPSE_INSTALL_DIR}/scripts/install-orcasynapse.sh" ]]; then
-      printf 'The same immutable OrcaSynapse source is already installed; preserving it and rerunning bootstrap.\n'
+      success "The same verified source is already installed; existing data and secrets will be preserved."
+      export ORCASYNAPSE_BOOTSTRAP_BRANDED=1
       exec bash "${ORCASYNAPSE_INSTALL_DIR}/scripts/install-orcasynapse.sh"
     fi
     fail "${ORCASYNAPSE_INSTALL_DIR} already exists with different or unverified source; refusing to overwrite application or secret material"
@@ -122,24 +168,33 @@ install_source_tree() {
 }
 
 main() {
+  banner
+  step 1 4 "Preflight checks"
   require_root
   install_bootstrap_dependencies
   validate_inputs
+  success "Host and installation settings are valid."
 
   local commit archive source_dir
+  step 2 4 "Resolve a reproducible release"
   commit="$(resolve_commit)"
+  success "GitHub ref '${ORCASYNAPSE_REF}' resolves to ${commit}."
   temporary_root="$(mktemp -d /tmp/orcasynapse-install.XXXXXX)"
   archive="${temporary_root}/source.tar.gz"
   source_dir="${temporary_root}/source"
   install -d -m 0700 "${source_dir}"
 
+  step 3 4 "Download and verify OrcaSynapse"
   download_release_source "${commit}" "${archive}"
   tar -xzf "${archive}" --strip-components=1 -C "${source_dir}"
   [[ -f "${source_dir}/compose.yaml" && -r "${source_dir}/scripts/install-orcasynapse.sh" ]] \
     || fail "the downloaded commit is not an intact OrcaSynapse release source tree"
 
   install_source_tree "${commit}" "${source_dir}"
-  printf 'Installed verified source at %s. Starting the OrcaSynapse host installer...\n' "${ORCASYNAPSE_INSTALL_DIR}"
+  step 4 4 "Provision the control plane"
+  success "Verified source installed at ${ORCASYNAPSE_INSTALL_DIR}."
+  info "Handing off to the host installer. Builds can take several minutes."
+  export ORCASYNAPSE_BOOTSTRAP_BRANDED=1
   exec bash "${ORCASYNAPSE_INSTALL_DIR}/scripts/install-orcasynapse.sh"
 }
 

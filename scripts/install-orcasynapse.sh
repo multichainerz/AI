@@ -8,8 +8,59 @@ ORCASYNAPSE_HTTP_PORT="${ORCASYNAPSE_HTTP_PORT:-8080}"
 ORCASYNAPSE_SECRET_DIR="${ORCASYNAPSE_ROOT}/.local/secrets"
 export ORCASYNAPSE_HTTP_PORT
 
+if [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-dumb}" != "dumb" ]]; then
+  UI_BOLD=$'\033[1m'
+  UI_DIM=$'\033[2m'
+  UI_BLUE=$'\033[38;5;75m'
+  UI_CYAN=$'\033[38;5;80m'
+  UI_GREEN=$'\033[38;5;78m'
+  UI_AMBER=$'\033[38;5;214m'
+  UI_RED=$'\033[38;5;203m'
+  UI_RESET=$'\033[0m'
+else
+  UI_BOLD=""
+  UI_DIM=""
+  UI_BLUE=""
+  UI_CYAN=""
+  UI_GREEN=""
+  UI_AMBER=""
+  UI_RED=""
+  UI_RESET=""
+fi
+
+banner() {
+  printf '%b' "${UI_BLUE}${UI_BOLD}"
+  cat <<'EOF'
+
+       __
+  ____/ /_________ ____
+ / __  / ___/ ___/ __ \       ORCASYNAPSE
+/ /_/ / /  / /__/ /_/ /       Private AI. Governed locally.
+\__,_/_/   \___/\____/
+
+EOF
+  printf '%b\n' "${UI_RESET}${UI_DIM}  Secure control-plane installer  |  PostgreSQL  |  Docker Compose${UI_RESET}"
+}
+
+step() {
+  printf '\n%b[%s/%s]%b %b%s%b\n' \
+    "${UI_CYAN}${UI_BOLD}" "$1" "$2" "${UI_RESET}" "${UI_BOLD}" "$3" "${UI_RESET}"
+}
+
+info() {
+  printf '      %b>%b %s\n' "${UI_BLUE}" "${UI_RESET}" "$1"
+}
+
+success() {
+  printf '      %bOK%b %s\n' "${UI_GREEN}${UI_BOLD}" "${UI_RESET}" "$1"
+}
+
+warning() {
+  printf '      %b!%b %s\n' "${UI_AMBER}${UI_BOLD}" "${UI_RESET}" "$1" >&2
+}
+
 fail() {
-  printf 'OrcaSynapse installer error: %s\n' "$1" >&2
+  printf '\n%bERROR%b %s\n' "${UI_RED}${UI_BOLD}" "${UI_RESET}" "$1" >&2
   exit 1
 }
 
@@ -98,8 +149,23 @@ migrate_legacy_installation_secret() {
     mv -- "${legacy_key}" "$(secret_file orcasynapse_installation_key)"
     chmod 0600 "$(secret_file orcasynapse_installation_key)"
     rm -f -- "${legacy_expiry}"
-    printf 'Migrated the prior protected bootstrap credential to the permanent Installation Key.\n'
+    success "Migrated the prior bootstrap credential to the permanent Installation Key."
   fi
+}
+
+start_stack() {
+  if docker compose up -d --no-build; then
+    success "Application services started."
+    return
+  fi
+
+  warning "The application stack did not reach its expected start state."
+  printf '\n%b--- Service status ---%b\n' "${UI_AMBER}${UI_BOLD}" "${UI_RESET}" >&2
+  docker compose ps -a >&2 || true
+  printf '\n%b--- Database migration diagnostics ---%b\n' "${UI_AMBER}${UI_BOLD}" "${UI_RESET}" >&2
+  docker compose logs --no-color --tail 160 migrate >&2 || true
+  printf '%b--- End diagnostics ---%b\n\n' "${UI_AMBER}${UI_BOLD}" "${UI_RESET}" >&2
+  fail "startup stopped safely; no data was deleted. After correcting the reported issue, rerun this installer or reproduce the migration with: cd '${ORCASYNAPSE_ROOT}' && docker compose run --rm migrate"
 }
 
 wait_for_orcasynapse() {
@@ -121,31 +187,52 @@ provision_local_administrator() {
       node apps/api/dist/auth/provision-local-admin.js --username admin --display-name 'Local Administrator')" \
     || fail "local administrator provisioning failed"
   if [[ "${result}" == *'"created":true'* ]]; then
-    printf '\nInitial local administrator:\n\nUsername: admin\nTemporary password: %s\n\n' "${temporary_password}"
-    printf 'Store this temporary password until first login. OrcaSynapse requires it to be changed immediately and does not retain a plaintext copy.\n'
+    printf '\n%b+----------------------------------------------------------------------+%b\n' "${UI_BLUE}${UI_BOLD}" "${UI_RESET}"
+    printf '%b|  %-68s|%b\n' "${UI_BLUE}${UI_BOLD}" "INITIAL LOCAL ADMINISTRATOR" "${UI_RESET}"
+    printf '%b+----------------------------------------------------------------------+%b\n' "${UI_BLUE}${UI_BOLD}" "${UI_RESET}"
+    printf '|  %-20s %-47s|\n' 'Username' 'admin'
+    printf '|  %-20s %-47s|\n' 'Temporary password' "${temporary_password}"
+    printf '%b+----------------------------------------------------------------------+%b\n\n' "${UI_BLUE}${UI_BOLD}" "${UI_RESET}"
+    warning "Store this password until first login; it must be changed immediately."
   else
-    printf '\nThe existing local administrator account was preserved.\n'
+    success "The existing local administrator account was preserved."
   fi
 }
 
 main() {
+  if [[ "${ORCASYNAPSE_BOOTSTRAP_BRANDED:-0}" != "1" ]]; then
+    banner
+  else
+    printf '\n%bORCASYNAPSE HOST PROVISIONING%b\n' "${UI_BLUE}${UI_BOLD}" "${UI_RESET}"
+  fi
+
+  step 1 5 "Validate the host"
   require_root
   install_host_dependencies
   validate_inputs
+  success "Docker Compose and host dependencies are ready."
   cd "${ORCASYNAPSE_ROOT}"
   migrate_legacy_installation_secret
 
-  printf 'Building the pinned OrcaSynapse release...\n'
+  step 2 5 "Build the pinned release"
+  info "Building application images locally."
   docker compose build
+  success "Application images built."
 
+  step 3 5 "Protect installation secrets"
   if all_secrets_exist; then
-    printf 'OrcaSynapse bootstrap material already exists; preserving it.\n'
+    success "Existing bootstrap material found and preserved."
   else
     generate_secrets
+    success "Database and recovery secrets generated with root-only permissions."
   fi
 
-  docker compose up -d --no-build
+  step 4 5 "Migrate PostgreSQL and start services"
+  start_stack
   wait_for_orcasynapse
+  success "Readiness checks passed."
+
+  step 5 5 "Provision administrator access"
   provision_local_administrator
 
   local host_ip installation_key
@@ -153,10 +240,16 @@ main() {
   host_ip="${host_ip:-127.0.0.1}"
   installation_key="$(<"$(secret_file orcasynapse_installation_key)")"
 
-  printf '\nOrcaSynapse is ready at http://%s:%s/\n' "${host_ip}" "${ORCASYNAPSE_HTTP_PORT}"
-  printf 'Offline recovery Installation Key:\n\n%s\n\n' "${installation_key}"
-  printf 'Store this key in your organization password vault before closing this terminal. It is only for local-account recovery and does not expire; it is not the routine dashboard login.\n'
-  printf 'The separate root-owned master key encrypts connector secrets in PostgreSQL and is never accepted by the dashboard. Export and verify the encrypted recovery kit before production activation.\n'
+  printf '\n%b+======================================================================+%b\n' "${UI_GREEN}${UI_BOLD}" "${UI_RESET}"
+  printf '%b|  %-68s|%b\n' "${UI_GREEN}${UI_BOLD}" "ORCASYNAPSE IS READY" "${UI_RESET}"
+  printf '%b+======================================================================+%b\n' "${UI_GREEN}${UI_BOLD}" "${UI_RESET}"
+  printf '|  %-20s %-47s|\n' 'Dashboard' "http://${host_ip}:${ORCASYNAPSE_HTTP_PORT}/"
+  printf '|  %-68s|\n' 'Offline recovery Installation Key'
+  printf '|  %-68s|\n' "${installation_key}"
+  printf '%b+======================================================================+%b\n\n' "${UI_GREEN}${UI_BOLD}" "${UI_RESET}"
+  warning "Store the Installation Key in your organization password vault before closing this terminal."
+  info "It is for offline local-account recovery, does not expire, and is not the routine dashboard login."
+  info "Export and verify the encrypted recovery kit before production activation."
 }
 
 main "$@"

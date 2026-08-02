@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="ai-v1.10.1"
+INSTALLER_VERSION="ai-v1.11.0"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 CONTAINER_NAME="orcasynapse-hermes"
 HEARTBEAT_SERVICE="orcasynapse-hermes-heartbeat"
@@ -13,8 +13,59 @@ SUPERMEMORY_USER="orcasynapse-supermemory"
 TEMPORARY_FILES=()
 RESOLVED_BUNDLE=""
 
+if [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-dumb}" != "dumb" ]]; then
+  UI_BOLD=$'\033[1m'
+  UI_DIM=$'\033[2m'
+  UI_BLUE=$'\033[38;5;75m'
+  UI_CYAN=$'\033[38;5;80m'
+  UI_GREEN=$'\033[38;5;78m'
+  UI_AMBER=$'\033[38;5;214m'
+  UI_RED=$'\033[38;5;203m'
+  UI_RESET=$'\033[0m'
+else
+  UI_BOLD=""
+  UI_DIM=""
+  UI_BLUE=""
+  UI_CYAN=""
+  UI_GREEN=""
+  UI_AMBER=""
+  UI_RED=""
+  UI_RESET=""
+fi
+
+banner() {
+  printf '%b' "${UI_BLUE}${UI_BOLD}"
+  cat <<'EOF'
+
+       __
+  ____/ /_________ ____
+ / __  / ___/ ___/ __ \       ORCASYNAPSE
+/ /_/ / /  / /__/ /_/ /       Private AI. Governed locally.
+\__,_/_/   \___/\____/
+
+EOF
+  printf '%b\n' "${UI_RESET}${UI_DIM}  Agentic System installer  |  Hermes Agent  |  Supermemory Local${UI_RESET}"
+}
+
+step() {
+  printf '\n%b[%s/%s]%b %b%s%b\n' \
+    "${UI_CYAN}${UI_BOLD}" "$1" "$2" "${UI_RESET}" "${UI_BOLD}" "$3" "${UI_RESET}"
+}
+
+info() {
+  printf '      %b>%b %s\n' "${UI_BLUE}" "${UI_RESET}" "$1"
+}
+
+success() {
+  printf '      %bOK%b %s\n' "${UI_GREEN}${UI_BOLD}" "${UI_RESET}" "$1"
+}
+
+warning() {
+  printf '      %b!%b %s\n' "${UI_AMBER}${UI_BOLD}" "${UI_RESET}" "$1" >&2
+}
+
 fail() {
-  printf 'Hermes node installer error: %s\n' "$1" >&2
+  printf '\n%bERROR%b %s\n' "${UI_RED}${UI_BOLD}" "${UI_RESET}" "$1" >&2
   exit 1
 }
 
@@ -81,7 +132,8 @@ resolve_bundle_from_orcasynapse() {
   else
     [[ -r /dev/tty && -w /dev/tty ]] \
       || fail "a terminal is required to enter the one-time claim; alternatively set ORCASYNAPSE_ENROLLMENT_TOKEN_FILE"
-    printf 'Paste the one-time claim shown by OrcaSynapse: ' > /dev/tty
+    printf '\n%bSECURE CLAIM%b\n' "${UI_CYAN}${UI_BOLD}" "${UI_RESET}" > /dev/tty
+    printf 'Paste the one-time claim shown by OrcaSynapse (input hidden): ' > /dev/tty
     IFS= read -r -s token < /dev/tty
     printf '\n' > /dev/tty
   fi
@@ -131,7 +183,7 @@ install_supermemory() {
   install -d -m 0750 -o "${SUPERMEMORY_USER}" -g "${SUPERMEMORY_USER}" \
     "${SUPERMEMORY_ROOT}" "${SUPERMEMORY_ROOT}/data" "${install_dir}" "${bin_dir}"
 
-  printf 'Installing the checksum-verified Supermemory Local binary (%s)...\n' "${requested_version}"
+  info "Installing checksum-verified Supermemory Local (${requested_version})."
   curl -fsSL https://supermemory.ai/install \
     | SUPERMEMORY_INSTALL_DIR="${install_dir}" \
       SUPERMEMORY_BIN_DIR="${bin_dir}" \
@@ -198,6 +250,7 @@ EOF
   printf '%s' "${memory_api_key}" > "${SUPERMEMORY_ROOT}/api-key"
   chown root:root "${SUPERMEMORY_ROOT}/api-key"
   chmod 0600 "${SUPERMEMORY_ROOT}/api-key"
+  success "Supermemory Local is healthy and its API key is protected."
 }
 
 write_heartbeat_client() {
@@ -282,8 +335,14 @@ EOF
 }
 
 main() {
+  banner
+
+  step 1 7 "Validate the isolated host"
   require_root
   install_host_dependencies
+  success "Docker, OpenSSL, curl, and jq are ready."
+
+  step 2 7 "Resolve the one-time enrollment"
   local bundle
   if [[ "$#" -eq 1 && "$1" != "--connect" ]]; then
     bundle="$(realpath "$1")"
@@ -294,6 +353,7 @@ main() {
     fail "usage: install-hermes-node.sh <enrollment-bundle.json> | install-hermes-node.sh --connect <OrcaSynapse-origin>"
   fi
   validate_bundle "${bundle}"
+  success "Enrollment bundle is valid, unexpired, and bound to OrcaSynapse."
 
   [[ ! -e "${STATE_ROOT}/node-id" ]] || fail "this host is already enrolled; revoke it in OrcaSynapse before rebuilding the node"
   docker inspect "${CONTAINER_NAME}" >/dev/null 2>&1 && fail "a container named '${CONTAINER_NAME}' already exists"
@@ -306,6 +366,8 @@ main() {
   hermes_image="$(jq -r '.hermesImage' "${bundle}")"
   hostname_value="$(hostname --fqdn 2>/dev/null || hostname)"
 
+  step 3 7 "Create the node identity"
+  info "Generating an Ed25519 identity locally; the private key never leaves VM2."
   install -d -m 0700 "${STATE_ROOT}" "${STATE_ROOT}/identity"
   # Hermes managed scope is a root-owned, read-only policy layer. The
   # container receives it at /etc/hermes so users cannot override the exact
@@ -317,6 +379,7 @@ main() {
   openssl pkey -in "${STATE_ROOT}/identity/node.key" -pubout -out "${STATE_ROOT}/identity/node.pub"
   public_key="$(<"${STATE_ROOT}/identity/node.pub")"
   api_key="$(openssl rand -hex 32)"
+  success "Node identity and protected runtime state created."
 
   install -m 0600 /dev/stdin "${STATE_ROOT}/data/.env" <<EOF
 API_SERVER_ENABLED=true
@@ -326,7 +389,8 @@ API_SERVER_KEY=${api_key}
 EOF
   chown 10000:10000 "${STATE_ROOT}/data/.env"
 
-  printf 'Pulling Hermes image %s...\n' "${hermes_image}"
+  step 4 7 "Start the hardened Hermes runtime"
+  info "Pulling approved Hermes image ${hermes_image}."
   docker pull "${hermes_image}"
   docker run -d \
     --name "${CONTAINER_NAME}" \
@@ -362,7 +426,10 @@ EOF
     fi
     sleep 2
   done
+  success "Hermes is healthy on the isolated runtime host."
 
+  step 5 7 "Enroll with the OrcaSynapse control plane"
+  info "Registering the public node identity and requesting the approved inference route."
   local request_file response_file http_status
   request_file="$(mktemp)"
   response_file="$(mktemp)"
@@ -400,7 +467,9 @@ EOF
   model_base_url="$(jq -r '.modelBootstrap.baseUrl' "${response_file}")"
   model_alias="$(jq -r '.modelBootstrap.modelAlias' "${response_file}")"
   model_api_key="$(jq -r '.modelBootstrap.apiKey' "${response_file}")"
+  success "Node enrolled and scoped inference configuration received."
 
+  step 6 7 "Install memory and managed policy"
   install_supermemory "${model_base_url}" "${model_alias}" "${model_api_key}"
   local supermemory_api_key supermemory_version runtime_authority runtime_host supermemory_base_url
   supermemory_api_key="$(<"${SUPERMEMORY_ROOT}/api-key")"
@@ -468,7 +537,9 @@ EOF
     (( SECONDS < deadline )) || fail "Hermes did not recover after applying the OrcaSynapse-managed inference route"
     sleep 2
   done
+  success "Hermes is using the managed inference, memory, and guardrail baseline."
 
+  step 7 7 "Register memory and enable monitoring"
   local memory_payload memory_timestamp memory_nonce memory_signature memory_status
   memory_payload="$(jq -cS -n \
     --arg baseUrl "${supermemory_base_url}" \
@@ -498,12 +569,21 @@ EOF
   systemctl enable --now "${HEARTBEAT_SERVICE}.timer"
   systemctl start "${HEARTBEAT_SERVICE}.service"
 
-  printf '\nHermes runtime node enrolled successfully.\n'
-  printf 'Runtime API: %s\n' "${hermes_base_url}"
-  printf 'Supermemory API: %s\n' "${supermemory_base_url}"
-  printf 'Node identity: %s\n' "$(openssl pkey -pubin -in "${STATE_ROOT}/identity/node.pub" -outform DER | sha256sum | awk '{print $1}')"
-  printf 'The enrollment token is consumed. OrcaSynapse now monitors this node without SSH or a Docker socket.\n'
-  printf 'Enforce the VM firewall allowlist before production activation: OrcaSynapse to TCP/8642, and this node to OrcaSynapse HTTPS plus approved inference/MCP destinations.\n'
+  local node_fingerprint
+  node_fingerprint="$(openssl pkey -pubin -in "${STATE_ROOT}/identity/node.pub" -outform DER | sha256sum | awk '{print $1}')"
+  success "Signed heartbeat monitoring is active."
+
+  printf '\n%b+======================================================================+%b\n' "${UI_GREEN}${UI_BOLD}" "${UI_RESET}"
+  printf '%b|  %-68s|%b\n' "${UI_GREEN}${UI_BOLD}" "AGENTIC SYSTEM IS READY" "${UI_RESET}"
+  printf '%b+======================================================================+%b\n' "${UI_GREEN}${UI_BOLD}" "${UI_RESET}"
+  printf '|  %-20s %-47s|\n' 'Hermes API' "${hermes_base_url}"
+  printf '|  %-20s %-47s|\n' 'Supermemory API' "${supermemory_base_url}"
+  printf '|  %-68s|\n' 'Node identity fingerprint'
+  printf '|  %-68s|\n' "${node_fingerprint}"
+  printf '%b+======================================================================+%b\n\n' "${UI_GREEN}${UI_BOLD}" "${UI_RESET}"
+  info "The one-time enrollment claim has been consumed."
+  info "OrcaSynapse now monitors this node without SSH or a Docker socket."
+  warning "Before production, allow OrcaSynapse to reach TCP/8642 and restrict VM2 egress to OrcaSynapse HTTPS plus approved inference and MCP destinations."
 }
 
 main "$@"
