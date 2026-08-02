@@ -52,7 +52,7 @@ function defaultForm(): CreateHermesNodeInvitation {
     baseUrl: "http://10.0.0.12:8642",
     controlPlaneUrl: typeof window === "undefined" ? "https://orcasynapse.internal" : window.location.origin,
     hermesImage: "nousresearch/hermes-agent:latest",
-    supermemoryVersion: "latest",
+    supermemoryVersion: "0.0.5",
     expiresInMinutes: 30,
   };
 }
@@ -184,7 +184,7 @@ export function RuntimeNodesPanel({
             <label>Expected VM hostname <em>Optional</em><input maxLength={253} value={form.expectedHostname ?? ""} placeholder="hermes-01.internal" onChange={(event) => setForm({ ...form, expectedHostname: event.target.value })} /><small>When set, enrollment fails if VM2 reports a different hostname.</small></label>
             <label>OrcaSynapse address visible to VM2<input required type="url" value={form.controlPlaneUrl} onChange={(event) => setForm({ ...form, controlPlaneUrl: event.target.value })} /></label>
             <label>Hermes image<input required maxLength={500} value={form.hermesImage} onChange={(event) => setForm({ ...form, hermesImage: event.target.value })} /><small>Pin with <code>@sha256:…</code> after acceptance testing.</small></label>
-            <label>Supermemory release<input required maxLength={120} pattern="(?:latest|v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)" value={form.supermemoryVersion} onChange={(event) => setForm({ ...form, supermemoryVersion: event.target.value })} /><small>Use <code>latest</code> only during development; Production requires an exact release.</small></label>
+            <label>Supermemory release<input required maxLength={120} pattern="(?:latest|v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)" value={form.supermemoryVersion} onChange={(event) => setForm({ ...form, supermemoryVersion: event.target.value })} /><small><code>0.0.5</code> is the current Linux-safe pin. Do not select <code>0.0.6</code>; its published binary cannot process documents.</small></label>
           </div>
         </details>
         {targetEnvironment === "PRODUCTION" && (unpinned || unpinnedSupermemory || insecureControlPlane) && <div className="runtime-invite-warning"><strong>Production hardening required</strong><ul>{unpinned && <li>The Hermes image is tagged, not digest-pinned.</li>}{unpinnedSupermemory && <li>The Supermemory release is not pinned.</li>}{insecureControlPlane && <li>The OrcaSynapse enrollment route uses HTTP rather than HTTPS.</li>}</ul></div>}

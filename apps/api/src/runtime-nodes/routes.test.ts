@@ -150,7 +150,10 @@ describe("Hermes runtime-node routes", () => {
     });
     expect(invitation.statusCode).toBe(201);
     expect(invitation.json()).toMatchObject({ bundle: { format: "orcasynapse-hermes-enrollment/v1", token: "t".repeat(43) } });
-    expect(runtimeNodeManager.createInvitation).toHaveBeenCalledWith(expect.objectContaining({ id: ADMIN_ID }), expect.objectContaining({ slug: node.slug }));
+    expect(runtimeNodeManager.createInvitation).toHaveBeenCalledWith(
+      expect.objectContaining({ id: ADMIN_ID }),
+      expect.objectContaining({ slug: node.slug, supermemoryVersion: "0.0.5" }),
+    );
 
     const bootstrap = await app.inject({
       method: "POST",

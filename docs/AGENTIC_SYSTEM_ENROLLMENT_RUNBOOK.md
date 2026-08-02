@@ -4,7 +4,7 @@
 
 This workflow turns a clean Ubuntu systemd VM into the isolated OrcaSynapse Agentic System. It installs Hermes Agent and Supermemory Local, configures both to use OrcaSynapse's authenticated inference gateway, and establishes a signed node identity without retaining SSH credentials.
 
-The installer follows the current upstream integration model: Hermes runs its official Docker gateway/API server, external memory providers are additive to built-in `MEMORY.md`/`USER.md`, and Supermemory Local is a single self-hosted binary with embedded graph storage and CPU-local `Xenova/bge-m3` embeddings (1024 dimensions). It uses Hermes's root-owned managed scope to pin the approved model route, Supermemory provider, secret redaction, unattended loop circuit breakers, and an explicit `platform_toolsets.api_server: [no_mcp]` baseline so the official image does not inherit its broad default tool surface.
+The installer follows the current upstream integration model: Hermes runs its official Docker gateway/API server, external memory providers are additive to built-in `MEMORY.md`/`USER.md`, and Supermemory Local is a single self-hosted binary with embedded graph storage. OrcaSynapse requests CPU-local `Xenova/bge-m3` embeddings (1024 dimensions), streams first-boot model-download progress, and reports the model the runtime actually loads. It uses Hermes's root-owned managed scope to pin the approved model route, Supermemory provider, secret redaction, unattended loop circuit breakers, and an explicit `platform_toolsets.api_server: [no_mcp]` baseline so the official image does not inherit its broad default tool surface.
 
 ## Prerequisites
 
@@ -16,7 +16,7 @@ The installer follows the current upstream integration model: Hermes runs its of
 - OrcaSynapse can reach the VM2 Hermes address on TCP 8642 and Supermemory address on TCP 6767;
 - the invitation uses a hostname/address that matches customer DNS and TLS policy.
 
-For production, enter a Hermes image digest and exact Supermemory release in the dashboard invitation. OrcaSynapse rejects mutable `latest` artifacts in Production. Validate the Hermes `supermemory` Python package version as part of the bill of materials.
+For production, enter a Hermes image digest and exact Supermemory release in the dashboard invitation. OrcaSynapse rejects mutable `latest` artifacts in Production. New invitations default to Supermemory v0.0.5 because v0.0.6 has a known workflow-packaging defect. Validate the Hermes `supermemory` Python package version as part of the bill of materials.
 
 ## Dashboard workflow
 
@@ -45,7 +45,7 @@ For an offline administrative transfer, download the JSON bundle and run `sudo b
 5. enrolls with the single-use claim;
 6. receives the OrcaSynapse `/internal/v1` URL, dashboard-selected model alias, and a node-scoped bearer key;
 7. installs the checksum-verified Supermemory Local binary and starts it under a dedicated system user;
-8. configures Supermemory extraction to use the OrcaSynapse gateway while `Xenova/bge-m3` embeddings run locally on VM2;
+8. configures Supermemory extraction to use the OrcaSynapse gateway, requests local `Xenova/bge-m3`, displays model-download progress, and verifies the loaded model;
 9. installs/enables Hermes's native Supermemory provider with `orcasynapse-agent-{identity}` and custom containers disabled;
 10. pins the model route and baseline guardrails in managed scope, disabling native API-server toolsets and default MCP discovery until an OrcaSynapse-reviewed distribution enables them;
 11. registers the VM2 Supermemory endpoint and encrypted API key with OrcaSynapse;
@@ -82,6 +82,11 @@ System journal access is root-equivalent for this workflow because Supermemory p
 ## Backup and restore
 
 Back up Hermes `/opt/data` for sessions, Skills, profiles, built-in memory, and runtime configuration. Back up the complete Supermemory data directory consistently for graph, auth, and local-embedding state. PostgreSQL backup alone cannot reconstruct either runtime.
+
+### Current upstream Supermemory limitations
+
+- Supermemory v0.0.6 is blocked by the installer because its missing RivetKit module leaves ingestion queued and search empty. See [#1315](https://github.com/supermemoryai/supermemory/issues/1315) and [#1324](https://github.com/supermemoryai/supermemory/issues/1324). The current known-working workflow pin is v0.0.5.
+- The current local-server binary lineage ignores the documented embedding-model variables and loads its English-only `Xenova/bge-base-en-v1.5` default (768 dimensions). The installer warns instead of claiming BGE-M3 is active. See [#1336](https://github.com/supermemoryai/supermemory/issues/1336); do not approve non-English semantic recall for production until a fixed release is validated.
 
 Preferred host-loss procedure:
 

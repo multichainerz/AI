@@ -38,12 +38,30 @@ describe("Hermes runtime-node contracts", () => {
       supermemoryVersion: "rolling",
     }).success).toBe(false);
     expect(createHermesNodeInvitationSchema.safeParse({
+      slug: "hermes-runtime-broken",
+      displayName: "Hermes Runtime Broken",
+      baseUrl: "http://10.0.0.15:8642",
+      controlPlaneUrl: "https://orcasynapse.internal",
+      hermesImage: "nousresearch/hermes-agent:latest",
+      supermemoryVersion: "v0.0.6",
+      expiresInMinutes: 30,
+    }).success).toBe(false);
+    expect(createHermesNodeInvitationSchema.safeParse({
       slug: "hermes-runtime-01",
       displayName: "Hermes Runtime 01",
       baseUrl: "http://10.0.0.12:8642/admin",
       controlPlaneUrl: "https://orcasynapse.internal/setup?token=unsafe",
       hermesImage: "nousresearch/hermes-agent",
     }).success).toBe(false);
+    const safeDefault = createHermesNodeInvitationSchema.parse({
+      slug: "hermes-runtime-default",
+      displayName: "Hermes Runtime Default",
+      baseUrl: "http://10.0.0.14:8642",
+      controlPlaneUrl: "https://orcasynapse.internal",
+      hermesImage: "nousresearch/hermes-agent:latest",
+      expiresInMinutes: 30,
+    });
+    expect(safeDefault.supermemoryVersion).toBe("0.0.5");
   });
 
   it("keeps enrollment identity and runtime API credentials explicit", () => {

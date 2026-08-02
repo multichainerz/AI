@@ -44,7 +44,7 @@ Development may co-locate services, but production acceptance assumes separate t
 | PostgreSQL | OrcaSynapse control data, audit, sessions, durable domain workflow state, authorization provenance | embeddings, source bytes, Hermes runtime state |
 | Runtime executor | idempotent reconciliation of unfinished PostgreSQL domain rows | independent queue state, semantic memory |
 | Hermes | agent loop, tools/subagents, sessions, built-in bounded memory, native Supermemory integration | enterprise authorization, inference-server credentials, OrcaSynapse database access |
-| Supermemory Local | semantic graph, normalized knowledge, long-term agent memory, CPU-local `Xenova/bge-m3` embeddings (1024d) | OrcaSynapse authorization decisions, original-file authority |
+| Supermemory Local | semantic graph, normalized knowledge, long-term agent memory, local embedding state | OrcaSynapse authorization decisions, original-file authority |
 | Inference Server | OpenAI-compatible inference for approved models; concrete backend is an operational choice | routing authority, enterprise policy, durable memory |
 
 There is no LiteLLM tier. OrcaSynapse's internal gateway is deliberately narrow: it authenticates enrolled runtimes, pins the active Agent model alias, applies deterministic request checks and response bounds, rate-limits requests in PostgreSQL, and forwards to the selected OpenAI-compatible inference server. It is not a general multi-provider proxy or backend-specific control plane.
@@ -87,6 +87,10 @@ This is intentionally not an enterprise file store. Source systems remain author
 | Hermes | local Supermemory TCP 6767 | native memory |
 
 Deny browser-to-Hermes, browser-to-inference-server, Hermes-to-PostgreSQL, Hermes-to-Docker-control, and unrestricted outbound runtime access. Production must use customer-approved TLS/mTLS or equivalent private-network controls; the enrollment signature is application identity, not a replacement for transport security.
+
+## Embedding compatibility
+
+OrcaSynapse currently pins Supermemory Local v0.0.5 because the published v0.0.6 binary cannot load its RivetKit workflow dependency, leaving ingestion queued and search empty ([#1315](https://github.com/supermemoryai/supermemory/issues/1315), [#1324](https://github.com/supermemoryai/supermemory/issues/1324)). OrcaSynapse requests CPU-local `Xenova/bge-m3` (1024d) for multilingual deployments and reports the model actually loaded, but the current binary lineage ignores that override and loads `Xenova/bge-base-en-v1.5` (768d) ([#1336](https://github.com/supermemoryai/supermemory/issues/1336)). Treat non-English semantic recall as degraded until a fixed upstream release passes acceptance testing.
 
 ## Durability and recovery
 

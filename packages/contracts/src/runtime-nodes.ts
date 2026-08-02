@@ -33,6 +33,9 @@ const imageReferenceSchema = z.string().trim().min(3).max(500).regex(
 const releaseVersionSchema = z.string().trim().min(1).max(120).regex(
   /^(?:latest|v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)$/,
   "Use 'latest' for development or an exact release version for controlled environments.",
+).refine(
+  (value) => value.replace(/^v/, "") !== "0.0.6",
+  "Supermemory v0.0.6 is blocked because its published workflow runtime cannot process documents.",
 );
 
 export const hermesRuntimeNodeSchema = z.object({
@@ -68,7 +71,7 @@ export const createHermesNodeInvitationSchema = z.object({
   expectedHostname: z.string().trim().min(1).max(253).optional(),
   controlPlaneUrl: runtimeOriginSchema,
   hermesImage: imageReferenceSchema.default("nousresearch/hermes-agent:latest"),
-  supermemoryVersion: releaseVersionSchema.default("latest"),
+  supermemoryVersion: releaseVersionSchema.default("0.0.5"),
   expiresInMinutes: z.number().int().min(10).max(1_440).default(30),
 }).strict();
 

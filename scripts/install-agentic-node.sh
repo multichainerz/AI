@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="ai-v1.14.2"
+INSTALLER_VERSION="ai-v1.14.3"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 CONTAINER_NAME="orcasynapse-hermes"
 HEARTBEAT_SERVICE="orcasynapse-hermes-heartbeat"
@@ -15,6 +15,7 @@ SUPERMEMORY_USER="orcasynapse-supermemory"
 SUPERMEMORY_EMBEDDING_MODEL="Xenova/bge-m3"
 SUPERMEMORY_EMBEDDING_DIMENSIONS="1024"
 SUPERMEMORY_START_TIMEOUT_SECONDS=600
+SUPERMEMORY_READY_PATH="/v4/openapi"
 ENROLLMENT_STATE="${STATE_ROOT}/enrollment-state.json"
 TEMPORARY_FILES=()
 RESOLVED_BUNDLE=""
@@ -66,9 +67,8 @@ EOF
   printf '%b\n' "${UI_RESET}${UI_DIM}  AGENTIC SYSTEM  /  VM2 SECURE ENROLLMENT${UI_RESET}"
   printf '%b\n' "${UI_DIM}  ----------------------------------------------------------------------${UI_RESET}"
   if (( UI_INTERACTIVE )); then
-    local dots
     printf '  Establishing node enrollment context'
-    for dots in 1 2 3; do
+    for _ in 1 2 3; do
       printf '%b.%b' "${UI_CYAN}" "${UI_RESET}"
       ui_pause 0.12
     done
@@ -112,7 +112,7 @@ run_with_spinner() {
   fi
 
   local log_file pid status=0 frame_index=0 started elapsed
-  local frames=('|' '/' '-' '\')
+  local frames=('|' '/' '-' "\\")
   log_file="$(mktemp /tmp/orcasynapse-command.XXXXXX)"
   TEMPORARY_FILES+=("${log_file}")
   started="${SECONDS}"
@@ -259,6 +259,15 @@ normalize_supermemory_release() {
   [[ "${requested_version}" == "latest" ]] && printf 'latest' || printf '%s' "${requested_version#v}"
 }
 
+assert_supermemory_release_usable() {
+  local installed_version="${1#v}"
+  case "${installed_version}" in
+    0.0.6)
+      fail "Supermemory Local v0.0.6 is blocked because its published binary cannot load RivetKit; document ingestion and search are non-functional (upstream issues #1315 and #1324). Issue a new enrollment pinned to 0.0.5 or a newer release explicitly validated by your organization"
+      ;;
+  esac
+}
+
 resolve_bundle_from_orcasynapse() {
   local control_plane_url="$1"
   control_plane_url="${control_plane_url%/}"
@@ -323,10 +332,110 @@ install_supermemory_binary() {
       bash -s -- "${install_target}"
 }
 
+supermemory_ready() {
+  local base_url="${1%/}"
+  curl --fail --silent --max-time 5 "${base_url}${SUPERMEMORY_READY_PATH}" >/dev/null 2>&1
+}
+
+supermemory_journal() {
+  local invocation_id="${1:-}"
+  if [[ -n "${invocation_id}" ]]; then
+    journalctl "_SYSTEMD_INVOCATION_ID=${invocation_id}" --no-pager -o cat 2>/dev/null
+  else
+    journalctl -u "${SUPERMEMORY_SERVICE}.service" --no-pager -o cat 2>/dev/null
+  fi
+}
+
+parse_supermemory_download_progress() {
+  sed -nE 's/^[[:space:]]*\[[=[:space:]]+\][[:space:]]+([0-9]{1,3})%[[:space:]]+[^[:alnum:]]+[[:space:]]+(.*)$/\1|\2/p' \
+    | tail -1
+}
+
+parse_supermemory_embedding_model() {
+  sed -nE 's/^[[:space:]]*[*+>][[:space:]]+local embeddings[[:space:]]+([^[:space:]]+)[[:space:]]+.*/\1/p' \
+    | grep -vE '^[0-9]+$' \
+    | head -1
+}
+
+render_supermemory_progress() {
+  local percent="$1" detail="$2" elapsed="$3" width=24 filled empty progress remainder
+  filled=$((percent * width / 100))
+  empty=$((width - filled))
+  printf -v progress '%*s' "${filled}" ''
+  printf -v remainder '%*s' "${empty}" ''
+  progress="${progress// /=}"
+  remainder="${remainder// / }"
+  printf '\r\033[2K  %b[DL]%b [%s%s] %3d%%  %-20.20s %4ss' \
+    "${UI_CYAN}${UI_BOLD}" "${UI_RESET}" "${progress}" "${remainder}" "${percent}" "${detail}" "${elapsed}"
+}
+
+print_safe_supermemory_diagnostics() {
+  local invocation_id="${1:-}"
+  supermemory_journal "${invocation_id}" \
+    | sed -E 's/sm_[A-Za-z0-9_-]{20,}/sm_[REDACTED]/g' \
+    | grep -Ei 'startup|download|embedding|fetching|worker|ready|failed|error|panic|fatal|dimension|provider|database' \
+    | tail -n 80 >&2 || true
+}
+
+wait_for_supermemory() {
+  local base_url="$1" invocation_id="$2"
+  local deadline=$((SECONDS + SUPERMEMORY_START_TIMEOUT_SECONDS))
+  local started="${SECONDS}" last_percent="" progress_record="" percent="" detail=""
+  local frames=('|' '/' '-' "\\") frame_index=0
+
+  if (( UI_INTERACTIVE )); then
+    printf '\033[?25l'
+  else
+    info "Waiting for Supermemory model initialization and API readiness."
+  fi
+
+  until supermemory_ready "${base_url}"; do
+    if ! systemctl is-active --quiet "${SUPERMEMORY_SERVICE}.service"; then
+      (( UI_INTERACTIVE )) && printf '\r\033[2K\033[?25h'
+      print_safe_supermemory_diagnostics "${invocation_id}"
+      fail "Supermemory Local stopped before its API became ready"
+    fi
+
+    progress_record="$(supermemory_journal "${invocation_id}" | parse_supermemory_download_progress || true)"
+    if [[ -n "${progress_record}" ]]; then
+      percent="${progress_record%%|*}"
+      detail="${progress_record#*|}"
+      if (( UI_INTERACTIVE )); then
+        render_supermemory_progress "${percent}" "${detail}" "$((SECONDS - started))"
+      elif [[ "${percent}" != "${last_percent}" ]]; then
+        printf '  [DL] [%-24s] %3d%%  %s\n' "$(printf '%*s' $((percent * 24 / 100)) '' | tr ' ' '=')" "${percent}" "${detail}"
+      fi
+      last_percent="${percent}"
+    elif (( UI_INTERACTIVE )); then
+      printf '\r\033[2K  %b[%s]%b %-42s %4ss' \
+        "${UI_CYAN}${UI_BOLD}" "${frames[frame_index]}" "${UI_RESET}" \
+        "Initialize Supermemory local embeddings" "$((SECONDS - started))"
+      frame_index=$(((frame_index + 1) % ${#frames[@]}))
+    fi
+
+    if (( SECONDS >= deadline )); then
+      (( UI_INTERACTIVE )) && printf '\r\033[2K\033[?25h'
+      print_safe_supermemory_diagnostics "${invocation_id}"
+      fail "Supermemory Local did not become ready within ten minutes"
+    fi
+    sleep 1
+  done
+
+  if (( UI_INTERACTIVE )); then
+    if [[ -n "${last_percent}" ]]; then
+      render_supermemory_progress 100 "model ready" "$((SECONDS - started))"
+      printf '\n\033[?25h'
+    else
+      printf '\r\033[2K\033[?25h'
+    fi
+  fi
+}
+
 install_supermemory() {
   local inference_base_url="$1" model_alias="$2" gateway_key="$3" requested_version="$4"
   local install_dir="${SUPERMEMORY_ROOT}/install"
   local bin_dir="${SUPERMEMORY_ROOT}/bin"
+  local installed_version=""
 
   if ! id -u "${SUPERMEMORY_USER}" >/dev/null 2>&1; then
     useradd --system --user-group --no-create-home \
@@ -338,7 +447,6 @@ install_supermemory() {
     "${SUPERMEMORY_ROOT}" "${SUPERMEMORY_ROOT}/data" "${install_dir}" "${bin_dir}"
 
   if [[ -x "${install_dir}/bin/supermemory-server" && -s "${install_dir}/bin/supermemory-server.version" ]]; then
-    local installed_version
     installed_version="$(<"${install_dir}/bin/supermemory-server.version")"
     if ! supermemory_release_matches "${requested_version}" "${installed_version}"; then
       fail "the retained Supermemory release '${installed_version}' does not match the dashboard-pinned release '${requested_version}'"
@@ -348,7 +456,9 @@ install_supermemory() {
     run_with_spinner "Install Supermemory Local (${requested_version})" \
       install_supermemory_binary "${requested_version}" "${install_dir}" "${bin_dir}" \
       || fail "Supermemory Local installation failed"
+    installed_version="$(<"${install_dir}/bin/supermemory-server.version")"
   fi
+  assert_supermemory_release_usable "${installed_version}"
   chown -R "${SUPERMEMORY_USER}:${SUPERMEMORY_USER}" "${SUPERMEMORY_ROOT}"
 
   install -m 0600 -o "${SUPERMEMORY_USER}" -g "${SUPERMEMORY_USER}" /dev/stdin "${SUPERMEMORY_ROOT}/runtime.env" <<EOF
@@ -389,22 +499,20 @@ ReadWritePaths=${SUPERMEMORY_ROOT}
 [Install]
 WantedBy=multi-user.target
 EOF
-  info "Supermemory will download and prewarm ${SUPERMEMORY_EMBEDDING_MODEL} locally on VM2."
+  info "Supermemory will initialize local embeddings; first boot downloads and prewarms model weights."
   systemctl daemon-reload
-  systemctl enable --now "${SUPERMEMORY_SERVICE}.service"
+  systemctl enable "${SUPERMEMORY_SERVICE}.service" >/dev/null
+  systemctl restart "${SUPERMEMORY_SERVICE}.service"
 
-  local deadline=$((SECONDS + SUPERMEMORY_START_TIMEOUT_SECONDS))
-  until curl --fail --silent --max-time 5 http://127.0.0.1:6767/health >/dev/null 2>&1; do
-    if (( SECONDS >= deadline )); then
-      journalctl -u "${SUPERMEMORY_SERVICE}.service" --no-pager -n 100 >&2 || true
-      fail "Supermemory Local did not become healthy within ten minutes"
-    fi
-    sleep 2
-  done
+  local invocation_id
+  invocation_id="$(systemctl show "${SUPERMEMORY_SERVICE}.service" --property=InvocationID --value 2>/dev/null || true)"
+  wait_for_supermemory "http://127.0.0.1:6767" "${invocation_id}"
 
-  local memory_api_key=""
+  local memory_api_key="" native_api_key_file="${SUPERMEMORY_ROOT}/data/api-key"
   if [[ -s "${SUPERMEMORY_ROOT}/api-key" ]]; then
     memory_api_key="$(<"${SUPERMEMORY_ROOT}/api-key")"
+  elif [[ -s "${native_api_key_file}" ]]; then
+    memory_api_key="$(<"${native_api_key_file}")"
   else
     local key_deadline=$((SECONDS + 120))
     while [[ -z "${memory_api_key}" && ${SECONDS} -lt ${key_deadline} ]]; do
@@ -413,11 +521,22 @@ EOF
       [[ -n "${memory_api_key}" ]] || sleep 1
     done
   fi
-  [[ -n "${memory_api_key}" ]] || fail "Supermemory Local started but its first-boot API key could not be captured"
+  [[ "${memory_api_key}" =~ ^sm_[A-Za-z0-9_-]{20,}$ ]] \
+    || fail "Supermemory Local started but its first-boot API key could not be captured safely"
   printf '%s' "${memory_api_key}" > "${SUPERMEMORY_ROOT}/api-key"
   chown root:root "${SUPERMEMORY_ROOT}/api-key"
   chmod 0600 "${SUPERMEMORY_ROOT}/api-key"
-  success "Supermemory Local is healthy with ${SUPERMEMORY_EMBEDDING_MODEL} (${SUPERMEMORY_EMBEDDING_DIMENSIONS} dimensions)."
+  local actual_embedding_model
+  actual_embedding_model="$(supermemory_journal "${invocation_id}" | parse_supermemory_embedding_model || true)"
+  if [[ -n "${actual_embedding_model}" && "${actual_embedding_model}" != "${SUPERMEMORY_EMBEDDING_MODEL}" ]]; then
+    success "Supermemory Local API is ready with ${actual_embedding_model}."
+    warning "Supermemory started with ${actual_embedding_model}; its current release ignored the requested ${SUPERMEMORY_EMBEDDING_MODEL} setting (upstream issue #1336)."
+    warning "Non-English semantic recall is reduced until Supermemory ships configurable local embeddings."
+  elif [[ -n "${actual_embedding_model}" ]]; then
+    success "Supermemory Local is ready with ${actual_embedding_model} (${SUPERMEMORY_EMBEDDING_DIMENSIONS} dimensions)."
+  else
+    success "Supermemory Local API is ready; the embedding model was already cached and not reported during this start."
+  fi
 }
 
 wait_for_hermes() {
@@ -711,8 +830,8 @@ EOF
   fi
   [[ -n "${runtime_host}" ]] || fail "the Hermes base URL does not contain a usable runtime host"
   supermemory_base_url="http://${runtime_host}:6767"
-  curl --fail --silent --max-time 5 "${supermemory_base_url}/health" >/dev/null 2>&1 \
-    || fail "Supermemory is healthy on loopback but is not reachable through the invited runtime host on TCP 6767"
+  supermemory_ready "${supermemory_base_url}" \
+    || fail "Supermemory is ready on loopback but is not reachable through the invited runtime host on TCP 6767"
 
   run_with_spinner "Load the governed Hermes memory provider" \
     docker exec --user "${HERMES_UID}:${HERMES_GID}" "${CONTAINER_NAME}" python -c \

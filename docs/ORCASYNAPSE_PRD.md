@@ -91,7 +91,7 @@ The dashboard creates a short-lived one-use enrollment claim. The customer downl
 2. starts a constrained official Hermes container;
 3. enrolls it with OrcaSynapse;
 4. receives an OrcaSynapse inference-gateway route, alias, and node key;
-5. installs checksum-verified Supermemory Local with CPU-local `Xenova/bge-m3` embeddings (1024 dimensions);
+5. installs checksum-verified Supermemory Local using the current workflow-safe v0.0.5 default, requests CPU-local `Xenova/bge-m3` embeddings (1024 dimensions), displays first-boot download progress, and reports any upstream fallback rather than misrepresenting the active model;
 6. configures Hermes's native Supermemory provider with a profile-scoped tag;
 7. registers Supermemory with OrcaSynapse;
 8. enables signed heartbeats.

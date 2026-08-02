@@ -40,9 +40,32 @@ if supermemory_release_matches "1.2.4" "v1.2.3"; then
   printf 'mismatched pinned Supermemory releases were accepted\n' >&2
   exit 1
 fi
+assert_supermemory_release_usable "0.0.5"
+if (assert_supermemory_release_usable "v0.0.6" >/dev/null 2>&1); then
+  printf 'known-broken Supermemory v0.0.6 was accepted\n' >&2
+  exit 1
+fi
+
+progress_sample="$({
+  printf '%s\n' '      [                        ] 0% · 717 B / 106 MB'
+  printf '%s\n' '      [==========              ] 40% · 43 MB / 106 MB'
+} | parse_supermemory_download_progress)"
+[[ "${progress_sample}" == "40|43 MB / 106 MB" ]]
+model_sample="$({
+  printf '%s\n' '  * local embeddings  Xenova/bge-m3 · first-run download'
+  printf '%s\n' '  + local embeddings  1 worker ready · native backend · 12s'
+} | parse_supermemory_embedding_model)"
+[[ "${model_sample}" == "Xenova/bge-m3" ]]
+[[ "${SUPERMEMORY_READY_PATH}" == "/v4/openapi" ]]
 
 grep -Fq 'default: ${model_alias_json}' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 grep -Fq 'local key_deadline=' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq 'native_api_key_file="${SUPERMEMORY_ROOT}/data/api-key"' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq 'print_safe_supermemory_diagnostics' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+if grep -Fq 'supermemory_base_url}/health' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"; then
+  printf 'Agentic System installer still probes the nonexistent Supermemory /health route\n' >&2
+  exit 1
+fi
 grep -Fq 'chown "${HERMES_UID}:${HERMES_GID}" "${destination}"' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 if grep -Eq 'install .*-[og] (10000|"?\$\{HERMES_(UID|GID)\})' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"; then
   printf 'Agentic System installer passes a numeric identity through install -o/-g\n' >&2

@@ -88,4 +88,11 @@ describe("committed PostgreSQL migrations", () => {
     const sql = readFileSync(resolve(migrationsRoot, directory!, "migration.sql"), "utf8");
     expect(sql).toContain('ADD COLUMN "supermemoryVersion" VARCHAR(120)');
   });
+
+  it("defaults new Agentic System invitations to the known-working Supermemory release", () => {
+    const directory = migrationDirectories.find((name) => name.endsWith("_pin_working_supermemory_release"));
+    expect(directory).toBeTruthy();
+    const sql = readFileSync(resolve(migrationsRoot, directory!, "migration.sql"), "utf8");
+    expect(sql).toContain('ALTER COLUMN "supermemoryVersion" SET DEFAULT \'0.0.5\'');
+  });
 });
