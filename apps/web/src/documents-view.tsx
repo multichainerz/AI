@@ -18,6 +18,7 @@ import {
 interface DocumentsViewProps {
   unlocked: boolean;
   administrator: boolean;
+  serviceReady: boolean | null;
   oidcConfigured: boolean;
   onSignIn: () => void;
   onConfigure: () => void;
@@ -116,7 +117,7 @@ export function DocumentsView(props: DocumentsViewProps) {
 
   const submitUpload = async (event: FormEvent) => {
     event.preventDefault();
-    if (!file || !validRetention || busy) return;
+    if (!file || !validRetention || busy || props.serviceReady === false) return;
     setBusy(true);
     setError(null);
     try {
@@ -172,12 +173,16 @@ export function DocumentsView(props: DocumentsViewProps) {
         <h1>Knowledge</h1>
         <p>Authorize sources into Supermemory while authoritative files remain in enterprise storage.</p>
       </div>
-      <button className="primary-button" type="button" onClick={() => setUploadOpen((value) => !value)}>{uploadOpen ? "Close" : "Add source"}</button>
+      <button className="primary-button" type="button" disabled={props.serviceReady === false} onClick={() => setUploadOpen((value) => !value)}>{uploadOpen ? "Close" : props.serviceReady === false ? "Memory unavailable" : "Add source"}</button>
     </header>
 
     {error && <div className="documents-alert" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
+    {props.serviceReady === false && <div className="workspace-guidance" role="status">
+      <div><strong>Supermemory needs attention</strong><span>Existing metadata remains visible, but new sources cannot be indexed until the VM2 memory service is healthy.</span></div>
+      <button className="secondary-button" type="button" onClick={props.onConfigure}>Review Agentic System</button>
+    </div>}
 
-    {uploadOpen && <form className="document-upload panel knowledge-upload" onSubmit={submitUpload}>
+    {uploadOpen && props.serviceReady !== false && <form className="document-upload panel knowledge-upload" onSubmit={submitUpload}>
       <div className="knowledge-upload-intro">
         <p className="section-kicker">Direct Supermemory ingestion</p>
         <h2>Add a knowledge source</h2>
@@ -190,7 +195,7 @@ export function DocumentsView(props: DocumentsViewProps) {
       </label>
       <div className="knowledge-capability-note">
         <strong>Local extraction compatibility</strong>
-        <span>Plain text is validated on the installed Supermemory Local baseline. Rich files are relayed natively, but PDF, Office, and image extraction can fail when the installed self-hosted extractor requires an unavailable cloud service.</span>
+        <span>Text files and text-based documents use the local OpenAI-compatible model on VM2. Scanned PDFs, image-heavy documents, and images require an optional Gemini or Vertex document-understanding provider. OrcaSynapse never retains a retry copy.</span>
       </div>
       <label>Classification<select value={classification} onChange={(event) => setClassification(event.target.value as DocumentClassification)}><option value="INTERNAL">Internal</option><option value="CONFIDENTIAL">Confidential</option><option value="RESTRICTED">Restricted</option></select></label>
       <label>Metadata retention<input type="number" min={1} max={3650} value={retentionDays} onChange={(event) => setRetentionDays(Number(event.target.value))} /></label>

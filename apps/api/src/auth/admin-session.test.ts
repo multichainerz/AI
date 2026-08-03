@@ -230,6 +230,24 @@ describe("PrismaAdminSessionManager", () => {
     expect(ADMIN_SESSION_IDLE_MS).toBe(15 * 60 * 1_000);
   });
 
+  it("does not rewrite a healthy session on every authenticated request", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-30T00:01:30.000Z"));
+    const updateMany = vi.fn(async () => ({ count: 1 }));
+    const prisma = {
+      administratorSession: {
+        findUnique: vi.fn(async () => storedSession()),
+        updateMany,
+      },
+    } as unknown as OrcaSynapsePrismaClient;
+
+    const principal = await new PrismaAdminSessionManager(prisma, { verify: () => false })
+      .authenticate(SESSION_TOKEN);
+
+    expect(principal?.id).toBe(SESSION_ID);
+    expect(updateMany).not.toHaveBeenCalled();
+  });
+
   it("fails closed when revocation wins the authentication update race", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-30T00:02:00.000Z"));

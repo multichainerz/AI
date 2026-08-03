@@ -61,7 +61,7 @@ describe("Hermes runtime-node contracts", () => {
       hermesImage: "nousresearch/hermes-agent:latest",
       expiresInMinutes: 30,
     });
-    expect(safeDefault.supermemoryVersion).toBe("0.0.5");
+    expect(safeDefault.supermemoryVersion).toBe("0.0.7-rc.2");
   });
 
   it("keeps enrollment identity and runtime API credentials explicit", () => {

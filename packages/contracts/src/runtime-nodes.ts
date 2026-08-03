@@ -71,7 +71,7 @@ export const createHermesNodeInvitationSchema = z.object({
   expectedHostname: z.string().trim().min(1).max(253).optional(),
   controlPlaneUrl: runtimeOriginSchema,
   hermesImage: imageReferenceSchema.default("nousresearch/hermes-agent:latest"),
-  supermemoryVersion: releaseVersionSchema.default("0.0.5"),
+  supermemoryVersion: releaseVersionSchema.default("0.0.7-rc.2"),
   expiresInMinutes: z.number().int().min(10).max(1_440).default(30),
 }).strict();
 

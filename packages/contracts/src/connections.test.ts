@@ -82,7 +82,8 @@ describe("service connection configuration", () => {
       memoryPollIntervalMs: 2_000,
       retrievalLimit: 6,
       retrievalThreshold: 0.25,
-    })).toMatchObject({ documentsPath: "/v3/documents", retrievalLimit: 6 });
+      observedVersion: "0.0.7-rc.2",
+    })).toMatchObject({ documentsPath: "/v3/documents", retrievalLimit: 6, observedVersion: "0.0.7-rc.2" });
 
     expect(() => parseServiceConnectionConfiguration("SUPERMEMORY", {
       retrievalLimit: 100,

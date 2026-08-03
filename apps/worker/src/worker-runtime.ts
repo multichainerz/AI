@@ -70,7 +70,14 @@ export class WorkerRuntime {
     const drain = (async () => {
       try {
         const work = await this.prisma.agentRun.findMany({
-          where: { jobId: { not: null }, status: { in: ["QUEUED", "RUNNING", "CANCEL_REQUESTED"] } },
+          where: {
+            jobId: { not: null },
+            status: { in: ["QUEUED", "RUNNING", "CANCEL_REQUESTED"] },
+            OR: [
+              { processorLeaseExpiresAt: null },
+              { processorLeaseExpiresAt: { lt: new Date() } },
+            ],
+          },
           select: { id: true, jobId: true },
           orderBy: { queuedAt: "asc" },
           take: 5,

@@ -20,6 +20,7 @@ import type { InstallationKeyVerifier } from "./installation-key-auth.js";
 export const ADMIN_SESSION_COOKIE = "orcasynapse_admin_session";
 export const ADMIN_SESSION_IDLE_MS = 15 * 60 * 1_000;
 export const ADMIN_SESSION_ABSOLUTE_MS = 8 * 60 * 60 * 1_000;
+export const ADMIN_SESSION_TOUCH_INTERVAL_MS = 60 * 1_000;
 const ADMIN_SESSION_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
 const LOCAL_LOGIN_FAILURE_LIMIT = 5;
 const LOCAL_LOGIN_LOCK_MS = 15 * 60 * 1_000;
@@ -47,8 +48,6 @@ const ROLE_SCOPES: Readonly<Record<AdminRole, readonly AdminScope[]>> = {
     "agents:control",
     "tools:read",
     "tools:manage",
-    "approvals:read",
-    "approvals:review",
     "evaluations:read",
     "evaluations:manage",
     "evaluations:promote",
@@ -69,13 +68,11 @@ const ROLE_SCOPES: Readonly<Record<AdminRole, readonly AdminScope[]>> = {
     "agents:read",
     "agents:control",
     "tools:read",
-    "approvals:read",
-    "approvals:review",
     "evaluations:read",
     "readiness:read",
     "readiness:manage",
   ],
-  AUDITOR: ["connections:read", "operations:read", "audit:read", "documents:read", "models:read", "guardrails:read", "prompts:read", "agents:read", "tools:read", "approvals:read", "evaluations:read", "readiness:read"],
+  AUDITOR: ["connections:read", "operations:read", "audit:read", "documents:read", "models:read", "guardrails:read", "prompts:read", "agents:read", "tools:read", "evaluations:read", "readiness:read"],
 };
 
 export interface AdminPrincipal extends AdministratorSession {}
@@ -573,6 +570,12 @@ export class PrismaAdminSessionManager implements AdminSessionManager {
       : ROLE_SCOPES[session.role];
     if (requiredScope && !scopes.includes(requiredScope)) return null;
 
+    // Preserve sliding expiry without turning every authenticated API request
+    // into a PostgreSQL write.
+    if (now.getTime() - session.lastSeenAt.getTime() < ADMIN_SESSION_TOUCH_INTERVAL_MS) {
+      return principalFromRecord(session);
+    }
+
     const idleExpiresAt = new Date(
       Math.min(now.getTime() + ADMIN_SESSION_IDLE_MS, session.absoluteExpiresAt.getTime()),
     );
@@ -580,6 +583,7 @@ export class PrismaAdminSessionManager implements AdminSessionManager {
       where: {
         id: session.id,
         revokedAt: null,
+        lastSeenAt: { lte: new Date(now.getTime() - ADMIN_SESSION_TOUCH_INTERVAL_MS) },
         idleExpiresAt: { gt: now },
         absoluteExpiresAt: { gt: now },
       },

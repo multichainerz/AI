@@ -1,11 +1,8 @@
 import {
-  decideToolApprovalSchema,
   gatewayCredentialListSchema,
   governedToolListSchema,
   issueGatewayCredentialSchema,
   issuedGatewayCredentialSchema,
-  toolApprovalListSchema,
-  toolApprovalSchema,
   toolCallListSchema,
   toolGrantListSchema,
   toolGrantSchema,
@@ -240,24 +237,6 @@ export async function registerAdminToolingRoutes(app: FastifyInstance, options: 
     const manager = managerOrLocked(options, reply);
     if (!principal || !manager) return;
     return toolCallListSchema.parse(await manager.listCalls());
-  });
-
-  app.get("/approvals", async (request, reply) => {
-    const principal = await requireAdmin(request, reply, options, "approvals:read");
-    const manager = managerOrLocked(options, reply);
-    if (!principal || !manager) return;
-    return toolApprovalListSchema.parse(await manager.listApprovals());
-  });
-
-  app.post("/approvals/:approvalId/decision", async (request, reply) => {
-    const principal = await requireAdmin(request, reply, options, "approvals:review");
-    const manager = managerOrLocked(options, reply);
-    const approvalId = uuid((request.params as Record<string, unknown>).approvalId);
-    const input = decideToolApprovalSchema.safeParse(request.body);
-    if (!principal || !manager) return;
-    if (!approvalId || !input.success) return reply.code(400).send({ error: "INVALID_REQUEST", message: approvalId ? input.error?.issues[0]?.message : "Approval ID is invalid." });
-    try { return toolApprovalSchema.parse(await manager.decideApproval(principal, approvalId, input.data)); }
-    catch (cause) { await sendToolingError(reply, cause); }
   });
 
   app.get("/runtime", async (request, reply) => {

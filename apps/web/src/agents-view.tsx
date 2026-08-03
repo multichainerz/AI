@@ -9,6 +9,7 @@ import {
   getAgentRunEvents,
   getAgentRuns,
   getAgentRuntime,
+  getConnections,
   runOnboardingValidation,
   setAgentProfileState,
   updateAgentProfile,
@@ -18,6 +19,8 @@ import {
 interface AgentsViewProps {
   unlocked: boolean;
   administrator: boolean;
+  activationReady: boolean | null;
+  activationMessage: string | null;
   oidcConfigured: boolean;
   onSignIn: () => void;
   onConfigure: () => void;
@@ -96,7 +99,7 @@ function draftFromProfile(profile: AgentProfile): CreateAgentProfile {
   };
 }
 
-export function AgentsView({ unlocked, administrator, oidcConfigured, onSignIn, onConfigure, onOpenChat, onOpenReadiness, onUnauthorized }: AgentsViewProps) {
+export function AgentsView({ unlocked, administrator, activationReady, activationMessage, oidcConfigured, onSignIn, onConfigure, onOpenChat, onOpenReadiness, onUnauthorized }: AgentsViewProps) {
   const runsRef = useRef<AgentRun[]>([]);
   const [profiles, setProfiles] = useState<AgentProfile[]>([]);
   const [runs, setRuns] = useState<AgentRun[]>([]);
@@ -112,6 +115,7 @@ export function AgentsView({ unlocked, administrator, oidcConfigured, onSignIn, 
   const [editorOpen, setEditorOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [readinessRequired, setReadinessRequired] = useState(false);
 
   const selectedRun = useMemo(() => runs.find(({ id }) => id === selectedRunId) ?? runs[0] ?? null, [runs, selectedRunId]);
@@ -167,21 +171,30 @@ export function AgentsView({ unlocked, administrator, oidcConfigured, onSignIn, 
     finally { setBusy(null); }
   };
 
-  const validateAsStandby = async (profile: AgentProfile) => {
+  const verifyProfileForChat = async (profile: AgentProfile) => {
+    const snapshot = await runOnboardingValidation({ stageKey: "ai-services" });
+    const hermesCompatibility = snapshot.components.find(({ key: componentKey }) => componentKey === "hermes-api");
+    if (hermesCompatibility?.status !== "PASSED") {
+      setReadinessRequired(true);
+      const status = hermesCompatibility?.status.replaceAll("_", " ").toLowerCase() ?? "not tested";
+      throw new Error(`Hermes compatibility is ${status}. ${hermesCompatibility?.note ?? "The Agentic System must pass its automated service check before this Profile can become active."}`);
+    }
+    await setAgentProfileState(profile.id, "activate");
+    if (!runtime?.enabled) {
+      await updateAgentRuntime(true, "Hermes boundary verified while activating the first usable Profile.");
+    }
+  };
+
+  const activateForChat = async (profile: AgentProfile) => {
     if (busy) return;
-    const key = `standby-${profile.id}`;
+    const key = `activate-${profile.id}`;
     setBusy(key);
     setError(null);
+    setNotice(null);
     setReadinessRequired(false);
     try {
-      const snapshot = await runOnboardingValidation({ stageKey: "ai-services" });
-      const hermesCompatibility = snapshot.components.find(({ key: componentKey }) => componentKey === "hermes-api");
-      if (hermesCompatibility?.status !== "PASSED") {
-        setReadinessRequired(true);
-        const status = hermesCompatibility?.status.replaceAll("_", " ").toLowerCase() ?? "not tested";
-        throw new Error(`Hermes compatibility is ${status}. ${hermesCompatibility?.note ?? "The Agentic System must pass its automated service check before this Profile can enter standby."}`);
-      }
-      await setAgentProfileState(profile.id, "standby");
+      await verifyProfileForChat(profile);
+      setNotice(`${profile.version.displayName} is active and Chat is ready.`);
       await load();
     } catch (cause) {
       if (cause instanceof OrcaSynapseApiError && cause.message.includes("Hermes compatibility")) setReadinessRequired(true);
@@ -189,6 +202,26 @@ export function AgentsView({ unlocked, administrator, oidcConfigured, onSignIn, 
     } finally {
       setBusy(null);
     }
+  };
+
+  const openNewProfile = async () => {
+    setError(null);
+    setNotice(null);
+    let modelAlias = blankProfile.modelAlias;
+    try {
+      const connections = await getConnections();
+      const aliases = connections.items
+        .filter(({ kind, enabled, status }) => kind === "INFERENCE" && enabled && status === "HEALTHY")
+        .map(({ configuration }) => configuration.modelAlias)
+        .filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+      if (aliases.length === 1) modelAlias = aliases[0]!.trim();
+    } catch (cause) {
+      fail(cause);
+    }
+    setEditingId(null);
+    setProfileDraft({ ...blankProfile, modelAlias });
+    setSkillsDraft("");
+    setEditorOpen(true);
   };
 
   const editProfile = (profile: AgentProfile) => {
@@ -205,16 +238,38 @@ export function AgentsView({ unlocked, administrator, oidcConfigured, onSignIn, 
       setError("Each Skill must use 'name@version sha256' with a lowercase slug and a 64-character digest.");
       return;
     }
-    await action("profile-save", async () => {
+    if (busy) return;
+    setBusy("profile-save");
+    setError(null);
+    setNotice(null);
+    setReadinessRequired(false);
+    try {
       const candidate = { ...profileDraft, skills };
       if (editingId) {
         const { slug: _slug, ...configuration } = candidate;
         await updateAgentProfile(editingId, configuration);
+        setNotice(`${candidate.displayName} version saved. Activate it when the new revision is ready for Chat.`);
       } else {
-        await createAgentProfile(candidate);
+        const created = await createAgentProfile(candidate);
+        // Creation is durable. Close the editor before live verification so a
+        // failed readiness check cannot tempt the operator to submit a duplicate.
+        setEditorOpen(false); setEditingId(null); setProfileDraft(blankProfile); setSkillsDraft("");
+        if (activationReady === false) {
+          setNotice(`${created.version.displayName} was saved as a draft. Finish the Agentic System, then use Verify & activate.`);
+        } else {
+          await verifyProfileForChat(created);
+          setNotice(`${created.version.displayName} was created, verified, and activated. Chat is ready.`);
+        }
       }
       setEditorOpen(false); setEditingId(null); setProfileDraft(blankProfile); setSkillsDraft("");
-    });
+      await load();
+    } catch (cause) {
+      if (cause instanceof OrcaSynapseApiError && cause.message.includes("Hermes compatibility")) setReadinessRequired(true);
+      fail(cause);
+      await load().catch(() => undefined);
+    } finally {
+      setBusy(null);
+    }
   };
 
   if (!unlocked) {
@@ -232,22 +287,33 @@ export function AgentsView({ unlocked, administrator, oidcConfigured, onSignIn, 
     );
   }
 
+  const chatAvailable = profiles.some(({ status }) => status === "ACTIVE")
+    && (administrator ? runtime?.enabled === true : true);
+
   return (
     <section className="agents-workspace">
       <header className="documents-header agents-header">
         <div><p className="page-kicker">Hardened orchestration</p><h1>Hermes Profiles</h1><p>Immutable Profile Distributions, scoped knowledge, optional OrcaSynapse-governed MCP actions, safe activity events, and an operator kill switch.</p></div>
-        <div className="agent-header-actions"><button className="secondary-button" type="button" onClick={onOpenChat}>Open Chat</button><button className="secondary-button" type="button" onClick={() => void load()}>Refresh</button>{administrator && <button className="primary-button" type="button" onClick={() => { setEditingId(null); setProfileDraft(blankProfile); setSkillsDraft(""); setEditorOpen(true); }}>New profile</button>}</div>
+        <div className="agent-header-actions"><button className="secondary-button" type="button" disabled={!chatAvailable} onClick={onOpenChat}>{chatAvailable ? "Open Chat" : "Chat not ready"}</button><button className="secondary-button" type="button" onClick={() => void load()}>Refresh</button>{administrator && <button className="primary-button" type="button" onClick={() => void openNewProfile()}>{activationReady === false ? "Create draft" : "Create agent"}</button>}</div>
       </header>
 
       {error && <div className="documents-alert" role="alert"><span>{error}</span><div className="documents-alert-actions">{readinessRequired && <button type="button" onClick={onOpenReadiness}>Open Hermes readiness</button>}<button type="button" onClick={() => { setError(null); setReadinessRequired(false); }}>Dismiss</button></div></div>}
+      {notice && <div className="documents-alert agent-success" role="status"><span>{notice}</span><div className="documents-alert-actions">{chatAvailable && <button type="button" onClick={onOpenChat}>Open Chat</button>}<button type="button" onClick={() => setNotice(null)}>Dismiss</button></div></div>}
+      {administrator && activationReady === false && <div className="workspace-guidance" role="status">
+        <div><strong>Profiles can be drafted now</strong><span>{activationMessage ?? "Connect AI Inference and finish VM2 enrollment before activating a Profile for Chat."}</span></div>
+        <button className="secondary-button" type="button" onClick={onOpenReadiness}>Review platform setup</button>
+      </div>}
 
       {administrator && <section className={`agent-boundary ${runtime?.enabled ? "enabled" : "disabled"}`}>
         <div className="agent-boundary-mark">{runtime?.enabled ? "ON" : "OFF"}</div>
-        <div><span>Global execution boundary</span><strong>{runtime?.enabled ? "Hermes runs are permitted" : "Hermes runs are denied fail-closed"}</strong><p>{runtime?.reason ?? "Runtime state is loading."}</p></div>
-        <form onSubmit={(event) => { event.preventDefault(); if (reason.trim().length >= 3) void action("runtime", () => updateAgentRuntime(!runtime?.enabled, reason.trim())); }}>
-          <label htmlFor="runtime-reason">Operator reason</label><input id="runtime-reason" value={reason} minLength={3} maxLength={500} onChange={(event) => setReason(event.target.value)} />
-          <button className={runtime?.enabled ? "danger-button" : "primary-button"} disabled={busy !== null || reason.trim().length < 3} type="submit">{busy === "runtime" ? "Applying..." : runtime?.enabled ? "Disable execution" : "Enable after verification"}</button>
-        </form>
+        <div><span>Hermes execution</span><strong>{runtime?.enabled ? "Ready for Chat" : "Activates with the first verified Profile"}</strong><p>{runtime?.enabled ? runtime.reason : "Create or verify a Profile; OrcaSynapse will test Hermes and enable this boundary automatically."}</p></div>
+        <details className="agent-boundary-control">
+          <summary>Manual control</summary>
+          <form onSubmit={(event) => { event.preventDefault(); if (reason.trim().length >= 3) void action("runtime", () => updateAgentRuntime(!runtime?.enabled, reason.trim())); }}>
+            <label htmlFor="runtime-reason">Audit reason</label><input id="runtime-reason" value={reason} minLength={3} maxLength={500} onChange={(event) => setReason(event.target.value)} />
+            <button className={runtime?.enabled ? "danger-button" : "secondary-button"} disabled={busy !== null || reason.trim().length < 3} type="submit">{busy === "runtime" ? "Applying..." : runtime?.enabled ? "Disable execution" : "Enable manually"}</button>
+          </form>
+        </details>
       </section>}
 
       <div className="agent-metrics" aria-label="Agent operations summary">
@@ -261,14 +327,14 @@ export function AgentsView({ unlocked, administrator, oidcConfigured, onSignIn, 
         <section className="agent-profiles panel">
           <div className="document-section-heading"><div><p className="section-kicker">Immutable configuration</p><h2>Profiles</h2></div><span>{profiles.length} profiles</span></div>
           <div className="agent-profile-list">
-            {profiles.length === 0 && <div className="document-empty"><strong>No agent profiles</strong><span>An administrator must create and activate the first bounded profile.</span></div>}
+            {profiles.length === 0 && <div className="document-empty"><strong>Create your first agent</strong><span>OrcaSynapse will verify Hermes, activate the Profile, and enable Chat in one guided action.</span>{administrator && <button className="primary-button" type="button" onClick={() => void openNewProfile()}>Create starter agent</button>}</div>}
             {profiles.map((profile) => <article key={profile.id} className={selectedProfileId === profile.id ? "selected" : undefined}>
               <button className="agent-profile-select" type="button" onClick={() => setSelectedProfileId(profile.id)}>
                 <span className="agent-avatar">{profile.version.displayName.slice(0, 2).toUpperCase()}</span>
                 <div><strong>{profile.version.displayName}</strong><p>{profile.version.purpose}</p><small>{profile.slug} · current v{profile.version.version} · {profile.version.modelAlias} · distro {profile.version.distributionDigest.slice(0, 10)}{profile.activeVersion !== null && profile.activeVersion !== profile.version.version ? ` · live v${profile.activeVersion}` : ""}</small></div>
                 <span className={`document-status ${statusTone(profile.status)}`}>{profile.status.toLowerCase()}</span>
               </button>
-              {administrator && <div className="agent-profile-actions"><button type="button" onClick={() => editProfile(profile)}>New version</button>{profile.status === "ACTIVE" ? <button type="button" disabled={busy !== null} onClick={() => void action(`suspend-${profile.id}`, () => setAgentProfileState(profile.id, "suspend"))}>Suspend</button> : profile.status === "STANDBY" ? <button type="button" disabled={busy !== null} onClick={() => void action(`activate-${profile.id}`, () => setAgentProfileState(profile.id, "activate"))}>Activate v{profile.currentVersion}</button> : <button type="button" disabled={busy !== null} onClick={() => void validateAsStandby(profile)}>{busy === `standby-${profile.id}` ? "Checking Hermes..." : "Check & set standby"}</button>}</div>}
+              {administrator && <div className="agent-profile-actions"><button type="button" onClick={() => editProfile(profile)}>New version</button>{profile.status === "ACTIVE" ? <button type="button" disabled={busy !== null} onClick={() => void action(`suspend-${profile.id}`, () => setAgentProfileState(profile.id, "suspend"))}>Suspend</button> : <button className="primary-button" type="button" disabled={busy !== null} onClick={() => void activateForChat(profile)}>{busy === `activate-${profile.id}` ? "Verifying Hermes..." : "Verify & activate"}</button>}</div>}
             </article>)}
           </div>
         </section>
@@ -306,13 +372,13 @@ export function AgentsView({ unlocked, administrator, oidcConfigured, onSignIn, 
         <header><div><p className="section-kicker">{editingId ? "Immutable revision" : "New bounded profile"}</p><h2>{editingId ? "Create a new profile version" : "Create agent profile"}</h2></div><button type="button" aria-label="Close profile editor" onClick={() => setEditorOpen(false)}>×</button></header>
         <div className="agent-editor-grid"><label>Slug<input required disabled={editingId !== null} pattern="[a-z0-9]+(?:-[a-z0-9]+)*" value={profileDraft.slug} onChange={(event) => setProfileDraft({ ...profileDraft, slug: event.target.value })} /></label><label>Display name<input required minLength={2} maxLength={120} value={profileDraft.displayName} onChange={(event) => setProfileDraft({ ...profileDraft, displayName: event.target.value })} /></label></div>
         <label>Purpose<textarea required minLength={3} maxLength={500} value={profileDraft.purpose} onChange={(event) => setProfileDraft({ ...profileDraft, purpose: event.target.value })} /></label>
-        <label>SOUL.md<textarea className="instructions" required minLength={10} maxLength={32_000} value={profileDraft.soulMd} onChange={(event) => setProfileDraft({ ...profileDraft, soulMd: event.target.value })} /></label>
+        <label>Personality and operating principles<textarea className="instructions" required minLength={10} maxLength={32_000} value={profileDraft.soulMd} onChange={(event) => setProfileDraft({ ...profileDraft, soulMd: event.target.value })} /></label>
         <label>System instructions<textarea className="instructions" required minLength={10} maxLength={32_000} value={profileDraft.instructions} onChange={(event) => setProfileDraft({ ...profileDraft, instructions: event.target.value })} /></label>
         <label>Approved Skills<textarea value={skillsDraft} placeholder={`One per line: name@version ${"a".repeat(64)}`} onChange={(event) => setSkillsDraft(event.target.value)} /><small>Only secret-free, reviewed Skill references are included in the distribution source. Runtime installation remains evidence-gated.</small></label>
-        <div className="agent-editor-grid"><label>Hermes model alias<input required value={profileDraft.modelAlias} onChange={(event) => setProfileDraft({ ...profileDraft, modelAlias: event.target.value })} /></label><label>Timeout (seconds)<input required type="number" min={30} max={3600} value={profileDraft.timeoutSeconds} onChange={(event) => setProfileDraft({ ...profileDraft, timeoutSeconds: Number(event.target.value) })} /></label><label>Concurrent runs<input required type="number" min={1} max={20} value={profileDraft.maxConcurrentRuns} onChange={(event) => setProfileDraft({ ...profileDraft, maxConcurrentRuns: Number(event.target.value) })} /></label></div>
+        <div className="agent-editor-grid"><label>Inference model<input required value={profileDraft.modelAlias} onChange={(event) => setProfileDraft({ ...profileDraft, modelAlias: event.target.value })} /><small>Filled from the healthy AI Inference connection.</small></label><label>Timeout (seconds)<input required type="number" min={30} max={3600} value={profileDraft.timeoutSeconds} onChange={(event) => setProfileDraft({ ...profileDraft, timeoutSeconds: Number(event.target.value) })} /></label><label>Concurrent runs<input required type="number" min={1} max={20} value={profileDraft.maxConcurrentRuns} onChange={(event) => setProfileDraft({ ...profileDraft, maxConcurrentRuns: Number(event.target.value) })} /></label></div>
         <label className="agent-check"><input type="checkbox" checked={profileDraft.allowPrivateKnowledge} onChange={(event) => setProfileDraft({ ...profileDraft, allowPrivateKnowledge: event.target.checked })} /><span><strong>Allow private knowledge retrieval</strong><small>Searches only the requesting identity’s authorized Supermemory scope.</small></span></label>
-        <div className="agent-editor-boundary"><strong>Distribution boundary</strong><span>SOUL.md and checksummed Skills describe behavior, never authority. Runtime installation must be verified before standby or activation; safe mode remains mandatory.</span></div>
-        <footer><button className="secondary-button" type="button" onClick={() => setEditorOpen(false)}>Cancel</button><button className="primary-button" disabled={busy !== null} type="submit">{busy === "profile-save" ? "Saving..." : editingId ? "Create version" : "Create draft"}</button></footer>
+        <div className="agent-editor-boundary"><strong>{activationReady === false ? "Draft until infrastructure is ready" : "Automatic activation"}</strong><span>{activationReady === false ? "This Profile will be saved safely without attempting a runtime activation. Finish Platform setup, then verify and activate it from the Profile list." : "OrcaSynapse will verify Hermes, activate this immutable Profile, and enable Chat. Personality and Skills describe behavior, never authority."}</span></div>
+        <footer><button className="secondary-button" type="button" onClick={() => setEditorOpen(false)}>Cancel</button><button className="primary-button" disabled={busy !== null} type="submit">{busy === "profile-save" ? "Saving..." : editingId ? "Save new version" : activationReady === false ? "Save draft" : "Create & activate"}</button></footer>
       </form></div>}
     </section>
   );

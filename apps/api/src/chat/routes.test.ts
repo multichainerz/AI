@@ -98,7 +98,8 @@ function memoryChatManager(): ChatManager {
     create: vi.fn(async () => summary),
     get: vi.fn(async () => ({ ...summary, messages: [] })),
     update: vi.fn(async () => summary),
-    streamMessage: vi.fn(async (_principal, conversationId, _content, _signal, emit) => {
+    cancelActiveRun: vi.fn(async () => ({ ...summary, messages: [] })),
+    streamMessage: vi.fn(async (_principal, conversationId, _content, emit) => {
       emit({ type: "started", conversationId, messageId: MESSAGE_ID });
       emit({ type: "delta", conversationId, messageId: MESSAGE_ID, delta: "Hello" });
       emit({ type: "completed", conversationId, messageId: MESSAGE_ID, message: completedMessage });
@@ -192,6 +193,23 @@ describe("controlled chat routes", () => {
     expect(response.body).toContain("event: started");
     expect(response.body).toContain("event: delta");
     expect(response.body).toContain("event: completed");
+  });
+
+  it("cancels the active durable Hermes run explicitly", async () => {
+    const manager = memoryChatManager();
+    const app = await chatApp(manager);
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/v1/chat/conversations/${CONVERSATION_ID}/cancel`,
+      headers: { cookie: `${ADMIN_SESSION_COOKIE}=${SESSION_TOKEN}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ ...summary, messages: [] });
+    expect(manager.cancelActiveRun).toHaveBeenCalledWith(
+      expect.objectContaining({ identityMode: "ADMINISTRATOR_PREVIEW" }),
+      CONVERSATION_ID,
+    );
   });
 
   it("records ownership-scoped response feedback", async () => {

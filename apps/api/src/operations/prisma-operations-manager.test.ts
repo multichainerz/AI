@@ -21,7 +21,7 @@ describe("PrismaOperationsManager", () => {
     vi.setSystemTime(new Date("2026-07-29T12:00:00.000Z"));
     const prisma = {
       agentRun: { groupBy: vi.fn(async () => [{ status: "RUNNING", _count: { _all: 1 } }]) },
-      workerNode: { findMany: vi.fn(async () => [{
+      workerNode: { updateMany: vi.fn(async () => ({ count: 0 })), findMany: vi.fn(async () => [{
         id: "runtime-1", name: "runtime.local", version: "0.1.0", status: "ONLINE", workloads: ["hermes-runs", "legacy"],
         startedAt: new Date("2026-07-29T11:00:00.000Z"), lastSeenAt: new Date("2026-07-29T11:59:50.000Z"),
       }]) },
@@ -37,10 +37,27 @@ describe("PrismaOperationsManager", () => {
   it("degrades without a current runtime executor heartbeat", async () => {
     const prisma = {
       agentRun: { groupBy: emptyGroups() },
-      workerNode: { findMany: vi.fn(async () => []) },
+      workerNode: { updateMany: vi.fn(async () => ({ count: 0 })), findMany: vi.fn(async () => []) },
     } as unknown as OrcaSynapsePrismaClient;
     const snapshot = await new PrismaOperationsManager(prisma).snapshot();
     expect(snapshot.status).toBe("DEGRADED");
     expect(snapshot.statusReasons[0]).toContain("No online PostgreSQL runtime executor");
+  });
+
+  it("persists expired executor heartbeats as stopped before reporting health", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-29T12:00:00.000Z"));
+    const updateMany = vi.fn(async () => ({ count: 1 }));
+    const prisma = {
+      agentRun: { groupBy: emptyGroups() },
+      workerNode: { updateMany, findMany: vi.fn(async () => []) },
+    } as unknown as OrcaSynapsePrismaClient;
+
+    await new PrismaOperationsManager(prisma).snapshot();
+
+    expect(updateMany).toHaveBeenCalledWith({
+      where: { status: "ONLINE", lastSeenAt: { lt: new Date("2026-07-29T11:59:15.000Z") } },
+      data: { status: "STOPPED" },
+    });
   });
 });

@@ -89,6 +89,7 @@ export const serviceConnectionConfigurationSchema = z
     memoryPollIntervalMs: z.number().int().min(500).max(30_000).optional(),
     retrievalLimit: z.number().int().min(2).max(20).optional(),
     retrievalThreshold: z.number().min(0).max(1).optional(),
+    observedVersion: z.string().trim().min(1).max(120).optional(),
     capabilitiesPath: relativeHealthPathSchema.optional(),
     runsPath: relativeHealthPathSchema.optional(),
     toolsetsPath: relativeHealthPathSchema.optional(),
@@ -145,6 +146,7 @@ const connectionConfigurationSchemas = {
     memoryPollIntervalMs: true,
     retrievalLimit: true,
     retrievalThreshold: true,
+    observedVersion: true,
   }),
   MCP: serviceConnectionConfigurationSchema.pick({ timeoutMs: true, healthPath: true }),
   OIDC: serviceConnectionConfigurationSchema.pick({

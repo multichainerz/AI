@@ -82,6 +82,24 @@ describe("SupermemoryClient", () => {
     })]);
   });
 
+  it("returns the managed runtime version and a credential-redacted extraction failure", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({
+      status: "failed",
+      type: "pdf",
+      customId: "document-1",
+      error: { message: "workflow limit reached with sm_secretcredential123456789" },
+    }), { status: 200 }));
+    const client = new SupermemoryClient(resolver({ observedVersion: "0.0.5" }), fetcher);
+
+    await expect(client.documentState("sm-document-1")).resolves.toEqual({
+      status: "failed",
+      type: "pdf",
+      customId: "document-1",
+      runtimeVersion: "0.0.5",
+      failureReason: "workflow limit reached with [credential redacted]",
+    });
+  });
+
   it("derives a stable agent-memory namespace without accepting arbitrary tags", () => {
     expect(agentMemoryContainerTag("Primary Hermes")).toBe("orcasynapse-agent-primary-hermes");
     expect(() => agentMemoryContainerTag("---")).toThrow("supported character");

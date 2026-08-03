@@ -16,8 +16,15 @@ const callbacks = {
   onConfigure: vi.fn(),
   onOpenWorkspace: vi.fn(),
   onOpenOperations: vi.fn(),
+  onRuntimeNodesChange: vi.fn(),
   onSignIn: vi.fn(),
   onUnauthorized: vi.fn(),
+};
+
+const runtimeState = {
+  agentRuntime: null,
+  profiles: [],
+  runtimeNodes: [],
 };
 
 describe("OnboardingView", () => {
@@ -26,6 +33,7 @@ describe("OnboardingView", () => {
       connections={[]}
       unlocked={false}
       oidcConfigured={false}
+      {...runtimeState}
       {...callbacks}
     />);
 
@@ -42,6 +50,7 @@ describe("OnboardingView", () => {
       ]}
       unlocked
       oidcConfigured={false}
+      {...runtimeState}
       {...callbacks}
     />);
 
@@ -59,6 +68,7 @@ describe("OnboardingView", () => {
       connections={[]}
       unlocked
       oidcConfigured={false}
+      {...runtimeState}
       {...callbacks}
     />);
 
@@ -73,6 +83,7 @@ describe("OnboardingView", () => {
       unlocked
       oidcConfigured={false}
       initialTab="nodes"
+      {...runtimeState}
       {...callbacks}
     />);
 
@@ -92,6 +103,7 @@ describe("OnboardingView", () => {
       unlocked
       oidcConfigured={false}
       initialTab="readiness"
+      {...runtimeState}
       {...callbacks}
     />);
 

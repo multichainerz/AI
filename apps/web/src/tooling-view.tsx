@@ -4,7 +4,6 @@ import type {
   GatewayCredential,
   GovernedTool,
   IssuedGatewayCredential,
-  ToolApproval,
   ToolCall,
   ToolGrant,
   ToolMetrics,
@@ -13,11 +12,9 @@ import type {
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   OrcaSynapseApiError,
-  decideToolApproval,
   getAgentProfiles,
   getGatewayCredentials,
   getGovernedTools,
-  getToolApprovals,
   getToolCalls,
   getToolGrants,
   getToolMetrics,
@@ -53,11 +50,9 @@ export function ToolingView({ unlocked, scopes, onConfigure, onUnauthorized }: T
   const [grants, setGrants] = useState<ToolGrant[]>([]);
   const [profiles, setProfiles] = useState<AgentProfile[]>([]);
   const [credentials, setCredentials] = useState<GatewayCredential[]>([]);
-  const [approvals, setApprovals] = useState<ToolApproval[]>([]);
   const [calls, setCalls] = useState<ToolCall[]>([]);
   const [runtime, setRuntime] = useState<ToolRuntimeControl | null>(null);
   const [metrics, setMetrics] = useState<ToolMetrics | null>(null);
-  const [selectedApprovalId, setSelectedApprovalId] = useState<string | null>(null);
   const [profileVersionId, setProfileVersionId] = useState("");
   const [toolId, setToolId] = useState("");
   const [groupClaims, setGroupClaims] = useState("");
@@ -65,15 +60,10 @@ export function ToolingView({ unlocked, scopes, onConfigure, onUnauthorized }: T
   const [credentialName, setCredentialName] = useState("Hermes on-prem gateway");
   const [issuedCredential, setIssuedCredential] = useState<IssuedGatewayCredential | null>(null);
   const [runtimeReason, setRuntimeReason] = useState("Gateway controls reviewed for the isolated pilot.");
-  const [approvalTtl, setApprovalTtl] = useState(15);
-  const [decisionReason, setDecisionReason] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const canManage = scopes.includes("tools:manage");
-  const canReview = scopes.includes("approvals:review");
-
-  const selectedApproval = useMemo(() => approvals.find(({ id }) => id === selectedApprovalId) ?? approvals.find(({ status }) => status === "PENDING") ?? approvals[0] ?? null, [approvals, selectedApprovalId]);
   const profileVersions = useMemo(() => profiles.flatMap((profile) => {
     const versions = [{ profile, version: profile.version, live: profile.activeVersion === profile.version.version }];
     if (profile.activeVersionConfiguration && profile.activeVersionConfiguration.id !== profile.version.id) {
@@ -88,11 +78,11 @@ export function ToolingView({ unlocked, scopes, onConfigure, onUnauthorized }: T
   };
 
   const load = async () => {
-    const [toolList, grantList, profileList, credentialList, approvalList, callList, control, nextMetrics] = await Promise.all([
-      getGovernedTools(), getToolGrants(), getAgentProfiles(true), getGatewayCredentials(), getToolApprovals(), getToolCalls(), getToolRuntime(), getToolMetrics(),
+    const [toolList, grantList, profileList, credentialList, callList, control, nextMetrics] = await Promise.all([
+      getGovernedTools(), getToolGrants(), getAgentProfiles(true), getGatewayCredentials(), getToolCalls(), getToolRuntime(), getToolMetrics(),
     ]);
     setTools(toolList.items); setGrants(grantList.items); setProfiles(profileList.items); setCredentials(credentialList.items);
-    setApprovals(approvalList.items); setCalls(callList.items); setRuntime(control); setMetrics(nextMetrics); setApprovalTtl(control.approvalTtlMinutes);
+    setCalls(callList.items); setRuntime(control); setMetrics(nextMetrics);
     setProfileVersionId((current) => current || profileList.items[0]?.activeVersionConfiguration?.id || profileList.items[0]?.version.id || "");
     setToolId((current) => current || toolList.items[0]?.id || "");
   };
@@ -122,20 +112,19 @@ export function ToolingView({ unlocked, scopes, onConfigure, onUnauthorized }: T
   };
 
   if (!unlocked) {
-    return <section className="chat-locked tooling-locked"><div className="chat-lock-mark">TG</div><p className="page-kicker">Governed access</p><h1>Tooling requires a scoped administrator</h1><p>Unlock the console to manage MCP gateway credentials, exact-version grants, tool health, and human approvals.</p><button className="primary-button" type="button" onClick={onConfigure}>Administrator setup</button></section>;
+    return <section className="chat-locked tooling-locked"><div className="chat-lock-mark">TG</div><p className="page-kicker">Governed access</p><h1>Tooling requires a scoped administrator</h1><p>Unlock the console to manage the read-only MCP gateway, exact-version grants, credentials, and tool health.</p><button className="primary-button" type="button" onClick={onConfigure}>Administrator setup</button></section>;
   }
 
   return <section className="tooling-workspace">
-    <header className="documents-header tooling-header"><div><p className="page-kicker">Controlled integration plane</p><h1>Tools & approvals</h1><p>OrcaSynapse-owned MCP access with two-factor gateway authentication, exact-version grants, owner-only resources, and mandatory review for consequential actions.</p></div><button className="secondary-button" type="button" onClick={() => void load()}>Refresh</button></header>
+    <header className="documents-header tooling-header"><div><p className="page-kicker">Controlled integration plane</p><h1>Governed tools</h1><p>OrcaSynapse-owned, read-only MCP access with two-factor gateway authentication, exact-version grants, and owner-only resources.</p></div><button className="secondary-button" type="button" onClick={() => void load()}>Refresh</button></header>
 
     {error && <div className="documents-alert" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
     {notice && <div className="tooling-notice" role="status"><span>{notice}</span><button type="button" onClick={() => setNotice(null)}>Dismiss</button></div>}
 
     <section className={`tooling-boundary ${runtime?.enabled ? "enabled" : "disabled"}`}>
       <div className="tooling-boundary-state"><span>{runtime?.enabled ? "ON" : "OFF"}</span><div><small>Global MCP gateway</small><strong>{runtime?.enabled ? "Governed calls are permitted" : "Every tool call is denied fail-closed"}</strong><p>{runtime?.reason ?? "Runtime state is loading."}</p></div></div>
-      <form onSubmit={(event) => { event.preventDefault(); void action("runtime", () => updateToolRuntime({ enabled: !runtime?.enabled, reason: runtimeReason, approvalTtlMinutes: approvalTtl })); }}>
+      <form onSubmit={(event) => { event.preventDefault(); void action("runtime", () => updateToolRuntime({ enabled: !runtime?.enabled, reason: runtimeReason, approvalTtlMinutes: runtime?.approvalTtlMinutes ?? 15 })); }}>
         <label>Operator reason<input disabled={!canManage} minLength={3} maxLength={500} value={runtimeReason} onChange={(event) => setRuntimeReason(event.target.value)} /></label>
-        <label>Approval expiry<select disabled={!canManage} value={approvalTtl} onChange={(event) => setApprovalTtl(Number(event.target.value))}><option value={15}>15 minutes</option><option value={30}>30 minutes</option><option value={60}>1 hour</option><option value={240}>4 hours</option></select></label>
         <button className={runtime?.enabled ? "danger-button" : "primary-button"} disabled={!canManage || busy !== null || runtimeReason.trim().length < 3} type="submit">{canManage ? busy === "runtime" ? "Applying…" : runtime?.enabled ? "Disable gateway" : "Enable gateway" : "Read-only access"}</button>
       </form>
     </section>
@@ -143,8 +132,7 @@ export function ToolingView({ unlocked, scopes, onConfigure, onUnauthorized }: T
     <div className="tooling-metrics" aria-label="Governed tooling summary">
       <article><span>Active tools</span><strong>{metrics?.activeTools ?? tools.filter(({ status }) => status === "ACTIVE").length}</strong><small>OrcaSynapse handlers only</small></article>
       <article><span>Version grants</span><strong>{metrics?.activeGrants ?? grants.filter(({ enabled }) => enabled).length}</strong><small>exact profile revisions</small></article>
-      <article><span>Pending review</span><strong>{metrics?.pendingApprovals ?? approvals.filter(({ status }) => status === "PENDING").length}</strong><small>expires automatically</small></article>
-      <article><span>Active calls</span><strong>{metrics?.executingCalls ?? calls.filter(({ status }) => status === "EXECUTING").length}</strong><small>{metrics?.pendingApprovals ?? 0} awaiting operator review</small></article>
+      <article><span>Active calls</span><strong>{metrics?.executingCalls ?? calls.filter(({ status }) => status === "EXECUTING").length}</strong><small>read-only execution</small></article>
     </div>
 
     <div className="tooling-grid">
@@ -164,24 +152,19 @@ export function ToolingView({ unlocked, scopes, onConfigure, onUnauthorized }: T
       </section>
     </div>
 
-    <div className="tooling-grid credentials-row">
+    <div className="tooling-grid credentials-row tooling-credentials-only">
       <section className="panel tooling-credentials"><div className="document-section-heading"><div><p className="section-kicker">Transport authentication</p><h2>Gateway credentials</h2></div><span>write-only</span></div>
         <form onSubmit={(event) => { event.preventDefault(); void action("credential", async () => { const issued = await issueGatewayCredential(credentialName.trim()); setIssuedCredential(issued); }, "Copy the new credential now; OrcaSynapse will not display it again."); }}><label>Client name<input disabled={!canManage} minLength={2} maxLength={120} value={credentialName} onChange={(event) => setCredentialName(event.target.value)} /></label><button className="primary-button" disabled={!canManage || busy !== null || credentialName.trim().length < 2} type="submit">{canManage ? busy === "credential" ? "Issuing…" : "Issue credential" : "Read-only access"}</button></form>
         {issuedCredential && <div className="tooling-secret"><div><strong>One-time credential</strong><span>Store this in the isolated Hermes MCP header configuration.</span></div><code>{issuedCredential.token}</code><button type="button" onClick={() => void navigator.clipboard.writeText(issuedCredential.token)}>Copy</button></div>}
         <div className="tooling-credential-list">{credentials.map((credential) => <article key={credential.id}><div><strong>{credential.name}</strong><code>{credential.tokenPrefix}…</code></div><span>Last used {when(credential.lastUsedAt)}</span><span className={`document-status ${credential.enabled ? "ready" : "neutral"}`}>{credential.enabled ? "active" : "revoked"}</span>{credential.enabled && <button type="button" disabled={!canManage || busy !== null} onClick={() => void action(`credential-${credential.id}`, () => revokeGatewayCredential(credential.id))}>{canManage ? "Revoke" : "View only"}</button>}</article>)}</div>
       </section>
 
-      <section className="panel tooling-approvals"><div className="document-section-heading"><div><p className="section-kicker">Human control</p><h2>Approval inbox</h2></div><span>{approvals.filter(({ status }) => status === "PENDING").length} pending</span></div>
-        <div className="tooling-approval-layout"><div className="tooling-approval-list">{approvals.length === 0 ? <div className="document-empty"><strong>Inbox is clear</strong><span>Consequential tool requests will appear here.</span></div> : approvals.map((approval) => <button className={selectedApproval?.id === approval.id ? "selected" : undefined} key={approval.id} type="button" onClick={() => { setSelectedApprovalId(approval.id); setDecisionReason(""); }}><span className={`document-status ${tone(approval.status)}`}>{approval.status.toLowerCase()}</span><strong>{approval.toolName}</strong><small>{approval.profileSlug} · expires {when(approval.expiresAt)}</small></button>)}</div>
-          <div className="tooling-approval-detail">{!selectedApproval ? <div className="document-empty"><strong>No approval selected</strong><span>Review context and ownership before deciding.</span></div> : <><div><span className={`document-status ${tone(selectedApproval.status)}`}>{selectedApproval.status.toLowerCase()}</span><h3>{selectedApproval.toolName}</h3><p>{selectedApproval.requestedBySubject}</p></div><dl><div><dt>Agent</dt><dd>{selectedApproval.profileSlug}</dd></div><div><dt>Run</dt><dd>{selectedApproval.runId.slice(0, 12)}…</dd></div><div><dt>Expires</dt><dd>{when(selectedApproval.expiresAt)}</dd></div></dl><pre>{JSON.stringify(selectedApproval.arguments, null, 2)}</pre>{selectedApproval.status === "PENDING" && (canReview ? <form onSubmit={(event) => { event.preventDefault(); }}><label>Reviewer reason<textarea minLength={3} maxLength={1_000} value={decisionReason} onChange={(event) => setDecisionReason(event.target.value)} /></label><div><button className="secondary-button" disabled={busy !== null || decisionReason.trim().length < 3} type="button" onClick={() => void action("decision", () => decideToolApproval(selectedApproval.id, "REJECT", decisionReason.trim()))}>Reject</button><button className="primary-button" disabled={busy !== null || decisionReason.trim().length < 3} type="button" onClick={() => void action("decision", () => decideToolApproval(selectedApproval.id, "APPROVE", decisionReason.trim()))}>Approve & execute</button></div></form> : <p className="tooling-readonly-note">Your role can inspect this request but cannot decide it.</p>)}</>}</div>
-        </div>
-      </section>
     </div>
 
     <section className="panel tooling-ledger"><div className="document-section-heading"><div><p className="section-kicker">Revalidated activity</p><h2>Tool-call ledger</h2></div><span>{calls.length} calls</span></div>
       <div className="tooling-call-table"><div className="tooling-call-head"><span>Status</span><span>Tool</span><span>Agent</span><span>Requested</span><span>Outcome</span></div>{calls.length === 0 ? <div className="document-empty"><strong>No calls recorded</strong><span>The gateway remains staged until a live Hermes configuration carries an approved per-run capability.</span></div> : calls.map((call) => <article key={call.id}><span className={`document-status ${tone(call.status)}`}>{call.status.toLowerCase().replace("_", " ")}</span><strong>{call.toolName}</strong><span>{call.profileSlug} · v{call.profileVersion}</span><span>{when(call.requestedAt)}</span><span>{call.errorMessage ?? (call.result ? "Result retained" : "Awaiting outcome")}</span></article>)}</div>
     </section>
 
-    <div className="tooling-stage-note"><strong>Hermes remains zero-tool by default</strong><p>The gateway control plane is ready for acceptance, but governed runs continue rejecting enabled Hermes toolsets until the isolated deployment proves exact tool discovery and per-run capability propagation end to end.</p></div>
+    <div className="tooling-stage-note"><strong>Hermes remains zero-tool by default</strong><p>Only installed read-only OrcaSynapse handlers can be granted. Consequential actions remain denied until an independently reviewed execution and approval subsystem is delivered.</p></div>
   </section>;
 }

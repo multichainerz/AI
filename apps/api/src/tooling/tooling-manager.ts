@@ -1,10 +1,7 @@
 import type {
-  DecideToolApproval,
   GatewayCredentialList,
   GovernedToolList,
   IssuedGatewayCredential,
-  ToolApproval,
-  ToolApprovalList,
   ToolCallList,
   ToolGrant,
   ToolGrantList,
@@ -50,8 +47,6 @@ export interface ToolingManager {
   invoke(toolSlug: string, invocation: GovernedToolInvocation): Promise<GovernedToolResult>;
   recordDeniedInvocation(toolSlug: string, invocation: GovernedToolInvocation, reason: string): Promise<void>;
   listCalls(): Promise<ToolCallList>;
-  listApprovals(): Promise<ToolApprovalList>;
-  decideApproval(principal: ToolingPrincipal, approvalId: string, input: DecideToolApproval): Promise<ToolApproval>;
   getRuntimeControl(): Promise<ToolRuntimeControl>;
   updateRuntimeControl(principal: ToolingPrincipal, input: UpdateToolRuntimeControl): Promise<ToolRuntimeControl>;
   metrics(): Promise<ToolMetrics>;

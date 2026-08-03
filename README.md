@@ -63,13 +63,14 @@ No LiteLLM tier, Redis, Valkey, pg-boss, object store, or duplicate vector datab
 1. **Install VM1** with the one-line command above and sign in to OrcaSynapse.
 2. **Connect AI Inference** from the dashboard. OrcaSynapse discovers compatible API paths and available models instead of asking you to guess endpoint URLs.
 3. **Enroll VM2** from **Deployment > Agentic System**. After administrator setup and AI Inference validation, OrcaSynapse serves the VM2 installer; the dashboard generates a one-time claim when a new node is ready to enroll.
-4. **Add Enterprise Access** when ready by connecting OIDC or Microsoft Entra ID and mapping groups to administrative roles.
+4. **Create the first agent** from **Hermes Profiles**. In Development, **Create & activate** verifies VM2, activates the immutable Profile, enables Hermes execution, and makes Chat ready in one action.
+5. **Add Enterprise Access** when ready by connecting OIDC or Microsoft Entra ID and mapping groups to administrative roles.
 
 The VM2 installer creates its identity locally, consumes the claim once, receives the dashboard-selected model alias through a scoped OrcaSynapse inference route, applies the managed guardrail baseline, and starts signed health reporting. Once a claim is consumed, protected root-only recovery state lets the same command resume interrupted memory or policy setup without another claim. The installer URL returns no script until administrator setup and AI Inference are ready. OrcaSynapse never needs the VM's SSH password or Docker socket.
 
 ## What you get
 
-- Hermes-first Chat with live run activity, cancellation, reported token usage, latency, feedback, and retained conversations.
+- Hermes-first Chat with durable PostgreSQL runs, explicit cancellation, live activity, reported token usage, latency, feedback, and retained conversations. Closing the browser stream does not cancel VM2 execution.
 - Smart inference discovery for vLLM, llama.cpp, SGLang, Ollama, TGI, and compatible OpenAI-style servers.
 - Governed Hermes profiles, skills, tools, prompts, guardrails, lifecycle states, runs, and safe event projections.
 - Durable semantic memory through self-hosted Supermemory Local without a second vector plane in OrcaSynapse.

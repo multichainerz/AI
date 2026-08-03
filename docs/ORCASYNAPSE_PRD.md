@@ -41,7 +41,7 @@ OrcaSynapse is an authorization and streaming gateway to Supermemory, not a perm
 
 ### Hermes agents
 
-OrcaSynapse manages immutable Profile Distributions: behavior instruction, selected model alias, Skill references, limits, memory policy, tool grants, and guardrails. Profiles move through draft, standby, active, and suspended states with exact-version evidence.
+OrcaSynapse manages immutable Profile Distributions: behavior instruction, selected model alias, Skill references, limits, memory policy, tool grants, and guardrails. In Development, creating the first Profile performs the live Hermes check, activates that immutable version, and enables Chat in one action. Pilot and Production activation additionally require promoted exact-version evaluation evidence; standby remains available for pre-release validation.
 
 Hermes runs in an isolated environment and can reach only:
 
@@ -91,7 +91,7 @@ The dashboard creates a short-lived one-use enrollment claim. The customer downl
 2. starts a constrained official Hermes container;
 3. enrolls it with OrcaSynapse;
 4. receives an OrcaSynapse inference-gateway route, alias, and node key;
-5. installs checksum-verified Supermemory Local using the current workflow-safe v0.0.5 default, requests CPU-local `Xenova/bge-m3` embeddings (1024 dimensions), displays first-boot download progress, and reports any upstream fallback rather than misrepresenting the active model;
+5. installs checksum-verified Supermemory Local using the exact v0.0.7-rc.2 large-document-fix baseline, requests CPU-local `Xenova/bge-m3` embeddings (1024 dimensions), displays first-boot download progress, and reports the observed release and model rather than misrepresenting runtime capability;
 6. configures Hermes's native Supermemory provider with a profile-scoped tag;
 7. registers Supermemory with OrcaSynapse;
 8. enables signed heartbeats.

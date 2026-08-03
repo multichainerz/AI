@@ -4,6 +4,15 @@ import { HermesClient, SupermemoryClient, type HermesSafeRunEvent } from "@orcas
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ACTIVE_HERMES_STATUSES = new Set(["queued", "started", "running", "stopping"]);
+const PROCESSOR_LEASE_MS = 90_000;
+const PROCESSOR_LEASE_RENEW_MS = 30_000;
+
+class ProcessorLeaseLostError extends Error {
+  constructor() {
+    super("The durable Hermes run lease moved to another worker.");
+    this.name = "ProcessorLeaseLostError";
+  }
+}
 
 function safeFailure(error: unknown): string {
   return error instanceof Error
@@ -86,9 +95,12 @@ interface LoadedRun {
   status: string;
   jobId: string | null;
   externalRunId: string | null;
+  processorLeaseOwner: string | null;
+  processorLeaseExpiresAt: Date | null;
   ownerSubject: string;
   sessionId: string;
   input: string;
+  sources: unknown;
   effectiveCapabilities: unknown;
   toolCapabilityTokenHash: Uint8Array | null;
   toolCapabilityExpiresAt: Date | null;
@@ -139,8 +151,56 @@ export class PrismaAgentProcessor {
   ) {}
 
   async process(payload: AgentRunJobPayload, jobId: string, workerId: string): Promise<object> {
-    const original = await this.load(payload.runId);
+    let original = await this.load(payload.runId);
     if (!original) return { skipped: true, reason: "missing-run" };
+    if (!["QUEUED", "RUNNING", "CANCEL_REQUESTED"].includes(original.status)) {
+      return { skipped: true, reason: "stale-or-ineligible" };
+    }
+    const acquired = await this.prisma.agentRun.updateMany({
+      where: {
+        id: original.id,
+        status: { in: ["QUEUED", "RUNNING", "CANCEL_REQUESTED"] },
+        OR: [
+          { processorLeaseExpiresAt: null },
+          { processorLeaseExpiresAt: { lt: new Date() } },
+        ],
+      },
+      data: {
+        processorLeaseOwner: workerId,
+        processorLeaseExpiresAt: new Date(Date.now() + PROCESSOR_LEASE_MS),
+      },
+    });
+    if (acquired.count !== 1) return { skipped: true, reason: "leased-by-another-worker" };
+    original = await this.load(payload.runId);
+    if (!original || original.processorLeaseOwner !== workerId) {
+      return { skipped: true, reason: "lease-lost" };
+    }
+
+    let leaseLost = false;
+    let renewal: Promise<void> | null = null;
+    const renewLease = async () => {
+      const renewed = await this.prisma.agentRun.updateMany({
+        where: {
+          id: payload.runId,
+          processorLeaseOwner: workerId,
+          status: { in: ["QUEUED", "RUNNING", "CANCEL_REQUESTED"] },
+        },
+        data: { processorLeaseExpiresAt: new Date(Date.now() + PROCESSOR_LEASE_MS) },
+      });
+      if (renewed.count !== 1) leaseLost = true;
+    };
+    const assertLease = () => {
+      if (leaseLost) throw new ProcessorLeaseLostError();
+    };
+    const leaseTimer = setInterval(() => {
+      if (renewal) return;
+      renewal = renewLease()
+        .catch(() => { leaseLost = true; })
+        .finally(() => { renewal = null; });
+    }, PROCESSOR_LEASE_RENEW_MS);
+    leaseTimer.unref();
+
+    try {
     if (original.status === "CANCEL_REQUESTED") {
       if (original.externalRunId) await this.hermes.stop(original.externalRunId).catch(() => undefined);
       await this.finish(
@@ -165,6 +225,7 @@ export class PrismaAgentProcessor {
     const claimed = await this.prisma.agentRun.updateMany({
       where: {
         id: original.id,
+        processorLeaseOwner: workerId,
         OR: [{ status: "QUEUED" }, { status: "RUNNING", jobId }],
       },
       data: { status: "RUNNING", jobId, startedAt: original.startedAt ?? new Date(), failureCode: null, failureMessage: null },
@@ -178,12 +239,14 @@ export class PrismaAgentProcessor {
     try {
       let run = await this.load(original.id);
       if (!run) return { skipped: true, reason: "run-removed" };
+      assertLease();
       externalRunId = run.externalRunId;
       if (!externalRunId) {
         let sources: KnowledgeSource[] = [];
         if (effectiveCapabilities(run.effectiveCapabilities).includes("knowledge:private:read")) {
           sources = await this.knowledge.search(run.ownerSubject, run.input);
-          await this.prisma.agentRun.update({ where: { id: run.id }, data: { sources } });
+          assertLease();
+          await this.prisma.agentRun.updateMany({ where: { id: run.id, processorLeaseOwner: workerId }, data: { sources } });
         }
         run = await this.load(run.id);
         if (!run) return { skipped: true, reason: "run-removed" };
@@ -198,10 +261,11 @@ export class PrismaAgentProcessor {
           await this.hermes.assertGovernedToolBoundary();
           const capability = this.capabilityIssuer.issue(run.id);
           const expiresAt = new Date((run.startedAt?.getTime() ?? Date.now()) + run.version.timeoutSeconds * 1_000);
-          await this.prisma.agentRun.update({
-            where: { id: run.id },
+          const capabilityStored = await this.prisma.agentRun.updateMany({
+            where: { id: run.id, processorLeaseOwner: workerId },
             data: { toolCapabilityTokenHash: capability.tokenHash, toolCapabilityExpiresAt: expiresAt },
           });
+          if (capabilityStored.count !== 1) throw new ProcessorLeaseLostError();
           governedMcp = { authorization: `${run.id}.${capability.token}`, expiresAt };
         } else {
           await this.hermes.assertZeroToolBoundary();
@@ -214,7 +278,12 @@ export class PrismaAgentProcessor {
           modelAlias: run.version.modelAlias,
           ...(governedMcp ? { governedMcp } : {}),
         });
-        await this.prisma.agentRun.update({ where: { id: run.id }, data: { externalRunId } });
+        assertLease();
+        const linked = await this.prisma.agentRun.updateMany({
+          where: { id: run.id, processorLeaseOwner: workerId },
+          data: { externalRunId },
+        });
+        if (linked.count !== 1) throw new ProcessorLeaseLostError();
       } else {
         // A recovered job must verify Hermes again, but it must not retrieve a
         // different evidence set after the original prompt has been submitted.
@@ -244,6 +313,7 @@ export class PrismaAgentProcessor {
       const startedAt = run.startedAt?.getTime() ?? Date.now();
       const deadline = startedAt + run.version.timeoutSeconds * 1_000;
       while (Date.now() < deadline) {
+        assertLease();
         if (eventStreamFailure) throw eventStreamFailure;
         run = await this.load(run.id);
         if (!run) return { skipped: true, reason: "run-removed" };
@@ -259,18 +329,33 @@ export class PrismaAgentProcessor {
           return { runId: run.id, status: "DENIED" };
         }
         const state = await this.hermes.status(externalRunId);
+        assertLease();
         if (state.status === "completed") {
           if (!state.output?.trim()) throw new Error("Hermes completed without a usable output.");
-          await this.prisma.$transaction([
-            this.prisma.agentRun.update({ where: { id: run.id }, data: {
-              status: "COMPLETED", output: state.output, completedAt: new Date(),
+          await this.prisma.$transaction(async (transaction) => {
+            const completedAt = new Date();
+            const completed = await transaction.agentRun.updateMany({ where: { id: run!.id, processorLeaseOwner: workerId }, data: {
+              status: "COMPLETED", output: state.output, completedAt,
               toolCapabilityTokenHash: null, toolCapabilityExpiresAt: null,
-            } }),
-            this.prisma.auditEvent.create({ data: {
+              processorLeaseOwner: null, processorLeaseExpiresAt: null,
+            } });
+            if (completed.count !== 1) throw new ProcessorLeaseLostError();
+            await transaction.chatMessage.updateMany({
+              where: { agentRunId: run!.id, status: "PENDING" },
+              data: {
+                status: "COMPLETED",
+                content: state.output!,
+                latencyMs: Math.max(0, completedAt.getTime() - (run!.startedAt?.getTime() ?? completedAt.getTime())),
+                finishReason: "hermes_completed",
+                sources: run!.sources as never,
+                completedAt,
+              },
+            });
+            await transaction.auditEvent.create({ data: {
               actorType: "SERVICE", actorId: workerId, action: "agent.run_completed", resourceType: "AgentRun",
-              resourceId: run.id, outcome: "SUCCESS", metadata: { externalRunId, profileVersion: run.profileVersion },
-            } }),
-          ]);
+              resourceId: run!.id, outcome: "SUCCESS", metadata: { externalRunId, profileVersion: run!.profileVersion },
+            } });
+          });
           return { runId: run.id, status: "COMPLETED" };
         }
         if (state.status === "failed") throw new Error(state.error ?? "Hermes reported that the run failed.");
@@ -290,6 +375,9 @@ export class PrismaAgentProcessor {
       await this.finish(original.id, "TIMED_OUT", "RUN_TIMEOUT", "The configured agent timeout elapsed.", workerId);
       return { runId: original.id, status: "TIMED_OUT" };
     } catch (error) {
+      if (error instanceof ProcessorLeaseLostError) {
+        return { skipped: true, reason: "lease-lost" };
+      }
       if (externalRunId) await this.hermes.stop(externalRunId).catch(() => undefined);
       const message = safeFailure(error);
       await this.finish(original.id, "FAILED", "HERMES_EXECUTION_FAILED", message, workerId);
@@ -297,6 +385,11 @@ export class PrismaAgentProcessor {
     } finally {
       eventController?.abort();
       await eventStream?.catch(() => undefined);
+    }
+    } finally {
+      clearInterval(leaseTimer);
+      const renewalToWait = renewal as Promise<void> | null;
+      if (renewalToWait) await renewalToWait.catch(() => undefined);
     }
   }
 
@@ -394,19 +487,30 @@ export class PrismaAgentProcessor {
     failureMessage: string,
     workerId: string,
   ): Promise<void> {
-    await this.prisma.$transaction([
-      this.prisma.agentRun.updateMany({
-        where: { id: runId, status: { in: ["QUEUED", "RUNNING", "CANCEL_REQUESTED"] } },
+    await this.prisma.$transaction(async (transaction) => {
+      const completedAt = new Date();
+      const finished = await transaction.agentRun.updateMany({
+        where: { id: runId, processorLeaseOwner: workerId, status: { in: ["QUEUED", "RUNNING", "CANCEL_REQUESTED"] } },
         data: {
-          status, failureCode, failureMessage: failureMessage.slice(0, 500), completedAt: new Date(),
+          status, failureCode, failureMessage: failureMessage.slice(0, 500), completedAt,
           toolCapabilityTokenHash: null, toolCapabilityExpiresAt: null,
+          processorLeaseOwner: null, processorLeaseExpiresAt: null,
         },
-      }),
-      this.prisma.auditEvent.create({ data: {
+      });
+      if (finished.count !== 1) throw new ProcessorLeaseLostError();
+      await transaction.chatMessage.updateMany({
+        where: { agentRunId: runId, status: "PENDING" },
+        data: {
+          status: status === "CANCELLED" ? "CANCELLED" : "FAILED",
+          errorCode: failureCode,
+          completedAt,
+        },
+      });
+      await transaction.auditEvent.create({ data: {
         actorType: "SERVICE", actorId: workerId, action: `agent.run_${status.toLowerCase()}`,
         resourceType: "AgentRun", resourceId: runId, outcome: status === "CANCELLED" ? "SUCCESS" : "FAILURE",
         metadata: { failureCode, failureMessage: failureMessage.slice(0, 500) },
-      } }),
-    ]);
+      } });
+    });
   }
 }

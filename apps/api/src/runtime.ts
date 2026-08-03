@@ -169,7 +169,12 @@ export function createRuntimeServices(): RuntimeServices {
       runtimeNodeManager,
       inferenceGateway,
     };
-  } catch {
+  } catch (error) {
+    const failure = error && typeof error === "object" ? error as { name?: unknown; code?: unknown } : {};
+    console.error("OrcaSynapse runtime initialization failed; the control plane is locked.", {
+      errorName: typeof failure.name === "string" ? failure.name.slice(0, 80) : "UnknownError",
+      errorCode: typeof failure.code === "string" ? failure.code.slice(0, 80) : undefined,
+    });
     return { bootstrapState: "LOCKED" };
   }
 }

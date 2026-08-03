@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="ai-v1.15.6"
+INSTALLER_VERSION="ai-v1.16.0"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 CONTAINER_NAME="orcasynapse-hermes"
 HEARTBEAT_SERVICE="orcasynapse-hermes-heartbeat"
@@ -152,6 +152,73 @@ run_with_progress() {
   tail -n 120 "${log_file}" >&2 || true
   rm -f -- "${log_file}"
   return "${status}"
+}
+
+format_transfer_bytes() {
+  local bytes="${1:-0}" unit=1 suffix="B" tenths
+  if (( bytes >= 1073741824 )); then unit=1073741824; suffix="GB"
+  elif (( bytes >= 1048576 )); then unit=1048576; suffix="MB"
+  elif (( bytes >= 1024 )); then unit=1024; suffix="KB"
+  fi
+  if (( unit == 1 )); then printf '%d B' "${bytes}"; return; fi
+  tenths=$((bytes * 10 / unit))
+  printf '%d.%d %s' "$((tenths / 10))" "$((tenths % 10))" "${suffix}"
+}
+
+render_download_progress() {
+  local label="$1" current="$2" total="$3" elapsed="$4" width=24 percent=0 filled empty progress remainder speed
+  (( total > 0 )) && percent=$((current * 100 / total))
+  if (( current < total && percent > 99 )); then percent=99; fi
+  (( percent > 100 )) && percent=100
+  filled=$((percent * width / 100)); empty=$((width - filled))
+  printf -v progress '%*s' "${filled}" ''; printf -v remainder '%*s' "${empty}" ''
+  progress="${progress// /=}"; remainder="${remainder// / }"
+  (( elapsed > 0 )) && speed=$((current / elapsed)) || speed=0
+  printf '\r\033[2K  %b[DL]%b [%s%s] %3d%%  %-17.17s / %-9.9s  %8s/s  %-24.24s' \
+    "${UI_CYAN}${UI_BOLD}" "${UI_RESET}" "${progress}" "${remainder}" "${percent}" \
+    "$(format_transfer_bytes "${current}")" "$(format_transfer_bytes "${total}")" "$(format_transfer_bytes "${speed}")" "${label}"
+}
+
+download_with_progress() {
+  local label="$1" url="$2" destination="$3"
+  local headers total=0 log_file pid status=0 started current=0 elapsed=0 tick=0
+  headers="$(curl --fail --silent --show-error --location --head --max-time 30 "${url}" 2>/dev/null || true)"
+  total="$(printf '%s\n' "${headers}" | tr -d '\r' \
+    | awk 'tolower($1) == "content-length:" && $2 ~ /^[0-9]+$/ { size=$2 } END { print size+0 }')"
+  log_file="$(mktemp /tmp/orcasynapse-download.XXXXXX)"
+  TEMPORARY_FILES+=("${log_file}")
+  started="${SECONDS}"
+  curl --fail --silent --show-error --location --retry 3 --max-time 1800 \
+    "${url}" --output "${destination}" 2>"${log_file}" &
+  pid=$!
+  if (( UI_INTERACTIVE )); then printf '\033[?25l'; else info "${label}"; fi
+  while kill -0 "${pid}" 2>/dev/null; do
+    current="$(stat -c '%s' "${destination}" 2>/dev/null || printf '0')"
+    elapsed=$((SECONDS - started))
+    if (( UI_INTERACTIVE )); then
+      if (( total > 0 )); then render_download_progress "${label}" "${current}" "${total}" "${elapsed}"
+      else render_activity_progress "${label}" "${elapsed}" "${tick}"
+      fi
+    fi
+    tick=$((tick + 1)); sleep 0.12
+  done
+  if wait "${pid}"; then status=0; else status=$?; fi
+  current="$(stat -c '%s' "${destination}" 2>/dev/null || printf '0')"
+  elapsed=$((SECONDS - started))
+  if (( UI_INTERACTIVE )); then
+    if (( status == 0 )); then
+      (( total > 0 )) || total="${current}"
+      render_download_progress "${label}" "${total}" "${total}" "${elapsed}"
+    fi
+    printf '\r\033[2K\033[?25h'
+  fi
+  if (( status != 0 )); then
+    printf '  %b[FAIL]%b %s\n' "${UI_RED}${UI_BOLD}" "${UI_RESET}" "${label}" >&2
+    tail -n 40 "${log_file}" >&2 || true
+    return "${status}"
+  fi
+  rm -f -- "${log_file}"
+  success "${label} ($(format_transfer_bytes "${current}") transferred)."
 }
 
 fail() {
@@ -356,7 +423,7 @@ assert_supermemory_release_usable() {
   local installed_version="${1#v}"
   case "${installed_version}" in
     0.0.6)
-      fail "Supermemory Local v0.0.6 is blocked because its published binary cannot load RivetKit; document ingestion and search are non-functional (upstream issues #1315 and #1324). Issue a new enrollment pinned to 0.0.5 or a newer release explicitly validated by your organization"
+      fail "Supermemory Local v0.0.6 is blocked because its published binary cannot load RivetKit; document ingestion and search are non-functional (upstream issues #1315 and #1324). Issue a new enrollment pinned to 0.0.7-rc.2 or a newer release explicitly validated by your organization"
       ;;
   esac
 }
@@ -471,14 +538,35 @@ verify_enrolled_identity() {
 
 install_supermemory_binary() {
   local requested_version="$1" install_dir="$2" bin_dir="$3"
-  local install_target
-  install_target="$(normalize_supermemory_release "${requested_version}")"
-  curl -fsSL https://supermemory.ai/install \
-    | SUPERMEMORY_INSTALL_DIR="${install_dir}" \
-      SUPERMEMORY_BIN_DIR="${bin_dir}" \
-      SUPERMEMORY_NO_START=1 \
-      SUPERMEMORY_NO_PROMPT=1 \
-      bash -s -- "${install_target}"
+  local release platform asset release_base binary_file checksum_file expected_checksum actual_checksum next_binary version_file
+  release="$(normalize_supermemory_release "${requested_version}")"
+  [[ "${release}" != "latest" ]] || fail "the secured VM2 installer requires an exact Supermemory release instead of mutable 'latest'"
+  case "$(uname -m)" in
+    x86_64) platform="linux-x64" ;;
+    aarch64) platform="linux-arm64" ;;
+    *) fail "Supermemory does not publish a verified binary for architecture '$(uname -m)'" ;;
+  esac
+  asset="supermemory-server-${platform}"
+  release_base="https://github.com/supermemoryai/supermemory/releases/download/server-v${release}"
+  binary_file="$(mktemp /tmp/orcasynapse-supermemory-binary.XXXXXX)"
+  checksum_file="$(mktemp /tmp/orcasynapse-supermemory-sha256.XXXXXX)"
+  TEMPORARY_FILES+=("${binary_file}" "${checksum_file}")
+  download_with_progress "Download Supermemory ${release}" "${release_base}/${asset}" "${binary_file}"
+  download_with_progress "Download Supermemory checksum" "${release_base}/${asset}.sha256" "${checksum_file}"
+  expected_checksum="$(awk 'NR == 1 && $1 ~ /^[a-f0-9]{64}$/ { print $1 }' "${checksum_file}")"
+  [[ -n "${expected_checksum}" ]] || fail "the Supermemory release checksum is malformed"
+  actual_checksum="$(sha256sum "${binary_file}" | awk '{print $1}')"
+  [[ "${actual_checksum}" == "${expected_checksum}" ]] || fail "the Supermemory release checksum did not match"
+  install -d -m 0750 "${install_dir}/bin" "${bin_dir}"
+  next_binary="${install_dir}/bin/.supermemory-server.${release}.new"
+  install -m 0755 "${binary_file}" "${next_binary}"
+  mv -f -- "${next_binary}" "${install_dir}/bin/supermemory-server"
+  version_file="${install_dir}/bin/.supermemory-server.version.new"
+  printf '%s\n' "${release}" > "${version_file}"
+  chmod 0644 "${version_file}"
+  mv -f -- "${version_file}" "${install_dir}/bin/supermemory-server.version"
+  ln -sfn "${install_dir}/bin/supermemory-server" "${bin_dir}/supermemory-server"
+  success "Verified and installed Supermemory Local ${release}."
 }
 
 supermemory_ready() {
@@ -596,12 +684,15 @@ install_supermemory() {
   if [[ -x "${install_dir}/bin/supermemory-server" && -s "${install_dir}/bin/supermemory-server.version" ]]; then
     installed_version="$(<"${install_dir}/bin/supermemory-server.version")"
     if ! supermemory_release_matches "${requested_version}" "${installed_version}"; then
-      fail "the retained Supermemory release '${installed_version}' does not match the dashboard-pinned release '${requested_version}'"
-    fi
-    info "Reusing the protected Supermemory Local installation already present on this node."
-  else
-    run_with_progress "Install Supermemory Local (${requested_version})" \
+      warning "Upgrading retained Supermemory Local ${installed_version} to the dashboard-pinned ${requested_version} release. The encrypted data and embedding plan are preserved."
       install_supermemory_binary "${requested_version}" "${install_dir}" "${bin_dir}" \
+        || fail "Supermemory Local upgrade failed"
+      installed_version="$(<"${install_dir}/bin/supermemory-server.version")"
+    else
+      info "Reusing the protected Supermemory Local installation already present on this node."
+    fi
+  else
+    install_supermemory_binary "${requested_version}" "${install_dir}" "${bin_dir}" \
       || fail "Supermemory Local installation failed"
     installed_version="$(<"${install_dir}/bin/supermemory-server.version")"
   fi
@@ -699,6 +790,17 @@ wait_for_hermes() {
     fi
     sleep 2
   done
+}
+
+resolved_image_reference() {
+  local image="$1" digest=""
+  if [[ "${image}" == *@sha256:* ]]; then
+    printf '%s' "${image}"
+    return 0
+  fi
+  digest="$(docker image inspect --format '{{index .RepoDigests 0}}' "${image}" 2>/dev/null || true)"
+  [[ "${digest}" == *@sha256:* ]] || return 1
+  printf '%s' "${digest}"
 }
 
 write_heartbeat_client() {
@@ -889,9 +991,14 @@ EOF
     docker start "${CONTAINER_NAME}" >/dev/null 2>&1 || true
     run_with_progress "Verify retained Hermes runtime" wait_for_hermes 0 \
       || fail "the retained Hermes runtime is not healthy"
+    hermes_image="$(resolved_image_reference "$(docker inspect --format '{{.Image}}' "${CONTAINER_NAME}")")" \
+      || fail "the retained Hermes runtime image has no immutable registry digest"
   else
     run_with_progress "Pull approved Hermes image" docker pull "${hermes_image}" \
       || fail "could not pull the approved Hermes image '${hermes_image}'"
+    hermes_image="$(resolved_image_reference "${hermes_image}")" \
+      || fail "the approved Hermes image has no immutable registry digest"
+    success "Resolved the Hermes runtime to immutable artifact ${hermes_image}."
     run_with_progress "Launch hardened Hermes container" docker run -d \
     --name "${CONTAINER_NAME}" \
     --label io.orcasynapse.managed=true \

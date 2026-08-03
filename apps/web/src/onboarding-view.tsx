@@ -10,23 +10,25 @@ import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 import {
   OrcaSynapseApiError,
   exportCredentialRecoveryKit,
-  getAgentProfiles,
-  getAgentRuntime,
-  getHermesRuntimeNodes,
   getOnboardingSnapshot,
   verifyCredentialRecoveryKit,
 } from "./api.js";
-import { connectionReadiness, isConnectionReady } from "./connection-readiness.js";
+import { connectionReadiness } from "./connection-readiness.js";
+import { connectionFor, deriveWorkspaceReadiness } from "./platform-readiness.js";
 import { RuntimeNodesPanel } from "./runtime-nodes-panel.js";
 
 interface OnboardingViewProps {
   unlocked: boolean;
   oidcConfigured: boolean;
   connections: ServiceConnectionSummary[];
+  agentRuntime: AgentRuntimeControl | null;
+  profiles: AgentProfile[];
+  runtimeNodes: HermesRuntimeNode[];
   initialTab?: "journey" | "nodes" | "readiness";
   onConfigure: (kind?: ServiceKind) => void;
   onOpenWorkspace: (workspace: "Chat" | "Documents" | "Agents") => void;
   onOpenOperations: () => void;
+  onRuntimeNodesChange: (nodes: HermesRuntimeNode[]) => void;
   onSignIn: () => void;
   onUnauthorized: () => void;
 }
@@ -42,26 +44,23 @@ function downloadRecoveryKit(fileName: string, serializedKit: string): void {
   URL.revokeObjectURL(url);
 }
 
-function connectionFor(connections: ServiceConnectionSummary[], kind: ServiceKind): ServiceConnectionSummary | undefined {
-  return connections.find((connection) => connection.kind === kind);
-}
-
 export function OnboardingView({
   connections,
+  agentRuntime,
+  profiles,
+  runtimeNodes,
   unlocked,
   oidcConfigured,
   initialTab = "journey",
   onConfigure,
   onOpenWorkspace,
   onOpenOperations,
+  onRuntimeNodesChange,
   onSignIn,
   onUnauthorized,
 }: OnboardingViewProps) {
   const [panel, setPanel] = useState<SetupPanel>(initialTab === "nodes" ? "nodes" : "overview");
   const [snapshot, setSnapshot] = useState<OnboardingSnapshot | null>(null);
-  const [agentRuntime, setAgentRuntime] = useState<AgentRuntimeControl | null>(null);
-  const [profiles, setProfiles] = useState<AgentProfile[]>([]);
-  const [nodes, setNodes] = useState<HermesRuntimeNode[]>([]);
   const [recoveryOpen, setRecoveryOpen] = useState(false);
   const [recoveryOwner, setRecoveryOwner] = useState("");
   const [recoveryPassphrase, setRecoveryPassphrase] = useState("");
@@ -96,20 +95,6 @@ export function OnboardingView({
     });
     return () => { active = false; };
   }, [onUnauthorized, unlocked]);
-
-  useEffect(() => {
-    if (!unlocked) return;
-    let active = true;
-    void Promise.all([getAgentRuntime(), getAgentProfiles(true), getHermesRuntimeNodes()])
-      .then(([runtime, profileList, nodeList]) => {
-        if (!active) return;
-        setAgentRuntime(runtime);
-        setProfiles(profileList.items);
-        setNodes(nodeList.items);
-      })
-      .catch(() => undefined);
-    return () => { active = false; };
-  }, [unlocked]);
 
   const run = async (key: string, operation: () => Promise<void>) => {
     if (busy) return;
@@ -185,14 +170,15 @@ export function OnboardingView({
   const inference = connectionFor(connections, "INFERENCE");
   const hermes = connectionFor(connections, "HERMES");
   const memory = connectionFor(connections, "SUPERMEMORY");
-  const inferenceReady = isConnectionReady(inference);
-  const hermesReady = isConnectionReady(hermes);
-  const memoryReady = isConnectionReady(memory);
-  const nodeReady = nodes.some(({ status }) => status === "ONLINE");
-  const profileReady = profiles.some(({ status }) => status === "ACTIVE");
-  const executionReady = agentRuntime?.enabled === true && profileReady;
-  const agenticInfrastructureReady = hermesReady && memoryReady && nodeReady;
-  const agenticReady = agenticInfrastructureReady && executionReady;
+  const readiness = deriveWorkspaceReadiness({ connections, runtimeNodes, profiles, runtime: agentRuntime });
+  const {
+    inferenceReady,
+    knowledgeReady: memoryReady,
+    runtimeNodeReady: nodeReady,
+    executionReady,
+    agenticInfrastructureReady,
+    agenticReady,
+  } = readiness;
   const readyCoreLayers = Number(inferenceReady) + Number(agenticReady);
 
   if (panel === "nodes") {
@@ -210,6 +196,7 @@ export function OnboardingView({
         targetEnvironment={snapshot?.architecture.targetEnvironment ?? "DEVELOPMENT"}
         inferenceReady={inferenceReady}
         onConfigureInference={() => onConfigure("INFERENCE")}
+        onNodesChange={onRuntimeNodesChange}
         onUnauthorized={onUnauthorized}
       />
     </section>;
@@ -289,8 +276,8 @@ export function OnboardingView({
         <p className="section-kicker">Employee workspace</p>
         <h2>Governed Chat</h2>
         <p>Talk to an active Hermes Profile with policy, memory, tool activity, and runtime evidence around every response.</p>
-        <button className="primary-button" type="button" disabled={!agenticReady} onClick={() => onOpenWorkspace("Chat")}>
-          {agenticReady ? "Open Chat" : "Enroll Agentic System first"}
+        <button className="primary-button" type="button" disabled={!readiness.chatReady} onClick={() => onOpenWorkspace("Chat")}>
+          {readiness.chatReady ? "Open Chat" : readiness.nextChatStep?.title ?? "Finish setup first"}
         </button>
       </article>
       <article>

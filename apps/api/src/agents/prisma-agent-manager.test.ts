@@ -144,6 +144,7 @@ describe("PrismaAgentManager", () => {
       agentProfileVersion: { findUnique: vi.fn(async () => ({ modelAlias: "hermes-agent", distributionDigest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" })) },
       componentCompatibility: { findUnique: vi.fn(async () => ({ status: "PASSED" })) },
       modelDeployment: { count: vi.fn(async () => 0), findFirst: vi.fn() },
+      platformArchitectureDecision: { findUnique: vi.fn(async () => ({ targetEnvironment: "PRODUCTION" })) },
       evaluationRun: { findFirst: vi.fn(async () => null) },
       auditEvent: { create: vi.fn() },
     };
@@ -152,6 +153,33 @@ describe("PrismaAgentManager", () => {
     await expect(new PrismaAgentManager(prisma).activateProfile(principal, PROFILE_ID))
       .rejects.toBeInstanceOf(AgentConflictError);
     expect(transaction.agentProfile.update).not.toHaveBeenCalled();
+  });
+
+  it("activates a verified development profile without an unrelated manual evaluation workflow", async () => {
+    const updatedProfile = {
+      id: PROFILE_ID, slug: "hermes-analyst", status: "ACTIVE", currentVersion: 1, activeVersion: 1,
+      createdAt: now, updatedAt: now, versions: [version(1)],
+    };
+    const transaction = {
+      agentProfile: {
+        findUnique: vi.fn(async () => ({ id: PROFILE_ID, slug: "hermes-analyst", currentVersion: 1, activeVersion: null })),
+        update: vi.fn(async () => updatedProfile),
+      },
+      agentProfileVersion: { findUnique: vi.fn(async () => ({ modelAlias: "hermes-agent", distributionDigest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" })) },
+      componentCompatibility: { findUnique: vi.fn(async () => ({ status: "PASSED" })) },
+      modelDeployment: { count: vi.fn(async () => 0), findFirst: vi.fn() },
+      platformArchitectureDecision: { findUnique: vi.fn(async () => ({ targetEnvironment: "DEVELOPMENT" })) },
+      evaluationRun: { findFirst: vi.fn() },
+      auditEvent: { create: vi.fn(async () => ({})) },
+    };
+    const prisma = { $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)) } as unknown as OrcaSynapsePrismaClient;
+
+    await expect(new PrismaAgentManager(prisma).activateProfile(principal, PROFILE_ID))
+      .resolves.toMatchObject({ status: "ACTIVE", activeVersion: 1 });
+    expect(transaction.evaluationRun.findFirst).not.toHaveBeenCalled();
+    expect(transaction.auditEvent.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ metadata: expect.objectContaining({ targetEnvironment: "DEVELOPMENT", releaseEvidenceRequired: false }) }),
+    }));
   });
 
   it("fails closed when Hermes compatibility has not passed", async () => {
@@ -171,7 +199,7 @@ describe("PrismaAgentManager", () => {
     const prisma = { $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)) } as unknown as OrcaSynapsePrismaClient;
 
     await expect(new PrismaAgentManager(prisma).standbyProfile(principal, PROFILE_ID))
-      .rejects.toThrow("Run the AI services check in Deployment > Advanced readiness");
+      .rejects.toThrow("Use Create & activate in Hermes Profiles");
     expect(transaction.modelDeployment.count).not.toHaveBeenCalled();
     expect(transaction.agentProfile.update).not.toHaveBeenCalled();
   });
@@ -189,6 +217,7 @@ describe("PrismaAgentManager", () => {
       agentProfileVersion: { findUnique: vi.fn(async () => ({ modelAlias: "hermes-agent", distributionDigest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" })) },
       componentCompatibility: { findUnique: vi.fn(async () => ({ status: "PASSED" })) },
       modelDeployment: { count: vi.fn(async () => 1), findFirst: vi.fn(async () => ({ id: MODEL_ROUTE_ID })) },
+      platformArchitectureDecision: { findUnique: vi.fn(async () => ({ targetEnvironment: "PRODUCTION" })) },
       evaluationRun: { findFirst: vi.fn(async () => ({ id: EVALUATION_ID })) },
       auditEvent: { create: vi.fn(async () => ({})) },
     };

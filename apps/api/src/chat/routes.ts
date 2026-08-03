@@ -196,12 +196,9 @@ export async function registerChatRoutes(
       });
     }
 
-    const controller = new AbortController();
-    const abort = () => controller.abort();
-    request.raw.once("aborted", abort);
-    reply.raw.once("close", () => {
-      if (!reply.raw.writableEnded) abort();
-    });
+    // The HTTP stream is a subscriber to durable PostgreSQL/Hermes work. A
+    // browser disconnect must not implicitly cancel that work; explicit Stop
+    // uses the cancellation route below.
     let streaming = false;
     const emit = (value: unknown) => {
       const event = chatStreamEventSchema.parse(value);
@@ -224,7 +221,6 @@ export async function registerChatRoutes(
         principal,
         id,
         input.data.content,
-        controller.signal,
         emit,
       );
       if (streaming && !reply.raw.destroyed) reply.raw.end();
@@ -234,8 +230,21 @@ export async function registerChatRoutes(
       } else {
         await sendChatError(reply, error);
       }
-    } finally {
-      request.raw.off("aborted", abort);
+    }
+  });
+
+  app.post("/conversations/:conversationId/cancel", async (request, reply) => {
+    const principal = await requireChatPrincipal(request, reply, options);
+    if (!principal) return;
+    if (!options.manager) {
+      return reply.code(423).send({ error: "PLATFORM_LOCKED", message: "Chat services are not ready." });
+    }
+    const id = conversationId((request.params as Record<string, unknown>).conversationId);
+    if (!id) return reply.code(400).send({ error: "INVALID_REQUEST", message: "Conversation ID is invalid." });
+    try {
+      return chatConversationSchema.parse(await options.manager.cancelActiveRun(principal, id));
+    } catch (error) {
+      await sendChatError(reply, error);
     }
   });
 

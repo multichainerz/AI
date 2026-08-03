@@ -40,7 +40,9 @@ The minimum deployment is two VMs plus an existing inference endpoint. VM1 runs 
 | Supermemory Local | semantic knowledge, long-duration agent memory, embeddings, and retrieval | enterprise authorization decisions or original-file authority |
 | AI Inference | OpenAI-compatible model serving | routing authority, durable memory, or enterprise credentials |
 
-There is no direct Chat-to-model path. Normal Chat creates a governed Hermes Agent Run. The PostgreSQL reconciler submits that run to VM2, follows safe lifecycle events, supports cancellation, and returns the final Hermes response. The run ID is the idempotency key; the conversation ID is the stable Hermes session ID.
+There is no direct Chat-to-model path. Normal Chat creates a governed Hermes Agent Run. A PostgreSQL worker acquires an exclusive renewable processing lease, submits the run to VM2, follows safe lifecycle events, supports explicit cancellation, and finalizes both the run and linked Chat message. The browser stream is only a live subscriber: disconnecting it does not cancel durable execution. The run ID is the idempotency key; the conversation ID is the stable Hermes session ID.
+
+After VM2 is enrolled and healthy, a Development administrator can use **Create & activate** once: OrcaSynapse runs the Hermes compatibility check, activates the immutable Profile Distribution, and enables the global execution boundary. Pilot and Production continue requiring promoted evaluation evidence before activation.
 
 ## Knowledge lifecycle
 
@@ -51,7 +53,7 @@ There is no direct Chat-to-model path. Normal Chat creates a governed Hermes Age
 5. OrcaSynapse polls Supermemory for indexing state. It keeps no retry copy; a failed transfer requires re-upload.
 6. Deletion removes the Supermemory object and marks the metadata record deleted.
 
-The verified Supermemory Local v0.0.5 baseline reliably handles UTF-8 plain text. PDF, DOCX, and image uploads are accepted by its local API but can fail during extraction when the self-hosted build depends on unavailable cloud extractors. The dashboard states this limitation instead of claiming unsupported local OCR.
+The Supermemory Local baseline handles text and text-based documents through the VM2 OpenAI-compatible inference route. New nodes pin v0.0.7-rc.2 for its upstream large-document workflow fix. Scanned PDFs, image-heavy documents, and images require an optional Gemini or Vertex document-understanding provider; the dashboard states this limitation instead of claiming universal local OCR.
 
 ## Memory boundaries
 
@@ -62,7 +64,7 @@ The verified Supermemory Local v0.0.5 baseline reliably handles UTF-8 plain text
 
 ## Runtime and tool boundaries
 
-The VM2 installer pins the OrcaSynapse inference route, Supermemory provider, secret redaction, and loop circuit breakers in Hermes managed configuration. The default distribution exposes no native model-callable MCP toolset. OrcaSynapse's governed MCP surface remains default-deny and currently exposes only its implemented read-only document-metadata handler; retired document resynchronization actions cannot be reactivated.
+The VM2 installer pins the OrcaSynapse inference route, resolves the pulled Hermes container to an immutable registry digest, pins the Supermemory provider, and applies secret redaction and loop circuit breakers in Hermes managed configuration. The default distribution exposes no native model-callable MCP toolset. OrcaSynapse's governed MCP surface remains default-deny and currently exposes only its implemented read-only document-metadata handler. The dashboard does not advertise a consequential-action approval inbox because this release cannot originate those actions; legacy approval records remain migration-compatible but are not an active product surface.
 
 Node lifecycle is an execution boundary:
 
@@ -93,6 +95,7 @@ Deny browser access to VM2 and inference, Hermes access to PostgreSQL or Docker 
 - Back up Hermes persistent data when sessions, Skills, and native memory must survive VM replacement.
 - Store the OrcaSynapse Installation Key and encrypted recovery kit off-host, then test recovery.
 - Restore into an isolated environment and verify identity, Profile, model route, namespace, retrieval, and deletion behavior.
+- Worker leases expire and can be recovered by another VM1 worker; terminal worker transitions also finalize linked Chat messages so browser or API-stream loss does not strand the conversation.
 
 ## Explicit non-dependencies
 

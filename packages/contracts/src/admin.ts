@@ -30,8 +30,6 @@ export const ADMIN_SCOPES = [
   "agents:control",
   "tools:read",
   "tools:manage",
-  "approvals:read",
-  "approvals:review",
   "evaluations:read",
   "evaluations:manage",
   "evaluations:promote",

@@ -32,6 +32,13 @@ export class PrismaOperationsManager implements OperationsManager {
 
   async snapshot(): Promise<RuntimeOperationsSnapshot> {
     const capturedAt = new Date();
+    await this.prisma.workerNode.updateMany({
+      where: {
+        status: "ONLINE",
+        lastSeenAt: { lt: new Date(capturedAt.getTime() - STALE_AFTER_MS) },
+      },
+      data: { status: "STOPPED" },
+    });
     const [agentGroups, executorRecords] = await Promise.all([
       this.prisma.agentRun.groupBy({ by: ["status"], _count: { _all: true } }),
       this.prisma.workerNode.findMany({

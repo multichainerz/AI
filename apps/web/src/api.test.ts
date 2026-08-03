@@ -9,8 +9,8 @@ import {
   getConnectionMonitoring,
   getEnterpriseSession,
   getChatConversations,
+  cancelChatRun,
   getToolRuntime,
-  decideToolApproval,
   completeEvaluationRun,
   promoteEvaluationRun,
   recordProductionReadinessApproval,
@@ -323,6 +323,31 @@ describe("OrcaSynapse browser API", () => {
     );
   });
 
+  it("stops Chat through the explicit durable-run cancellation route", async () => {
+    const conversationId = "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d";
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({
+      id: conversationId,
+      title: "Pilot chat",
+      modelAlias: "hermes-model",
+      profileId: "f2f68d20-f921-44ba-981c-56b043e1b9ac",
+      profileName: "Hermes Analyst",
+      status: "ACTIVE",
+      messageCount: 0,
+      lastMessagePreview: null,
+      createdAt: "2026-07-30T00:00:00.000Z",
+      updatedAt: "2026-07-30T00:00:00.000Z",
+      lastMessageAt: null,
+      messages: [],
+    }));
+
+    await cancelChatRun(conversationId);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/v1/chat/conversations/${conversationId}/cancel`,
+      expect.objectContaining({ method: "POST", credentials: "same-origin" }),
+    );
+  });
+
   it("sends the optimistic active-revision guard when restoring configuration", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({
       connection: {
@@ -425,39 +450,6 @@ describe("OrcaSynapse browser API", () => {
       enabled: false,
       reason: "Keep the boundary closed during interoperability testing.",
       approvalTtlMinutes: 45,
-    });
-  });
-
-  it("sends an explicit approval decision and operator reason", async () => {
-    const approvalId = "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb";
-    const callId = "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d";
-    const runId = "fb8c1e58-10d6-4ac7-aafe-e259763a6f63";
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({
-      id: approvalId,
-      callId,
-      runId,
-      profileSlug: "hermes-ops",
-      toolSlug: "document_memory_resync",
-      toolName: "Document memory resync",
-      requestedBySubject: "pilot@orcasynapse.example",
-      arguments: { documentId: "b78784ba-9156-4d42-8066-18f30217d42d" },
-      status: "REJECTED",
-      expiresAt: "2026-07-30T00:30:00.000Z",
-      decisionReason: "The source document is still under review.",
-      decisionBy: approvalId,
-      decidedAt: "2026-07-30T00:10:00.000Z",
-      createdAt: "2026-07-30T00:00:00.000Z",
-      updatedAt: "2026-07-30T00:10:00.000Z",
-    }));
-
-    await decideToolApproval(approvalId, "REJECT", "The source document is still under review.");
-
-    const [url, options] = fetchMock.mock.calls[0]!;
-    expect(url).toBe(`/api/v1/admin/tooling/approvals/${approvalId}/decision`);
-    expect(options).toMatchObject({ method: "POST", credentials: "same-origin" });
-    expect(JSON.parse(String(options?.body))).toEqual({
-      decision: "REJECT",
-      reason: "The source document is still under review.",
     });
   });
 

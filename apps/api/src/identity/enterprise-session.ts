@@ -21,6 +21,7 @@ export const ENTERPRISE_SESSION_COOKIE = "orcasynapse_user_session";
 export const OIDC_STATE_COOKIE = "orcasynapse_oidc_state";
 const ENTERPRISE_SESSION_IDLE_MS = 8 * 60 * 60 * 1_000;
 const ENTERPRISE_SESSION_ABSOLUTE_MS = 12 * 60 * 60 * 1_000;
+const ENTERPRISE_SESSION_TOUCH_INTERVAL_MS = 60 * 1_000;
 const ENTERPRISE_SESSION_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
 const OIDC_REQUEST_TTL_MS = 10 * 60 * 1_000;
 const OIDC_HTTP_TIMEOUT_MS = 10_000;
@@ -214,17 +215,39 @@ function principalFromRecord(record: {
   };
 }
 
-async function boundedJson(response: Response): Promise<unknown> {
+export async function boundedOidcJson(response: Response): Promise<unknown> {
   const declaredLength = Number(response.headers.get("content-length"));
   if (Number.isFinite(declaredLength) && declaredLength > MAX_OIDC_RESPONSE_BYTES) {
     throw new EnterpriseIdentityError("OIDC_RESPONSE_TOO_LARGE", "The identity provider response is too large.", 502);
   }
-  const text = await response.text();
-  if (text.length > MAX_OIDC_RESPONSE_BYTES) {
-    throw new EnterpriseIdentityError("OIDC_RESPONSE_TOO_LARGE", "The identity provider response is too large.", 502);
+  if (!response.body) {
+    throw new EnterpriseIdentityError("OIDC_INVALID_RESPONSE", "The identity provider returned invalid JSON.", 502);
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_OIDC_RESPONSE_BYTES) {
+        throw new EnterpriseIdentityError("OIDC_RESPONSE_TOO_LARGE", "The identity provider response is too large.", 502);
+      }
+      chunks.push(value);
+    }
+  } catch (error) {
+    await reader.cancel().catch(() => undefined);
+    throw error;
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
   }
   try {
-    return JSON.parse(text) as unknown;
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
   } catch {
     throw new EnterpriseIdentityError("OIDC_INVALID_RESPONSE", "The identity provider returned invalid JSON.", 502);
   }
@@ -509,6 +532,9 @@ export class PrismaEnterpriseIdentityManager implements EnterpriseIdentityManage
       }
       return null;
     }
+    if (now.getTime() - session.lastSeenAt.getTime() < ENTERPRISE_SESSION_TOUCH_INTERVAL_MS) {
+      return principalFromRecord(session);
+    }
     const idleExpiresAt = new Date(
       Math.min(now.getTime() + ENTERPRISE_SESSION_IDLE_MS, session.absoluteExpiresAt.getTime()),
     );
@@ -516,6 +542,7 @@ export class PrismaEnterpriseIdentityManager implements EnterpriseIdentityManage
       where: {
         id: session.id,
         revokedAt: null,
+        lastSeenAt: { lte: new Date(now.getTime() - ENTERPRISE_SESSION_TOUCH_INTERVAL_MS) },
         idleExpiresAt: { gt: now },
         absoluteExpiresAt: { gt: now },
       },
@@ -631,7 +658,7 @@ export class PrismaEnterpriseIdentityManager implements EnterpriseIdentityManage
     if (!response.ok) {
       throw new EnterpriseIdentityError("OIDC_DISCOVERY_REJECTED", `OIDC discovery returned status ${response.status}.`, 502);
     }
-    const value = await boundedJson(response);
+    const value = await boundedOidcJson(response);
     if (!value || typeof value !== "object" || Array.isArray(value)) {
       throw new EnterpriseIdentityError("OIDC_DISCOVERY_INVALID", "OIDC discovery is incomplete.", 502);
     }
@@ -693,7 +720,7 @@ export class PrismaEnterpriseIdentityManager implements EnterpriseIdentityManage
     if (!response.ok) {
       throw new EnterpriseIdentityError("OIDC_TOKEN_REJECTED", "The identity provider rejected the authorization code.");
     }
-    const value = await boundedJson(response);
+    const value = await boundedOidcJson(response);
     if (!value || typeof value !== "object" || Array.isArray(value)) {
       throw new EnterpriseIdentityError("OIDC_TOKEN_INVALID", "The identity provider token response is invalid.", 502);
     }
@@ -715,7 +742,7 @@ export class PrismaEnterpriseIdentityManager implements EnterpriseIdentityManage
     if (!response.ok) {
       throw new EnterpriseIdentityError("OIDC_JWKS_REJECTED", "The identity provider signing keys were rejected.", 502);
     }
-    const value = await boundedJson(response);
+    const value = await boundedOidcJson(response);
     if (!value || typeof value !== "object" || !Array.isArray((value as { keys?: unknown }).keys)) {
       throw new EnterpriseIdentityError("OIDC_JWKS_INVALID", "The identity provider signing keys are invalid.", 502);
     }

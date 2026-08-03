@@ -579,7 +579,7 @@ export class PrismaAgentManager implements AgentManager {
           select: { status: true },
         });
         if (hermesCompatibility?.status !== "PASSED") {
-          throw new AgentConflictError("Hermes compatibility is not passed. Run the AI services check in Deployment > Advanced readiness before a Profile can enter standby or active service.");
+          throw new AgentConflictError("Hermes compatibility is not passed. Use Create & activate in Hermes Profiles to run the check automatically, or run the AI services check from Deployment diagnostics.");
         }
       }
       const modelCatalogueCount = requiresRelease
@@ -592,7 +592,13 @@ export class PrismaAgentManager implements AgentManager {
       if (requiresRelease && modelCatalogueCount > 0 && !modelRoute) {
         throw new AgentConflictError(`Activate the '${currentVersion!.modelAlias}' agent model route before activating this profile.`);
       }
-      const releaseEvidence = requiresRelease ? await transaction.evaluationRun.findFirst({
+      const architecture = requiresRelease ? await transaction.platformArchitectureDecision.findUnique({
+        where: { id: "global" },
+        select: { targetEnvironment: true },
+      }) : null;
+      const targetEnvironment = architecture?.targetEnvironment ?? "DEVELOPMENT";
+      const requiresReleaseEvidence = state === "ACTIVE" && targetEnvironment !== "DEVELOPMENT";
+      const releaseEvidence = requiresReleaseEvidence ? await transaction.evaluationRun.findFirst({
         where: {
           targetType: "AGENT",
           targetReference: `agent:${profile.slug}`,
@@ -601,8 +607,8 @@ export class PrismaAgentManager implements AgentManager {
         },
         select: { id: true },
       }) : null;
-      if (requiresRelease && !releaseEvidence) {
-        throw new AgentConflictError(`Agent standby or activation requires promoted evaluation evidence for agent:${profile.slug} version ${profile.currentVersion}.`);
+      if (requiresReleaseEvidence && !releaseEvidence) {
+        throw new AgentConflictError(`${targetEnvironment.toLowerCase()} activation requires promoted evaluation evidence for agent:${profile.slug} version ${profile.currentVersion}. Promote the matching evaluation in Operations, or keep this installation in Development while validating the first profile.`);
       }
       const updated = await transaction.agentProfile.update({
         where: { id: profileId },
@@ -617,6 +623,8 @@ export class PrismaAgentManager implements AgentManager {
           activeVersion: requiresRelease ? profile.currentVersion : profile.activeVersion,
           evaluationRunId: releaseEvidence?.id ?? null,
           modelRouteId: modelRoute?.id ?? null,
+          targetEnvironment,
+          releaseEvidenceRequired: requiresReleaseEvidence,
         },
       } });
       return updated as StoredProfile;

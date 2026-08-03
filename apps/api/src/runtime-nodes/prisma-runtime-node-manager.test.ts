@@ -21,6 +21,62 @@ const principal: AdminPrincipal = {
   absoluteExpiresAt: "2026-08-02T08:00:00.000Z",
 };
 
+describe("Hermes runtime-node liveness reconciliation", () => {
+  it("persists an expired heartbeat as offline before listing the node", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-03T00:10:00.000Z"));
+    try {
+      const updateMany = vi.fn(async () => ({ count: 1 }));
+      const prisma = {
+        hermesRuntimeNode: {
+          updateMany,
+          findMany: vi.fn(async () => [{
+            id: "9de260d7-bc51-4558-9d20-06916d393072",
+            slug: "hermes-runtime-01",
+            displayName: "Hermes Runtime 01",
+            baseUrl: "http://10.0.0.12:8642",
+            expectedHostname: null,
+            hostname: "hermes-01",
+            status: "OFFLINE",
+            identityFingerprint: "a".repeat(64),
+            hermesVersion: "hermes@sha256:abc",
+            installerVersion: "1.16.0",
+            capabilities: [],
+            serviceConnectionId: null,
+            serviceConnection: null,
+            lastSeenAt: new Date("2026-08-03T00:00:00.000Z"),
+            enrolledAt: new Date("2026-08-03T00:00:00.000Z"),
+            revokedAt: null,
+            revision: 2,
+            createdAt: new Date("2026-08-03T00:00:00.000Z"),
+            updatedAt: new Date("2026-08-03T00:10:00.000Z"),
+          }]),
+        },
+      } as unknown as OrcaSynapsePrismaClient;
+      const manager = new PrismaHermesRuntimeNodeManager(
+        prisma,
+        new EnvelopeEncryption({ masterKey: new Uint8Array(32).fill(7) }),
+      );
+
+      await expect(manager.list()).resolves.toEqual([
+        expect.objectContaining({ status: "OFFLINE", revision: 2 }),
+      ]);
+      expect(updateMany).toHaveBeenCalledWith({
+        where: {
+          status: { in: ["ONLINE", "DEGRADED"] },
+          OR: [
+            { lastSeenAt: null },
+            { lastSeenAt: { lt: new Date("2026-08-03T00:07:00.000Z") } },
+          ],
+        },
+        data: { status: "OFFLINE", revision: { increment: 1 } },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 function canonicalize(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(canonicalize).join(",")}]`;

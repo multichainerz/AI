@@ -38,12 +38,18 @@ describe("WorkerRuntime", () => {
 
   it("reconciles durable Hermes run state when the runtime starts", async () => {
     const agentHandler = { process: vi.fn(async () => ({ completed: true })) };
-    const runtime = new WorkerRuntime(prisma([{
+    const database = prisma([{
       id: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d",
       jobId: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb",
-    }]), registry(), identity, { info: vi.fn(), error: vi.fn() }, 60_000, agentHandler);
+    }]);
+    const runtime = new WorkerRuntime(database, registry(), identity, { info: vi.fn(), error: vi.fn() }, 60_000, agentHandler);
 
     await runtime.start();
+    expect(database.agentRun.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        OR: [{ processorLeaseExpiresAt: null }, { processorLeaseExpiresAt: { lt: expect.any(Date) } }],
+      }),
+    }));
     expect(agentHandler.process).toHaveBeenCalledWith(
       { runId: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d" },
       "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb",

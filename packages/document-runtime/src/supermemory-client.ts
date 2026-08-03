@@ -29,6 +29,21 @@ function endpoint(connection: RuntimeConnection, path: string): URL {
   return url;
 }
 
+function safeFailureReason(record: Record<string, unknown>): string | null {
+  const nestedError = record.error && typeof record.error === "object" && !Array.isArray(record.error)
+    ? (record.error as Record<string, unknown>).message
+    : null;
+  const candidate = [record.failureReason, record.errorMessage, nestedError, record.message]
+    .find((value): value is string => typeof value === "string" && value.trim().length > 0);
+  if (!candidate) return null;
+  return candidate
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/\b(?:Bearer\s+)?(?:sm_|sk-)[A-Za-z0-9_-]{12,}\b/gi, "[credential redacted]")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 500);
+}
+
 async function boundedJson(response: Response): Promise<unknown> {
   const declared = Number(response.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > MAX_RESPONSE_BYTES) throw new Error("Supermemory response is too large.");
@@ -102,6 +117,8 @@ export interface SupermemoryDocumentState {
   status: string;
   type: string | null;
   customId: string | null;
+  runtimeVersion: string | null;
+  failureReason: string | null;
 }
 
 export class SupermemoryUploadTooLargeError extends Error {
@@ -188,6 +205,8 @@ export class SupermemoryClient {
       status: typeof record.status === "string" ? record.status : "unknown",
       type: typeof record.type === "string" ? record.type : null,
       customId: typeof record.customId === "string" ? record.customId : null,
+      runtimeVersion: stringSetting(connection, "observedVersion", "") || null,
+      failureReason: safeFailureReason(record),
     };
   }
 

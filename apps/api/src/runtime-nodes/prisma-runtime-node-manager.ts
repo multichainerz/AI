@@ -36,6 +36,7 @@ import {
 
 const SIGNATURE_CLOCK_SKEW_MS = 5 * 60 * 1_000;
 const NONCE_RETENTION_MS = 24 * 60 * 60 * 1_000;
+const NODE_STALE_AFTER_MS = 180_000;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 type StoredNode = {
@@ -132,7 +133,7 @@ function summarize(node: StoredNode): HermesRuntimeNode {
   const capabilities = Array.isArray(node.capabilities)
     ? node.capabilities.filter((value): value is string => typeof value === "string")
     : [];
-  const status = ["ONLINE", "DEGRADED"].includes(node.status) && (!node.lastSeenAt || Date.now() - node.lastSeenAt.getTime() > 180_000)
+  const status = ["ONLINE", "DEGRADED"].includes(node.status) && (!node.lastSeenAt || Date.now() - node.lastSeenAt.getTime() > NODE_STALE_AFTER_MS)
     ? "OFFLINE"
     : node.status;
   return {
@@ -227,6 +228,16 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
   ) {}
 
   async list(): Promise<HermesRuntimeNode[]> {
+    await this.prisma.hermesRuntimeNode.updateMany({
+      where: {
+        status: { in: ["ONLINE", "DEGRADED"] },
+        OR: [
+          { lastSeenAt: null },
+          { lastSeenAt: { lt: new Date(Date.now() - NODE_STALE_AFTER_MS) } },
+        ],
+      },
+      data: { status: "OFFLINE", revision: { increment: 1 } },
+    });
     const nodes = await this.prisma.hermesRuntimeNode.findMany({
       include: { serviceConnection: { select: { status: true } } },
       orderBy: [{ displayName: "asc" }],
@@ -667,6 +678,7 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
         memoryPollIntervalMs: 2_000,
         retrievalLimit: 6,
         retrievalThreshold: 0.25,
+        observedVersion: input.observedVersion,
       };
       const revision = (existing?.activeRevision ?? 0) + 1;
       const revisionState = {

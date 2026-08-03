@@ -95,4 +95,20 @@ describe("committed PostgreSQL migrations", () => {
     const sql = readFileSync(resolve(migrationsRoot, directory!, "migration.sql"), "utf8");
     expect(sql).toContain('ALTER COLUMN "supermemoryVersion" SET DEFAULT \'0.0.5\'');
   });
+
+  it("moves new invitations to the release containing the large-document workflow fix", () => {
+    const directory = migrationDirectories.find((name) => name.endsWith("_pin_supermemory_large_document_fix"));
+    expect(directory).toBeTruthy();
+    const sql = readFileSync(resolve(migrationsRoot, directory!, "migration.sql"), "utf8");
+    expect(sql).toContain('ALTER COLUMN "supermemoryVersion" SET DEFAULT \'0.0.7-rc.2\'');
+  });
+
+  it("adds an expiring exclusive lease for durable Hermes run processing", () => {
+    const directory = migrationDirectories.find((name) => name.endsWith("_harden_agent_run_leases"));
+    expect(directory).toBeTruthy();
+    const sql = readFileSync(resolve(migrationsRoot, directory!, "migration.sql"), "utf8");
+    expect(sql).toContain('ADD COLUMN "processorLeaseOwner" VARCHAR(160)');
+    expect(sql).toContain('ADD COLUMN "processorLeaseExpiresAt" TIMESTAMPTZ(6)');
+    expect(sql).toContain('"AgentRun_status_processorLeaseExpiresAt_idx"');
+  });
 });

@@ -17,7 +17,7 @@ The dashboard has six product areas with one owner each:
 
 ### Phase 0 — Contract proof and architecture freeze
 
-- Verified Supermemory Local v0.0.5 authentication, file upload, status, deletion, and search contracts against the deployed VM2 service.
+- Verified Supermemory Local authentication, file upload, status, deletion, and search contracts against the deployed VM2 service; new nodes use v0.0.7-rc.2 for its upstream large-document workflow fix.
 - Verified UTF-8 TXT ingestion end to end.
 - Recorded the honest rich-file limitation: the local API accepts PDF, DOCX, and images, but extraction can fail without the upstream cloud extractor.
 - Froze VM1, VM2, and inference ownership and the six-area information architecture.

@@ -4,7 +4,6 @@ import {
   inferenceDiscoveryResultSchema,
   administratorSessionSchema,
   configurationRevisionListSchema,
-  runtimeOperationsSnapshotSchema,
   platformMetaSchema,
   serviceConnectionListSchema,
   serviceConnectionSummarySchema,
@@ -25,7 +24,6 @@ import {
   type InferenceDiscoveryResult,
   type UpdateConnectionMonitoringControl,
   type ConfigurationRevisionList,
-  type RuntimeOperationsSnapshot,
   type PlatformMeta,
   type ServiceConnectionList,
   type ServiceConnectionSummary,
@@ -71,8 +69,6 @@ import {
   gatewayCredentialListSchema,
   issuedGatewayCredentialSchema,
   toolCallListSchema,
-  toolApprovalListSchema,
-  toolApprovalSchema,
   toolRuntimeControlSchema,
   toolMetricsSchema,
   type GovernedToolList,
@@ -81,8 +77,6 @@ import {
   type GatewayCredentialList,
   type IssuedGatewayCredential,
   type ToolCallList,
-  type ToolApproval,
-  type ToolApprovalList,
   type ToolRuntimeControl,
   type ToolMetrics,
   type UpsertToolGrant,
@@ -132,18 +126,12 @@ import {
   type UpdatePromptTemplate,
   type ChangePromptTemplateState,
   onboardingSnapshotSchema,
-  architectureDecisionSchema,
   recoveryKitExportSchema,
   type OnboardingSnapshot,
-  type ArchitectureDecision,
-  type UpdateArchitectureDecision,
-  type UpdateComponentCompatibility,
-  type UpdateOnboardingStep,
   type RunOnboardingValidation,
   type ExportRecoveryKit,
   type RecoveryKitExport,
   type VerifyRecoveryKit,
-  type CompleteOnboarding,
   hermesNodeInvitationSchema,
   hermesRuntimeNodeListSchema,
   hermesRuntimeNodeSchema,
@@ -380,13 +368,6 @@ export async function rollbackConfiguration(
   return rollbackConfigurationResultSchema.parse(await parsedResponse(response));
 }
 
-export async function getRuntimeOperations(): Promise<RuntimeOperationsSnapshot> {
-  const response = await fetch("/api/v1/admin/operations/runtime", {
-    credentials: "same-origin",
-  });
-  return runtimeOperationsSnapshotSchema.parse(await parsedResponse(response));
-}
-
 export async function getChatConversations(): Promise<ChatConversationList> {
   const response = await fetch("/api/v1/chat/conversations", {
     credentials: "same-origin",
@@ -428,6 +409,14 @@ export async function updateChatConversation(
     },
   );
   return chatConversationSummarySchema.parse(await parsedResponse(response));
+}
+
+export async function cancelChatRun(conversationId: string): Promise<ChatConversation> {
+  const response = await fetch(
+    `/api/v1/chat/conversations/${encodeURIComponent(conversationId)}/cancel`,
+    { method: "POST", headers: adminHeaders(), credentials: "same-origin" },
+  );
+  return chatConversationSchema.parse(await parsedResponse(response));
 }
 
 export async function streamChatMessage(
@@ -587,13 +576,6 @@ export async function getAgentRunEvents(runId: string, administrator: boolean): 
   const prefix = administrator ? "/api/v1/admin/agents" : "/api/v1/agents";
   const response = await fetch(`${prefix}/runs/${encodeURIComponent(runId)}/events`, { credentials: "same-origin" });
   return agentRunEventListSchema.parse(await parsedResponse(response));
-}
-
-export async function submitAgentRun(profileId: string, input: string): Promise<AgentRun> {
-  const response = await fetch("/api/v1/agents/runs", {
-    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify({ profileId, input }),
-  });
-  return agentRunSchema.parse(await parsedResponse(response));
 }
 
 export async function cancelAgentRun(runId: string, administrator: boolean): Promise<AgentRun> {
@@ -759,18 +741,6 @@ export async function getToolCalls(): Promise<ToolCallList> {
   return toolCallListSchema.parse(await parsedResponse(response));
 }
 
-export async function getToolApprovals(): Promise<ToolApprovalList> {
-  const response = await fetch("/api/v1/admin/tooling/approvals", { credentials: "same-origin" });
-  return toolApprovalListSchema.parse(await parsedResponse(response));
-}
-
-export async function decideToolApproval(id: string, decision: "APPROVE" | "REJECT", reason: string): Promise<ToolApproval> {
-  const response = await fetch(`/api/v1/admin/tooling/approvals/${encodeURIComponent(id)}/decision`, {
-    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify({ decision, reason }),
-  });
-  return toolApprovalSchema.parse(await parsedResponse(response));
-}
-
 export async function getToolRuntime(): Promise<ToolRuntimeControl> {
   const response = await fetch("/api/v1/admin/tooling/runtime", { credentials: "same-origin" });
   return toolRuntimeControlSchema.parse(await parsedResponse(response));
@@ -872,30 +842,6 @@ export async function getOnboardingSnapshot(): Promise<OnboardingSnapshot> {
   return onboardingSnapshotSchema.parse(await parsedResponse(response));
 }
 
-export async function updateArchitectureDecision(input: UpdateArchitectureDecision): Promise<ArchitectureDecision> {
-  const response = await fetch("/api/v1/admin/onboarding/architecture", {
-    method: "PATCH", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
-  });
-  return architectureDecisionSchema.parse(await parsedResponse(response));
-}
-
-export async function updateComponentCompatibility(
-  key: string,
-  input: UpdateComponentCompatibility,
-): Promise<OnboardingSnapshot> {
-  const response = await fetch(`/api/v1/admin/onboarding/components/${encodeURIComponent(key)}`, {
-    method: "PATCH", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
-  });
-  return onboardingSnapshotSchema.parse(await parsedResponse(response));
-}
-
-export async function updateOnboardingStep(key: string, input: UpdateOnboardingStep): Promise<OnboardingSnapshot> {
-  const response = await fetch(`/api/v1/admin/onboarding/steps/${encodeURIComponent(key)}`, {
-    method: "PATCH", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
-  });
-  return onboardingSnapshotSchema.parse(await parsedResponse(response));
-}
-
 export async function runOnboardingValidation(input: RunOnboardingValidation = {}): Promise<OnboardingSnapshot> {
   const response = await fetch("/api/v1/admin/onboarding/validate", {
     method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
@@ -912,13 +858,6 @@ export async function exportCredentialRecoveryKit(input: ExportRecoveryKit): Pro
 
 export async function verifyCredentialRecoveryKit(input: VerifyRecoveryKit): Promise<OnboardingSnapshot> {
   const response = await fetch("/api/v1/admin/onboarding/recovery/verify", {
-    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
-  });
-  return onboardingSnapshotSchema.parse(await parsedResponse(response));
-}
-
-export async function completeOnboarding(input: CompleteOnboarding): Promise<OnboardingSnapshot> {
-  const response = await fetch("/api/v1/admin/onboarding/complete", {
     method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
   });
   return onboardingSnapshotSchema.parse(await parsedResponse(response));

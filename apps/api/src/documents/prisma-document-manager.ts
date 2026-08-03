@@ -13,6 +13,7 @@ import {
   knowledgeScopeTag,
   SupermemoryClient,
   SupermemoryUploadTooLargeError,
+  type SupermemoryDocumentState,
 } from "@orcasynapse/document-runtime";
 import {
   DocumentConflictError,
@@ -108,6 +109,23 @@ function memoryStatus(status: DocumentStatus): "QUEUED" | "READY" | "FAILED" {
   if (status === "READY") return "READY";
   if (status === "FAILED") return "FAILED";
   return "QUEUED";
+}
+
+function extractionFailureMessage(document: StoredDocument, state: SupermemoryDocumentState): string {
+  const version = state.runtimeVersion?.replace(/^v/, "") ?? null;
+  if ((version === null || version === "0.0.5") && Number(document.sizeBytes) > 96 * 1024) {
+    return `This file expands beyond the workflow-step limit used by ${version ? `Supermemory Local ${version}` : "older Supermemory Local releases"}. Upgrade or re-enroll VM2 with the supported 0.0.7-rc.2 release, then upload the authoritative file again.`;
+  }
+  if (state.failureReason) {
+    return `Supermemory reported: ${state.failureReason} Review the VM2 Supermemory service log, correct the extractor configuration, then upload the authoritative file again.`;
+  }
+  if (["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"].includes(document.mediaType)) {
+    return "Supermemory could not extract this document. Text-based documents use the configured local OpenAI-compatible model; scanned or image-heavy files require an optional Gemini or Vertex document-understanding provider. Review the VM2 service log, then upload the authoritative file again.";
+  }
+  if (document.mediaType.startsWith("image/")) {
+    return "Supermemory could not understand this image with the installed local extractor. Image understanding requires an optional Gemini or Vertex provider. Review the VM2 service log, then upload the authoritative file again.";
+  }
+  return "Supermemory could not process this source. Review the VM2 Supermemory service log and its local LLM compatibility, then upload the authoritative file again.";
 }
 
 export class PrismaDocumentManager implements DocumentManager {
@@ -297,18 +315,20 @@ export class PrismaDocumentManager implements DocumentManager {
   }
 
   private async synchronize(document: StoredDocument): Promise<StoredDocument> {
-    if (!["QUEUED", "CONVERTING"].includes(document.status)) return document;
+    const legacyFailure = document.status === "FAILED"
+      && document.failureCode === "SUPERMEMORY_PROCESSING_FAILED"
+      && (!document.failureMessage || document.failureMessage.includes("installed Supermemory extractor"));
+    if (!["QUEUED", "CONVERTING"].includes(document.status) && !legacyFailure) return document;
     const externalDocumentId = document.supermemoryProjection?.externalDocumentId;
     if (!externalDocumentId) return document;
     try {
       const state = await this.supermemory.documentState(externalDocumentId);
+      if (legacyFailure && !["failed", "done"].includes(state.status)) return document;
       const status = projectedStatus(state.status);
-      if (status === document.status) return document;
+      if (status === document.status && !legacyFailure) return document;
       const now = new Date();
       const failureCode = status === "FAILED" ? "SUPERMEMORY_PROCESSING_FAILED" : null;
-      const failureMessage = status === "FAILED"
-        ? "The installed Supermemory extractor could not process this source. Keep the authoritative file and review VM2 extractor compatibility."
-        : null;
+      const failureMessage = status === "FAILED" ? extractionFailureMessage(document, state) : null;
       await this.prisma.$transaction([
         this.prisma.document.update({
           where: { id: document.id },

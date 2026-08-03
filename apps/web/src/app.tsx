@@ -15,7 +15,7 @@ import type {
   AgentRuntimeControl,
   HermesRuntimeNode,
 } from "@orcasynapse/contracts";
-import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   OrcaSynapseApiError,
   changeLocalAdministratorPassword,
@@ -45,6 +45,7 @@ import {
 import { ConnectionDrawer, type ConnectionDraft } from "./connection-drawer.js";
 import { connectionReadiness } from "./connection-readiness.js";
 import { HomeView, type HomeLayer, type HomeReadinessCheck } from "./home-view.js";
+import { connectionFor, deriveWorkspaceReadiness } from "./platform-readiness.js";
 import {
   pathForView,
   primaryNavigationGroups,
@@ -164,15 +165,22 @@ function App() {
     const generation = sessionGeneration.current;
     const restoreSession = async () => {
       void getOidcStatus()
-        .then((status) => active && setOidcStatus(status))
-        .catch(() => active && setOidcStatus(null));
-      void getEnterpriseSession()
-        .then((session) => {
-          if (active && sessionGeneration.current === generation) setEnterpriseSession(session);
+        .then((status) => {
+          if (!active || sessionGeneration.current !== generation) return;
+          setOidcStatus(status);
+          if (!status.configured) {
+            setEnterpriseSession(null);
+            return;
+          }
+          void getEnterpriseSession()
+            .then((session) => {
+              if (active && sessionGeneration.current === generation) setEnterpriseSession(session);
+            })
+            .catch(() => {
+              if (active && sessionGeneration.current === generation) setEnterpriseSession(null);
+            });
         })
-        .catch(() => {
-          if (active && sessionGeneration.current === generation) setEnterpriseSession(null);
-        });
+        .catch(() => active && sessionGeneration.current === generation && setOidcStatus(null));
       try {
         const session = await getAdministratorSession();
         if (!active || sessionGeneration.current !== generation) return;
@@ -216,6 +224,21 @@ function App() {
   const documentsUnlocked = unlocked || enterpriseSession?.scopes.includes("documents:use") === true;
   const agentsUnlocked = unlocked || enterpriseSession?.scopes.includes("agents:use") === true;
 
+  const refreshWorkspaceState = useCallback(async () => {
+    const [connections, runtime, profiles, nodes, metrics] = await Promise.all([
+      getConnections(),
+      getAgentRuntime(),
+      getAgentProfiles(true),
+      getHermesRuntimeNodes(),
+      getChatMetrics().catch(() => null),
+    ]);
+    setManagedConnections(connections.items);
+    setAgentRuntime(runtime);
+    setAgentProfiles(profiles.items);
+    setRuntimeNodes(nodes.items);
+    if (metrics) setChatMetrics(metrics);
+  }, []);
+
   useEffect(() => {
     if (!unlocked) {
       setAgentRuntime(null);
@@ -224,39 +247,45 @@ function App() {
       return;
     }
     let active = true;
-    const refreshReadiness = async () => {
-      const [runtime, profiles, nodes] = await Promise.all([
-        getAgentRuntime(),
-        getAgentProfiles(true),
-        getHermesRuntimeNodes(),
-      ]);
-      if (!active) return;
-      setAgentRuntime(runtime);
-      setAgentProfiles(profiles.items);
-      setRuntimeNodes(nodes.items);
+    const refresh = async () => {
+      try {
+        const [connections, runtime, profiles, nodes, metrics] = await Promise.all([
+          getConnections(),
+          getAgentRuntime(),
+          getAgentProfiles(true),
+          getHermesRuntimeNodes(),
+          getChatMetrics().catch(() => null),
+        ]);
+        if (!active) return;
+        setManagedConnections(connections.items);
+        setAgentRuntime(runtime);
+        setAgentProfiles(profiles.items);
+        setRuntimeNodes(nodes.items);
+        if (metrics) setChatMetrics(metrics);
+      } catch {
+        // Individual workspaces surface actionable errors. This background
+        // reconciler must never sign the operator out because of a transient VM2 gap.
+      }
     };
-    void refreshReadiness().catch(() => undefined);
-    const timer = window.setInterval(() => void refreshReadiness().catch(() => undefined), 30_000);
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 15_000);
     return () => { active = false; window.clearInterval(timer); };
   }, [unlocked]);
 
-  const healthyConnections = managedConnections.filter(({ status }) => status === "HEALTHY").length;
-  const healthyConnection = (kind: ServiceKind) => managedConnections.some((connection) =>
-    connection.kind === kind && connection.enabled && connection.status === "HEALTHY");
-  const connectionFor = (kind: ServiceKind) => managedConnections.find((connection) => connection.kind === kind);
-  const inferenceConnection = connectionFor("INFERENCE");
-  const hermesConnection = connectionFor("HERMES");
-  const supermemoryConnection = connectionFor("SUPERMEMORY");
-  const oidcConnection = connectionFor("OIDC");
-  const onlineRuntimeNode = runtimeNodes.some(({ status }) => status === "ONLINE");
-  const activeAgentProfile = agentProfiles.some(({ status }) => status === "ACTIVE");
-  const hermesChatReady = healthyConnection("INFERENCE")
-    && healthyConnection("HERMES")
-    && onlineRuntimeNode
-    && agentRuntime?.enabled === true
-    && activeAgentProfile;
-  const knowledgeReady = healthyConnection("SUPERMEMORY");
-  const agenticReady = hermesChatReady && knowledgeReady;
+  const readiness = deriveWorkspaceReadiness({
+    connections: managedConnections,
+    runtimeNodes,
+    profiles: agentProfiles,
+    runtime: agentRuntime,
+  });
+  const healthyConnections = managedConnections.filter(({ enabled, status }) => enabled && status === "HEALTHY").length;
+  const inferenceConnection = connectionFor(managedConnections, "INFERENCE");
+  const hermesConnection = connectionFor(managedConnections, "HERMES");
+  const supermemoryConnection = connectionFor(managedConnections, "SUPERMEMORY");
+  const oidcConnection = connectionFor(managedConnections, "OIDC");
+  const hermesChatReady = readiness.chatReady;
+  const knowledgeReady = readiness.knowledgeReady;
+  const agenticReady = readiness.agenticReady;
   const agenticConfigured = Boolean(hermesConnection || supermemoryConnection);
   const agenticState = !unlocked
     ? { label: "Unlock to view", tone: "disabled" }
@@ -283,7 +312,7 @@ function App() {
       tone: "violet",
       state: agenticState,
       components: unlocked ? [
-        { name: "Hermes", label: hermesChatReady ? "Ready" : onlineRuntimeNode ? "Needs Profile or policy" : connectionState(hermesConnection).label, tone: hermesChatReady ? "ready" : onlineRuntimeNode ? "degraded" : connectionState(hermesConnection).tone },
+        { name: "Hermes", label: hermesChatReady ? "Ready" : readiness.runtimeNodeReady ? "Needs Profile or policy" : connectionState(hermesConnection).label, tone: hermesChatReady ? "ready" : readiness.runtimeNodeReady ? "degraded" : connectionState(hermesConnection).tone },
         { name: "Knowledge", ...connectionState(supermemoryConnection) },
       ] : [],
     },
@@ -306,20 +335,20 @@ function App() {
   const readinessChecks: HomeReadinessCheck[] = [
     {
       label: "AI Inference",
-      detail: healthyConnection("INFERENCE") ? "Approved model serving is reachable" : "Connect and verify model serving",
-      ready: healthyConnection("INFERENCE"),
+      detail: readiness.inferenceReady ? "Approved model serving is reachable" : "Connect and verify model serving",
+      ready: readiness.inferenceReady,
       action: "Deployment" as ActiveView,
     },
     {
       label: "Isolated agent runtime",
-      detail: onlineRuntimeNode && healthyConnection("HERMES") ? "VM2 is online and Hermes is reachable" : "Enroll VM2 and verify Hermes health",
-      ready: onlineRuntimeNode && healthyConnection("HERMES"),
+      detail: readiness.runtimeNodeReady && readiness.hermesReady ? "VM2 is online and Hermes is reachable" : "Enroll VM2 and verify Hermes health",
+      ready: readiness.runtimeNodeReady && readiness.hermesReady,
       action: "Deployment" as ActiveView,
     },
     {
       label: "Active Agent Profile",
-      detail: activeAgentProfile && agentRuntime?.enabled ? "Hermes execution policy and an active Profile are ready" : activeAgentProfile ? "Enable the global Hermes execution boundary" : "Validate and activate an Agent Profile",
-      ready: activeAgentProfile && agentRuntime?.enabled === true,
+      detail: readiness.executionReady ? "Hermes execution policy and an active Profile are ready" : readiness.profileReady ? "Enable the global Hermes execution boundary" : "Create and activate an Agent Profile",
+      ready: readiness.executionReady,
       action: "Agents" as ActiveView,
     },
     {
@@ -640,9 +669,17 @@ function App() {
             unlocked={chatUnlocked}
             identityMode={unlocked && adminSession ? "ADMINISTRATOR_PREVIEW" : enterpriseSession ? "ENTERPRISE" : null}
             displayName={unlocked && adminSession ? "System administrator" : enterpriseSession?.user.displayName ?? null}
+            administratorReadiness={unlocked ? {
+              ready: readiness.chatReady,
+              title: readiness.nextChatStep?.title ?? "Hermes is ready",
+              detail: readiness.nextChatStep?.detail ?? "The governed Hermes route is ready.",
+              target: readiness.nextChatStep?.target ?? "Agents",
+            } : null}
             oidcConfigured={oidcStatus?.configured === true}
             onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23chat")}
             onConfigure={() => openConnectionSettings("OIDC")}
+            onOpenAgents={() => selectView("Agents")}
+            onOpenPlatform={() => selectView("Deployment")}
             onUnauthorized={() => {
               sessionGeneration.current += 1;
               setAdminSession(null);
@@ -674,11 +711,16 @@ function App() {
           <AgentsView
             unlocked={agentsUnlocked}
             administrator={adminSession !== null}
+            activationReady={unlocked ? readiness.agenticInfrastructureReady && readiness.inferenceReady : null}
+            activationMessage={readiness.nextChatStep?.detail ?? null}
             oidcConfigured={oidcStatus?.configured === true}
             onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23agents%2Fprofiles")}
             onConfigure={() => openConnectionSettings("HERMES")}
-            onOpenChat={() => selectView("Chat")}
-            onOpenReadiness={() => selectView("Operations")}
+            onOpenChat={() => {
+              void refreshWorkspaceState().catch(() => undefined);
+              selectView("Chat");
+            }}
+            onOpenReadiness={() => selectView("Deployment", "nodes")}
             onUnauthorized={() => {
               sessionGeneration.current += 1;
               setAdminSession(null);
@@ -689,6 +731,7 @@ function App() {
           <DocumentsView
             unlocked={documentsUnlocked}
             administrator={adminSession !== null}
+            serviceReady={unlocked ? readiness.knowledgeReady : null}
             oidcConfigured={oidcStatus?.configured === true}
             onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23knowledge%2Fdocuments")}
             onConfigure={() => openConnectionSettings("SUPERMEMORY")}
@@ -721,11 +764,15 @@ function App() {
         ) : activeView === "Deployment" ? (
           <OnboardingView
             connections={managedConnections}
+            agentRuntime={agentRuntime}
+            profiles={agentProfiles}
+            runtimeNodes={runtimeNodes}
             unlocked={unlocked}
             oidcConfigured={oidcStatus?.administratorSignIn === true}
             initialTab={deploymentInitialTab}
              onConfigure={(kind) => openConnectionSettings(kind)}
              onOpenWorkspace={(workspace) => selectView(workspace)}
+             onRuntimeNodesChange={setRuntimeNodes}
              onOpenOperations={() => selectView("Operations")}
              onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23platform%2Fsetup")}
             onUnauthorized={() => {

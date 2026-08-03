@@ -76,12 +76,45 @@ describe("Hermes-backed chat", () => {
       principal,
       "814f06ec-7e6f-47f4-93e9-a0c7c0d3acfd",
       "123456",
-      new AbortController().signal,
       vi.fn(),
     )).rejects.toBeInstanceOf(ChatPolicyViolationError);
     expect(agents.submitRun).not.toHaveBeenCalled();
     expect(auditCreate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ action: "guardrail.request_blocked", metadata: expect.objectContaining({ reason: "INPUT_CHARACTER_LIMIT" }) }),
     }));
+  });
+
+  it("stops the linked durable Hermes run only through explicit cancellation", async () => {
+    const conversationId = "814f06ec-7e6f-47f4-93e9-a0c7c0d3acfd";
+    const runId = "dd729774-47cb-4bd1-83d2-2ff75c6f3ec1";
+    const prisma = {
+      chatMessage: {
+        findFirst: vi.fn(async () => ({ id: "78e3b103-3c63-41d8-a6c9-13b02369ee07", agentRunId: runId })),
+      },
+      auditEvent: { create: vi.fn(async () => ({})) },
+      chatConversation: { findFirst: vi.fn(async () => ({
+        id: conversationId,
+        title: "Pilot chat",
+        modelAlias: "hermes-model",
+        profileId: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d",
+        profileName: "Hermes Analyst",
+        status: "ACTIVE",
+        createdAt: new Date("2026-08-03T00:00:00.000Z"),
+        updatedAt: new Date("2026-08-03T00:00:00.000Z"),
+        lastMessageAt: null,
+        _count: { messages: 0 },
+        messages: [],
+      })) },
+    } as unknown as OrcaSynapsePrismaClient;
+    const agents = { cancelRun: vi.fn(async () => ({})) } as unknown as AgentManager;
+    const manager = new PrismaChatManager(prisma, agents);
+
+    await expect(manager.cancelActiveRun(principal, conversationId))
+      .resolves.toMatchObject({ id: conversationId, messages: [] });
+    expect(agents.cancelRun).toHaveBeenCalledWith(
+      expect.objectContaining({ subject: principal.subject }),
+      runId,
+      false,
+    );
   });
 });

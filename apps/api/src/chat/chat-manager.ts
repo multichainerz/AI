@@ -33,9 +33,12 @@ export interface ChatManager {
     principal: ChatPrincipal,
     conversationId: string,
     content: string,
-    signal: AbortSignal,
     emit: (event: ChatStreamEvent) => void,
   ): Promise<void>;
+  cancelActiveRun(
+    principal: ChatPrincipal,
+    conversationId: string,
+  ): Promise<ChatConversation>;
   setFeedback(
     principal: ChatPrincipal,
     messageId: string,

@@ -87,6 +87,7 @@ if supermemory_release_matches "1.2.4" "v1.2.3"; then
   exit 1
 fi
 assert_supermemory_release_usable "0.0.5"
+assert_supermemory_release_usable "0.0.7-rc.2"
 if (assert_supermemory_release_usable "v0.0.6" >/dev/null 2>&1); then
   printf 'known-broken Supermemory v0.0.6 was accepted\n' >&2
   exit 1
@@ -121,6 +122,15 @@ grep -Fq 'Local identity fingerprint:' "${REPOSITORY_ROOT}/scripts/install-agent
 grep -Fq 'VM1 accepted the signed VM2 trust handshake.' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 grep -Fq 'The retained VM2 state and dashboard record no longer share the same trust binding.' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 grep -Fq 'render_activity_progress()' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq 'download_with_progress()' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq 'resolved_image_reference()' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq 'the approved Hermes image has no immutable registry digest' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq 'releases/download/server-v${release}' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq 'the Supermemory release checksum did not match' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+if grep -Fq 'curl -fsSL https://supermemory.ai/install' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"; then
+  printf 'Agentic System installer still executes the mutable upstream Supermemory installer\n' >&2
+  exit 1
+fi
 grep -Fq 'render_activity_progress "Initialize Supermemory embeddings"' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 if grep -Fq '/dev/stdin' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"; then
   printf 'Agentic System installer still depends on non-portable /dev/stdin file copies\n' >&2

@@ -8,6 +8,7 @@ import type {
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   OrcaSynapseApiError,
+  cancelChatRun,
   createChatConversation,
   getChatConversation,
   getChatConversations,
@@ -21,9 +22,17 @@ interface ChatViewProps {
   unlocked: boolean;
   identityMode: "ENTERPRISE" | "ADMINISTRATOR_PREVIEW" | null;
   displayName: string | null;
+  administratorReadiness: {
+    ready: boolean;
+    title: string;
+    detail: string;
+    target: "Deployment" | "Agents";
+  } | null;
   oidcConfigured: boolean;
   onSignIn: () => void;
   onConfigure: () => void;
+  onOpenAgents: () => void;
+  onOpenPlatform: () => void;
   onUnauthorized: () => void;
 }
 
@@ -135,9 +144,12 @@ export function ChatView({
   unlocked,
   identityMode,
   displayName,
+  administratorReadiness,
   oidcConfigured,
   onSignIn,
   onConfigure,
+  onOpenAgents,
+  onOpenPlatform,
   onUnauthorized,
 }: ChatViewProps) {
   const [conversations, setConversations] = useState<ChatConversationSummary[]>([]);
@@ -290,6 +302,14 @@ export function ChatView({
     event.preventDefault();
     const content = draft.trim();
     if (!content || busy || !unlocked) return;
+    if (administratorReadiness?.ready === false) {
+      setError(administratorReadiness.detail);
+      return;
+    }
+    if (profiles.length === 0) {
+      setError("Create and activate an Agent Profile before starting Chat.");
+      return;
+    }
     setBusy(true);
     setError(null);
     setDraft("");
@@ -331,6 +351,26 @@ export function ChatView({
       setStreamStartedAt(null);
       setCurrentActivity(null);
       setBusy(false);
+    }
+  };
+
+  const requestStop = async () => {
+    if (!active || !busy || currentActivity === "Cancellation requested") return;
+    setError(null);
+    setCurrentActivity("Cancellation requested");
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      try {
+        await cancelChatRun(active.id);
+        return;
+      } catch (cause) {
+        if (cause instanceof OrcaSynapseApiError && cause.status === 409 && attempt < 5) {
+          await new Promise((resolve) => window.setTimeout(resolve, 200));
+          continue;
+        }
+        handleError(cause, "Unable to stop the Hermes run.");
+        setCurrentActivity("Hermes is working");
+        return;
+      }
     }
   };
 
@@ -395,6 +435,17 @@ export function ChatView({
     (total, message) => total + (message.totalTokens ?? 0),
     0,
   );
+  const profileAvailable = profiles.length > 0;
+  const routeReady = administratorReadiness?.ready !== false && profileAvailable;
+  const readinessTitle = !profileAvailable
+    ? "Create your first Agent Profile"
+    : administratorReadiness?.title ?? "Hermes is ready";
+  const readinessDetail = !profileAvailable
+    ? "A Profile defines Hermes behavior, model selection, memory access, and governed Skills."
+    : administratorReadiness?.detail ?? "The governed Hermes route is ready.";
+  const openReadiness = !profileAvailable || administratorReadiness?.target === "Agents"
+    ? onOpenAgents
+    : onOpenPlatform;
 
   return (
     <section className="chat-workspace">
@@ -440,7 +491,7 @@ export function ChatView({
             <span>{active ? `${active.profileName ?? "Legacy route"} · ${active.messages.length} messages` : "Start a governed Hermes conversation"}</span>
           </div>
           <div className="chat-runtime-summary" aria-label="Conversation runtime summary">
-            <span className={busy ? "generating" : "ready"}><i aria-hidden="true" />{busy ? `${currentActivity ?? "Hermes is working"} · ${(streamElapsedMs / 1_000).toFixed(1)} s` : "Hermes ready"}</span>
+            <span className={busy ? "generating" : routeReady ? "ready" : "degraded"}><i aria-hidden="true" />{busy ? `${currentActivity ?? "Hermes is working"} · ${(streamElapsedMs / 1_000).toFixed(1)} s` : routeReady ? "Hermes ready" : "Setup required"}</span>
             <span><small>Model</small><strong>{active?.modelAlias ?? "Active default"}</strong></span>
             <span><small>Session usage</small><strong>{conversationTotalTokens.toLocaleString()} tok</strong></span>
           </div>
@@ -454,9 +505,13 @@ export function ChatView({
               <p className="page-kicker">Hermes through OrcaSynapse</p>
               <h2>How can I help?</h2>
               <p>Every response is a governed Hermes Agent Run. Your selected profile controls behavior, skills, memory access, and tool policy.</p>
+              {!routeReady && <div className="chat-readiness-callout" role="status">
+                <div><strong>{readinessTitle}</strong><span>{readinessDetail}</span></div>
+                <button className="primary-button" type="button" onClick={openReadiness}>{!profileAvailable ? "Create Agent Profile" : "Review setup"}</button>
+              </div>}
               <label className="chat-profile-picker">
                 <span>Agent Profile</span>
-                <select value={selectedProfileId} onChange={(event) => setSelectedProfileId(event.target.value)}>
+                <select disabled={!profileAvailable} value={selectedProfileId} onChange={(event) => setSelectedProfileId(event.target.value)}>
                   {profiles.length === 0 && <option value="">No active profiles</option>}
                   {profiles.map((profile) => (
                     <option value={profile.id} key={profile.id}>{profile.activeVersionConfiguration?.displayName ?? profile.version.displayName}</option>
@@ -465,8 +520,8 @@ export function ChatView({
                 <small>{profiles.length === 0 ? "Activate a profile in Agents before chatting." : "This profile remains bound to the conversation."}</small>
               </label>
               <div className="chat-suggestions">
-                <button type="button" onClick={() => setDraft("Summarize the main considerations for an on-premise AI deployment.")}>Outline an on-premise AI deployment</button>
-                <button type="button" onClick={() => setDraft("Create a concise risk checklist for deploying an internal AI assistant.")}>Create an AI risk checklist</button>
+                <button type="button" disabled={!routeReady} onClick={() => setDraft("Summarize the main considerations for an on-premise AI deployment.")}>Outline an on-premise AI deployment</button>
+                <button type="button" disabled={!routeReady} onClick={() => setDraft("Create a concise risk checklist for deploying an internal AI assistant.")}>Create an AI risk checklist</button>
               </div>
             </div>
           ) : (
@@ -564,22 +619,22 @@ export function ChatView({
                     event.currentTarget.form?.requestSubmit();
                   }
                 }}
-                placeholder="Message your selected Hermes agent"
+                placeholder={routeReady ? "Message your selected Hermes agent" : "Finish the required setup to start Chat"}
                 rows={1}
                 maxLength={32_000}
-                disabled={busy}
+                disabled={busy || !routeReady}
                 aria-label="Chat message"
               />
               <div><span>Enter to send · Shift + Enter for a new line</span><span>{draft.length.toLocaleString()} / 32,000</span></div>
             </div>
             {busy ? (
-              <button className="stop-button" type="button" onClick={() => abortController.current?.abort()}>Stop</button>
+              <button className="stop-button" type="button" disabled={currentActivity === "Cancellation requested"} onClick={() => void requestStop()}>{currentActivity === "Cancellation requested" ? "Stopping…" : "Stop"}</button>
             ) : (
-              <button className="send-button" type="submit" disabled={!draft.trim()} aria-label="Send message">↑</button>
+              <button className="send-button" type="submit" disabled={!draft.trim() || !routeReady} aria-label="Send message">↑</button>
             )}
           </form>
           <div className="chat-composer-status">
-            <span className={busy ? "generating" : "ready"}><i aria-hidden="true" />{busy ? currentActivity ?? "Hermes is working" : "Hermes route ready"}</span>
+            <span className={busy ? "generating" : routeReady ? "ready" : "degraded"}><i aria-hidden="true" />{busy ? currentActivity ?? "Hermes is working" : routeReady ? "Hermes route ready" : readinessTitle}</span>
             <span>{identityMode === "ENTERPRISE" ? "Enterprise session" : "Administrator preview"}</span>
             <span>OrcaSynapse policy · Hermes execution · Supermemory knowledge</span>
           </div>

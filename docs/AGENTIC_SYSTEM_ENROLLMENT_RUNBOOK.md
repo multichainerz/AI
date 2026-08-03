@@ -16,7 +16,7 @@ The installer follows the current upstream integration model: Hermes runs its of
 - OrcaSynapse can reach the VM2 Hermes address on TCP 8642 and Supermemory address on TCP 6767;
 - the invitation uses a hostname/address that matches customer DNS and TLS policy.
 
-For production, enter a Hermes image digest and exact Supermemory release in the dashboard invitation. OrcaSynapse rejects mutable `latest` artifacts in Production. New invitations default to Supermemory v0.0.5 because v0.0.6 has a known workflow-packaging defect. Validate the Hermes `supermemory` Python package version as part of the bill of materials.
+For production, enter a Hermes image digest and exact Supermemory release in the dashboard invitation. OrcaSynapse rejects mutable `latest` artifacts in Production. In Development, the installer may accept a tag from the invitation but resolves the pull to its registry digest before starting, enrolling, or reporting the runtime. New invitations default to Supermemory v0.0.7-rc.2 because it contains the upstream large-document workflow fix; v0.0.6 remains blocked by a workflow-packaging defect. Promote a newer stable release only after validation, and record the Hermes `supermemory` Python package in the bill of materials.
 
 ## Dashboard workflow
 
@@ -94,8 +94,8 @@ Back up Hermes `/opt/data` for sessions, Skills, profiles, built-in memory, and 
 
 ### Current upstream Supermemory limitations
 
-- Supermemory v0.0.6 is blocked by the installer because its missing RivetKit module leaves ingestion queued and search empty. See [#1315](https://github.com/supermemoryai/supermemory/issues/1315) and [#1324](https://github.com/supermemoryai/supermemory/issues/1324). The current known-working workflow pin is v0.0.5.
-- The current local-server binary lineage ignores the documented embedding-model variables and loads its English-only `Xenova/bge-base-en-v1.5` default (768 dimensions). The installer warns instead of claiming BGE-M3 is active. See [#1336](https://github.com/supermemoryai/supermemory/issues/1336); do not approve non-English semantic recall for production until a fixed release is validated.
+- Supermemory v0.0.6 is blocked by the installer because its missing RivetKit module leaves ingestion queued and search empty. See [#1315](https://github.com/supermemoryai/supermemory/issues/1315) and [#1324](https://github.com/supermemoryai/supermemory/issues/1324). New nodes pin v0.0.7-rc.2, whose release notes identify the self-hosted large-document workflow fix; replace the release candidate with a stable pin after equivalent validation.
+- The installer requests multilingual `Xenova/bge-m3` at 1024 dimensions and reports the model observed in the first-boot log. If a release falls back to `Xenova/bge-base-en-v1.5`, the installer warns rather than claiming multilingual readiness; validate Indonesian recall before Production approval.
 
 Preferred host-loss procedure:
 
