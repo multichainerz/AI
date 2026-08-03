@@ -49,7 +49,13 @@ function runtime(status = "completed"): AgentHermesRuntime {
 
 const capabilities = { issue: vi.fn(() => ({ token: "r".repeat(43), tokenHash: new Uint8Array(32) })) };
 
-function database(record = runRecord(), enabled = true, toolEnabled = false, runtimeStatus = "ONLINE"): OrcaSynapsePrismaClient {
+function database(
+  record = runRecord(),
+  enabled = true,
+  toolEnabled = false,
+  runtimeStatus = "ONLINE",
+  memoryStatus = "HEALTHY",
+): OrcaSynapsePrismaClient {
   const state = { ...record };
   const agentRun = {
     findUnique: vi.fn(async () => ({ ...state })),
@@ -64,6 +70,7 @@ function database(record = runRecord(), enabled = true, toolEnabled = false, run
       lastSeenAt: new Date(),
       serviceConnection: { enabled: true, status: "HEALTHY" },
     }]) },
+    serviceConnection: { findMany: vi.fn(async () => [{ status: memoryStatus }]) },
     toolRuntimeControl: { findUnique: vi.fn(async () => ({ enabled: toolEnabled, reason: toolEnabled ? "Pilot" : "Disabled" })) },
     auditEvent: { create: vi.fn(async () => ({})) },
     chatMessage: { updateMany: vi.fn(async () => ({ count: 1 })) },
@@ -126,6 +133,31 @@ describe("PrismaAgentProcessor", () => {
     expect(hermes.assertZeroToolBoundary).not.toHaveBeenCalled();
     expect(hermes.start).not.toHaveBeenCalled();
     expect(knowledge.search).not.toHaveBeenCalled();
+  });
+
+  it("denies a run when Hermes reports online but its memory plane is unhealthy", async () => {
+    // A restarted Hermes container answers /health long before Supermemory is
+    // usable, so the node heartbeat alone reports a healthy runtime.
+    const prisma = database(runRecord(), true, false, "ONLINE", "UNHEALTHY");
+    const hermes = runtime();
+    const knowledge: AgentKnowledgeRetriever = { search: vi.fn() };
+    const processor = new PrismaAgentProcessor(prisma, hermes, knowledge, capabilities);
+
+    await expect(processor.process({ runId: RUN_ID }, "job-1", "worker-1")).resolves.toMatchObject({ status: "DENIED" });
+    expect(hermes.start).not.toHaveBeenCalled();
+    expect(knowledge.search).not.toHaveBeenCalled();
+  });
+
+  it("denies a run when no enabled Supermemory connection is registered", async () => {
+    const prisma = database();
+    (prisma as unknown as { serviceConnection: { findMany: unknown } }).serviceConnection = {
+      findMany: vi.fn(async () => []),
+    };
+    const hermes = runtime();
+    const processor = new PrismaAgentProcessor(prisma, hermes, { search: vi.fn() }, capabilities);
+
+    await expect(processor.process({ runId: RUN_ID }, "job-1", "worker-1")).resolves.toMatchObject({ status: "DENIED" });
+    expect(hermes.start).not.toHaveBeenCalled();
   });
 
   it("does not start queued work while the Hermes runtime is draining", async () => {

@@ -643,7 +643,7 @@ export class PrismaAgentProcessor {
   }
 
   private async boundaryState(run: LoadedRun): Promise<{ code: string; message: string } | null> {
-    const [control, runtimeNodes] = await Promise.all([
+    const [control, runtimeNodes, memoryConnections] = await Promise.all([
       this.prisma.agentRuntimeControl.findUnique({ where: { id: "global" } }),
       this.prisma.hermesRuntimeNode.findMany({
         where: { enrolledAt: { not: null }, status: { not: "REVOKED" } },
@@ -652,6 +652,14 @@ export class PrismaAgentProcessor {
           lastSeenAt: true,
           serviceConnection: { select: { enabled: true, status: true } },
         },
+        take: 2,
+      }),
+      // A runtime node links only to its Hermes connection, and the node
+      // heartbeat only proves the Hermes API port answers. Supermemory is a
+      // sibling connection that OrcaSynapse probes itself, so read it here.
+      this.prisma.serviceConnection.findMany({
+        where: { kind: "SUPERMEMORY", enabled: true },
+        select: { status: true },
         take: 2,
       }),
     ]);
@@ -671,6 +679,20 @@ export class PrismaAgentProcessor {
     }
     if (runtimeNode.serviceConnection?.enabled !== true || runtimeNode.serviceConnection.status !== "HEALTHY") {
       return { code: "HERMES_CONNECTION_UNHEALTHY", message: "The governed Hermes service connection is not healthy." };
+    }
+    // Supermemory is Hermes' durable memory plane. A Hermes container can
+    // restart and answer /health while Supermemory stays down, which is how a
+    // node reports ONLINE with an unusable memory plane. Refuse the run here
+    // rather than letting it fail mid-execution with an opaque Hermes error.
+    const memoryConnection = memoryConnections.length === 1 ? memoryConnections[0] : undefined;
+    if (!memoryConnection) {
+      return { code: "SUPERMEMORY_UNAVAILABLE", message: "Exactly one enabled Supermemory connection is required." };
+    }
+    if (memoryConnection.status !== "HEALTHY") {
+      return {
+        code: "SUPERMEMORY_UNHEALTHY",
+        message: `The Supermemory memory plane is ${memoryConnection.status.toLowerCase()} and cannot support this run.`,
+      };
     }
     if (run.profile.status !== "ACTIVE") return { code: "PROFILE_SUSPENDED", message: "The agent profile is no longer active." };
     if (run.profile.activeVersion !== run.profileVersion) return { code: "PROFILE_VERSION_REVOKED", message: "The run's agent version is no longer active." };

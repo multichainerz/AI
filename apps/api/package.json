@@ -1,6 +1,6 @@
 {
   "name": "@orcasynapse/api",
-  "version": "1.17.3",
+  "version": "1.17.4",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
