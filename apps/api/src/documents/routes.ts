@@ -3,7 +3,6 @@ import {
   documentListSchema,
   documentMetricsSchema,
   documentUploadMetadataSchema,
-  quarantineDecisionSchema,
   type AdminScope,
 } from "@orcasynapse/contracts";
 import multipart from "@fastify/multipart";
@@ -170,37 +169,6 @@ export async function registerDocumentRoutes(
     if (!id) return reply.code(400).send({ error: "INVALID_REQUEST", message: "Document ID is invalid." });
     try {
       return documentDetailSchema.parse(await manager.get(principal, id));
-    } catch (error) {
-      await sendDocumentError(reply, error);
-    }
-  });
-
-  app.post("/:documentId/quarantine-decision", async (request, reply) => {
-    const principal = await requireDocumentPrincipal(request, reply, options, { adminOnly: true, adminScope: "documents:review" });
-    if (!principal) return;
-    const manager = managerOrLocked(options, reply);
-    if (!manager) return;
-    const id = uuid((request.params as Record<string, unknown>).documentId);
-    const input = quarantineDecisionSchema.safeParse(request.body);
-    if (!id || !input.success) {
-      return reply.code(400).send({ error: "INVALID_REQUEST", message: id ? input.error?.issues[0]?.message : "Document ID is invalid." });
-    }
-    try {
-      return documentDetailSchema.parse(await manager.decideQuarantine(principal, id, input.data));
-    } catch (error) {
-      await sendDocumentError(reply, error);
-    }
-  });
-
-  app.post("/:documentId/reprocess", async (request, reply) => {
-    const principal = await requireDocumentPrincipal(request, reply, options, { adminScope: "documents:reprocess" });
-    if (!principal) return;
-    const manager = managerOrLocked(options, reply);
-    if (!manager) return;
-    const id = uuid((request.params as Record<string, unknown>).documentId);
-    if (!id) return reply.code(400).send({ error: "INVALID_REQUEST", message: "Document ID is invalid." });
-    try {
-      return documentDetailSchema.parse(await manager.reprocess(principal, id));
     } catch (error) {
       await sendDocumentError(reply, error);
     }

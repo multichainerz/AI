@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
+import { Readable } from "node:stream";
 import type { PrismaRuntimeConnectionResolver } from "./connection-resolver.js";
 import {
   knowledgeDocumentCustomId,
+  knowledgeScopeTag,
   agentMemoryContainerTag,
-  sharedKnowledgeScopeTag,
   SupermemoryClient,
 } from "./supermemory-client.js";
 
@@ -22,35 +23,38 @@ function resolver(configuration: Record<string, unknown> = {}): PrismaRuntimeCon
 }
 
 describe("SupermemoryClient", () => {
-  it("publishes a document into the shared governed knowledge container and waits for indexing", async () => {
+  it("streams an authenticated multipart source into the native file endpoint", async () => {
     const fetcher = vi.fn<typeof fetch>(async (input, init) => {
-      const url = input.toString();
-      expect(init?.redirect).toBe("error");
-      expect(init?.headers).toEqual(expect.objectContaining({ authorization: "Bearer write-only-key" }));
-      if (init?.method === "POST") {
-        const body = JSON.parse(String(init.body)) as Record<string, unknown>;
-        expect(body).toMatchObject({
-          containerTag: sharedKnowledgeScopeTag(),
-          customId: knowledgeDocumentCustomId(DOCUMENT_ID),
-          taskType: "superrag",
-        });
-        expect(JSON.stringify(body)).not.toContain("user:pilot");
-        return new Response(JSON.stringify({ id: "sm-document-1" }), { status: 202 });
-      }
-      expect(url).toBe("https://memory.orcasynapse.internal/v3/documents/sm-document-1");
-      return new Response(JSON.stringify({ status: "done" }), { status: 200 });
+      expect(String(input)).toBe("https://memory.orcasynapse.internal/v3/documents/file");
+      expect(init?.headers).toMatchObject({
+        authorization: "Bearer write-only-key",
+        accept: "application/json",
+      });
+      const stream = init?.body as ReadableStream<Uint8Array>;
+      const chunks: Buffer[] = [];
+      for await (const chunk of Readable.fromWeb(stream)) chunks.push(Buffer.from(chunk));
+      const multipart = Buffer.concat(chunks).toString("utf8");
+      expect(multipart).toContain(`name="customId"\r\n\r\n${knowledgeDocumentCustomId(DOCUMENT_ID)}`);
+      expect(multipart).toContain(`name="containerTag"\r\n\r\n${knowledgeScopeTag("user:pilot")}`);
+      expect(multipart).toContain('filename="policy.txt"');
+      expect(multipart).toContain("private policy");
+      return new Response(JSON.stringify({ id: "sm-document-1", status: "queued" }), { status: 200 });
     });
-    const client = new SupermemoryClient(resolver({ documentsPath: "/v3/documents" }), fetcher);
+    const client = new SupermemoryClient(resolver(), fetcher);
 
-    await expect(client.publish({
+    await expect(client.uploadFile({
       documentId: DOCUMENT_ID,
       ownerSubject: "user:pilot",
-      content: "Approved normalized content",
-      fileName: "policy.pdf",
+      stream: Readable.from("private policy"),
+      fileName: "policy.txt",
+      mediaType: "text/plain",
       classification: "CONFIDENTIAL",
-      generation: 2,
-    })).resolves.toBe("sm-document-1");
-    expect(fetcher).toHaveBeenCalledTimes(2);
+      maximumBytes: 1_024,
+    })).resolves.toMatchObject({
+      externalDocumentId: "sm-document-1",
+      status: "queued",
+      sizeBytes: 14,
+    });
   });
 
   it("parses bounded chunk search results and preserves scalar metadata", async () => {
@@ -58,7 +62,7 @@ describe("SupermemoryClient", () => {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
       expect(body).toMatchObject({
         q: "vehicle policy",
-        containerTag: sharedKnowledgeScopeTag(),
+        containerTag: knowledgeScopeTag("user:pilot"),
         limit: 4,
       });
       return new Response(JSON.stringify({ results: [{

@@ -4,7 +4,6 @@ import {
   inferenceDiscoveryResultSchema,
   administratorSessionSchema,
   configurationRevisionListSchema,
-  memoryReindexResultSchema,
   runtimeOperationsSnapshotSchema,
   platformMetaSchema,
   serviceConnectionListSchema,
@@ -26,7 +25,6 @@ import {
   type InferenceDiscoveryResult,
   type UpdateConnectionMonitoringControl,
   type ConfigurationRevisionList,
-  type MemoryReindexResult,
   type RuntimeOperationsSnapshot,
   type PlatformMeta,
   type ServiceConnectionList,
@@ -51,11 +49,6 @@ import {
   type DocumentDetail,
   type DocumentMetrics,
   type DocumentClassification,
-  type QuarantineDecision,
-  memoryPublicationListSchema,
-  memoryMetricsSchema,
-  type MemoryPublicationList,
-  type MemoryMetrics,
   agentProfileListSchema,
   agentProfileSchema,
   agentRunListSchema,
@@ -536,30 +529,6 @@ export async function uploadDocument(
   return documentDetailSchema.parse(await parsedResponse(response));
 }
 
-export async function decideDocumentQuarantine(
-  id: string,
-  decision: QuarantineDecision,
-): Promise<DocumentDetail> {
-  const response = await fetch(
-    `/api/v1/documents/${encodeURIComponent(id)}/quarantine-decision`,
-    {
-      method: "POST",
-      headers: adminHeaders(),
-      credentials: "same-origin",
-      body: JSON.stringify(decision),
-    },
-  );
-  return documentDetailSchema.parse(await parsedResponse(response));
-}
-
-export async function reprocessDocument(id: string): Promise<DocumentDetail> {
-  const response = await fetch(`/api/v1/documents/${encodeURIComponent(id)}/reprocess`, {
-    method: "POST",
-    credentials: "same-origin",
-  });
-  return documentDetailSchema.parse(await parsedResponse(response));
-}
-
 export async function deleteDocument(
   id: string,
   force = false,
@@ -579,24 +548,6 @@ export async function deleteDocument(
 export async function getDocumentMetrics(): Promise<DocumentMetrics> {
   const response = await fetch("/api/v1/documents/metrics", { credentials: "same-origin" });
   return documentMetricsSchema.parse(await parsedResponse(response));
-}
-
-export async function getMemoryPublications(): Promise<MemoryPublicationList> {
-  const response = await fetch("/api/v1/admin/memory/publications", { credentials: "same-origin" });
-  return memoryPublicationListSchema.parse(await parsedResponse(response));
-}
-
-export async function getMemoryMetrics(): Promise<MemoryMetrics> {
-  const response = await fetch("/api/v1/admin/memory/metrics", { credentials: "same-origin" });
-  return memoryMetricsSchema.parse(await parsedResponse(response));
-}
-
-export async function reindexMemoryDocument(documentId: string): Promise<MemoryReindexResult> {
-  const response = await fetch(
-    `/api/v1/admin/memory/documents/${encodeURIComponent(documentId)}/reindex`,
-    { method: "POST", credentials: "same-origin" },
-  );
-  return memoryReindexResultSchema.parse(await parsedResponse(response));
 }
 
 export async function getAgentProfiles(administrator: boolean): Promise<AgentProfileList> {

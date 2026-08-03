@@ -8,12 +8,10 @@ import type {
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   OrcaSynapseApiError,
-  decideDocumentQuarantine,
   deleteDocument,
   getDocument,
   getDocumentMetrics,
   getDocuments,
-  reprocessDocument,
   uploadDocument,
 } from "./api.js";
 
@@ -26,9 +24,7 @@ interface DocumentsViewProps {
   onUnauthorized: () => void;
 }
 
-const processingStatuses = new Set<DocumentStatus>([
-  "QUEUED", "CONVERTING",
-]);
+const processingStatuses = new Set<DocumentStatus>(["QUEUED", "CONVERTING"]);
 
 function formatBytes(value: number): string {
   if (value < 1_024) return `${value} B`;
@@ -37,13 +33,13 @@ function formatBytes(value: number): string {
 }
 
 function formatStatus(status: DocumentStatus): string {
-  return status.replaceAll("_", " ").toLowerCase();
+  if (status === "QUEUED" || status === "CONVERTING") return "Indexing";
+  return status.replaceAll("_", " ").toLowerCase().replace(/^./, (letter) => letter.toUpperCase());
 }
 
 function statusTone(status: DocumentStatus): string {
   if (status === "READY") return "ready";
   if (status === "FAILED" || status === "REJECTED") return "failed";
-  if (status === "QUARANTINED") return "quarantined";
   if (processingStatuses.has(status)) return "processing";
   return "neutral";
 }
@@ -58,7 +54,7 @@ export function DocumentsView(props: DocumentsViewProps) {
   const [file, setFile] = useState<File | null>(null);
   const [classification, setClassification] = useState<DocumentClassification>("INTERNAL");
   const [retentionDays, setRetentionDays] = useState(365);
-  const [reviewReason, setReviewReason] = useState("");
+  const [deletionReason, setDeletionReason] = useState("");
   const [uploadOpen, setUploadOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -78,9 +74,7 @@ export function DocumentsView(props: DocumentsViewProps) {
     setDocuments(items);
     setMetrics(nextMetrics);
     const requestedId = preserveId === undefined ? activeId.current : preserveId;
-    const target = requestedId
-      ? items.find(({ id }) => id === requestedId) ?? items[0]
-      : items[0];
+    const target = requestedId ? items.find(({ id }) => id === requestedId) ?? items[0] : items[0];
     const detail = target ? await getDocument(target.id) : null;
     activeId.current = detail?.id ?? null;
     setActive(detail);
@@ -98,7 +92,7 @@ export function DocumentsView(props: DocumentsViewProps) {
     let current = true;
     setBusy(true);
     void refresh(null)
-      .catch((cause) => current && handleError(cause, "Unable to load documents."))
+      .catch((cause) => current && handleError(cause, "Unable to load knowledge."))
       .finally(() => current && setBusy(false));
     const timer = window.setInterval(() => {
       if (current && documentsRef.current.some(({ status }) => processingStatuses.has(status))) {
@@ -116,8 +110,7 @@ export function DocumentsView(props: DocumentsViewProps) {
       const detail = await getDocument(id);
       activeId.current = detail.id;
       setActive(detail);
-    }
-    catch (cause) { handleError(cause, "Unable to open the document."); }
+    } catch (cause) { handleError(cause, "Unable to open the knowledge record."); }
     finally { setBusy(false); }
   };
 
@@ -132,32 +125,7 @@ export function DocumentsView(props: DocumentsViewProps) {
       setFile(null);
       if (fileInput.current) fileInput.current.value = "";
       setUploadOpen(false);
-    } catch (cause) {
-      handleError(cause, "Unable to upload the document.");
-    } finally { setBusy(false); }
-  };
-
-  const review = async (decision: "APPROVE" | "REJECT") => {
-    if (!active || reviewReason.trim().length < 3 || busy) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const updated = await decideDocumentQuarantine(active.id, {
-        decision,
-        reason: reviewReason.trim(),
-      });
-      setReviewReason("");
-      await refresh(updated.id);
-    } catch (cause) { handleError(cause, "Unable to review the document."); }
-    finally { setBusy(false); }
-  };
-
-  const reprocess = async () => {
-    if (!active || busy) return;
-    setBusy(true);
-    setError(null);
-    try { await reprocessDocument(active.id); await refresh(active.id); }
-    catch (cause) { handleError(cause, "Unable to reprocess the document."); }
+    } catch (cause) { handleError(cause, "Unable to send the source to Supermemory."); }
     finally { setBusy(false); }
   };
 
@@ -165,120 +133,109 @@ export function DocumentsView(props: DocumentsViewProps) {
     if (!active || busy) return;
     const beforeRetention = new Date(active.retentionUntil) > new Date();
     if (beforeRetention && !props.administrator) {
-      setError("This document is still inside its retention period.");
+      setError("This knowledge record is still inside its retention period.");
       return;
     }
-    if (beforeRetention && reviewReason.trim().length < 3) {
-      setError("Enter a deletion reason before forcing retention override.");
+    if (beforeRetention && deletionReason.trim().length < 3) {
+      setError("Enter a deletion reason before overriding retention.");
       return;
     }
     setBusy(true);
     setError(null);
     try {
-      await deleteDocument(active.id, beforeRetention, beforeRetention ? reviewReason.trim() : undefined);
-      setReviewReason("");
+      await deleteDocument(active.id, beforeRetention, beforeRetention ? deletionReason.trim() : undefined);
+      setDeletionReason("");
       await refresh(null);
-    } catch (cause) { handleError(cause, "Unable to delete the document."); }
+    } catch (cause) { handleError(cause, "Unable to delete the knowledge record."); }
     finally { setBusy(false); }
   };
 
   if (!props.unlocked) {
-    return (
-      <section className="documents-locked panel">
-        <div className="document-lock-mark" aria-hidden="true">DOC</div>
-        <div>
-          <p className="page-kicker">Governed document pipeline</p>
-          <h1>{props.oidcConfigured ? "Sign in to manage documents" : "Enterprise access is not configured"}</h1>
-          <p>UTF-8 TXT uploads remain quarantined until review, then use encrypted transient staging for normalization before durable publication to Supermemory.</p>
-        </div>
-        <div className="document-lock-actions">
-          {props.oidcConfigured && <button className="primary-button" type="button" onClick={props.onSignIn}>Sign in with OrcaSynapse</button>}
-          <button className="text-button" type="button" onClick={props.onConfigure}>Administrator setup</button>
-        </div>
-      </section>
-    );
+    return <section className="documents-locked panel">
+      <div className="document-lock-mark" aria-hidden="true">KN</div>
+      <div>
+        <p className="page-kicker">Enterprise knowledge</p>
+        <h1>{props.oidcConfigured ? "Sign in to use Knowledge" : "Enterprise access is not configured"}</h1>
+        <p>OrcaSynapse authorizes each source and streams it to Supermemory. Source bytes are not retained by the control plane.</p>
+      </div>
+      <div className="document-lock-actions">
+        {props.oidcConfigured && <button className="primary-button" type="button" onClick={props.onSignIn}>Sign in with OrcaSynapse</button>}
+        <button className="text-button" type="button" onClick={props.onConfigure}>Manage Agentic System</button>
+      </div>
+    </section>;
   }
 
-  return (
-    <section className="documents-workspace">
-      <header className="documents-header">
-        <div><p className="page-kicker">Content operations</p><h1>Documents</h1><p>Quarantine, normalize, and publish UTF-8 text knowledge without retaining source files in OrcaSynapse.</p></div>
-        <button className="primary-button" type="button" onClick={() => setUploadOpen((value) => !value)}>{uploadOpen ? "Close upload" : "Upload document"}</button>
-      </header>
-
-      {error && <div className="documents-alert" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
-
-      {uploadOpen && (
-        <form className="document-upload panel" onSubmit={submitUpload}>
-          <label className="document-file-field">
-            <span>{file ? file.name : "Choose an approved document"}</span>
-            <small>UTF-8 TXT · up to 50 MB</small>
-            <input ref={fileInput} type="file" required accept=".txt,text/plain" onChange={(event) => setFile(event.target.files?.[0] ?? null)}/>
-          </label>
-          <p className="document-upload-note">OrcaSynapse encrypts this file in transient staging and purges it after Supermemory confirms publication. Keep the authoritative original in enterprise storage.</p>
-          <label>Classification<select value={classification} onChange={(event) => setClassification(event.target.value as DocumentClassification)}><option value="INTERNAL">Internal</option><option value="CONFIDENTIAL">Confidential</option><option value="RESTRICTED">Restricted</option></select></label>
-          <label>Retention days<input type="number" min={1} max={3650} value={retentionDays} onChange={(event) => setRetentionDays(Number(event.target.value))}/></label>
-          <button className="primary-button" type="submit" disabled={!file || !validRetention || busy}>{busy ? "Uploading…" : "Upload to quarantine"}</button>
-        </form>
-      )}
-
-      <div className="document-metrics" aria-label="Document operations summary">
-        <article><span>Total documents</span><strong>{metrics?.total ?? documents.length}</strong></article>
-        <article><span>Quarantined</span><strong>{metrics?.quarantined ?? documents.filter(({ status }) => status === "QUARANTINED").length}</strong></article>
-        <article><span>Processing</span><strong>{metrics?.processing ?? documents.filter(({ status }) => processingStatuses.has(status)).length}</strong></article>
-        <article><span>Ready</span><strong>{metrics?.ready ?? documents.filter(({ status }) => status === "READY").length}</strong></article>
+  return <section className="documents-workspace knowledge-workspace">
+    <header className="documents-header">
+      <div>
+        <p className="page-kicker">Enterprise knowledge</p>
+        <h1>Knowledge</h1>
+        <p>Authorize sources into Supermemory while authoritative files remain in enterprise storage.</p>
       </div>
+      <button className="primary-button" type="button" onClick={() => setUploadOpen((value) => !value)}>{uploadOpen ? "Close" : "Add source"}</button>
+    </header>
 
-      <div className="documents-layout">
-        <section className="document-list panel" aria-label="Document list">
-          <div className="document-section-heading"><div><p className="section-kicker">Ingestion ledger</p><h2>Document records</h2></div><button type="button" onClick={() => void refresh()} disabled={busy}>Refresh</button></div>
-          {documents.length === 0 && !busy && <div className="document-empty"><strong>No documents yet</strong><span>Upload a file to begin the governed pipeline.</span></div>}
-          {documents.map((document) => (
-            <button key={document.id} type="button" className={active?.id === document.id ? "selected" : ""} onClick={() => void select(document.id)}>
-              <span className="document-type">{extLabel(document.fileName)}</span>
-              <span className="document-list-copy"><strong>{document.fileName}</strong><small>{formatBytes(document.sizeBytes)} · {document.classification.toLowerCase()}</small></span>
-              <span className={`document-status ${statusTone(document.status)}`}>{formatStatus(document.status)}</span>
-            </button>
-          ))}
-        </section>
+    {error && <div className="documents-alert" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
 
-        <section className="document-detail panel">
-          {!active ? (
-            <div className="document-empty"><strong>Select a document</strong><span>Lifecycle, provenance, and transient staging state will appear here.</span></div>
-          ) : (
-            <>
-              <div className="document-detail-title"><div><p className="section-kicker">Document record</p><h2>{active.fileName}</h2></div><span className={`document-status ${statusTone(active.status)}`}>{formatStatus(active.status)}</span></div>
-              <dl className="document-facts"><div><dt>Classification</dt><dd>{active.classification.toLowerCase()}</dd></div><div><dt>Pages</dt><dd>{active.pageCount ?? "—"}</dd></div><div><dt>Size</dt><dd>{formatBytes(active.sizeBytes)}</dd></div><div><dt>Retain until</dt><dd>{new Date(active.retentionUntil).toLocaleDateString()}</dd></div></dl>
-
-              {processingStatuses.has(active.status) && <div className="document-progress"><span/><div><strong>Processing generation {active.processingGeneration}</strong><small>Text normalization is reconciled from durable PostgreSQL document state.</small></div></div>}
-              {(active.status === "FAILED" || active.status === "REJECTED") && <div className="document-failure"><strong>{active.failureCode ?? "PROCESSING_FAILED"}</strong><span>{active.failureMessage ?? "Document processing did not complete."}</span></div>}
-
-              <div className="document-staging">
-                <strong>{active.stagingPurgedAt ? "Transient staging purged" : "Transient staging active"}</strong>
-                <span>{active.stagingPurgedAt
-                  ? "The source and extraction intermediates are no longer stored by OrcaSynapse. Durable normalized knowledge remains in Supermemory."
-                  : active.stagingExpiresAt
-                    ? `Encrypted processing data is available until ${new Date(active.stagingExpiresAt).toLocaleString()} or successful Supermemory publication, whichever comes first.`
-                    : "OrcaSynapse does not retain a document source for this record."}</span>
-              </div>
-
-              {(props.administrator || ["QUARANTINED", "READY", "FAILED", "REJECTED"].includes(active.status)) && (
-                <div className="document-actions">
-                  {props.administrator && (active.status === "QUARANTINED" || (["READY", "FAILED", "REJECTED"].includes(active.status) && new Date(active.retentionUntil) > new Date())) && <label>Review or override reason<textarea value={reviewReason} onChange={(event) => setReviewReason(event.target.value)} maxLength={1000} rows={2} placeholder="Record the operational reason"/></label>}
-                  {props.administrator && active.status === "QUARANTINED" && <div><button className="primary-button" type="button" disabled={busy || reviewReason.trim().length < 3} onClick={() => void review("APPROVE")}>Approve processing</button><button className="danger-button" type="button" disabled={busy || reviewReason.trim().length < 3} onClick={() => void review("REJECT")}>Reject</button></div>}
-                  {active.reprocessAvailable && <button type="button" disabled={busy} onClick={() => void reprocess()}>Retry processing</button>}
-                  {["QUARANTINED", "READY", "FAILED", "REJECTED"].includes(active.status) && <button className="danger-button" type="button" disabled={busy} onClick={() => void remove()}>Delete document</button>}
-                </div>
-              )}
-            </>
-          )}
-        </section>
+    {uploadOpen && <form className="document-upload panel knowledge-upload" onSubmit={submitUpload}>
+      <div className="knowledge-upload-intro">
+        <p className="section-kicker">Direct Supermemory ingestion</p>
+        <h2>Add a knowledge source</h2>
+        <p>The browser sends the file to OrcaSynapse for identity and policy checks. OrcaSynapse relays the stream to VM2 and keeps metadata only.</p>
       </div>
-    </section>
-  );
+      <label className="document-file-field">
+        <span>{file ? file.name : "Choose a source file"}</span>
+        <small>TXT, Markdown, HTML, PDF, DOCX, PNG, JPEG, or WebP · up to 50 MB</small>
+        <input ref={fileInput} type="file" required accept=".txt,.md,.html,.pdf,.docx,.png,.jpg,.jpeg,.webp,text/plain,text/markdown,text/html,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/png,image/jpeg,image/webp" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
+      </label>
+      <div className="knowledge-capability-note">
+        <strong>Local extraction compatibility</strong>
+        <span>Plain text is validated on the installed Supermemory Local baseline. Rich files are relayed natively, but PDF, Office, and image extraction can fail when the installed self-hosted extractor requires an unavailable cloud service.</span>
+      </div>
+      <label>Classification<select value={classification} onChange={(event) => setClassification(event.target.value as DocumentClassification)}><option value="INTERNAL">Internal</option><option value="CONFIDENTIAL">Confidential</option><option value="RESTRICTED">Restricted</option></select></label>
+      <label>Metadata retention<input type="number" min={1} max={3650} value={retentionDays} onChange={(event) => setRetentionDays(Number(event.target.value))} /></label>
+      <button className="primary-button" type="submit" disabled={!file || !validRetention || busy}>{busy ? "Sending…" : "Send to Supermemory"}</button>
+    </form>}
+
+    <div className="document-metrics" aria-label="Knowledge summary">
+      <article><span>Sources</span><strong>{metrics?.total ?? documents.length}</strong></article>
+      <article><span>Indexing</span><strong>{metrics?.processing ?? documents.filter(({ status }) => processingStatuses.has(status)).length}</strong></article>
+      <article><span>Ready</span><strong>{metrics?.ready ?? documents.filter(({ status }) => status === "READY").length}</strong></article>
+      <article><span>Source bytes retained</span><strong>0 B</strong></article>
+    </div>
+
+    <div className="documents-layout">
+      <section className="document-list panel" aria-label="Knowledge source list">
+        <div className="document-section-heading"><div><p className="section-kicker">Knowledge index</p><h2>Sources</h2></div><button type="button" onClick={() => void refresh()} disabled={busy}>Refresh</button></div>
+        {documents.length === 0 && !busy && <div className="document-empty"><strong>No knowledge sources</strong><span>Add a file or keep using Chat without private knowledge.</span></div>}
+        {documents.map((document) => <button key={document.id} type="button" className={active?.id === document.id ? "selected" : ""} onClick={() => void select(document.id)}>
+          <span className="document-type">{extLabel(document.fileName)}</span>
+          <span className="document-list-copy"><strong>{document.fileName}</strong><small>{formatBytes(document.sizeBytes)} · {document.classification.toLowerCase()}</small></span>
+          <span className={`document-status ${statusTone(document.status)}`}>{formatStatus(document.status)}</span>
+        </button>)}
+      </section>
+
+      <section className="document-detail panel">
+        {!active ? <div className="document-empty"><strong>Select a source</strong><span>Index status, provenance, and retention will appear here.</span></div> : <>
+          <div className="document-detail-title"><div><p className="section-kicker">Knowledge record</p><h2>{active.fileName}</h2></div><span className={`document-status ${statusTone(active.status)}`}>{formatStatus(active.status)}</span></div>
+          <dl className="document-facts"><div><dt>Classification</dt><dd>{active.classification.toLowerCase()}</dd></div><div><dt>Type</dt><dd>{extLabel(active.fileName)}</dd></div><div><dt>Size</dt><dd>{formatBytes(active.sizeBytes)}</dd></div><div><dt>Metadata until</dt><dd>{new Date(active.retentionUntil).toLocaleDateString()}</dd></div></dl>
+
+          {processingStatuses.has(active.status) && <div className="document-progress"><span /><div><strong>Supermemory is indexing this source</strong><small>Status is projected from VM2; OrcaSynapse is not holding a retry copy.</small></div></div>}
+          {(active.status === "FAILED" || active.status === "REJECTED") && <div className="document-failure"><strong>{active.failureCode ?? "SUPERMEMORY_PROCESSING_FAILED"}</strong><span>{active.failureMessage ?? "The installed Supermemory extractor could not process this source. Re-upload after correcting VM2 extraction compatibility."}</span></div>}
+
+          <div className="document-staging ready"><strong>No source bytes retained by OrcaSynapse</strong><span>PostgreSQL contains ownership, classification, checksum, projected status, retention, and audit metadata only.</span></div>
+
+          {["READY", "FAILED", "REJECTED"].includes(active.status) && <div className="document-actions">
+            {props.administrator && new Date(active.retentionUntil) > new Date() && <label>Retention override reason<textarea value={deletionReason} onChange={(event) => setDeletionReason(event.target.value)} maxLength={1000} rows={2} placeholder="Record why this source must be deleted early" /></label>}
+            <button className="danger-button" type="button" disabled={busy} onClick={() => void remove()}>Delete from Supermemory</button>
+          </div>}
+        </>}
+      </section>
+    </div>
+  </section>;
 }
 
 function extLabel(fileName: string): string {
   const extension = fileName.split(".").pop();
-  return extension && extension !== fileName ? extension.slice(0, 4).toUpperCase() : "DOC";
+  return extension && extension !== fileName ? extension.slice(0, 5).toUpperCase() : "FILE";
 }

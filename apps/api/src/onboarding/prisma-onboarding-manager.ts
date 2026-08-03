@@ -52,7 +52,7 @@ const STEPS = [
   ["system-topology", 2, "System and topology", "Validate the host and select Compact, Control-plane only, or Segmented production.", "Save topology, then validate this host"],
   ["identity-recovery", 3, "Identity and recovery", "Configure final trust, enterprise identity, recovery ownership, and a verified encrypted recovery kit.", "Export and verify recovery; configure OIDC for Production"],
   ["ai-services", 4, "AI services and Hermes node", "Connect an inference server, then enroll and validate the isolated Hermes + Supermemory runtime.", "Test the inference server, then enroll the Hermes VM"],
-  ["knowledge-workflow", 5, "Knowledge workflow", "Validate transient extraction, publication, authorized retrieval/deletion, and scratch purge.", "Process and publish a representative document"],
+  ["knowledge-workflow", 5, "Knowledge workflow", "Validate direct Supermemory ingestion, indexing, authorized retrieval, and deletion.", "Publish and retrieve a representative knowledge source"],
   ["hermes-profiles", 6, "Hermes and Profiles", "Validate the Hermes boundary and move an immutable Profile Distribution into standby.", "Create, evaluate, and validate a standby Profile"],
   ["guardrails-tools", 7, "Guardrails and tools", "Prove conservative policy, zero-tool operation, approvals, and bounded governed tools.", "Activate a guardrail baseline and validate tool posture"],
   ["validate-activate", 8, "Validate and activate", "Run the target-environment gate and record Development, Pilot, or Production activation.", "Run all validation and resolve remaining blockers"],
@@ -550,11 +550,11 @@ export class PrismaOnboardingManager implements OnboardingManager {
     }
     if (stageKey === "knowledge-workflow") {
       const document = await this.prisma.document.findFirst({
-        where: { status: "READY", stagingPurgedAt: { not: null }, memoryPublication: { is: { status: "READY" } } },
+        where: { status: "READY", supermemoryProjection: { is: { status: "READY", externalDocumentId: { not: null } } } },
         orderBy: { completedAt: "desc" },
-        select: { id: true, stagingPurgedAt: true, memoryPublication: { select: { syncedAt: true } } },
+        select: { id: true, supermemoryProjection: { select: { syncedAt: true, externalDocumentId: true } } },
       });
-      return [{ stageKey, componentKey: "document-conversion", outcome: contractOutcome(Boolean(document)), code: "knowledge-roundtrip", summary: document ? "A ready document was published to Supermemory and its transient staging was purged; Production still requires malformed-input and recovery evidence." : "Process one representative document through the optional extraction fallback, Supermemory publication, and staging purge.", details: document ? { documentId: document.id } : {} }];
+      return [{ stageKey, componentKey: "supermemory-knowledge", outcome: contractOutcome(Boolean(document)), code: "knowledge-roundtrip", summary: document ? "A knowledge source was indexed by Supermemory through OrcaSynapse's authenticated streaming relay; Production still requires malformed-input and deletion evidence." : "Publish one representative knowledge source and confirm Supermemory completes indexing.", details: document ? { documentId: document.id, externalDocumentId: document.supermemoryProjection?.externalDocumentId ?? null } : {} }];
     }
     if (stageKey === "hermes-profiles") {
       const profile = await this.prisma.agentProfile.findFirst({

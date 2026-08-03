@@ -1,3 +1,5 @@
+import { createHash, randomBytes } from "node:crypto";
+import { Readable } from "node:stream";
 import type { PrismaRuntimeConnectionResolver, RuntimeConnection } from "./connection-resolver.js";
 
 const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
@@ -64,8 +66,9 @@ async function boundedJson(response: Response): Promise<unknown> {
 
 export const SHARED_KNOWLEDGE_CONTAINER_TAG = "orcasynapse-knowledge";
 
-export function sharedKnowledgeScopeTag(): string {
-  return SHARED_KNOWLEDGE_CONTAINER_TAG;
+export function knowledgeScopeTag(ownerSubject: string): string {
+  const digest = createHash("sha256").update(ownerSubject).digest("hex").slice(0, 24);
+  return `${SHARED_KNOWLEDGE_CONTAINER_TAG}-${digest}`;
 }
 
 export function agentMemoryContainerTag(identity: string): string {
@@ -78,13 +81,34 @@ export function knowledgeDocumentCustomId(documentId: string): string {
   return `orcasynapse_doc_${documentId.replaceAll("-", "")}`;
 }
 
-export interface SupermemoryPublicationInput {
+export interface SupermemoryFileUploadInput {
   documentId: string;
   ownerSubject: string;
-  content: string;
+  stream: Readable;
   fileName: string;
+  mediaType: string;
   classification: string;
-  generation: number;
+  maximumBytes: number;
+}
+
+export interface SupermemoryFileUploadResult {
+  externalDocumentId: string;
+  status: string;
+  sizeBytes: number;
+  sha256: string;
+}
+
+export interface SupermemoryDocumentState {
+  status: string;
+  type: string | null;
+  customId: string | null;
+}
+
+export class SupermemoryUploadTooLargeError extends Error {
+  constructor() {
+    super("The document exceeds the configured upload limit.");
+    this.name = "SupermemoryUploadTooLargeError";
+  }
 }
 
 export interface SupermemorySearchHit {
@@ -101,39 +125,70 @@ export class SupermemoryClient {
     private readonly fetcher: typeof fetch = fetch,
   ) {}
 
-  async publish(input: SupermemoryPublicationInput): Promise<string> {
+  async uploadFile(input: SupermemoryFileUploadInput): Promise<SupermemoryFileUploadResult> {
     const connection = await this.resolver.resolveOne("SUPERMEMORY");
-    const documentsPath = stringSetting(connection, "documentsPath", "/v3/documents");
-    const response = await this.request(connection, endpoint(connection, documentsPath), {
+    const documentsPath = stringSetting(connection, "documentsPath", "/v3/documents").replace(/\/+$/, "");
+    const boundary = `orcasynapse-${randomBytes(18).toString("hex")}`;
+    const safeFileName = input.fileName.replace(/[\r\n"\\]/g, "_");
+    const fields = [
+      ["containerTag", knowledgeScopeTag(input.ownerSubject)],
+      ["customId", knowledgeDocumentCustomId(input.documentId)],
+      ["taskType", "superrag"],
+      ["metadata", JSON.stringify({
+        orcasynapseDocumentId: input.documentId,
+        fileName: input.fileName,
+        classification: input.classification,
+        source: "orcasynapse",
+      })],
+    ] as const;
+    const encoder = new TextEncoder();
+    const hash = createHash("sha256");
+    let sizeBytes = 0;
+    const body = Readable.toWeb(Readable.from((async function* () {
+      for (const [name, value] of fields) {
+        yield encoder.encode(`--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`);
+      }
+      yield encoder.encode(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${safeFileName}"\r\nContent-Type: ${input.mediaType}\r\n\r\n`);
+      for await (const value of input.stream) {
+        const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value as Uint8Array);
+        sizeBytes += chunk.byteLength;
+        if (sizeBytes > input.maximumBytes) throw new SupermemoryUploadTooLargeError();
+        hash.update(chunk);
+        yield chunk;
+      }
+      yield encoder.encode(`\r\n--${boundary}--\r\n`);
+    })())) as ReadableStream<Uint8Array>;
+    const url = endpoint(connection, `${documentsPath}/file`);
+    const response = await this.request(connection, url, {
       method: "POST",
-      body: JSON.stringify({
-        content: input.content,
-        containerTag: sharedKnowledgeScopeTag(),
-        customId: knowledgeDocumentCustomId(input.documentId),
-        taskType: "superrag",
-        metadata: {
-          orcasynapseDocumentId: input.documentId,
-          fileName: input.fileName,
-          classification: input.classification,
-          generation: input.generation,
-          source: "orcasynapse",
-        },
-      }),
-    });
-    const id = response && typeof response === "object" && typeof (response as { id?: unknown }).id === "string"
+      headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+      body,
+      duplex: "half",
+    } as RequestInit & { duplex: "half" }, "uploadTimeoutMs", 300_000);
+    const externalDocumentId = response && typeof response === "object" && typeof (response as { id?: unknown }).id === "string"
       ? (response as { id: string }).id
       : null;
-    if (!id) throw new Error("Supermemory did not return a document ID.");
-    const timeoutMs = numberSetting(connection, "memoryTimeoutMs", 300_000, 10_000, 900_000);
-    const pollMs = numberSetting(connection, "memoryPollIntervalMs", 2_000, 500, 30_000);
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      const status = await this.getStatus(connection, documentsPath, id);
-      if (status === "done") return id;
-      if (status === "failed") throw new Error("Supermemory failed to index the document.");
-      await new Promise((resolve) => setTimeout(resolve, pollMs));
-    }
-    throw new Error("Supermemory indexing timed out.");
+    if (!externalDocumentId) throw new Error("Supermemory did not return a document ID.");
+    const status = typeof (response as { status?: unknown }).status === "string"
+      ? (response as { status: string }).status
+      : "queued";
+    return { externalDocumentId, status, sizeBytes, sha256: hash.digest("hex") };
+  }
+
+  async documentState(externalDocumentId: string): Promise<SupermemoryDocumentState> {
+    const connection = await this.resolver.resolveOne("SUPERMEMORY");
+    const documentsPath = stringSetting(connection, "documentsPath", "/v3/documents");
+    const body = await this.request(
+      connection,
+      endpoint(connection, `${documentsPath.replace(/\/+$/, "")}/${encodeURIComponent(externalDocumentId)}`),
+      { method: "GET" },
+    );
+    const record = body && typeof body === "object" ? body as Record<string, unknown> : {};
+    return {
+      status: typeof record.status === "string" ? record.status : "unknown",
+      type: typeof record.type === "string" ? record.type : null,
+      customId: typeof record.customId === "string" ? record.customId : null,
+    };
   }
 
   async delete(documentId: string, externalDocumentId?: string | null): Promise<void> {
@@ -146,7 +201,7 @@ export class SupermemoryClient {
     throw new Error(`Supermemory rejected document deletion with status ${response.status}.`);
   }
 
-  async search(_ownerSubject: string, query: string): Promise<SupermemorySearchHit[]> {
+  async search(ownerSubject: string, query: string): Promise<SupermemorySearchHit[]> {
     const connection = await this.resolver.resolveOne("SUPERMEMORY");
     const searchPath = stringSetting(connection, "searchPath", "/v3/search");
     const limit = Math.trunc(numberSetting(connection, "retrievalLimit", 6, 2, 20));
@@ -155,7 +210,7 @@ export class SupermemoryClient {
       method: "POST",
       body: JSON.stringify({
         q: query,
-        containerTag: sharedKnowledgeScopeTag(),
+        containerTag: knowledgeScopeTag(ownerSubject),
         limit,
         chunkThreshold: threshold,
         includeFullDocs: false,
@@ -193,16 +248,14 @@ export class SupermemoryClient {
     });
   }
 
-  private async getStatus(connection: RuntimeConnection, documentsPath: string, id: string): Promise<string> {
-    const url = endpoint(connection, `${documentsPath.replace(/\/+$/, "")}/${encodeURIComponent(id)}`);
-    const body = await this.request(connection, url, { method: "GET" });
-    return body && typeof body === "object" && typeof (body as { status?: unknown }).status === "string"
-      ? (body as { status: string }).status
-      : "unknown";
-  }
-
-  private async request(connection: RuntimeConnection, url: URL, init: RequestInit): Promise<unknown> {
-    const timeoutMs = numberSetting(connection, "timeoutMs", 8_000, 1_000, 30_000);
+  private async request(
+    connection: RuntimeConnection,
+    url: URL,
+    init: RequestInit,
+    timeoutSetting = "timeoutMs",
+    timeoutFallback = 8_000,
+  ): Promise<unknown> {
+    const timeoutMs = numberSetting(connection, timeoutSetting, timeoutFallback, 1_000, 900_000);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {

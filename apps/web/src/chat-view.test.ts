@@ -16,6 +16,8 @@ function message(overrides: Partial<ChatMessage> = {}): ChatMessage {
     latencyMs: 4_000,
     finishReason: "stop",
     errorCode: null,
+    agentRunId: "c184ecb8-8597-48bd-9de6-262049b55db6",
+    runtimeEvents: [],
     sources: [],
     feedback: null,
     createdAt: "2026-07-31T00:00:00.000Z",

@@ -1,4 +1,5 @@
 import type {
+  AgentProfile,
   ChatConversation,
   ChatConversationSummary,
   ChatMessage,
@@ -10,6 +11,7 @@ import {
   createChatConversation,
   getChatConversation,
   getChatConversations,
+  getAgentProfiles,
   streamChatMessage,
   setChatFeedback,
   updateChatConversation,
@@ -74,6 +76,8 @@ function emptyMessage(
     latencyMs: null,
     finishReason: null,
     errorCode: null,
+    agentRunId: null,
+    runtimeEvents: [],
     sources: [],
     feedback: null,
     createdAt: new Date().toISOString(),
@@ -146,6 +150,9 @@ export function ChatView({
   const [feedbackBusy, setFeedbackBusy] = useState<string | null>(null);
   const [streamStartedAt, setStreamStartedAt] = useState<number | null>(null);
   const [streamElapsedMs, setStreamElapsedMs] = useState(0);
+  const [profiles, setProfiles] = useState<AgentProfile[]>([]);
+  const [selectedProfileId, setSelectedProfileId] = useState("");
+  const [currentActivity, setCurrentActivity] = useState<string | null>(null);
   const abortController = useRef<AbortController | null>(null);
   const messageEnd = useRef<HTMLDivElement>(null);
 
@@ -165,14 +172,18 @@ export function ChatView({
       setConversations([]);
       setActive(null);
       setError(null);
+      setProfiles([]);
       return;
     }
     let current = true;
     setLoading(true);
-    void getChatConversations()
-      .then(async ({ items }) => {
+    void Promise.all([getChatConversations(), getAgentProfiles(false)])
+      .then(async ([{ items }, profileList]) => {
         if (!current) return;
         setConversations(items);
+        const activeProfiles = profileList.items.filter(({ status }) => status === "ACTIVE");
+        setProfiles(activeProfiles);
+        setSelectedProfileId((selected) => selected || activeProfiles[0]?.id || "");
         if (items[0]) setActive(await getChatConversation(items[0].id));
       })
       .catch((cause) => current && handleError(cause, "Unable to load conversations."))
@@ -215,9 +226,17 @@ export function ChatView({
     setDraft("");
     setError(null);
     setHistoryOpen(false);
+    setCurrentActivity(null);
   };
 
   const applyStreamEvent = (event: ChatStreamEvent) => {
+    if (event.type === "started") setCurrentActivity("Hermes run queued");
+    if (event.type === "activity") {
+      setCurrentActivity(event.toolName ?? event.summary ?? event.activity.replaceAll("_", " ").toLowerCase());
+    }
+    if (event.type === "completed" || event.type === "failed" || event.type === "cancelled") {
+      setCurrentActivity(null);
+    }
     setActive((current) => {
       if (!current || current.id !== event.conversationId) return current;
       if (event.type === "started") {
@@ -229,6 +248,9 @@ export function ChatView({
             emptyMessage(current.id, event.messageId, "ASSISTANT", "", "PENDING"),
           ],
         };
+      }
+      if (event.type === "activity") {
+        return current;
       }
       if (event.type === "delta") {
         return {
@@ -274,7 +296,8 @@ export function ChatView({
     let conversation = active;
     try {
       if (!conversation) {
-        const created = await createChatConversation();
+        if (!selectedProfileId) throw new Error("Activate an Agent Profile before starting Chat.");
+        const created = await createChatConversation({ profileId: selectedProfileId });
         conversation = await getChatConversation(created.id);
         setConversations((items) => [created, ...items]);
       }
@@ -290,6 +313,7 @@ export function ChatView({
       abortController.current = controller;
       setStreamElapsedMs(0);
       setStreamStartedAt(Date.now());
+      setCurrentActivity("Hermes run queued");
       await streamChatMessage(conversation.id, content, applyStreamEvent, controller.signal);
       const refreshed = await getChatConversation(conversation.id);
       setActive(refreshed);
@@ -305,6 +329,7 @@ export function ChatView({
     } finally {
       abortController.current = null;
       setStreamStartedAt(null);
+      setCurrentActivity(null);
       setBusy(false);
     }
   };
@@ -390,7 +415,7 @@ export function ChatView({
               onClick={() => void selectConversation(conversation.id)}
             >
               <strong>{conversation.title}</strong>
-              <span>{conversation.lastMessagePreview ?? conversation.modelAlias}</span>
+              <span>{conversation.lastMessagePreview ?? conversation.profileName ?? conversation.modelAlias}</span>
               <small>{conversation.status === "ARCHIVED" ? "Archived" : formatConversationTime(conversation.lastMessageAt)}</small>
             </button>
           ))}
@@ -401,7 +426,7 @@ export function ChatView({
             <div><span>Identity mode</span><strong>{identityMode === "ENTERPRISE" ? "Enterprise Access" : "Administrator preview"}</strong><small>{displayName ?? "Active OrcaSynapse session"}</small></div>
           </div>
           <dl>
-            <div><dt>Route</dt><dd>{active?.modelAlias ?? "Automatic"}</dd></div>
+            <div><dt>Agent</dt><dd>{active?.profileName ?? "Choose below"}</dd></div>
             <div><dt>Usage</dt><dd>{conversationTotalTokens.toLocaleString()} tokens</dd></div>
           </dl>
         </div>
@@ -412,10 +437,10 @@ export function ChatView({
           <button className="history-toggle" type="button" onClick={() => setHistoryOpen((value) => !value)} aria-label="Toggle conversation history">☰</button>
           <div className="chat-topbar-title">
             <strong>{active?.title ?? "New conversation"}</strong>
-            <span>{active ? `${active.messages.length} messages in this conversation` : "Start a governed on-premise conversation"}</span>
+            <span>{active ? `${active.profileName ?? "Legacy route"} · ${active.messages.length} messages` : "Start a governed Hermes conversation"}</span>
           </div>
           <div className="chat-runtime-summary" aria-label="Conversation runtime summary">
-            <span className={busy ? "generating" : "ready"}><i aria-hidden="true" />{busy ? `Generating ${(streamElapsedMs / 1_000).toFixed(1)} s` : "Route ready"}</span>
+            <span className={busy ? "generating" : "ready"}><i aria-hidden="true" />{busy ? `${currentActivity ?? "Hermes is working"} · ${(streamElapsedMs / 1_000).toFixed(1)} s` : "Hermes ready"}</span>
             <span><small>Model</small><strong>{active?.modelAlias ?? "Active default"}</strong></span>
             <span><small>Session usage</small><strong>{conversationTotalTokens.toLocaleString()} tok</strong></span>
           </div>
@@ -425,10 +450,20 @@ export function ChatView({
         <div className="chat-messages" aria-live="polite">
           {!active || active.messages.length === 0 ? (
             <div className="chat-welcome">
-              <div className="chat-welcome-mark">M</div>
-              <p className="page-kicker">OrcaSynapse</p>
+              <div className="chat-welcome-mark">H</div>
+              <p className="page-kicker">Hermes through OrcaSynapse</p>
               <h2>How can I help?</h2>
-              <p>Responses stay on the configured on-premise inference route and include approved document context when relevant. Tools remain disabled.</p>
+              <p>Every response is a governed Hermes Agent Run. Your selected profile controls behavior, skills, memory access, and tool policy.</p>
+              <label className="chat-profile-picker">
+                <span>Agent Profile</span>
+                <select value={selectedProfileId} onChange={(event) => setSelectedProfileId(event.target.value)}>
+                  {profiles.length === 0 && <option value="">No active profiles</option>}
+                  {profiles.map((profile) => (
+                    <option value={profile.id} key={profile.id}>{profile.activeVersionConfiguration?.displayName ?? profile.version.displayName}</option>
+                  ))}
+                </select>
+                <small>{profiles.length === 0 ? "Activate a profile in Agents before chatting." : "This profile remains bound to the conversation."}</small>
+              </label>
               <div className="chat-suggestions">
                 <button type="button" onClick={() => setDraft("Summarize the main considerations for an on-premise AI deployment.")}>Outline an on-premise AI deployment</button>
                 <button type="button" onClick={() => setDraft("Create a concise risk checklist for deploying an internal AI assistant.")}>Create an AI risk checklist</button>
@@ -437,10 +472,10 @@ export function ChatView({
           ) : (
             active.messages.map((message) => (
               <article className={`chat-message ${message.role.toLowerCase()}`} key={message.id}>
-                <div className="message-avatar">{message.role === "USER" ? "You" : "M"}</div>
+                <div className="message-avatar">{message.role === "USER" ? "You" : "H"}</div>
                 <div className="message-body">
                   <div className="message-heading">
-                    <div><strong>{message.role === "USER" ? "You" : "OrcaSynapse"}</strong><time dateTime={message.createdAt}>{formatMessageTime(message.createdAt)}</time></div>
+                    <div><strong>{message.role === "USER" ? "You" : active.profileName ?? "Hermes"}</strong><time dateTime={message.createdAt}>{formatMessageTime(message.createdAt)}</time></div>
                     <div className="message-heading-tags">
                       {message.role === "ASSISTANT" && <span className="model">{message.modelAlias ?? active.modelAlias}</span>}
                       {message.status !== "COMPLETED" && <span className={`status ${message.status.toLowerCase()}`}>{message.status.toLowerCase()}</span>}
@@ -449,9 +484,20 @@ export function ChatView({
                   <p>{message.content || (message.status === "PENDING" ? "Thinking…" : "No content returned.")}</p>
                   {message.role === "ASSISTANT" && message.status === "PENDING" && (
                     <div className="message-stream-status" aria-label="Live generation status">
-                      <span><i aria-hidden="true" />Streaming response</span>
-                      <small>{busy ? `${(streamElapsedMs / 1_000).toFixed(1)} s elapsed` : "Awaiting recovery"} · {message.content.length.toLocaleString()} characters received · exact token usage reports on completion</small>
+                      <span><i aria-hidden="true" />{currentActivity ?? "Hermes is working"}</span>
+                      <small>{busy ? `${(streamElapsedMs / 1_000).toFixed(1)} s elapsed` : "Awaiting recovery"} · governed run details appear as Hermes reports them</small>
                     </div>
+                  )}
+                  {message.role === "ASSISTANT" && message.runtimeEvents.length > 0 && (
+                    <details className="message-runtime-events">
+                      <summary>{message.runtimeEvents.length} Hermes runtime event{message.runtimeEvents.length === 1 ? "" : "s"}</summary>
+                      <ol>{message.runtimeEvents.map((runtimeEvent) => (
+                        <li key={runtimeEvent.id}>
+                          <strong>{runtimeEvent.type.replaceAll("_", " ").toLowerCase()}</strong>
+                          <span>{runtimeEvent.toolName ?? runtimeEvent.summary ?? "Runtime lifecycle update"}</span>
+                        </li>
+                      ))}</ol>
+                    </details>
                   )}
                   {message.sources.length > 0 && (
                     <div className="message-sources" aria-label="Enterprise knowledge sources">
@@ -467,7 +513,7 @@ export function ChatView({
                   {message.role === "ASSISTANT" && message.status === "COMPLETED" && (
                     <>
                       <section className="message-telemetry" aria-label="Response performance">
-                        <header><div><strong>Response telemetry</strong><small>Reported by AI Inference and measured by OrcaSynapse</small></div>{message.sources.length > 0 && <span>{message.sources.length} knowledge source{message.sources.length === 1 ? "" : "s"}</span>}</header>
+                        <header><div><strong>Response telemetry</strong><small>Reported by Hermes lifecycle events and measured by OrcaSynapse</small></div>{message.sources.length > 0 && <span>{message.sources.length} knowledge source{message.sources.length === 1 ? "" : "s"}</span>}</header>
                         <dl>{chatMessageTelemetry(message).map((metric) => (
                           <div className={metric.key === "throughput" ? "primary" : undefined} key={metric.key}>
                             <dt>{metric.label}</dt><dd>{metric.value}</dd>
@@ -518,7 +564,7 @@ export function ChatView({
                     event.currentTarget.form?.requestSubmit();
                   }
                 }}
-                placeholder="Message the approved on-premise model"
+                placeholder="Message your selected Hermes agent"
                 rows={1}
                 maxLength={32_000}
                 disabled={busy}
@@ -533,9 +579,9 @@ export function ChatView({
             )}
           </form>
           <div className="chat-composer-status">
-            <span className={busy ? "generating" : "ready"}><i aria-hidden="true" />{busy ? "Model is generating" : "Inference route ready"}</span>
+            <span className={busy ? "generating" : "ready"}><i aria-hidden="true" />{busy ? currentActivity ?? "Hermes is working" : "Hermes route ready"}</span>
             <span>{identityMode === "ENTERPRISE" ? "Enterprise session" : "Administrator preview"}</span>
-            <span>OrcaSynapse gateway · governed knowledge · tools disabled</span>
+            <span>OrcaSynapse policy · Hermes execution · Supermemory knowledge</span>
           </div>
         </div>
       </div>

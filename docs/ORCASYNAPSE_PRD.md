@@ -18,26 +18,26 @@ The product should feel usable after two actions: install OrcaSynapse on the con
 
 ### Dashboard
 
-The responsive React application provides Chat, Documents, Agents, Models, Guardrails, Prompts, Integrations, AI Operations, and Deployment workspaces. Desktop and mobile layouts must use one coherent design system and expose the same security state.
+The responsive React application provides six product areas: Home, Chat, Knowledge, Agents, Platform, and Operations. Models, prompts, guardrails, setup, tools, and approvals live under their owning area rather than becoming duplicate top-level destinations. Desktop and mobile layouts expose the same security and readiness state.
 
 ### Chat
 
-OrcaSynapse provides streaming Chat through an approved inference route. It persists conversations, final responses, token usage, time-to-first-token/latency where available, cancellation/failure state, feedback, and sanitized audit data in PostgreSQL. The browser never receives the upstream serving credential.
+Normal Chat always uses an active Hermes Profile and stable Hermes session. Each message creates one governed Agent Run; OrcaSynapse persists the conversation, final response, usage and latency where Hermes reports them, cancellation/failure state, feedback, and sanitized audit data in PostgreSQL. The browser never receives the upstream serving credential.
 
-Agentic Chat and governed tasks use Hermes. OrcaSynapse shows run status, projected tool/subagent activity, sources, cancellation, and final output without storing hidden reasoning, raw tool secrets, or unrestricted event payloads.
+OrcaSynapse shows run status, projected tool/subagent activity, sources, cancellation, and final output without storing hidden reasoning, raw tool secrets, or unrestricted event payloads. Direct model testing belongs only in the Platform inference playground.
 
 ### Documents and knowledge
 
-OrcaSynapse is a content-extraction and publication workflow, not a permanent file server.
+OrcaSynapse is an authorization and streaming gateway to Supermemory, not a permanent file server or second extraction pipeline.
 
 - Original enterprise systems remain authoritative.
-- Uploaded bytes exist only in encrypted transient staging.
-- This release accepts UTF-8 TXT input only.
-- Rich files and images are rejected at upload rather than entering an incomplete extraction path.
-- Only normalized content is durably published to Supermemory.
+- Uploaded bytes are streamed to Supermemory and are never retained by OrcaSynapse.
+- UTF-8 plain text is verified against the pinned self-hosted baseline.
+- Rich files and images are relayed to Supermemory's native endpoint; the dashboard warns that the current local extractor may fail without its upstream cloud extraction service.
+- Supermemory owns extraction, chunking, embeddings, and semantic indexing.
 - PostgreSQL stores lifecycle, authorization, provenance, checksum, and audit metadata.
-- Retrieval is reauthorized against PostgreSQL before entering a model request.
-- Deletion removes both the durable Supermemory object and remaining transient material.
+- Owner-derived container tags prevent callers from selecting arbitrary namespaces.
+- Deletion removes the durable Supermemory object and marks the metadata record deleted.
 
 ### Hermes agents
 
@@ -54,7 +54,7 @@ OrcaSynapse does not give Hermes PostgreSQL credentials, Docker control, host fi
 
 ### Memory
 
-Self-hosted Supermemory Local is the semantic-memory plane. Hermes gets a profile-scoped `orcasynapse-agent-{identity}` container. OrcaSynapse publishes governed document knowledge to `orcasynapse-knowledge`; Hermes receives that knowledge only through OrcaSynapse's authorization boundary.
+Self-hosted Supermemory Local is the semantic-memory plane. Hermes gets a profile-scoped native memory container, while enterprise sources use deterministic owner-derived `orcasynapse-knowledge-*` tags assigned only by OrcaSynapse.
 
 Hermes's native bounded memory remains active alongside Supermemory. OrcaSynapse must preserve and document both recovery domains.
 
@@ -126,7 +126,7 @@ OrcaSynapse retains no SSH password/key and no remote Docker socket. Upgrades us
 
 ## Acceptance
 
-Development acceptance requires direct Chat, transient text publication, authorized retrieval/deletion, Hermes enrollment, native agent memory, signed heartbeat, and dashboard health against real endpoints.
+Development acceptance requires Hermes-first Chat, direct Supermemory text ingestion, authorized status/deletion, Hermes enrollment, native agent memory, signed heartbeat, and capability-based dashboard readiness against real endpoints.
 
 Pilot acceptance adds representative users/data, model evaluation, load/cancellation, restore practice, incident exercises, false-positive review, and operational ownership.
 

@@ -7,14 +7,12 @@ const identity: WorkerIdentity = {
   id: "runtime-1",
   name: "runtime.local",
   version: "0.1.0",
-  workloads: ["documents", "memory", "agents", "tool-actions"],
+  workloads: ["hermes-runs"],
 };
 
-function prisma(documentWork: Array<{ documentId: string; generation: number; conversionJobId: string }> = []) {
+function prisma(agentWork: Array<{ id: string; jobId: string }> = []) {
   return {
-    documentProcessingRun: { findMany: vi.fn(async () => documentWork) },
-    documentMemoryPublication: { findMany: vi.fn(async () => []) },
-    agentRun: { findMany: vi.fn(async () => []) },
+    agentRun: { findMany: vi.fn(async () => agentWork) },
   } as unknown as OrcaSynapsePrismaClient;
 }
 
@@ -38,17 +36,16 @@ describe("WorkerRuntime", () => {
     expect(records.markStopped).toHaveBeenCalledWith(identity.id);
   });
 
-  it("reconciles durable document state when the runtime starts", async () => {
-    const documentHandler = { convert: vi.fn(async () => ({ converted: true })) };
+  it("reconciles durable Hermes run state when the runtime starts", async () => {
+    const agentHandler = { process: vi.fn(async () => ({ completed: true })) };
     const runtime = new WorkerRuntime(prisma([{
-      documentId: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d",
-      generation: 2,
-      conversionJobId: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb",
-    }]), registry(), identity, { info: vi.fn(), error: vi.fn() }, 60_000, documentHandler);
+      id: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d",
+      jobId: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb",
+    }]), registry(), identity, { info: vi.fn(), error: vi.fn() }, 60_000, agentHandler);
 
     await runtime.start();
-    expect(documentHandler.convert).toHaveBeenCalledWith(
-      { documentId: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d", generation: 2 },
+    expect(agentHandler.process).toHaveBeenCalledWith(
+      { runId: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d" },
       "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb",
       identity.id,
     );

@@ -14,6 +14,7 @@ export interface ChatPrincipal {
   id: string;
   subject: string;
   identityMode: "ENTERPRISE" | "ADMINISTRATOR_PREVIEW";
+  scopes: readonly string[];
 }
 
 export interface ChatManager {

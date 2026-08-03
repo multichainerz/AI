@@ -404,7 +404,8 @@ export class PrismaAgentManager implements AgentManager {
     return { items: events.map((event) => runEventDto(event as StoredRunEvent)) };
   }
 
-  async submitRun(principal: AgentPrincipal, input: SubmitAgentRun): Promise<AgentRun> {
+  async submitRun(principal: AgentPrincipal, input: SubmitAgentRun, options: { sessionId?: string } = {}): Promise<AgentRun> {
+    const runId = randomUUID();
     const run = await this.prisma.$transaction(async (transaction) => {
       await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`orcasynapse-agent-submit:${input.profileId}`}, 0))`;
       const [control, profile, runtimeNodes] = await Promise.all([
@@ -453,12 +454,14 @@ export class PrismaAgentManager implements AgentManager {
       }
       const created = await transaction.agentRun.create({
         data: {
+          id: runId,
           profileId: profile.id,
           profileVersionId: version.id,
           profileVersion: version.version,
           profileDistributionDigest: version.distributionDigest,
           ownerSubject: principal.subject,
           requestedBy: principal.id,
+          sessionId: options.sessionId ?? runId,
           input: input.input,
           jobId: randomUUID(),
           effectiveCapabilities: version.allowPrivateKnowledge ? ["knowledge:private:read"] : [],
@@ -576,7 +579,7 @@ export class PrismaAgentManager implements AgentManager {
           select: { status: true },
         });
         if (hermesCompatibility?.status !== "PASSED") {
-          throw new AgentConflictError("Run Setup and pass Hermes compatibility before a Profile can enter standby or active service.");
+          throw new AgentConflictError("Hermes compatibility is not passed. Run the AI services check in Deployment > Advanced readiness before a Profile can enter standby or active service.");
         }
       }
       const modelCatalogueCount = requiresRelease

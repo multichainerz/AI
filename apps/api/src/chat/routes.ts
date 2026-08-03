@@ -48,6 +48,7 @@ async function requireChatPrincipal(
       id: administrator.id,
       subject: administrator.subject,
       identityMode: "ADMINISTRATOR_PREVIEW",
+      scopes: administrator.scopes,
     };
   }
 
@@ -59,6 +60,7 @@ async function requireChatPrincipal(
       id: enterprise.id,
       subject: enterprise.subject,
       identityMode: "ENTERPRISE",
+      scopes: enterprise.scopes,
     };
   }
 

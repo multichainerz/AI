@@ -88,7 +88,7 @@ describe("PrismaToolingManager", () => {
       enterpriseUserSession: { findFirst: vi.fn() },
       document: { findFirst: vi.fn(async () => ({
         id: DOCUMENT_ID, fileName: "policy.pdf", mediaType: "application/pdf", sizeBytes: 1000n,
-        classification: "CONFIDENTIAL", status: "READY", processingGeneration: 1, memoryPublication: null,
+        classification: "CONFIDENTIAL", status: "READY", supermemoryProjection: null,
         createdAt: now, updatedAt: now,
       })) },
       auditEvent: { create: auditCreate },
@@ -134,7 +134,7 @@ describe("PrismaToolingManager", () => {
     }));
   });
 
-  it("commits an approved decision and its durable dispatch in one transaction", async () => {
+  it("cancels legacy consequential approvals when no handler is installed", async () => {
     const toolActionDispatchCreate = vi.fn(async () => ({ id: REQUEST_ID }));
     const approval = {
       id: APPROVAL_ID,
@@ -212,11 +212,11 @@ describe("PrismaToolingManager", () => {
       { id: SESSION_ID, subject: "platform-admin" },
       APPROVAL_ID,
       { decision: "APPROVE", reason: "Approved for the pilot." },
-    )).resolves.toMatchObject({ id: APPROVAL_ID, status: "APPROVED" });
+    )).rejects.toThrow("No consequential tool handler is installed");
 
-    expect(toolActionDispatchCreate).toHaveBeenCalledWith({ data: { callId: REQUEST_ID } });
+    expect(toolActionDispatchCreate).not.toHaveBeenCalled();
     expect(prismaBase.governedToolCall.update).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ status: "EXECUTING" }),
+      data: expect.objectContaining({ status: "DENIED", errorCode: "AUTHORIZATION_REVOKED" }),
     }));
   });
 

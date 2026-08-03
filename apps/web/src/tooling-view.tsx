@@ -144,7 +144,7 @@ export function ToolingView({ unlocked, scopes, onConfigure, onUnauthorized }: T
       <article><span>Active tools</span><strong>{metrics?.activeTools ?? tools.filter(({ status }) => status === "ACTIVE").length}</strong><small>OrcaSynapse handlers only</small></article>
       <article><span>Version grants</span><strong>{metrics?.activeGrants ?? grants.filter(({ enabled }) => enabled).length}</strong><small>exact profile revisions</small></article>
       <article><span>Pending review</span><strong>{metrics?.pendingApprovals ?? approvals.filter(({ status }) => status === "PENDING").length}</strong><small>expires automatically</small></article>
-      <article><span>Action dispatch</span><strong>{metrics?.openActionDispatches ?? calls.filter(({ status }) => status === "EXECUTING").length}</strong><small>{metrics?.executingCalls ?? 0} executing / {metrics?.failedActionDispatches ?? 0} failed</small></article>
+      <article><span>Active calls</span><strong>{metrics?.executingCalls ?? calls.filter(({ status }) => status === "EXECUTING").length}</strong><small>{metrics?.pendingApprovals ?? 0} awaiting operator review</small></article>
     </div>
 
     <div className="tooling-grid">

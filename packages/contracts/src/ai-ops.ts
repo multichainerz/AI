@@ -3,7 +3,6 @@ import { agentMetricsSchema } from "./agents.js";
 import { chatMetricsSchema } from "./chat.js";
 import { documentMetricsSchema } from "./documents.js";
 import { runtimeOperationsSnapshotSchema } from "./runtime-operations.js";
-import { memoryMetricsSchema } from "./memory.js";
 import { toolMetricsSchema } from "./tooling.js";
 
 export const AI_OPS_COMPONENT_STATUSES = [
@@ -17,8 +16,7 @@ export const aiOpsComponentStatusSchema = z.enum(AI_OPS_COMPONENT_STATUSES);
 
 export const aiOpsWorkflowSchema = z.enum([
   "CHAT",
-  "DOCUMENTS",
-  "MEMORY",
+  "KNOWLEDGE",
   "AGENTS",
   "TOOLS",
 ]);
@@ -269,7 +267,6 @@ export const aiOpsOverviewSchema = z.object({
   metrics: z.object({
     chat: chatMetricsSchema.nullable(),
     documents: documentMetricsSchema.nullable(),
-    memory: memoryMetricsSchema.nullable(),
     agents: agentMetricsSchema.nullable(),
     tools: toolMetricsSchema.nullable(),
   }),

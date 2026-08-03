@@ -11,6 +11,9 @@ import type {
   ChatMetrics,
   InferenceDiscoveryRequest,
   InferenceDiscoveryResult,
+  AgentProfile,
+  AgentRuntimeControl,
+  HermesRuntimeNode,
 } from "@orcasynapse/contracts";
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import {
@@ -24,6 +27,9 @@ import {
   getEnterpriseSession,
   getOidcStatus,
   getChatMetrics,
+  getAgentProfiles,
+  getAgentRuntime,
+  getHermesRuntimeNodes,
   getConfigurationRevisions,
   getConnectionMonitoring,
   getConnections,
@@ -37,55 +43,26 @@ import {
   updateConnectionMonitoring,
 } from "./api.js";
 import { ConnectionDrawer, type ConnectionDraft } from "./connection-drawer.js";
-import { connectionDefinitions } from "./connection-definitions.js";
+import { connectionReadiness } from "./connection-readiness.js";
+import { HomeView, type HomeLayer, type HomeReadinessCheck } from "./home-view.js";
+import {
+  pathForView,
+  primaryNavigationGroups,
+  productAreaForView,
+  viewFromHash,
+  WorkspaceContextBar,
+  type ActiveView,
+} from "./workspace-navigation.js";
 
 const OperationsView = lazy(() => import("./operations-view.js").then((module) => ({ default: module.OperationsView })));
 const ChatView = lazy(() => import("./chat-view.js").then((module) => ({ default: module.ChatView })));
 const DocumentsView = lazy(() => import("./documents-view.js").then((module) => ({ default: module.DocumentsView })));
-const MemoryView = lazy(() => import("./memory-view.js").then((module) => ({ default: module.MemoryView })));
 const AgentsView = lazy(() => import("./agents-view.js").then((module) => ({ default: module.AgentsView })));
 const ToolingView = lazy(() => import("./tooling-view.js").then((module) => ({ default: module.ToolingView })));
 const ModelsView = lazy(() => import("./models-view.js").then((module) => ({ default: module.ModelsView })));
 const GuardrailsView = lazy(() => import("./guardrails-view.js").then((module) => ({ default: module.GuardrailsView })));
 const PromptsView = lazy(() => import("./prompts-view.js").then((module) => ({ default: module.PromptsView })));
 const OnboardingView = lazy(() => import("./onboarding-view.js").then((module) => ({ default: module.OnboardingView })));
-
-type ActiveView = "Overview" | "Deployment" | "Chat" | "Models" | "Prompts" | "Agents" | "Documents" | "Memory" | "Integrations" | "Guardrails" | "Operations";
-
-type NavigationItem = {
-  label: string;
-  icon: string;
-  available: boolean;
-};
-
-const navigationGroups: ReadonlyArray<{ label: string; items: ReadonlyArray<NavigationItem> }> = [
-  {
-    label: "Workspace",
-    items: [
-      { label: "Overview", icon: "overview", available: true },
-      { label: "Chat", icon: "chat", available: true },
-      { label: "Documents", icon: "documents", available: true },
-      { label: "Memory", icon: "memory", available: true },
-    ],
-  },
-  {
-    label: "Intelligence",
-    items: [
-      { label: "Models", icon: "models", available: true },
-      { label: "Prompts", icon: "prompts", available: true },
-      { label: "Agents", icon: "agents", available: true },
-    ],
-  },
-  {
-    label: "Control",
-    items: [
-      { label: "Deployment", icon: "setup", available: true },
-      { label: "Integrations", icon: "integrations", available: true },
-      { label: "Guardrails", icon: "guardrails", available: true },
-      { label: "Operations", icon: "operations", available: true },
-    ],
-  },
-];
 
 function Glyph({ name }: { name: string }) {
   const glyphs: Record<string, ReactNode> = {
@@ -96,7 +73,6 @@ function Glyph({ name }: { name: string }) {
     prompts: <><path d="M6 3h12v18H6z"/><path d="M9 8h6M9 12h6M9 16h4"/></>,
     agents: <><rect x="4" y="7" width="16" height="13" rx="3"/><path d="M9 12h.01M15 12h.01M9 16h6M12 7V3M9 3h6"/></>,
     documents: <><path d="M6 2h8l4 4v16H6z"/><path d="M14 2v5h5M9 12h6M9 16h6"/></>,
-    memory: <><path d="M9.5 4A3.5 3.5 0 0 0 6 7.5c0 .5.1 1 .3 1.4A4 4 0 0 0 7 16.8V18a3 3 0 0 0 5 2.2V5.8A3 3 0 0 0 9.5 4Z"/><path d="M14.5 4A3.5 3.5 0 0 1 18 7.5c0 .5-.1 1-.3 1.4a4 4 0 0 1-.7 7.9V18a3 3 0 0 1-5 2.2V5.8A3 3 0 0 1 14.5 4Z"/></>,
     integrations: <><path d="M8 12h8M12 8v8"/><circle cx="12" cy="12" r="9"/></>,
     guardrails: <path d="M12 2 20 5v6c0 5-3.4 9-8 11-4.6-2-8-6-8-11V5l8-3Z"/>,
     operations: <><path d="M4 18v-5M9 18V8M14 18v-3M19 18V5"/><path d="M3 21h18"/></>,
@@ -120,21 +96,8 @@ function OrcaSynapseMark() {
 }
 
 function connectionState(connection: ServiceConnectionSummary | undefined) {
-  if (!connection) return { label: "Not configured", tone: "unconfigured" };
-  if (!connection.enabled) return { label: "Saved, disabled", tone: "disabled" };
-  return {
-    label: connection.status
-      .replaceAll("_", " ")
-      .toLowerCase()
-      .replace(/^./, (character) => character.toUpperCase()),
-    tone: connection.status.toLowerCase(),
-  };
-}
-
-function monitoringCadence(seconds: number): string {
-  if (seconds < 60) return `Checked every ${seconds} sec`;
-  if (seconds < 3_600) return `Checked every ${Math.round(seconds / 60)} min`;
-  return `Checked every ${Math.round(seconds / 3_600)} hr`;
+  const state = connectionReadiness(connection);
+  return { label: state.label, tone: state.tone };
 }
 
 function App() {
@@ -144,38 +107,18 @@ function App() {
   const [enterpriseSession, setEnterpriseSession] = useState<EnterpriseSession | null>(null);
   const [oidcStatus, setOidcStatus] = useState<OidcStatus | null>(null);
   const [chatMetrics, setChatMetrics] = useState<ChatMetrics | null>(null);
+  const [agentRuntime, setAgentRuntime] = useState<AgentRuntimeControl | null>(null);
+  const [agentProfiles, setAgentProfiles] = useState<AgentProfile[]>([]);
+  const [runtimeNodes, setRuntimeNodes] = useState<HermesRuntimeNode[]>([]);
   const [managedConnections, setManagedConnections] = useState<ServiceConnectionSummary[]>([]);
   const [connectionMonitoring, setConnectionMonitoring] = useState<ConnectionMonitoringControl | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerKind, setDrawerKind] = useState<ServiceKind>("INFERENCE");
-  const [deploymentInitialTab, setDeploymentInitialTab] = useState<"journey" | "nodes">("journey");
+  const [deploymentInitialTab, setDeploymentInitialTab] = useState<"journey" | "nodes" | "readiness">("journey");
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [diagnostic, setDiagnostic] = useState<ConnectionTestResult | null>(null);
-  const [activeView, setActiveView] = useState<ActiveView>(() => {
-    const hash = window.location.hash.toLowerCase();
-    return hash === "#chat"
-      ? "Chat"
-      : hash === "#setup" || hash === "#deployment"
-        ? "Deployment"
-      : hash === "#models"
-        ? "Models"
-        : hash === "#prompts"
-          ? "Prompts"
-        : hash === "#agents"
-          ? "Agents"
-          : hash === "#documents"
-            ? "Documents"
-            : hash === "#memory"
-              ? "Memory"
-              : hash === "#integrations"
-                ? "Integrations"
-                : hash === "#guardrails"
-                  ? "Guardrails"
-                  : hash === "#operations"
-                    ? "Operations"
-                    : "Overview";
-  });
+  const [activeView, setActiveView] = useState<ActiveView>(() => viewFromHash(window.location.hash));
   const [revisionHistory, setRevisionHistory] = useState<ConfigurationRevisionList | null>(null);
   const [revisionConnectionId, setRevisionConnectionId] = useState<string | null>(null);
   const sessionGeneration = useRef(0);
@@ -189,6 +132,12 @@ function App() {
     const centeredLeft = item.offsetLeft - (container.clientWidth - item.offsetWidth) / 2;
     container.scrollTo({ left: Math.max(0, centeredLeft), behavior: "auto" });
   }, [activeView]);
+
+  useEffect(() => {
+    const synchronizeRoute = () => setActiveView(viewFromHash(window.location.hash));
+    window.addEventListener("hashchange", synchronizeRoute);
+    return () => window.removeEventListener("hashchange", synchronizeRoute);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -266,7 +215,31 @@ function App() {
   const chatUnlocked = enterpriseSession !== null || unlocked;
   const documentsUnlocked = unlocked || enterpriseSession?.scopes.includes("documents:use") === true;
   const agentsUnlocked = unlocked || enterpriseSession?.scopes.includes("agents:use") === true;
-  const enabledConnections = managedConnections.filter(({ enabled }) => enabled).length;
+
+  useEffect(() => {
+    if (!unlocked) {
+      setAgentRuntime(null);
+      setAgentProfiles([]);
+      setRuntimeNodes([]);
+      return;
+    }
+    let active = true;
+    const refreshReadiness = async () => {
+      const [runtime, profiles, nodes] = await Promise.all([
+        getAgentRuntime(),
+        getAgentProfiles(true),
+        getHermesRuntimeNodes(),
+      ]);
+      if (!active) return;
+      setAgentRuntime(runtime);
+      setAgentProfiles(profiles.items);
+      setRuntimeNodes(nodes.items);
+    };
+    void refreshReadiness().catch(() => undefined);
+    const timer = window.setInterval(() => void refreshReadiness().catch(() => undefined), 30_000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [unlocked]);
+
   const healthyConnections = managedConnections.filter(({ status }) => status === "HEALTHY").length;
   const healthyConnection = (kind: ServiceKind) => managedConnections.some((connection) =>
     connection.kind === kind && connection.enabled && connection.status === "HEALTHY");
@@ -275,17 +248,24 @@ function App() {
   const hermesConnection = connectionFor("HERMES");
   const supermemoryConnection = connectionFor("SUPERMEMORY");
   const oidcConnection = connectionFor("OIDC");
-  const agenticReady = healthyConnection("HERMES") && healthyConnection("SUPERMEMORY");
+  const onlineRuntimeNode = runtimeNodes.some(({ status }) => status === "ONLINE");
+  const activeAgentProfile = agentProfiles.some(({ status }) => status === "ACTIVE");
+  const hermesChatReady = healthyConnection("INFERENCE")
+    && healthyConnection("HERMES")
+    && onlineRuntimeNode
+    && agentRuntime?.enabled === true
+    && activeAgentProfile;
+  const knowledgeReady = healthyConnection("SUPERMEMORY");
+  const agenticReady = hermesChatReady && knowledgeReady;
   const agenticConfigured = Boolean(hermesConnection || supermemoryConnection);
   const agenticState = !unlocked
     ? { label: "Unlock to view", tone: "disabled" }
     : agenticReady
-      ? { label: "Healthy", tone: "healthy" }
+      ? { label: "Ready", tone: "ready" }
       : agenticConfigured
-        ? { label: "Needs attention", tone: "degraded" }
+        ? { label: "Degraded", tone: "degraded" }
         : { label: "Not configured", tone: "unconfigured" };
-  const agenticActionKind: ServiceKind = !hermesConnection || !healthyConnection("HERMES") ? "HERMES" : "SUPERMEMORY";
-  const platformLayers = [
+  const platformLayers: HomeLayer[] = [
     {
       key: "inference",
       name: "AI Inference",
@@ -293,8 +273,7 @@ function App() {
       mark: "AI",
       tone: "blue",
       state: unlocked ? connectionState(inferenceConnection) : { label: "Unlock to view", tone: "disabled" },
-      actionKind: "INFERENCE" as ServiceKind,
-      components: undefined,
+      components: [],
     },
     {
       key: "agentic",
@@ -303,11 +282,10 @@ function App() {
       mark: "AS",
       tone: "violet",
       state: agenticState,
-      actionKind: agenticActionKind,
       components: unlocked ? [
-        { name: "Hermes", ...connectionState(hermesConnection) },
-        { name: "Memory", ...connectionState(supermemoryConnection) },
-      ] : undefined,
+        { name: "Hermes", label: hermesChatReady ? "Ready" : onlineRuntimeNode ? "Needs Profile or policy" : connectionState(hermesConnection).label, tone: hermesChatReady ? "ready" : onlineRuntimeNode ? "degraded" : connectionState(hermesConnection).tone },
+        { name: "Knowledge", ...connectionState(supermemoryConnection) },
+      ] : [],
     },
     {
       key: "access",
@@ -317,34 +295,40 @@ function App() {
       tone: "rose",
       state: unlocked
         ? oidcStatus?.configured
-          ? { label: "Configured", tone: "healthy" }
-          : connectionState(oidcConnection)
+          ? { label: "Ready", tone: "ready" }
+          : oidcConnection
+            ? connectionState(oidcConnection)
+            : { label: "Optional", tone: "configured" }
         : { label: "Unlock to view", tone: "disabled" },
-      actionKind: "OIDC" as ServiceKind,
-      components: undefined,
+      components: [],
     },
   ];
-  const readinessChecks = [
+  const readinessChecks: HomeReadinessCheck[] = [
     {
       label: "AI Inference",
       detail: healthyConnection("INFERENCE") ? "Approved model serving is reachable" : "Connect and verify model serving",
       ready: healthyConnection("INFERENCE"),
-      action: "Models" as ActiveView,
-    },
-    {
-      label: "Agentic System",
-      detail: agenticReady ? "Hermes and durable memory are reachable" : "Enroll the Hermes and Supermemory runtime",
-      ready: agenticReady,
       action: "Deployment" as ActiveView,
     },
     {
-      label: "Enterprise access",
-      detail: oidcStatus?.configured ? "Enterprise identity and RBAC are configured" : "Configure OIDC or Microsoft Entra ID",
-      ready: oidcStatus?.configured === true,
+      label: "Isolated agent runtime",
+      detail: onlineRuntimeNode && healthyConnection("HERMES") ? "VM2 is online and Hermes is reachable" : "Enroll VM2 and verify Hermes health",
+      ready: onlineRuntimeNode && healthyConnection("HERMES"),
       action: "Deployment" as ActiveView,
+    },
+    {
+      label: "Active Agent Profile",
+      detail: activeAgentProfile && agentRuntime?.enabled ? "Hermes execution policy and an active Profile are ready" : activeAgentProfile ? "Enable the global Hermes execution boundary" : "Validate and activate an Agent Profile",
+      ready: activeAgentProfile && agentRuntime?.enabled === true,
+      action: "Agents" as ActiveView,
+    },
+    {
+      label: "Private Knowledge",
+      detail: knowledgeReady ? "Supermemory is reachable on the enrolled VM2 runtime" : "Verify Supermemory on VM2",
+      ready: knowledgeReady,
+      action: knowledgeReady ? "Documents" as ActiveView : "Deployment" as ActiveView,
     },
   ];
-  const readyWorkloads = readinessChecks.filter(({ ready }) => ready).length;
 
   const openConnectionSettings = (kind: ServiceKind = "INFERENCE") => {
     if (kind === "HERMES" || kind === "SUPERMEMORY") {
@@ -547,13 +531,13 @@ function App() {
     }
   };
 
-  const selectView = (view: ActiveView, deploymentTab: "journey" | "nodes" = "journey") => {
+  const selectView = (view: ActiveView, deploymentTab: "journey" | "nodes" | "readiness" = "journey") => {
     if (view === "Deployment") setDeploymentInitialTab(deploymentTab);
     setActiveView(view);
     window.history.replaceState(
       null,
       "",
-      view === "Overview" ? window.location.pathname : `#${view.toLowerCase()}`,
+      view === "Overview" ? `${window.location.pathname}#home` : pathForView(view),
     );
   };
 
@@ -603,6 +587,8 @@ function App() {
     ]);
   };
 
+  const activeArea = productAreaForView(activeView);
+
   return (
     <div className="app-shell">
       <aside className="sidebar" aria-label="OrcaSynapse navigation">
@@ -611,32 +597,27 @@ function App() {
           <div><strong>OrcaSynapse</strong><span>On-prem AI control plane</span></div>
         </div>
         <nav aria-label="Primary navigation">
-          {navigationGroups.map((group) => (
+          {primaryNavigationGroups.map((group) => (
             <div className="nav-group" key={group.label}>
               <p className="nav-label">{group.label}</p>
-              {group.items.map(({ label, icon, available }) => (
+              {group.items.map(({ area, icon, target, description }) => (
                 <button
-                  className={label === activeView ? "nav-item active" : "nav-item"}
-                  disabled={!available}
-                  key={label}
-                  ref={label === activeView ? activeNavigationItem : undefined}
-                  aria-current={label === activeView ? "page" : undefined}
+                  className={area === activeArea ? "nav-item active" : "nav-item"}
+                  key={area}
+                  ref={area === activeArea ? activeNavigationItem : undefined}
+                  aria-current={area === activeArea ? "page" : undefined}
                   type="button"
-                  title={available ? label : `${label} is planned for a later phase`}
-                  onClick={() => available && selectView(label as ActiveView)}
+                  title={description}
+                  onClick={() => selectView(target)}
                 >
                   <Glyph name={icon} />
-                  <span>{label}</span>
-                  {!available && <small>Planned</small>}
+                  <span><strong>{area}</strong><small>{description}</small></span>
                 </button>
               ))}
             </div>
           ))}
         </nav>
         <div className="sidebar-bottom">
-          <button className="nav-item settings-nav" type="button" onClick={() => openConnectionSettings()}>
-            <Glyph name="settings"/><span>Settings</span>
-          </button>
           <div className="operator">
             <div className="avatar">{adminSession ? "SA" : enterpriseSession ? enterpriseSession.user.displayName.slice(0, 2).toUpperCase() : "SA"}</div>
             <div>
@@ -650,6 +631,9 @@ function App() {
 
       <main className={activeView === "Chat" ? "chat-page" : undefined}>
         <div className="mobile-brand"><span className="brand-mark"><OrcaSynapseMark /></span><strong>OrcaSynapse</strong></div>
+        {activeView !== "Chat" && activeView !== "Overview" && (
+          <WorkspaceContextBar area={activeArea} activeView={activeView} onSelect={selectView} />
+        )}
         <Suspense fallback={<section className="view-loading" aria-live="polite"><span className="setup-spinner" />Loading workspace...</section>}>
         {activeView === "Chat" ? (
           <ChatView
@@ -691,8 +675,10 @@ function App() {
             unlocked={agentsUnlocked}
             administrator={adminSession !== null}
             oidcConfigured={oidcStatus?.configured === true}
-            onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23agents")}
+            onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23agents%2Fprofiles")}
             onConfigure={() => openConnectionSettings("HERMES")}
+            onOpenChat={() => selectView("Chat")}
+            onOpenReadiness={() => selectView("Operations")}
             onUnauthorized={() => {
               sessionGeneration.current += 1;
               setAdminSession(null);
@@ -704,21 +690,12 @@ function App() {
             unlocked={documentsUnlocked}
             administrator={adminSession !== null}
             oidcConfigured={oidcStatus?.configured === true}
-            onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23documents")}
+            onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23knowledge%2Fdocuments")}
             onConfigure={() => openConnectionSettings("SUPERMEMORY")}
             onUnauthorized={() => {
               sessionGeneration.current += 1;
               setAdminSession(null);
               setEnterpriseSession(null);
-            }}
-          />
-        ) : activeView === "Memory" ? (
-          <MemoryView
-            unlocked={unlocked}
-            onConfigure={() => openConnectionSettings("SUPERMEMORY")}
-            onUnauthorized={() => {
-              sessionGeneration.current += 1;
-              setAdminSession(null);
             }}
           />
         ) : activeView === "Integrations" ? (
@@ -747,9 +724,10 @@ function App() {
             unlocked={unlocked}
             oidcConfigured={oidcStatus?.administratorSignIn === true}
             initialTab={deploymentInitialTab}
-            onConfigure={(kind) => openConnectionSettings(kind)}
-            onOpenWorkspace={(workspace) => selectView(workspace)}
-            onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23deployment")}
+             onConfigure={(kind) => openConnectionSettings(kind)}
+             onOpenWorkspace={(workspace) => selectView(workspace)}
+             onOpenOperations={() => selectView("Operations")}
+             onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23platform%2Fsetup")}
             onUnauthorized={() => {
               sessionGeneration.current += 1;
               setAdminSession(null);
@@ -766,88 +744,19 @@ function App() {
             }}
           />
         ) : (
-          <>
-            <header className="topbar">
-              <div className="page-heading">
-                <p className="page-kicker">Control plane overview</p>
-                <h1>AI operations at a glance</h1>
-                <p>Current readiness, infrastructure health, and the shortest path to a usable on-premise AI workspace.</p>
-              </div>
-              <div className="topbar-actions">
-                <span className={`status-chip ${apiAvailable ? "online" : "offline"}`}><i />{apiAvailable ? "Control plane online" : "Control plane offline"}</span>
-                <button className="primary-button" type="button" onClick={() => openConnectionSettings()}>Manage platform</button>
-              </div>
-            </header>
-
-            <section className={`setup-banner ${bootstrapState.toLowerCase()}`}>
-              <div className="banner-icon"><Glyph name="guardrails" /></div>
-              <div>
-                <strong>{bootstrapState === "READY" ? unlocked ? "Administrator workspace active" : passwordChangePending ? "Password change required" : "Local sign-in ready" : bootstrapState === "REQUIRED" ? "Installation required" : "Installation trust locked"}</strong>
-                <p>{bootstrapState === "READY" ? unlocked ? `${readyWorkloads} of ${readinessChecks.length} core capabilities are ready.` : passwordChangePending ? "Replace the temporary password before opening administrative operations." : "Sign in with the local administrator account to manage encrypted endpoints and credentials." : "Run the protected host installer before configuring services."}</p>
-              </div>
-              <button type="button" onClick={() => bootstrapState === "READY" ? openConnectionSettings() : selectView("Deployment")}>{bootstrapState === "READY" ? "Open connections" : "Review setup"}</button>
-            </section>
-
-            <section className="metrics" aria-label="Platform summary">
-              <article><span>Configured services</span><strong>{unlocked ? managedConnections.length : "—"}</strong><small>{unlocked ? `${connectionDefinitions.length} operator setup paths plus enrolled runtime services` : "Unlock to view"}</small></article>
-              <article><span>Healthy connections</span><strong>{unlocked ? healthyConnections : "—"}</strong><small>{connectionMonitoring?.enabled ? monitoringCadence(connectionMonitoring.intervalSeconds) : "Credential-aware checks"}</small></article>
-              <article><span>Enabled connections</span><strong>{unlocked ? enabledConnections : "—"}</strong><small>Available to OrcaSynapse services</small></article>
-              <article><span>Tool posture</span><strong className="metric-posture">Default deny</strong><small>No access without an explicit grant</small></article>
-            </section>
-
-            <div className="content-grid">
-              <section className="panel connections-panel">
-                <div className="panel-heading">
-                  <div><p className="section-kicker">Platform foundation</p><h2>AI operating layers</h2><p>Three layers take the installation from model serving to governed agents and enterprise access.</p></div>
-                  <button className="text-button" type="button" onClick={() => openConnectionSettings()}>Manage platform</button>
-                </div>
-                <div className="connection-list">
-                  {platformLayers.map((layer) => <article className="connection connection-layer" key={layer.key}>
-                    <div className={`connection-mark ${layer.tone}`}>{layer.mark}</div>
-                    <div className="connection-copy">
-                      <strong>{layer.name}</strong>
-                      <span>{layer.role}</span>
-                      {layer.components && <div className="connection-components">{layer.components.map((component) => <small key={component.name}><i className={component.tone} />{component.name}: {component.label}</small>)}</div>}
-                    </div>
-                    <span className={`connection-status ${layer.state.tone}`}><i />{layer.state.label}</span>
-                    <button type="button" aria-label={`Manage ${layer.name}`} onClick={() => openConnectionSettings(layer.actionKind)}>{unlocked ? layer.state.tone === "unconfigured" ? "Configure" : "Manage" : "Unlock"}</button>
-                  </article>)}
-                </div>
-              </section>
-
-              <section className="panel architecture-panel">
-                <div className="panel-heading"><div><p className="section-kicker">Runtime trust boundary</p><h2>Target execution path</h2><p>Hermes stays isolated while OrcaSynapse mediates identity, policy, model access, and approved integrations.</p></div><span className="phase-tag">Default deny</span></div>
-                <ol className="runtime-flow">
-                  <li><span>1</span><div><strong>OrcaSynapse</strong><small>Identity and orchestration</small></div></li>
-                  <li><span>2</span><div><strong>Hermes</strong><small>Isolated agent runtime</small></div></li>
-                  <li><span>3</span><div><strong>OrcaSynapse gateway</strong><small>Model policy and audit</small></div></li>
-                  <li><span>4</span><div><strong>AI Inference</strong><small>Approved local model serving</small></div></li>
-                </ol>
-                <div className="boundary-note"><Glyph name="guardrails" /><div><strong>Secrets terminate at OrcaSynapse</strong><p>Hermes receives bounded runtime access; database and enterprise connector credentials remain in the control plane.</p></div></div>
-              </section>
-
-              <section className="panel readiness-panel">
-                <div className="panel-heading"><div><p className="section-kicker">Operational readiness</p><h2>Core capabilities</h2><p>Live connection state determines what operators and employees can use now.</p></div><span className={`readiness-count ${!unlocked ? "restricted" : readyWorkloads === readinessChecks.length ? "ready" : "pending"}`}>{unlocked ? `${readyWorkloads}/${readinessChecks.length} ready` : "Unlock to verify"}</span></div>
-                {chatMetrics && (
-                  <div className="chat-metric-grid" aria-label="Chat metrics for the last 24 hours">
-                    <div><span>Responses</span><strong>{chatMetrics.responses.toLocaleString()}</strong></div>
-                    <div><span>Failure rate</span><strong>{(chatMetrics.failureRate * 100).toFixed(1)}%</strong></div>
-                    <div><span>Avg latency</span><strong>{chatMetrics.averageLatencyMs === null ? "—" : `${(chatMetrics.averageLatencyMs / 1000).toFixed(1)}s`}</strong></div>
-                    <div><span>Tokens</span><strong>{chatMetrics.totalTokens.toLocaleString()}</strong></div>
-                  </div>
-                )}
-                <div className="readiness-list">
-                  {readinessChecks.map((check) => (
-                    <button type="button" key={check.label} onClick={() => unlocked ? selectView(check.action) : openConnectionSettings()}>
-                      <span className={`readiness-dot ${!unlocked ? "restricted" : check.ready ? "ready" : "pending"}`}><i /></span>
-                      <span><strong>{check.label}</strong><small>{unlocked ? check.detail : "Unlock to view current readiness"}</small></span>
-                      <span aria-hidden="true">→</span>
-                    </button>
-                  ))}
-                </div>
-              </section>
-            </div>
-          </>
+          <HomeView
+            apiAvailable={apiAvailable}
+            bootstrapState={bootstrapState}
+            unlocked={unlocked}
+            passwordChangePending={passwordChangePending}
+            healthyConnections={healthyConnections}
+            monitoring={connectionMonitoring}
+            chatMetrics={chatMetrics}
+            layers={platformLayers}
+            readiness={readinessChecks}
+            onSelect={selectView}
+            onUnlock={() => setDrawerOpen(true)}
+          />
         )}
         </Suspense>
       </main>

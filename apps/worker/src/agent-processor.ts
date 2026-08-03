@@ -33,7 +33,7 @@ export class WorkerAgentKnowledgeRetriever implements AgentKnowledgeRetriever {
     }))];
     if (ids.length === 0) return [];
     const documents = await this.prisma.document.findMany({
-      where: { id: { in: ids }, ownerSubject, status: "READY", deletedAt: null, memoryPublication: { status: "READY" } },
+      where: { id: { in: ids }, ownerSubject, status: "READY", deletedAt: null, supermemoryProjection: { status: "READY" } },
       select: { id: true, fileName: true, classification: true },
     });
     const authorized = new Map(documents.map((document) => [document.id, document]));
@@ -62,6 +62,7 @@ export interface AgentHermesRuntime {
     input: string;
     instructions: string;
     sessionId: string;
+    idempotencyKey: string;
     modelAlias: string;
     governedMcp?: { authorization: string; expiresAt: Date };
   }): Promise<string>;
@@ -86,6 +87,7 @@ interface LoadedRun {
   jobId: string | null;
   externalRunId: string | null;
   ownerSubject: string;
+  sessionId: string;
   input: string;
   effectiveCapabilities: unknown;
   toolCapabilityTokenHash: Uint8Array | null;
@@ -207,7 +209,8 @@ export class PrismaAgentProcessor {
         externalRunId = await this.hermes.start({
           input: run.input,
           instructions: hardenedInstructions(run, sources, governedTools),
-          sessionId: run.id,
+          sessionId: run.sessionId,
+          idempotencyKey: run.id,
           modelAlias: run.version.modelAlias,
           ...(governedMcp ? { governedMcp } : {}),
         });

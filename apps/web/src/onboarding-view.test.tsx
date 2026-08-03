@@ -15,6 +15,7 @@ function connection(kind: ServiceKind, baseUrl: string): ServiceConnectionSummar
 const callbacks = {
   onConfigure: vi.fn(),
   onOpenWorkspace: vi.fn(),
+  onOpenOperations: vi.fn(),
   onSignIn: vi.fn(),
   onUnauthorized: vi.fn(),
 };
@@ -29,7 +30,7 @@ describe("OnboardingView", () => {
     />);
 
     expect(html).toContain("Sign in to this OrcaSynapse installation");
-    expect(html).toContain("account recovery only");
+    expect(html).toContain("for recovery only");
     expect(html).not.toContain("Development quick start");
   });
 
@@ -44,14 +45,12 @@ describe("OnboardingView", () => {
       {...callbacks}
     />);
 
-    expect(html).toContain("Development quick start");
-    expect(html).toContain("Start chatting");
-    expect(html).toContain("Open documents");
-    expect(html).toContain("AI Inference, Agentic System, Enterprise Access");
-    expect(html).toContain("Hermes execution with durable Supermemory");
-    expect(html).toContain("tenant data isolation remains a planned phase");
-    expect(html).toContain("Enroll runtime");
-    expect(html).toContain("Enterprise model serving for Chat and governed agents");
+    expect(html).toContain("Three layers. One usable AI workspace.");
+    expect(html).toContain("AI Inference");
+    expect(html).toContain("Agentic System");
+    expect(html).toContain("Enterprise Access");
+    expect(html).toContain("Open Knowledge");
+    expect(html).toContain("Installation recovery");
     expect(html).not.toContain("Guided journey");
   });
 
@@ -63,9 +62,8 @@ describe("OnboardingView", () => {
       {...callbacks}
     />);
 
-    expect(html).toContain("Set up AI Inference first");
+    expect(html).toContain("Set up inference first");
     expect(html).toContain("Enroll Agentic System first");
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Set up AI Inference first<\/button>/);
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Enroll Agentic System first<\/button>/);
   });
 
@@ -82,5 +80,21 @@ describe("OnboardingView", () => {
     expect(html).toContain("Generate VM2 installer");
     expect(html).not.toContain("Connect Hermes");
     expect(html).not.toContain("Operational settings");
+  });
+
+  it("can enter advanced Hermes readiness directly from another workspace", () => {
+    const html = renderToStaticMarkup(<OnboardingView
+      connections={[
+        connection("INFERENCE", "http://vllm.internal:8000"),
+        connection("HERMES", "http://hermes.internal:8642"),
+        connection("SUPERMEMORY", "http://supermemory.internal:6767"),
+      ]}
+      unlocked
+      oidcConfigured={false}
+      initialTab="readiness"
+      {...callbacks}
+    />);
+
+    expect(html).toContain("Three layers. One usable AI workspace.");
   });
 });

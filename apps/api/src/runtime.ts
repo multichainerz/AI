@@ -25,16 +25,11 @@ import {
 } from "./identity/enterprise-session.js";
 import {
   PrismaRuntimeConnectionResolver,
-  documentScratchDirectory,
-  EncryptedFileSystemDocumentScratchStore,
   HermesClient,
   SupermemoryClient,
 } from "@orcasynapse/document-runtime";
 import type { DocumentManager } from "./documents/document-manager.js";
 import { PrismaDocumentManager } from "./documents/prisma-document-manager.js";
-import { SupermemoryKnowledgeRetriever } from "./chat/knowledge-retriever.js";
-import type { MemoryManager } from "./memory/memory-manager.js";
-import { PrismaMemoryManager } from "./memory/prisma-memory-manager.js";
 import type { AgentManager } from "./agents/agent-manager.js";
 import { PrismaAgentManager } from "./agents/prisma-agent-manager.js";
 import type { ToolingManager } from "./tooling/tooling-manager.js";
@@ -66,7 +61,6 @@ export interface RuntimeServices {
   chatManager?: ChatManager;
   identityManager?: EnterpriseIdentityManager;
   documentManager?: DocumentManager;
-  memoryManager?: MemoryManager;
   modelManager?: ModelManager;
   guardrailManager?: GuardrailManager;
   promptManager?: PromptManager;
@@ -123,22 +117,16 @@ export function createRuntimeServices(): RuntimeServices {
     const sessionManager = new PrismaAdminSessionManager(prisma, authenticator);
     const operationsManager = new PrismaOperationsManager(prisma);
     const documentResolver = new PrismaRuntimeConnectionResolver(prisma, encryption);
-    const memoryManager = new PrismaMemoryManager(prisma);
     const modelManager = new PrismaModelManager(prisma);
     const guardrailManager = new PrismaGuardrailManager(prisma);
     const promptManager = new PrismaPromptManager(prisma);
-    const chatManager = new PrismaChatManager(
-      prisma,
-      connectionManager,
-      undefined,
-      new SupermemoryKnowledgeRetriever(prisma, new SupermemoryClient(documentResolver)),
-    );
     const documentManager = new PrismaDocumentManager(
       prisma,
-      new EncryptedFileSystemDocumentScratchStore(documentScratchDirectory(), masterKey),
+      new SupermemoryClient(documentResolver),
     );
     const hermesClient = new HermesClient(documentResolver);
     const agentManager = new PrismaAgentManager(prisma, hermesClient);
+    const chatManager = new PrismaChatManager(prisma, agentManager);
     const toolingManager = new PrismaToolingManager(prisma, hermesClient);
     const aiOpsManager = new PrismaAiOpsManager(prisma, {
       connections: connectionManager,
@@ -147,7 +135,6 @@ export function createRuntimeServices(): RuntimeServices {
       runtime: operationsManager,
       chat: chatManager,
       documents: documentManager,
-      memory: memoryManager,
       agents: agentManager,
       tools: toolingManager,
     });
@@ -172,7 +159,6 @@ export function createRuntimeServices(): RuntimeServices {
         sessionManager,
       ),
       documentManager,
-      memoryManager,
       modelManager,
       guardrailManager,
       promptManager,

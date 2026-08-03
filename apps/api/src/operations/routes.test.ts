@@ -24,8 +24,8 @@ class MemoryOperationsManager implements OperationsManager {
     const capturedAt = new Date().toISOString();
     return {
       engine: "postgresql-state", status: "ONLINE", statusReasons: [], capturedAt,
-      workloads: [{ name: "agents", displayName: "Hermes runs", pendingCount: 0, activeCount: 1, failedCount: 0, totalCount: 1 }],
-      executors: [{ id: "runtime-1", name: "runtime.local", status: "ONLINE", startedAt: capturedAt, lastSeenAt: capturedAt, version: "0.1.0", workloads: ["agents"] }],
+      workloads: [{ name: "hermes-runs", displayName: "Hermes runs", pendingCount: 0, activeCount: 1, failedCount: 0, totalCount: 1 }],
+      executors: [{ id: "runtime-1", name: "runtime.local", status: "ONLINE", startedAt: capturedAt, lastSeenAt: capturedAt, version: "0.1.0", workloads: ["hermes-runs"] }],
     };
   }
 }
@@ -51,6 +51,6 @@ describe("administrator runtime operations routes", () => {
     const response = await app.inject({ method: "GET", url: "/api/v1/admin/operations/runtime", headers: { cookie: `${ADMIN_SESSION_COOKIE}=${SESSION_TOKEN}` } });
     expect(manager.start).toHaveBeenCalledOnce();
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({ engine: "postgresql-state", workloads: [{ name: "agents" }], executors: [{ status: "ONLINE" }] });
+    expect(response.json()).toMatchObject({ engine: "postgresql-state", workloads: [{ name: "hermes-runs" }], executors: [{ status: "ONLINE" }] });
   });
 });

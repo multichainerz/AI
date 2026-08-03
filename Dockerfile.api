@@ -38,8 +38,6 @@ COPY --from=builder /app/pnpm-lock.yaml ./pnpm-lock.yaml
 COPY scripts/install-agentic-node.sh ./scripts/install-agentic-node.sh
 COPY scripts/remove-agentic-node.sh ./scripts/remove-agentic-node.sh
 
-RUN install -d -o node -g node -m 0700 /var/lib/orcasynapse-document-scratch
-
 USER node
 EXPOSE 4000
 CMD ["node", "apps/api/dist/index.js"]

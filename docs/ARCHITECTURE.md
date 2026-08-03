@@ -1,106 +1,99 @@
 # OrcaSynapse Architecture
 
+OrcaSynapse is the identity, policy, orchestration, and observability plane around an isolated Hermes runtime. It is not a second agent framework, file repository, vector database, or model server.
+
 ## Production baseline
 
 ```mermaid
 flowchart LR
-  subgraph VM1["OrcaSynapse host"]
-    WEB["React / Vite dashboard"]
-    API["Fastify API and inference gateway"]
-    WORKER["PostgreSQL state reconciler"]
-    PG["PostgreSQL"]
-    WEB --> API
-    API <--> PG
-    WORKER <--> PG
+  USER["Browser"] --> WEB["OrcaSynapse dashboard"]
+
+  subgraph VM1["VM1 · control plane"]
+    WEB --> API["Fastify API"]
+    API <--> PG["PostgreSQL"]
+    WORKER["Hermes run reconciler"] <--> PG
   end
 
-  subgraph VM2["Isolated agent host"]
-    HERMES["Hermes Agent"]
-    SM["Supermemory Local"]
-    HERMES <--> SM
+  subgraph VM2["VM2 · isolated agentic system"]
+    HERMES["Hermes Agent"] <--> SM["Supermemory Local"]
   end
 
-  subgraph GPU["Inference server"]
-    INFERENCE["Inference Server<br/>vLLM / llama.cpp / SGLang / Ollama / TGI / custom"]
-    MODEL["Approved local model"]
-    INFERENCE <--> MODEL
+  subgraph GPU["AI Inference"]
+    SERVER["OpenAI-compatible server"] <--> MODEL["Approved local model"]
   end
 
-  API -->|"approved direct Chat"| INFERENCE
-  API -->|"governed agent runs"| HERMES
-  HERMES -->|"node-scoped bearer key"| API
-  SM -->|"node-scoped bearer key"| API
-  API -->|"approved alias + local policy"| INFERENCE
-  WORKER -->|"normalized knowledge"| SM
+  API -->|"stream source after policy checks"| SM
+  WORKER -->|"submit, observe, cancel"| HERMES
+  HERMES -->|"node-scoped inference route"| API
+  API -->|"approved alias and bounded request"| SERVER
 ```
 
-Development may co-locate services, but production acceptance assumes separate trust zones for OrcaSynapse, the agent runtime, and GPU inference.
+The minimum deployment is two VMs plus an existing inference endpoint. VM1 runs OrcaSynapse and PostgreSQL. VM2 runs Hermes and Supermemory. The inference endpoint may be vLLM, llama.cpp, SGLang, Ollama, TGI, or another compatible server.
 
-## Ownership
+## One owner for each kind of state
 
-| Component | Owns | Does not own |
+| Component | Owns | Never owns |
 | --- | --- | --- |
-| OrcaSynapse | identity, authorization, service configuration, encrypted credentials, model/prompt/guardrail policy, document lifecycle, agent profiles, approvals, audit, inference gateway | model serving, semantic index internals, original enterprise files |
-| PostgreSQL | OrcaSynapse control data, audit, sessions, durable domain workflow state, authorization provenance | embeddings, source bytes, Hermes runtime state |
-| Runtime executor | idempotent reconciliation of unfinished PostgreSQL domain rows | independent queue state, semantic memory |
-| Hermes | agent loop, tools/subagents, sessions, built-in bounded memory, native Supermemory integration | enterprise authorization, inference-server credentials, OrcaSynapse database access |
-| Supermemory Local | semantic graph, normalized knowledge, long-term agent memory, local embedding state | OrcaSynapse authorization decisions, original-file authority |
-| Inference Server | OpenAI-compatible inference for approved models; concrete backend is an operational choice | routing authority, enterprise policy, durable memory |
+| OrcaSynapse | workforce and administrator identity, authorization, encrypted endpoints, Profile releases, policy, audit, metadata, incidents, and operational evidence | agent execution, embeddings, original files, or model weights |
+| PostgreSQL | OrcaSynapse control-plane and durable Hermes-run state | source bytes, vectors, or Hermes session internals |
+| Hermes | agent sessions, loop execution, Skills, tool and sub-agent behavior, and bounded native memory | enterprise authorization, PostgreSQL access, or inference credentials |
+| Supermemory Local | semantic knowledge, long-duration agent memory, embeddings, and retrieval | enterprise authorization decisions or original-file authority |
+| AI Inference | OpenAI-compatible model serving | routing authority, durable memory, or enterprise credentials |
 
-There is no LiteLLM tier. OrcaSynapse's internal gateway is deliberately narrow: it authenticates enrolled runtimes, pins the active Agent model alias, applies deterministic request checks and response bounds, rate-limits requests in PostgreSQL, and forwards to the selected OpenAI-compatible inference server. It is not a general multi-provider proxy or backend-specific control plane.
+There is no direct Chat-to-model path. Normal Chat creates a governed Hermes Agent Run. The PostgreSQL reconciler submits that run to VM2, follows safe lifecycle events, supports cancellation, and returns the final Hermes response. The run ID is the idempotency key; the conversation ID is the stable Hermes session ID.
 
-## Memory namespaces
+## Knowledge lifecycle
 
-- `orcasynapse-agent-{identity}` is Hermes's profile-scoped native memory. Hermes may read and write it through its Supermemory provider.
-- `orcasynapse-knowledge` contains normalized enterprise document knowledge published by OrcaSynapse.
-- OrcaSynapse reauthorizes every enterprise-knowledge result against current PostgreSQL ownership and publication state before it can enter Chat or a governed agent run.
-- Hermes is not given unrestricted custom-container access. Access to enterprise knowledge remains mediated by OrcaSynapse.
+1. The browser uploads a source to OrcaSynapse.
+2. OrcaSynapse authenticates the identity and validates classification, file name, MIME type, retention, and the 50 MB limit.
+3. OrcaSynapse streams the multipart body to Supermemory using a server-side credential and an owner-derived container tag.
+4. PostgreSQL stores only ownership, classification, checksum, size, external Supermemory ID, projected status, retention, and audit metadata.
+5. OrcaSynapse polls Supermemory for indexing state. It keeps no retry copy; a failed transfer requires re-upload.
+6. Deletion removes the Supermemory object and marks the metadata record deleted.
 
-Hermes's `MEMORY.md` and `USER.md` remain active because the official external-memory-provider model is additive. They hold small curated runtime facts; Supermemory provides deeper cross-session semantic memory.
+The verified Supermemory Local v0.0.5 baseline reliably handles UTF-8 plain text. PDF, DOCX, and image uploads are accepted by its local API but can fail during extraction when the self-hosted build depends on unavailable cloud extractors. The dashboard states this limitation instead of claiming unsupported local OCR.
 
-The installed baseline uses Hermes's root-owned managed scope to pin the approved model route, Supermemory provider, secret redaction, loop circuit breakers, and the `api_server` platform to `no_mcp`; it exposes no native model-callable toolsets. This does not disable automatic Supermemory recall/capture. Managed scope prevents an ordinary runtime user from overriding pinned keys, but it is not a substitute for VM isolation or network policy. Tools and subagent delegation are capabilities of Hermes, but they are not part of the production trust boundary until an OrcaSynapse-reviewed distribution explicitly enables and verifies them.
+## Memory boundaries
 
-Node lifecycle is an execution boundary: Drain rejects new agent work while allowing already-submitted Hermes runs to finish; Suspend denies both new and active work; Resume restores admission only when the signed heartbeat and managed Hermes connection are healthy; Revoke permanently disables the node-scoped inference, Hermes, and Supermemory routes.
+- Each enterprise identity receives a deterministic, hashed `orcasynapse-knowledge-*` container tag. OrcaSynapse never accepts an arbitrary namespace from the browser.
+- Hermes uses its VM2-local Supermemory provider for durable agent recall and capture.
+- Hermes `MEMORY.md` and `USER.md` remain small native runtime files because the upstream external-memory provider is additive.
+- PostgreSQL records authorization and provenance; it is not a second vector plane.
 
-## Document lifecycle
+## Runtime and tool boundaries
 
-1. OrcaSynapse validates, classifies, checksums, encrypts, and quarantines an upload in transient scratch space.
-2. OrcaSynapse accepts UTF-8 TXT input and normalizes it directly; rich documents and images are rejected by this release.
-3. The runtime executor reconciles the document row and publishes normalized content to `orcasynapse-knowledge`.
-4. After Supermemory confirms indexing, OrcaSynapse purges every staged byte for that document generation.
-5. PostgreSQL retains only lifecycle, authorization, provenance, checksum, and audit metadata.
-6. Deletion removes the Supermemory object and related transient staging.
+The VM2 installer pins the OrcaSynapse inference route, Supermemory provider, secret redaction, and loop circuit breakers in Hermes managed configuration. The default distribution exposes no native model-callable MCP toolset. OrcaSynapse's governed MCP surface remains default-deny and currently exposes only its implemented read-only document-metadata handler; retired document resynchronization actions cannot be reactivated.
 
-This is intentionally not an enterprise file store. Source systems remain authoritative, and failed publication after staging expiry requires a fresh upload or connector fetch.
+Node lifecycle is an execution boundary:
+
+- **Drain** rejects new work and lets accepted work finish.
+- **Suspend** denies new and active work.
+- **Resume** restores admission only after the signed heartbeat and Hermes connection are healthy.
+- **Revoke** permanently disables node-scoped Hermes, Supermemory, and inference access.
+- **Remove** deletes the dashboard registration only after revocation; the operator separately runs the generated VM2 cleanup command to destroy local runtime data.
 
 ## Network policy
 
 | Source | Destination | Purpose |
 | --- | --- | --- |
-| Browser | OrcaSynapse HTTPS | dashboard/API only |
-| OrcaSynapse | PostgreSQL | private application/data network |
-| OrcaSynapse | Inference Server | direct Chat and gateway forwarding over the approved OpenAI-compatible contract |
-| OrcaSynapse runtime | Supermemory TCP 6767 | governed knowledge publication/retrieval |
-| OrcaSynapse | Hermes TCP 8642 | governed run submission/status/stop |
-| Hermes host | OrcaSynapse `/internal/v1` | model inference without an upstream serving credential |
-| Hermes host | OrcaSynapse runtime-node API | enrollment, memory registration, signed heartbeat |
-| Hermes | local Supermemory TCP 6767 | native memory |
+| Browser | OrcaSynapse HTTPS | dashboard and API only |
+| OrcaSynapse | PostgreSQL | private control-plane data |
+| OrcaSynapse | Hermes TCP 8642 | governed runs, status, and stop |
+| OrcaSynapse | Supermemory TCP 6767 | knowledge upload, status, search, and deletion |
+| Hermes | local Supermemory TCP 6767 | native agent memory |
+| Hermes | OrcaSynapse internal inference API | node-scoped model access |
+| OrcaSynapse | AI Inference | approved OpenAI-compatible model calls |
 
-Deny browser-to-Hermes, browser-to-inference-server, Hermes-to-PostgreSQL, Hermes-to-Docker-control, and unrestricted outbound runtime access. Production must use customer-approved TLS/mTLS or equivalent private-network controls; the enrollment signature is application identity, not a replacement for transport security.
-
-## Embedding compatibility
-
-OrcaSynapse currently pins Supermemory Local v0.0.5 because the published v0.0.6 binary cannot load its RivetKit workflow dependency, leaving ingestion queued and search empty ([#1315](https://github.com/supermemoryai/supermemory/issues/1315), [#1324](https://github.com/supermemoryai/supermemory/issues/1324)). OrcaSynapse requests CPU-local `Xenova/bge-m3` (1024d) for multilingual deployments and reports the model actually loaded, but the current binary lineage ignores that override and loads `Xenova/bge-base-en-v1.5` (768d) ([#1336](https://github.com/supermemoryai/supermemory/issues/1336)). Treat non-English semantic recall as degraded until a fixed upstream release passes acceptance testing.
+Deny browser access to VM2 and inference, Hermes access to PostgreSQL or Docker control, and unrestricted VM2 egress. Enrollment signatures identify the node but do not replace customer-approved TLS/mTLS and firewall controls.
 
 ## Durability and recovery
 
-- Back up PostgreSQL with point-in-time recovery appropriate to the customer RPO/RTO.
-- Back up the complete Supermemory data directory consistently; it contains graph state, auth state, and local embedding state.
-- Back up Hermes `/opt/data` when session continuity, Skills, built-in memory, and runtime configuration must survive host loss.
-- Never back up OrcaSynapse document scratch as a knowledge repository.
-- Retain the encrypted OrcaSynapse credential-recovery kit off-host and test it.
-- Test restore into an isolated environment and verify model-route, namespace, authorization, and deletion behavior before declaring production readiness.
+- Back up PostgreSQL with a tested customer RPO/RTO and point-in-time recovery where required.
+- Back up the complete Supermemory data directory consistently; it contains semantic graph, auth, and embedding state.
+- Back up Hermes persistent data when sessions, Skills, and native memory must survive VM replacement.
+- Store the OrcaSynapse Installation Key and encrypted recovery kit off-host, then test recovery.
+- Restore into an isolated environment and verify identity, Profile, model route, namespace, retrieval, and deletion behavior.
 
 ## Explicit non-dependencies
 
-The application does not require Redis, Valkey, pg-boss, LiteLLM, S3-compatible storage, SeaweedFS, MinIO, or a separate pgvector service. Those may exist elsewhere in a customer's infrastructure but are not OrcaSynapse runtime dependencies.
+OrcaSynapse does not require Redis, Valkey, pg-boss, LiteLLM, S3-compatible storage, SeaweedFS, MinIO, pgvector, or a separate OCR service.

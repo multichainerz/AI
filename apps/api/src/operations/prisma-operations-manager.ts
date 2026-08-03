@@ -32,11 +32,8 @@ export class PrismaOperationsManager implements OperationsManager {
 
   async snapshot(): Promise<RuntimeOperationsSnapshot> {
     const capturedAt = new Date();
-    const [documentGroups, memoryGroups, agentGroups, toolGroups, executorRecords] = await Promise.all([
-      this.prisma.document.groupBy({ by: ["status"], where: { status: { not: "DELETED" } }, _count: { _all: true } }),
-      this.prisma.documentMemoryPublication.groupBy({ by: ["status"], _count: { _all: true } }),
+    const [agentGroups, executorRecords] = await Promise.all([
       this.prisma.agentRun.groupBy({ by: ["status"], _count: { _all: true } }),
-      this.prisma.toolActionDispatch.groupBy({ by: ["status"], _count: { _all: true } }),
       this.prisma.workerNode.findMany({
         where: { lastSeenAt: { gte: new Date(capturedAt.getTime() - VISIBLE_EXECUTOR_HISTORY_MS) } },
         orderBy: { lastSeenAt: "desc" },
@@ -57,24 +54,9 @@ export class PrismaOperationsManager implements OperationsManager {
     });
     const workloads = [
       {
-        name: "documents" as const, displayName: "Document processing",
-        pendingCount: count(documentGroups, ["QUEUED"]), activeCount: count(documentGroups, ["CONVERTING"]),
-        failedCount: count(documentGroups, ["FAILED"]), totalCount: count(documentGroups, documentGroups.map(({ status }) => status)),
-      },
-      {
-        name: "memory" as const, displayName: "Supermemory synchronization",
-        pendingCount: count(memoryGroups, ["QUEUED", "DELETE_PENDING"]), activeCount: count(memoryGroups, ["PROCESSING"]),
-        failedCount: count(memoryGroups, ["FAILED"]), totalCount: count(memoryGroups, memoryGroups.map(({ status }) => status)),
-      },
-      {
-        name: "agents" as const, displayName: "Hermes runs",
+        name: "hermes-runs" as const, displayName: "Hermes Agent Runs",
         pendingCount: count(agentGroups, ["QUEUED", "CANCEL_REQUESTED"]), activeCount: count(agentGroups, ["RUNNING"]),
         failedCount: count(agentGroups, ["FAILED", "TIMED_OUT", "DENIED"]), totalCount: count(agentGroups, agentGroups.map(({ status }) => status)),
-      },
-      {
-        name: "tool-actions" as const, displayName: "Governed tool actions",
-        pendingCount: count(toolGroups, ["PENDING", "RETRY_WAIT"]), activeCount: count(toolGroups, ["PROCESSING"]),
-        failedCount: count(toolGroups, ["FAILED", "CANCELLED"]), totalCount: count(toolGroups, toolGroups.map(({ status }) => status)),
       },
     ];
     const hasOnlineExecutor = executors.some(({ status }) => status === "ONLINE");

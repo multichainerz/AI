@@ -15,6 +15,15 @@ export const chatMessageRoleSchema = z.enum(CHAT_MESSAGE_ROLES);
 export const chatMessageStatusSchema = z.enum(CHAT_MESSAGE_STATUSES);
 export const chatFeedbackRatingSchema = z.enum(["HELPFUL", "NOT_HELPFUL"]);
 
+export const chatRuntimeEventSchema = z.object({
+  id: z.uuid(),
+  type: z.string().min(1).max(80),
+  summary: z.string().max(1_000).nullable(),
+  toolName: z.string().max(160).nullable(),
+  childSessionId: z.string().max(255).nullable(),
+  occurredAt: z.iso.datetime(),
+});
+
 export const chatFeedbackSchema = z.object({
   rating: chatFeedbackRatingSchema,
   comment: z.string().max(1_000).nullable(),
@@ -35,6 +44,8 @@ export const chatMessageSchema = z.object({
   latencyMs: z.number().int().nonnegative().nullable(),
   finishReason: z.string().nullable(),
   errorCode: z.string().nullable(),
+  agentRunId: z.uuid().nullable(),
+  runtimeEvents: z.array(chatRuntimeEventSchema).max(500),
   sources: z.array(knowledgeSourceSchema).max(10),
   feedback: chatFeedbackSchema.nullable(),
   createdAt: z.iso.datetime(),
@@ -45,6 +56,8 @@ export const chatConversationSummarySchema = z.object({
   id: z.uuid(),
   title: z.string().min(1).max(160),
   modelAlias: z.string().min(1).max(200),
+  profileId: z.uuid().nullable(),
+  profileName: z.string().min(1).max(120).nullable(),
   status: chatConversationStatusSchema,
   messageCount: z.number().int().nonnegative(),
   lastMessagePreview: z.string().nullable(),
@@ -70,6 +83,7 @@ export const createChatConversationSchema = z
       .max(200)
       .regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/)
       .optional(),
+    profileId: z.uuid().optional(),
   })
   .strict();
 
@@ -120,6 +134,14 @@ const chatStreamBaseSchema = z.object({
 
 export const chatStreamEventSchema = z.discriminatedUnion("type", [
   chatStreamBaseSchema.extend({ type: z.literal("started") }),
+  chatStreamBaseSchema.extend({
+    type: z.literal("activity"),
+    runId: z.uuid(),
+    activity: z.string().min(1).max(80),
+    summary: z.string().max(1_000).nullable(),
+    toolName: z.string().max(160).nullable(),
+    childSessionId: z.string().max(255).nullable(),
+  }),
   chatStreamBaseSchema.extend({ type: z.literal("delta"), delta: z.string().min(1) }),
   chatStreamBaseSchema.extend({ type: z.literal("completed"), message: chatMessageSchema }),
   chatStreamBaseSchema.extend({
@@ -134,6 +156,7 @@ export type ChatConversationStatus = z.infer<typeof chatConversationStatusSchema
 export type ChatMessageRole = z.infer<typeof chatMessageRoleSchema>;
 export type ChatMessageStatus = z.infer<typeof chatMessageStatusSchema>;
 export type ChatFeedbackRating = z.infer<typeof chatFeedbackRatingSchema>;
+export type ChatRuntimeEvent = z.infer<typeof chatRuntimeEventSchema>;
 export type ChatFeedback = z.infer<typeof chatFeedbackSchema>;
 export type ChatMessage = z.infer<typeof chatMessageSchema>;
 export type ChatConversationSummary = z.infer<typeof chatConversationSummarySchema>;

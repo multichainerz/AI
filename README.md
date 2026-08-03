@@ -69,11 +69,11 @@ The VM2 installer creates its identity locally, consumes the claim once, receive
 
 ## What you get
 
-- Responsive Chat with streaming, cancellation, token usage, latency, throughput, feedback, and retained conversations.
+- Hermes-first Chat with live run activity, cancellation, reported token usage, latency, feedback, and retained conversations.
 - Smart inference discovery for vLLM, llama.cpp, SGLang, Ollama, TGI, and compatible OpenAI-style servers.
 - Governed Hermes profiles, skills, tools, prompts, guardrails, lifecycle states, runs, and safe event projections.
 - Durable semantic memory through self-hosted Supermemory Local without a second vector plane in OrcaSynapse.
-- Ephemeral document processing with durable knowledge publication and no permanent source-file repository.
+- Direct, policy-checked source streaming to Supermemory with no OrcaSynapse source-file repository or duplicate processing queue.
 - Encrypted PostgreSQL-backed configuration, sessions, authorization, workflow state, audit, and operational evidence.
 - Local recovery plus optional OIDC / Microsoft Entra ID for enterprise administration.
 

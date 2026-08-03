@@ -9,8 +9,8 @@ import {
   getAgentRunEvents,
   getAgentRuns,
   getAgentRuntime,
+  runOnboardingValidation,
   setAgentProfileState,
-  submitAgentRun,
   updateAgentProfile,
   updateAgentRuntime,
 } from "./api.js";
@@ -21,6 +21,8 @@ interface AgentsViewProps {
   oidcConfigured: boolean;
   onSignIn: () => void;
   onConfigure: () => void;
+  onOpenChat: () => void;
+  onOpenReadiness: () => void;
   onUnauthorized: () => void;
 }
 
@@ -94,7 +96,7 @@ function draftFromProfile(profile: AgentProfile): CreateAgentProfile {
   };
 }
 
-export function AgentsView({ unlocked, administrator, oidcConfigured, onSignIn, onConfigure, onUnauthorized }: AgentsViewProps) {
+export function AgentsView({ unlocked, administrator, oidcConfigured, onSignIn, onConfigure, onOpenChat, onOpenReadiness, onUnauthorized }: AgentsViewProps) {
   const runsRef = useRef<AgentRun[]>([]);
   const [profiles, setProfiles] = useState<AgentProfile[]>([]);
   const [runs, setRuns] = useState<AgentRun[]>([]);
@@ -103,7 +105,6 @@ export function AgentsView({ unlocked, administrator, oidcConfigured, onSignIn, 
   const [runtime, setRuntime] = useState<AgentRuntimeControl | null>(null);
   const [selectedProfileId, setSelectedProfileId] = useState("");
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
-  const [prompt, setPrompt] = useState("");
   const [reason, setReason] = useState("Runtime and Profile Distribution boundaries verified by the platform administrator.");
   const [profileDraft, setProfileDraft] = useState<CreateAgentProfile>(blankProfile);
   const [skillsDraft, setSkillsDraft] = useState("");
@@ -111,6 +112,7 @@ export function AgentsView({ unlocked, administrator, oidcConfigured, onSignIn, 
   const [editorOpen, setEditorOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [readinessRequired, setReadinessRequired] = useState(false);
 
   const selectedRun = useMemo(() => runs.find(({ id }) => id === selectedRunId) ?? runs[0] ?? null, [runs, selectedRunId]);
 
@@ -165,6 +167,30 @@ export function AgentsView({ unlocked, administrator, oidcConfigured, onSignIn, 
     finally { setBusy(null); }
   };
 
+  const validateAsStandby = async (profile: AgentProfile) => {
+    if (busy) return;
+    const key = `standby-${profile.id}`;
+    setBusy(key);
+    setError(null);
+    setReadinessRequired(false);
+    try {
+      const snapshot = await runOnboardingValidation({ stageKey: "ai-services" });
+      const hermesCompatibility = snapshot.components.find(({ key: componentKey }) => componentKey === "hermes-api");
+      if (hermesCompatibility?.status !== "PASSED") {
+        setReadinessRequired(true);
+        const status = hermesCompatibility?.status.replaceAll("_", " ").toLowerCase() ?? "not tested";
+        throw new Error(`Hermes compatibility is ${status}. ${hermesCompatibility?.note ?? "The Agentic System must pass its automated service check before this Profile can enter standby."}`);
+      }
+      await setAgentProfileState(profile.id, "standby");
+      await load();
+    } catch (cause) {
+      if (cause instanceof OrcaSynapseApiError && cause.message.includes("Hermes compatibility")) setReadinessRequired(true);
+      fail(cause);
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const editProfile = (profile: AgentProfile) => {
     setEditingId(profile.id);
     setProfileDraft(draftFromProfile(profile));
@@ -191,16 +217,6 @@ export function AgentsView({ unlocked, administrator, oidcConfigured, onSignIn, 
     });
   };
 
-  const runAgent = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!selectedProfileId || !prompt.trim()) return;
-    const input = prompt.trim();
-    await action("run-submit", async () => {
-      const created = await submitAgentRun(selectedProfileId, input);
-      setPrompt(""); setSelectedRunId(created.id);
-    });
-  };
-
   if (!unlocked) {
     return (
       <section className="chat-locked agents-locked">
@@ -220,10 +236,10 @@ export function AgentsView({ unlocked, administrator, oidcConfigured, onSignIn, 
     <section className="agents-workspace">
       <header className="documents-header agents-header">
         <div><p className="page-kicker">Hardened orchestration</p><h1>Hermes Profiles</h1><p>Immutable Profile Distributions, scoped knowledge, optional OrcaSynapse-governed MCP actions, safe activity events, and an operator kill switch.</p></div>
-        <div className="agent-header-actions"><button className="secondary-button" type="button" onClick={() => void load()}>Refresh</button>{administrator && <button className="primary-button" type="button" onClick={() => { setEditingId(null); setProfileDraft(blankProfile); setSkillsDraft(""); setEditorOpen(true); }}>New profile</button>}</div>
+        <div className="agent-header-actions"><button className="secondary-button" type="button" onClick={onOpenChat}>Open Chat</button><button className="secondary-button" type="button" onClick={() => void load()}>Refresh</button>{administrator && <button className="primary-button" type="button" onClick={() => { setEditingId(null); setProfileDraft(blankProfile); setSkillsDraft(""); setEditorOpen(true); }}>New profile</button>}</div>
       </header>
 
-      {error && <div className="documents-alert" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
+      {error && <div className="documents-alert" role="alert"><span>{error}</span><div className="documents-alert-actions">{readinessRequired && <button type="button" onClick={onOpenReadiness}>Open Hermes readiness</button>}<button type="button" onClick={() => { setError(null); setReadinessRequired(false); }}>Dismiss</button></div></div>}
 
       {administrator && <section className={`agent-boundary ${runtime?.enabled ? "enabled" : "disabled"}`}>
         <div className="agent-boundary-mark">{runtime?.enabled ? "ON" : "OFF"}</div>
@@ -241,7 +257,7 @@ export function AgentsView({ unlocked, administrator, oidcConfigured, onSignIn, 
         <article><span>Completed</span><strong>{metrics?.completedRuns ?? runs.filter(({ status }) => status === "COMPLETED").length}</strong><small>retained outcomes</small></article>
       </div>
 
-      <div className="agents-layout">
+      <div className="agents-layout profiles-only">
         <section className="agent-profiles panel">
           <div className="document-section-heading"><div><p className="section-kicker">Immutable configuration</p><h2>Profiles</h2></div><span>{profiles.length} profiles</span></div>
           <div className="agent-profile-list">
@@ -252,23 +268,11 @@ export function AgentsView({ unlocked, administrator, oidcConfigured, onSignIn, 
                 <div><strong>{profile.version.displayName}</strong><p>{profile.version.purpose}</p><small>{profile.slug} · current v{profile.version.version} · {profile.version.modelAlias} · distro {profile.version.distributionDigest.slice(0, 10)}{profile.activeVersion !== null && profile.activeVersion !== profile.version.version ? ` · live v${profile.activeVersion}` : ""}</small></div>
                 <span className={`document-status ${statusTone(profile.status)}`}>{profile.status.toLowerCase()}</span>
               </button>
-              {administrator && <div className="agent-profile-actions"><button type="button" onClick={() => editProfile(profile)}>New version</button>{profile.status === "ACTIVE" ? <button type="button" disabled={busy !== null} onClick={() => void action(`suspend-${profile.id}`, () => setAgentProfileState(profile.id, "suspend"))}>Suspend</button> : profile.status === "STANDBY" ? <button type="button" disabled={busy !== null} onClick={() => void action(`activate-${profile.id}`, () => setAgentProfileState(profile.id, "activate"))}>Activate v{profile.currentVersion}</button> : <button type="button" disabled={busy !== null} onClick={() => void action(`standby-${profile.id}`, () => setAgentProfileState(profile.id, "standby"))}>Validate as standby</button>}</div>}
+              {administrator && <div className="agent-profile-actions"><button type="button" onClick={() => editProfile(profile)}>New version</button>{profile.status === "ACTIVE" ? <button type="button" disabled={busy !== null} onClick={() => void action(`suspend-${profile.id}`, () => setAgentProfileState(profile.id, "suspend"))}>Suspend</button> : profile.status === "STANDBY" ? <button type="button" disabled={busy !== null} onClick={() => void action(`activate-${profile.id}`, () => setAgentProfileState(profile.id, "activate"))}>Activate v{profile.currentVersion}</button> : <button type="button" disabled={busy !== null} onClick={() => void validateAsStandby(profile)}>{busy === `standby-${profile.id}` ? "Checking Hermes..." : "Check & set standby"}</button>}</div>}
             </article>)}
           </div>
         </section>
 
-        <section className="agent-run-panel panel">
-          <div className="document-section-heading"><div><p className="section-kicker">Bounded request</p><h2>Run an active Profile</h2></div><span>1 turn · governed tools only</span></div>
-          <form className="agent-composer" onSubmit={(event) => void runAgent(event)}>
-            <label htmlFor="agent-profile">Agent profile</label>
-            <select id="agent-profile" value={selectedProfileId} onChange={(event) => setSelectedProfileId(event.target.value)}>
-              <option value="">Select an active profile</option>{profiles.filter(({ status, activeVersionConfiguration }) => status === "ACTIVE" && activeVersionConfiguration !== null).map((profile) => <option key={profile.id} value={profile.id}>{profile.activeVersionConfiguration?.displayName} · v{profile.activeVersion}</option>)}
-            </select>
-            <label htmlFor="agent-prompt">Task</label>
-            <textarea id="agent-prompt" value={prompt} maxLength={32_000} placeholder="Describe the bounded analysis you want Hermes to complete…" onChange={(event) => setPrompt(event.target.value)} />
-            <div><span>Private memory is retrieved only when the selected profile permits it.</span><button className="primary-button" disabled={busy !== null || !selectedProfileId || !prompt.trim() || runtime?.enabled === false} type="submit">{busy === "run-submit" ? "Queuing..." : "Queue run"}</button></div>
-          </form>
-        </section>
       </div>
 
       <div className="agent-runs-layout">

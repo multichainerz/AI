@@ -26,6 +26,7 @@ import {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const GATEWAY_TOKEN = /^orcasynapse_mcp_([A-Za-z0-9_-]{43})$/;
 const RUN_AUTHORIZATION = /^([0-9a-f-]{36})\.([A-Za-z0-9_-]{43})$/i;
+const SUPPORTED_TOOL_HANDLERS = ["builtin.document_metadata_read"] as const;
 
 const callInclude = {
   run: { include: { profile: { select: { slug: true } } } },
@@ -164,7 +165,10 @@ export class PrismaToolingManager implements ToolingManager {
   ) {}
 
   async listTools() {
-    const items = await this.prisma.governedTool.findMany({ orderBy: [{ risk: "asc" }, { displayName: "asc" }] });
+    const items = await this.prisma.governedTool.findMany({
+      where: { handlerKey: { in: [...SUPPORTED_TOOL_HANDLERS] } },
+      orderBy: [{ risk: "asc" }, { displayName: "asc" }],
+    });
     return { items: items.map(toolDto) };
   }
 
@@ -207,7 +211,10 @@ export class PrismaToolingManager implements ToolingManager {
 
   async setToolStatus(principal: ToolingPrincipal, toolId: string, status: ToolStatus): Promise<void> {
     await this.prisma.$transaction(async (transaction) => {
-      const changed = await transaction.governedTool.updateMany({ where: { id: toolId }, data: { status } });
+      const changed = await transaction.governedTool.updateMany({
+        where: { id: toolId, handlerKey: { in: [...SUPPORTED_TOOL_HANDLERS] } },
+        data: { status },
+      });
       if (changed.count !== 1) throw new ToolingNotFoundError();
       await transaction.auditEvent.create({ data: {
         actorType: "USER", actorId: principal.id, action: status === "ACTIVE" ? "tool.activated" : "tool.suspended",
@@ -227,7 +234,7 @@ export class PrismaToolingManager implements ToolingManager {
   async upsertGrant(principal: ToolingPrincipal, input: UpsertToolGrant): Promise<ToolGrant> {
     const [version, tool] = await Promise.all([
       this.prisma.agentProfileVersion.findUnique({ where: { id: input.profileVersionId }, select: { id: true } }),
-      this.prisma.governedTool.findUnique({ where: { id: input.toolId }, select: { id: true } }),
+      this.prisma.governedTool.findFirst({ where: { id: input.toolId, handlerKey: { in: [...SUPPORTED_TOOL_HANDLERS] } }, select: { id: true } }),
     ]);
     if (!version || !tool) throw new ToolingNotFoundError("The selected profile version or tool does not exist.");
     const grant = await this.prisma.$transaction(async (transaction) => {
@@ -321,6 +328,9 @@ export class PrismaToolingManager implements ToolingManager {
     if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) throw new ToolingDeniedError("The run capability is invalid.");
     if (run.profile.status !== "ACTIVE" || run.profile.activeVersion !== run.profileVersion) throw new ToolingDeniedError("The agent profile or version is no longer active.");
     if (!tool || tool.status !== "ACTIVE") throw new ToolingDeniedError("The requested tool is not active.");
+    if (tool.risk === "CONSEQUENTIAL") {
+      throw new ToolingDeniedError("No consequential tool handler is installed in this release.");
+    }
     const grant = run.version.toolGrants.find((item) => item.toolId === tool.id);
     if (!grant) throw new ToolingDeniedError("The active agent version does not grant this tool.");
     if (!(await this.requesterMatchesGrant(run.requestedBy, grant.allowedGroups, grant.allowedAdminRoles))) {
@@ -330,30 +340,6 @@ export class PrismaToolingManager implements ToolingManager {
     const sanitizedArguments = { documentId };
     const existing = await this.findExistingResult(runId, invocation.requestId, toolSlug, documentId);
     if (existing) return existing;
-
-    if (tool.risk === "CONSEQUENTIAL") {
-      const expiresAt = new Date(Date.now() + control.approvalTtlMinutes * 60_000);
-      let call;
-      try {
-        call = await this.prisma.$transaction(async (transaction) => {
-          const created = await transaction.governedToolCall.create({ data: {
-            runId, toolId: tool.id, grantId: grant.id, requestId: invocation.requestId,
-            status: "APPROVAL_PENDING", arguments: sanitizedArguments,
-            approval: { create: { expiresAt } },
-          }, include: callInclude });
-          await transaction.auditEvent.create({ data: {
-            actorType: "SERVICE", action: "tool.approval_requested", resourceType: "GovernedToolCall",
-            resourceId: created.id, outcome: "SUCCESS", metadata: { runId, toolSlug, requestId: invocation.requestId, expiresAt },
-          } });
-          return created;
-        });
-      } catch (cause) {
-        const raced = await this.findExistingResult(runId, invocation.requestId, toolSlug, documentId);
-        if (raced) return raced;
-        throw cause;
-      }
-      return { callId: call.id, status: "APPROVAL_PENDING", data: { approvalRequired: true, expiresAt: expiresAt.toISOString() }, isError: false };
-    }
 
     let call;
     try {
@@ -523,21 +509,19 @@ export class PrismaToolingManager implements ToolingManager {
   async metrics(): Promise<ToolMetrics> {
     const [
       activeTools, activeGrants, pendingApprovals, executingCalls,
-      openActionDispatches, failedActionDispatches, completedCalls, deniedCalls, failedCalls,
+      completedCalls, deniedCalls, failedCalls,
     ] = await Promise.all([
       this.prisma.governedTool.count({ where: { status: "ACTIVE" } }),
       this.prisma.agentToolGrant.count({ where: { enabled: true } }),
       this.prisma.toolApproval.count({ where: { status: "PENDING", expiresAt: { gt: new Date() } } }),
       this.prisma.governedToolCall.count({ where: { status: "EXECUTING" } }),
-      this.prisma.toolActionDispatch.count({ where: { status: { in: ["PENDING", "PROCESSING"] } } }),
-      this.prisma.toolActionDispatch.count({ where: { status: "FAILED" } }),
       this.prisma.governedToolCall.count({ where: { status: "COMPLETED" } }),
       this.prisma.governedToolCall.count({ where: { status: "DENIED" } }),
       this.prisma.governedToolCall.count({ where: { status: "FAILED" } }),
     ]);
     return {
       generatedAt: new Date().toISOString(), activeTools, activeGrants, pendingApprovals,
-      executingCalls, openActionDispatches, failedActionDispatches,
+      executingCalls,
       completedCalls, deniedCalls, failedCalls,
     };
   }
@@ -570,8 +554,8 @@ export class PrismaToolingManager implements ToolingManager {
       where: { id: documentId, ownerSubject, deletedAt: null },
       select: {
         id: true, fileName: true, mediaType: true, sizeBytes: true, classification: true, status: true,
-        processingGeneration: true, createdAt: true, updatedAt: true,
-        memoryPublication: { select: { status: true, generation: true, syncedAt: true, failureCode: true } },
+        createdAt: true, updatedAt: true,
+        supermemoryProjection: { select: { status: true, syncedAt: true, failureCode: true, externalDocumentId: true } },
       },
     });
     if (!document) throw new ToolingDeniedError("The document is unavailable within the requesting user's owner-only scope.");
@@ -582,12 +566,11 @@ export class PrismaToolingManager implements ToolingManager {
       sizeBytes: document.sizeBytes.toString(),
       classification: document.classification,
       status: document.status,
-      processingGeneration: document.processingGeneration,
-      memory: document.memoryPublication ? {
-        status: document.memoryPublication.status,
-        generation: document.memoryPublication.generation,
-        syncedAt: document.memoryPublication.syncedAt?.toISOString() ?? null,
-        failureCode: document.memoryPublication.failureCode,
+      memory: document.supermemoryProjection ? {
+        status: document.supermemoryProjection.status,
+        externalDocumentId: document.supermemoryProjection.externalDocumentId,
+        syncedAt: document.supermemoryProjection.syncedAt?.toISOString() ?? null,
+        failureCode: document.supermemoryProjection.failureCode,
       } : null,
       createdAt: document.createdAt.toISOString(),
       updatedAt: document.updatedAt.toISOString(),
@@ -609,7 +592,7 @@ export class PrismaToolingManager implements ToolingManager {
     if (call.grant.toolId !== call.toolId || call.grant.profileVersionId !== call.run.profileVersionId || call.grant.resourceScope !== "OWNER_ONLY") {
       throw new ToolingDeniedError("The stored tool grant no longer matches the exact run and tool scope.");
     }
-    if (call.tool.risk !== "CONSEQUENTIAL" || call.tool.handlerKey !== "builtin.document_memory_resync") throw new ToolingDeniedError("The approved action handler is not allowed.");
+    if (call.tool.risk === "CONSEQUENTIAL") throw new ToolingDeniedError("No consequential tool handler is installed in this release.");
     if (call.run.profile.status !== "ACTIVE" || call.run.profile.activeVersion !== call.run.profileVersion) throw new ToolingDeniedError("The agent profile or version was revoked before approval.");
     if (!(await this.requesterMatchesGrant(call.run.requestedBy, call.grant.allowedGroups, call.grant.allowedAdminRoles, client))) {
       throw new ToolingDeniedError("The requesting identity no longer satisfies the tool grant.");
@@ -621,9 +604,7 @@ export class PrismaToolingManager implements ToolingManager {
         ownerSubject: call.run.ownerSubject,
         status: "READY",
         deletedAt: null,
-        stagingKey: { not: null },
-        stagingPurgedAt: null,
-        stagingExpiresAt: { gt: new Date() },
+        supermemoryProjection: { is: { status: "READY", externalDocumentId: { not: null } } },
       },
       select: { id: true },
     });

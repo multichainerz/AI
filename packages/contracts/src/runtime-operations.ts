@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const RUNTIME_WORKLOAD_NAMES = ["documents", "memory", "agents", "tool-actions"] as const;
+export const RUNTIME_WORKLOAD_NAMES = ["hermes-runs"] as const;
 export const runtimeWorkloadNameSchema = z.enum(RUNTIME_WORKLOAD_NAMES);
 
 export const runtimeWorkloadSnapshotSchema = z.object({

@@ -106,14 +106,14 @@ describe("HermesClient", () => {
         return new Response(JSON.stringify({ object: "list", platform: "api_server", data: [] }), { status: 200 });
       }
       if (init?.method === "POST") {
-        expect(init.headers).toEqual(expect.objectContaining({ "idempotency-key": "run-session-1" }));
+        expect(init.headers).toEqual(expect.objectContaining({ "idempotency-key": "run-request-1" }));
         expect(JSON.parse(String(init.body))).toMatchObject({ input: "Analyze", session_id: "run-session-1", model: "hermes-agent" });
         return new Response(JSON.stringify({ run_id: "run_external_1", status: "started" }), { status: 202 });
       }
       return new Response(JSON.stringify({ run_id: "run_external_1", status: "completed", output: "Result" }), { status: 200 });
     });
     const client = new HermesClient(resolver(), fetcher);
-    const id = await client.start({ input: "Analyze", instructions: "Stay bounded", sessionId: "run-session-1", modelAlias: "hermes-agent" });
+    const id = await client.start({ input: "Analyze", instructions: "Stay bounded", sessionId: "run-session-1", idempotencyKey: "run-request-1", modelAlias: "hermes-agent" });
     await expect(client.status(id)).resolves.toMatchObject({ id, status: "completed", output: "Result", error: null });
   });
 
@@ -169,6 +169,7 @@ describe("HermesClient", () => {
       input: "Analyze",
       instructions: "Stay bounded",
       sessionId: "run-session-1",
+      idempotencyKey: "run-request-1",
       modelAlias: "hermes-agent",
       governedMcp: { authorization, expiresAt: new Date("2026-07-30T01:00:00.000Z") },
     })).resolves.toBe("run_external_1");

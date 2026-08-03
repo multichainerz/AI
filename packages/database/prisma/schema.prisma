@@ -797,6 +797,8 @@ model ChatConversation {
   ownerSubject  String                 @db.VarChar(200)
   title         String                 @db.VarChar(160)
   modelAlias    String                 @db.VarChar(200)
+  profileId     String?                @db.Uuid
+  profileName   String?                @db.VarChar(120)
   status        ChatConversationStatus @default(ACTIVE)
   generation    Int                    @default(0)
   lastMessageAt DateTime?              @db.Timestamptz(6)
@@ -823,11 +825,13 @@ model ChatMessage {
   finishReason      String?           @db.VarChar(120)
   providerRequestId String?           @db.VarChar(200)
   errorCode         String?           @db.VarChar(80)
+  agentRunId        String?           @unique @db.Uuid
   sources           Json              @default("[]")
   createdAt         DateTime          @default(now()) @db.Timestamptz(6)
   completedAt       DateTime?         @db.Timestamptz(6)
   conversation      ChatConversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   feedback          ChatFeedback?
+  agentRun          AgentRun?         @relation(fields: [agentRunId], references: [id], onDelete: SetNull)
 
   @@unique([conversationId, ordinal])
   @@index([conversationId, createdAt])
@@ -920,41 +924,29 @@ model Document {
   sizeBytes            BigInt
   sha256               String                     @db.VarChar(64)
   classification       DocumentClassification
-  status               DocumentStatus             @default(QUARANTINED)
-  stagingKey           String?                    @db.VarChar(1024)
-  stagingExpiresAt     DateTime?                  @db.Timestamptz(6)
-  stagingPurgedAt      DateTime?                  @db.Timestamptz(6)
-  pageCount            Int?
-  processingGeneration Int                        @default(0)
+  status               DocumentStatus             @default(QUEUED)
   failureCode          String?                    @db.VarChar(80)
   failureMessage       String?                    @db.VarChar(500)
   retentionUntil       DateTime                   @db.Timestamptz(6)
-  approvedAt           DateTime?                  @db.Timestamptz(6)
-  approvedBy           String?                    @db.Uuid
   completedAt          DateTime?                  @db.Timestamptz(6)
   deletedAt            DateTime?                  @db.Timestamptz(6)
   createdAt            DateTime                   @default(now()) @db.Timestamptz(6)
   updatedAt            DateTime                   @updatedAt @db.Timestamptz(6)
-  processingRuns       DocumentProcessingRun[]
-  memoryPublication    DocumentMemoryPublication?
+  supermemoryProjection SupermemoryProjection?
 
   @@index([ownerSubject, status, updatedAt])
   @@index([status, createdAt])
   @@index([retentionUntil, status])
-  @@index([stagingExpiresAt, stagingPurgedAt])
   @@index([sha256])
 }
 
-model DocumentMemoryPublication {
+model SupermemoryProjection {
   id                   String           @id @default(uuid()) @db.Uuid
   documentId           String           @unique @db.Uuid
   ownerSubject         String           @db.VarChar(200)
   scopeTag             String           @db.VarChar(100)
-  generation           Int              @default(0)
   status               MemorySyncStatus @default(NOT_INDEXED)
   externalDocumentId   String?          @db.VarChar(255)
-  jobId                String?          @db.Uuid
-  sourceToolDispatchId String?          @db.Uuid
   failureCode          String?          @db.VarChar(80)
   failureMessage       String?          @db.VarChar(500)
   queuedAt             DateTime?        @db.Timestamptz(6)
@@ -967,7 +959,7 @@ model DocumentMemoryPublication {
   @@index([ownerSubject, status, updatedAt])
   @@index([status, queuedAt])
   @@index([scopeTag, status])
-  @@index([sourceToolDispatchId])
+  @@map("DocumentMemoryPublication")
 }
 
 model AgentProfile {
@@ -1018,6 +1010,7 @@ model AgentRun {
   profileDistributionDigest String?            @db.VarChar(64)
   ownerSubject            String              @db.VarChar(200)
   requestedBy             String              @db.Uuid
+  sessionId               String              @db.VarChar(200)
   status                  AgentRunStatus      @default(QUEUED)
   input                   String              @db.Text
   output                  String?             @db.Text
@@ -1038,6 +1031,7 @@ model AgentRun {
   version                 AgentProfileVersion @relation(fields: [profileVersionId], references: [id], onDelete: Restrict)
   toolCalls               GovernedToolCall[]
   events                  AgentRunEvent[]
+  chatMessage             ChatMessage?
 
   @@index([ownerSubject, createdAt])
   @@index([profileId, status, createdAt])
@@ -1193,21 +1187,4 @@ model ToolRuntimeControl {
   approvalTtlMinutes Int      @default(15)
   updatedBy          String?  @db.Uuid
   updatedAt          DateTime @updatedAt @db.Timestamptz(6)
-}
-
-model DocumentProcessingRun {
-  id              String    @id @default(uuid()) @db.Uuid
-  documentId      String    @db.Uuid
-  generation      Int
-  conversionJobId String?   @db.Uuid
-  startedAt       DateTime? @db.Timestamptz(6)
-  completedAt     DateTime? @db.Timestamptz(6)
-  failedAt        DateTime? @db.Timestamptz(6)
-  failureCode     String?   @db.VarChar(80)
-  createdAt       DateTime  @default(now()) @db.Timestamptz(6)
-  updatedAt       DateTime  @updatedAt @db.Timestamptz(6)
-  document        Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
-
-  @@unique([documentId, generation])
-  @@index([conversionJobId])
 }

@@ -151,8 +151,6 @@ export const toolMetricsSchema = z.object({
   activeGrants: z.number().int().nonnegative(),
   pendingApprovals: z.number().int().nonnegative(),
   executingCalls: z.number().int().nonnegative(),
-  openActionDispatches: z.number().int().nonnegative(),
-  failedActionDispatches: z.number().int().nonnegative(),
   completedCalls: z.number().int().nonnegative(),
   deniedCalls: z.number().int().nonnegative(),
   failedCalls: z.number().int().nonnegative(),

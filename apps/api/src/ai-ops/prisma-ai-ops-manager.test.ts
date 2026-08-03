@@ -69,7 +69,6 @@ function operationsOverviewHarness(
     })) },
     chat: metrics,
     documents: metrics,
-    memory: metrics,
     agents: metrics,
     tools: metrics,
   };
@@ -110,6 +109,23 @@ describe("PrismaAiOpsManager scheduled connection evidence", () => {
       status: "HEALTHY",
       source: "LIVE",
     });
+  });
+
+  it("shows missing required services without fabricating failures for optional integrations", async () => {
+    const manager = operationsOverviewHarness(connection(new Date().toISOString()), monitoring);
+
+    const overview = await manager.overview();
+
+    expect(overview.components).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "service:hermes", status: "NOT_CONFIGURED" }),
+      expect.objectContaining({ id: "service:supermemory", status: "NOT_CONFIGURED" }),
+    ]));
+    expect(overview.components).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "service:oidc" }),
+      expect.objectContaining({ id: "service:mcp" }),
+      expect.objectContaining({ id: "service:siem" }),
+      expect.objectContaining({ id: "service:notification" }),
+    ]));
   });
 
   it("downgrades an overdue scheduled check without presenting it as live", async () => {

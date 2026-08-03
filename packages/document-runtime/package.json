@@ -1,6 +1,6 @@
 {
   "name": "@orcasynapse/document-runtime",
-  "version": "1.15.6",
+  "version": "1.16.0",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",

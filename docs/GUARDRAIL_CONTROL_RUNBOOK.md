@@ -1,6 +1,6 @@
 # Guardrail Control Runbook
 
-OrcaSynapse owns the guardrail policy applied to direct Chat and to runtime requests crossing `/internal/v1`. No separate LiteLLM policy plane is present.
+OrcaSynapse owns the guardrail policy applied before Chat creates a Hermes run and again when VM2 inference requests cross `/internal/v1`. No separate LiteLLM policy plane is present.
 
 ## Policy fields
 
@@ -36,7 +36,7 @@ Test at least:
 - recognizable private-key and service-token examples;
 - benign strings resembling credentials to measure false positives;
 - streaming overflow and cancellation;
-- direct Chat and Hermes/Supermemory gateway requests;
+- Chat-to-Hermes admission and Hermes inference-gateway requests;
 - suspended/missing policy behavior after governance adoption;
 - audit content for absence of submitted text and secrets.
 

@@ -5,17 +5,12 @@ import { createPrismaClient, readBootstrapSecret } from "@orcasynapse/database";
 import { decodeMasterKey, EnvelopeEncryption, RunCapabilityIssuer } from "@orcasynapse/security";
 import {
   PrismaRuntimeConnectionResolver,
-  documentScratchDirectory,
-  EncryptedFileSystemDocumentScratchStore,
   HermesClient,
   SupermemoryClient,
 } from "@orcasynapse/document-runtime";
 import { WorkerRuntime } from "./worker-runtime.js";
 import { PrismaWorkerRegistry } from "./worker-registry.js";
-import { PrismaDocumentProcessor } from "./document-processor.js";
-import { PrismaMemoryProcessor } from "./memory-processor.js";
 import { PrismaAgentProcessor, WorkerAgentKnowledgeRetriever } from "./agent-processor.js";
-import { PrismaToolActionProcessor } from "./tool-action-processor.js";
 
 const databaseUrl = readBootstrapSecret("orcasynapse_database_url");
 const prisma = createPrismaClient(databaseUrl);
@@ -23,11 +18,6 @@ const workerId = randomUUID();
 const masterKey = decodeMasterKey(readBootstrapSecret("orcasynapse_master_key"));
 const encryption = new EnvelopeEncryption({ masterKey });
 const documentResolver = new PrismaRuntimeConnectionResolver(prisma, encryption);
-const documentStore = new EncryptedFileSystemDocumentScratchStore(documentScratchDirectory(), masterKey);
-const documentProcessor = new PrismaDocumentProcessor(
-  prisma,
-  documentStore,
-);
 const runtime = new WorkerRuntime(
   prisma,
   new PrismaWorkerRegistry(prisma),
@@ -35,22 +25,19 @@ const runtime = new WorkerRuntime(
     id: workerId,
     name: hostname(),
     version: ORCASYNAPSE_VERSION,
-    workloads: ["documents", "memory", "agents", "tool-actions"],
+    workloads: ["hermes-runs"],
   },
   {
     info: (message) => console.info(message),
     error: (message, error) => console.error(message, error),
   },
   15_000,
-  documentProcessor,
-  new PrismaMemoryProcessor(prisma, new SupermemoryClient(documentResolver), documentStore),
   new PrismaAgentProcessor(
     prisma,
     new HermesClient(documentResolver),
     new WorkerAgentKnowledgeRetriever(prisma, new SupermemoryClient(documentResolver)),
     new RunCapabilityIssuer(masterKey),
   ),
-  new PrismaToolActionProcessor(prisma),
 );
 
 let shuttingDown = false;

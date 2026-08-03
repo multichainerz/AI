@@ -321,7 +321,7 @@ export function OperationsView({ unlocked, scopes, onConfigure, onUnauthorized }
         <section className="metrics aiops-metrics" aria-label="AI operations summary">
           <article><span>Services needing attention</span><strong>{overview?.components.filter(({ status }) => status !== "HEALTHY").length ?? "--"}</strong><small>{overview?.components.length ?? 0} observed components</small></article>
           <article><span>Open incidents</span><strong className={overview?.incidents.critical ? "text-bad" : undefined}>{overview?.incidents.open ?? "--"}</strong><small>{overview?.incidents.critical ?? 0} critical</small></article>
-          <article><span>Pending work</span><strong>{numberFormatter.format(pendingWork)}</strong><small>{failedWork} retained failures across domain state</small></article>
+          <article><span>Hermes runs pending</span><strong>{numberFormatter.format(pendingWork)}</strong><small>{failedWork} retained agent-run failures</small></article>
           <article><span>Release evidence</span><strong>{overview?.evaluations.passed ?? "--"}</strong><small>{overview?.evaluations.drafts ?? 0} draft / {overview?.evaluations.promoted ?? 0} promoted</small></article>
         </section>
 
@@ -364,11 +364,10 @@ export function OperationsView({ unlocked, scopes, onConfigure, onUnauthorized }
           <div className="panel-heading"><div><p className="section-kicker">Workflows</p><h2>24-hour and retained workload signals</h2><p>Counts retain their domain meaning; all-time values are not presented as live error rates.</p></div></div>
           <div className="workload-grid">
             <article><span>Chat responses / 24h</span><strong>{metrics?.chat?.responses ?? "--"}</strong><small>{percentage(metrics?.chat?.failureRate ?? null)} failed / {metrics?.chat?.averageLatencyMs ?? "--"} ms average</small></article>
-            <article><span>Document pipeline</span><strong>{metrics?.documents?.processing ?? "--"}</strong><small>{metrics?.documents?.failed ?? 0} failed / {metrics?.documents?.ready ?? 0} ready</small></article>
-            <article><span>Supermemory sync</span><strong>{metrics?.memory?.processing ?? "--"}</strong><small>{metrics?.memory?.failed ?? 0} failed / {metrics?.memory?.ready ?? 0} ready</small></article>
+            <article><span>Knowledge indexing</span><strong>{metrics?.documents?.processing ?? "--"}</strong><small>{metrics?.documents?.ready ?? 0} ready / {metrics?.documents?.failed ?? 0} need attention</small></article>
             <article><span>Hermes runs</span><strong>{metrics?.agents?.runningRuns ?? "--"}</strong><small>{metrics?.agents?.queuedRuns ?? 0} queued / {metrics?.agents?.failedRuns ?? 0} retained failures</small></article>
-            <article><span>Tool actions</span><strong>{metrics?.tools?.openActionDispatches ?? "--"}</strong><small>{metrics?.tools?.pendingApprovals ?? 0} pending review / {metrics?.tools?.failedActionDispatches ?? 0} failed</small></article>
-            <article><span>Transient staging</span><strong>{metrics?.documents ? bytes(metrics.documents.stagedSourceBytes) : "--"}</strong><small>{metrics?.documents?.stagedDocuments ?? 0} sources awaiting purge</small></article>
+            <article><span>Governed tools</span><strong>{metrics?.tools?.executingCalls ?? "--"}</strong><small>{metrics?.tools?.pendingApprovals ?? 0} pending review / {metrics?.tools?.deniedCalls ?? 0} denied</small></article>
+            <article><span>Source bytes retained</span><strong>{metrics?.documents ? bytes(metrics.documents.retainedSourceBytes) : "--"}</strong><small>Knowledge streams directly to Supermemory</small></article>
           </div>
         </section>
 
@@ -389,7 +388,7 @@ export function OperationsView({ unlocked, scopes, onConfigure, onUnauthorized }
         {showIncidentForm && <form className="panel aiops-form" onSubmit={(event) => void createIncident(event)}>
           <label><span>Title</span><input name="title" minLength={3} maxLength={160} required /></label>
           <label><span>Severity</span><select name="severity"><option value="WARNING">Warning</option><option value="CRITICAL">Critical</option></select></label>
-          <label><span>Component</span><input name="component" minLength={1} maxLength={80} placeholder="e.g. document-pipeline" required /></label>
+          <label><span>Component</span><input name="component" minLength={1} maxLength={80} placeholder="e.g. supermemory-vm2" required /></label>
           <label><span>Owner</span><input name="owner" maxLength={160} placeholder="Optional team or operator" /></label>
           <label className="wide"><span>Summary</span><textarea name="summary" minLength={3} maxLength={1000} rows={3} required /></label>
           <div className="wide form-actions"><button className="primary-button" type="submit" disabled={busy}>Create incident</button></div>

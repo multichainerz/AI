@@ -36,8 +36,6 @@ const ROLE_SCOPES: Readonly<Record<AdminRole, readonly AdminScope[]>> = {
     "documents:read",
     "documents:review",
     "documents:delete",
-    "memory:read",
-    "memory:manage",
     "models:read",
     "models:manage",
     "guardrails:read",
@@ -65,9 +63,6 @@ const ROLE_SCOPES: Readonly<Record<AdminRole, readonly AdminScope[]>> = {
     "operations:execute",
     "documents:read",
     "documents:review",
-    "documents:reprocess",
-    "memory:read",
-    "memory:manage",
     "models:read",
     "guardrails:read",
     "prompts:read",
@@ -80,7 +75,7 @@ const ROLE_SCOPES: Readonly<Record<AdminRole, readonly AdminScope[]>> = {
     "readiness:read",
     "readiness:manage",
   ],
-  AUDITOR: ["connections:read", "operations:read", "audit:read", "documents:read", "memory:read", "models:read", "guardrails:read", "prompts:read", "agents:read", "tools:read", "approvals:read", "evaluations:read", "readiness:read"],
+  AUDITOR: ["connections:read", "operations:read", "audit:read", "documents:read", "models:read", "guardrails:read", "prompts:read", "agents:read", "tools:read", "approvals:read", "evaluations:read", "readiness:read"],
 };
 
 export interface AdminPrincipal extends AdministratorSession {}

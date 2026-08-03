@@ -171,7 +171,7 @@ describe("PrismaAgentManager", () => {
     const prisma = { $transaction: vi.fn(async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction)) } as unknown as OrcaSynapsePrismaClient;
 
     await expect(new PrismaAgentManager(prisma).standbyProfile(principal, PROFILE_ID))
-      .rejects.toThrow("Run Setup and pass Hermes compatibility");
+      .rejects.toThrow("Run the AI services check in Deployment > Advanced readiness");
     expect(transaction.modelDeployment.count).not.toHaveBeenCalled();
     expect(transaction.agentProfile.update).not.toHaveBeenCalled();
   });

@@ -141,6 +141,7 @@ export interface HermesRunSubmission {
   input: string;
   instructions: string;
   sessionId: string;
+  idempotencyKey: string;
   modelAlias: string;
   governedMcp?: {
     authorization: string;
@@ -270,7 +271,7 @@ export class HermesClient {
         model: input.modelAlias,
         ...(privateContext ? { private_context: privateContext } : {}),
       }),
-      headers: { "idempotency-key": input.sessionId },
+      headers: { "idempotency-key": input.idempotencyKey },
     });
     const id = body && typeof body === "object" && typeof (body as { run_id?: unknown }).run_id === "string"
       ? (body as { run_id: string }).run_id

@@ -28,7 +28,7 @@ function manager(): ToolingManager {
     decideApproval: vi.fn(), getRuntimeControl: vi.fn(async () => ({ enabled: false, reason: "Acceptance pending", approvalTtlMinutes: 15, updatedAt: "2026-07-30T00:00:00.000Z", updatedBy: null })),
     updateRuntimeControl: vi.fn(), metrics: vi.fn(async () => ({
       generatedAt: "2026-07-30T00:00:00.000Z", activeTools: 2, activeGrants: 0,
-      pendingApprovals: 0, executingCalls: 0, openActionDispatches: 0, failedActionDispatches: 0,
+      pendingApprovals: 0, executingCalls: 0,
       completedCalls: 0, deniedCalls: 0, failedCalls: 0,
     })),
   } as unknown as ToolingManager;

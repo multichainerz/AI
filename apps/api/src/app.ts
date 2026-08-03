@@ -13,7 +13,6 @@ import { registerAdminSessionRoutes } from "./auth/routes.js";
 import { registerChatMetricsRoutes, registerChatRoutes } from "./chat/routes.js";
 import { registerIdentityRoutes } from "./identity/routes.js";
 import { registerDocumentRoutes } from "./documents/routes.js";
-import { registerMemoryRoutes } from "./memory/routes.js";
 import { registerAdminAgentRoutes, registerAgentRoutes } from "./agents/routes.js";
 import { registerAdminToolingRoutes, registerMcpGatewayRoutes } from "./tooling/routes.js";
 import { registerAiOpsRoutes } from "./ai-ops/routes.js";
@@ -258,15 +257,6 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
       ...(runtime.toolingManager ? { manager: runtime.toolingManager } : {}),
     }),
     { prefix: "/api/v1/admin/tooling" },
-  );
-
-  await app.register(
-    async (memory) =>
-      registerMemoryRoutes(memory, {
-        ...(runtime.sessionManager ? { sessionManager: runtime.sessionManager } : {}),
-        ...(runtime.memoryManager ? { manager: runtime.memoryManager } : {}),
-      }),
-    { prefix: "/api/v1/admin/memory" },
   );
 
   await app.register(

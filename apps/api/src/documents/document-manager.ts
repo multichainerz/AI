@@ -2,9 +2,7 @@ import type {
   DocumentDetail,
   DocumentList,
   DocumentMetrics,
-  DocumentSummary,
   DocumentUploadMetadata,
-  QuarantineDecision,
 } from "@orcasynapse/contracts";
 import type { Readable } from "node:stream";
 
@@ -29,12 +27,6 @@ export interface DocumentManager {
     upload: DocumentUpload,
     metadata: DocumentUploadMetadata,
   ): Promise<DocumentDetail>;
-  decideQuarantine(
-    principal: DocumentPrincipal,
-    documentId: string,
-    decision: QuarantineDecision,
-  ): Promise<DocumentDetail>;
-  reprocess(principal: DocumentPrincipal, documentId: string): Promise<DocumentDetail>;
   delete(
     principal: DocumentPrincipal,
     documentId: string,

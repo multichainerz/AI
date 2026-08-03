@@ -1,5 +1,4 @@
 import {
-  SERVICE_KINDS,
   evaluationCategoryResultSchema,
   evaluationCategorySchema,
   type AiOpsComponent,
@@ -33,13 +32,13 @@ import type { ChatManager } from "../chat/chat-manager.js";
 import type { ConnectionManager } from "../connections/connection-manager.js";
 import type { ConnectionMonitoringManager } from "../connections/connection-monitor.js";
 import type { DocumentManager } from "../documents/document-manager.js";
-import type { MemoryManager } from "../memory/memory-manager.js";
 import type { OperationsManager } from "../operations/operations-manager.js";
 import type { ToolingManager } from "../tooling/tooling-manager.js";
 import type { ModelManager } from "../models/model-manager.js";
 import { AiOpsConflictError, AiOpsNotFoundError, type AiOpsManager } from "./ai-ops-manager.js";
 
 const HEALTH_FRESHNESS_MS = 15 * 60 * 1_000;
+const REQUIRED_SERVICE_KINDS = ["INFERENCE", "HERMES", "SUPERMEMORY"] as const satisfies readonly ServiceKind[];
 
 interface AiOpsDependencies {
   connections: ConnectionManager;
@@ -48,7 +47,6 @@ interface AiOpsDependencies {
   runtime: OperationsManager;
   chat: ChatManager;
   documents: DocumentManager;
-  memory: MemoryManager;
   agents: AgentManager;
   tools: ToolingManager;
 }
@@ -120,9 +118,9 @@ const READINESS_APPROVAL_ROLES = ["SECURITY", "INFRASTRUCTURE", "PRODUCT", "BUSI
 const serviceMetadata: Record<ServiceKind, { label: string; workflows: AiOpsWorkflow[] }> = {
   INFERENCE: { label: "Inference server", workflows: ["CHAT", "AGENTS"] },
   HERMES: { label: "Hermes runtime", workflows: ["AGENTS", "TOOLS"] },
-  SUPERMEMORY: { label: "Supermemory", workflows: ["CHAT", "MEMORY", "AGENTS"] },
+  SUPERMEMORY: { label: "Supermemory", workflows: ["CHAT", "KNOWLEDGE", "AGENTS"] },
   MCP: { label: "MCP gateway", workflows: ["AGENTS", "TOOLS"] },
-  OIDC: { label: "Enterprise identity", workflows: ["CHAT", "DOCUMENTS", "MEMORY", "AGENTS", "TOOLS"] },
+  OIDC: { label: "Enterprise identity", workflows: ["CHAT", "KNOWLEDGE", "AGENTS", "TOOLS"] },
   SIEM: { label: "SIEM forwarding", workflows: [] },
   NOTIFICATION: { label: "Operator notifications", workflows: [] },
   OTHER: { label: "Other service", workflows: [] },
@@ -434,14 +432,13 @@ export class PrismaAiOpsManager implements AiOpsManager {
 
   async overview(): Promise<AiOpsOverview> {
     const generatedAt = new Date();
-    const [connections, monitoring, models, runtime, chat, documents, memory, agents, tools, activeGuardrail, activePrompt] = await Promise.all([
+    const [connections, monitoring, models, runtime, chat, documents, agents, tools, activeGuardrail, activePrompt] = await Promise.all([
       settled(this.dependencies.connections.list()),
       this.dependencies.connectionMonitoring ? settled(this.dependencies.connectionMonitoring.getControl()) : Promise.resolve(null),
       this.dependencies.models ? settled(this.dependencies.models.list()) : Promise.resolve(null),
       settled(this.dependencies.runtime.snapshot()),
       settled(this.dependencies.chat.metrics()),
       settled(this.dependencies.documents.metrics()),
-      settled(this.dependencies.memory.metrics()),
       settled(this.dependencies.agents.metrics()),
       settled(this.dependencies.tools.metrics()),
       settled(this.prisma.guardrailPolicy.findFirst({
@@ -472,24 +469,24 @@ export class PrismaAiOpsManager implements AiOpsManager {
         source: "LIVE",
         observedAt: generatedAt.toISOString(),
         latencyMs: null,
-        affectedWorkflows: ["CHAT", "DOCUMENTS", "MEMORY", "AGENTS", "TOOLS"],
+        affectedWorkflows: ["CHAT", "KNOWLEDGE", "AGENTS", "TOOLS"],
       },
       {
-        id: "jobs",
-        label: "PostgreSQL runtime executors",
+        id: "hermes-run-reconciler",
+        label: "Hermes run reconciler",
         status: runtime ? (runtime.status === "ONLINE" ? "HEALTHY" : "DEGRADED") : "UNAVAILABLE",
-        summary: runtime ? (runtime.statusReasons[0] ?? "Required PostgreSQL workloads have an online executor.") : "PostgreSQL runtime state could not be read.",
+        summary: runtime ? (runtime.statusReasons[0] ?? "Queued Hermes runs have an online PostgreSQL-backed reconciler.") : "Hermes run state could not be read.",
         source: "LIVE",
         observedAt: runtime?.capturedAt ?? generatedAt.toISOString(),
         latencyMs: null,
-        affectedWorkflows: ["DOCUMENTS", "MEMORY", "AGENTS"],
+        affectedWorkflows: ["CHAT", "AGENTS"],
       },
     ];
 
     if (connections) {
       const configuredKinds = new Set(connections.map(({ kind }) => kind));
       components.push(...connections.map((connection) => configuredComponent(connection, generatedAt, monitoring)));
-      components.push(...SERVICE_KINDS.filter((kind) => kind !== "OTHER" && !configuredKinds.has(kind)).map(placeholderComponent));
+      components.push(...REQUIRED_SERVICE_KINDS.filter((kind) => !configuredKinds.has(kind)).map(placeholderComponent));
     } else {
       components.push({
         id: "connection-control",
@@ -499,7 +496,7 @@ export class PrismaAiOpsManager implements AiOpsManager {
         source: "LIVE",
         observedAt: generatedAt.toISOString(),
         latencyMs: null,
-        affectedWorkflows: ["CHAT", "DOCUMENTS", "MEMORY", "AGENTS", "TOOLS"],
+        affectedWorkflows: ["CHAT", "KNOWLEDGE", "AGENTS", "TOOLS"],
       });
     }
     if (models) components.push(...models.items.map(modelComponent));
@@ -562,7 +559,7 @@ export class PrismaAiOpsManager implements AiOpsManager {
       status,
       components,
       runtime,
-      metrics: { chat, documents, memory, agents, tools },
+      metrics: { chat, documents, agents, tools },
       guardrails: guardrailPosture(activeGuardrail),
       incidents: {
         open: openIncidentCount,

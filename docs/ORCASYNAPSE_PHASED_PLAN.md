@@ -1,106 +1,94 @@
-# OrcaSynapse Delivery and Acceptance Plan
+# OrcaSynapse Cohesion and Delivery Plan
 
-This plan replaces the earlier component-heavy phase history. The target architecture is OrcaSynapse/PostgreSQL, isolated Hermes/Supermemory, and one approved OpenAI-compatible inference server.
+This plan records what the current release implements and what remains environment-specific. OrcaSynapse is the enterprise control plane around one isolated Hermes/Supermemory system and one approved OpenAI-compatible inference service.
 
-## Phase A — Simplified foundation
+## Product architecture
 
-Status: implemented and source-verified; all migrations pass against a fresh PostgreSQL 17 database.
+The dashboard has six product areas with one owner each:
 
-- Node.js/TypeScript monorepo with React/Vite, Fastify, Prisma, and PostgreSQL domain-state reconciliation.
-- Docker Compose release topology for web, API, worker, migrations, and PostgreSQL.
-- encrypted configuration, PostgreSQL-backed local administrator login, forced first-password replacement, offline Installation Key recovery, recovery-kit controls, bounded sessions, optional OIDC, audits, and responsive dashboard.
-- no Redis/Valkey, object-store dependency, or duplicate vector plane.
+1. **Home** — actual Chat and Knowledge readiness plus the next useful action.
+2. **Chat** — the employee-facing governed Hermes conversation surface.
+3. **Knowledge** — direct Supermemory ingestion, status, provenance, retention, and deletion.
+4. **Agents** — immutable Hermes Profiles, runtime policy, runs, safe events, tools, and approvals.
+5. **Platform** — AI Inference, Agentic System enrollment, optional Enterprise Access, models, prompts, and guardrails.
+6. **Operations** — health, incidents, Hermes run state, release evidence, and Production acceptance.
 
-Exit: `pnpm verify`, clean-database migrations, repeatable local-account provisioning, Installation Key recovery/rotation, and backup ownership are demonstrated.
+## Completed application phases
 
-## Phase B — Direct inference and governed Chat
+### Phase 0 — Contract proof and architecture freeze
 
-Status: implemented; real endpoint acceptance remains environment-dependent.
+- Verified Supermemory Local v0.0.5 authentication, file upload, status, deletion, and search contracts against the deployed VM2 service.
+- Verified UTF-8 TXT ingestion end to end.
+- Recorded the honest rich-file limitation: the local API accepts PDF, DOCX, and images, but extraction can fail without the upstream cloud extractor.
+- Froze VM1, VM2, and inference ownership and the six-area information architecture.
 
-- one provider-neutral Inference Server connection serves Chat and Agent workloads.
-- versioned model catalogue, prompts, deterministic guardrails, streaming/cancellation, usage telemetry, feedback, and PostgreSQL limits.
-- authenticated internal inference gateway for Hermes and Supermemory.
-- caller model selection is replaced with the approved active Agent alias; upstream inference secrets never leave OrcaSynapse.
+### Phase 1 — Cohesive dashboard foundation
 
-Exit: representative Qwen/Laguna route passes chat template, reasoning/tool-call, streaming, cancellation, context, concurrency, and error-mapping tests on the RTX 6000 PRO 96 GB server.
+- Replaced duplicate top-level destinations with Home, Chat, Knowledge, Agents, Platform, and Operations.
+- Preserved legacy hashes while emitting canonical routes.
+- Extracted capability-based Home from the application shell.
+- Home now requires healthy inference, an online Hermes node, enabled execution policy, an active Profile, and healthy Supermemory instead of counting connection records.
 
-## Phase C — Ephemeral documents and durable knowledge
+### Phase 2 — Simplified Platform setup
 
-Status: implemented for UTF-8 TXT ingestion and Supermemory publication.
+- Reduced setup to AI Inference, Agentic System, and optional Enterprise Access.
+- Added inference discovery and validation rather than requiring guessed API paths.
+- Gated the VM2 installer on administrator and inference readiness.
+- Kept Production evidence and recovery details available without blocking development use.
 
-- encrypted transient scratch, quarantine, classification, checksums, retention, purge, and audited deletion.
-- direct TXT normalization.
-- explicit rejection of rich files and images until a future extraction requirement is reviewed.
-- durable normalized publication to `orcasynapse-knowledge` in Supermemory.
-- PostgreSQL reauthorization of every retrieved enterprise result.
+### Phase 3 — Supermemory-native Knowledge
 
-Exit: real files demonstrate success, malformed-input failure, retry/expiry, publication, owner isolation, deletion, and zero source bytes after purge.
+- Replaced scratch storage, conversion, OCR, document workers, and publication retry queues with a bounded streaming relay to Supermemory.
+- Retained metadata only in PostgreSQL and zero source bytes in OrcaSynapse.
+- Merged Documents and Memory into one Knowledge workspace and removed the duplicate Memory API/screen.
+- Added owner-derived namespace tags, duplicate detection, projected indexing state, and direct deletion.
 
-## Phase D — Isolated Hermes and durable agent memory
+### Phase 4 — Hermes-first Chat
 
-Status: implemented and source-verified; clean-VM acceptance remains.
+- Removed the direct inference Chat implementation.
+- Bound every conversation to an active immutable Agent Profile and stable Hermes session.
+- Created one Agent Run per message with a distinct idempotency key, cancellation, safe activity events, usage, latency, and retained outcome.
+- Kept model credentials and policy at OrcaSynapse; the browser talks only to the control plane.
 
-- one-time enrollment claim resolved through the customer-owned OrcaSynapse origin, with JSON-bundle fallback, node-generated Ed25519 identity, signed replay-protected heartbeats, lifecycle actions, and dashboard status.
-- official Hermes container using OrcaSynapse's inference gateway.
-- checksum-verified Supermemory Local installation using the current workflow-safe v0.0.5 default, requesting CPU-local `Xenova/bge-m3` (1024 dimensions), displaying first-boot model-download progress, and verifying the runtime-selected model.
-- native Hermes Supermemory provider using `orcasynapse-agent-{identity}`.
-- automatic endpoint registration in OrcaSynapse without standing SSH trust.
-- protected post-enrollment recovery journal and idempotent resume after memory or policy bootstrap failure.
-- immutable Profile Distribution and governed agent-run lifecycle.
+### Phase 5 — Hermes-aligned Agents and tools
 
-Exit: a clean isolated VM enrolls end to end; agent memory survives restarts; profile namespaces cannot cross; revocation disables Hermes and its managed Supermemory route; backups restore Hermes and Supermemory consistently.
+- Uses Hermes concepts: Profiles, `SOUL.md`, Skills, sessions, runs, and managed configuration.
+- Supports immutable Profile revisions, standby validation, activation, suspension, runtime kill switch, and safe run inspection.
+- Removed the duplicate task composer from Agents; Chat is the single user execution surface.
+- Retired and blocked the removed document-memory resynchronization handler. Governed MCP remains zero-tool by default except for the implemented read-only metadata handler.
 
-## Phase E — Optional governed tools
+### Phase 6 — Correlated operations
 
-Status: implemented behind fail-closed controls; production disabled until accepted.
+- Simplified the runtime executor to one durable workload: Hermes Agent Runs.
+- Correlates Chat messages with Agent Runs and preserves sanitized Hermes events.
+- Operations owns service topology, incidents, guardrail posture, workflow metrics, release evidence, and Production acceptance.
 
-- MCP protocol boundary, short-lived run capability, registered tools, profile grants, risk classification, approval records, cancellation, and revocation.
-- zero-tool is the default posture.
-- the VM installer explicitly writes Hermes `platform_toolsets.api_server: [no_mcp]`; OrcaSynapse verifies the resolved `/v1/toolsets` surface before each run.
-- prompts, Skills, or Hermes memory cannot grant a tool or broaden a profile grant.
+### Phase 7 — Removal and codebase closure
 
-Exit: protocol, authorization, argument validation, approval, replay, timeout, cancellation, output redaction, and post-approval revocation tests pass with the exact hardened Hermes build.
+- Removed obsolete document, memory-publication, and tool-action processors.
+- Removed duplicate Memory UI/API paths and inactive scratch volumes.
+- Added a migration that closes unfinished legacy work, disables obsolete grants, and drops retired staging schema.
+- Updated architecture, PRD, runbooks, and public positioning to match shipped behavior.
 
-## Phase F — Operations and production onboarding
+## Environment acceptance still required
 
-Status: dashboard controls implemented; customer evidence remains.
+These are customer deployment gates, not missing dashboard architecture:
 
-- public GitHub VM1 bootstrap plus one OrcaSynapse-hosted VM2 script that installs and enrolls Hermes and Supermemory.
-- quick-start path for PostgreSQL + an inference server and a single Hermes/Supermemory enrollment.
-- advanced target-environment gate, connection checks, compatibility evidence, model/prompt/policy evaluations, incidents, scheduled monitoring, recovery controls, and activation record.
-- dashboard-generated evidence remains distinct from customer attestations.
-
-Production exit requires:
-
-- exact OrcaSynapse, PostgreSQL, Node.js, Hermes image, Supermemory binary/SDK, inference backend, model, driver, and CUDA pins;
-- customer-approved TLS or mTLS and firewall matrix;
-- enterprise OIDC group mappings and retained login/logout/revocation tests;
-- PostgreSQL point-in-time recovery and consistent Hermes/Supermemory restore drills;
-- GPU context/concurrency/thermal/cancellation/soak evidence;
-- representative OrcaSynapse model, memory, document, guardrail, and adversarial evaluations;
-- monitoring, alert routing, SIEM retention, runbooks, training, and named owners;
-- formal Pilot and Production approval.
-
-## Phase G — Enterprise identity and tenant isolation
-
-Status: instance-wide OIDC/RBAC is implemented; true multi-tenancy remains future work.
-
-- current: PostgreSQL local administrator with Installation Key recovery, OIDC discovery, PKCE, issuer/JWK validation, allowed-group checks, and mappings to platform roles;
-- supported identity path: Microsoft Entra ID, AD FS, or another enterprise identity provider when it exposes an OpenID Connect issuer;
-- not implemented: direct LDAP bind/domain-join authentication;
-- not implemented: a Tenant/Organization/Workspace domain boundary with tenant-scoped database keys, queries, audit records, agent profiles, memory namespaces, quotas, and administrative delegation.
-
-Exit: a tenant identifier is mandatory on every tenant-owned record and authorization decision; cross-tenant negative tests cover APIs, jobs, audits, profiles, documents, Chat, and Supermemory identity namespaces; provisioning/deprovisioning and OIDC group changes are demonstrated end to end.
+- TLS/mTLS and firewall evidence for the actual VM1, VM2, and inference networks.
+- Exact image/release pins and signed artifact policy.
+- PostgreSQL, Hermes, and Supermemory backup/restore drills against the customer RPO/RTO.
+- GPU capacity, concurrency, cancellation, and soak tests with the selected model.
+- OIDC/Microsoft Entra ID group mapping and deprovisioning acceptance.
+- Cross-tenant isolation before advertising true multi-tenancy.
+- Security, infrastructure, product, and business Production sign-off.
 
 ## Architecture invariants
 
-These are not optional phase choices:
-
-1. OrcaSynapse is the enterprise authorization and policy boundary.
-2. The selected inference backend serves models; it does not own routing policy or credentials exposed to runtimes.
-3. Hermes executes agents only in its constrained environment.
-4. Supermemory is the sole semantic graph/vector plane.
-5. PostgreSQL owns OrcaSynapse control/audit/job state, not embeddings.
-6. Original enterprise files remain in enterprise systems; OrcaSynapse staging is ephemeral.
-7. No LiteLLM, Redis, Valkey, S3, SeaweedFS, MinIO, or OrcaSynapse pgvector dependency is introduced without a new reviewed requirement.
-8. Environment-dependent controls are reported as unproven until evidence exists.
+1. OrcaSynapse owns enterprise identity, authorization, policy, orchestration, and audit.
+2. Hermes is the only normal Chat and agent-execution path.
+3. Supermemory is the sole semantic knowledge and vector plane.
+4. PostgreSQL owns control state and metadata, never source files or embeddings.
+5. Original files remain authoritative in enterprise systems; failed ephemeral ingestion requires re-upload.
+6. Inference servers serve models but do not own enterprise policy or credentials.
+7. No Redis, Valkey, pg-boss, LiteLLM, object store, pgvector, or extra OCR stack is required.
+8. Customer-environment controls remain visibly unproven until real evidence is recorded.
