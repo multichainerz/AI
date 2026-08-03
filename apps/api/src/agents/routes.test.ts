@@ -33,6 +33,8 @@ profile.activeVersionConfiguration = profile.version;
 const run: AgentRun = {
   id: RUN_ID, profileId: PROFILE_ID, profileSlug: profile.slug, profileName: profile.version.displayName,
   profileVersion: 1, profileDistributionDigest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", status: "QUEUED", input: "Analyze policy", output: null,
+  partialOutput: "", modelAlias: "hermes-agent", inputTokens: null, outputTokens: null,
+  reasoningTokens: null, totalTokens: null, finishReason: null,
   effectiveCapabilities: ["knowledge:private:read"], sources: [], failureCode: null, failureMessage: null,
   queuedAt: "2026-07-30T00:00:00.000Z", startedAt: null, completedAt: null,
   createdAt: "2026-07-30T00:00:00.000Z", updatedAt: "2026-07-30T00:00:00.000Z",
@@ -56,8 +58,9 @@ function manager(): AgentManager {
     getRun: vi.fn(async () => run),
     listRunEvents: vi.fn(async () => ({ items: [{
       id: "d1fab491-ce72-4efe-8845-4d44150849d6", runId: RUN_ID, type: "SUBAGENT_COMPLETED" as const,
+      cursor: "1", delta: null, preview: null, errorCode: null, approvalId: null,
       summary: "Bounded research completed.", status: "completed", toolName: null, childSessionId: "child-1",
-      durationMs: 1200, inputTokens: 20, outputTokens: 30, costUsd: null, occurredAt: "2026-07-30T00:00:01.000Z",
+      durationMs: 1200, inputTokens: 20, outputTokens: 30, reasoningTokens: 5, costUsd: null, occurredAt: "2026-07-30T00:00:01.000Z",
     }] })),
     submitRun: vi.fn(async () => run),
     cancelRun: vi.fn(async (): Promise<AgentRun> => ({ ...run, status: "CANCEL_REQUESTED" })),

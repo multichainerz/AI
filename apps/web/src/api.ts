@@ -11,7 +11,9 @@ import {
   chatConversationListSchema,
   chatConversationSchema,
   chatConversationSummarySchema,
+  chatMessageSubmissionSchema,
   chatStreamEventSchema,
+  agentRunApprovalSchema,
   chatFeedbackSchema,
   chatMetricsSchema,
   enterpriseSessionSchema,
@@ -35,6 +37,10 @@ import {
   type ChatFeedback,
   type ChatFeedbackRating,
   type ChatMetrics,
+  type ChatMessageSubmission,
+  type AgentRunApproval,
+  type DecideAgentRunApproval,
+  type ForkChatConversation,
   type EnterpriseSession,
   type OidcStatus,
   type CreateChatConversation,
@@ -419,26 +425,35 @@ export async function cancelChatRun(conversationId: string): Promise<ChatConvers
   return chatConversationSchema.parse(await parsedResponse(response));
 }
 
-export async function streamChatMessage(
+export async function submitChatMessage(
   conversationId: string,
   content: string,
-  onEvent: (event: ChatStreamEvent) => void,
-  signal: AbortSignal,
-): Promise<void> {
+): Promise<ChatMessageSubmission> {
   const response = await fetch(
     `/api/v1/chat/conversations/${encodeURIComponent(conversationId)}/messages`,
     {
       method: "POST",
       headers: adminHeaders(),
       credentials: "same-origin",
-      signal,
       body: JSON.stringify({ content }),
     },
   );
-  if (!response.ok) {
-    await parsedResponse(response);
-    return;
-  }
+  return chatMessageSubmissionSchema.parse(await parsedResponse(response));
+}
+
+export async function streamChatEvents(
+  conversationId: string,
+  messageId: string,
+  cursor: string | null,
+  onEvent: (event: ChatStreamEvent) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+  const response = await fetch(
+    `/api/v1/chat/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/events${query}`,
+    { credentials: "same-origin", signal },
+  );
+  if (!response.ok) await parsedResponse(response);
   if (!response.body) {
     throw new OrcaSynapseApiError(response.status, "OrcaSynapse returned no chat response stream.");
   }
@@ -446,13 +461,20 @@ export async function streamChatMessage(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let streamError: string | null = null;
   const consumeFrame = (frame: string) => {
+    const eventName = frame.split(/\r?\n/).find((line) => line.startsWith("event:"))?.slice(6).trim();
     const data = frame
       .split(/\r?\n/)
       .filter((line) => line.startsWith("data:"))
       .map((line) => line.slice(5).trimStart())
       .join("\n");
     if (!data) return;
+    if (eventName === "stream_error") {
+      const value = JSON.parse(data) as { message?: unknown };
+      streamError = typeof value.message === "string" ? value.message : "The Hermes event stream failed.";
+      return;
+    }
     onEvent(chatStreamEventSchema.parse(JSON.parse(data) as unknown));
   };
 
@@ -465,6 +487,41 @@ export async function streamChatMessage(
     if (done) break;
   }
   if (buffer.trim()) consumeFrame(buffer);
+  if (streamError) throw new OrcaSynapseApiError(502, streamError);
+}
+
+export async function forkChatConversation(
+  conversationId: string,
+  input: ForkChatConversation = {},
+): Promise<ChatConversationSummary> {
+  const response = await fetch(`/api/v1/chat/conversations/${encodeURIComponent(conversationId)}/fork`, {
+    method: "POST",
+    headers: adminHeaders(),
+    credentials: "same-origin",
+    body: JSON.stringify(input),
+  });
+  return chatConversationSummarySchema.parse(await parsedResponse(response));
+}
+
+export async function deleteChatConversation(conversationId: string): Promise<void> {
+  const response = await fetch(`/api/v1/chat/conversations/${encodeURIComponent(conversationId)}`, {
+    method: "DELETE",
+    credentials: "same-origin",
+  });
+  if (!response.ok) await parsedResponse(response);
+}
+
+export async function decideChatApproval(
+  approvalId: string,
+  input: DecideAgentRunApproval,
+): Promise<AgentRunApproval> {
+  const response = await fetch(`/api/v1/chat/approvals/${encodeURIComponent(approvalId)}/decision`, {
+    method: "POST",
+    headers: adminHeaders(),
+    credentials: "same-origin",
+    body: JSON.stringify(input),
+  });
+  return agentRunApprovalSchema.parse(await parsedResponse(response));
 }
 
 export async function setChatFeedback(

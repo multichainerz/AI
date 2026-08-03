@@ -36,8 +36,13 @@ function runtime(status = "completed"): AgentHermesRuntime {
     assertZeroToolBoundary: vi.fn(async () => undefined),
     assertGovernedToolBoundary: vi.fn(async () => undefined),
     start: vi.fn(async () => "run_external_1"),
-    status: vi.fn(async () => ({ id: "run_external_1", status, output: status === "completed" ? "Bounded answer" : null, error: null })),
+    status: vi.fn(async () => ({
+      id: "run_external_1", status, output: status === "completed" ? "Bounded answer" : null, error: null,
+      modelAlias: "hermes-agent", sessionId: "session-1", inputTokens: 12, outputTokens: 4,
+      reasoningTokens: 0, totalTokens: 16, finishReason: "stop",
+    })),
     stop: vi.fn(async () => undefined),
+    decideApproval: vi.fn(async () => undefined),
     pollIntervalMs: vi.fn(async () => 1),
   };
 }
@@ -62,6 +67,16 @@ function database(record = runRecord(), enabled = true, toolEnabled = false, run
     toolRuntimeControl: { findUnique: vi.fn(async () => ({ enabled: toolEnabled, reason: toolEnabled ? "Pilot" : "Disabled" })) },
     auditEvent: { create: vi.fn(async () => ({})) },
     chatMessage: { updateMany: vi.fn(async () => ({ count: 1 })) },
+    agentRunApproval: {
+      findFirst: vi.fn(async () => null),
+      create: vi.fn(async () => ({})),
+      update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({ id: "approval-1", ...data })),
+      updateMany: vi.fn(async () => ({ count: 0 })),
+    },
+    agentRunEvent: {
+      findUnique: vi.fn(async () => null),
+      create: vi.fn(async () => ({ cursor: 1n })),
+    },
   } as any;
   prisma.$transaction = vi.fn(async (operation: unknown) => typeof operation === "function"
     ? operation(prisma)
@@ -206,13 +221,20 @@ describe("PrismaAgentProcessor", () => {
     expect(hermes.status).not.toHaveBeenCalled();
   });
 
-  it("denies approval requests and stops the Hermes run", async () => {
+  it("forwards an operator denial and closes the governed run", async () => {
     const prisma = database();
+    prisma.agentRunApproval.findFirst = vi.fn(async () => ({
+      id: "approval-1",
+      runId: RUN_ID,
+      status: "DENIED",
+      expiresAt: new Date(Date.now() + 60_000),
+      forwardedAt: null,
+    })) as never;
     const hermes = runtime("waiting_for_approval");
     const processor = new PrismaAgentProcessor(prisma, hermes, { search: vi.fn(async () => []) }, capabilities);
 
     await expect(processor.process({ runId: RUN_ID }, "job-1", "worker-1")).resolves.toMatchObject({ status: "DENIED" });
-    expect(hermes.stop).toHaveBeenCalledWith("run_external_1");
+    expect(hermes.decideApproval).toHaveBeenCalledWith("run_external_1", "deny");
   });
 
   it("stops the Hermes run when polling fails unexpectedly", async () => {

@@ -2,7 +2,7 @@ import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
 import { describe, expect, it, vi } from "vitest";
 import type { AgentManager } from "../agents/agent-manager.js";
 import { ChatPolicyViolationError } from "./chat-manager.js";
-import { acquireChatRateLimitLock, PrismaChatManager } from "./prisma-chat-manager.js";
+import { acquireChatRateLimitLock, boundedConversationHistory, PrismaChatManager } from "./prisma-chat-manager.js";
 
 const principal = {
   id: "ac369dab-cad5-4fd9-83ed-b4fbf528028a",
@@ -12,6 +12,19 @@ const principal = {
 };
 
 describe("Hermes-backed chat", () => {
+  it("sends only complete user-assistant turns to Hermes in chronological order", () => {
+    expect(boundedConversationHistory([
+      { role: "ASSISTANT", status: "COMPLETED", content: "Second answer", ordinal: 4 },
+      { role: "USER", status: "COMPLETED", content: "First question", ordinal: 1 },
+      { role: "ASSISTANT", status: "FAILED", content: "Partial failure", ordinal: 2 },
+      { role: "USER", status: "COMPLETED", content: "Second question", ordinal: 3 },
+      { role: "USER", status: "COMPLETED", content: "Current question", ordinal: 5 },
+    ])).toEqual([
+      { role: "user", content: "Second question" },
+      { role: "assistant", content: "Second answer" },
+    ]);
+  });
+
   it("acquires the PostgreSQL rate-limit lock without deserializing a void result", async () => {
     const executeRaw = vi.fn(async (..._arguments: unknown[]) => 1);
     await acquireChatRateLimitLock(
@@ -72,11 +85,10 @@ describe("Hermes-backed chat", () => {
     const agents = { submitRun: vi.fn() } as unknown as AgentManager;
     const manager = new PrismaChatManager(prisma, agents);
 
-    await expect(manager.streamMessage(
+    await expect(manager.submitMessage(
       principal,
       "814f06ec-7e6f-47f4-93e9-a0c7c0d3acfd",
       "123456",
-      vi.fn(),
     )).rejects.toBeInstanceOf(ChatPolicyViolationError);
     expect(agents.submitRun).not.toHaveBeenCalled();
     expect(auditCreate).toHaveBeenCalledWith(expect.objectContaining({

@@ -44,12 +44,17 @@ const completedMessage: ChatMessage = {
   modelAlias: "laguna-primary",
   inputTokens: 4,
   outputTokens: 2,
+  reasoningTokens: 0,
   totalTokens: 6,
   latencyMs: 150,
+  firstTokenLatencyMs: 40,
   finishReason: "stop",
   errorCode: null,
   agentRunId: "dd729774-47cb-4bd1-83d2-2ff75c6f3ec1",
+  runStatus: "COMPLETED",
+  lastEventCursor: "2",
   runtimeEvents: [],
+  approvals: [],
   sources: [],
   feedback: null,
   createdAt: "2026-07-30T00:00:01.000Z",
@@ -93,17 +98,58 @@ const enterpriseIdentity: EnterpriseIdentityManager = {
 };
 
 function memoryChatManager(): ChatManager {
+  const userMessage: ChatMessage = {
+    ...completedMessage,
+    id: "c1446fb5-19f2-4071-8d5e-957a9629b1ad",
+    role: "USER",
+    content: "Hello",
+    modelAlias: null,
+    inputTokens: null,
+    outputTokens: null,
+    totalTokens: null,
+    latencyMs: null,
+    finishReason: null,
+    agentRunId: null,
+    runStatus: null,
+    lastEventCursor: null,
+    completedAt: "2026-07-30T00:00:01.000Z",
+  };
+  const pendingMessage: ChatMessage = {
+    ...completedMessage,
+    status: "PENDING",
+    content: "",
+    runStatus: "QUEUED",
+    lastEventCursor: null,
+    inputTokens: null,
+    outputTokens: null,
+    totalTokens: null,
+    latencyMs: null,
+    finishReason: null,
+    completedAt: null,
+  };
   return {
     list: vi.fn(async () => ({ items: [summary] })),
     create: vi.fn(async () => summary),
     get: vi.fn(async () => ({ ...summary, messages: [] })),
     update: vi.fn(async () => summary),
     cancelActiveRun: vi.fn(async () => ({ ...summary, messages: [] })),
-    streamMessage: vi.fn(async (_principal, conversationId, _content, emit) => {
-      emit({ type: "started", conversationId, messageId: MESSAGE_ID });
-      emit({ type: "delta", conversationId, messageId: MESSAGE_ID, delta: "Hello" });
-      emit({ type: "completed", conversationId, messageId: MESSAGE_ID, message: completedMessage });
+    submitMessage: vi.fn(async () => ({
+      conversationId: CONVERSATION_ID,
+      userMessage,
+      assistantMessage: pendingMessage,
+    })),
+    subscribe: vi.fn(async (_principal, conversationId, messageId, _cursor, emit) => {
+      emit({ type: "started", conversationId, messageId, runId: completedMessage.agentRunId!, cursor: null });
+      emit({ type: "delta", conversationId, messageId, cursor: "1", delta: "Hello" });
+      emit({ type: "completed", conversationId, messageId, cursor: "2", message: completedMessage });
     }),
+    decideApproval: vi.fn(async () => ({
+      id: "1d85febd-3e0e-4fc7-b9b7-1f8ceda13ebc", runId: completedMessage.agentRunId!, status: "APPROVED" as const,
+      command: null, summary: "Continue", choices: ["ALLOW_ONCE" as const, "DENY" as const], requestedAt: "2026-07-30T00:00:00.000Z",
+      expiresAt: "2026-07-30T00:10:00.000Z", decidedAt: "2026-07-30T00:01:00.000Z", decision: "ALLOW_ONCE" as const,
+    })),
+    fork: vi.fn(async () => ({ ...summary, id: "190039a6-f9dc-49ef-ab09-b94fc483e3c7", title: "Pilot chat (fork)" })),
+    delete: vi.fn(async () => undefined),
     setFeedback: vi.fn(async (_principal, _messageId, input) => ({
       rating: input.rating,
       comment: input.comment ?? null,
@@ -180,13 +226,20 @@ describe("controlled chat routes", () => {
     }));
   });
 
-  it("streams typed model events over SSE", async () => {
+  it("submits durable work and streams typed model events over resumable SSE", async () => {
     const app = await chatApp();
-    const response = await app.inject({
+    const submission = await app.inject({
       method: "POST",
       url: `/api/v1/chat/conversations/${CONVERSATION_ID}/messages`,
       headers: { cookie: `${ADMIN_SESSION_COOKIE}=${SESSION_TOKEN}` },
       payload: { content: "Hello" },
+    });
+    expect(submission.statusCode).toBe(202);
+    expect(submission.json()).toMatchObject({ assistantMessage: { id: MESSAGE_ID, status: "PENDING" } });
+    const response = await app.inject({
+      method: "GET",
+      url: `/api/v1/chat/conversations/${CONVERSATION_ID}/messages/${MESSAGE_ID}/events`,
+      headers: { cookie: `${ADMIN_SESSION_COOKIE}=${SESSION_TOKEN}` },
     });
     expect(response.statusCode).toBe(200);
     expect(response.headers["content-type"]).toContain("text/event-stream");

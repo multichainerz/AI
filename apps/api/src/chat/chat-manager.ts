@@ -5,6 +5,10 @@ import type {
   ChatStreamEvent,
   ChatFeedback,
   ChatMetrics,
+  ChatMessageSubmission,
+  AgentRunApproval,
+  DecideAgentRunApproval,
+  ForkChatConversation,
   SetChatFeedback,
   CreateChatConversation,
   UpdateChatConversation,
@@ -29,11 +33,18 @@ export interface ChatManager {
     conversationId: string,
     input: UpdateChatConversation,
   ): Promise<ChatConversationSummary>;
-  streamMessage(
+  submitMessage(
     principal: ChatPrincipal,
     conversationId: string,
     content: string,
+  ): Promise<ChatMessageSubmission>;
+  subscribe(
+    principal: ChatPrincipal,
+    conversationId: string,
+    messageId: string,
+    afterCursor: string | null,
     emit: (event: ChatStreamEvent) => void,
+    signal: AbortSignal,
   ): Promise<void>;
   cancelActiveRun(
     principal: ChatPrincipal,
@@ -44,6 +55,17 @@ export interface ChatManager {
     messageId: string,
     input: SetChatFeedback,
   ): Promise<ChatFeedback>;
+  decideApproval(
+    principal: ChatPrincipal,
+    approvalId: string,
+    input: DecideAgentRunApproval,
+  ): Promise<AgentRunApproval>;
+  fork(
+    principal: ChatPrincipal,
+    conversationId: string,
+    input: ForkChatConversation,
+  ): Promise<ChatConversationSummary>;
+  delete(principal: ChatPrincipal, conversationId: string): Promise<void>;
   metrics(): Promise<ChatMetrics>;
 }
 

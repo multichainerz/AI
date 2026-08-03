@@ -1,17 +1,19 @@
 import { randomUUID } from "node:crypto";
 import {
   knowledgeSourceSchema,
-  type AgentRun,
-  type AgentRunEvent,
+  type AgentRunApproval,
   type ChatConversation,
   type ChatConversationList,
   type ChatConversationSummary,
   type ChatFeedback,
   type ChatMessage,
   type ChatMetrics,
+  type ChatMessageSubmission,
   type ChatStreamEvent,
   type CreateChatConversation,
   type SetChatFeedback,
+  type DecideAgentRunApproval,
+  type ForkChatConversation,
   type UpdateChatConversation,
 } from "@orcasynapse/contracts";
 import { Prisma, type OrcaSynapsePrismaClient } from "@orcasynapse/database";
@@ -28,16 +30,40 @@ import {
   type ChatPrincipal,
 } from "./chat-manager.js";
 
-const STALE_PENDING_AFTER_MS = 10 * 60 * 1_000;
-const RUN_POLL_INTERVAL_MS = 500;
+const STALE_PENDING_AFTER_MS = 65 * 60 * 1_000;
+const RUN_POLL_INTERVAL_MS = 350;
 
 interface StoredRunEvent {
   id: string;
+  cursor: bigint;
   type: string;
+  delta: string | null;
+  preview: string | null;
+  status: string | null;
+  errorCode: string | null;
+  approvalId: string | null;
   summary: string | null;
   toolName: string | null;
   childSessionId: string | null;
+  durationMs: number | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  reasoningTokens: number | null;
+  costUsd: Prisma.Decimal | number | null;
   occurredAt: Date;
+}
+
+interface StoredApproval {
+  id: string;
+  runId: string;
+  status: "PENDING" | "APPROVED" | "DENIED" | "EXPIRED" | "CANCELLED";
+  command: string | null;
+  summary: string | null;
+  choices: unknown;
+  requestedAt: Date;
+  expiresAt: Date;
+  decidedAt: Date | null;
+  decision: string | null;
 }
 
 interface StoredMessage {
@@ -50,7 +76,9 @@ interface StoredMessage {
   inputTokens: number | null;
   outputTokens: number | null;
   totalTokens: number | null;
+  reasoningTokens: number | null;
   latencyMs: number | null;
+  firstTokenLatencyMs: number | null;
   finishReason: string | null;
   errorCode: string | null;
   agentRunId: string | null;
@@ -63,7 +91,12 @@ interface StoredMessage {
     createdAt: Date;
     updatedAt: Date;
   } | null;
-  agentRun?: { events: StoredRunEvent[] } | null;
+  agentRun?: {
+    status: "QUEUED" | "RUNNING" | "WAITING_FOR_APPROVAL" | "CANCEL_REQUESTED" | "COMPLETED" | "FAILED" | "CANCELLED" | "TIMED_OUT" | "DENIED";
+    lastEventCursor: bigint | null;
+    events: StoredRunEvent[];
+    approvals: StoredApproval[];
+  } | null;
 }
 
 interface StoredConversation {
@@ -73,6 +106,7 @@ interface StoredConversation {
   profileId: string | null;
   profileName: string | null;
   status: "ACTIVE" | "ARCHIVED";
+  hermesMemoryKey?: string;
   createdAt: Date;
   updatedAt: Date;
   lastMessageAt: Date | null;
@@ -90,8 +124,46 @@ interface ChatPolicy {
   guardrailPolicyVersion: string | null;
 }
 
+const messageInclude = {
+  feedback: true,
+  agentRun: {
+    select: {
+      status: true,
+      lastEventCursor: true,
+      events: {
+        where: { type: { not: "MESSAGE_DELTA" } },
+        orderBy: { cursor: "asc" as const },
+        take: 500,
+      },
+      approvals: {
+        orderBy: { requestedAt: "asc" as const },
+        take: 20,
+      },
+    },
+  },
+} as const;
+
+function approvalDto(approval: StoredApproval): AgentRunApproval {
+  const choices = Array.isArray(approval.choices)
+    ? approval.choices.filter((choice): choice is "ALLOW_ONCE" | "DENY" => choice === "ALLOW_ONCE" || choice === "DENY")
+    : [];
+  return {
+    id: approval.id,
+    runId: approval.runId,
+    status: approval.status,
+    command: approval.command,
+    summary: approval.summary,
+    choices: choices.length > 0 ? choices : ["ALLOW_ONCE", "DENY"],
+    requestedAt: approval.requestedAt.toISOString(),
+    expiresAt: approval.expiresAt.toISOString(),
+    decidedAt: approval.decidedAt?.toISOString() ?? null,
+    decision: approval.decision === "ALLOW_ONCE" || approval.decision === "DENY" ? approval.decision : null,
+  };
+}
+
 function messageDto(message: StoredMessage): ChatMessage {
   const sources = knowledgeSourceSchema.array().max(10).safeParse(message.sources);
+  const allEvents = message.agentRun?.events ?? [];
   return {
     id: message.id,
     conversationId: message.conversationId,
@@ -102,18 +174,33 @@ function messageDto(message: StoredMessage): ChatMessage {
     inputTokens: message.inputTokens,
     outputTokens: message.outputTokens,
     totalTokens: message.totalTokens,
+    reasoningTokens: message.reasoningTokens,
     latencyMs: message.latencyMs,
+    firstTokenLatencyMs: message.firstTokenLatencyMs,
     finishReason: message.finishReason,
     errorCode: message.errorCode,
     agentRunId: message.agentRunId,
-    runtimeEvents: (message.agentRun?.events ?? []).map((event) => ({
+    runStatus: message.agentRun?.status ?? null,
+    lastEventCursor: message.agentRun?.lastEventCursor?.toString() ?? null,
+    runtimeEvents: allEvents.filter(({ type }) => type !== "MESSAGE_DELTA").map((event) => ({
       id: event.id,
+      cursor: event.cursor.toString(),
       type: event.type,
       summary: event.summary,
+      preview: event.preview,
+      status: event.status,
+      errorCode: event.errorCode,
       toolName: event.toolName,
       childSessionId: event.childSessionId,
+      approvalId: event.approvalId,
+      durationMs: event.durationMs,
+      inputTokens: event.inputTokens,
+      outputTokens: event.outputTokens,
+      reasoningTokens: event.reasoningTokens,
+      costUsd: event.costUsd === null ? null : Number(event.costUsd),
       occurredAt: event.occurredAt.toISOString(),
     })),
+    approvals: (message.agentRun?.approvals ?? []).map(approvalDto),
     sources: sources.success ? sources.data : [],
     feedback: message.feedback ? {
       rating: message.feedback.rating,
@@ -148,6 +235,33 @@ function safeTitle(content: string): string {
   return normalized.length <= 72 ? normalized : `${normalized.slice(0, 69).trimEnd()}…`;
 }
 
+export function boundedConversationHistory(
+  messages: Array<{ role: "USER" | "ASSISTANT"; status: string; content: string; ordinal: number }>,
+): Array<{ role: "user" | "assistant"; content: string }> {
+  let characters = 0;
+  const ordered = [...messages].sort((left, right) => left.ordinal - right.ordinal);
+  const pairs: Array<Array<{ role: "user" | "assistant"; content: string }>> = [];
+  for (let index = 0; index < ordered.length - 1; index += 1) {
+    const user = ordered[index];
+    const assistant = ordered[index + 1];
+    if (
+      user?.role === "USER" && user.status === "COMPLETED" && user.content.trim() &&
+      assistant?.role === "ASSISTANT" && assistant.status === "COMPLETED" && assistant.content.trim()
+    ) {
+      pairs.push([{ role: "user", content: user.content }, { role: "assistant", content: assistant.content }]);
+      index += 1;
+    }
+  }
+  const selected: Array<{ role: "user" | "assistant"; content: string }> = [];
+  for (const pair of pairs.reverse()) {
+    const pairCharacters = pair.reduce((total, message) => total + message.content.length, 0);
+    if (selected.length + pair.length > 40 || characters + pairCharacters > 64_000) break;
+    selected.unshift(...pair);
+    characters += pairCharacters;
+  }
+  return selected;
+}
+
 function asAgentPrincipal(principal: ChatPrincipal): AgentPrincipal {
   return {
     id: principal.id,
@@ -157,13 +271,17 @@ function asAgentPrincipal(principal: ChatPrincipal): AgentPrincipal {
   };
 }
 
-function maximumUsage(events: AgentRunEvent[], field: "inputTokens" | "outputTokens"): number | null {
-  const values = events.flatMap((event) => event[field] === null ? [] : [event[field]]);
-  return values.length === 0 ? null : Math.max(...values);
-}
-
-function sleep(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+function sleep(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    const finish = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, milliseconds);
+    signal?.addEventListener("abort", finish, { once: true });
+  });
 }
 
 export async function acquireChatRateLimitLock(
@@ -227,10 +345,7 @@ export class PrismaChatManager implements ChatManager {
         _count: { select: { messages: true } },
         messages: {
           orderBy: { ordinal: "asc" },
-          include: {
-            feedback: true,
-            agentRun: { select: { events: { orderBy: [{ occurredAt: "asc" }, { id: "asc" }], take: 500 } } },
-          },
+          include: messageInclude,
         },
       },
     });
@@ -295,12 +410,11 @@ export class PrismaChatManager implements ChatManager {
     return this.get(principal, conversationId);
   }
 
-  async streamMessage(
+  async submitMessage(
     principal: ChatPrincipal,
     conversationId: string,
     content: string,
-    emit: (event: ChatStreamEvent) => void,
-  ): Promise<void> {
+  ): Promise<ChatMessageSubmission> {
     const policy = await this.resolvePolicy();
     const violation = inspectInputText(content, policy);
     if (violation) {
@@ -323,14 +437,28 @@ export class PrismaChatManager implements ChatManager {
       if (recentRequests >= policy.requestsPerMinute) throw new ChatRateLimitError();
       const stored = await transaction.chatConversation.findFirst({
         where: { id: conversationId, ownerSubject: principal.subject },
-        include: { messages: { where: { status: "PENDING" }, select: { id: true, createdAt: true }, take: 1 } },
+        include: {
+          messages: {
+            orderBy: { ordinal: "desc" },
+            take: 42,
+            select: {
+              id: true,
+              ordinal: true,
+              role: true,
+              status: true,
+              content: true,
+              createdAt: true,
+              agentRunId: true,
+            },
+          },
+        },
       });
       if (!stored) throw new ChatConversationNotFoundError();
       if (stored.status !== "ACTIVE") throw new ChatConversationConflictError("Archived conversations cannot accept new messages.");
       if (!stored.profileId || !stored.profileName) {
         throw new ChatConfigurationError("This legacy conversation has no Agent Profile. Start a new conversation.");
       }
-      const pending = stored.messages[0];
+      const pending = stored.messages.find(({ role, status }) => role === "ASSISTANT" && status === "PENDING");
       if (pending?.createdAt && pending.createdAt.getTime() > now.getTime() - STALE_PENDING_AFTER_MS) {
         throw new ChatConversationConflictError("This conversation already has a Hermes run in progress.");
       }
@@ -348,17 +476,25 @@ export class PrismaChatManager implements ChatManager {
         { id: userMessageId, conversationId, ordinal: generation * 2 - 1, role: "USER", status: "COMPLETED", content, completedAt: now },
         { id: assistantMessageId, conversationId, ordinal: generation * 2, role: "ASSISTANT", status: "PENDING", content: "", modelAlias: stored.modelAlias },
       ] });
-      return stored;
+      return {
+        profileId: stored.profileId,
+        modelAlias: stored.modelAlias,
+        hermesMemoryKey: stored.hermesMemoryKey,
+        history: boundedConversationHistory(stored.messages),
+      };
     });
 
-    emit({ type: "started", conversationId, messageId: assistantMessageId });
-    const startedAt = Date.now();
-    let run: AgentRun | null = null;
+    let run;
     try {
       run = await this.agents.submitRun(
         asAgentPrincipal(principal),
         { profileId: conversation.profileId!, input: content },
-        { sessionId: conversationId },
+        {
+          sessionId: conversationId,
+          memorySessionKey: conversation.hermesMemoryKey,
+          conversationHistory: conversation.history,
+          outputCharacterLimit: policy.maxOutputCharacters,
+        },
       );
       const linked = await this.prisma.chatMessage.updateMany({
         where: { id: assistantMessageId, status: "PENDING" },
@@ -366,84 +502,19 @@ export class PrismaChatManager implements ChatManager {
       });
       if (linked.count !== 1) {
         await this.agents.cancelRun(asAgentPrincipal(principal), run.id, false).catch(() => undefined);
-        emit({ type: "cancelled", conversationId, messageId: assistantMessageId });
-        return;
+        throw new ChatConversationConflictError("The pending response was cancelled before Hermes submission completed.");
       }
       await this.prisma.auditEvent.create({ data: {
         actorType: "USER", actorId: principal.id, action: "chat.hermes_run_requested",
         resourceType: "ChatMessage", resourceId: assistantMessageId, outcome: "SUCCESS",
         metadata: { conversationId, runId: run.id, profileId: run.profileId, profileVersion: run.profileVersion, enforcementPlane: "ORCASYNAPSE" },
       } });
-
-      const emittedEvents = new Set<string>();
-      while (true) {
-        run = await this.agents.getRun(asAgentPrincipal(principal), run.id, false);
-        const events = await this.agents.listRunEvents(asAgentPrincipal(principal), run.id, false);
-        for (const event of events.items) {
-          if (emittedEvents.has(event.id)) continue;
-          emittedEvents.add(event.id);
-          emit({
-            type: "activity", conversationId, messageId: assistantMessageId,
-            runId: run.id, activity: event.type, summary: event.summary,
-            toolName: event.toolName, childSessionId: event.childSessionId,
-          });
-        }
-        if (run.status === "COMPLETED") {
-          if (!run.output?.trim()) throw new Error("Hermes completed without a response.");
-          if (run.output.length > policy.maxOutputCharacters) throw new Error("Hermes output exceeded the active guardrail limit.");
-          emit({ type: "delta", conversationId, messageId: assistantMessageId, delta: run.output });
-          const inputTokens = maximumUsage(events.items, "inputTokens");
-          const outputTokens = maximumUsage(events.items, "outputTokens");
-          const totalTokens = inputTokens === null && outputTokens === null ? null : (inputTokens ?? 0) + (outputTokens ?? 0);
-          const completed = await this.prisma.$transaction(async (transaction) => {
-            await transaction.chatMessage.update({ where: { id: assistantMessageId }, data: {
-              status: "COMPLETED", content: run!.output!, inputTokens, outputTokens, totalTokens,
-              latencyMs: Date.now() - startedAt, finishReason: "hermes_completed", sources: run!.sources as Prisma.InputJsonValue,
-              completedAt: new Date(),
-            } });
-            await transaction.auditEvent.create({ data: {
-              actorType: "USER", actorId: principal.id, action: "chat.hermes_run_completed",
-              resourceType: "ChatMessage", resourceId: assistantMessageId, outcome: "SUCCESS",
-              metadata: { conversationId, runId: run!.id, profileId: run!.profileId, profileVersion: run!.profileVersion, latencyMs: Date.now() - startedAt, inputTokens, outputTokens, knowledgeSourceCount: run!.sources.length, guardrailPolicyId: policy.guardrailPolicyId },
-            } });
-            return transaction.chatMessage.findUniqueOrThrow({
-              where: { id: assistantMessageId },
-              include: { feedback: true, agentRun: { select: { events: { orderBy: [{ occurredAt: "asc" }, { id: "asc" }], take: 500 } } } },
-            });
-          });
-          emit({ type: "completed", conversationId, messageId: assistantMessageId, message: messageDto(completed as StoredMessage) });
-          return;
-        }
-        if (run.status === "CANCELLED") {
-          await this.prisma.$transaction([
-            this.prisma.chatMessage.updateMany({
-              where: { id: assistantMessageId, status: "PENDING" },
-              data: {
-                status: "CANCELLED", latencyMs: Date.now() - startedAt,
-                errorCode: run.failureCode ?? "HERMES_RUN_CANCELLED", completedAt: new Date(),
-              },
-            }),
-            this.prisma.auditEvent.create({ data: {
-              actorType: "USER", actorId: principal.id, action: "chat.hermes_run_cancelled",
-              resourceType: "ChatMessage", resourceId: assistantMessageId, outcome: "SUCCESS",
-              metadata: { conversationId, runId: run.id, guardrailPolicyId: policy.guardrailPolicyId },
-            } }),
-          ]);
-          emit({ type: "cancelled", conversationId, messageId: assistantMessageId });
-          return;
-        }
-        if (["FAILED", "DENIED", "TIMED_OUT"].includes(run.status)) {
-          throw new Error(run.failureMessage ?? `Hermes run ended as ${run.status.toLowerCase()}.`);
-        }
-        await sleep(RUN_POLL_INTERVAL_MS);
-      }
     } catch (error) {
-      const errorCode = run?.failureCode ?? "HERMES_RUN_FAILED";
-      const safeError = error instanceof Error ? error.message.slice(0, 500) : "Hermes could not complete the response.";
+      const errorCode = "HERMES_SUBMISSION_FAILED";
       await this.prisma.$transaction([
         this.prisma.chatMessage.updateMany({
           where: { id: assistantMessageId, status: "PENDING" },
-          data: { status: "FAILED", latencyMs: Date.now() - startedAt, errorCode, completedAt: new Date() },
+          data: { status: "FAILED", errorCode, completedAt: new Date() },
         }),
         this.prisma.auditEvent.create({ data: {
           actorType: "USER", actorId: principal.id, action: "chat.hermes_run_failed",
@@ -451,8 +522,264 @@ export class PrismaChatManager implements ChatManager {
           metadata: { conversationId, runId: run?.id ?? null, errorCode, guardrailPolicyId: policy.guardrailPolicyId },
         } }),
       ]);
-      emit({ type: "failed", conversationId, messageId: assistantMessageId, error: safeError, errorCode });
+      throw error;
     }
+
+    const [userMessage, assistantMessage] = await Promise.all([
+      this.prisma.chatMessage.findUniqueOrThrow({ where: { id: userMessageId }, include: messageInclude }),
+      this.prisma.chatMessage.findUniqueOrThrow({ where: { id: assistantMessageId }, include: messageInclude }),
+    ]);
+    return {
+      conversationId,
+      userMessage: messageDto(userMessage as StoredMessage),
+      assistantMessage: messageDto(assistantMessage as StoredMessage),
+    };
+  }
+
+  async subscribe(
+    principal: ChatPrincipal,
+    conversationId: string,
+    messageId: string,
+    afterCursor: string | null,
+    emit: (event: ChatStreamEvent) => void,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const linked = await this.prisma.chatMessage.findFirst({
+      where: {
+        id: messageId,
+        conversationId,
+        role: "ASSISTANT",
+        conversation: { ownerSubject: principal.subject },
+      },
+      select: { agentRunId: true },
+    });
+    if (!linked) throw new ChatMessageNotFoundError();
+    if (!linked.agentRunId) throw new ChatConversationConflictError("The Hermes run has not been linked yet.");
+    const runId = linked.agentRunId;
+    let cursor = afterCursor && /^\d+$/.test(afterCursor) ? BigInt(afterCursor) : 0n;
+    let previousStatus: string | null = null;
+    emit({ type: "started", conversationId, messageId, runId, cursor: cursor === 0n ? null : cursor.toString() });
+
+    while (!signal.aborted) {
+      const events = await this.prisma.agentRunEvent.findMany({
+        where: { runId, cursor: { gt: cursor } },
+        orderBy: { cursor: "asc" },
+        take: 100,
+      });
+      const approvalIds = events.flatMap(({ approvalId }) => approvalId ? [approvalId] : []);
+      const approvals = approvalIds.length === 0 ? [] : await this.prisma.agentRunApproval.findMany({
+        where: { id: { in: approvalIds }, runId },
+      });
+      const approvalById = new Map(approvals.map((approval) => [approval.id, approval]));
+      for (const event of events) {
+        cursor = event.cursor;
+        const eventCursor = cursor.toString();
+        if (event.type === "MESSAGE_DELTA" && event.delta) {
+          emit({ type: "delta", conversationId, messageId, cursor: eventCursor, delta: event.delta });
+          continue;
+        }
+        emit({
+          type: "activity",
+          conversationId,
+          messageId,
+          cursor: eventCursor,
+          runId,
+          eventId: event.id,
+          activity: event.type,
+          summary: event.summary,
+          preview: event.preview,
+          status: event.status,
+          errorCode: event.errorCode,
+          toolName: event.toolName,
+          childSessionId: event.childSessionId,
+          approvalId: event.approvalId,
+          durationMs: event.durationMs,
+          inputTokens: event.inputTokens,
+          outputTokens: event.outputTokens,
+          reasoningTokens: event.reasoningTokens,
+          costUsd: event.costUsd === null ? null : Number(event.costUsd),
+          occurredAt: event.occurredAt.toISOString(),
+        });
+        const approval = event.approvalId ? approvalById.get(event.approvalId) : null;
+        if (approval) {
+          emit({
+            type: "approval",
+            conversationId,
+            messageId,
+            cursor: eventCursor,
+            runId,
+            approval: approvalDto(approval as StoredApproval),
+          });
+        }
+      }
+      if (events.length === 100) continue;
+
+      const run = await this.prisma.agentRun.findUnique({
+        where: { id: runId },
+        select: { status: true, failureCode: true, failureMessage: true, lastEventCursor: true },
+      });
+      if (!run) throw new ChatConversationConflictError("The Hermes run is no longer available.");
+      if (run.status !== previousStatus) {
+        previousStatus = run.status;
+        emit({
+          type: "state",
+          conversationId,
+          messageId,
+          cursor: run.lastEventCursor?.toString() ?? (cursor === 0n ? null : cursor.toString()),
+          runId,
+          status: run.status,
+        });
+      }
+      if (["COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT", "DENIED"].includes(run.status)) {
+        const message = await this.prisma.chatMessage.findUniqueOrThrow({
+          where: { id: messageId },
+          include: messageInclude,
+        });
+        const dto = messageDto(message as StoredMessage);
+        const terminalCursor = run.lastEventCursor?.toString() ?? (cursor === 0n ? null : cursor.toString());
+        if (run.status === "COMPLETED") {
+          emit({ type: "completed", conversationId, messageId, cursor: terminalCursor, message: dto });
+        } else if (run.status === "CANCELLED") {
+          emit({ type: "cancelled", conversationId, messageId, cursor: terminalCursor });
+        } else {
+          emit({
+            type: "failed",
+            conversationId,
+            messageId,
+            cursor: terminalCursor,
+            error: run.failureMessage ?? `Hermes ended the run as ${run.status.toLowerCase()}.`,
+            errorCode: run.failureCode ?? `HERMES_${run.status}`,
+          });
+        }
+        return;
+      }
+      await sleep(RUN_POLL_INTERVAL_MS, signal);
+    }
+  }
+
+  async decideApproval(
+    principal: ChatPrincipal,
+    approvalId: string,
+    input: DecideAgentRunApproval,
+  ): Promise<AgentRunApproval> {
+    const now = new Date();
+    const approval = await this.prisma.$transaction(async (transaction) => {
+      const current = await transaction.agentRunApproval.findFirst({
+        where: { id: approvalId, run: { ownerSubject: principal.subject } },
+      });
+      if (!current) throw new ChatMessageNotFoundError();
+      if (current.status !== "PENDING") {
+        throw new ChatConversationConflictError("This Hermes approval request has already been decided.");
+      }
+      if (current.expiresAt <= now) {
+        throw new ChatConversationConflictError("This Hermes approval request has expired.");
+      }
+      const changed = await transaction.agentRunApproval.updateMany({
+        where: { id: current.id, status: "PENDING", expiresAt: { gt: now } },
+        data: {
+          status: input.decision === "ALLOW_ONCE" ? "APPROVED" : "DENIED",
+          decision: input.decision,
+          decidedAt: now,
+          decidedBy: principal.id,
+        },
+      });
+      if (changed.count !== 1) throw new ChatConversationConflictError("This approval changed before the decision was saved.");
+      await transaction.auditEvent.create({ data: {
+        actorType: "USER",
+        actorId: principal.id,
+        action: input.decision === "ALLOW_ONCE" ? "chat.hermes_approval_allowed_once" : "chat.hermes_approval_denied",
+        resourceType: "AgentRunApproval",
+        resourceId: current.id,
+        outcome: "SUCCESS",
+        metadata: { runId: current.runId, identityMode: principal.identityMode },
+      } });
+      return transaction.agentRunApproval.findUniqueOrThrow({ where: { id: current.id } });
+    });
+    return approvalDto(approval as StoredApproval);
+  }
+
+  async fork(
+    principal: ChatPrincipal,
+    conversationId: string,
+    input: ForkChatConversation,
+  ): Promise<ChatConversationSummary> {
+    const source = await this.prisma.chatConversation.findFirst({
+      where: { id: conversationId, ownerSubject: principal.subject },
+      include: { messages: { where: { status: "COMPLETED" }, orderBy: { ordinal: "asc" } } },
+    });
+    if (!source) throw new ChatConversationNotFoundError();
+    if (!source.profileId) throw new ChatConfigurationError("The source conversation has no Agent Profile.");
+    await this.activeProfile(source.profileId);
+    const through = input.throughMessageId
+      ? source.messages.find(({ id }) => id === input.throughMessageId)
+      : source.messages.at(-1);
+    if (input.throughMessageId && !through) throw new ChatMessageNotFoundError();
+    const messages = through ? source.messages.filter(({ ordinal }) => ordinal <= through.ordinal) : [];
+    const created = await this.prisma.$transaction(async (transaction) => {
+      const conversation = await transaction.chatConversation.create({
+        data: {
+          ownerSubject: principal.subject,
+          title: `${source.title.replace(/ \(fork\)$/i, "")} (fork)`.slice(0, 160),
+          modelAlias: source.modelAlias,
+          profileId: source.profileId,
+          profileName: source.profileName,
+          generation: Math.ceil(messages.length / 2),
+          lastMessageAt: messages.at(-1)?.createdAt ?? null,
+          ...(messages.length === 0 ? {} : { messages: {
+            create: messages.map((message) => ({
+              ordinal: message.ordinal,
+              role: message.role,
+              status: "COMPLETED" as const,
+              content: message.content,
+              modelAlias: message.modelAlias,
+              inputTokens: message.inputTokens,
+              outputTokens: message.outputTokens,
+              reasoningTokens: message.reasoningTokens,
+              totalTokens: message.totalTokens,
+              latencyMs: message.latencyMs,
+              firstTokenLatencyMs: message.firstTokenLatencyMs,
+              finishReason: message.finishReason,
+              sources: message.sources as Prisma.InputJsonValue,
+              completedAt: message.completedAt,
+            })),
+          } }),
+        },
+        include: { _count: { select: { messages: true } } },
+      });
+      await transaction.auditEvent.create({ data: {
+        actorType: "USER",
+        actorId: principal.id,
+        action: "chat.conversation_forked",
+        resourceType: "ChatConversation",
+        resourceId: conversation.id,
+        outcome: "SUCCESS",
+        metadata: { sourceConversationId: source.id, throughMessageId: through?.id ?? null },
+      } });
+      return conversation;
+    });
+    return summaryDto(created as StoredConversation);
+  }
+
+  async delete(principal: ChatPrincipal, conversationId: string): Promise<void> {
+    await this.prisma.$transaction(async (transaction) => {
+      const conversation = await transaction.chatConversation.findFirst({
+        where: { id: conversationId, ownerSubject: principal.subject },
+        select: { id: true, messages: { where: { status: "PENDING" }, select: { id: true }, take: 1 } },
+      });
+      if (!conversation) throw new ChatConversationNotFoundError();
+      if (conversation.messages.length > 0) {
+        throw new ChatConversationConflictError("Stop the active Hermes run before deleting this conversation.");
+      }
+      await transaction.auditEvent.create({ data: {
+        actorType: "USER",
+        actorId: principal.id,
+        action: "chat.conversation_deleted",
+        resourceType: "ChatConversation",
+        resourceId: conversationId,
+        outcome: "SUCCESS",
+      } });
+      await transaction.chatConversation.delete({ where: { id: conversationId } });
+    });
   }
 
   async setFeedback(principal: ChatPrincipal, messageId: string, input: SetChatFeedback): Promise<ChatFeedback> {

@@ -12,12 +12,17 @@ function message(overrides: Partial<ChatMessage> = {}): ChatMessage {
     modelAlias: "qwen3.5-122b-a10b",
     inputTokens: 1_250,
     outputTokens: 240,
+    reasoningTokens: 32,
     totalTokens: 1_490,
     latencyMs: 4_000,
+    firstTokenLatencyMs: 280,
     finishReason: "stop",
     errorCode: null,
     agentRunId: "c184ecb8-8597-48bd-9de6-262049b55db6",
+    runStatus: "COMPLETED",
+    lastEventCursor: "42",
     runtimeEvents: [],
+    approvals: [],
     sources: [],
     feedback: null,
     createdAt: "2026-07-31T00:00:00.000Z",
@@ -32,7 +37,9 @@ describe("chat response telemetry", () => {
       { key: "throughput", label: "Effective speed", value: "60.0 tok/s" },
       { key: "input", label: "Input", value: "1,250" },
       { key: "output", label: "Output", value: "240" },
+      { key: "reasoning", label: "Reasoning", value: "32" },
       { key: "total", label: "Total", value: "1,490" },
+      { key: "first-token", label: "First token", value: "280 ms" },
       { key: "latency", label: "Latency", value: "4.00 s" },
       { key: "finish", label: "Finish", value: "stop" },
     ]);
@@ -42,8 +49,10 @@ describe("chat response telemetry", () => {
     const metrics = chatMessageTelemetry(message({
       inputTokens: null,
       outputTokens: null,
+      reasoningTokens: null,
       totalTokens: null,
       latencyMs: null,
+      firstTokenLatencyMs: null,
       finishReason: null,
     }));
 

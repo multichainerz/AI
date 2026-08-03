@@ -16,7 +16,7 @@ import {
   recordProductionReadinessApproval,
   updateProductionReadinessControl,
   rollbackConfiguration,
-  streamChatMessage,
+  streamChatEvents,
   updateToolRuntime,
   updateConnectionMonitoring,
   getModelDeployments,
@@ -400,7 +400,7 @@ describe("OrcaSynapse browser API", () => {
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
         controller.enqueue(encoder.encode('event: started\ndata: {"type":"started","conversationId":"8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d",'));
-        controller.enqueue(encoder.encode('"messageId":"6cf6ce1b-a8c6-49d7-b6aa-019d35888acb"}\n\nevent: delta\ndata: {"type":"delta","conversationId":"8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d","messageId":"6cf6ce1b-a8c6-49d7-b6aa-019d35888acb","delta":"Hi"}\n\n'));
+        controller.enqueue(encoder.encode('"messageId":"6cf6ce1b-a8c6-49d7-b6aa-019d35888acb","runId":"814f06ec-7e6f-47f4-93e9-a0c7c0d3acfd","cursor":null}\n\nid: 1\nevent: delta\ndata: {"type":"delta","conversationId":"8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d","messageId":"6cf6ce1b-a8c6-49d7-b6aa-019d35888acb","cursor":"1","delta":"Hi"}\n\n'));
         controller.close();
       },
     });
@@ -410,9 +410,10 @@ describe("OrcaSynapse browser API", () => {
     }));
     const events: string[] = [];
 
-    await streamChatMessage(
+    await streamChatEvents(
       "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d",
-      "Hello",
+      "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb",
+      null,
       (event) => events.push(event.type),
       new AbortController().signal,
     );

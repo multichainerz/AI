@@ -106,14 +106,27 @@ describe("HermesClient", () => {
         return new Response(JSON.stringify({ object: "list", platform: "api_server", data: [] }), { status: 200 });
       }
       if (init?.method === "POST") {
-        expect(init.headers).toEqual(expect.objectContaining({ "idempotency-key": "run-request-1" }));
-        expect(JSON.parse(String(init.body))).toMatchObject({ input: "Analyze", session_id: "run-session-1", model: "hermes-agent" });
+        expect(init.headers).toEqual(expect.objectContaining({
+          "idempotency-key": "run-request-1",
+          "x-hermes-session-key": "memory-scope-1",
+        }));
+        expect(JSON.parse(String(init.body))).toMatchObject({
+          input: "Analyze",
+          session_id: "run-session-1",
+          model: "hermes-agent",
+          conversation_history: [{ role: "user", content: "Earlier question" }, { role: "assistant", content: "Earlier answer" }],
+        });
         return new Response(JSON.stringify({ run_id: "run_external_1", status: "started" }), { status: 202 });
       }
       return new Response(JSON.stringify({ run_id: "run_external_1", status: "completed", output: "Result" }), { status: 200 });
     });
     const client = new HermesClient(resolver(), fetcher);
-    const id = await client.start({ input: "Analyze", instructions: "Stay bounded", sessionId: "run-session-1", idempotencyKey: "run-request-1", modelAlias: "hermes-agent" });
+    const id = await client.start({
+      input: "Analyze", instructions: "Stay bounded", sessionId: "run-session-1",
+      idempotencyKey: "run-request-1", modelAlias: "hermes-agent",
+      conversationHistory: [{ role: "user", content: "Earlier question" }, { role: "assistant", content: "Earlier answer" }],
+      memorySessionKey: "memory-scope-1",
+    });
     await expect(client.status(id)).resolves.toMatchObject({ id, status: "completed", output: "Result", error: null });
   });
 
@@ -171,6 +184,8 @@ describe("HermesClient", () => {
       sessionId: "run-session-1",
       idempotencyKey: "run-request-1",
       modelAlias: "hermes-agent",
+      conversationHistory: [],
+      memorySessionKey: "memory-scope-1",
       governedMcp: { authorization, expiresAt: new Date("2026-07-30T01:00:00.000Z") },
     })).resolves.toBe("run_external_1");
   });
@@ -182,11 +197,13 @@ describe("HermesClient", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
-  it("projects only bounded lifecycle fields from the official run SSE stream", async () => {
+  it("projects and batches the official data-only Hermes run SSE protocol", async () => {
     const payload = [
-      "id: event-1\nevent: subagent.start\ndata: {\"child_session_id\":\"child-1\",\"summary\":\"Researching the bounded task\",\"hidden_prompt\":\"do not retain\"}\n\n",
-      "event: token.delta\ndata: {\"delta\":\"private token stream\"}\n\n",
-      "id: event-2\nevent: subagent.complete\ndata: {\"child_session_id\":\"child-1\",\"status\":\"completed\",\"summary\":\"Research complete\",\"duration_ms\":1250,\"usage\":{\"input_tokens\":20,\"output_tokens\":30,\"cost_usd\":0.02},\"tool_arguments\":{\"secret\":true}}\n\n",
+      "data: {\"event\":\"subagent.start\",\"id\":\"event-1\",\"child_session_id\":\"child-1\",\"summary\":\"Researching the bounded task\",\"hidden_prompt\":\"do not retain\"}\n\n",
+      "data: {\"event\":\"message.delta\",\"id\":\"delta-1\",\"delta\":\"Hello \"}\n\n",
+      "data: {\"event\":\"message.delta\",\"id\":\"delta-2\",\"delta\":\"world\"}\n\n",
+      "data: {\"event\":\"approval.request\",\"id\":\"approval-event\",\"approval_id\":\"approval-1\",\"command\":\"Read protected source\",\"choices\":[\"once\",\"deny\"]}\n\n",
+      "data: {\"event\":\"subagent.complete\",\"id\":\"event-2\",\"child_session_id\":\"child-1\",\"status\":\"completed\",\"summary\":\"Research complete\",\"duration_seconds\":1.25,\"usage\":{\"input_tokens\":20,\"output_tokens\":30,\"reasoning_tokens\":5,\"cost_usd\":0.02},\"tool_arguments\":{\"secret\":true}}\n\n",
     ].join("");
     const fetcher = vi.fn<typeof fetch>(async () => new Response(payload, {
       status: 200,
@@ -198,8 +215,18 @@ describe("HermesClient", () => {
       (event) => { projected.push(event); },
       new AbortController().signal,
     );
-    expect(projected).toHaveLength(2);
+    expect(projected).toHaveLength(4);
     expect(projected[1]).toMatchObject({
+      type: "MESSAGE_DELTA",
+      delta: "Hello world",
+    });
+    expect(projected[2]).toMatchObject({
+      type: "APPROVAL_REQUIRED",
+      approvalExternalId: "approval-1",
+      approvalCommand: "Read protected source",
+      approvalChoices: ["ALLOW_ONCE", "DENY"],
+    });
+    expect(projected[3]).toMatchObject({
       sourceEventId: "event-2",
       type: "SUBAGENT_COMPLETED",
       childSessionId: "child-1",
@@ -208,9 +235,20 @@ describe("HermesClient", () => {
       durationMs: 1250,
       inputTokens: 20,
       outputTokens: 30,
+      reasoningTokens: 5,
       costUsd: 0.02,
     });
-    expect(projected[1]).not.toHaveProperty("hidden_prompt");
-    expect(projected[1]).not.toHaveProperty("tool_arguments");
+    expect(projected[3]).not.toHaveProperty("hidden_prompt");
+    expect(projected[3]).not.toHaveProperty("tool_arguments");
+  });
+
+  it("forwards a bounded allow-once approval to the official run endpoint", async () => {
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      expect(input.toString()).toBe("https://hermes.orcasynapse.internal/v1/runs/run_external_1/approval");
+      expect(init?.method).toBe("POST");
+      expect(JSON.parse(String(init?.body))).toEqual({ choice: "once" });
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+    await expect(new HermesClient(resolver(), fetcher).decideApproval("run_external_1", "once")).resolves.toBeUndefined();
   });
 });

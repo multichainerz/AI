@@ -1,4 +1,5 @@
 import type {
+  AgentRunApproval,
   AgentProfile,
   ChatConversation,
   ChatConversationSummary,
@@ -6,14 +7,20 @@ import type {
   ChatStreamEvent,
 } from "@orcasynapse/contracts";
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   OrcaSynapseApiError,
   cancelChatRun,
   createChatConversation,
+  decideChatApproval,
+  deleteChatConversation,
+  forkChatConversation,
   getChatConversation,
   getChatConversations,
   getAgentProfiles,
-  streamChatMessage,
+  streamChatEvents,
+  submitChatMessage,
   setChatFeedback,
   updateChatConversation,
 } from "./api.js";
@@ -82,11 +89,16 @@ function emptyMessage(
     inputTokens: null,
     outputTokens: null,
     totalTokens: null,
+    reasoningTokens: null,
     latencyMs: null,
+    firstTokenLatencyMs: null,
     finishReason: null,
     errorCode: null,
     agentRunId: null,
+    runStatus: null,
+    lastEventCursor: null,
     runtimeEvents: [],
+    approvals: [],
     sources: [],
     feedback: null,
     createdAt: new Date().toISOString(),
@@ -116,8 +128,17 @@ function formatLatency(value: number | null): string {
   return value < 1_000 ? `${value} ms` : `${(value / 1_000).toFixed(2)} s`;
 }
 
+function formatRuntimeDuration(value: number | null): string | null {
+  if (value === null) return null;
+  return value < 1_000 ? `${value} ms` : `${(value / 1_000).toFixed(1)} s`;
+}
+
+function runtimeEventLabel(type: string): string {
+  return type.replaceAll("_", " ").toLowerCase().replace(/^./, (character) => character.toUpperCase());
+}
+
 export interface ChatTelemetryMetric {
-  key: "throughput" | "input" | "output" | "total" | "latency" | "finish";
+  key: "throughput" | "input" | "output" | "reasoning" | "total" | "first-token" | "latency" | "finish";
   label: string;
   value: string;
 }
@@ -130,7 +151,9 @@ export function chatMessageTelemetry(message: ChatMessage): ChatTelemetryMetric[
     { key: "throughput", label: "Effective speed", value: throughput },
     { key: "input", label: "Input", value: formatTokenCount(message.inputTokens) },
     { key: "output", label: "Output", value: formatTokenCount(message.outputTokens) },
+    { key: "reasoning", label: "Reasoning", value: formatTokenCount(message.reasoningTokens) },
     { key: "total", label: "Total", value: formatTokenCount(message.totalTokens) },
+    { key: "first-token", label: "First token", value: formatLatency(message.firstTokenLatencyMs) },
     { key: "latency", label: "Latency", value: formatLatency(message.latencyMs) },
     {
       key: "finish",
@@ -138,6 +161,25 @@ export function chatMessageTelemetry(message: ChatMessage): ChatTelemetryMetric[
       value: message.finishReason?.replaceAll("_", " ").toLowerCase() ?? "—",
     },
   ];
+}
+
+export function MarkdownMessage({ content }: { content: string }) {
+  return (
+    <div className="message-markdown">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        urlTransform={(url) => defaultUrlTransform(url)}
+        components={{
+          a: ({ children, ...properties }) => (
+            <a {...properties} target="_blank" rel="noreferrer noopener">{children}</a>
+          ),
+          img: ({ alt }) => <span className="blocked-inline-image">[External image blocked{alt ? `: ${alt}` : ""}]</span>,
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
 }
 
 export function ChatView({
@@ -156,17 +198,27 @@ export function ChatView({
   const [active, setActive] = useState<ChatConversation | null>(null);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyFilter, setHistoryFilter] = useState("");
   const [feedbackBusy, setFeedbackBusy] = useState<string | null>(null);
   const [streamStartedAt, setStreamStartedAt] = useState<number | null>(null);
   const [streamElapsedMs, setStreamElapsedMs] = useState(0);
   const [profiles, setProfiles] = useState<AgentProfile[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState("");
   const [currentActivity, setCurrentActivity] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [approvalBusy, setApprovalBusy] = useState<string | null>(null);
   const abortController = useRef<AbortController | null>(null);
   const messageEnd = useRef<HTMLDivElement>(null);
+  const activePending = active?.messages.find(
+    ({ role, status, agentRunId }) => role === "ASSISTANT" && status === "PENDING" && agentRunId,
+  ) ?? null;
+  const working = busy || submitting;
 
   const handleError = (cause: unknown, fallback: string) => {
     if (cause instanceof OrcaSynapseApiError && cause.status === 401) onUnauthorized();
@@ -218,8 +270,73 @@ export function ChatView({
     return () => window.clearInterval(timer);
   }, [streamStartedAt]);
 
+  useEffect(() => {
+    if (!unlocked || !active || !activePending?.agentRunId) {
+      setBusy(false);
+      setStreamStartedAt(null);
+      return;
+    }
+    const conversationId = active.id;
+    const messageId = activePending.id;
+    const controller = new AbortController();
+    abortController.current?.abort();
+    abortController.current = controller;
+    let cursor = activePending.lastEventCursor;
+    setBusy(true);
+    setStreamStartedAt(Date.now());
+    setCurrentActivity(activePending.runStatus === "WAITING_FOR_APPROVAL" ? "Waiting for approval" : "Connecting to Hermes run");
+
+    const follow = async () => {
+      let retry = 0;
+      while (!controller.signal.aborted) {
+        try {
+          await streamChatEvents(
+            conversationId,
+            messageId,
+            cursor,
+            (event) => {
+              if (event.cursor) cursor = event.cursor;
+              applyStreamEvent(event);
+            },
+            controller.signal,
+          );
+          if (controller.signal.aborted) return;
+          const refreshed = await getChatConversation(conversationId);
+          setActive((current) => current?.id === conversationId ? refreshed : current);
+          await refreshList();
+          return;
+        } catch (cause) {
+          if (controller.signal.aborted || (cause instanceof DOMException && cause.name === "AbortError")) return;
+          if (cause instanceof OrcaSynapseApiError && cause.status === 401) {
+            onUnauthorized();
+            return;
+          }
+          retry += 1;
+          setCurrentActivity(`Connection interrupted · retrying (${retry})`);
+          const refreshed = await getChatConversation(conversationId).catch(() => null);
+          const pending = refreshed?.messages.find(({ id }) => id === messageId);
+          if (refreshed) setActive((current) => current?.id === conversationId ? refreshed : current);
+          if (!pending || pending.status !== "PENDING") {
+            await refreshList().catch(() => undefined);
+            return;
+          }
+          cursor = pending.lastEventCursor;
+          await new Promise((resolve) => window.setTimeout(resolve, Math.min(5_000, 500 * 2 ** Math.min(retry, 4))));
+        }
+      }
+    };
+    void follow().finally(() => {
+      if (abortController.current === controller) {
+        abortController.current = null;
+        setBusy(false);
+        setStreamStartedAt(null);
+        setCurrentActivity(null);
+      }
+    });
+    return () => controller.abort();
+  }, [unlocked, active?.id, activePending?.id]);
+
   const selectConversation = async (id: string) => {
-    if (busy) return;
     setLoading(true);
     setError(null);
     try {
@@ -233,7 +350,6 @@ export function ChatView({
   };
 
   const newConversation = () => {
-    if (busy) return;
     setActive(null);
     setDraft("");
     setError(null);
@@ -241,10 +357,15 @@ export function ChatView({
     setCurrentActivity(null);
   };
 
-  const applyStreamEvent = (event: ChatStreamEvent) => {
+  function applyStreamEvent(event: ChatStreamEvent) {
     if (event.type === "started") setCurrentActivity("Hermes run queued");
+    if (event.type === "state") {
+      setCurrentActivity(event.status === "WAITING_FOR_APPROVAL"
+        ? "Waiting for approval"
+        : event.status.replaceAll("_", " ").toLowerCase());
+    }
     if (event.type === "activity") {
-      setCurrentActivity(event.toolName ?? event.summary ?? event.activity.replaceAll("_", " ").toLowerCase());
+      setCurrentActivity(event.toolName ?? event.preview ?? event.summary ?? event.activity.replaceAll("_", " ").toLowerCase());
     }
     if (event.type === "completed" || event.type === "failed" || event.type === "cancelled") {
       setCurrentActivity(null);
@@ -252,24 +373,83 @@ export function ChatView({
     setActive((current) => {
       if (!current || current.id !== event.conversationId) return current;
       if (event.type === "started") {
-        if (current.messages.some(({ id }) => id === event.messageId)) return current;
+        if (current.messages.some(({ id }) => id === event.messageId)) {
+          return {
+            ...current,
+            messages: current.messages.map((message) => message.id === event.messageId
+              ? { ...message, agentRunId: event.runId, runStatus: message.runStatus ?? "QUEUED", lastEventCursor: event.cursor ?? message.lastEventCursor }
+              : message),
+          };
+        }
         return {
           ...current,
           messages: [
             ...current.messages,
-            emptyMessage(current.id, event.messageId, "ASSISTANT", "", "PENDING"),
+            { ...emptyMessage(current.id, event.messageId, "ASSISTANT", "", "PENDING"), agentRunId: event.runId, runStatus: "QUEUED", lastEventCursor: event.cursor },
           ],
         };
       }
+      if (event.type === "state") {
+        return {
+          ...current,
+          messages: current.messages.map((message) => message.id === event.messageId
+            ? { ...message, runStatus: event.status, lastEventCursor: event.cursor ?? message.lastEventCursor }
+            : message),
+        };
+      }
       if (event.type === "activity") {
-        return current;
+        return {
+          ...current,
+          messages: current.messages.map((message) => message.id === event.messageId
+            ? {
+                ...message,
+                lastEventCursor: event.cursor ?? message.lastEventCursor,
+                runtimeEvents: message.runtimeEvents.some(({ id }) => id === event.eventId)
+                  ? message.runtimeEvents
+                  : [...message.runtimeEvents, {
+                      id: event.eventId,
+                      cursor: event.cursor!,
+                      type: event.activity,
+                      summary: event.summary,
+                      preview: event.preview,
+                      status: event.status,
+                      errorCode: event.errorCode,
+                      toolName: event.toolName,
+                      childSessionId: event.childSessionId,
+                      approvalId: event.approvalId,
+                      durationMs: event.durationMs,
+                      inputTokens: event.inputTokens,
+                      outputTokens: event.outputTokens,
+                      reasoningTokens: event.reasoningTokens,
+                      costUsd: event.costUsd,
+                      occurredAt: event.occurredAt,
+                    }],
+              }
+            : message),
+        };
+      }
+      if (event.type === "approval") {
+        return {
+          ...current,
+          messages: current.messages.map((message) => message.id === event.messageId
+            ? {
+                ...message,
+                runStatus: "WAITING_FOR_APPROVAL",
+                lastEventCursor: event.cursor ?? message.lastEventCursor,
+                approvals: [
+                  ...message.approvals.filter(({ id }) => id !== event.approval.id),
+                  event.approval,
+                ],
+              }
+            : message),
+        };
       }
       if (event.type === "delta") {
         return {
           ...current,
           messages: current.messages.map((message) =>
             message.id === event.messageId
-              ? { ...message, content: message.content + event.delta }
+              ? { ...message, content: message.content + event.delta, lastEventCursor: event.cursor ?? message.lastEventCursor }
               : message,
           ),
         };
@@ -289,6 +469,8 @@ export function ChatView({
             ? {
                 ...message,
                 status: event.type === "cancelled" ? "CANCELLED" : "FAILED",
+                runStatus: event.type === "cancelled" ? "CANCELLED" : "FAILED",
+                lastEventCursor: event.cursor ?? message.lastEventCursor,
                 errorCode: event.type === "failed" ? event.errorCode : "INFERENCE_CANCELLED",
               }
             : message,
@@ -296,12 +478,12 @@ export function ChatView({
       };
     });
     if (event.type === "failed") setError(event.error);
-  };
+  }
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     const content = draft.trim();
-    if (!content || busy || !unlocked) return;
+    if (!content || working || !unlocked || active?.status === "ARCHIVED") return;
     if (administratorReadiness?.ready === false) {
       setError(administratorReadiness.detail);
       return;
@@ -310,7 +492,7 @@ export function ChatView({
       setError("Create and activate an Agent Profile before starting Chat.");
       return;
     }
-    setBusy(true);
+    setSubmitting(true);
     setError(null);
     setDraft("");
     let conversation = active;
@@ -321,22 +503,13 @@ export function ChatView({
         conversation = await getChatConversation(created.id);
         setConversations((items) => [created, ...items]);
       }
-      const optimistic = emptyMessage(
-        conversation.id,
-        createClientMessageId(),
-        "USER",
-        content,
-        "COMPLETED",
-      );
-      setActive({ ...conversation, messages: [...conversation.messages, optimistic] });
-      const controller = new AbortController();
-      abortController.current = controller;
-      setStreamElapsedMs(0);
-      setStreamStartedAt(Date.now());
       setCurrentActivity("Hermes run queued");
-      await streamChatMessage(conversation.id, content, applyStreamEvent, controller.signal);
-      const refreshed = await getChatConversation(conversation.id);
-      setActive(refreshed);
+      const submission = await submitChatMessage(conversation.id, content);
+      setActive({
+        ...conversation,
+        messages: [...conversation.messages, submission.userMessage, submission.assistantMessage],
+        lastMessageAt: submission.userMessage.createdAt,
+      });
       await refreshList();
     } catch (cause) {
       if (!(cause instanceof DOMException && cause.name === "AbortError")) {
@@ -347,10 +520,7 @@ export function ChatView({
         await refreshList().catch(() => undefined);
       }
     } finally {
-      abortController.current = null;
-      setStreamStartedAt(null);
-      setCurrentActivity(null);
-      setBusy(false);
+      setSubmitting(false);
     }
   };
 
@@ -374,20 +544,116 @@ export function ChatView({
     }
   };
 
-  const archive = async () => {
-    if (!active || busy) return;
+  const setArchiveStatus = async (status: "ACTIVE" | "ARCHIVED") => {
+    if (!active || working) return;
     setLoading(true);
     setError(null);
     try {
-      await updateChatConversation(active.id, { status: "ARCHIVED" });
+      const updated = await updateChatConversation(active.id, { status });
       const items = await refreshList();
-      const next = items.find(({ id }) => id !== active.id && statusIsActive(id, items));
-      setActive(next ? await getChatConversation(next.id) : null);
+      if (status === "ACTIVE") {
+        setActive((current) => current?.id === updated.id ? { ...current, status: "ACTIVE" } : current);
+      } else {
+        const next = items.find(({ id }) => id !== active.id && statusIsActive(id, items));
+        setActive(next ? await getChatConversation(next.id) : null);
+      }
     } catch (cause) {
-      handleError(cause, "Unable to archive the conversation.");
+      handleError(cause, `Unable to ${status === "ACTIVE" ? "restore" : "archive"} the conversation.`);
     } finally {
       setLoading(false);
     }
+  };
+
+  const exportConversation = () => {
+    if (!active) return;
+    const payload = JSON.stringify({
+      exportedAt: new Date().toISOString(),
+      product: "OrcaSynapse",
+      conversation: active,
+    }, null, 2);
+    const url = URL.createObjectURL(new Blob([payload], { type: "application/json;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${active.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 80) || "orcasynapse-chat"}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const saveTitle = async () => {
+    if (!active || !titleDraft.trim() || loading) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const updated = await updateChatConversation(active.id, { title: titleDraft.trim() });
+      setActive((current) => current?.id === updated.id ? { ...current, title: updated.title } : current);
+      await refreshList();
+      setRenaming(false);
+    } catch (cause) {
+      handleError(cause, "Unable to rename the conversation.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const forkConversation = async (throughMessageId?: string) => {
+    if (!active || working || loading) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const created = await forkChatConversation(active.id, throughMessageId ? { throughMessageId } : {});
+      await refreshList();
+      setActive(await getChatConversation(created.id));
+    } catch (cause) {
+      handleError(cause, "Unable to fork the conversation.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const removeConversation = async () => {
+    if (!active || working || loading) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const removedId = active.id;
+      await deleteChatConversation(removedId);
+      const items = await refreshList();
+      const next = items.find(({ id }) => id !== removedId);
+      setActive(next ? await getChatConversation(next.id) : null);
+      setConfirmDelete(false);
+    } catch (cause) {
+      handleError(cause, "Unable to delete the conversation.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const decideApproval = async (approval: AgentRunApproval, decision: "ALLOW_ONCE" | "DENY") => {
+    if (approvalBusy) return;
+    setApprovalBusy(approval.id);
+    setError(null);
+    try {
+      const updated = await decideChatApproval(approval.id, { decision });
+      setActive((current) => current ? {
+        ...current,
+        messages: current.messages.map((message) => ({
+          ...message,
+          approvals: message.approvals.map((item) => item.id === updated.id ? updated : item),
+        })),
+      } : current);
+      setCurrentActivity(decision === "ALLOW_ONCE" ? "Approval granted once" : "Approval denied");
+    } catch (cause) {
+      handleError(cause, "Unable to decide the Hermes approval request.");
+    } finally {
+      setApprovalBusy(null);
+    }
+  };
+
+  const retryMessage = (messageId: string) => {
+    if (!active || working) return;
+    const index = active.messages.findIndex(({ id }) => id === messageId);
+    const prior = [...active.messages.slice(0, index)].reverse().find(({ role }) => role === "USER");
+    if (prior) setDraft(prior.content);
   };
 
   const recordFeedback = async (
@@ -437,6 +703,12 @@ export function ChatView({
   );
   const profileAvailable = profiles.length > 0;
   const routeReady = administratorReadiness?.ready !== false && profileAvailable;
+  const chatReady = routeReady && active?.status !== "ARCHIVED";
+  const normalizedHistoryFilter = historyFilter.trim().toLowerCase();
+  const visibleConversations = normalizedHistoryFilter
+    ? conversations.filter((conversation) => [conversation.title, conversation.profileName, conversation.lastMessagePreview]
+      .some((value) => value?.toLowerCase().includes(normalizedHistoryFilter)))
+    : conversations;
   const readinessTitle = !profileAvailable
     ? "Create your first Agent Profile"
     : administratorReadiness?.title ?? "Hermes is ready";
@@ -454,11 +726,15 @@ export function ChatView({
           <div><p className="page-kicker">Workspace</p><h1>Chat</h1></div>
           <button className="chat-new-button" type="button" onClick={newConversation}>+ New</button>
         </div>
+        <label className="chat-history-search">
+          <span className="sr-only">Search conversations</span>
+          <input type="search" value={historyFilter} onChange={(event) => setHistoryFilter(event.target.value)} placeholder="Search conversations" />
+        </label>
         <div className="chat-history-list" aria-label="Conversation history">
-          {conversations.length === 0 && !loading && (
-            <p className="chat-history-empty">Your conversations will appear here.</p>
+          {visibleConversations.length === 0 && !loading && (
+            <p className="chat-history-empty">{conversations.length === 0 ? "Your conversations will appear here." : "No conversations match this search."}</p>
           )}
-          {conversations.map((conversation) => (
+          {visibleConversations.map((conversation) => (
             <button
               type="button"
               key={conversation.id}
@@ -487,16 +763,38 @@ export function ChatView({
         <header className="chat-topbar">
           <button className="history-toggle" type="button" onClick={() => setHistoryOpen((value) => !value)} aria-label="Toggle conversation history">☰</button>
           <div className="chat-topbar-title">
-            <strong>{active?.title ?? "New conversation"}</strong>
+            {renaming && active ? (
+              <form className="chat-title-editor" onSubmit={(event) => { event.preventDefault(); void saveTitle(); }}>
+                <input value={titleDraft} maxLength={160} autoFocus onChange={(event) => setTitleDraft(event.target.value)} aria-label="Conversation title" />
+                <button type="submit" disabled={!titleDraft.trim()}>Save</button>
+                <button type="button" onClick={() => setRenaming(false)}>Cancel</button>
+              </form>
+            ) : <strong>{active?.title ?? "New conversation"}</strong>}
             <span>{active ? `${active.profileName ?? "Legacy route"} · ${active.messages.length} messages` : "Start a governed Hermes conversation"}</span>
           </div>
           <div className="chat-runtime-summary" aria-label="Conversation runtime summary">
-            <span className={busy ? "generating" : routeReady ? "ready" : "degraded"}><i aria-hidden="true" />{busy ? `${currentActivity ?? "Hermes is working"} · ${(streamElapsedMs / 1_000).toFixed(1)} s` : routeReady ? "Hermes ready" : "Setup required"}</span>
+            <span className={working ? "generating" : routeReady ? "ready" : "degraded"}><i aria-hidden="true" />{working ? `${currentActivity ?? "Hermes is working"} · ${(streamElapsedMs / 1_000).toFixed(1)} s` : routeReady ? "Hermes ready" : "Setup required"}</span>
             <span><small>Model</small><strong>{active?.modelAlias ?? "Active default"}</strong></span>
             <span><small>Session usage</small><strong>{conversationTotalTokens.toLocaleString()} tok</strong></span>
           </div>
-          {active && <button type="button" disabled={busy || loading} onClick={() => void archive()}>Archive</button>}
+          {active && !renaming && (
+            <div className="chat-conversation-actions">
+              <button type="button" disabled={working || loading} onClick={() => { setTitleDraft(active.title); setRenaming(true); }}>Rename</button>
+              <button type="button" disabled={working || loading} onClick={() => void forkConversation()}>Fork</button>
+              <button type="button" disabled={working || loading} onClick={exportConversation}>Export</button>
+              <button type="button" disabled={working || loading} onClick={() => void setArchiveStatus(active.status === "ARCHIVED" ? "ACTIVE" : "ARCHIVED")}>{active.status === "ARCHIVED" ? "Restore" : "Archive"}</button>
+              <button className="danger" type="button" disabled={working || loading} onClick={() => setConfirmDelete(true)}>Delete</button>
+            </div>
+          )}
         </header>
+
+        {confirmDelete && active && (
+          <div className="chat-confirmation" role="alertdialog" aria-labelledby="delete-conversation-title">
+            <div><strong id="delete-conversation-title">Delete this conversation?</strong><span>The transcript and its run telemetry will be removed. Audit evidence remains.</span></div>
+            <button type="button" onClick={() => setConfirmDelete(false)}>Keep</button>
+            <button className="danger" type="button" onClick={() => void removeConversation()}>Delete permanently</button>
+          </div>
+        )}
 
         <div className="chat-messages" aria-live="polite">
           {!active || active.messages.length === 0 ? (
@@ -536,7 +834,9 @@ export function ChatView({
                       {message.status !== "COMPLETED" && <span className={`status ${message.status.toLowerCase()}`}>{message.status.toLowerCase()}</span>}
                     </div>
                   </div>
-                  <p>{message.content || (message.status === "PENDING" ? "Thinking…" : "No content returned.")}</p>
+                  {message.role === "USER"
+                    ? <p>{message.content}</p>
+                    : <MarkdownMessage content={message.content || (message.status === "PENDING" ? "Thinking…" : "No content returned.")} />}
                   {message.role === "ASSISTANT" && message.status === "PENDING" && (
                     <div className="message-stream-status" aria-label="Live generation status">
                       <span><i aria-hidden="true" />{currentActivity ?? "Hermes is working"}</span>
@@ -544,16 +844,48 @@ export function ChatView({
                     </div>
                   )}
                   {message.role === "ASSISTANT" && message.runtimeEvents.length > 0 && (
-                    <details className="message-runtime-events">
-                      <summary>{message.runtimeEvents.length} Hermes runtime event{message.runtimeEvents.length === 1 ? "" : "s"}</summary>
-                      <ol>{message.runtimeEvents.map((runtimeEvent) => (
-                        <li key={runtimeEvent.id}>
-                          <strong>{runtimeEvent.type.replaceAll("_", " ").toLowerCase()}</strong>
-                          <span>{runtimeEvent.toolName ?? runtimeEvent.summary ?? "Runtime lifecycle update"}</span>
-                        </li>
-                      ))}</ol>
-                    </details>
+                    <section className="agent-activity" aria-label="Hermes agent activity">
+                      <header><strong>Agent activity</strong><span>{message.runtimeEvents.length} event{message.runtimeEvents.length === 1 ? "" : "s"}</span></header>
+                      <ol>{message.runtimeEvents.map((runtimeEvent) => {
+                        const kind = runtimeEvent.type.startsWith("TOOL_") ? "tool"
+                          : runtimeEvent.type.startsWith("SUBAGENT_") ? "subagent"
+                            : runtimeEvent.type === "APPROVAL_REQUIRED" ? "approval" : "lifecycle";
+                        return (
+                          <li className={kind} key={runtimeEvent.id}>
+                            <span className="agent-activity-icon" aria-hidden="true">{kind === "tool" ? "TL" : kind === "subagent" ? "SA" : kind === "approval" ? "!" : "AI"}</span>
+                            <div>
+                              <div><strong>{runtimeEvent.toolName ?? (kind === "subagent" ? "Hermes subagent" : runtimeEventLabel(runtimeEvent.type))}</strong><span>{runtimeEvent.status ?? runtimeEventLabel(runtimeEvent.type)}</span></div>
+                              {(runtimeEvent.preview || runtimeEvent.summary) && <p>{runtimeEvent.preview ?? runtimeEvent.summary}</p>}
+                              <small>{[
+                                formatRuntimeDuration(runtimeEvent.durationMs),
+                                runtimeEvent.inputTokens === null ? null : `${runtimeEvent.inputTokens.toLocaleString()} in`,
+                                runtimeEvent.outputTokens === null ? null : `${runtimeEvent.outputTokens.toLocaleString()} out`,
+                                runtimeEvent.reasoningTokens === null ? null : `${runtimeEvent.reasoningTokens.toLocaleString()} reasoning`,
+                                runtimeEvent.costUsd === null ? null : `$${runtimeEvent.costUsd.toFixed(4)}`,
+                              ].filter(Boolean).join(" · ") || new Date(runtimeEvent.occurredAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</small>
+                            </div>
+                          </li>
+                        );
+                      })}</ol>
+                    </section>
                   )}
+                  {message.role === "ASSISTANT" && message.approvals.map((approval) => (
+                    <section className={`chat-approval ${approval.status.toLowerCase()}`} key={approval.id} aria-label="Hermes approval request">
+                      <div className="chat-approval-mark" aria-hidden="true">!</div>
+                      <div>
+                        <span>Human approval</span>
+                        <strong>{approval.summary ?? "Hermes needs permission to continue"}</strong>
+                        {approval.command && <code>{approval.command}</code>}
+                        <small>{approval.status === "PENDING" ? `Expires ${new Date(approval.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : `Decision: ${(approval.decision ?? approval.status).replaceAll("_", " ").toLowerCase()}`}</small>
+                      </div>
+                      {approval.status === "PENDING" && (
+                        <div className="chat-approval-actions">
+                          <button type="button" disabled={approvalBusy === approval.id} onClick={() => void decideApproval(approval, "DENY")}>Deny</button>
+                          <button className="primary-button" type="button" disabled={approvalBusy === approval.id} onClick={() => void decideApproval(approval, "ALLOW_ONCE")}>Allow once</button>
+                        </div>
+                      )}
+                    </section>
+                  ))}
                   {message.sources.length > 0 && (
                     <div className="message-sources" aria-label="Enterprise knowledge sources">
                       <strong>Sources</strong>
@@ -577,6 +909,10 @@ export function ChatView({
                       </section>
                       <div className="message-meta">
                         <small>Effective speed is output tokens divided by end-to-end response latency.</small>
+                        <div className="message-response-actions" aria-label="Response actions">
+                          <button type="button" onClick={() => void navigator.clipboard?.writeText(message.content)}>Copy</button>
+                          <button type="button" disabled={working} onClick={() => void forkConversation(message.id)}>Fork here</button>
+                        </div>
                         <div className="message-feedback" aria-label="Response feedback">
                           <button
                             type="button"
@@ -597,7 +933,10 @@ export function ChatView({
                     </>
                   )}
                   {(message.status === "FAILED" || message.status === "CANCELLED") && (
-                    <small className="message-failure">{message.status === "CANCELLED" ? "Generation cancelled" : `Generation failed · ${message.errorCode ?? "UNKNOWN"}`}</small>
+                    <div className="message-failure-row">
+                      <small className="message-failure">{message.status === "CANCELLED" ? "Generation cancelled" : `Generation failed · ${message.errorCode ?? "UNKNOWN"}`}</small>
+                      <button type="button" disabled={working} onClick={() => retryMessage(message.id)}>Retry prompt</button>
+                    </div>
                   )}
                 </div>
               </article>
@@ -619,10 +958,10 @@ export function ChatView({
                     event.currentTarget.form?.requestSubmit();
                   }
                 }}
-                placeholder={routeReady ? "Message your selected Hermes agent" : "Finish the required setup to start Chat"}
+                placeholder={active?.status === "ARCHIVED" ? "Restore this conversation to continue" : chatReady ? "Message your selected Hermes agent" : "Finish the required setup to start Chat"}
                 rows={1}
                 maxLength={32_000}
-                disabled={busy || !routeReady}
+                disabled={working || !chatReady}
                 aria-label="Chat message"
               />
               <div><span>Enter to send · Shift + Enter for a new line</span><span>{draft.length.toLocaleString()} / 32,000</span></div>
@@ -630,11 +969,11 @@ export function ChatView({
             {busy ? (
               <button className="stop-button" type="button" disabled={currentActivity === "Cancellation requested"} onClick={() => void requestStop()}>{currentActivity === "Cancellation requested" ? "Stopping…" : "Stop"}</button>
             ) : (
-              <button className="send-button" type="submit" disabled={!draft.trim() || !routeReady} aria-label="Send message">↑</button>
+              <button className="send-button" type="submit" disabled={!draft.trim() || !chatReady} aria-label="Send message">↑</button>
             )}
           </form>
           <div className="chat-composer-status">
-            <span className={busy ? "generating" : routeReady ? "ready" : "degraded"}><i aria-hidden="true" />{busy ? currentActivity ?? "Hermes is working" : routeReady ? "Hermes route ready" : readinessTitle}</span>
+            <span className={working ? "generating" : routeReady ? "ready" : "degraded"}><i aria-hidden="true" />{working ? currentActivity ?? "Hermes is working" : routeReady ? "Hermes route ready" : readinessTitle}</span>
             <span>{identityMode === "ENTERPRISE" ? "Enterprise session" : "Administrator preview"}</span>
             <span>OrcaSynapse policy · Hermes execution · Supermemory knowledge</span>
           </div>

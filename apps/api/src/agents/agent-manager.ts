@@ -34,7 +34,16 @@ export interface AgentManager {
   listRuns(principal: AgentPrincipal, includeAll: boolean): Promise<AgentRunList>;
   getRun(principal: AgentPrincipal, runId: string, includeAll: boolean): Promise<AgentRun>;
   listRunEvents(principal: AgentPrincipal, runId: string, includeAll: boolean): Promise<AgentRunEventList>;
-  submitRun(principal: AgentPrincipal, input: SubmitAgentRun, options?: { sessionId?: string }): Promise<AgentRun>;
+  submitRun(
+    principal: AgentPrincipal,
+    input: SubmitAgentRun,
+    options?: {
+      sessionId?: string;
+      memorySessionKey?: string;
+      conversationHistory?: Array<{ role: "user" | "assistant"; content: string }>;
+      outputCharacterLimit?: number;
+    },
+  ): Promise<AgentRun>;
   cancelRun(principal: AgentPrincipal, runId: string, includeAll: boolean): Promise<AgentRun>;
   getRuntimeControl(): Promise<AgentRuntimeControl>;
   updateRuntimeControl(principal: AgentPrincipal, input: UpdateAgentRuntimeControl): Promise<AgentRuntimeControl>;

@@ -25,6 +25,7 @@ describe("chat contracts", () => {
       type: "delta",
       conversationId: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d",
       messageId: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb",
+      cursor: "1",
       delta: "token",
     }).type).toBe("delta");
   });

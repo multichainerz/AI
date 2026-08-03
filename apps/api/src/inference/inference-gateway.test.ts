@@ -14,7 +14,7 @@ const request: InferenceGatewayChatRequest = {
 function harness(fetcher: typeof fetch = vi.fn(async () => new Response(JSON.stringify({ choices: [] }), {
   status: 200,
   headers: { "content-type": "application/json" },
-})) as typeof fetch) {
+})) as typeof fetch, inferenceConfiguration: Record<string, unknown> = {}) {
   const transaction = {
     $executeRaw: vi.fn(async () => 1),
     auditEvent: {
@@ -45,7 +45,7 @@ function harness(fetcher: typeof fetch = vi.fn(async () => new Response(JSON.str
       activeRevision: 1,
       kind: "INFERENCE" as const,
       baseUrl: "https://vllm.internal",
-      configuration: { modelAlias: "approved-agent", maxOutputTokens: 4_096 },
+      configuration: { inferenceBackend: "VLLM", modelAlias: "approved-agent", maxOutputTokens: 4_096, ...inferenceConfiguration },
       secrets: { apiKey: "upstream-key" },
     }),
     recordDiagnostic: vi.fn(),
@@ -88,6 +88,50 @@ describe("PrismaInferenceGateway", () => {
     const options = vi.mocked(fetcher).mock.calls[0]![1]!;
     expect(JSON.parse(String(options.body))).toMatchObject({ max_tokens: 2_000 });
     expect(JSON.parse(String(options.body))).not.toHaveProperty("max_completion_tokens");
+  });
+
+  it("removes optional request hints that llama.cpp rejects", async () => {
+    const { gateway, fetcher } = harness(undefined, { inferenceBackend: "LLAMA_CPP" });
+    await gateway.chat("runtime-key", {
+      ...request,
+      stream: true,
+      reasoning_effort: "medium",
+      stream_options: { include_usage: true },
+    }, new AbortController().signal);
+    const options = vi.mocked(fetcher).mock.calls[0]![1]!;
+    const body = JSON.parse(String(options.body));
+    expect(body).not.toHaveProperty("reasoning_effort");
+    expect(body).not.toHaveProperty("stream_options");
+  });
+
+  it("keeps supported hints for vLLM", async () => {
+    const { gateway, fetcher } = harness();
+    await gateway.chat("runtime-key", {
+      ...request,
+      stream: true,
+      reasoning_effort: "medium",
+    }, new AbortController().signal);
+    const options = vi.mocked(fetcher).mock.calls[0]![1]!;
+    expect(JSON.parse(String(options.body))).toMatchObject({
+      reasoning_effort: "medium",
+      stream_options: { include_usage: true },
+    });
+  });
+
+  it("retries a partially compatible backend once without explicitly rejected hints", async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "Unrecognized keys: reasoning_effort, stream_options" }), { status: 400 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [] }), { status: 200 }));
+    const { gateway } = harness(fetcher as typeof fetch, { inferenceBackend: "CUSTOM_OPENAI_COMPATIBLE" });
+    await gateway.chat("runtime-key", {
+      ...request,
+      stream: true,
+      reasoning_effort: "medium",
+    }, new AbortController().signal);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    const retriedBody = JSON.parse(String(fetcher.mock.calls[1]![1]!.body));
+    expect(retriedBody).not.toHaveProperty("reasoning_effort");
+    expect(retriedBody).not.toHaveProperty("stream_options");
   });
 
   it("blocks recognizable credentials before calling the inference server", async () => {

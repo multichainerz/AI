@@ -46,8 +46,10 @@ The dashboard has six product areas with one owner each:
 ### Phase 4 — Hermes-first Chat
 
 - Removed the direct inference Chat implementation.
-- Bound every conversation to an active immutable Agent Profile and stable Hermes session.
-- Created one Agent Run per message with a distinct idempotency key, cancellation, safe activity events, usage, latency, and retained outcome.
+- Bound every conversation to an active immutable Agent Profile, a stable Hermes memory key, and bounded complete-turn history.
+- Created one durable Agent Run per message with a distinct idempotency key, explicit cancellation, a single PostgreSQL result writer, and a resumable cursor-based event stream.
+- Added structured message deltas, tool and subagent activity, allow-once or deny approval decisions, reload recovery, Markdown responses, and first-token, reasoning-token, latency, and throughput telemetry.
+- Added rename, search, fork, archive/restore, safe JSON export, retry, feedback, and guarded permanent deletion without duplicating the Agents execution surface.
 - Kept model credentials and policy at OrcaSynapse; the browser talks only to the control plane.
 
 ### Phase 5 — Hermes-aligned Agents and tools

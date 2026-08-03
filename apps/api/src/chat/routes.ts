@@ -2,10 +2,14 @@ import {
   chatConversationSchema,
   chatConversationListSchema,
   chatConversationSummarySchema,
+  chatMessageSubmissionSchema,
+  agentRunApprovalSchema,
   chatStreamEventSchema,
   chatFeedbackSchema,
   chatMetricsSchema,
   createChatConversationSchema,
+  decideAgentRunApprovalSchema,
+  forkChatConversationSchema,
   sendChatMessageSchema,
   setChatFeedbackSchema,
   updateChatConversationSchema,
@@ -113,6 +117,18 @@ async function sendChatError(reply: FastifyReply, error: unknown): Promise<void>
   throw error;
 }
 
+function safeStreamError(error: unknown): string {
+  if (
+    error instanceof ChatMessageNotFoundError ||
+    error instanceof ChatConversationNotFoundError ||
+    error instanceof ChatConversationConflictError ||
+    error instanceof ChatConfigurationError ||
+    error instanceof ChatRateLimitError ||
+    error instanceof ChatPolicyViolationError
+  ) return error.message.slice(0, 500);
+  return "The Hermes event stream was interrupted. Reconnect to resume from the last saved event.";
+}
+
 export async function registerChatRoutes(
   app: FastifyInstance,
   options: ChatRouteOptions,
@@ -196,40 +212,110 @@ export async function registerChatRoutes(
       });
     }
 
-    // The HTTP stream is a subscriber to durable PostgreSQL/Hermes work. A
-    // browser disconnect must not implicitly cancel that work; explicit Stop
-    // uses the cancellation route below.
-    let streaming = false;
+    try {
+      return reply.code(202).send(chatMessageSubmissionSchema.parse(
+        await options.manager.submitMessage(principal, id, input.data.content),
+      ));
+    } catch (error) {
+      await sendChatError(reply, error);
+    }
+  });
+
+  app.get("/conversations/:conversationId/messages/:messageId/events", async (request, reply) => {
+    const principal = await requireChatPrincipal(request, reply, options);
+    if (!principal) return;
+    if (!options.manager) {
+      return reply.code(423).send({ error: "PLATFORM_LOCKED", message: "Chat services are not ready." });
+    }
+    const parameters = request.params as Record<string, unknown>;
+    const conversation = conversationId(parameters.conversationId);
+    const message = conversationId(parameters.messageId);
+    if (!conversation || !message) {
+      return reply.code(400).send({ error: "INVALID_REQUEST", message: "Conversation or message ID is invalid." });
+    }
+    const query = request.query as Record<string, unknown>;
+    const queryCursor = typeof query.cursor === "string" && /^\d+$/.test(query.cursor) ? query.cursor : null;
+    const headerCursor = typeof request.headers["last-event-id"] === "string" && /^\d+$/.test(request.headers["last-event-id"])
+      ? request.headers["last-event-id"]
+      : null;
+    const controller = new AbortController();
+    request.raw.once("close", () => controller.abort());
+    reply.hijack();
+    reply.raw.writeHead(200, {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-store, no-cache, must-revalidate",
+      connection: "keep-alive",
+      "x-accel-buffering": "no",
+    });
+    reply.raw.write(": OrcaSynapse Hermes event stream\n\n");
+    const heartbeat = setInterval(() => {
+      if (!reply.raw.destroyed) reply.raw.write(`: heartbeat ${Date.now()}\n\n`);
+    }, 15_000);
+    heartbeat.unref();
     const emit = (value: unknown) => {
       const event = chatStreamEventSchema.parse(value);
       if (reply.raw.destroyed) return;
-      if (!streaming) {
-        streaming = true;
-        reply.hijack();
-        reply.raw.writeHead(200, {
-          "content-type": "text/event-stream; charset=utf-8",
-          "cache-control": "no-store, no-cache, must-revalidate",
-          connection: "keep-alive",
-          "x-accel-buffering": "no",
-        });
-      }
-      reply.raw.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+      const idLine = event.cursor ? `id: ${event.cursor}\n` : "";
+      reply.raw.write(`${idLine}event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
     };
-
     try {
-      await options.manager.streamMessage(
+      await options.manager.subscribe(
         principal,
-        id,
-        input.data.content,
+        conversation,
+        message,
+        queryCursor ?? headerCursor,
         emit,
+        controller.signal,
       );
-      if (streaming && !reply.raw.destroyed) reply.raw.end();
     } catch (error) {
-      if (streaming) {
-        if (!reply.raw.destroyed) reply.raw.end();
-      } else {
-        await sendChatError(reply, error);
+      if (!reply.raw.destroyed) {
+        reply.raw.write(`event: stream_error\ndata: ${JSON.stringify({ message: safeStreamError(error) })}\n\n`);
       }
+    } finally {
+      clearInterval(heartbeat);
+      if (!reply.raw.destroyed) reply.raw.end();
+    }
+  });
+
+  app.post("/conversations/:conversationId/fork", async (request, reply) => {
+    const principal = await requireChatPrincipal(request, reply, options);
+    if (!principal) return;
+    if (!options.manager) return reply.code(423).send({ error: "PLATFORM_LOCKED", message: "Chat services are not ready." });
+    const id = conversationId((request.params as Record<string, unknown>).conversationId);
+    const input = forkChatConversationSchema.safeParse(request.body ?? {});
+    if (!id || !input.success) return reply.code(400).send({ error: "INVALID_REQUEST", message: id ? input.error?.issues[0]?.message : "Conversation ID is invalid." });
+    try {
+      return reply.code(201).send(chatConversationSummarySchema.parse(await options.manager.fork(principal, id, input.data)));
+    } catch (error) {
+      await sendChatError(reply, error);
+    }
+  });
+
+  app.delete("/conversations/:conversationId", async (request, reply) => {
+    const principal = await requireChatPrincipal(request, reply, options);
+    if (!principal) return;
+    if (!options.manager) return reply.code(423).send({ error: "PLATFORM_LOCKED", message: "Chat services are not ready." });
+    const id = conversationId((request.params as Record<string, unknown>).conversationId);
+    if (!id) return reply.code(400).send({ error: "INVALID_REQUEST", message: "Conversation ID is invalid." });
+    try {
+      await options.manager.delete(principal, id);
+      return reply.code(204).send();
+    } catch (error) {
+      await sendChatError(reply, error);
+    }
+  });
+
+  app.post("/approvals/:approvalId/decision", async (request, reply) => {
+    const principal = await requireChatPrincipal(request, reply, options);
+    if (!principal) return;
+    if (!options.manager) return reply.code(423).send({ error: "PLATFORM_LOCKED", message: "Chat services are not ready." });
+    const id = conversationId((request.params as Record<string, unknown>).approvalId);
+    const input = decideAgentRunApprovalSchema.safeParse(request.body);
+    if (!id || !input.success) return reply.code(400).send({ error: "INVALID_REQUEST", message: id ? input.error?.issues[0]?.message : "Approval ID is invalid." });
+    try {
+      return agentRunApprovalSchema.parse(await options.manager.decideApproval(principal, id, input.data));
+    } catch (error) {
+      await sendChatError(reply, error);
     }
   });
 

@@ -26,6 +26,8 @@ export const inferenceGatewayChatRequestSchema = z.object({
   tools: z.array(extensionObjectSchema).max(128).optional(),
   tool_choice: z.union([z.string().max(120), extensionObjectSchema]).optional(),
   parallel_tool_calls: z.boolean().optional(),
+  reasoning_effort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]).optional(),
+  stream_options: z.object({ include_usage: z.boolean().optional() }).strict().optional(),
   response_format: extensionObjectSchema.optional(),
   chat_template_kwargs: extensionObjectSchema.optional(),
 }).strict().refine(

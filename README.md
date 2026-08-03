@@ -70,7 +70,7 @@ The VM2 installer creates its identity locally, consumes the claim once, receive
 
 ## What you get
 
-- Hermes-first Chat with durable PostgreSQL runs, explicit cancellation, live activity, reported token usage, latency, feedback, and retained conversations. Closing the browser stream does not cancel VM2 execution.
+- Hermes-first Chat with durable multi-turn context, stable memory scope, resumable token streaming, structured tool and subagent activity, governed allow-once approvals, explicit cancellation, first-token and token-usage telemetry, feedback, search, fork, archive, export, and retained conversations. Closing or refreshing the browser does not cancel VM2 execution.
 - Smart inference discovery for vLLM, llama.cpp, SGLang, Ollama, TGI, and compatible OpenAI-style servers.
 - Governed Hermes profiles, skills, tools, prompts, guardrails, lifecycle states, runs, and safe event projections.
 - Durable semantic memory through self-hosted Supermemory Local without a second vector plane in OrcaSynapse.

@@ -64,6 +64,13 @@ interface StoredRun {
   status: AgentRun["status"];
   input: string;
   output: string | null;
+  partialOutput: string;
+  modelAlias: string | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  reasoningTokens: number | null;
+  totalTokens: number | null;
+  finishReason: string | null;
   effectiveCapabilities: unknown;
   sources: unknown;
   failureCode: string | null;
@@ -79,8 +86,13 @@ interface StoredRun {
 
 interface StoredRunEvent {
   id: string;
+  cursor: bigint;
   runId: string;
   type: AgentRunEvent["type"];
+  delta: string | null;
+  preview: string | null;
+  errorCode: string | null;
+  approvalId: string | null;
   summary: string | null;
   status: string | null;
   toolName: string | null;
@@ -88,6 +100,7 @@ interface StoredRunEvent {
   durationMs: number | null;
   inputTokens: number | null;
   outputTokens: number | null;
+  reasoningTokens: number | null;
   costUsd: Prisma.Decimal | number | null;
   occurredAt: Date;
 }
@@ -213,6 +226,13 @@ function runDto(run: StoredRun): AgentRun {
     status: run.status,
     input: run.input,
     output: run.output,
+    partialOutput: run.partialOutput,
+    modelAlias: run.modelAlias,
+    inputTokens: run.inputTokens,
+    outputTokens: run.outputTokens,
+    reasoningTokens: run.reasoningTokens,
+    totalTokens: run.totalTokens,
+    finishReason: run.finishReason,
     effectiveCapabilities: parseCapabilities(run.effectiveCapabilities),
     sources: parseSources(run.sources),
     failureCode: run.failureCode,
@@ -228,8 +248,13 @@ function runDto(run: StoredRun): AgentRun {
 function runEventDto(event: StoredRunEvent): AgentRunEvent {
   return {
     id: event.id,
+    cursor: event.cursor.toString(),
     runId: event.runId,
     type: event.type,
+    delta: event.delta,
+    preview: event.preview,
+    errorCode: event.errorCode,
+    approvalId: event.approvalId,
     summary: event.summary,
     status: event.status,
     toolName: event.toolName,
@@ -237,6 +262,7 @@ function runEventDto(event: StoredRunEvent): AgentRunEvent {
     durationMs: event.durationMs,
     inputTokens: event.inputTokens,
     outputTokens: event.outputTokens,
+    reasoningTokens: event.reasoningTokens,
     costUsd: event.costUsd === null ? null : Number(event.costUsd),
     occurredAt: event.occurredAt.toISOString(),
   };
@@ -404,8 +430,29 @@ export class PrismaAgentManager implements AgentManager {
     return { items: events.map((event) => runEventDto(event as StoredRunEvent)) };
   }
 
-  async submitRun(principal: AgentPrincipal, input: SubmitAgentRun, options: { sessionId?: string } = {}): Promise<AgentRun> {
+  async submitRun(
+    principal: AgentPrincipal,
+    input: SubmitAgentRun,
+    options: {
+      sessionId?: string;
+      memorySessionKey?: string;
+      conversationHistory?: Array<{ role: "user" | "assistant"; content: string }>;
+      outputCharacterLimit?: number;
+    } = {},
+  ): Promise<AgentRun> {
     const runId = randomUUID();
+    const conversationHistory = (options.conversationHistory ?? []).slice(-40);
+    if (conversationHistory.some(({ role, content }) =>
+      !["user", "assistant"].includes(role) || typeof content !== "string" || content.length > 32_000)) {
+      throw new AgentConflictError("The supplied conversation history is invalid.");
+    }
+    const historyCharacters = conversationHistory.reduce((total, message) => total + message.content.length, 0);
+    if (historyCharacters > 64_000) throw new AgentConflictError("The supplied conversation history is too large.");
+    const memorySessionKey = options.memorySessionKey ?? options.sessionId ?? runId;
+    if (memorySessionKey.length < 1 || memorySessionKey.length > 200) {
+      throw new AgentConflictError("The Hermes memory session key is invalid.");
+    }
+    const outputCharacterLimit = Math.min(200_000, Math.max(1_000, options.outputCharacterLimit ?? 200_000));
     const run = await this.prisma.$transaction(async (transaction) => {
       await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`orcasynapse-agent-submit:${input.profileId}`}, 0))`;
       const [control, profile, runtimeNodes] = await Promise.all([
@@ -447,7 +494,7 @@ export class PrismaAgentManager implements AgentManager {
       });
       if (!version) throw new AgentConflictError("The active agent configuration is missing.");
       const activeRuns = await transaction.agentRun.count({
-        where: { profileId: profile.id, status: { in: ["QUEUED", "RUNNING", "CANCEL_REQUESTED"] } },
+        where: { profileId: profile.id, status: { in: ["QUEUED", "RUNNING", "WAITING_FOR_APPROVAL", "CANCEL_REQUESTED"] } },
       });
       if (activeRuns >= version.maxConcurrentRuns) {
         throw new AgentConflictError("This agent has reached its configured concurrent-run limit.");
@@ -462,7 +509,11 @@ export class PrismaAgentManager implements AgentManager {
           ownerSubject: principal.subject,
           requestedBy: principal.id,
           sessionId: options.sessionId ?? runId,
+          memorySessionKey,
           input: input.input,
+          conversationHistory,
+          outputCharacterLimit,
+          modelAlias: version.modelAlias,
           jobId: randomUUID(),
           effectiveCapabilities: version.allowPrivateKnowledge ? ["knowledge:private:read"] : [],
         },
@@ -480,7 +531,7 @@ export class PrismaAgentManager implements AgentManager {
 
   async cancelRun(principal: AgentPrincipal, runId: string, includeAll: boolean): Promise<AgentRun> {
     const changed = await this.prisma.agentRun.updateMany({
-      where: { id: runId, ...(includeAll ? {} : { ownerSubject: principal.subject }), status: { in: ["QUEUED", "RUNNING"] } },
+      where: { id: runId, ...(includeAll ? {} : { ownerSubject: principal.subject }), status: { in: ["QUEUED", "RUNNING", "WAITING_FOR_APPROVAL"] } },
       data: { status: "CANCEL_REQUESTED" },
     });
     if (changed.count !== 1) {
@@ -549,7 +600,7 @@ export class PrismaAgentManager implements AgentManager {
     const runCount = (statuses: string[]) => runs.filter((item) => statuses.includes(item.status)).reduce((sum, item) => sum + item._count._all, 0);
     return {
       generatedAt: new Date().toISOString(), profiles: profileCount(), activeProfiles: profileCount("ACTIVE"),
-      queuedRuns: runCount(["QUEUED"]), runningRuns: runCount(["RUNNING", "CANCEL_REQUESTED"]),
+      queuedRuns: runCount(["QUEUED"]), runningRuns: runCount(["RUNNING", "WAITING_FOR_APPROVAL", "CANCEL_REQUESTED"]),
       completedRuns: runCount(["COMPLETED"]), failedRuns: runCount(["FAILED", "TIMED_OUT", "DENIED"]),
     };
   }

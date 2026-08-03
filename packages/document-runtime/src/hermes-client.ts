@@ -5,6 +5,7 @@ const MAX_SSE_EVENT_BYTES = 64 * 1024;
 
 export type HermesSafeRunEventType =
   | "RUN_STARTED"
+  | "MESSAGE_DELTA"
   | "TOOL_STARTED"
   | "TOOL_COMPLETED"
   | "SUBAGENT_STARTED"
@@ -17,6 +18,9 @@ export type HermesSafeRunEventType =
 export interface HermesSafeRunEvent {
   sourceEventId: string | null;
   type: HermesSafeRunEventType;
+  delta: string | null;
+  preview: string | null;
+  errorCode: string | null;
   summary: string | null;
   status: string | null;
   toolName: string | null;
@@ -24,13 +28,18 @@ export interface HermesSafeRunEvent {
   durationMs: number | null;
   inputTokens: number | null;
   outputTokens: number | null;
+  reasoningTokens: number | null;
   costUsd: number | null;
+  approvalExternalId: string | null;
+  approvalCommand: string | null;
+  approvalChoices: Array<"ALLOW_ONCE" | "DENY">;
   occurredAt: Date;
 }
 
 const SAFE_EVENT_TYPES = new Map<string, HermesSafeRunEventType>([
   ["run.start", "RUN_STARTED"],
   ["run.started", "RUN_STARTED"],
+  ["message.delta", "MESSAGE_DELTA"],
   ["tool.start", "TOOL_STARTED"],
   ["tool.started", "TOOL_STARTED"],
   ["hermes.tool.progress", "TOOL_STARTED"],
@@ -40,6 +49,7 @@ const SAFE_EVENT_TYPES = new Map<string, HermesSafeRunEventType>([
   ["subagent.complete", "SUBAGENT_COMPLETED"],
   ["approval.required", "APPROVAL_REQUIRED"],
   ["run.approval_required", "APPROVAL_REQUIRED"],
+  ["approval.request", "APPROVAL_REQUIRED"],
   ["run.complete", "RUN_COMPLETED"],
   ["run.completed", "RUN_COMPLETED"],
   ["run.failed", "RUN_FAILED"],
@@ -52,6 +62,12 @@ function safeEventText(value: unknown, maximum: number): string | null {
   return sanitized ? sanitized.slice(0, maximum) : null;
 }
 
+function safeDelta(value: unknown): string | null {
+  if (typeof value !== "string" || value.length === 0) return null;
+  const sanitized = value.replace(/[\u0000\u000b\u000c\u000e-\u001f\u007f]/g, "");
+  return sanitized.length === 0 ? null : sanitized.slice(0, 64_000);
+}
+
 function safeNonnegativeNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
 }
@@ -61,26 +77,56 @@ function safeNonnegativeInteger(value: unknown): number | null {
   return number === null ? null : Math.floor(number);
 }
 
+function safeApprovalChoices(value: unknown): Array<"ALLOW_ONCE" | "DENY"> {
+  if (!Array.isArray(value)) return ["ALLOW_ONCE", "DENY"];
+  const normalized = new Set(value.flatMap((choice) => {
+    if (typeof choice !== "string") return [];
+    const name = choice.trim().toLowerCase();
+    if (name === "once" || name === "allow_once" || name === "approve") return ["ALLOW_ONCE" as const];
+    if (name === "deny" || name === "denied") return ["DENY" as const];
+    return [];
+  }));
+  if (!normalized.has("DENY")) normalized.add("DENY");
+  return [...normalized];
+}
+
 function safeRunEvent(eventName: string, sourceEventId: string | null, data: unknown): HermesSafeRunEvent | null {
-  const type = SAFE_EVENT_TYPES.get(eventName.toLowerCase());
-  if (!type || !data || typeof data !== "object" || Array.isArray(data)) return null;
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
   const value = data as Record<string, unknown>;
+  const dataEvent = typeof value.event === "string" ? value.event : eventName;
+  const type = SAFE_EVENT_TYPES.get(dataEvent.toLowerCase());
+  if (!type) return null;
   const usage = value.usage && typeof value.usage === "object" && !Array.isArray(value.usage)
     ? value.usage as Record<string, unknown>
     : {};
-  const rawTime = typeof value.timestamp === "string" ? value.timestamp : typeof value.occurred_at === "string" ? value.occurred_at : null;
-  const parsedTime = rawTime ? new Date(rawTime) : new Date();
+  const rawTime = value.timestamp ?? value.occurred_at;
+  const parsedTime = typeof rawTime === "number"
+    ? new Date(rawTime > 10_000_000_000 ? rawTime : rawTime * 1_000)
+    : typeof rawTime === "string" ? new Date(rawTime) : new Date();
+  const durationMs = safeNonnegativeInteger(value.duration_ms) ?? (() => {
+    const seconds = safeNonnegativeNumber(value.duration ?? value.duration_seconds);
+    return seconds === null ? null : Math.round(seconds * 1_000);
+  })();
   return {
-    sourceEventId: safeEventText(sourceEventId, 255),
+    sourceEventId: safeEventText(sourceEventId ?? value.event_id ?? value.id, 255),
     type,
-    summary: safeEventText(value.summary, 1_000),
+    delta: type === "MESSAGE_DELTA" ? safeDelta(value.delta) : null,
+    preview: safeEventText(value.preview, 1_000),
+    errorCode: safeEventText(value.error_code, 80),
+    summary: safeEventText(value.summary ?? value.preview ?? value.goal ?? value.task, 1_000),
     status: safeEventText(value.status, 80),
-    toolName: safeEventText(value.tool_name ?? value.name, 160),
-    childSessionId: safeEventText(value.child_session_id, 255),
-    durationMs: safeNonnegativeInteger(value.duration_ms),
+    toolName: safeEventText(value.tool ?? value.tool_name ?? value.name, 160),
+    childSessionId: safeEventText(value.child_session_id ?? value.subagent_id ?? value.task_id, 255),
+    durationMs,
     inputTokens: safeNonnegativeInteger(value.input_tokens ?? usage.input_tokens),
     outputTokens: safeNonnegativeInteger(value.output_tokens ?? usage.output_tokens),
+    reasoningTokens: safeNonnegativeInteger(value.reasoning_tokens ?? usage.reasoning_tokens),
     costUsd: safeNonnegativeNumber(value.cost_usd ?? usage.cost_usd),
+    approvalExternalId: type === "APPROVAL_REQUIRED"
+      ? safeEventText(value.approval_id ?? value.request_id ?? value.id, 255)
+      : null,
+    approvalCommand: type === "APPROVAL_REQUIRED" ? safeEventText(value.command, 1_000) : null,
+    approvalChoices: type === "APPROVAL_REQUIRED" ? safeApprovalChoices(value.choices) : [],
     occurredAt: Number.isNaN(parsedTime.getTime()) ? new Date() : parsedTime,
   };
 }
@@ -143,6 +189,8 @@ export interface HermesRunSubmission {
   sessionId: string;
   idempotencyKey: string;
   modelAlias: string;
+  conversationHistory: Array<{ role: "user" | "assistant"; content: string }>;
+  memorySessionKey: string;
   governedMcp?: {
     authorization: string;
     expiresAt: Date;
@@ -154,6 +202,13 @@ export interface HermesRunState {
   status: string;
   output: string | null;
   error: string | null;
+  modelAlias: string | null;
+  sessionId: string | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  reasoningTokens: number | null;
+  totalTokens: number | null;
+  finishReason: string | null;
 }
 
 export class HermesClient {
@@ -269,9 +324,13 @@ export class HermesClient {
         instructions: input.instructions,
         session_id: input.sessionId,
         model: input.modelAlias,
+        conversation_history: input.conversationHistory,
         ...(privateContext ? { private_context: privateContext } : {}),
       }),
-      headers: { "idempotency-key": input.idempotencyKey },
+      headers: {
+        "idempotency-key": input.idempotencyKey,
+        "x-hermes-session-key": input.memorySessionKey,
+      },
     });
     const id = body && typeof body === "object" && typeof (body as { run_id?: unknown }).run_id === "string"
       ? (body as { run_id: string }).run_id
@@ -368,6 +427,9 @@ export class HermesClient {
     });
     if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("Hermes run status is invalid.");
     const value = body as Record<string, unknown>;
+    const usage = value.usage && typeof value.usage === "object" && !Array.isArray(value.usage)
+      ? value.usage as Record<string, unknown>
+      : {};
     const id = typeof value.run_id === "string" ? value.run_id : runId;
     if (id !== runId || typeof value.status !== "string") throw new Error("Hermes run status did not match the requested run.");
     return {
@@ -375,7 +437,23 @@ export class HermesClient {
       status: value.status.toLowerCase(),
       output: typeof value.output === "string" ? value.output.slice(0, 2_000_000) : null,
       error: typeof value.error === "string" ? value.error.slice(0, 500) : null,
+      modelAlias: safeEventText(value.model, 200),
+      sessionId: safeEventText(value.session_id, 200),
+      inputTokens: safeNonnegativeInteger(value.input_tokens ?? usage.input_tokens),
+      outputTokens: safeNonnegativeInteger(value.output_tokens ?? usage.output_tokens),
+      reasoningTokens: safeNonnegativeInteger(value.reasoning_tokens ?? usage.reasoning_tokens),
+      totalTokens: safeNonnegativeInteger(value.total_tokens ?? usage.total_tokens),
+      finishReason: safeEventText(value.finish_reason, 120),
     };
+  }
+
+  async decideApproval(runId: string, choice: "once" | "deny"): Promise<void> {
+    const connection = await this.resolver.resolveOne("HERMES");
+    const runsPath = stringSetting(connection, "runsPath", "/v1/runs").replace(/\/+$/, "");
+    await this.request(connection, endpoint(connection, `${runsPath}/${encodeURIComponent(runId)}/approval`), {
+      method: "POST",
+      body: JSON.stringify({ choice }),
+    });
   }
 
   async stop(runId: string): Promise<void> {
@@ -413,6 +491,16 @@ export class HermesClient {
     if (!reader) throw new Error("Hermes returned an empty run event stream.");
     const decoder = new TextDecoder();
     let buffer = "";
+    let pendingDelta = "";
+    let pendingDeltaEvent: HermesSafeRunEvent | null = null;
+    let lastDeltaFlushAt = Date.now();
+    const flushDelta = async () => {
+      if (!pendingDeltaEvent || pendingDelta.length === 0) return;
+      await onEvent({ ...pendingDeltaEvent, delta: pendingDelta });
+      pendingDelta = "";
+      pendingDeltaEvent = null;
+      lastDeltaFlushAt = Date.now();
+    };
     try {
       while (true) {
         const { done, value } = await reader.read();
@@ -442,9 +530,20 @@ export class HermesClient {
             continue;
           }
           const event = safeRunEvent(eventName, sourceEventId, data);
-          if (event) await onEvent(event);
+          if (!event) continue;
+          if (event.type === "MESSAGE_DELTA" && event.delta) {
+            pendingDeltaEvent = event;
+            pendingDelta += event.delta;
+            if (pendingDelta.length >= 1_024 || Date.now() - lastDeltaFlushAt >= 100) {
+              await flushDelta();
+            }
+            continue;
+          }
+          await flushDelta();
+          await onEvent(event);
         }
       }
+      await flushDelta();
     } finally {
       reader.releaseLock();
     }
@@ -472,7 +571,12 @@ export class HermesClient {
         },
       });
       const body = await boundedJson(response);
-      if (!response.ok) throw new Error(`Hermes rejected the request with status ${response.status}.`);
+      if (!response.ok) {
+        const detail = body && typeof body === "object" && !Array.isArray(body)
+          ? safeEventText((body as Record<string, unknown>).message ?? (body as Record<string, unknown>).error, 300)
+          : null;
+        throw new Error(`Hermes rejected the request with status ${response.status}${detail ? `: ${detail}` : ""}.`);
+      }
       return body;
     } finally {
       clearTimeout(timeout);

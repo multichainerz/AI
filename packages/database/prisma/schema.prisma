@@ -117,12 +117,21 @@ enum AgentProfileStatus {
 enum AgentRunStatus {
   QUEUED
   RUNNING
+  WAITING_FOR_APPROVAL
   CANCEL_REQUESTED
   COMPLETED
   FAILED
   CANCELLED
   TIMED_OUT
   DENIED
+}
+
+enum AgentRunApprovalStatus {
+  PENDING
+  APPROVED
+  DENIED
+  EXPIRED
+  CANCELLED
 }
 
 enum ToolRisk {
@@ -801,6 +810,7 @@ model ChatConversation {
   profileName   String?                @db.VarChar(120)
   status        ChatConversationStatus @default(ACTIVE)
   generation    Int                    @default(0)
+  hermesMemoryKey String               @default(uuid()) @db.VarChar(200)
   lastMessageAt DateTime?              @db.Timestamptz(6)
   createdAt     DateTime               @default(now()) @db.Timestamptz(6)
   updatedAt     DateTime               @updatedAt @db.Timestamptz(6)
@@ -821,7 +831,9 @@ model ChatMessage {
   inputTokens       Int?
   outputTokens      Int?
   totalTokens       Int?
+  reasoningTokens   Int?
   latencyMs         Int?
+  firstTokenLatencyMs Int?
   finishReason      String?           @db.VarChar(120)
   providerRequestId String?           @db.VarChar(200)
   errorCode         String?           @db.VarChar(80)
@@ -1011,9 +1023,20 @@ model AgentRun {
   ownerSubject            String              @db.VarChar(200)
   requestedBy             String              @db.Uuid
   sessionId               String              @db.VarChar(200)
+  memorySessionKey         String              @db.VarChar(200)
   status                  AgentRunStatus      @default(QUEUED)
   input                   String              @db.Text
+  conversationHistory     Json                @default("[]")
   output                  String?             @db.Text
+  partialOutput           String               @default("") @db.Text
+  lastEventCursor         BigInt?
+  outputCharacterLimit    Int                 @default(200000)
+  modelAlias              String?             @db.VarChar(200)
+  inputTokens             Int?
+  outputTokens            Int?
+  reasoningTokens         Int?
+  totalTokens             Int?
+  finishReason            String?             @db.VarChar(120)
   effectiveCapabilities   Json                @default("[]")
   sources                 Json                @default("[]")
   toolCapabilityTokenHash Bytes?
@@ -1026,6 +1049,7 @@ model AgentRun {
   failureMessage          String?             @db.VarChar(500)
   queuedAt                DateTime            @default(now()) @db.Timestamptz(6)
   startedAt               DateTime?           @db.Timestamptz(6)
+  firstTokenAt            DateTime?           @db.Timestamptz(6)
   completedAt             DateTime?           @db.Timestamptz(6)
   createdAt               DateTime            @default(now()) @db.Timestamptz(6)
   updatedAt               DateTime            @updatedAt @db.Timestamptz(6)
@@ -1033,6 +1057,7 @@ model AgentRun {
   version                 AgentProfileVersion @relation(fields: [profileVersionId], references: [id], onDelete: Restrict)
   toolCalls               GovernedToolCall[]
   events                  AgentRunEvent[]
+  approvals               AgentRunApproval[]
   chatMessage             ChatMessage?
 
   @@index([ownerSubject, createdAt])
@@ -1043,9 +1068,14 @@ model AgentRun {
 
 model AgentRunEvent {
   id             String   @id @default(uuid()) @db.Uuid
+  cursor         BigInt   @unique @default(autoincrement())
   runId          String   @db.Uuid
   sourceEventId  String?  @db.VarChar(255)
   type           String   @db.VarChar(80)
+  delta          String?  @db.Text
+  preview        String?  @db.VarChar(1000)
+  errorCode      String?  @db.VarChar(80)
+  approvalId     String?  @db.Uuid
   summary        String?  @db.VarChar(1000)
   status         String?  @db.VarChar(80)
   toolName       String?  @db.VarChar(160)
@@ -1053,6 +1083,7 @@ model AgentRunEvent {
   durationMs     Int?
   inputTokens    Int?
   outputTokens   Int?
+  reasoningTokens Int?
   costUsd        Decimal? @db.Decimal(18, 8)
   occurredAt     DateTime @default(now()) @db.Timestamptz(6)
   createdAt      DateTime @default(now()) @db.Timestamptz(6)
@@ -1060,6 +1091,29 @@ model AgentRunEvent {
 
   @@unique([runId, sourceEventId])
   @@index([runId, occurredAt, id])
+  @@index([runId, cursor])
+}
+
+model AgentRunApproval {
+  id                 String                 @id @default(uuid()) @db.Uuid
+  runId              String                 @db.Uuid
+  externalApprovalId String?                @db.VarChar(255)
+  status             AgentRunApprovalStatus @default(PENDING)
+  command            String?                @db.VarChar(1000)
+  summary            String?                @db.VarChar(1000)
+  choices            Json                   @default("[]")
+  requestedAt        DateTime               @default(now()) @db.Timestamptz(6)
+  expiresAt          DateTime               @db.Timestamptz(6)
+  decidedAt          DateTime?              @db.Timestamptz(6)
+  decidedBy          String?                @db.Uuid
+  decision           String?                @db.VarChar(40)
+  forwardedAt        DateTime?              @db.Timestamptz(6)
+  createdAt          DateTime               @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime               @updatedAt @db.Timestamptz(6)
+  run                AgentRun               @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId, status, requestedAt])
+  @@index([status, expiresAt])
 }
 
 model AgentRuntimeControl {

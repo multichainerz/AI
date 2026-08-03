@@ -1,5 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
-import type { InferenceGatewayChatRequest } from "@orcasynapse/contracts";
+import type { InferenceBackend, InferenceGatewayChatRequest } from "@orcasynapse/contracts";
 import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
 import type { ConnectionDiagnosticStore, ResolvedConnection } from "../connections/diagnostics/types.js";
 import { inspectInputText, type RuntimeTextPolicy } from "../guardrails/runtime-policy.js";
@@ -55,6 +55,37 @@ function endpointFor(connection: ResolvedConnection): URL {
   } catch {
     throw new InferenceGatewayError("NOT_CONFIGURED", "The approved inference route is invalid.");
   }
+}
+
+const COMPATIBILITY_HINTS = ["reasoning_effort", "stream_options"] as const;
+type CompatibilityHint = typeof COMPATIBILITY_HINTS[number];
+
+function inferenceBackend(connection: ResolvedConnection): InferenceBackend {
+  const value = connection.configuration.inferenceBackend;
+  return ["VLLM", "LLAMA_CPP", "SGLANG", "TGI", "OLLAMA", "CUSTOM_OPENAI_COMPATIBLE"].includes(String(value))
+    ? value as InferenceBackend
+    : "CUSTOM_OPENAI_COMPATIBLE";
+}
+
+function compatibilityHintsFor(backend: InferenceBackend): Set<CompatibilityHint> {
+  // llama.cpp intentionally implements a compact OpenAI-compatible surface and
+  // rejects these optional OpenAI request hints instead of ignoring them.
+  return new Set(backend === "LLAMA_CPP" ? COMPATIBILITY_HINTS : []);
+}
+
+async function rejectedCompatibilityHints(response: Response): Promise<Set<CompatibilityHint>> {
+  if (response.status !== 400) return new Set();
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > 16_384) return new Set();
+  let text = "";
+  try {
+    text = await response.clone().text();
+  } catch {
+    return new Set();
+  }
+  if (new TextEncoder().encode(text).byteLength > 16_384) return new Set();
+  if (!/(unrecognized|unknown|unexpected|extra|not permitted)/i.test(text)) return new Set();
+  return new Set(COMPATIBILITY_HINTS.filter((hint) => text.includes(hint)));
 }
 
 export class PrismaInferenceGateway {
@@ -204,24 +235,36 @@ export class PrismaInferenceGateway {
       input.max_completion_tokens ?? input.max_tokens ?? runtime.maxOutputTokens,
       runtime.maxOutputTokens,
     );
+    const backend = inferenceBackend(runtime.connection);
+    const omittedHints = compatibilityHintsFor(backend);
+    const requestBody = (additionalOmissions: Set<CompatibilityHint> = new Set()): Record<string, unknown> => {
+      const body: Record<string, unknown> = {
+        ...forwardedInput,
+        model: runtime.modelAlias,
+        user: `hermes:${runtimeConnectionId}`,
+      };
+      for (const hint of new Set([...omittedHints, ...additionalOmissions])) delete body[hint];
+      if (input.stream && !omittedHints.has("stream_options") && !additionalOmissions.has("stream_options")) {
+        body.stream_options = { include_usage: true };
+      }
+      return body;
+    };
+    const send = (body: Record<string, unknown>) => this.fetcher(endpoint, {
+      method: "POST",
+      redirect: "error",
+      signal: AbortSignal.any([signal, timeoutSignal]),
+      headers: {
+        "content-type": "application/json",
+        accept: input.stream ? "text/event-stream" : "application/json",
+        ...(runtime.connection.secrets.apiKey ? { authorization: `Bearer ${runtime.connection.secrets.apiKey}` } : {}),
+      },
+      body: JSON.stringify(body),
+    });
     let response: Response;
     try {
-      response = await this.fetcher(endpoint, {
-        method: "POST",
-        redirect: "error",
-        signal: AbortSignal.any([signal, timeoutSignal]),
-        headers: {
-          "content-type": "application/json",
-          accept: input.stream ? "text/event-stream" : "application/json",
-          ...(runtime.connection.secrets.apiKey ? { authorization: `Bearer ${runtime.connection.secrets.apiKey}` } : {}),
-        },
-        body: JSON.stringify({
-          ...forwardedInput,
-          model: runtime.modelAlias,
-          user: `hermes:${runtimeConnectionId}`,
-          ...(input.stream ? { stream_options: { include_usage: true } } : {}),
-        }),
-      });
+      response = await send(requestBody());
+      const rejectedHints = await rejectedCompatibilityHints(response);
+      if (rejectedHints.size > 0) response = await send(requestBody(rejectedHints));
     } catch {
       throw new InferenceGatewayError("UPSTREAM_FAILED", "The approved inference server could not be reached.");
     }

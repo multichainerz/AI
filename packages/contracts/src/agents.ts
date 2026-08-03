@@ -5,6 +5,7 @@ export const AGENT_PROFILE_STATUSES = ["DRAFT", "STANDBY", "ACTIVE", "SUSPENDED"
 export const AGENT_RUN_STATUSES = [
   "QUEUED",
   "RUNNING",
+  "WAITING_FOR_APPROVAL",
   "CANCEL_REQUESTED",
   "COMPLETED",
   "FAILED",
@@ -15,6 +16,7 @@ export const AGENT_RUN_STATUSES = [
 export const AGENT_CAPABILITIES = ["knowledge:private:read"] as const;
 export const AGENT_RUN_EVENT_TYPES = [
   "RUN_STARTED",
+  "MESSAGE_DELTA",
   "TOOL_STARTED",
   "TOOL_COMPLETED",
   "SUBAGENT_STARTED",
@@ -24,11 +26,19 @@ export const AGENT_RUN_EVENT_TYPES = [
   "RUN_FAILED",
   "RUN_CANCELLED",
 ] as const;
+export const AGENT_RUN_APPROVAL_STATUSES = [
+  "PENDING",
+  "APPROVED",
+  "DENIED",
+  "EXPIRED",
+  "CANCELLED",
+] as const;
 
 export const agentProfileStatusSchema = z.enum(AGENT_PROFILE_STATUSES);
 export const agentRunStatusSchema = z.enum(AGENT_RUN_STATUSES);
 export const agentCapabilitySchema = z.enum(AGENT_CAPABILITIES);
 export const agentRunEventTypeSchema = z.enum(AGENT_RUN_EVENT_TYPES);
+export const agentRunApprovalStatusSchema = z.enum(AGENT_RUN_APPROVAL_STATUSES);
 
 const agentSlugSchema = z.string().min(2).max(64).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
 const agentModelAliasSchema = z.string().min(1).max(200)
@@ -106,6 +116,13 @@ export const agentRunSchema = z.object({
   status: agentRunStatusSchema,
   input: z.string().max(32_000),
   output: z.string().nullable(),
+  partialOutput: z.string(),
+  modelAlias: z.string().max(200).nullable(),
+  inputTokens: z.number().int().nonnegative().nullable(),
+  outputTokens: z.number().int().nonnegative().nullable(),
+  reasoningTokens: z.number().int().nonnegative().nullable(),
+  totalTokens: z.number().int().nonnegative().nullable(),
+  finishReason: z.string().max(120).nullable(),
   effectiveCapabilities: z.array(agentCapabilitySchema),
   sources: z.array(knowledgeSourceSchema).max(10),
   failureCode: z.string().nullable(),
@@ -121,8 +138,13 @@ export const agentRunListSchema = z.object({ items: z.array(agentRunSchema) });
 
 export const agentRunEventSchema = z.object({
   id: z.uuid(),
+  cursor: z.string().regex(/^\d+$/),
   runId: z.uuid(),
   type: agentRunEventTypeSchema,
+  delta: z.string().nullable(),
+  preview: z.string().max(1000).nullable(),
+  errorCode: z.string().max(80).nullable(),
+  approvalId: z.uuid().nullable(),
   summary: z.string().max(1000).nullable(),
   status: z.string().max(80).nullable(),
   toolName: z.string().max(160).nullable(),
@@ -130,11 +152,29 @@ export const agentRunEventSchema = z.object({
   durationMs: z.number().int().nonnegative().nullable(),
   inputTokens: z.number().int().nonnegative().nullable(),
   outputTokens: z.number().int().nonnegative().nullable(),
+  reasoningTokens: z.number().int().nonnegative().nullable(),
   costUsd: z.number().nonnegative().nullable(),
   occurredAt: z.iso.datetime(),
 });
 
 export const agentRunEventListSchema = z.object({ items: z.array(agentRunEventSchema).max(500) });
+
+export const agentRunApprovalSchema = z.object({
+  id: z.uuid(),
+  runId: z.uuid(),
+  status: agentRunApprovalStatusSchema,
+  command: z.string().max(1000).nullable(),
+  summary: z.string().max(1000).nullable(),
+  choices: z.array(z.enum(["ALLOW_ONCE", "DENY"])).max(2),
+  requestedAt: z.iso.datetime(),
+  expiresAt: z.iso.datetime(),
+  decidedAt: z.iso.datetime().nullable(),
+  decision: z.enum(["ALLOW_ONCE", "DENY"]).nullable(),
+});
+
+export const decideAgentRunApprovalSchema = z.object({
+  decision: z.enum(["ALLOW_ONCE", "DENY"]),
+}).strict();
 
 export const agentRuntimeControlSchema = z.object({
   enabled: z.boolean(),
@@ -164,6 +204,7 @@ export type AgentProfileStatus = z.infer<typeof agentProfileStatusSchema>;
 export type AgentRunStatus = z.infer<typeof agentRunStatusSchema>;
 export type AgentCapability = z.infer<typeof agentCapabilitySchema>;
 export type AgentRunEventType = z.infer<typeof agentRunEventTypeSchema>;
+export type AgentRunApprovalStatus = z.infer<typeof agentRunApprovalStatusSchema>;
 export type AgentVersionConfiguration = z.infer<typeof agentVersionConfigurationSchema>;
 export type AgentSkillReference = z.infer<typeof agentSkillReferenceSchema>;
 export type CreateAgentProfile = z.infer<typeof createAgentProfileSchema>;
@@ -176,6 +217,8 @@ export type AgentRun = z.infer<typeof agentRunSchema>;
 export type AgentRunList = z.infer<typeof agentRunListSchema>;
 export type AgentRunEvent = z.infer<typeof agentRunEventSchema>;
 export type AgentRunEventList = z.infer<typeof agentRunEventListSchema>;
+export type AgentRunApproval = z.infer<typeof agentRunApprovalSchema>;
+export type DecideAgentRunApproval = z.infer<typeof decideAgentRunApprovalSchema>;
 export type AgentRuntimeControl = z.infer<typeof agentRuntimeControlSchema>;
 export type UpdateAgentRuntimeControl = z.infer<typeof updateAgentRuntimeControlSchema>;
 export type AgentMetrics = z.infer<typeof agentMetricsSchema>;
