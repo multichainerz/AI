@@ -945,11 +945,32 @@ model Document {
   createdAt            DateTime                   @default(now()) @db.Timestamptz(6)
   updatedAt            DateTime                   @updatedAt @db.Timestamptz(6)
   supermemoryProjection SupermemoryProjection?
+  chunks               DocumentChunk[]
 
   @@index([ownerSubject, status, updatedAt])
   @@index([status, createdAt])
   @@index([retentionUntil, status])
   @@index([sha256])
+}
+
+/// Owned and queried through Drizzle. Declared here only so `prisma migrate dev`
+/// does not read the table as drift while the data layer is being migrated off
+/// Prisma; no application code reaches it through the Prisma client.
+model DocumentChunk {
+  id             String                      @id @default(uuid()) @db.Uuid
+  documentId     String                      @db.Uuid
+  ownerSubject   String                      @db.VarChar(200)
+  ordinal        Int
+  content        String                      @db.Text
+  characterCount Int
+  embeddingModel String                      @db.VarChar(120)
+  embedding      Unsupported("vector(1024)")
+  contentSearch  String?                     @db.Text
+  createdAt      DateTime                    @default(now()) @db.Timestamptz(6)
+  document       Document                    @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, ordinal])
+  @@index([ownerSubject])
 }
 
 model SupermemoryProjection {

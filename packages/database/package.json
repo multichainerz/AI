@@ -1,6 +1,6 @@
 {
   "name": "@orcasynapse/database",
-  "version": "1.17.5",
+  "version": "1.18.0",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
@@ -23,10 +23,12 @@
   "dependencies": {
     "@prisma/adapter-pg": "7.9.1",
     "@prisma/client": "7.9.1",
+    "drizzle-orm": "0.45.2",
     "pg": "8.22.0"
   },
   "devDependencies": {
     "@types/pg": "8.20.0",
+    "drizzle-kit": "0.31.10",
     "prisma": "7.9.1"
   }
 }

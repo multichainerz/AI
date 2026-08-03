@@ -1,27 +1,21 @@
 {
-  "name": "@orcasynapse/api",
+  "name": "@orcasynapse/knowledge",
   "version": "1.18.0",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "scripts": {
     "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
-    "dev": "tsx src/index.ts",
-    "start": "node dist/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --exclude=dist/**"
   },
   "dependencies": {
+    "@huggingface/transformers": "4.2.0",
     "@orcasynapse/contracts": "workspace:*",
     "@orcasynapse/database": "workspace:*",
-    "@orcasynapse/runtime-clients": "workspace:*",
-    "@orcasynapse/security": "workspace:*",
-    "@fastify/helmet": "13.1.0",
-    "@fastify/multipart": "9.3.0",
-    "fastify": "5.10.0",
-    "jose": "6.2.4"
-  },
-  "devDependencies": {
-    "tsx": "4.23.1"
+    "drizzle-orm": "0.45.2",
+    "officeparser": "7.5.1",
+    "unpdf": "1.8.0"
   }
 }
