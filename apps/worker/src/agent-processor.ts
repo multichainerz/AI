@@ -144,18 +144,27 @@ function effectiveCapabilities(value: unknown): string[] {
   return value.flatMap((item) => agentCapabilitySchema.safeParse(item).success ? [String(item)] : []);
 }
 
-function conversationHistory(value: unknown): Array<{ role: "user" | "assistant"; content: string }> {
+export function conversationHistory(value: unknown): Array<{ role: "user" | "assistant"; content: string }> {
   if (!Array.isArray(value)) return [];
+  const source = value.slice(-40);
+  const selected: Array<{ role: "user" | "assistant"; content: string }> = [];
   let characters = 0;
-  return value.slice(-40).flatMap((item) => {
-    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+  // Walk newest first and stop at the first entry that is malformed or does not
+  // fit. Skipping one in place would hand Hermes a question whose answer had
+  // been deleted, because only assistant turns can exceed the transport budget.
+  for (let index = source.length - 1; index >= 0; index -= 1) {
+    const item = source[index];
+    if (!item || typeof item !== "object" || Array.isArray(item)) break;
     const role = (item as Record<string, unknown>).role;
     const content = (item as Record<string, unknown>).content;
-    if ((role !== "user" && role !== "assistant") || typeof content !== "string" || !content.trim()) return [];
-    if (content.length > 32_000 || characters + content.length > 64_000) return [];
+    if ((role !== "user" && role !== "assistant") || typeof content !== "string" || !content.trim()) break;
+    if (characters + content.length > 64_000) break;
     characters += content.length;
-    return [{ role, content }];
-  });
+    selected.unshift({ role, content });
+  }
+  // A leading assistant turn lost its prompt when the walk stopped.
+  while (selected[0]?.role === "assistant") selected.shift();
+  return selected;
 }
 
 function sourceContext(sources: KnowledgeSource[]): string {
@@ -248,6 +257,7 @@ export class PrismaAgentProcessor {
     }
     if (!["QUEUED", "RUNNING", "WAITING_FOR_APPROVAL"].includes(original.status) ||
         (["RUNNING", "WAITING_FOR_APPROVAL"].includes(original.status) && original.jobId !== jobId)) {
+      await this.releaseLease(original.id, workerId);
       return { skipped: true, reason: "stale-or-ineligible" };
     }
 
@@ -265,7 +275,10 @@ export class PrismaAgentProcessor {
       },
       data: { status: "RUNNING", jobId, startedAt: original.startedAt ?? new Date(), failureCode: null, failureMessage: null },
     });
-    if (claimed.count !== 1) return { skipped: true, reason: "claim-lost" };
+    if (claimed.count !== 1) {
+      await this.releaseLease(original.id, workerId);
+      return { skipped: true, reason: "claim-lost" };
+    }
 
     let eventController: AbortController | null = null;
     let eventStream: Promise<void> | null = null;
@@ -679,6 +692,18 @@ export class PrismaAgentProcessor {
     if (!run.version.toolGrants.some((grant) => grant.enabled && grant.tool.status === "ACTIVE")) return false;
     const control = await this.prisma.toolRuntimeControl.findUnique({ where: { id: "global" } });
     return control?.enabled === true;
+  }
+
+  /**
+   * Hands back a lease this worker still owns after deciding not to run the
+   * work. Without it the run stays untouchable for the remainder of the lease
+   * term even though no worker is driving it.
+   */
+  private async releaseLease(runId: string, workerId: string): Promise<void> {
+    await this.prisma.agentRun.updateMany({
+      where: { id: runId, processorLeaseOwner: workerId },
+      data: { processorLeaseOwner: null, processorLeaseExpiresAt: null },
+    }).catch(() => undefined);
   }
 
   private async finish(

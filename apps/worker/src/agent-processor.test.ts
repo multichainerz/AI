@@ -1,6 +1,6 @@
 import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
 import { describe, expect, it, vi } from "vitest";
-import { PrismaAgentProcessor, type AgentHermesRuntime, type AgentKnowledgeRetriever } from "./agent-processor.js";
+import { conversationHistory, PrismaAgentProcessor, type AgentHermesRuntime, type AgentKnowledgeRetriever } from "./agent-processor.js";
 
 const RUN_ID = "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d";
 
@@ -245,5 +245,64 @@ describe("PrismaAgentProcessor", () => {
 
     await expect(processor.process({ runId: RUN_ID }, "job-1", "worker-1")).resolves.toMatchObject({ status: "FAILED" });
     expect(hermes.stop).toHaveBeenCalledWith("run_external_1");
+  });
+});
+
+describe("conversationHistory", () => {
+  it("forwards the stored turns when they fit the transport budget", () => {
+    expect(conversationHistory([
+      { role: "user", content: "first question" },
+      { role: "assistant", content: "first answer" },
+      { role: "user", content: "second question" },
+      { role: "assistant", content: "second answer" },
+    ])).toEqual([
+      { role: "user", content: "first question" },
+      { role: "assistant", content: "first answer" },
+      { role: "user", content: "second question" },
+      { role: "assistant", content: "second answer" },
+    ]);
+  });
+
+  it("truncates instead of stranding a question whose answer exceeds the budget", () => {
+    // Guardrails cap chat input at 32,000 characters but allow up to 1,000,000
+    // output characters, so only an assistant turn can overflow here.
+    expect(conversationHistory([
+      { role: "user", content: "old question" },
+      { role: "assistant", content: "x".repeat(65_000) },
+      { role: "user", content: "recent question" },
+      { role: "assistant", content: "recent answer" },
+    ])).toEqual([
+      { role: "user", content: "recent question" },
+      { role: "assistant", content: "recent answer" },
+    ]);
+  });
+
+  it("drops a leading assistant turn that lost its prompt to truncation", () => {
+    expect(conversationHistory([
+      { role: "user", content: "y".repeat(64_000) },
+      { role: "assistant", content: "orphaned answer" },
+      { role: "user", content: "kept question" },
+      { role: "assistant", content: "kept answer" },
+    ])).toEqual([
+      { role: "user", content: "kept question" },
+      { role: "assistant", content: "kept answer" },
+    ]);
+  });
+
+  it("stops at malformed stored history rather than leaving a hole", () => {
+    expect(conversationHistory([
+      { role: "user", content: "older question" },
+      { role: "system", content: "not a supported transport role" },
+      { role: "user", content: "newer question" },
+      { role: "assistant", content: "newer answer" },
+    ])).toEqual([
+      { role: "user", content: "newer question" },
+      { role: "assistant", content: "newer answer" },
+    ]);
+  });
+
+  it("ignores history that is not a stored array", () => {
+    expect(conversationHistory(null)).toEqual([]);
+    expect(conversationHistory({ role: "user", content: "not an array" })).toEqual([]);
   });
 });
