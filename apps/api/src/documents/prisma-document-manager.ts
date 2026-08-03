@@ -120,10 +120,10 @@ function extractionFailureMessage(document: StoredDocument, state: SupermemoryDo
     return `Supermemory reported: ${state.failureReason} Review the VM2 Supermemory service log, correct the extractor configuration, then upload the authoritative file again.`;
   }
   if (["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"].includes(document.mediaType)) {
-    return "Supermemory could not extract this document. Text-based documents use the configured local OpenAI-compatible model; scanned or image-heavy files require an optional Gemini or Vertex document-understanding provider. Review the VM2 service log, then upload the authoritative file again.";
+    return "Supermemory stopped before this document reached BGE-M3 embedding. Text-bearing PDF and DOCX extraction uses the configured local OpenAI-compatible chat model; BGE-M3 indexes the extracted text afterward. Scanned or image-heavy files require an optional Gemini or Vertex document-understanding provider. Review the VM2 Supermemory log, then upload the authoritative file again.";
   }
   if (document.mediaType.startsWith("image/")) {
-    return "Supermemory could not understand this image with the installed local extractor. Image understanding requires an optional Gemini or Vertex provider. Review the VM2 service log, then upload the authoritative file again.";
+    return "Supermemory stopped before this image reached BGE-M3 embedding. Image understanding requires an optional Gemini or Vertex provider; BGE-M3 only indexes text after extraction. Review the VM2 Supermemory log, then upload the authoritative file again.";
   }
   return "Supermemory could not process this source. Review the VM2 Supermemory service log and its local LLM compatibility, then upload the authoritative file again.";
 }

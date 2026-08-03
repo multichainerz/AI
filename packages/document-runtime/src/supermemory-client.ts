@@ -30,10 +30,11 @@ function endpoint(connection: RuntimeConnection, path: string): URL {
 }
 
 function safeFailureReason(record: Record<string, unknown>): string | null {
+  const directError = typeof record.error === "string" ? record.error : null;
   const nestedError = record.error && typeof record.error === "object" && !Array.isArray(record.error)
     ? (record.error as Record<string, unknown>).message
     : null;
-  const candidate = [record.failureReason, record.errorMessage, nestedError, record.message]
+  const candidate = [record.failureReason, record.errorMessage, directError, nestedError, record.message]
     .find((value): value is string => typeof value === "string" && value.trim().length > 0);
   if (!candidate) return null;
   return candidate
@@ -147,10 +148,12 @@ export class SupermemoryClient {
     const documentsPath = stringSetting(connection, "documentsPath", "/v3/documents").replace(/\/+$/, "");
     const boundary = `orcasynapse-${randomBytes(18).toString("hex")}`;
     const safeFileName = input.fileName.replace(/[\r\n"\\]/g, "_");
+    const scopeTag = knowledgeScopeTag(input.ownerSubject);
     const fields = [
-      ["containerTag", knowledgeScopeTag(input.ownerSubject)],
+      // Supermemory Local documents the plural multipart field as a string.
+      // OrcaSynapse owns one deterministic knowledge scope per upload.
+      ["containerTags", scopeTag],
       ["customId", knowledgeDocumentCustomId(input.documentId)],
-      ["taskType", "superrag"],
       ["metadata", JSON.stringify({
         orcasynapseDocumentId: input.documentId,
         fileName: input.fileName,

@@ -132,6 +132,9 @@ if grep -Fq 'curl -fsSL https://supermemory.ai/install' "${REPOSITORY_ROOT}/scri
   exit 1
 fi
 grep -Fq 'render_activity_progress "Initialize Supermemory embeddings"' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq 'verify_supermemory_document_pipeline "http://127.0.0.1:6767"' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq -- '--form '\''containerTags=orcasynapse-install-check'\''' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq 'BGE-M3 only embeds extracted text' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 if grep -Fq '/dev/stdin' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"; then
   printf 'Agentic System installer still depends on non-portable /dev/stdin file copies\n' >&2
   exit 1

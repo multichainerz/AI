@@ -53,7 +53,7 @@ After VM2 is enrolled and healthy, a Development administrator can use **Create 
 5. OrcaSynapse polls Supermemory for indexing state. It keeps no retry copy; a failed transfer requires re-upload.
 6. Deletion removes the Supermemory object and marks the metadata record deleted.
 
-The Supermemory Local baseline handles text and text-based documents through the VM2 OpenAI-compatible inference route. New nodes pin v0.0.7-rc.2 for its upstream large-document workflow fix. Scanned PDFs, image-heavy documents, and images require an optional Gemini or Vertex document-understanding provider; the dashboard states this limitation instead of claiming universal local OCR.
+The Supermemory Local baseline handles text and text-based documents through the VM2 OpenAI-compatible inference route. The chat model extracts and understands content; CPU-local BGE-M3 only embeds the extracted text for retrieval. New nodes pin v0.0.7-rc.2 for its upstream large-document workflow fix and must pass a disposable end-to-end document check before enrollment reports ready. Scanned PDFs, image-heavy documents, and images require an optional Gemini or Vertex document-understanding provider; the dashboard states this limitation instead of claiming universal local OCR.
 
 ## Memory boundaries
 

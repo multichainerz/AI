@@ -133,4 +133,23 @@ describe("PrismaDocumentManager", () => {
       failureMessage: expect.stringContaining("0.0.7-rc.2"),
     });
   });
+
+  it("distinguishes rich-document extraction from BGE-M3 embedding failures", async () => {
+    const row = stored({ fileName: "policy.pdf", mediaType: "application/pdf" });
+    const prisma = {
+      document: { findMany: vi.fn(async () => [row]), update: vi.fn(async () => ({})) },
+      supermemoryProjection: { update: vi.fn(async () => ({})) },
+      $transaction: vi.fn(async (operations: unknown[]) => operations),
+    } as unknown as OrcaSynapsePrismaClient;
+    const supermemory = {
+      documentState: vi.fn(async () => ({
+        status: "failed", type: "pdf", customId: null, runtimeVersion: "0.0.7-rc.2", failureReason: null,
+      })),
+    } as unknown as SupermemoryClient;
+
+    const result = await new PrismaDocumentManager(prisma, supermemory).list(principal);
+
+    expect(result.items[0]?.failureMessage).toContain("before this document reached BGE-M3 embedding");
+    expect(result.items[0]?.failureMessage).toContain("chat model");
+  });
 });

@@ -54,7 +54,7 @@ OrcaSynapse has no standing SSH credential or Docker socket on VM2, so host dest
 5. enrolls with the single-use claim;
 6. receives the OrcaSynapse `/internal/v1` URL, dashboard-selected model alias, and a node-scoped bearer key;
 7. installs the checksum-verified Supermemory Local binary and starts it under a dedicated system user;
-8. configures Supermemory extraction to use the OrcaSynapse gateway, requests local `Xenova/bge-m3`, displays model-download progress, and verifies the loaded model;
+8. configures Supermemory extraction to use the OrcaSynapse gateway, requests local `Xenova/bge-m3`, displays model-download progress, verifies the loaded model, and passes a disposable end-to-end text-file check through extraction, embedding, and indexing before reporting readiness;
 9. installs/enables Hermes's native Supermemory provider with `orcasynapse-agent-{identity}` and custom containers disabled;
 10. pins the model route and baseline guardrails in managed scope, disabling native API-server toolsets and default MCP discovery until an OrcaSynapse-reviewed distribution enables them;
 11. registers the VM2 Supermemory endpoint and encrypted API key with OrcaSynapse;
@@ -96,6 +96,7 @@ Back up Hermes `/opt/data` for sessions, Skills, profiles, built-in memory, and 
 
 - Supermemory v0.0.6 is blocked by the installer because its missing RivetKit module leaves ingestion queued and search empty. See [#1315](https://github.com/supermemoryai/supermemory/issues/1315) and [#1324](https://github.com/supermemoryai/supermemory/issues/1324). New nodes pin v0.0.7-rc.2, whose release notes identify the self-hosted large-document workflow fix; replace the release candidate with a stable pin after equivalent validation.
 - The installer requests multilingual `Xenova/bge-m3` at 1024 dimensions and reports the model observed in the first-boot log. If a release falls back to `Xenova/bge-base-en-v1.5`, the installer warns rather than claiming multilingual readiness; validate Indonesian recall before Production approval.
+- `BGE-M3` is the embedding stage, not a parser or OCR model. The approved OpenAI-compatible chat model performs text extraction and memory understanding. The installer now refuses a false-ready deployment when that complete local document path cannot process its disposable verification source.
 
 Preferred host-loss procedure:
 

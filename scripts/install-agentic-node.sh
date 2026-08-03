@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="ai-v1.16.0"
+INSTALLER_VERSION="ai-v1.17.1"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 CONTAINER_NAME="orcasynapse-hermes"
 HEARTBEAT_SERVICE="orcasynapse-hermes-heartbeat"
@@ -666,6 +666,81 @@ wait_for_supermemory() {
   fi
 }
 
+verify_supermemory_document_pipeline() {
+  local base_url="${1%/}" api_key="$2"
+  local source_file response_file state_file document_id custom_id http_status status deadline
+  local started="${SECONDS}" frame_index=0 last_status=""
+  source_file="$(mktemp /tmp/orcasynapse-supermemory-check.XXXXXX.txt)"
+  response_file="$(mktemp /tmp/orcasynapse-supermemory-response.XXXXXX.json)"
+  state_file="$(mktemp /tmp/orcasynapse-supermemory-state.XXXXXX.json)"
+  TEMPORARY_FILES+=("${source_file}" "${response_file}" "${state_file}")
+  custom_id="orcasynapse_install_check_$(openssl rand -hex 12)"
+  printf '%s\n' 'OrcaSynapse verifies local document extraction, embedding, and indexing during enrollment.' > "${source_file}"
+
+  http_status="$(curl --silent --show-error --max-time 30 \
+    --output "${response_file}" --write-out '%{http_code}' \
+    --request POST \
+    --header "Authorization: Bearer ${api_key}" \
+    --form "file=@${source_file};type=text/plain;filename=orcasynapse-memory-check.txt" \
+    --form 'containerTags=orcasynapse-install-check' \
+    --form "customId=${custom_id}" \
+    "${base_url}/v3/documents/file")" \
+    || fail "Supermemory could not accept its end-to-end document verification source"
+  [[ "${http_status}" =~ ^2[0-9][0-9]$ ]] \
+    || fail "Supermemory rejected its end-to-end document verification source (HTTP ${http_status})"
+  document_id="$(jq -r '.id // .documentId // empty' "${response_file}" 2>/dev/null || true)"
+  [[ -n "${document_id}" ]] || fail "Supermemory accepted its verification source without returning a document ID"
+
+  deadline=$((SECONDS + 300))
+  if (( UI_INTERACTIVE )); then
+    printf '\033[?25l'
+  else
+    info "Verify local document extraction, BGE-M3 embedding, and indexing."
+  fi
+  while (( SECONDS < deadline )); do
+    http_status="$(curl --silent --show-error --max-time 15 \
+      --output "${state_file}" --write-out '%{http_code}' \
+      --header "Authorization: Bearer ${api_key}" \
+      "${base_url}/v3/documents/${document_id}")" || http_status="000"
+    if [[ "${http_status}" =~ ^2[0-9][0-9]$ ]]; then
+      status="$(jq -r '.status // "unknown"' "${state_file}" 2>/dev/null || printf 'unknown')"
+      if (( UI_INTERACTIVE )); then
+        render_activity_progress "Document pipeline: ${status}" "$((SECONDS - started))" "${frame_index}"
+        frame_index=$((frame_index + 1))
+      elif [[ "${status}" != "${last_status}" ]]; then
+        info "Supermemory verification status: ${status}."
+      fi
+      last_status="${status}"
+      case "${status}" in
+        done)
+          (( UI_INTERACTIVE )) && printf '\r\033[2K\033[?25h'
+          curl --fail --silent --max-time 15 --request DELETE \
+            --header "Authorization: Bearer ${api_key}" \
+            "${base_url}/v3/documents/${document_id}" >/dev/null 2>&1 || true
+          success "Supermemory document extraction, BGE-M3 embedding, and indexing passed."
+          return 0
+          ;;
+        failed)
+          (( UI_INTERACTIVE )) && printf '\r\033[2K\033[?25h'
+          curl --fail --silent --max-time 15 --request DELETE \
+            --header "Authorization: Bearer ${api_key}" \
+            "${base_url}/v3/documents/${document_id}" >/dev/null 2>&1 || true
+          print_safe_supermemory_diagnostics
+          fail "Supermemory's local document pipeline failed before enrollment completed. BGE-M3 only embeds extracted text; verify that the approved OpenAI-compatible chat model supports structured extraction, then rerun this installer"
+          ;;
+      esac
+    fi
+    sleep 2
+  done
+
+  (( UI_INTERACTIVE )) && printf '\r\033[2K\033[?25h'
+  curl --fail --silent --max-time 15 --request DELETE \
+    --header "Authorization: Bearer ${api_key}" \
+    "${base_url}/v3/documents/${document_id}" >/dev/null 2>&1 || true
+  print_safe_supermemory_diagnostics
+  fail "Supermemory's end-to-end document pipeline did not finish within five minutes"
+}
+
 install_supermemory() {
   local inference_base_url="$1" model_alias="$2" gateway_key="$3" requested_version="$4"
   local install_dir="${SUPERMEMORY_ROOT}/install"
@@ -764,6 +839,7 @@ EOF
   printf '%s' "${memory_api_key}" > "${SUPERMEMORY_ROOT}/api-key"
   chown root:root "${SUPERMEMORY_ROOT}/api-key"
   chmod 0600 "${SUPERMEMORY_ROOT}/api-key"
+  verify_supermemory_document_pipeline "http://127.0.0.1:6767" "${memory_api_key}"
   local actual_embedding_model
   actual_embedding_model="$(supermemory_journal "${invocation_id}" | parse_supermemory_embedding_model || true)"
   if [[ -n "${actual_embedding_model}" && "${actual_embedding_model}" != "${SUPERMEMORY_EMBEDDING_MODEL}" ]]; then

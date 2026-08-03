@@ -195,7 +195,7 @@ export function DocumentsView(props: DocumentsViewProps) {
       </label>
       <div className="knowledge-capability-note">
         <strong>Local extraction compatibility</strong>
-        <span>Text files and text-based documents use the local OpenAI-compatible model on VM2. Scanned PDFs, image-heavy documents, and images require an optional Gemini or Vertex document-understanding provider. OrcaSynapse never retains a retry copy.</span>
+        <span>The VM2 chat model extracts text, then BGE-M3 embeds it for retrieval. BGE-M3 does not read files or perform OCR. Scanned PDFs, image-heavy documents, and images require an optional Gemini or Vertex document-understanding provider. OrcaSynapse never retains a retry copy.</span>
       </div>
       <label>Classification<select value={classification} onChange={(event) => setClassification(event.target.value as DocumentClassification)}><option value="INTERNAL">Internal</option><option value="CONFIDENTIAL">Confidential</option><option value="RESTRICTED">Restricted</option></select></label>
       <label>Metadata retention<input type="number" min={1} max={3650} value={retentionDays} onChange={(event) => setRetentionDays(Number(event.target.value))} /></label>

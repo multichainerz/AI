@@ -35,7 +35,9 @@ describe("SupermemoryClient", () => {
       for await (const chunk of Readable.fromWeb(stream)) chunks.push(Buffer.from(chunk));
       const multipart = Buffer.concat(chunks).toString("utf8");
       expect(multipart).toContain(`name="customId"\r\n\r\n${knowledgeDocumentCustomId(DOCUMENT_ID)}`);
-      expect(multipart).toContain(`name="containerTag"\r\n\r\n${knowledgeScopeTag("user:pilot")}`);
+      expect(multipart).toContain(`name="containerTags"\r\n\r\n${knowledgeScopeTag("user:pilot")}`);
+      expect(multipart).not.toContain('name="containerTag"');
+      expect(multipart).not.toContain('name="taskType"');
       expect(multipart).toContain('filename="policy.txt"');
       expect(multipart).toContain("private policy");
       return new Response(JSON.stringify({ id: "sm-document-1", status: "queued" }), { status: 200 });
@@ -97,6 +99,19 @@ describe("SupermemoryClient", () => {
       customId: "document-1",
       runtimeVersion: "0.0.5",
       failureReason: "workflow limit reached with [credential redacted]",
+    });
+  });
+
+  it("retains a safe string-form processing error from Supermemory Local", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({
+      status: "failed",
+      error: "OpenAI-compatible extraction returned HTTP 400",
+    }), { status: 200 }));
+    const client = new SupermemoryClient(resolver({ observedVersion: "0.0.7-rc.2" }), fetcher);
+
+    await expect(client.documentState("sm-document-1")).resolves.toMatchObject({
+      status: "failed",
+      failureReason: "OpenAI-compatible extraction returned HTTP 400",
     });
   });
 
