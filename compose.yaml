@@ -1,0 +1,112 @@
+name: orcasynapse
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: orcasynapse
+      POSTGRES_USER: orcasynapse
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orcasynapse -d orcasynapse"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - data
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    depends_on:
+      postgres:
+        condition: service_healthy
+    secrets:
+      - orcasynapse_database_url
+    command:
+      - "node"
+      - "packages/database/node_modules/prisma/build/index.js"
+      - "migrate"
+      - "deploy"
+      - "--config"
+      - "packages/database/prisma.config.ts"
+    networks:
+      - data
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    secrets:
+      - orcasynapse_database_url
+      - orcasynapse_master_key
+      - orcasynapse_installation_key
+    networks:
+      - application
+      - data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/readyz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    secrets:
+      - orcasynapse_database_url
+      - orcasynapse_master_key
+    networks:
+      - application
+      - data
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${ORCASYNAPSE_HTTP_PORT:-8080}:8080"
+    networks:
+      - application
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/web-healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+secrets:
+  postgres_password:
+    file: ./.local/secrets/postgres_password
+  orcasynapse_database_url:
+    file: ./.local/secrets/orcasynapse_database_url
+  orcasynapse_master_key:
+    file: ./.local/secrets/orcasynapse_master_key
+  orcasynapse_installation_key:
+    file: ./.local/secrets/orcasynapse_installation_key
+
+volumes:
+  postgres_data:
+
+networks:
+  application:
+  data:
+    internal: true

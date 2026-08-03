@@ -1,0 +1,21 @@
+{
+  "name": "@orcasynapse/knowledge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --exclude=dist/**"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "4.2.0",
+    "@orcasynapse/contracts": "workspace:*",
+    "@orcasynapse/database": "workspace:*",
+    "drizzle-orm": "0.45.2",
+    "officeparser": "7.5.1",
+    "unpdf": "1.8.0"
+  }
+}

@@ -1,0 +1,225 @@
+import { z } from "zod";
+import { knowledgeSourceSchema } from "./memory.js";
+
+export const AGENT_PROFILE_STATUSES = ["DRAFT", "STANDBY", "ACTIVE", "SUSPENDED"] as const;
+export const AGENT_RUN_STATUSES = [
+  "QUEUED",
+  "RUNNING",
+  "WAITING_FOR_APPROVAL",
+  "CANCEL_REQUESTED",
+  "COMPLETED",
+  "FAILED",
+  "CANCELLED",
+  "TIMED_OUT",
+  "DENIED",
+] as const;
+export const AGENT_CAPABILITIES = ["knowledge:private:read"] as const;
+export const AGENT_RUN_EVENT_TYPES = [
+  "RUN_STARTED",
+  "MESSAGE_DELTA",
+  "TOOL_STARTED",
+  "TOOL_COMPLETED",
+  "SUBAGENT_STARTED",
+  "SUBAGENT_COMPLETED",
+  "APPROVAL_REQUIRED",
+  "RUN_COMPLETED",
+  "RUN_FAILED",
+  "RUN_CANCELLED",
+] as const;
+export const AGENT_RUN_APPROVAL_STATUSES = [
+  "PENDING",
+  "APPROVED",
+  "DENIED",
+  "EXPIRED",
+  "CANCELLED",
+] as const;
+
+export const agentProfileStatusSchema = z.enum(AGENT_PROFILE_STATUSES);
+export const agentRunStatusSchema = z.enum(AGENT_RUN_STATUSES);
+export const agentCapabilitySchema = z.enum(AGENT_CAPABILITIES);
+export const agentRunEventTypeSchema = z.enum(AGENT_RUN_EVENT_TYPES);
+export const agentRunApprovalStatusSchema = z.enum(AGENT_RUN_APPROVAL_STATUSES);
+
+const agentSlugSchema = z.string().min(2).max(64).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+const agentModelAliasSchema = z.string().min(1).max(200)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/);
+const sha256Schema = z.string().length(64).regex(/^[a-f0-9]{64}$/);
+
+export const agentSkillReferenceSchema = z.object({
+  name: agentSlugSchema,
+  version: z.string().trim().min(1).max(80).regex(/^[A-Za-z0-9][A-Za-z0-9._+-]*$/),
+  digest: sha256Schema,
+}).strict();
+
+export const agentVersionConfigurationSchema = z.object({
+  displayName: z.string().trim().min(2).max(120),
+  purpose: z.string().trim().min(3).max(500),
+  instructions: z.string().trim().min(10).max(32_000),
+  soulMd: z.string().trim().min(10).max(32_000),
+  skills: z.array(agentSkillReferenceSchema).max(20),
+  modelAlias: agentModelAliasSchema,
+  // The current production baseline remains a single Hermes turn. Tools, when
+  // enabled, are exposed only through OrcaSynapse's separately governed MCP path.
+  maxTurns: z.literal(1),
+  timeoutSeconds: z.number().int().min(30).max(3_600),
+  maxConcurrentRuns: z.number().int().min(1).max(20),
+  allowPrivateKnowledge: z.boolean(),
+  safeMode: z.literal(true),
+}).strict();
+
+export const createAgentProfileSchema = agentVersionConfigurationSchema.extend({
+  slug: agentSlugSchema,
+});
+
+export const updateAgentProfileSchema = agentVersionConfigurationSchema.partial().strict()
+  .refine((value) => Object.keys(value).length > 0, {
+    message: "At least one agent configuration field must be provided.",
+  });
+
+export const agentProfileVersionSchema = agentVersionConfigurationSchema.extend({
+  id: z.uuid(),
+  version: z.number().int().positive(),
+  createdAt: z.iso.datetime(),
+  createdBy: z.uuid().nullable(),
+  distributionDigest: sha256Schema,
+});
+
+export const agentProfileSchema = z.object({
+  id: z.uuid(),
+  slug: agentSlugSchema,
+  status: agentProfileStatusSchema,
+  currentVersion: z.number().int().positive(),
+  activeVersion: z.number().int().positive().nullable(),
+  // Administrators edit the latest immutable revision while runs always use
+  // the explicitly activated revision. Keeping both prevents the console from
+  // presenting an unactivated draft as the live runtime configuration.
+  activeVersionConfiguration: agentProfileVersionSchema.nullable(),
+  version: agentProfileVersionSchema,
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+});
+
+export const agentProfileListSchema = z.object({ items: z.array(agentProfileSchema) });
+
+export const submitAgentRunSchema = z.object({
+  profileId: z.uuid(),
+  input: z.string().trim().min(1).max(32_000),
+}).strict();
+
+export const agentRunSchema = z.object({
+  id: z.uuid(),
+  profileId: z.uuid(),
+  profileSlug: agentSlugSchema,
+  profileName: z.string().min(1).max(120),
+  profileVersion: z.number().int().positive(),
+  profileDistributionDigest: sha256Schema.nullable(),
+  status: agentRunStatusSchema,
+  input: z.string().max(32_000),
+  output: z.string().nullable(),
+  partialOutput: z.string(),
+  modelAlias: z.string().max(200).nullable(),
+  inputTokens: z.number().int().nonnegative().nullable(),
+  outputTokens: z.number().int().nonnegative().nullable(),
+  reasoningTokens: z.number().int().nonnegative().nullable(),
+  totalTokens: z.number().int().nonnegative().nullable(),
+  finishReason: z.string().max(120).nullable(),
+  effectiveCapabilities: z.array(agentCapabilitySchema),
+  sources: z.array(knowledgeSourceSchema).max(10),
+  failureCode: z.string().nullable(),
+  failureMessage: z.string().nullable(),
+  queuedAt: z.iso.datetime(),
+  startedAt: z.iso.datetime().nullable(),
+  completedAt: z.iso.datetime().nullable(),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+});
+
+export const agentRunListSchema = z.object({ items: z.array(agentRunSchema) });
+
+export const agentRunEventSchema = z.object({
+  id: z.uuid(),
+  cursor: z.string().regex(/^\d+$/),
+  runId: z.uuid(),
+  type: agentRunEventTypeSchema,
+  delta: z.string().nullable(),
+  preview: z.string().max(1000).nullable(),
+  errorCode: z.string().max(80).nullable(),
+  approvalId: z.uuid().nullable(),
+  summary: z.string().max(1000).nullable(),
+  status: z.string().max(80).nullable(),
+  toolName: z.string().max(160).nullable(),
+  childSessionId: z.string().max(255).nullable(),
+  durationMs: z.number().int().nonnegative().nullable(),
+  inputTokens: z.number().int().nonnegative().nullable(),
+  outputTokens: z.number().int().nonnegative().nullable(),
+  reasoningTokens: z.number().int().nonnegative().nullable(),
+  costUsd: z.number().nonnegative().nullable(),
+  occurredAt: z.iso.datetime(),
+});
+
+export const agentRunEventListSchema = z.object({ items: z.array(agentRunEventSchema).max(500) });
+
+export const agentRunApprovalSchema = z.object({
+  id: z.uuid(),
+  runId: z.uuid(),
+  status: agentRunApprovalStatusSchema,
+  command: z.string().max(1000).nullable(),
+  summary: z.string().max(1000).nullable(),
+  choices: z.array(z.enum(["ALLOW_ONCE", "DENY"])).max(2),
+  requestedAt: z.iso.datetime(),
+  expiresAt: z.iso.datetime(),
+  decidedAt: z.iso.datetime().nullable(),
+  decision: z.enum(["ALLOW_ONCE", "DENY"]).nullable(),
+});
+
+export const decideAgentRunApprovalSchema = z.object({
+  decision: z.enum(["ALLOW_ONCE", "DENY"]),
+}).strict();
+
+export const agentRuntimeControlSchema = z.object({
+  enabled: z.boolean(),
+  reason: z.string().nullable(),
+  updatedAt: z.iso.datetime(),
+  updatedBy: z.uuid().nullable(),
+});
+
+export const updateAgentRuntimeControlSchema = z.object({
+  enabled: z.boolean(),
+  reason: z.string().trim().min(3).max(500),
+}).strict();
+
+export const agentMetricsSchema = z.object({
+  generatedAt: z.iso.datetime(),
+  profiles: z.number().int().nonnegative(),
+  activeProfiles: z.number().int().nonnegative(),
+  queuedRuns: z.number().int().nonnegative(),
+  runningRuns: z.number().int().nonnegative(),
+  completedRuns: z.number().int().nonnegative(),
+  failedRuns: z.number().int().nonnegative(),
+});
+
+export const agentRunJobPayloadSchema = z.object({ runId: z.uuid() }).strict();
+
+export type AgentProfileStatus = z.infer<typeof agentProfileStatusSchema>;
+export type AgentRunStatus = z.infer<typeof agentRunStatusSchema>;
+export type AgentCapability = z.infer<typeof agentCapabilitySchema>;
+export type AgentRunEventType = z.infer<typeof agentRunEventTypeSchema>;
+export type AgentRunApprovalStatus = z.infer<typeof agentRunApprovalStatusSchema>;
+export type AgentVersionConfiguration = z.infer<typeof agentVersionConfigurationSchema>;
+export type AgentSkillReference = z.infer<typeof agentSkillReferenceSchema>;
+export type CreateAgentProfile = z.infer<typeof createAgentProfileSchema>;
+export type UpdateAgentProfile = z.infer<typeof updateAgentProfileSchema>;
+export type AgentProfileVersion = z.infer<typeof agentProfileVersionSchema>;
+export type AgentProfile = z.infer<typeof agentProfileSchema>;
+export type AgentProfileList = z.infer<typeof agentProfileListSchema>;
+export type SubmitAgentRun = z.infer<typeof submitAgentRunSchema>;
+export type AgentRun = z.infer<typeof agentRunSchema>;
+export type AgentRunList = z.infer<typeof agentRunListSchema>;
+export type AgentRunEvent = z.infer<typeof agentRunEventSchema>;
+export type AgentRunEventList = z.infer<typeof agentRunEventListSchema>;
+export type AgentRunApproval = z.infer<typeof agentRunApprovalSchema>;
+export type DecideAgentRunApproval = z.infer<typeof decideAgentRunApprovalSchema>;
+export type AgentRuntimeControl = z.infer<typeof agentRuntimeControlSchema>;
+export type UpdateAgentRuntimeControl = z.infer<typeof updateAgentRuntimeControlSchema>;
+export type AgentMetrics = z.infer<typeof agentMetricsSchema>;
+export type AgentRunJobPayload = z.infer<typeof agentRunJobPayloadSchema>;

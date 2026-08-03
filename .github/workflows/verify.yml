@@ -1,0 +1,49 @@
+name: Verify OrcaSynapse
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: orcasynapse_test
+          POSTGRES_USER: orcasynapse_test
+          POSTGRES_PASSWORD: orcasynapse_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U orcasynapse_test -d orcasynapse_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate installer scripts
+        run: bash -n install.sh scripts/*.sh
+      - name: Verify installer recovery paths
+        run: |
+          bash scripts/test-public-installer-recovery.sh
+          bash scripts/test-agentic-installer-recovery.sh
+      - name: Verify Linux container secret access
+        run: sudo bash scripts/test-installer-secret-permissions.sh
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm verify
+      - run: pnpm verify:postgres
+        env:
+          ORCASYNAPSE_INTEGRATION_DATABASE_URL: postgresql://orcasynapse_test:orcasynapse_test@127.0.0.1:5432/orcasynapse_test

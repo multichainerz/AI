@@ -1,0 +1,23 @@
+{
+  "name": "@orcasynapse/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --exclude=dist/**"
+  },
+  "dependencies": {
+    "@orcasynapse/contracts": "workspace:*",
+    "@orcasynapse/database": "workspace:*",
+    "@orcasynapse/runtime-clients": "workspace:*",
+    "@orcasynapse/security": "workspace:*"
+  },
+  "devDependencies": {
+    "tsx": "4.23.1"
+  }
+}
