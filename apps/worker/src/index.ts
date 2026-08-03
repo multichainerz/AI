@@ -7,7 +7,7 @@ import {
   PrismaRuntimeConnectionResolver,
   HermesClient,
   SupermemoryClient,
-} from "@orcasynapse/document-runtime";
+} from "@orcasynapse/runtime-clients";
 import { WorkerRuntime } from "./worker-runtime.js";
 import { PrismaWorkerRegistry } from "./worker-registry.js";
 import { PrismaAgentProcessor, WorkerAgentKnowledgeRetriever } from "./agent-processor.js";

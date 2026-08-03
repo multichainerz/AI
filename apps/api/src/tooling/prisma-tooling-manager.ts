@@ -377,13 +377,34 @@ export class PrismaToolingManager implements ToolingManager {
     return { items: items.map((item) => callDto(item as Parameters<typeof callDto>[0])) };
   }
 
-  async listApprovals() {
+  /*
+   * INCOMPLETE SUBSYSTEM - human approval for CONSEQUENTIAL governed tools.
+   *
+   * This is the consequential half of the governed MCP surface whose read-only
+   * half is live. It is deliberately parked and currently unreachable:
+   *
+   *   - nothing anywhere creates a ToolApproval, so the two methods below have
+   *     no data source;
+   *   - neither is declared on the ToolingManager interface or exposed by a
+   *     route, so nothing can call them;
+   *   - invoke() denies CONSEQUENTIAL tools outright, so no call can reach the
+   *     state that would request an approval.
+   *
+   * Before wiring this up, note that decideToolApproval is NOT inert. On
+   * approval it moves the GovernedToolCall to EXECUTING and writes a
+   * ToolActionDispatch row - and nothing reads ToolActionDispatch. Without an
+   * executor draining that table, approved calls stay EXECUTING forever. The
+   * dispatch consumer is the missing piece, not the approval flow.
+   */
+  async listToolApprovals() {
     await this.expireApprovals();
     const items = await this.prisma.toolApproval.findMany({ include: approvalInclude, orderBy: { createdAt: "desc" }, take: 300 });
     return { items: items.map((item) => approvalDto(item as Parameters<typeof approvalDto>[0])) };
   }
 
-  async decideApproval(principal: ToolingPrincipal, approvalId: string, input: { decision: "APPROVE" | "REJECT"; reason: string }): Promise<ToolApproval> {
+  /** Named for its model so it cannot be confused with the live chat approval
+   * decision on ChatManager, which acts on AgentRunApproval instead. */
+  async decideToolApproval(principal: ToolingPrincipal, approvalId: string, input: { decision: "APPROVE" | "REJECT"; reason: string }): Promise<ToolApproval> {
     let expired = false;
     let revokedReason: string | null = null;
     await this.prisma.$transaction(async (transaction) => {
@@ -432,6 +453,8 @@ export class PrismaToolingManager implements ToolingManager {
           : { status: "DENIED", errorCode: "APPROVAL_REJECTED", errorMessage: input.reason, completedAt: now },
       });
       if (approved) {
+        // No executor drains ToolActionDispatch today, so this row is durable
+        // intent with no consumer. See the note above decideToolApproval.
         await transaction.toolActionDispatch.create({
           data: { callId: found.callId },
         });

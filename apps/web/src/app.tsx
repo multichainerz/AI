@@ -319,7 +319,7 @@ function App() {
     {
       key: "access",
       name: "Enterprise Access",
-      role: "OIDC, Microsoft Entra ID and RBAC · tenant isolation planned",
+      role: "OIDC, Microsoft Entra ID and RBAC · owner-scoped access",
       mark: "EA",
       tone: "rose",
       state: unlocked

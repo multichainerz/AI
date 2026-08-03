@@ -81,7 +81,7 @@ These are customer deployment gates, not missing dashboard architecture:
 - PostgreSQL, Hermes, and Supermemory backup/restore drills against the customer RPO/RTO.
 - GPU capacity, concurrency, cancellation, and soak tests with the selected model.
 - OIDC/Microsoft Entra ID group mapping and deprovisioning acceptance.
-- Cross-tenant isolation before advertising true multi-tenancy.
+- Owner-scope isolation testing between users inside the organization. Tenancy is achieved per deployment: one installation serves one organization, so there is no in-installation tenant boundary to certify.
 - Security, infrastructure, product, and business Production sign-off.
 
 ## Architecture invariants

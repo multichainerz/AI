@@ -329,7 +329,9 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
         ...(runtime.sessionManager ? { sessionManager: runtime.sessionManager } : {}),
         ...(runtime.operationsManager ? { manager: runtime.operationsManager } : {}),
       }),
-    { prefix: "/api/v1/admin/operations/runtime" },
+    // Sibling of, not a sub-resource of, /admin/operations. That module is the
+    // AI-operations surface; this one reports worker and workload runtime state.
+    { prefix: "/api/v1/admin/runtime" },
   );
 
   app.setErrorHandler(async (error, request, reply) => {

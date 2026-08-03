@@ -1,6 +1,6 @@
 import { agentCapabilitySchema, knowledgeSourceSchema, type AgentRunJobPayload, type KnowledgeSource } from "@orcasynapse/contracts";
 import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
-import { HermesClient, SupermemoryClient, type HermesSafeRunEvent } from "@orcasynapse/document-runtime";
+import { HermesClient, SupermemoryClient, type HermesSafeRunEvent } from "@orcasynapse/runtime-clients";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ACTIVE_HERMES_STATUSES = new Set(["queued", "started", "running", "stopping"]);

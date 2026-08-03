@@ -1,6 +1,6 @@
 import { Readable } from "node:stream";
 import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
-import type { SupermemoryClient } from "@orcasynapse/document-runtime";
+import type { SupermemoryClient } from "@orcasynapse/runtime-clients";
 import { describe, expect, it, vi } from "vitest";
 import { PrismaDocumentManager } from "./prisma-document-manager.js";
 

@@ -208,7 +208,7 @@ describe("PrismaToolingManager", () => {
     prismaBase.$transaction = vi.fn(async (callback: (transaction: unknown) => Promise<unknown>) => callback(prismaBase));
     const manager = new PrismaToolingManager(prismaBase as OrcaSynapsePrismaClient);
 
-    await expect(manager.decideApproval(
+    await expect(manager.decideToolApproval(
       { id: SESSION_ID, subject: "platform-admin" },
       APPROVAL_ID,
       { decision: "APPROVE", reason: "Approved for the pilot." },
@@ -249,7 +249,7 @@ describe("PrismaToolingManager", () => {
     };
     prismaBase.$transaction = vi.fn(async (callback: (transaction: unknown) => Promise<unknown>) => callback(prismaBase));
 
-    await expect(new PrismaToolingManager(prismaBase as OrcaSynapsePrismaClient).decideApproval(
+    await expect(new PrismaToolingManager(prismaBase as OrcaSynapsePrismaClient).decideToolApproval(
       { id: SESSION_ID, subject: "platform-admin" }, APPROVAL_ID,
       { decision: "APPROVE", reason: "Approved for the pilot." },
     )).rejects.toThrow("originating agent run is no longer authorized");

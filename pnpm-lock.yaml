@@ -38,9 +38,9 @@ importers:
       '@orcasynapse/database':
         specifier: workspace:*
         version: link:../../packages/database
-      '@orcasynapse/document-runtime':
+      '@orcasynapse/runtime-clients':
         specifier: workspace:*
-        version: link:../../packages/document-runtime
+        version: link:../../packages/runtime-clients
       '@orcasynapse/security':
         specifier: workspace:*
         version: link:../../packages/security
@@ -94,9 +94,9 @@ importers:
       '@orcasynapse/database':
         specifier: workspace:*
         version: link:../../packages/database
-      '@orcasynapse/document-runtime':
+      '@orcasynapse/runtime-clients':
         specifier: workspace:*
-        version: link:../../packages/document-runtime
+        version: link:../../packages/runtime-clients
       '@orcasynapse/security':
         specifier: workspace:*
         version: link:../../packages/security
@@ -130,7 +130,7 @@ importers:
         specifier: 7.9.1
         version: 7.9.1(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@7.0.2)
 
-  packages/document-runtime:
+  packages/runtime-clients:
     dependencies:
       '@orcasynapse/contracts':
         specifier: workspace:*

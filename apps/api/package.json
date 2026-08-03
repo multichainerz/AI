@@ -1,6 +1,6 @@
 {
   "name": "@orcasynapse/api",
-  "version": "1.17.2",
+  "version": "1.17.3",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
@@ -14,7 +14,7 @@
   "dependencies": {
     "@orcasynapse/contracts": "workspace:*",
     "@orcasynapse/database": "workspace:*",
-    "@orcasynapse/document-runtime": "workspace:*",
+    "@orcasynapse/runtime-clients": "workspace:*",
     "@orcasynapse/security": "workspace:*",
     "@fastify/helmet": "13.1.0",
     "@fastify/multipart": "9.3.0",

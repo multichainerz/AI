@@ -97,6 +97,10 @@ export class PrismaInferenceGateway {
 
   private async authenticate(token: string | undefined): Promise<string> {
     if (!token) throw new InferenceGatewayError("UNAUTHORIZED", "A runtime gateway credential is required.");
+    // OrcaSynapse enrols exactly one Hermes runtime per installation, the same
+    // invariant the worker enforces before it will execute a run. Reading two
+    // rows lets an unexpected second enrolment fail closed instead of silently
+    // picking one, and keeps authentication to a single secret decryption.
     const candidates = await this.prisma.serviceConnection.findMany({
       where: {
         kind: "HERMES",
@@ -104,24 +108,22 @@ export class PrismaInferenceGateway {
         hermesRuntimeNode: { is: { status: { notIn: ["SUSPENDED", "REVOKED"] } } },
       },
       select: { id: true },
-      take: 100,
+      take: 2,
     });
-    const runtimes = await Promise.all(candidates.map(async (candidate) => {
-      try {
-        return await this.connections.resolveForDiagnostic(candidate.id);
-      } catch {
-        return null;
-      }
-    }));
-    const matches = runtimes.filter((runtime) => {
-      if (!runtime) return false;
-      const expected = runtime.secrets.inferenceGatewayKey;
-      return Boolean(expected && secureEqual(token, expected));
-    }) as ResolvedConnection[];
-    if (matches.length !== 1) {
-      throw new InferenceGatewayError("UNAUTHORIZED", "The runtime gateway credential is invalid.");
+    // Every failure reports one message. An unauthenticated caller must not be
+    // able to tell a misconfigured installation from a wrong credential.
+    const invalid = () => new InferenceGatewayError("UNAUTHORIZED", "The runtime gateway credential is invalid.");
+    const candidate = candidates.length === 1 ? candidates[0] : undefined;
+    if (!candidate) throw invalid();
+    let runtime: ResolvedConnection;
+    try {
+      runtime = await this.connections.resolveForDiagnostic(candidate.id);
+    } catch {
+      throw invalid();
     }
-    return matches[0]!.id;
+    const expected = runtime.secrets.inferenceGatewayKey;
+    if (!expected || !secureEqual(token, expected)) throw invalid();
+    return runtime.id;
   }
 
   private async resolvePolicy(): Promise<RuntimeTextPolicy> {

@@ -12,7 +12,7 @@ This document is the sanitized transfer context for continuing OrcaSynapse work 
 - Baseline commit: `5209c11926de22bac26209a9f55624abb8d23da1` (`ai-v1.17.1`)
 - Baseline relationship: local `main` and `origin/main` are synchronized (`0` ahead, `0` behind).
 - Baseline verification: `pnpm verify` passes at this commit. Re-confirmed independently: 72 test files, 359 tests.
-- Current working branch: `fix/worker-run-durability` at `ai-v1.17.2`, one commit ahead of `main`, not yet pushed. See "Latest verified build state" for what it contains.
+- Current working branch: `fix/worker-run-durability` at `ai-v1.17.3`, one commit ahead of `main`, not yet pushed. See "Latest verified build state" for what it contains.
 - This file is the only expected uncommitted change unless later work says otherwise.
 
 Do not copy credentials from terminals, VM environment files, Docker secrets, PostgreSQL, or service logs into issues, commits, or future handoff documents.
@@ -76,7 +76,7 @@ Important locations:
 | `apps/worker` | Durable Hermes Agent Run reconciliation and lifecycle processing |
 | `packages/contracts` | Shared validated API contracts |
 | `packages/database` | Prisma schema, migrations, and database bootstrap |
-| `packages/document-runtime` | Hermes and Supermemory server-side clients |
+| `packages/runtime-clients` | Hermes and Supermemory server-side clients (renamed from `document-runtime`, which predated the removal of the local document pipeline) |
 | `packages/security` | Password hashing, envelope encryption, capability checks, and recovery-kit primitives |
 | `install.sh` | Public VM1 bootstrap wrapper |
 | `scripts/install-orcasynapse.sh` | Full VM1 installer/update implementation |
@@ -135,7 +135,8 @@ Important locations:
 
 - Service topology, connection health, runtime-node health, incidents, audit, guardrail posture, workflow metrics, and release evidence.
 - Local administrator and recovery foundations are implemented.
-- OIDC/Microsoft Entra ID connection and enterprise-session foundations exist, but customer-specific identity and multi-tenant acceptance remain deployment gates.
+- OIDC/Microsoft Entra ID connection and enterprise-session foundations exist, but customer-specific identity acceptance remains a deployment gate.
+- Tenancy is achieved per deployment: one installation serves one organization. `ownerSubject` scopes documents, conversations, and Supermemory container tags to a user within that organization, and there is deliberately no in-installation tenant boundary. Do not reintroduce multi-tenancy as pending work.
 
 ## Latest verified build state
 
@@ -153,7 +154,7 @@ Result on baseline commit `5209c11`:
 - Prisma schema validation: passed.
 - Web production build: passed; the largest generated chunks are the application shell (`index`, 380.87 kB) and Chat workspace (`chat-view`, 179.72 kB).
 
-Since that capture, `ai-v1.17.2` on branch `fix/worker-run-durability` landed five worker defects found by review rather than by a failing test. `pnpm verify` passes there with 72 test files and 368 tests; worker coverage went from 14 to 23 tests. The fixes are:
+Since that capture, `ai-v1.17.3` on branch `fix/worker-run-durability` landed five worker defects found by review rather than by a failing test. `pnpm verify` passes there with 72 test files and 368 tests; worker coverage went from 14 to 23 tests. The fixes are:
 
 1. Run discovery omitted `WAITING_FOR_APPROVAL`, permanently stranding any run whose worker restarted with an approval outstanding, leaving its chat message `PENDING`.
 2. Batch dispatch head-of-line blocked; replaced with slot accounting. The concurrency ceiling stays at five, so peak inference load is unchanged.
@@ -356,5 +357,5 @@ Avoid dumping complete environment files or unredacted logs because they may con
 - PostgreSQL, Hermes, and Supermemory backup/restore drills against defined RPO/RTO.
 - GPU concurrency, cancellation, and soak testing with the chosen model.
 - OIDC/Microsoft Entra ID group mapping and deprovisioning acceptance.
-- Cross-tenant isolation testing before claiming full multi-tenancy.
+- Owner-scope isolation testing between users inside the organization. Tenancy is achieved per deployment: one installation serves one organization, so there is no in-installation tenant boundary to certify.
 - Infrastructure, security, product, and business approval.

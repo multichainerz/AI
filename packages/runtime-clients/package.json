@@ -1,6 +1,6 @@
 {
-  "name": "@orcasynapse/document-runtime",
-  "version": "1.17.2",
+  "name": "@orcasynapse/runtime-clients",
+  "version": "1.17.3",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",

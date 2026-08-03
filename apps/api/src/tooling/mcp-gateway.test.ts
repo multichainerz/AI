@@ -23,7 +23,7 @@ function manager(): ToolingManager {
     setToolStatus: vi.fn(), listGrants: vi.fn(), upsertGrant: vi.fn(), listCredentials: vi.fn(),
     issueCredential: vi.fn(), revokeCredential: vi.fn(), authenticateGateway: vi.fn(async () => true),
     invoke: vi.fn(async () => ({ callId: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d", status: "COMPLETED", data: { fileName: "policy.pdf" }, isError: false })),
-    recordDeniedInvocation: vi.fn(async () => undefined), listCalls: vi.fn(), listApprovals: vi.fn(), decideApproval: vi.fn(),
+    recordDeniedInvocation: vi.fn(async () => undefined), listCalls: vi.fn(),
     getRuntimeControl: vi.fn(), updateRuntimeControl: vi.fn(), metrics: vi.fn(),
   } as unknown as ToolingManager;
 }

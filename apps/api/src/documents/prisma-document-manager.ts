@@ -14,7 +14,7 @@ import {
   SupermemoryClient,
   SupermemoryUploadTooLargeError,
   type SupermemoryDocumentState,
-} from "@orcasynapse/document-runtime";
+} from "@orcasynapse/runtime-clients";
 import {
   DocumentConflictError,
   DocumentNotFoundError,

@@ -1202,6 +1202,12 @@ model GovernedToolCall {
   @@index([status, requestedAt])
 }
 
+/// INCOMPLETE SUBSYSTEM. Durable dispatch intent for approved CONSEQUENTIAL
+/// governed tool calls. Rows are written by PrismaToolingManager on approval
+/// but nothing reads this table - there is no executor draining it, so a call
+/// that reached here would stay EXECUTING forever. The dispatch consumer is
+/// the missing piece. Do not treat the presence of these columns as evidence
+/// that consequential tool execution works.
 model ToolActionDispatch {
   id             String                   @id @default(uuid()) @db.Uuid
   callId         String                   @unique @db.Uuid
@@ -1222,6 +1228,11 @@ model ToolActionDispatch {
   @@index([claimedAt])
 }
 
+/// INCOMPLETE SUBSYSTEM. Human approval for CONSEQUENTIAL governed tool calls
+/// that Hermes invokes through the OrcaSynapse MCP surface. No code path
+/// creates a ToolApproval today because invoke() denies CONSEQUENTIAL tools
+/// outright, so this table is always empty. Distinct from AgentRunApproval,
+/// which is the live allow-once approval Hermes raises during a chat run.
 model ToolApproval {
   id             String             @id @default(uuid()) @db.Uuid
   callId         String             @unique @db.Uuid

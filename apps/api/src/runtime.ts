@@ -27,7 +27,7 @@ import {
   PrismaRuntimeConnectionResolver,
   HermesClient,
   SupermemoryClient,
-} from "@orcasynapse/document-runtime";
+} from "@orcasynapse/runtime-clients";
 import type { DocumentManager } from "./documents/document-manager.js";
 import { PrismaDocumentManager } from "./documents/prisma-document-manager.js";
 import type { AgentManager } from "./agents/agent-manager.js";

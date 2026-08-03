@@ -24,8 +24,8 @@ function manager(): ToolingManager {
       id: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb", name, tokenPrefix: GATEWAY_TOKEN.slice(0, 20), token: GATEWAY_TOKEN,
       enabled: true, lastUsedAt: null, revokedAt: null, createdAt: "2026-07-30T00:00:00.000Z",
     })), revokeCredential: vi.fn(), authenticateGateway: vi.fn(async (token) => token === GATEWAY_TOKEN),
-    invoke: vi.fn(), recordDeniedInvocation: vi.fn(), listCalls: vi.fn(async () => ({ items: [] })), listApprovals: vi.fn(async () => ({ items: [] })),
-    decideApproval: vi.fn(), getRuntimeControl: vi.fn(async () => ({ enabled: false, reason: "Acceptance pending", approvalTtlMinutes: 15, updatedAt: "2026-07-30T00:00:00.000Z", updatedBy: null })),
+    invoke: vi.fn(), recordDeniedInvocation: vi.fn(), listCalls: vi.fn(async () => ({ items: [] })),
+    getRuntimeControl: vi.fn(async () => ({ enabled: false, reason: "Acceptance pending", approvalTtlMinutes: 15, updatedAt: "2026-07-30T00:00:00.000Z", updatedBy: null })),
     updateRuntimeControl: vi.fn(), metrics: vi.fn(async () => ({
       generatedAt: "2026-07-30T00:00:00.000Z", activeTools: 2, activeGrants: 0,
       pendingApprovals: 0, executingCalls: 0,
