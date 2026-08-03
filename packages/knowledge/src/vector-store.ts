@@ -1,7 +1,7 @@
 import { and, cosineDistance, desc, eq, gt, sql } from "drizzle-orm";
 import {
-  documentChunks,
-  documents,
+  documentChunk,
+  document,
   type OrcaSynapseDatabase,
 } from "@orcasynapse/database";
 
@@ -48,9 +48,9 @@ export class DocumentVectorStore {
     chunks: StoredChunk[],
   ): Promise<number> {
     return this.database.transaction(async (transaction) => {
-      await transaction.delete(documentChunks).where(eq(documentChunks.documentId, documentId));
+      await transaction.delete(documentChunk).where(eq(documentChunk.documentId, documentId));
       if (chunks.length === 0) return 0;
-      await transaction.insert(documentChunks).values(
+      await transaction.insert(documentChunk).values(
         chunks.map((chunk) => ({
           documentId,
           ownerSubject,
@@ -66,14 +66,14 @@ export class DocumentVectorStore {
   }
 
   async deleteDocumentChunks(documentId: string): Promise<void> {
-    await this.database.delete(documentChunks).where(eq(documentChunks.documentId, documentId));
+    await this.database.delete(documentChunk).where(eq(documentChunk.documentId, documentId));
   }
 
   async countChunks(documentId: string): Promise<number> {
     const [row] = await this.database
       .select({ total: sql<number>`count(*)::int` })
-      .from(documentChunks)
-      .where(eq(documentChunks.documentId, documentId));
+      .from(documentChunk)
+      .where(eq(documentChunk.documentId, documentId));
     return row?.total ?? 0;
   }
 
@@ -88,28 +88,28 @@ export class DocumentVectorStore {
     queryEmbedding: number[],
     options: VectorSearchOptions = DEFAULT_SEARCH_OPTIONS,
   ): Promise<ChunkHit[]> {
-    const similarity = sql<number>`1 - (${cosineDistance(documentChunks.embedding, queryEmbedding)})`;
-    const lexical = sql<number>`ts_rank_cd(to_tsvector('simple', ${documentChunks.content}), plainto_tsquery('simple', ${query}))`;
+    const similarity = sql<number>`1 - (${cosineDistance(documentChunk.embedding, queryEmbedding)})`;
+    const lexical = sql<number>`ts_rank_cd(to_tsvector('simple', ${documentChunk.content}), plainto_tsquery('simple', ${query}))`;
     // Weighted fusion rather than reciprocal rank: one ordered scan, and the
     // vector half stays dominant while lexical breaks near-ties.
     const fused = sql<number>`(${similarity}) + (0.15 * least(${lexical}, 1.0))`;
 
     const rows = await this.database
       .select({
-        documentId: documentChunks.documentId,
-        fileName: documents.fileName,
-        classification: documents.classification,
-        ordinal: documentChunks.ordinal,
-        content: documentChunks.content,
+        documentId: documentChunk.documentId,
+        fileName: document.fileName,
+        classification: document.classification,
+        ordinal: documentChunk.ordinal,
+        content: documentChunk.content,
         score: fused,
       })
-      .from(documentChunks)
-      .innerJoin(documents, eq(documents.id, documentChunks.documentId))
+      .from(documentChunk)
+      .innerJoin(document, eq(document.id, documentChunk.documentId))
       .where(
         and(
-          eq(documentChunks.ownerSubject, ownerSubject),
-          eq(documents.status, "READY"),
-          sql`${documents.deletedAt} IS NULL`,
+          eq(documentChunk.ownerSubject, ownerSubject),
+          eq(document.status, "READY"),
+          sql`${document.deletedAt} IS NULL`,
           gt(similarity, options.minimumScore),
         ),
       )
