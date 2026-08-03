@@ -12,7 +12,7 @@ This document is the sanitized transfer context for continuing OrcaSynapse work 
 - Baseline commit: `5209c11926de22bac26209a9f55624abb8d23da1` (`ai-v1.17.1`)
 - Baseline relationship: local `main` and `origin/main` are synchronized (`0` ahead, `0` behind).
 - Baseline verification: `pnpm verify` passes at this commit. Re-confirmed independently: 72 test files, 359 tests.
-- Current working branch: `fix/worker-run-durability` at `ai-v1.18.1`, one commit ahead of `main`, not yet pushed. See "Latest verified build state" for what it contains.
+- Current working branch: `fix/worker-run-durability` at `ai-v1.19.0`, one commit ahead of `main`, not yet pushed. See "Latest verified build state" for what it contains.
 - This file is the only expected uncommitted change unless later work says otherwise.
 
 Do not copy credentials from terminals, VM environment files, Docker secrets, PostgreSQL, or service logs into issues, commits, or future handoff documents.
@@ -154,7 +154,7 @@ Result on baseline commit `5209c11`:
 - Prisma schema validation: passed.
 - Web production build: passed; the largest generated chunks are the application shell (`index`, 380.87 kB) and Chat workspace (`chat-view`, 179.72 kB).
 
-Since that capture, `ai-v1.18.1` on branch `fix/worker-run-durability` landed five worker defects found by review rather than by a failing test. `pnpm verify` passes there with 72 test files and 368 tests; worker coverage went from 14 to 23 tests. The fixes are:
+Since that capture, `ai-v1.19.0` on branch `fix/worker-run-durability` landed five worker defects found by review rather than by a failing test. `pnpm verify` passes there with 72 test files and 368 tests; worker coverage went from 14 to 23 tests. The fixes are:
 
 1. Run discovery omitted `WAITING_FOR_APPROVAL`, permanently stranding any run whose worker restarted with an approval outstanding, leaving its chat message `PENDING`.
 2. Batch dispatch head-of-line blocked; replaced with slot accounting. The concurrency ceiling stays at five, so peak inference load is unchanged.

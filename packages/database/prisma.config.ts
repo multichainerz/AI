@@ -25,11 +25,10 @@ function readDatabaseUrl(): string {
   return "postgresql://orcasynapse:orcasynapse@localhost:5432/orcasynapse";
 }
 
+// Prisma remains only to generate the client the not-yet-migrated modules use.
+// Drizzle owns migrations; see drizzle.config.ts.
 export default defineConfig({
   schema: "prisma/schema.prisma",
-  migrations: {
-    path: "prisma/migrations",
-  },
   datasource: {
     url: readDatabaseUrl(),
   },

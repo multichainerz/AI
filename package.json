@@ -1,6 +1,6 @@
 {
   "name": "orcasynapse",
-  "version": "1.18.1",
+  "version": "1.19.0",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.14.0",
@@ -23,8 +23,8 @@
     "verify": "pnpm typecheck && pnpm test && pnpm build && pnpm db:validate",
     "security:audit": "pnpm audit --prod --audit-level high",
     "admin:provision": "node scripts/provision-local-admin.mjs",
-    "db:generate": "pnpm --filter @orcasynapse/database prisma:generate",
-    "db:validate": "pnpm --filter @orcasynapse/database prisma:validate",
+    "db:generate": "pnpm --filter @orcasynapse/database db:generate",
+    "db:validate": "pnpm --filter @orcasynapse/database db:check",
     "verify:postgres": "pnpm --filter @orcasynapse/database verify:postgres"
   },
   "devDependencies": {
