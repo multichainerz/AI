@@ -135,6 +135,14 @@ grep -Fq 'render_activity_progress "Initialize Supermemory embeddings"' "${REPOS
 grep -Fq 'verify_supermemory_document_pipeline "http://127.0.0.1:6767"' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 grep -Fq -- '--form '\''containerTags=orcasynapse-install-check'\''' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 grep -Fq 'BGE-M3 only embeds extracted text' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+# A node must not report ONLINE on the Hermes port alone. Hermes answers /health
+# well before Supermemory has loaded its model, so the heartbeat has to observe
+# both planes or the control plane sees a healthy runtime with unusable memory.
+grep -Fq 'http://127.0.0.1:6767/v4/openapi' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+if grep -Fq 'Restart=on-failure' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"; then
+  printf 'Supermemory unit can stay dead after a clean exit; use Restart=always\n' >&2
+  exit 1
+fi
 if grep -Fq '/dev/stdin' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"; then
   printf 'Agentic System installer still depends on non-portable /dev/stdin file copies\n' >&2
   exit 1

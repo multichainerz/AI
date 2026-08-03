@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="ai-v1.17.4"
+INSTALLER_VERSION="ai-v1.17.5"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 CONTAINER_NAME="orcasynapse-hermes"
 HEARTBEAT_SERVICE="orcasynapse-hermes-heartbeat"
@@ -801,7 +801,9 @@ Group=${SUPERMEMORY_USER}
 WorkingDirectory=${SUPERMEMORY_ROOT}
 EnvironmentFile=${SUPERMEMORY_ROOT}/runtime.env
 ExecStart=${install_dir}/bin/supermemory-server
-Restart=on-failure
+# always, not on-failure: a long-running memory plane that exits cleanly still
+# leaves Hermes without recall, and nothing else on VM2 would restart it.
+Restart=always
 RestartSec=5s
 NoNewPrivileges=true
 PrivateTmp=true
@@ -910,8 +912,14 @@ sign_request() {
   printf '%s' "${signature}"
 }
 
+# Hermes answers /health the moment its API server binds, which is long before
+# Supermemory has loaded its embedding model - and Docker restarts the Hermes
+# container independently of the Supermemory unit. Reporting ONLINE on the
+# Hermes port alone is how a node presents a healthy runtime whose memory plane
+# is unusable. Both planes must answer before this node claims to be online.
 hermes_status="DEGRADED"
-if curl --fail --silent --max-time 5 http://127.0.0.1:8642/health >/dev/null; then
+if curl --fail --silent --max-time 5 http://127.0.0.1:8642/health >/dev/null \
+  && curl --fail --silent --max-time 5 http://127.0.0.1:6767/v4/openapi >/dev/null; then
   hermes_status="ONLINE"
 fi
 observed_at="$(date --utc '+%Y-%m-%dT%H:%M:%SZ')"
