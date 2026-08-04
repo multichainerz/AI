@@ -149,6 +149,7 @@ export function createRuntimeServices(): RuntimeServices {
       documents: documentManager,
       agents: agentManager,
       tools: toolingManager,
+      audit: auditManager,
     });
     const onboardingManager = new DrizzleOnboardingManager(database, masterKey, aiOpsManager);
     const runtimeNodeManager = new DrizzleHermesRuntimeNodeManager(database, encryption, connectionTestService);

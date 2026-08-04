@@ -46,6 +46,7 @@ import type { DocumentManager } from "../documents/document-manager.js";
 import type { OperationsManager } from "../operations/operations-manager.js";
 import type { ToolingManager } from "../tooling/tooling-manager.js";
 import type { ModelManager } from "../models/model-manager.js";
+import type { AuditManager } from "../audit/audit-manager.js";
 import { AiOpsConflictError, AiOpsNotFoundError, type AiOpsManager } from "./ai-ops-manager.js";
 
 const HEALTH_FRESHNESS_MS = 15 * 60 * 1_000;
@@ -60,6 +61,7 @@ export interface AiOpsDependencies {
   documents: DocumentManager;
   agents: AgentManager;
   tools: ToolingManager;
+  audit?: AuditManager;
 }
 
 interface StoredIncident {
@@ -448,7 +450,7 @@ export class DrizzleAiOpsManager implements AiOpsManager {
 
   async overview(): Promise<AiOpsOverview> {
     const generatedAt = new Date();
-    const [connections, monitoring, models, runtime, chat, documents, agents, tools, activeGuardrail, activePrompt] = await Promise.all([
+    const [connections, monitoring, models, runtime, chat, documents, agents, tools, forwarding, activeGuardrail, activePrompt] = await Promise.all([
       settled(this.dependencies.connections.list()),
       this.dependencies.connectionMonitoring ? settled(this.dependencies.connectionMonitoring.getControl()) : Promise.resolve(null),
       this.dependencies.models ? settled(this.dependencies.models.list()) : Promise.resolve(null),
@@ -457,6 +459,7 @@ export class DrizzleAiOpsManager implements AiOpsManager {
       settled(this.dependencies.documents.metrics()),
       settled(this.dependencies.agents.metrics()),
       settled(this.dependencies.tools.metrics()),
+      this.dependencies.audit ? settled(this.dependencies.audit.forwarding()) : Promise.resolve(null),
       settled(this.database
         .select({
           id: guardrailPolicy.id,
@@ -524,6 +527,24 @@ export class DrizzleAiOpsManager implements AiOpsManager {
         observedAt: generatedAt.toISOString(),
         latencyMs: null,
         affectedWorkflows: ["CHAT", "KNOWLEDGE", "AGENTS", "TOOLS"],
+      });
+    }
+    if (forwarding) {
+      // The SIEM connection's own health check says whether the endpoint is
+      // reachable. It cannot say whether it is accepting the trail, so a
+      // rejecting destination would otherwise read as HEALTHY here while the
+      // audit view reported a failure.
+      components.push({
+        id: "audit-forwarding",
+        label: "Audit forwarding",
+        status: forwarding.status === "HEALTHY"
+          ? "HEALTHY"
+          : forwarding.status === "NOT_CONFIGURED" ? "NOT_CONFIGURED" : "DEGRADED",
+        summary: forwarding.summary,
+        source: "LIVE",
+        observedAt: forwarding.lastAttemptAt ?? generatedAt.toISOString(),
+        latencyMs: null,
+        affectedWorkflows: [],
       });
     }
     if (models) components.push(...models.items.map(modelComponent));
