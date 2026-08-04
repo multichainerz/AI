@@ -1,7 +1,9 @@
 import {
+  createDrizzleClient,
   createPrismaClient,
   hasBootstrapSecret,
   readBootstrapSecret,
+  type OrcaSynapseDatabase,
   type OrcaSynapsePrismaClient,
 } from "@orcasynapse/database";
 import { decodeMasterKey, EnvelopeEncryption } from "@orcasynapse/security";
@@ -16,7 +18,7 @@ import { ConnectionTestService } from "./connections/diagnostics/connection-test
 import { InferenceDiscoveryService } from "./connections/diagnostics/inference-discovery-service.js";
 import { ConnectionMonitorRuntime, type ConnectionMonitorService } from "./connections/connection-monitor.js";
 import type { OperationsManager } from "./operations/operations-manager.js";
-import { PrismaOperationsManager } from "./operations/prisma-operations-manager.js";
+import { DrizzleOperationsManager } from "./operations/drizzle-operations-manager.js";
 import type { ChatManager } from "./chat/chat-manager.js";
 import { PrismaChatManager } from "./chat/prisma-chat-manager.js";
 import {
@@ -71,6 +73,9 @@ export interface RuntimeServices {
   runtimeNodeManager?: HermesRuntimeNodeManager;
   inferenceGateway?: PrismaInferenceGateway;
   prisma?: OrcaSynapsePrismaClient;
+  database?: OrcaSynapseDatabase;
+  /** Closes the Drizzle pool. Prisma is torn down through its own client. */
+  closeDatabase?: () => Promise<void>;
 }
 
 export function getBootstrapState(): BootstrapState {
@@ -100,6 +105,7 @@ export function createRuntimeServices(): RuntimeServices {
   try {
     const databaseUrl = readBootstrapSecret("orcasynapse_database_url");
     const prisma = createPrismaClient(databaseUrl);
+    const { database, close: closeDatabase } = createDrizzleClient(databaseUrl);
     const masterKey = decodeMasterKey(readBootstrapSecret("orcasynapse_master_key"));
     const encryption = new EnvelopeEncryption({ masterKey });
     const authenticator = new InstallationKeyAuthenticator(
@@ -115,7 +121,7 @@ export function createRuntimeServices(): RuntimeServices {
       { error: (message, error) => console.error(message, error) },
     );
     const sessionManager = new PrismaAdminSessionManager(prisma, authenticator);
-    const operationsManager = new PrismaOperationsManager(prisma);
+    const operationsManager = new DrizzleOperationsManager(database);
     const documentResolver = new PrismaRuntimeConnectionResolver(prisma, encryption);
     const modelManager = new PrismaModelManager(prisma);
     const guardrailManager = new PrismaGuardrailManager(prisma);
@@ -144,6 +150,8 @@ export function createRuntimeServices(): RuntimeServices {
     return {
       bootstrapState,
       prisma,
+      database,
+      closeDatabase,
       sessionManager,
       connectionManager,
       connectionTestService,

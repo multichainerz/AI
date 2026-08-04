@@ -95,7 +95,11 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
         try {
           await runtime.operationsManager?.stop();
         } finally {
-          await runtime.prisma?.$disconnect();
+          try {
+            await runtime.prisma?.$disconnect();
+          } finally {
+            await runtime.closeDatabase?.();
+          }
         }
       }
     });
