@@ -9,6 +9,8 @@ import { agentRun, workerNode, type OrcaSynapseDatabase } from "@orcasynapse/dat
 import type { OperationsManager } from "./operations-manager.js";
 
 const STALE_AFTER_MS = 45_000;
+/** How often a dead executor is reaped without anyone watching the dashboard. */
+const RECONCILE_INTERVAL_MS = 30_000;
 const VISIBLE_EXECUTOR_HISTORY_MS = 24 * 60 * 60 * 1_000;
 const EXECUTOR_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
 
@@ -25,27 +27,45 @@ function workloadNames(value: unknown): RuntimeWorkloadName[] {
 }
 
 export class DrizzleOperationsManager implements OperationsManager {
-  constructor(private readonly database: OrcaSynapseDatabase) {}
+  private reconcileTimer: NodeJS.Timeout | undefined;
+
+  constructor(
+    private readonly database: OrcaSynapseDatabase,
+    private readonly reconcileIntervalMs = RECONCILE_INTERVAL_MS,
+  ) {}
 
   async start(): Promise<void> {
     await this.database
       .delete(workerNode)
       .where(lt(workerNode.lastSeenAt, new Date(Date.now() - EXECUTOR_RETENTION_MS)));
+    // A dead executor cannot mark itself stopped, and reconciliation used to run
+    // only when a snapshot was requested - so an unattended installation kept
+    // reporting a dead worker as ONLINE until somebody opened the dashboard.
+    this.reconcileTimer = setInterval(() => void this.reconcile(), this.reconcileIntervalMs);
+    this.reconcileTimer.unref();
   }
 
-  async stop(): Promise<void> {}
+  async stop(): Promise<void> {
+    if (this.reconcileTimer) clearInterval(this.reconcileTimer);
+    this.reconcileTimer = undefined;
+  }
+
+  /** Marks executors stopped once their heartbeat has gone stale. */
+  async reconcile(): Promise<number> {
+    const stopped = await this.database
+      .update(workerNode)
+      .set({ status: "STOPPED" })
+      .where(and(
+        eq(workerNode.status, "ONLINE"),
+        lt(workerNode.lastSeenAt, new Date(Date.now() - STALE_AFTER_MS)),
+      ))
+      .returning({ id: workerNode.id });
+    return stopped.length;
+  }
 
   async snapshot(): Promise<RuntimeOperationsSnapshot> {
     const capturedAt = new Date();
-    await this.database
-      .update(workerNode)
-      .set({ status: "STOPPED" })
-      .where(
-        and(
-          eq(workerNode.status, "ONLINE"),
-          lt(workerNode.lastSeenAt, new Date(capturedAt.getTime() - STALE_AFTER_MS)),
-        ),
-      );
+    await this.reconcile();
 
     const [agentGroups, executorRecords] = await Promise.all([
       this.database
