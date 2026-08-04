@@ -342,8 +342,9 @@ export const agentToolGrant = pgTable("AgentToolGrant", {
 	toolId: uuid().notNull(),
 	enabled: boolean().default(true).notNull(),
 	allowedGroups: text().array().notNull(),
-	// TODO: failed to parse database type 'AdministratorRole"[]'
-	allowedAdminRoles: bytea("allowedAdminRoles").array().notNull(),
+	// Adaptation: drizzle-kit could not introspect an enum array and fell back to
+	// bytea[], which the baseline then created. Corrected by migration 0001.
+	allowedAdminRoles: administratorRole("allowedAdminRoles").array().notNull(),
 	resourceScope: toolResourceScope().default('OWNER_ONLY').notNull(),
 	createdBy: uuid(),
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),

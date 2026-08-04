@@ -65,6 +65,17 @@ describe("committed Drizzle migrations", () => {
     expect(explicit.length).toBe(cosine.length);
   });
 
+  it("stores administrator role grants as an enum array rather than an opaque fallback", () => {
+    const statements = sql();
+    // Introspection could not parse AdministratorRole[] and fell back to
+    // bytea[], so the baseline created a column no role value can be written to.
+    // PostgreSQL has no bytea-to-enum cast, so the column is replaced outright.
+    expect(statements).toContain('ADD COLUMN "allowedAdminRoles" "public"."AdministratorRole"[]');
+    expect(statements).toContain('DROP COLUMN "allowedAdminRoles"');
+    // The baseline's mistake is the only bytea array the schema may contain.
+    expect(statements.match(/"bytea"\[\]/g) ?? []).toHaveLength(1);
+  });
+
   it("defaults array columns to empty rather than a parsed fragment", () => {
     // Introspection rendered ARRAY[]::text[] as '{RAY}', which would have made
     // every new row default to a bogus single-element array.
