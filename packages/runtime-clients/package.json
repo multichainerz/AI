@@ -1,6 +1,8 @@
 {
   "name": "@orcasynapse/runtime-clients",
-  "version": "0.3.0",
+  "version": "0.4.0",
+  "description": "Typed clients for the Hermes and Supermemory runtime services",
+  "license": "BUSL-1.1",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",

@@ -1,7 +1,17 @@
 {
   "name": "orcasynapse",
-  "version": "0.3.0",
+  "version": "0.4.0",
+  "description": "OrcaSynapse - on-premises AI operations and agentic control plane",
+  "license": "BUSL-1.1",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/multichainerz/AI.git"
+  },
+  "homepage": "https://github.com/multichainerz/AI#readme",
+  "bugs": {
+    "url": "https://github.com/multichainerz/AI/issues"
+  },
   "type": "module",
   "packageManager": "pnpm@10.14.0",
   "engines": {

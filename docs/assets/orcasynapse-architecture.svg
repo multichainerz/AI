@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="560" viewBox="0 0 1200 560" role="img" aria-labelledby="title description" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif">
+  <title id="title">OrcaSynapse production baseline</title>
+  <desc id="description">Two virtual machines plus an inference server. VM1 runs the OrcaSynapse control plane with PostgreSQL and pgvector holding control-plane state, document knowledge, and the append-only audit trail. VM2 runs the isolated Hermes agent runtime with Supermemory agent memory. VM1 calls an OpenAI-compatible inference server and can optionally forward audit batches to a customer SIEM.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1016"/>
+      <stop offset="1" stop-color="#131b28"/>
+    </linearGradient>
+    <linearGradient id="vm1" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7f9cff" stop-opacity=".16"/>
+      <stop offset="1" stop-color="#7457df" stop-opacity=".07"/>
+    </linearGradient>
+    <marker id="head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#7f9cff"/>
+    </marker>
+    <marker id="headMuted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#6b7a8f"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="560" rx="24" fill="url(#bg)"/>
+  <text x="40" y="46" fill="#7f9cff" font-size="14" font-weight="600" letter-spacing="2.4">ORCASYNAPSE · PRODUCTION BASELINE</text>
+  <text x="1160" y="46" fill="#6b7a8f" font-size="14" text-anchor="end">two VMs + one inference endpoint</text>
+
+  <!-- Browser -->
+  <rect x="30" y="246" width="150" height="78" rx="14" fill="#171e27" stroke="#2b3646"/>
+  <text x="105" y="279" fill="#f2f5fb" font-size="16" font-weight="600" text-anchor="middle">Browser</text>
+  <text x="105" y="301" fill="#9aa9bc" font-size="13" text-anchor="middle">people &amp; admins</text>
+  <line x1="182" y1="285" x2="216" y2="285" stroke="#7f9cff" stroke-width="2" marker-end="url(#head)"/>
+
+  <!-- VM1 -->
+  <rect x="220" y="90" width="360" height="400" rx="18" fill="url(#vm1)" stroke="#3c4a63"/>
+  <text x="244" y="122" fill="#7f9cff" font-size="13" font-weight="600" letter-spacing="1.8">VM1 · CONTROL PLANE</text>
+
+  <rect x="244" y="140" width="312" height="66" rx="12" fill="#121820" stroke="#27313c"/>
+  <text x="264" y="169" fill="#f2f5fb" font-size="17" font-weight="600">Dashboard · API · Worker</text>
+  <text x="264" y="191" fill="#9aa9bc" font-size="13">identity · policy · orchestration · guardrails</text>
+
+  <rect x="244" y="222" width="312" height="150" rx="12" fill="#121820" stroke="#27313c"/>
+  <text x="264" y="252" fill="#f2f5fb" font-size="17" font-weight="600">PostgreSQL 17 <tspan fill="#b9f5ff">+ pgvector</tspan></text>
+  <text x="264" y="283" fill="#9aa9bc" font-size="13">control-plane state · encrypted secrets</text>
+  <text x="264" y="309" fill="#9aa9bc" font-size="13">document knowledge: chunks + embeddings</text>
+  <text x="264" y="335" fill="#9aa9bc" font-size="13">append-only audit trail</text>
+  <text x="264" y="358" fill="#54c995" font-size="12">original files are never stored</text>
+
+  <rect x="244" y="388" width="312" height="62" rx="12" fill="#121820" stroke="#27313c"/>
+  <text x="264" y="415" fill="#f2f5fb" font-size="16" font-weight="600">Inference gateway</text>
+  <text x="264" y="436" fill="#9aa9bc" font-size="13">/internal/v1 · node-scoped credential</text>
+
+  <!-- VM2 -->
+  <rect x="700" y="90" width="460" height="172" rx="18" fill="#141b26" stroke="#3c4a63"/>
+  <text x="724" y="122" fill="#b9f5ff" font-size="13" font-weight="600" letter-spacing="1.8">VM2 · ISOLATED AGENTIC SYSTEM</text>
+  <rect x="724" y="140" width="198" height="98" rx="12" fill="#121820" stroke="#27313c"/>
+  <text x="744" y="171" fill="#f2f5fb" font-size="17" font-weight="600">Hermes runtime</text>
+  <text x="744" y="196" fill="#9aa9bc" font-size="13">sessions · skills</text>
+  <text x="744" y="218" fill="#9aa9bc" font-size="13">tools · subagents</text>
+  <rect x="938" y="140" width="198" height="98" rx="12" fill="#121820" stroke="#27313c"/>
+  <text x="958" y="171" fill="#f2f5fb" font-size="17" font-weight="600">Supermemory</text>
+  <text x="958" y="196" fill="#9aa9bc" font-size="13">agent memory only</text>
+  <text x="958" y="218" fill="#9aa9bc" font-size="13">recall · capture</text>
+
+  <!-- AI Inference -->
+  <rect x="700" y="302" width="460" height="94" rx="18" fill="#141b26" stroke="#3c4a63"/>
+  <text x="724" y="334" fill="#7f9cff" font-size="13" font-weight="600" letter-spacing="1.8">AI INFERENCE</text>
+  <text x="724" y="362" fill="#f2f5fb" font-size="17" font-weight="600">Any OpenAI-compatible server</text>
+  <text x="724" y="384" fill="#9aa9bc" font-size="13">vLLM · llama.cpp · SGLang · Ollama · TGI</text>
+
+  <!-- SIEM -->
+  <rect x="700" y="424" width="460" height="66" rx="18" fill="#10161f" stroke="#2b3646" stroke-dasharray="6 5"/>
+  <text x="724" y="453" fill="#f2f5fb" font-size="16" font-weight="600">Customer SIEM</text>
+  <text x="724" y="475" fill="#9aa9bc" font-size="13">forwarded audit batches · optional</text>
+
+  <!-- VM1 <-> VM2 -->
+  <line x1="582" y1="152" x2="696" y2="152" stroke="#7f9cff" stroke-width="2" marker-end="url(#head)"/>
+  <text x="639" y="142" fill="#9aa9bc" font-size="12.5" text-anchor="middle">governed runs</text>
+  <line x1="696" y1="212" x2="582" y2="212" stroke="#7f9cff" stroke-width="2" marker-end="url(#head)"/>
+  <text x="639" y="202" fill="#9aa9bc" font-size="12.5" text-anchor="middle">signed heartbeats</text>
+  <text x="639" y="234" fill="#9aa9bc" font-size="12.5" text-anchor="middle">model access</text>
+
+  <!-- VM1 -> inference -->
+  <line x1="582" y1="349" x2="696" y2="349" stroke="#7f9cff" stroke-width="2" marker-end="url(#head)"/>
+  <text x="639" y="339" fill="#9aa9bc" font-size="12.5" text-anchor="middle">approved alias</text>
+
+  <!-- VM1 -.-> SIEM -->
+  <line x1="582" y1="457" x2="696" y2="457" stroke="#6b7a8f" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#headMuted)"/>
+
+  <text x="600" y="524" fill="#6b7a8f" font-size="13" text-anchor="middle">Inference credentials never leave VM1 · Hermes never reaches PostgreSQL, Docker, or the open network</text>
+</svg>

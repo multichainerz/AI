@@ -9,142 +9,15 @@ ORCASYNAPSE_SECRET_DIR="${ORCASYNAPSE_ROOT}/.local/secrets"
 ORCASYNAPSE_APPLICATION_SECRET_GID=1000
 export ORCASYNAPSE_HTTP_PORT
 
-if [[ -t 1 && "${TERM:-dumb}" != "dumb" ]]; then
-  UI_INTERACTIVE=1
-else
-  UI_INTERACTIVE=0
-fi
+# shellcheck source=lib/installer-ui.sh
+. "${ORCASYNAPSE_ROOT}/scripts/lib/installer-ui.sh"
 
-if (( UI_INTERACTIVE )) && [[ -z "${NO_COLOR:-}" ]]; then
-  UI_BOLD=$'\033[1m'
-  UI_DIM=$'\033[2m'
-  UI_BLUE=$'\033[38;5;75m'
-  UI_CYAN=$'\033[38;5;80m'
-  UI_GREEN=$'\033[38;5;78m'
-  UI_AMBER=$'\033[38;5;214m'
-  UI_RED=$'\033[38;5;203m'
-  UI_RESET=$'\033[0m'
-else
-  UI_BOLD=""
-  UI_DIM=""
-  UI_BLUE=""
-  UI_CYAN=""
-  UI_GREEN=""
-  UI_AMBER=""
-  UI_RED=""
-  UI_RESET=""
-fi
+UI_BANNER_TAGLINE="PRIVATE AI CONTROL PLANE  /  VM1 PROVISIONING"
+UI_BANNER_ACTIVITY="Establishing secure installation context"
+TOTAL_STEPS=6
 
-ui_pause() {
-  (( UI_INTERACTIVE )) && sleep "${1:-0.08}"
-  return 0
-}
-
-banner() {
-  printf '%b' "${UI_BLUE}${UI_BOLD}"
-  cat <<'EOF'
-
-     ____                _____
-    / __ \___________ _ / ___/__  ______  ____ _____  ________
-   / / / / ___/ ___/  '/\__ \/ / / / __ \/ __ `/ __ \/ ___/ _ \
-  / /_/ / /  / /__/ /| |__/ / /_/ / / / / /_/ / /_/ (__  )  __/
-  \____/_/   \___/_/ |_/____/\__, /_/ /_/\__,_/ .___/____/\___/
-                             /____/            /_/
-
-EOF
-  printf '%b\n' "${UI_RESET}${UI_DIM}  PRIVATE AI CONTROL PLANE  /  VM1 PROVISIONING${UI_RESET}"
-  printf '%b\n' "${UI_DIM}  ----------------------------------------------------------------------${UI_RESET}"
-  if (( UI_INTERACTIVE )); then
-    local dots
-    printf '  Establishing secure installation context'
-    for dots in 1 2 3; do
-      printf '%b.%b' "${UI_CYAN}" "${UI_RESET}"
-      ui_pause 0.12
-    done
-    printf ' %bREADY%b\n' "${UI_GREEN}${UI_BOLD}" "${UI_RESET}"
-  fi
-}
-
-step() {
-  local current="$1" total="$2" label="$3" width=28 filled empty progress remainder
-  filled=$((current * width / total))
-  empty=$((width - filled))
-  printf -v progress '%*s' "${filled}" ''
-  printf -v remainder '%*s' "${empty}" ''
-  progress="${progress// /#}"
-  remainder="${remainder// /.}"
-  printf '\n%b  STEP %02d OF %02d%b  %b%s%b\n' \
-    "${UI_CYAN}${UI_BOLD}" "${current}" "${total}" "${UI_RESET}" "${UI_BOLD}" "${label}" "${UI_RESET}"
-  printf '  %b[%s%s]%b %3d%%\n' "${UI_BLUE}" "${progress}" "${remainder}" "${UI_RESET}" "$((current * 100 / total))"
-}
-
-info() {
-  printf '      %b>%b %s\n' "${UI_BLUE}" "${UI_RESET}" "$1"
-}
-
-success() {
-  printf '  %b[ OK ]%b %s\n' "${UI_GREEN}${UI_BOLD}" "${UI_RESET}" "$1"
-}
-
-warning() {
-  printf '  %b[WARN]%b %s\n' "${UI_AMBER}${UI_BOLD}" "${UI_RESET}" "$1" >&2
-}
-
-render_activity_progress() {
-  local label="$1" elapsed="$2" tick="$3" width=24 segment=6 span position
-  local leading trailing active bar
-  span=$((2 * (width - segment)))
-  position=$((tick % span))
-  (( position > width - segment )) && position=$((span - position))
-  printf -v leading '%*s' "${position}" ''
-  printf -v trailing '%*s' "$((width - segment - position))" ''
-  printf -v active '%*s' "${segment}" ''
-  active="${active// /=}"
-  bar="${leading}${active}${trailing}"
-  printf '\r\033[2K  %b[RUN]%b [%s] %-36.36s %4ss' \
-    "${UI_CYAN}${UI_BOLD}" "${UI_RESET}" "${bar}" "${label}" "${elapsed}"
-}
-
-run_with_progress() {
-  local label="$1"
-  shift
-  if (( ! UI_INTERACTIVE )); then
-    info "${label}"
-    "$@"
-    success "${label}"
-    return
-  fi
-
-  local log_file pid status=0 frame_index=0 started elapsed
-  log_file="$(mktemp /tmp/orcasynapse-command.XXXXXX)"
-  started="${SECONDS}"
-  "$@" >"${log_file}" 2>&1 &
-  pid=$!
-  printf '\033[?25l'
-  while kill -0 "${pid}" 2>/dev/null; do
-    elapsed=$((SECONDS - started))
-    render_activity_progress "${label}" "${elapsed}" "${frame_index}"
-    frame_index=$((frame_index + 1))
-    sleep 0.12
-  done
-  if wait "${pid}"; then status=0; else status=$?; fi
-  printf '\r\033[2K\033[?25h'
-  if (( status == 0 )); then
-    rm -f -- "${log_file}"
-    success "${label}"
-    return 0
-  fi
-
-  printf '  %b[FAIL]%b %s\n' "${UI_RED}${UI_BOLD}" "${UI_RESET}" "${label}" >&2
-  tail -n 120 "${log_file}" >&2 || true
-  rm -f -- "${log_file}"
-  return "${status}"
-}
-
-fail() {
-  printf '\n%bERROR%b %s\n' "${UI_RED}${UI_BOLD}" "${UI_RESET}" "$1" >&2
-  exit 1
-}
+# Restore the cursor if an animated section is interrupted, and close the log.
+trap 'ui_show_cursor; ui_log "install finished status=$?"' EXIT
 
 require_root() {
   if [[ "${EUID}" -ne 0 ]]; then
@@ -280,10 +153,83 @@ wait_for_orcasynapse() {
   until curl --fail --silent --show-error "http://127.0.0.1:${ORCASYNAPSE_HTTP_PORT}/readyz" >/dev/null 2>&1; do
     if (( SECONDS >= deadline )); then
       docker compose --project-directory "${ORCASYNAPSE_ROOT}" ps >&2 || true
+      docker compose --project-directory "${ORCASYNAPSE_ROOT}" logs --no-color --tail 120 api >&2 || true
       fail "OrcaSynapse did not become ready within five minutes; inspect 'docker compose logs'"
     fi
     sleep 2
   done
+}
+
+# The postgres service moved from postgres:17-alpine (musl) to
+# pgvector/pgvector:pg17 (glibc). Locale collation differs between the two
+# libcs, so text btree indexes built under the old image can be mis-ordered
+# under the new one. Reindex once for data volumes that predate the switch,
+# then record completion so subsequent runs skip it.
+reindex_after_libc_migration() {
+  local volume_preexisted="$1"
+  local state_dir="${ORCASYNAPSE_ROOT}/.local/state"
+  local marker="${state_dir}/postgres-libc-reindexed"
+  [[ -f "${marker}" ]] && return 0
+  if (( volume_preexisted )); then
+    run_with_progress "Reindex PostgreSQL after the base-image migration" \
+      docker compose exec -T postgres reindexdb --username orcasynapse --dbname orcasynapse --quiet \
+      || fail "could not reindex PostgreSQL after the base-image migration"
+  fi
+  install -d -m 0700 "${state_dir}"
+  : > "${marker}"
+  chmod 0600 "${marker}"
+}
+
+preflight_checks() {
+  docker info >/dev/null 2>&1 || fail "the Docker daemon is not running; start it with: systemctl start docker"
+
+  local stack_owns_port=0
+  if [[ -n "$(docker compose ps -q 2>/dev/null || true)" ]]; then
+    stack_owns_port=1
+    info "An existing OrcaSynapse stack is running and will be updated in place."
+  fi
+  if (( ! stack_owns_port )) && command -v ss >/dev/null 2>&1 \
+    && [[ -n "$(ss -ltnH "sport = :${ORCASYNAPSE_HTTP_PORT}" 2>/dev/null || true)" ]]; then
+    fail "TCP port ${ORCASYNAPSE_HTTP_PORT} is already in use; stop the conflicting service or set ORCASYNAPSE_HTTP_PORT"
+  fi
+
+  local free_root_gib free_docker_gib
+  free_root_gib="$(df -Pk "${ORCASYNAPSE_ROOT}" 2>/dev/null | awk 'NR==2 {print int($4/1048576)}' || true)"
+  free_docker_gib="$(df -Pk /var/lib/docker 2>/dev/null | awk 'NR==2 {print int($4/1048576)}' || true)"
+  free_docker_gib="${free_docker_gib:-${free_root_gib:-0}}"
+  if [[ -n "${free_root_gib}" ]] && (( free_root_gib < 5 )); then
+    fail "only ${free_root_gib} GiB free under ${ORCASYNAPSE_ROOT}; at least 5 GiB is required"
+  fi
+  if (( free_docker_gib < 5 )); then
+    fail "only ${free_docker_gib} GiB free under /var/lib/docker; at least 5 GiB is required for images and the database volume"
+  fi
+  if [[ -n "${free_root_gib}" ]] && (( free_root_gib < 10 )); then
+    warning "less than 10 GiB free under ${ORCASYNAPSE_ROOT}; plan for growth before production use"
+  fi
+
+  local memory_kib
+  memory_kib="$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || printf '0')"
+  if (( memory_kib > 0 && memory_kib < 4194304 )); then
+    warning "this host has less than 4 GiB of memory; the control plane may be slow under load"
+  fi
+
+  if all_secrets_exist; then
+    info "Protected secrets are present; existing installation state will be preserved."
+  else
+    info "No protected secrets found; this run bootstraps a new installation."
+  fi
+  success "Preflight checks passed."
+}
+
+# A machine-readable completion record for operators and support tooling.
+write_completion_marker() {
+  local version="$1" commit="$2" completed_at
+  completed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  install -d -m 0700 "${ORCASYNAPSE_ROOT}/.local/state"
+  printf '{"version":"%s","commit":"%s","completedAt":"%s"}\n' \
+    "${version}" "${commit}" "${completed_at}" \
+    > "${ORCASYNAPSE_ROOT}/.local/state/install-complete.json"
+  chmod 0600 "${ORCASYNAPSE_ROOT}/.local/state/install-complete.json"
 }
 
 provision_local_administrator() {
@@ -294,12 +240,10 @@ provision_local_administrator() {
       node apps/api/dist/auth/provision-local-admin.js --username admin --display-name 'Local Administrator')" \
     || fail "local administrator provisioning failed"
   if [[ "${result}" == *'"created":true'* ]]; then
-    printf '\n%b+----------------------------------------------------------------------+%b\n' "${UI_BLUE}${UI_BOLD}" "${UI_RESET}"
-    printf '%b|  %-68s|%b\n' "${UI_BLUE}${UI_BOLD}" "INITIAL LOCAL ADMINISTRATOR" "${UI_RESET}"
-    printf '%b+----------------------------------------------------------------------+%b\n' "${UI_BLUE}${UI_BOLD}" "${UI_RESET}"
-    printf '|  %-20s %-47s|\n' 'Username' 'admin'
-    printf '|  %-20s %-47s|\n' 'Temporary password' "${temporary_password}"
-    printf '%b+----------------------------------------------------------------------+%b\n\n' "${UI_BLUE}${UI_BOLD}" "${UI_RESET}"
+    ui_panel_begin "${UI_BLUE}" "INITIAL LOCAL ADMINISTRATOR" "-"
+    ui_panel_kv 'Username' 'admin'
+    ui_panel_kv 'Temporary password' "${temporary_password}"
+    ui_panel_end "${UI_BLUE}" "-"
     warning "Store this password until first login; it must be changed immediately."
   else
     success "The existing local administrator account was preserved."
@@ -307,26 +251,44 @@ provision_local_administrator() {
 }
 
 main() {
+  local release_version source_commit=""
+  release_version="$(installer_release_version)"
+  if [[ -r "${ORCASYNAPSE_ROOT}/.orcasynapse-source-commit" ]]; then
+    source_commit="$(<"${ORCASYNAPSE_ROOT}/.orcasynapse-source-commit")"
+  fi
+  UI_BANNER_META="Release ${release_version}${source_commit:+  /  source ${source_commit:0:12}}"
+
   if [[ "${ORCASYNAPSE_BOOTSTRAP_BRANDED:-0}" != "1" ]]; then
     banner
   else
     printf '\n%b  CONTROL PLANE PROVISIONING%b\n' "${UI_BLUE}${UI_BOLD}" "${UI_RESET}"
     printf '%b\n' "${UI_DIM}  ----------------------------------------------------------------------${UI_RESET}"
+    if [[ -n "${UI_BANNER_META}" ]]; then
+      printf '%b\n' "${UI_DIM}  ${UI_BANNER_META}${UI_RESET}"
+    fi
   fi
 
-  step 1 5 "Validate the host"
+  step 1 "${TOTAL_STEPS}" "Validate the host"
   require_root
+  install -d -m 0700 "${ORCASYNAPSE_ROOT}/.local/state"
+  UI_LOG_FILE="${ORCASYNAPSE_ROOT}/.local/state/install-$(date -u +%Y%m%dT%H%M%SZ).log"
+  : > "${UI_LOG_FILE}"
+  chmod 0600 "${UI_LOG_FILE}"
+  ui_log "installer release=${release_version} commit=${source_commit:-none}"
   install_host_dependencies
   validate_inputs
   success "Docker Compose and host dependencies are ready."
   cd "${ORCASYNAPSE_ROOT}"
   migrate_legacy_installation_secret
 
-  step 2 5 "Build the pinned release"
+  step 2 "${TOTAL_STEPS}" "Preflight the host for this release"
+  preflight_checks
+
+  step 3 "${TOTAL_STEPS}" "Build the pinned release"
   run_with_progress "Build verified application images" docker compose build \
     || fail "application image build failed"
 
-  step 3 5 "Protect installation secrets"
+  step 4 "${TOTAL_STEPS}" "Protect installation secrets"
   if all_secrets_exist; then
     success "Existing bootstrap material found and preserved."
   else
@@ -336,12 +298,17 @@ main() {
   protect_secret_files
   success "Secrets are host-protected and readable only by their intended container identities."
 
-  step 4 5 "Migrate PostgreSQL and start services"
+  step 5 "${TOTAL_STEPS}" "Migrate PostgreSQL and start services"
+  local postgres_volume_preexisted=0
+  if docker volume inspect orcasynapse_postgres_data >/dev/null 2>&1; then
+    postgres_volume_preexisted=1
+  fi
   start_stack
   run_with_progress "Wait for control-plane readiness" wait_for_orcasynapse \
     || fail "control-plane readiness checks failed"
+  reindex_after_libc_migration "${postgres_volume_preexisted}"
 
-  step 5 5 "Provision administrator access"
+  step 6 "${TOTAL_STEPS}" "Provision administrator access"
   provision_local_administrator
 
   local host_ip installation_key
@@ -349,16 +316,16 @@ main() {
   host_ip="${host_ip:-127.0.0.1}"
   installation_key="$(<"$(secret_file orcasynapse_installation_key)")"
 
-  printf '\n%b+======================================================================+%b\n' "${UI_GREEN}${UI_BOLD}" "${UI_RESET}"
-  printf '%b|  %-68s|%b\n' "${UI_GREEN}${UI_BOLD}" "ORCASYNAPSE IS READY" "${UI_RESET}"
-  printf '%b+======================================================================+%b\n' "${UI_GREEN}${UI_BOLD}" "${UI_RESET}"
-  printf '|  %-20s %-47s|\n' 'Dashboard' "http://${host_ip}:${ORCASYNAPSE_HTTP_PORT}/"
-  printf '|  %-68s|\n' 'Offline recovery Installation Key'
-  printf '|  %-68s|\n' "${installation_key}"
-  printf '%b+======================================================================+%b\n\n' "${UI_GREEN}${UI_BOLD}" "${UI_RESET}"
+  ui_panel_begin "${UI_GREEN}" "ORCASYNAPSE IS READY"
+  ui_panel_kv 'Dashboard' "http://${host_ip}:${ORCASYNAPSE_HTTP_PORT}/"
+  ui_panel_kv 'Release' "${release_version}${source_commit:+ (${source_commit:0:12})}"
+  ui_panel_line 'Offline recovery Installation Key'
+  ui_panel_line "${installation_key}"
+  ui_panel_end "${UI_GREEN}"
   warning "Store the Installation Key in your organization password vault before closing this terminal."
   info "It is for offline local-account recovery, does not expire, and is not the routine dashboard login."
   info "Export and verify the encrypted recovery kit before production activation."
+  write_completion_marker "${release_version}" "${source_commit:-unknown}"
   printf '\n%b  NEXT%b  Open the dashboard, change the temporary password, then connect AI Inference.\n' \
     "${UI_CYAN}${UI_BOLD}" "${UI_RESET}"
 }

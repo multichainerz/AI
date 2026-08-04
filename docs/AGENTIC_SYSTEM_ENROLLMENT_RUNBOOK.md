@@ -27,7 +27,7 @@ For production, enter a Hermes image digest and exact Supermemory release in the
 5. Run it against the same OrcaSynapse origin, then paste the claim at the hidden prompt:
 
    ```bash
-   curl --fail --show-error --location --progress-bar https://orcasynapse.example.internal/install/agentic-node.sh \
+   curl -fsSL https://orcasynapse.example.internal/install/agentic-node.sh \
      | sudo bash -s -- --connect https://orcasynapse.example.internal
    ```
 
@@ -40,7 +40,7 @@ For an offline administrative transfer, download the JSON bundle and run `sudo b
 
 Revocation and destruction are intentionally separate. Revoke the node first to disable its runtime credential and generated service connections. Then select **Remove** beside the revoked node and follow the dashboard's two-stage flow:
 
-1. Run the displayed `remove-agentic-node.sh` command on VM2 and type `DESTROY` at its local terminal. It stops and removes the managed Hermes container, Supermemory runtime and durable data, node identity, managed policy, heartbeat units, and the dedicated service account. It preserves Docker, unrelated containers, Ubuntu packages, and external backups.
+1. Run the displayed `remove-agentic-node.sh` command on VM2 and type `DESTROY` at its local terminal. It stops and removes the managed Hermes container, Supermemory runtime and durable data, node identity, managed policy, heartbeat units, and the dedicated service account. It preserves Docker, unrelated containers, Ubuntu packages, and external backups. The remover honors the same `ORCASYNAPSE_HERMES_STATE_ROOT`/`ORCASYNAPSE_SUPERMEMORY_STATE_ROOT` overrides the installer accepts, removes the recorded Hermes image layers even when the container was already deleted by hand, and reports its own version in the completion panel.
 2. Confirm the host-side result, type the exact node slug, and choose **Remove permanently**. OrcaSynapse transactionally removes the runtime-node record, enrollment claims, replay nonces, and generated Hermes/Supermemory connections. The security audit event remains.
 
 OrcaSynapse has no standing SSH credential or Docker socket on VM2, so host destruction is an explicit operator-attested action. If the VM has already been destroyed by the infrastructure platform, use that destruction event as the host-side evidence. Snapshot and backup retirement remains the infrastructure operator's responsibility.
@@ -62,6 +62,8 @@ OrcaSynapse has no standing SSH credential or Docker socket on VM2, so host dest
 
 After the claim is consumed, the installer writes a root-only `${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}/enrollment-state.json` recovery journal before installing memory or policy. If a later step fails, rerun the same command: the installer reuses the node identity and scoped configuration, repeats idempotent steps, and removes the recovery journal only after memory registration and heartbeat startup succeed.
 
+**Expected DEGRADED window:** the dashboard shows the node as `DEGRADED` between enrollment (step 5) and heartbeat startup (step 12). This is deliberate — a node must not report `ONLINE` until both Hermes and Supermemory answer, and Supermemory is installed after enrollment. The first timer heartbeat flips the node to `ONLINE` once both planes are healthy; a node that stays DEGRADED afterward has a real memory-plane problem.
+
 The inference bootstrap never contains the upstream serving credential. Revoking a node disables its generated Hermes connection and managed Supermemory connection.
 
 Supermemory auto-recall and auto-capture remain active in this baseline because the memory provider is not a native model-callable toolset.
@@ -72,7 +74,7 @@ Supermemory auto-recall and auto-capture remain active in this baseline because 
 | --- | --- | --- |
 | VM2 | OrcaSynapse HTTPS | enrollment, memory registration, heartbeat, inference gateway |
 | OrcaSynapse | VM2 TCP 8642 | Hermes health and governed agent calls |
-| OrcaSynapse worker | VM2 TCP 6767 | document publication and authorized retrieval |
+| OrcaSynapse | VM2 TCP 6767 | connection health and memory-registration verification |
 | Hermes container | VM2 TCP 6767 | native long-term memory |
 | VM2 | approved artifact registries | installation/upgrade only; mirror internally for air-gapped production |
 

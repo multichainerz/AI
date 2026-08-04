@@ -1,0 +1,50 @@
+name: Bug report
+description: Something in OrcaSynapse does not behave as documented.
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: From the release tag, installer banner, or packages/contracts/src/version.ts.
+      placeholder: v0.4.0
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      options:
+        - Dashboard (web)
+        - API
+        - Worker
+        - VM1 installer (install.sh / install-orcasynapse.sh)
+        - VM2 installer (install-agentic-node.sh)
+        - Enrollment / heartbeat
+        - Knowledge / documents
+        - Audit trail / SIEM forwarding
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what actually happened.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output
+      description: |
+        Logs, error messages, or installer output. Redact all secrets first —
+        no API keys, Installation Keys, enrollment claims, or passwords.
+      render: text
+  - type: checkboxes
+    id: hygiene
+    attributes:
+      label: Report hygiene
+      options:
+        - label: I redacted credentials and secrets from everything above.
+          required: true

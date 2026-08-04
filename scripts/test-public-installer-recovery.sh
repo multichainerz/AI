@@ -21,9 +21,12 @@ printf 'progress-test-payload\n' > "${test_root}/download-source"
 download_with_progress "Verify local transfer progress" \
   "file://${test_root}/download-source" "${test_root}/download-target"
 cmp "${test_root}/download-source" "${test_root}/download-target"
-grep -Fq 'render_activity_progress()' "${SCRIPT_ROOT}/scripts/install-orcasynapse.sh"
-grep -Fq 'render_activity_progress()' "${SCRIPT_ROOT}/scripts/install-agentic-node.sh"
+# The progress UI has one source of truth: tree-resident scripts source the
+# library, self-contained scripts embed it, and the sync tool proves the
+# embedded regions have not drifted.
+grep -Fq 'scripts/lib/installer-ui.sh' "${SCRIPT_ROOT}/scripts/install-orcasynapse.sh"
 grep -Fq 'render_supermemory_progress' "${SCRIPT_ROOT}/scripts/install-agentic-node.sh"
+bash "${SCRIPT_ROOT}/scripts/sync-installer-ui.sh" --check
 
 old_commit="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 new_commit="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"

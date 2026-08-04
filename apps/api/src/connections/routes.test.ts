@@ -322,7 +322,7 @@ describe("administrator connection routes", () => {
         kind: "INFERENCE",
         environment: "PRODUCTION",
         baseUrl: "https://vllm.orcasynapse.internal",
-        configuration: { documentsPath: "/v3/documents" },
+        configuration: { memoryTimeoutMs: 300_000 },
       },
     });
 

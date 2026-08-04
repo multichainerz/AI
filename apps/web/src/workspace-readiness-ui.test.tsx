@@ -29,20 +29,22 @@ describe("workspace readiness UI", () => {
     expect(html).toMatch(/<textarea[^>]*disabled=""/);
   });
 
-  it("keeps knowledge metadata visible while preventing uploads to degraded Supermemory", () => {
+  it("keeps knowledge uploads available independently of the VM2 memory plane", () => {
+    // Document knowledge is extracted and embedded locally since the pgvector
+    // migration; the Supermemory connection backs Hermes agent memory only, so
+    // its health must not gate uploads or appear in this workspace.
     const html = renderToStaticMarkup(<DocumentsView
       unlocked
       administrator
-      serviceReady={false}
       oidcConfigured={false}
       onSignIn={vi.fn()}
       onConfigure={vi.fn()}
       onUnauthorized={vi.fn()}
     />);
 
-    expect(html).toContain("Supermemory needs attention");
-    expect(html).toContain("Existing metadata remains visible");
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Memory unavailable<\/button>/);
-    expect(html).not.toContain("Direct Supermemory ingestion");
+    expect(html).toContain("Add source");
+    expect(html).toContain("private vector index");
+    expect(html).not.toContain("Supermemory");
+    expect(html).not.toContain("Memory unavailable");
   });
 });

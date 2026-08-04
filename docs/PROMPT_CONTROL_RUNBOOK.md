@@ -42,7 +42,7 @@ Prompt instructions never expand authorization. Identity scopes, local retrieval
 
 ## Acceptance checklist
 
-1. Apply migration `20260730001500_prompt_templates`.
+1. Confirm migrations are current (`PromptTemplate` ships in the Drizzle baseline; the compose `migrate` service applies it on every start).
 2. Create the approved draft without secrets and review its displayed checksum.
 3. Create, complete, and promote the exact `PROMPT` evaluation with `CHAT` and `SAFETY` evidence.
 4. Confirm activation rejects missing, mismatched, failed, or unpromoted evidence.

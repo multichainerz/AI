@@ -1,0 +1,2 @@
+ALTER TABLE "HermesRuntimeNode" ALTER COLUMN "hermesVersion" SET DATA TYPE varchar(256);--> statement-breakpoint
+ALTER TABLE "HermesRuntimeNode" ALTER COLUMN "installerVersion" SET DATA TYPE varchar(256);

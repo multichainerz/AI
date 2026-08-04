@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="320" viewBox="0 0 1200 320" role="img" aria-labelledby="title description">
   <title id="title">OrcaSynapse</title>
-  <desc id="description">OrcaSynapse on-prem AI operations and agentic control plane</desc>
+  <desc id="description">OrcaSynapse on-premises AI operations and agentic control plane</desc>
   <defs>
     <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#0b1016"/>
@@ -24,7 +24,7 @@
   <circle cx="221" cy="153" r="8" fill="#b9f5ff"/>
   <path d="m139 128 29-18m15 2 31 35" fill="none" stroke="#b9f5ff" stroke-width="6" stroke-linecap="round"/>
   <text x="310" y="153" fill="#f2f5fb" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="72" font-weight="700" letter-spacing="-3">OrcaSynapse</text>
-  <text x="314" y="198" fill="#9aa9bc" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="24" font-weight="500" letter-spacing="1.2">ON-PREMISE AI OPERATIONS &amp; AGENTIC CONTROL PLANE</text>
+  <text x="314" y="198" fill="#9aa9bc" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="24" font-weight="500" letter-spacing="1.2">ON-PREMISES AI OPERATIONS &amp; AGENTIC CONTROL PLANE</text>
   <path d="M314 222h694" stroke="#334257" stroke-width="2"/>
   <text x="314" y="252" fill="#7f9cff" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18" font-weight="600">Private inference  •  Isolated agents  •  Durable memory  •  Governed access</text>
 </svg>

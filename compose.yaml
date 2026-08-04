@@ -2,7 +2,10 @@ name: orcasynapse
 
 services:
   postgres:
-    image: postgres:17-alpine
+    # pgvector, not stock postgres: the migrator creates the vector extension
+    # and the baseline declares vector columns, so a plain image cannot apply
+    # migrations at all. Must stay identical to the CI service image.
+    image: pgvector/pgvector:pg17
     restart: unless-stopped
     environment:
       POSTGRES_DB: orcasynapse

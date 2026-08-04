@@ -80,6 +80,39 @@ describe("Hermes runtime-node contracts", () => {
     expect(enrollHermesNodeSchema.safeParse({ ...input, apiKey: "short" }).success).toBe(false);
   });
 
+  it("accepts digest-pinned image references from private registry mirrors", () => {
+    // A mirrored, digest-pinned reference legitimately exceeds the old
+    // 120-character cap; the column and contract both allow 256 now.
+    const pinned = `registry.internal.example:5000/mirrors/ai/nousresearch/hermes-agent:2026-08-01@sha256:${"a".repeat(64)}`;
+    expect(pinned.length).toBeGreaterThan(120);
+    const input = {
+      nodeId: "9de260d7-bc51-4558-9d20-06916d393072",
+      token: "t".repeat(43),
+      hostname: "hermes-01.internal",
+      publicKeyPem: `-----BEGIN PUBLIC KEY-----\n${"A".repeat(80)}\n-----END PUBLIC KEY-----`,
+      controlPlaneUrl: "https://orcasynapse.internal",
+      apiKey: "k".repeat(64),
+      hermesVersion: pinned,
+      installerVersion: "v0.4.0",
+      capabilities: ["gateway-api", "signed-heartbeat"],
+    };
+    expect(enrollHermesNodeSchema.safeParse(input).success).toBe(true);
+    expect(hermesNodeHeartbeatSchema.safeParse({
+      observedAt: "2026-08-05T00:00:00.000Z",
+      status: "ONLINE",
+      hermesVersion: pinned,
+      capabilities: [],
+    }).success).toBe(true);
+    // The widened cap is still a cap.
+    expect(enrollHermesNodeSchema.safeParse({ ...input, hermesVersion: "r".repeat(257) }).success).toBe(false);
+    expect(hermesNodeHeartbeatSchema.safeParse({
+      observedAt: "2026-08-05T00:00:00.000Z",
+      status: "ONLINE",
+      hermesVersion: "r".repeat(257),
+      capabilities: [],
+    }).success).toBe(false);
+  });
+
   it("rejects unbounded heartbeat and lifecycle input", () => {
     expect(registerHermesNodeMemorySchema.safeParse({
       baseUrl: "http://10.0.0.12:6767",

@@ -8,9 +8,6 @@ coverage/
 .local/
 secrets/
 
-# Generated Prisma client.
-packages/database/src/generated/
-
 # Local IDE and tooling state.
 .idea/
 .vscode/
