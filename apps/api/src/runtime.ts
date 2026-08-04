@@ -1,10 +1,8 @@
 import {
   createDrizzleClient,
-  createPrismaClient,
   hasBootstrapSecret,
   readBootstrapSecret,
   type OrcaSynapseDatabase,
-  type OrcaSynapsePrismaClient,
 } from "@orcasynapse/database";
 import { decodeMasterKey, EnvelopeEncryption } from "@orcasynapse/security";
 import { InstallationKeyAuthenticator } from "./auth/installation-key-auth.js";
@@ -38,7 +36,7 @@ import { DrizzleAgentManager } from "./agents/drizzle-agent-manager.js";
 import type { ToolingManager } from "./tooling/tooling-manager.js";
 import { DrizzleToolingManager } from "./tooling/drizzle-tooling-manager.js";
 import type { AiOpsManager } from "./ai-ops/ai-ops-manager.js";
-import { PrismaAiOpsManager } from "./ai-ops/prisma-ai-ops-manager.js";
+import { DrizzleAiOpsManager } from "./ai-ops/drizzle-ai-ops-manager.js";
 import type { ModelManager } from "./models/model-manager.js";
 import { DrizzleModelManager } from "./models/drizzle-model-manager.js";
 import type { GuardrailManager } from "./guardrails/guardrail-manager.js";
@@ -73,9 +71,8 @@ export interface RuntimeServices {
   onboardingManager?: OnboardingManager;
   runtimeNodeManager?: HermesRuntimeNodeManager;
   inferenceGateway?: DrizzleInferenceGateway;
-  prisma?: OrcaSynapsePrismaClient;
   database?: OrcaSynapseDatabase;
-  /** Closes the Drizzle pool. Prisma is torn down through its own client. */
+  /** Closes the single connection pool the control plane opens. */
   closeDatabase?: () => Promise<void>;
 }
 
@@ -105,7 +102,6 @@ export function createRuntimeServices(): RuntimeServices {
 
   try {
     const databaseUrl = readBootstrapSecret("orcasynapse_database_url");
-    const prisma = createPrismaClient(databaseUrl);
     const { database, close: closeDatabase } = createDrizzleClient(databaseUrl);
     const masterKey = decodeMasterKey(readBootstrapSecret("orcasynapse_master_key"));
     const encryption = new EnvelopeEncryption({ masterKey });
@@ -136,7 +132,7 @@ export function createRuntimeServices(): RuntimeServices {
     const agentManager = new DrizzleAgentManager(database, hermesClient);
     const chatManager = new DrizzleChatManager(database, agentManager);
     const toolingManager = new DrizzleToolingManager(database, hermesClient);
-    const aiOpsManager = new PrismaAiOpsManager(prisma, {
+    const aiOpsManager = new DrizzleAiOpsManager(database, {
       connections: connectionManager,
       connectionMonitoring: connectionMonitor,
       models: modelManager,
@@ -151,7 +147,6 @@ export function createRuntimeServices(): RuntimeServices {
     const inferenceGateway = new DrizzleInferenceGateway(database, connectionManager);
     return {
       bootstrapState,
-      prisma,
       database,
       closeDatabase,
       sessionManager,

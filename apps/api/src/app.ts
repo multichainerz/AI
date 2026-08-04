@@ -5,6 +5,7 @@ import {
   SERVICE_KINDS,
 } from "@orcasynapse/contracts";
 import helmet from "@fastify/helmet";
+import { sql } from "drizzle-orm";
 import Fastify, { type FastifyInstance } from "fastify";
 import { registerConnectionRoutes } from "./connections/routes.js";
 import { createRuntimeServices, type RuntimeServices } from "./runtime.js";
@@ -87,7 +88,7 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
     return payload;
   });
 
-  if (runtime.prisma || runtime.operationsManager || runtime.connectionMonitor) {
+  if (runtime.database || runtime.operationsManager || runtime.connectionMonitor) {
     app.addHook("onClose", async () => {
       try {
         await runtime.connectionMonitor?.stop();
@@ -95,11 +96,7 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
         try {
           await runtime.operationsManager?.stop();
         } finally {
-          try {
-            await runtime.prisma?.$disconnect();
-          } finally {
-            await runtime.closeDatabase?.();
-          }
+          await runtime.closeDatabase?.();
         }
       }
     });
@@ -111,7 +108,7 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
     } catch (error) {
       await Promise.allSettled([
         runtime.operationsManager.stop(),
-        runtime.prisma?.$disconnect() ?? Promise.resolve(),
+        runtime.closeDatabase?.() ?? Promise.resolve(),
       ]);
       throw error;
     }
@@ -137,11 +134,11 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
       service: "orcasynapse-api-readiness",
       timestamp: new Date().toISOString(),
     });
-    if (runtime.bootstrapState !== "READY" || !runtime.prisma) {
+    if (runtime.bootstrapState !== "READY" || !runtime.database) {
       return reply.code(503).send(response("degraded"));
     }
     try {
-      await runtime.prisma.$queryRaw`SELECT 1`;
+      await runtime.database.execute(sql`SELECT 1`);
       return response("ok");
     } catch {
       return reply.code(503).send(response("degraded"));

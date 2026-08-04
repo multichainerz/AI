@@ -1,4 +1,4 @@
-import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
+import type { OrcaSynapseDatabase } from "@orcasynapse/database";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OperationsManager } from "./operations/operations-manager.js";
 import { createApp } from "./app.js";
@@ -40,10 +40,9 @@ describe("OrcaSynapse API", () => {
     expect(locked.statusCode).toBe(503);
     expect(locked.json()).toMatchObject({ status: "degraded", service: "orcasynapse-api-readiness" });
 
-    const query = vi.fn(async () => [{ ready: 1 }]);
-    const disconnect = vi.fn(async () => undefined);
-    const prisma = { $queryRaw: query, $disconnect: disconnect } as unknown as OrcaSynapsePrismaClient;
-    const ready = await createApp({ logger: false, runtime: { bootstrapState: "READY", prisma } });
+    const query = vi.fn(async () => ({ rows: [{ ready: 1 }] }));
+    const database = { execute: query } as unknown as OrcaSynapseDatabase;
+    const ready = await createApp({ logger: false, runtime: { bootstrapState: "READY", database } });
     apps.push(ready);
     const response = await ready.inject({ method: "GET", url: "/readyz" });
     expect(response.statusCode).toBe(200);
@@ -54,21 +53,20 @@ describe("OrcaSynapse API", () => {
 
   it("releases runtime resources when job operations fail to start", async () => {
     const stop = vi.fn(async () => undefined);
-    const disconnect = vi.fn(async () => undefined);
+    const closeDatabase = vi.fn(async () => undefined);
     const operationsManager = {
       start: vi.fn(async () => {
         throw new Error("queue unavailable");
       }),
       stop,
     } as unknown as OperationsManager;
-    const prisma = { $disconnect: disconnect } as unknown as OrcaSynapsePrismaClient;
-
     await expect(createApp({
       logger: false,
-      runtime: { bootstrapState: "READY", operationsManager, prisma },
+      runtime: { bootstrapState: "READY", operationsManager, closeDatabase },
     })).rejects.toThrow("queue unavailable");
 
     expect(stop).toHaveBeenCalledOnce();
-    expect(disconnect).toHaveBeenCalledOnce();
+    // The single pool must be released when startup fails partway through.
+    expect(closeDatabase).toHaveBeenCalledOnce();
   });
 });
