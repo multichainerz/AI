@@ -43,7 +43,7 @@ import { PrismaModelManager } from "./models/prisma-model-manager.js";
 import type { GuardrailManager } from "./guardrails/guardrail-manager.js";
 import { PrismaGuardrailManager } from "./guardrails/prisma-guardrail-manager.js";
 import type { PromptManager } from "./prompts/prompt-manager.js";
-import { PrismaPromptManager } from "./prompts/prisma-prompt-manager.js";
+import { DrizzlePromptManager } from "./prompts/drizzle-prompt-manager.js";
 import type { OnboardingManager } from "./onboarding/onboarding-manager.js";
 import { PrismaOnboardingManager } from "./onboarding/prisma-onboarding-manager.js";
 import type { HermesRuntimeNodeManager } from "./runtime-nodes/runtime-node-manager.js";
@@ -125,7 +125,7 @@ export function createRuntimeServices(): RuntimeServices {
     const documentResolver = new DrizzleRuntimeConnectionResolver(database, encryption);
     const modelManager = new PrismaModelManager(prisma);
     const guardrailManager = new PrismaGuardrailManager(prisma);
-    const promptManager = new PrismaPromptManager(prisma);
+    const promptManager = new DrizzlePromptManager(database);
     const documentManager = new PrismaDocumentManager(
       prisma,
       new SupermemoryClient(documentResolver),

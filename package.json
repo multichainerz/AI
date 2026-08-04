@@ -1,6 +1,6 @@
 {
   "name": "orcasynapse",
-  "version": "1.19.3",
+  "version": "1.19.4",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.14.0",

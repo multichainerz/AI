@@ -64,7 +64,7 @@ export const workerLifecycleStatus = pgEnum("WorkerLifecycleStatus", ['ONLINE', 
 
 
 export const enterpriseUser = pgTable("EnterpriseUser", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	issuer: varchar({ length: 512 }).notNull(),
 	subject: varchar({ length: 255 }).notNull(),
 	email: varchar({ length: 320 }),
@@ -81,7 +81,7 @@ export const enterpriseUser = pgTable("EnterpriseUser", {
 ]);
 
 export const enterpriseUserSession = pgTable("EnterpriseUserSession", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	tokenHash: bytea("tokenHash").notNull(),
 	userId: uuid().notNull(),
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
@@ -104,7 +104,7 @@ export const enterpriseUserSession = pgTable("EnterpriseUserSession", {
 ]);
 
 export const auditEvent = pgTable("AuditEvent", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	occurredAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	actorType: auditActorType().notNull(),
 	actorId: uuid(),
@@ -123,7 +123,7 @@ export const auditEvent = pgTable("AuditEvent", {
 ]);
 
 export const secretRecord = pgTable("SecretRecord", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	serviceConnectionId: uuid().notNull(),
 	fieldName: varchar({ length: 120 }).notNull(),
 	encryptedValue: bytea("encryptedValue").notNull(),
@@ -149,7 +149,7 @@ export const secretRecord = pgTable("SecretRecord", {
 ]);
 
 export const configurationRevision = pgTable("ConfigurationRevision", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	serviceConnectionId: uuid().notNull(),
 	revision: integer().notNull(),
 	configuration: jsonb().notNull(),
@@ -169,7 +169,7 @@ export const configurationRevision = pgTable("ConfigurationRevision", {
 ]);
 
 export const agentProfile = pgTable("AgentProfile", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	slug: varchar({ length: 64 }).notNull(),
 	status: agentProfileStatus().default('DRAFT').notNull(),
 	currentVersion: integer().default(1).notNull(),
@@ -199,7 +199,7 @@ export const workerNode = pgTable("WorkerNode", {
 ]);
 
 export const chatFeedback = pgTable("ChatFeedback", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	messageId: uuid().notNull(),
 	ownerSubject: varchar({ length: 200 }).notNull(),
 	rating: chatFeedbackRating().notNull(),
@@ -226,7 +226,7 @@ export const agentRuntimeControl = pgTable("AgentRuntimeControl", {
 });
 
 export const agentProfileVersion = pgTable("AgentProfileVersion", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	profileId: uuid().notNull(),
 	version: integer().notNull(),
 	displayName: varchar({ length: 120 }).notNull(),
@@ -255,7 +255,7 @@ export const agentProfileVersion = pgTable("AgentProfileVersion", {
 ]);
 
 export const documentMemoryPublication = pgTable("DocumentMemoryPublication", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	documentId: uuid().notNull(),
 	ownerSubject: varchar({ length: 200 }).notNull(),
 	scopeTag: varchar({ length: 100 }).notNull(),
@@ -281,7 +281,7 @@ export const documentMemoryPublication = pgTable("DocumentMemoryPublication", {
 ]);
 
 export const chatConversation = pgTable("ChatConversation", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	ownerSubject: varchar({ length: 200 }).notNull(),
 	title: varchar({ length: 160 }).notNull(),
 	modelAlias: varchar({ length: 200 }).notNull(),
@@ -299,7 +299,7 @@ export const chatConversation = pgTable("ChatConversation", {
 ]);
 
 export const chatMessage = pgTable("ChatMessage", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	conversationId: uuid().notNull(),
 	ordinal: integer().notNull(),
 	role: chatMessageRole().notNull(),
@@ -337,7 +337,7 @@ export const chatMessage = pgTable("ChatMessage", {
 ]);
 
 export const agentToolGrant = pgTable("AgentToolGrant", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	profileVersionId: uuid().notNull(),
 	toolId: uuid().notNull(),
 	enabled: boolean().default(true).notNull(),
@@ -365,7 +365,7 @@ export const agentToolGrant = pgTable("AgentToolGrant", {
 ]);
 
 export const governedTool = pgTable("GovernedTool", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	slug: varchar({ length: 80 }).notNull(),
 	displayName: varchar({ length: 120 }).notNull(),
 	description: varchar({ length: 1000 }).notNull(),
@@ -381,7 +381,7 @@ export const governedTool = pgTable("GovernedTool", {
 ]);
 
 export const oidcAuthorizationRequest = pgTable("OidcAuthorizationRequest", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	serviceConnectionId: uuid().notNull(),
 	stateHash: bytea("stateHash").notNull(),
 	nonce: varchar({ length: 86 }).notNull(),
@@ -414,7 +414,7 @@ export const oidcAuthorizationRequest = pgTable("OidcAuthorizationRequest", {
 ]);
 
 export const mcpGatewayCredential = pgTable("McpGatewayCredential", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	name: varchar({ length: 120 }).notNull(),
 	tokenPrefix: varchar({ length: 32 }).notNull(),
 	tokenHash: bytea("tokenHash").notNull(),
@@ -431,7 +431,7 @@ export const mcpGatewayCredential = pgTable("McpGatewayCredential", {
 ]);
 
 export const operationalIncident = pgTable("OperationalIncident", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	activeFingerprint: varchar({ length: 160 }),
 	title: varchar({ length: 160 }).notNull(),
 	severity: operationalIncidentSeverity().notNull(),
@@ -469,7 +469,7 @@ export const toolRuntimeControl = pgTable("ToolRuntimeControl", {
 ]);
 
 export const governedToolCall = pgTable("GovernedToolCall", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	runId: uuid().notNull(),
 	toolId: uuid().notNull(),
 	grantId: uuid().notNull(),
@@ -508,7 +508,7 @@ export const governedToolCall = pgTable("GovernedToolCall", {
 ]);
 
 export const toolApproval = pgTable("ToolApproval", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	callId: uuid().notNull(),
 	status: toolApprovalStatus().default('PENDING').notNull(),
 	expiresAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull(),
@@ -528,7 +528,7 @@ export const toolApproval = pgTable("ToolApproval", {
 ]);
 
 export const evaluationRun = pgTable("EvaluationRun", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	name: varchar({ length: 160 }).notNull(),
 	targetType: evaluationTargetType().notNull(),
 	targetReference: varchar({ length: 240 }).notNull(),
@@ -583,7 +583,7 @@ export const productionReadinessControl = pgTable("ProductionReadinessControl", 
 ]);
 
 export const productionReadinessApproval = pgTable("ProductionReadinessApproval", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	role: productionReadinessApprovalRole().notNull(),
 	decision: productionReadinessApprovalDecision().notNull(),
 	authority: varchar({ length: 160 }).notNull(),
@@ -600,7 +600,7 @@ export const productionReadinessApproval = pgTable("ProductionReadinessApproval"
 ]);
 
 export const toolActionDispatch = pgTable("ToolActionDispatch", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	callId: uuid().notNull(),
 	status: toolActionDispatchStatus().default('PENDING').notNull(),
 	attemptCount: integer().default(0).notNull(),
@@ -639,7 +639,7 @@ export const connectionMonitoringControl = pgTable("ConnectionMonitoringControl"
 ]);
 
 export const serviceConnection = pgTable("ServiceConnection", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	slug: varchar({ length: 64 }).notNull(),
 	displayName: varchar({ length: 120 }).notNull(),
 	kind: serviceKind().notNull(),
@@ -665,7 +665,7 @@ export const serviceConnection = pgTable("ServiceConnection", {
 ]);
 
 export const modelDeployment = pgTable("ModelDeployment", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	slug: varchar({ length: 64 }).notNull(),
 	displayName: varchar({ length: 120 }).notNull(),
 	modelAlias: varchar({ length: 200 }).notNull(),
@@ -708,7 +708,7 @@ export const modelDeployment = pgTable("ModelDeployment", {
 ]);
 
 export const promptTemplate = pgTable("PromptTemplate", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	slug: varchar({ length: 64 }).notNull(),
 	displayName: varchar({ length: 120 }).notNull(),
 	description: varchar({ length: 500 }).notNull(),
@@ -792,7 +792,7 @@ export const componentCompatibility = pgTable("ComponentCompatibility", {
 ]);
 
 export const document = pgTable("Document", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	ownerSubject: varchar({ length: 200 }).notNull(),
 	fileName: varchar({ length: 255 }).notNull(),
 	mediaType: varchar({ length: 160 }).notNull(),
@@ -829,7 +829,7 @@ export const installationCredential = pgTable("InstallationCredential", {
 ]);
 
 export const agentRunEvent = pgTable("AgentRunEvent", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	runId: uuid().notNull(),
 	sourceEventId: varchar({ length: 255 }),
 	type: varchar({ length: 80 }).notNull(),
@@ -876,7 +876,7 @@ export const credentialRecoveryControl = pgTable("CredentialRecoveryControl", {
 });
 
 export const onboardingEvidence = pgTable("OnboardingEvidence", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	stageKey: varchar({ length: 80 }).notNull(),
 	componentKey: varchar({ length: 80 }),
 	source: onboardingEvidenceSource().notNull(),
@@ -906,7 +906,7 @@ export const platformArchitectureDecision = pgTable("PlatformArchitectureDecisio
 });
 
 export const hermesRuntimeNode = pgTable("HermesRuntimeNode", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	slug: varchar({ length: 64 }).notNull(),
 	displayName: varchar({ length: 120 }).notNull(),
 	baseUrl: text().notNull(),
@@ -940,7 +940,7 @@ export const hermesRuntimeNode = pgTable("HermesRuntimeNode", {
 ]);
 
 export const hermesNodeRequestNonce = pgTable("HermesNodeRequestNonce", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	nodeId: uuid().notNull(),
 	nonce: uuid().notNull(),
 	receivedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
@@ -955,7 +955,7 @@ export const hermesNodeRequestNonce = pgTable("HermesNodeRequestNonce", {
 ]);
 
 export const hermesNodeEnrollment = pgTable("HermesNodeEnrollment", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	nodeId: uuid().notNull(),
 	tokenHash: bytea("tokenHash").notNull(),
 	status: hermesNodeEnrollmentStatus().default('ISSUED').notNull(),
@@ -981,7 +981,7 @@ export const hermesNodeEnrollment = pgTable("HermesNodeEnrollment", {
 ]);
 
 export const guardrailPolicy = pgTable("GuardrailPolicy", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	slug: varchar({ length: 64 }).notNull(),
 	displayName: varchar({ length: 120 }).notNull(),
 	description: varchar({ length: 500 }).notNull(),
@@ -1012,7 +1012,7 @@ export const guardrailPolicy = pgTable("GuardrailPolicy", {
 ]);
 
 export const administratorSession = pgTable("AdministratorSession", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	tokenHash: bytea("tokenHash").notNull(),
 	subject: varchar({ length: 160 }).notNull(),
 	role: administratorRole().notNull(),
@@ -1033,7 +1033,7 @@ export const administratorSession = pgTable("AdministratorSession", {
 ]);
 
 export const localAdministrator = pgTable("LocalAdministrator", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	username: varchar({ length: 64 }).notNull(),
 	displayName: varchar({ length: 120 }).notNull(),
 	passwordHash: text().notNull(),
@@ -1052,7 +1052,7 @@ export const localAdministrator = pgTable("LocalAdministrator", {
 ]);
 
 export const agentRun = pgTable("AgentRun", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	profileId: uuid().notNull(),
 	profileVersionId: uuid().notNull(),
 	profileVersion: integer().notNull(),

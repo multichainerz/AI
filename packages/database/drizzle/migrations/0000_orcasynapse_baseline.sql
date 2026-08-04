@@ -44,7 +44,7 @@ CREATE TYPE "public"."ToolRisk" AS ENUM('READ_ONLY', 'CONSEQUENTIAL');--> statem
 CREATE TYPE "public"."ToolStatus" AS ENUM('ACTIVE', 'SUSPENDED');--> statement-breakpoint
 CREATE TYPE "public"."WorkerLifecycleStatus" AS ENUM('ONLINE', 'STOPPED');--> statement-breakpoint
 CREATE TABLE "AdministratorSession" (
-	"id" uuid PRIMARY KEY NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"tokenHash" "bytea" NOT NULL,
 	"subject" varchar(160) NOT NULL,
 	"role" "AdministratorRole" NOT NULL,
@@ -60,7 +60,7 @@ CREATE TABLE "AdministratorSession" (
 );
 --> statement-breakpoint
 CREATE TABLE "AgentProfile" (
-	"id" uuid PRIMARY KEY NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"slug" varchar(64) NOT NULL,
 	"status" "AgentProfileStatus" DEFAULT 'DRAFT' NOT NULL,
 	"currentVersion" integer DEFAULT 1 NOT NULL,
@@ -70,7 +70,7 @@ CREATE TABLE "AgentProfile" (
 );
 --> statement-breakpoint
 CREATE TABLE "AgentProfileVersion" (
-	"id" uuid PRIMARY KEY NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"profileId" uuid NOT NULL,
 	"version" integer NOT NULL,
 	"displayName" varchar(120) NOT NULL,
@@ -91,7 +91,7 @@ CREATE TABLE "AgentProfileVersion" (
 );
 --> statement-breakpoint
 CREATE TABLE "AgentRun" (
-	"id" uuid PRIMARY KEY NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"profileId" uuid NOT NULL,
 	"profileVersionId" uuid NOT NULL,
 	"profileVersion" integer NOT NULL,
@@ -151,7 +151,7 @@ CREATE TABLE "AgentRunApproval" (
 );
 --> statement-breakpoint
 CREATE TABLE "AgentRunEvent" (
-	"id" uuid PRIMARY KEY NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"runId" uuid NOT NULL,
 	"sourceEventId" varchar(255),
 	"type" varchar(80) NOT NULL,
@@ -182,7 +182,7 @@ CREATE TABLE "AgentRuntimeControl" (
 );
 --> statement-breakpoint
 CREATE TABLE "AgentToolGrant" (
-	"id" uuid PRIMARY KEY NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"profileVersionId" uuid NOT NULL,
 	"toolId" uuid NOT NULL,
 	"enabled" boolean DEFAULT true NOT NULL,
@@ -196,7 +196,7 @@ CREATE TABLE "AgentToolGrant" (
 );
 --> statement-breakpoint
 CREATE TABLE "AuditEvent" (
-	"id" uuid PRIMARY KEY NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"occurredAt" timestamp (6) with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
 	"actorType" "AuditActorType" NOT NULL,
 	"actorId" uuid,
@@ -210,7 +210,7 @@ CREATE TABLE "AuditEvent" (
 );
 --> statement-breakpoint
 CREATE TABLE "ChatConversation" (
-	"id" uuid PRIMARY KEY NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"ownerSubject" varchar(200) NOT NULL,
 	"title" varchar(160) NOT NULL,
 	"modelAlias" varchar(200) NOT NULL,
@@ -225,7 +225,7 @@ CREATE TABLE "ChatConversation" (
 );
 --> statement-breakpoint
 CREATE TABLE "ChatFeedback" (
-	"id" uuid PRIMARY KEY NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"messageId" uuid NOT NULL,
 	"ownerSubject" varchar(200) NOT NULL,
 	"rating" "ChatFeedbackRating" NOT NULL,
@@ -235,7 +235,7 @@ CREATE TABLE "ChatFeedback" (
 );
 --> statement-breakpoint
 CREATE TABLE "ChatMessage" (
-	"id" uuid PRIMARY KEY NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"conversationId" uuid NOT NULL,
 	"ordinal" integer NOT NULL,
 	"role" "ChatMessageRole" NOT NULL,
@@ -275,7 +275,7 @@ CREATE TABLE "ComponentCompatibility" (
 );
 --> statement-breakpoint
 CREATE TABLE "ConfigurationRevision" (
-	"id" uuid PRIMARY KEY NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"serviceConnectionId" uuid NOT NULL,
 	"revision" integer NOT NULL,
 	"configuration" jsonb NOT NULL,
@@ -311,7 +311,7 @@ CREATE TABLE "CredentialRecoveryControl" (
 );
 --> statement-breakpoint
 CREATE TABLE "Document" (
-	"id" uuid PRIMARY KEY NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"ownerSubject" varchar(200) NOT NULL,
 	"fileName" varchar(255) NOT NULL,
 	"mediaType" varchar(160) NOT NULL,
@@ -342,7 +342,7 @@ CREATE TABLE "DocumentChunk" (
 );
 --> statement-breakpoint
 CREATE TABLE "DocumentMemoryPublication" (
-	"id" uuid PRIMARY KEY NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"documentId" uuid NOT NULL,
 	"ownerSubject" varchar(200) NOT NULL,
 	"scopeTag" varchar(100) NOT NULL,
@@ -358,7 +358,7 @@ CREATE TABLE "DocumentMemoryPublication" (
 );
 --> statement-breakpoint
 CREATE TABLE "EnterpriseUser" (
-	"id" uuid PRIMARY KEY NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"issuer" varchar(512) NOT NULL,
 	"subject" varchar(255) NOT NULL,
 	"email" varchar(320),
@@ -371,7 +371,7 @@ CREATE TABLE "EnterpriseUser" (
 );
 --> statement-breakpoint
 CREATE TABLE "EnterpriseUserSession" (
-	"id" uuid PRIMARY KEY NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"tokenHash" "bytea" NOT NULL,
 	"userId" uuid NOT NULL,
 	"createdAt" timestamp (6) with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
@@ -384,7 +384,7 @@ CREATE TABLE "EnterpriseUserSession" (
 );
 --> statement-breakpoint
 CREATE TABLE "EvaluationRun" (
-	"id" uuid PRIMARY KEY NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"name" varchar(160) NOT NULL,
 	"targetType" "EvaluationTargetType" NOT NULL,
 	"targetReference" varchar(240) NOT NULL,
@@ -412,7 +412,7 @@ CREATE TABLE "EvaluationRun" (
 );
 --> statement-breakpoint
 CREATE TABLE "GovernedTool" (
-	"id" uuid PRIMARY KEY NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"slug" varchar(80) NOT NULL,
 	"displayName" varchar(120) NOT NULL,
 	"description" varchar(1000) NOT NULL,
@@ -425,7 +425,7 @@ CREATE TABLE "GovernedTool" (
 );
 --> statement-breakpoint
 CREATE TABLE "GovernedToolCall" (
-	"id" uuid PRIMARY KEY NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"runId" uuid NOT NULL,
 	"toolId" uuid NOT NULL,
 	"grantId" uuid NOT NULL,
@@ -444,7 +444,7 @@ CREATE TABLE "GovernedToolCall" (
 );
 --> statement-breakpoint
 CREATE TABLE "GuardrailPolicy" (
-	"id" uuid PRIMARY KEY NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"slug" varchar(64) NOT NULL,
 	"displayName" varchar(120) NOT NULL,
 	"description" varchar(500) NOT NULL,
@@ -465,7 +465,7 @@ CREATE TABLE "GuardrailPolicy" (
 );
 --> statement-breakpoint
 CREATE TABLE "HermesNodeEnrollment" (
-	"id" uuid PRIMARY KEY NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"nodeId" uuid NOT NULL,
 	"tokenHash" "bytea" NOT NULL,
 	"status" "HermesNodeEnrollmentStatus" DEFAULT 'ISSUED' NOT NULL,
@@ -482,14 +482,14 @@ CREATE TABLE "HermesNodeEnrollment" (
 );
 --> statement-breakpoint
 CREATE TABLE "HermesNodeRequestNonce" (
-	"id" uuid PRIMARY KEY NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"nodeId" uuid NOT NULL,
 	"nonce" uuid NOT NULL,
 	"receivedAt" timestamp (6) with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE "HermesRuntimeNode" (
-	"id" uuid PRIMARY KEY NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"slug" varchar(64) NOT NULL,
 	"displayName" varchar(120) NOT NULL,
 	"baseUrl" text NOT NULL,
@@ -522,7 +522,7 @@ CREATE TABLE "InstallationCredential" (
 );
 --> statement-breakpoint
 CREATE TABLE "LocalAdministrator" (
-	"id" uuid PRIMARY KEY NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"username" varchar(64) NOT NULL,
 	"displayName" varchar(120) NOT NULL,
 	"passwordHash" text NOT NULL,
@@ -538,7 +538,7 @@ CREATE TABLE "LocalAdministrator" (
 );
 --> statement-breakpoint
 CREATE TABLE "McpGatewayCredential" (
-	"id" uuid PRIMARY KEY NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"name" varchar(120) NOT NULL,
 	"tokenPrefix" varchar(32) NOT NULL,
 	"tokenHash" "bytea" NOT NULL,
@@ -551,7 +551,7 @@ CREATE TABLE "McpGatewayCredential" (
 );
 --> statement-breakpoint
 CREATE TABLE "ModelDeployment" (
-	"id" uuid PRIMARY KEY NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"slug" varchar(64) NOT NULL,
 	"displayName" varchar(120) NOT NULL,
 	"modelAlias" varchar(200) NOT NULL,
@@ -577,7 +577,7 @@ CREATE TABLE "ModelDeployment" (
 );
 --> statement-breakpoint
 CREATE TABLE "OidcAuthorizationRequest" (
-	"id" uuid PRIMARY KEY NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"serviceConnectionId" uuid NOT NULL,
 	"stateHash" "bytea" NOT NULL,
 	"nonce" varchar(86) NOT NULL,
@@ -601,7 +601,7 @@ CREATE TABLE "OidcAuthorizationRequest" (
 );
 --> statement-breakpoint
 CREATE TABLE "OnboardingEvidence" (
-	"id" uuid PRIMARY KEY NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"stageKey" varchar(80) NOT NULL,
 	"componentKey" varchar(80),
 	"source" "OnboardingEvidenceSource" NOT NULL,
@@ -646,7 +646,7 @@ CREATE TABLE "OnboardingStep" (
 );
 --> statement-breakpoint
 CREATE TABLE "OperationalIncident" (
-	"id" uuid PRIMARY KEY NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"activeFingerprint" varchar(160),
 	"title" varchar(160) NOT NULL,
 	"severity" "OperationalIncidentSeverity" NOT NULL,
@@ -679,7 +679,7 @@ CREATE TABLE "PlatformArchitectureDecision" (
 );
 --> statement-breakpoint
 CREATE TABLE "ProductionReadinessApproval" (
-	"id" uuid PRIMARY KEY NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"role" "ProductionReadinessApprovalRole" NOT NULL,
 	"decision" "ProductionReadinessApprovalDecision" NOT NULL,
 	"authority" varchar(160) NOT NULL,
@@ -714,7 +714,7 @@ CREATE TABLE "ProductionReadinessControl" (
 );
 --> statement-breakpoint
 CREATE TABLE "PromptTemplate" (
-	"id" uuid PRIMARY KEY NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"slug" varchar(64) NOT NULL,
 	"displayName" varchar(120) NOT NULL,
 	"description" varchar(500) NOT NULL,
@@ -735,7 +735,7 @@ CREATE TABLE "PromptTemplate" (
 );
 --> statement-breakpoint
 CREATE TABLE "SecretRecord" (
-	"id" uuid PRIMARY KEY NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"serviceConnectionId" uuid NOT NULL,
 	"fieldName" varchar(120) NOT NULL,
 	"encryptedValue" "bytea" NOT NULL,
@@ -753,7 +753,7 @@ CREATE TABLE "SecretRecord" (
 );
 --> statement-breakpoint
 CREATE TABLE "ServiceConnection" (
-	"id" uuid PRIMARY KEY NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"slug" varchar(64) NOT NULL,
 	"displayName" varchar(120) NOT NULL,
 	"kind" "ServiceKind" NOT NULL,
@@ -774,7 +774,7 @@ CREATE TABLE "ServiceConnection" (
 );
 --> statement-breakpoint
 CREATE TABLE "ToolActionDispatch" (
-	"id" uuid PRIMARY KEY NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"callId" uuid NOT NULL,
 	"status" "ToolActionDispatchStatus" DEFAULT 'PENDING' NOT NULL,
 	"attemptCount" integer DEFAULT 0 NOT NULL,
@@ -793,7 +793,7 @@ CREATE TABLE "ToolActionDispatch" (
 );
 --> statement-breakpoint
 CREATE TABLE "ToolApproval" (
-	"id" uuid PRIMARY KEY NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"callId" uuid NOT NULL,
 	"status" "ToolApprovalStatus" DEFAULT 'PENDING' NOT NULL,
 	"expiresAt" timestamp (6) with time zone NOT NULL,
