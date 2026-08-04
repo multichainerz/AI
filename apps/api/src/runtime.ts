@@ -9,7 +9,7 @@ import {
 import { decodeMasterKey, EnvelopeEncryption } from "@orcasynapse/security";
 import { InstallationKeyAuthenticator } from "./auth/installation-key-auth.js";
 import {
-  PrismaAdminSessionManager,
+  DrizzleAdminSessionManager,
   type AdminSessionManager,
 } from "./auth/admin-session.js";
 import type { ConnectionManager } from "./connections/connection-manager.js";
@@ -121,7 +121,7 @@ export function createRuntimeServices(): RuntimeServices {
       connectionTestService,
       { error: (message, error) => console.error(message, error) },
     );
-    const sessionManager = new PrismaAdminSessionManager(prisma, authenticator);
+    const sessionManager = new DrizzleAdminSessionManager(database, authenticator);
     const operationsManager = new DrizzleOperationsManager(database);
     const documentResolver = new DrizzleRuntimeConnectionResolver(database, encryption);
     const modelManager = new DrizzleModelManager(database);

@@ -1,5 +1,12 @@
-import { createPrismaClient, readBootstrapSecret } from "@orcasynapse/database";
+import { eq } from "drizzle-orm";
+import {
+  auditEvent,
+  createDrizzleClient,
+  localAdministrator,
+  readBootstrapSecret,
+} from "@orcasynapse/database";
 import { hashLocalPassword, localPasswordIsValid } from "@orcasynapse/security";
+import { advisoryLock } from "../database-support.js";
 
 function argument(name: string): string | undefined {
   const index = process.argv.indexOf(name);
@@ -25,33 +32,40 @@ if (!localPasswordIsValid(password)) {
   throw new Error("The temporary local administrator password is invalid.");
 }
 
-const prisma = createPrismaClient(readBootstrapSecret("orcasynapse_database_url"));
+const { database, close } = createDrizzleClient(readBootstrapSecret("orcasynapse_database_url"));
 try {
-  const result = await prisma.$transaction(async (transaction) => {
-    await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`orcasynapse-local-admin:${username}`}, 0))`;
-    const existing = await transaction.localAdministrator.findUnique({ where: { username } });
+  const result = await database.transaction(async (transaction) => {
+    await transaction.execute(advisoryLock(`orcasynapse-local-admin:${username}`));
+    const [existing] = await transaction
+      .select({ username: localAdministrator.username })
+      .from(localAdministrator)
+      .where(eq(localAdministrator.username, username))
+      .limit(1);
     if (existing) return { created: false, username: existing.username };
 
-    const created = await transaction.localAdministrator.create({
-      data: {
+    const [created] = await transaction
+      .insert(localAdministrator)
+      .values({
         username,
         displayName,
         passwordHash: await hashLocalPassword(password),
         role: "PLATFORM_ADMIN",
         passwordChangeRequired: true,
-      },
-    });
-    await transaction.auditEvent.create({ data: {
+      })
+      .returning({ id: localAdministrator.id, username: localAdministrator.username });
+    if (!created) throw new Error("The local administrator account could not be provisioned.");
+
+    await transaction.insert(auditEvent).values({
       actorType: "SYSTEM",
       action: "administrator.local_account_provisioned",
       resourceType: "LocalAdministrator",
       resourceId: created.id,
       outcome: "SUCCESS",
       metadata: { username: created.username, requiresPasswordChange: true },
-    } });
+    });
     return { created: true, username: created.username };
   });
   process.stdout.write(`${JSON.stringify(result)}\n`);
 } finally {
-  await prisma.$disconnect();
+  await close();
 }
