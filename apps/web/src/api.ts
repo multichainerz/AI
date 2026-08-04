@@ -1,4 +1,5 @@
 import {
+  architectureDecisionSchema,
   auditEventListSchema,
   connectionTestResultSchema,
   connectionMonitoringControlSchema,
@@ -22,6 +23,11 @@ import {
   type AdministratorSession,
   type AuditEventList,
   type AuditEventQuery,
+  type ArchitectureDecision,
+  type CompleteOnboarding,
+  type UpdateArchitectureDecision,
+  type UpdateComponentCompatibility,
+  type UpdateOnboardingStep,
   type CreateServiceConnection,
   type ConnectionTestResult,
   type ConnectionMonitoringControl,
@@ -913,6 +919,42 @@ export async function getOnboardingSnapshot(): Promise<OnboardingSnapshot> {
 
 export async function runOnboardingValidation(input: RunOnboardingValidation = {}): Promise<OnboardingSnapshot> {
   const response = await fetch("/api/v1/admin/onboarding/validate", {
+    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return onboardingSnapshotSchema.parse(await parsedResponse(response));
+}
+
+export async function updateArchitectureDecision(
+  input: UpdateArchitectureDecision,
+): Promise<ArchitectureDecision> {
+  const response = await fetch("/api/v1/admin/onboarding/architecture", {
+    method: "PATCH", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return architectureDecisionSchema.parse(await parsedResponse(response));
+}
+
+export async function updateOnboardingComponent(
+  key: string,
+  input: UpdateComponentCompatibility,
+): Promise<OnboardingSnapshot> {
+  const response = await fetch(`/api/v1/admin/onboarding/components/${encodeURIComponent(key)}`, {
+    method: "PATCH", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return onboardingSnapshotSchema.parse(await parsedResponse(response));
+}
+
+export async function updateOnboardingStep(
+  key: string,
+  input: UpdateOnboardingStep,
+): Promise<OnboardingSnapshot> {
+  const response = await fetch(`/api/v1/admin/onboarding/steps/${encodeURIComponent(key)}`, {
+    method: "PATCH", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return onboardingSnapshotSchema.parse(await parsedResponse(response));
+}
+
+export async function completeOnboarding(input: CompleteOnboarding): Promise<OnboardingSnapshot> {
+  const response = await fetch("/api/v1/admin/onboarding/complete", {
     method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
   });
   return onboardingSnapshotSchema.parse(await parsedResponse(response));
