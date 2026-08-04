@@ -1,8 +1,9 @@
 import { timingSafeEqual } from "node:crypto";
 import type { InferenceBackend, InferenceGatewayChatRequest } from "@orcasynapse/contracts";
-import { and, eq, gte, isNotNull, notInArray, sql } from "drizzle-orm";
+import { and, eq, gte, isNotNull, lt, notInArray, sql } from "drizzle-orm";
 import {
   auditEvent,
+  inferenceGatewayRequest,
   guardrailPolicy,
   modelDeployment,
   serviceConnection,
@@ -222,19 +223,29 @@ export class DrizzleInferenceGateway {
       // Serialises counting and recording for this runtime, so two concurrent
       // requests cannot both observe a count below the limit and pass.
       await transaction.execute(advisoryLock(`orcasynapse-inference-gateway:${runtimeConnectionId}`));
+      const windowStartedAt = new Date(Date.now() - 60_000);
+      // Pruning first keeps the counter proportional to the limit rather than to
+      // lifetime traffic, which is why this no longer counts from AuditEvent.
+      await transaction
+        .delete(inferenceGatewayRequest)
+        .where(and(
+          eq(inferenceGatewayRequest.connectionId, runtimeConnectionId),
+          lt(inferenceGatewayRequest.occurredAt, windowStartedAt),
+        ));
       const [recent] = await transaction
         .select({ total: sql<number>`count(*)::int` })
-        .from(auditEvent)
+        .from(inferenceGatewayRequest)
         .where(
           and(
-            eq(auditEvent.action, "inference.gateway_requested"),
-            eq(auditEvent.resourceId, runtimeConnectionId),
-            gte(auditEvent.occurredAt, new Date(Date.now() - 60_000)),
+            eq(inferenceGatewayRequest.connectionId, runtimeConnectionId),
+            gte(inferenceGatewayRequest.occurredAt, windowStartedAt),
           ),
         );
       if ((recent?.total ?? 0) >= requestsPerMinute) {
         throw new InferenceGatewayError("RATE_LIMITED", "The Hermes inference gateway is at its request limit.");
       }
+      await transaction.insert(inferenceGatewayRequest).values({ connectionId: runtimeConnectionId });
+      // The audit trail still records every gateway request in full.
       await transaction.insert(auditEvent).values({
         actorType: "SERVICE",
         actorId: runtimeConnectionId,

@@ -5,6 +5,7 @@ import {
   auditEvent,
   createTestDatabase,
   hermesRuntimeNode,
+  inferenceGatewayRequest,
   serviceConnection,
   type TestDatabase,
 } from "@orcasynapse/database";
@@ -153,16 +154,8 @@ describe("DrizzleInferenceGateway", () => {
   it("refuses a request once the runtime is at its per-minute limit", async () => {
     const { gateway, fetcher, hermesConnectionId } = await harness();
     // requestsPerMinute defaults to 30, so seed the window to its ceiling.
-    await context.database.insert(auditEvent).values(
-      Array.from({ length: 30 }, () => ({
-        actorType: "SERVICE" as const,
-        actorId: hermesConnectionId,
-        action: "inference.gateway_requested",
-        resourceType: "ServiceConnection",
-        resourceId: hermesConnectionId,
-        outcome: "SUCCESS",
-        metadata: {},
-      })),
+    await context.database.insert(inferenceGatewayRequest).values(
+      Array.from({ length: 30 }, () => ({ connectionId: hermesConnectionId })),
     );
 
     await expect(gateway.chat("runtime-key", request, new AbortController().signal))
@@ -253,5 +246,36 @@ describe("DrizzleInferenceGateway", () => {
     await expect(gateway.chat("runtime-key", request, new AbortController().signal))
       .rejects.toBeInstanceOf(InferenceGatewayError);
     expect(fetcher).not.toHaveBeenCalled();
+  });
+});
+
+describe("DrizzleInferenceGateway rate-limit counter", () => {
+  it("prunes its own window instead of scanning the audit trail", async () => {
+    const { gateway, hermesConnectionId } = await harness();
+    // A stale row from an earlier window must not count, and must not survive.
+    await context.database.insert(inferenceGatewayRequest).values({
+      connectionId: hermesConnectionId,
+      occurredAt: new Date(Date.now() - 5 * 60 * 1_000),
+    });
+
+    await gateway.chat("runtime-key", request, new AbortController().signal);
+
+    const rows = await context.database.select().from(inferenceGatewayRequest);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.occurredAt.getTime()).toBeGreaterThan(Date.now() - 60_000);
+  });
+
+  it("keeps the audit trail complete while the counter stays bounded", async () => {
+    const { gateway, hermesConnectionId } = await harness();
+
+    await gateway.chat("runtime-key", request, new AbortController().signal);
+    await gateway.chat("runtime-key", request, new AbortController().signal);
+
+    // Two requests: two audit events retained, two counter rows in the window.
+    const recorded = (await context.database.select().from(auditEvent))
+      .filter(({ action }) => action === "inference.gateway_requested");
+    expect(recorded).toHaveLength(2);
+    expect(recorded.every(({ resourceId }) => resourceId === hermesConnectionId)).toBe(true);
+    expect(await context.database.select().from(inferenceGatewayRequest)).toHaveLength(2);
   });
 });

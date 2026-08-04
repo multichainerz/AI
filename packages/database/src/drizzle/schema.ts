@@ -1161,3 +1161,25 @@ export const documentChunk = pgTable("DocumentChunk", {
 			name: "DocumentChunk_documentId_fkey"
 		}).onUpdate("cascade").onDelete("cascade"),
 ]);
+
+/**
+ * A bounded counter for the Hermes inference gateway's per-minute limit.
+ *
+ * The limit was previously counted from AuditEvent, which has no retention, so
+ * a hot path scanned a permanently growing table. Rows here are pruned to the
+ * current window on every request, keeping the table proportional to the limit
+ * rather than to lifetime traffic. The audit trail is still written separately
+ * and remains complete.
+ */
+export const inferenceGatewayRequest = pgTable("InferenceGatewayRequest", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	connectionId: uuid().notNull(),
+	occurredAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+	index("InferenceGatewayRequest_connectionId_occurredAt_idx").using("btree", table.connectionId.asc().nullsLast(), table.occurredAt.asc().nullsLast()),
+	foreignKey({
+			columns: [table.connectionId],
+			foreignColumns: [serviceConnection.id],
+			name: "InferenceGatewayRequest_connectionId_fkey"
+		}).onUpdate("cascade").onDelete("cascade"),
+]);

@@ -15,6 +15,13 @@
       "when": 1785830854072,
       "tag": "0001_fix_tool_grant_admin_roles",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785846367863,
+      "tag": "0002_inference_gateway_rate_limit",
+      "breakpoints": true
     }
   ]
 }
