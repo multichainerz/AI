@@ -18,7 +18,6 @@ export interface WorkspaceSetupStep {
 export interface WorkspaceReadiness {
   inferenceReady: boolean;
   hermesReady: boolean;
-  knowledgeReady: boolean;
   runtimeNodeReady: boolean;
   profileReady: boolean;
   executionReady: boolean;
@@ -43,11 +42,13 @@ export function deriveWorkspaceReadiness(input: {
 }): WorkspaceReadiness {
   const inferenceReady = isConnectionReady(connectionFor(input.connections, "INFERENCE"));
   const hermesReady = isConnectionReady(connectionFor(input.connections, "HERMES"));
-  const knowledgeReady = isConnectionReady(connectionFor(input.connections, "SUPERMEMORY"));
   const runtimeNodeReady = input.runtimeNodes.some(({ status }) => status === "ONLINE");
   const profileReady = input.profiles.some(({ status }) => status === "ACTIVE");
   const executionReady = input.runtime?.enabled === true && profileReady;
-  const agenticInfrastructureReady = hermesReady && knowledgeReady && runtimeNodeReady;
+  // The agentic infrastructure is the isolated runtime: a healthy Hermes
+  // connection and an online node. Knowledge is served by the control plane
+  // itself and is not part of this boundary.
+  const agenticInfrastructureReady = hermesReady && runtimeNodeReady;
   const chatReady = inferenceReady && hermesReady && runtimeNodeReady && executionReady;
 
   let nextChatStep: WorkspaceSetupStep | null = null;
@@ -74,13 +75,14 @@ export function deriveWorkspaceReadiness(input: {
   return {
     inferenceReady,
     hermesReady,
-    knowledgeReady,
     runtimeNodeReady,
     profileReady,
     executionReady,
     agenticInfrastructureReady,
     chatReady,
-    agenticReady: chatReady && knowledgeReady,
+    // Document knowledge is local to the control plane, so a ready agentic
+    // workspace is exactly a ready chat path; there is no second plane to wait on.
+    agenticReady: chatReady,
     nextChatStep,
   };
 }

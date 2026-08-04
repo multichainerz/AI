@@ -13,7 +13,7 @@ mkdir -p "${STATE_ROOT}/identity"
 openssl genpkey -algorithm ED25519 -out "${STATE_ROOT}/identity/node.key"
 openssl pkey -in "${STATE_ROOT}/identity/node.key" -pubout -out "${STATE_ROOT}/identity/node.pub"
 [[ "$(public_identity_fingerprint)" == "$(private_identity_fingerprint)" ]]
-signature_body='{"apiKey":"sm_test_registration_key_0123456789","baseUrl":"http://10.0.0.12:6767","observedVersion":"0.0.5"}'
+signature_body='{"capabilities":["gateway-api","signed-heartbeat"],"hermesVersion":"nousresearch/hermes-agent:latest","observedAt":"2026-08-03T00:00:00Z","status":"ONLINE"}'
 signature_timestamp='2026-08-03T00:00:00Z'
 signature_nonce='c634de85-7087-426a-b4f5-f4c2857f55c2'
 signature_value="$(sign_node_payload "${signature_body}" "${signature_timestamp}" "${signature_nonce}")"
@@ -64,7 +64,6 @@ jq -n \
     controlPlaneUrl:"https://orcasynapse.internal",
     hermesBaseUrl:"http://10.0.0.12:8642",
     hermesImage:"nousresearch/hermes-agent:latest",
-    supermemoryVersion:"v1.2.3",
     hostname:"hermes-01.internal",
     apiKey:$apiKey,
     identityFingerprint:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -78,47 +77,10 @@ if validate_resume_state "${TEST_ROOT}/invalid.json"; then
   exit 1
 fi
 
-supermemory_release_matches "latest" "v9.9.9"
-supermemory_release_matches "1.2.3" "v1.2.3"
-[[ "$(normalize_supermemory_release "v1.2.3")" == "1.2.3" ]]
-[[ "$(normalize_supermemory_release "latest")" == "latest" ]]
-if supermemory_release_matches "1.2.4" "v1.2.3"; then
-  printf 'mismatched pinned Supermemory releases were accepted\n' >&2
-  exit 1
-fi
-assert_supermemory_release_usable "0.0.5"
-assert_supermemory_release_usable "0.0.7-rc.2"
-if (assert_supermemory_release_usable "v0.0.6" >/dev/null 2>&1); then
-  printf 'known-broken Supermemory v0.0.6 was accepted\n' >&2
-  exit 1
-fi
-
-progress_sample="$({
-  printf '%s\n' '      [                        ] 0% · 717 B / 106 MB'
-  printf '%s\n' '      [==========              ] 40% · 43 MB / 106 MB'
-} | parse_supermemory_download_progress)"
-[[ "${progress_sample}" == "40|43 MB / 106 MB" ]]
-model_sample="$({
-  printf '%s\n' '  * local embeddings  Xenova/bge-m3 · first-run download'
-  printf '%s\n' '  + local embeddings  1 worker ready · native backend · 12s'
-} | parse_supermemory_embedding_model)"
-[[ "${model_sample}" == "Xenova/bge-m3" ]]
-[[ "${SUPERMEMORY_READY_PATH}" == "/v4/openapi" ]]
-
 grep -Fq 'default: ${model_alias_json}' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
-grep -Fq 'local key_deadline=' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
-grep -Fq 'native_api_key_file="${SUPERMEMORY_ROOT}/data/api-key"' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
-grep -Fq 'print_safe_supermemory_diagnostics' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
-if grep -Fq 'supermemory_base_url}/health' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"; then
-  printf 'Agentic System installer still probes the nonexistent Supermemory /health route\n' >&2
-  exit 1
-fi
 grep -Fq 'write_file_from_stdin()' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
-grep -Fq 'HERMES_MANAGED_DIR=/opt/data/.orcasynapse-bootstrap-managed' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
-grep -Fq 'allow_lazy_installs: true' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 grep -Fq 'allow_lazy_installs: false' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
-grep -Fq 'activate_durable_lazy_target' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
-grep -Fq 'Local identity fingerprint:' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq 'VM1 rejected the enrolled VM2 identity ${node_fingerprint}' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 grep -Fq 'VM1 accepted the signed VM2 trust handshake.' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 grep -Fq 'The retained VM2 state and dashboard record no longer share the same trust binding.' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 grep -Fq 'render_activity_progress()' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
@@ -128,33 +90,9 @@ grep -Fq 'download_with_progress()' "${REPOSITORY_ROOT}/scripts/install-agentic-
 grep -Fq '>>> ORCASYNAPSE-INSTALLER-UI v1' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 grep -Fq 'resolved_image_reference()' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 grep -Fq 'the approved Hermes image has no immutable registry digest' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
-grep -Fq 'releases/download/server-v${release}' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
-grep -Fq 'the Supermemory release checksum did not match' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
-if grep -Fq 'curl -fsSL https://supermemory.ai/install' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"; then
-  printf 'Agentic System installer still executes the mutable upstream Supermemory installer\n' >&2
-  exit 1
-fi
-grep -Fq 'render_activity_progress "Initialize Supermemory embeddings"' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
-grep -Fq 'verify_supermemory_document_pipeline "http://127.0.0.1:6767"' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
-grep -Fq -- '--form '\''containerTags=orcasynapse-install-check'\''' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
-grep -Fq 'BGE-M3 only embeds extracted text' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
-# A node must not report ONLINE on the Hermes port alone. Hermes answers /health
-# well before Supermemory has loaded its model, so the heartbeat has to observe
-# both planes or the control plane sees a healthy runtime with unusable memory.
-grep -Fq 'http://127.0.0.1:6767/v4/openapi' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
-# The same rule binds the post-enroll trust proof: it reports DEGRADED until
-# the memory plane exists rather than claiming ONLINE from Hermes alone.
-grep -Fq 'The trust proof must not claim ONLINE before the memory plane exists' \
-  "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
-# Hermes .env values are written raw; the JSON-quoted variants belong only in
-# the managed YAML policy, where quoted scalars are the injection-safe form.
 if grep -Eq 'OPENAI_(BASE_URL|API_KEY)=\$\{model_(base_url|api_key)_json\}' \
   "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"; then
   printf 'Hermes .env values must be raw, not JSON-quoted\n' >&2
-  exit 1
-fi
-if grep -Fq 'Restart=on-failure' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"; then
-  printf 'Supermemory unit can stay dead after a clean exit; use Restart=always\n' >&2
   exit 1
 fi
 if grep -Fq '/dev/stdin' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"; then
@@ -163,6 +101,17 @@ if grep -Fq '/dev/stdin' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"; t
 fi
 if grep -Eq 'install .*-[og] (10000|"?\$\{HERMES_(UID|GID)\})' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"; then
   printf 'Agentic System installer passes a numeric identity through install -o/-g\n' >&2
+  exit 1
+fi
+
+# VM2 runs exactly one plane. Agent memory and knowledge are served by the
+# control plane, so no second service may reappear in this installer.
+if grep -qi 'supermemory' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"; then
+  printf 'the Agentic System installer reintroduced an external memory service\n' >&2
+  exit 1
+fi
+if grep -Fq '6767' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"; then
+  printf 'the Agentic System installer still references the removed memory port\n' >&2
   exit 1
 fi
 

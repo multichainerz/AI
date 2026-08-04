@@ -57,10 +57,9 @@ const COMPONENTS = [
   ["database-orm", "Drizzle and pg", "Data", true, "Pinned ORM and driver pass pool, timeout, migration, and drift checks."],
   ["postgresql-runtime", "PostgreSQL runtime state", "Data", true, "Durable domain state, compare-and-set claims, restart reconciliation, and executor heartbeats pass without a separate queue broker."],
   ["inference-server", "Inference Server", "Inference", true, "The selected OpenAI-compatible inference server passes model discovery, parser, streaming, cancellation, usage, load, and soak checks."],
-  ["supermemory-local", "Supermemory API", "Memory", true, "Selected Supermemory deployment passes API, isolation, deletion, telemetry, backup, and restore checks."],
+  ["knowledge-index", "Knowledge index (pgvector)", "Memory", true, "The local pgvector knowledge index passes extraction, embedding, owner-scoped retrieval, and deletion checks."],
   ["hermes-api", "Hermes API Server", "Agents", true, "Pinned Hermes passes capabilities, Runs, SSE, stop, Profile, Skill, Toolset, and state.db checks."],
   ["hermes-runtime-node", "Hermes runtime node", "Agents", false, "An isolated Hermes node completes one-time enrollment, proves its signing identity, and maintains a current heartbeat without standing SSH trust."],
-  ["hermes-native-memory", "Hermes native Supermemory provider", "Agents", true, "The scoped native provider passes isolation, retention, deletion, backup, restore, and leakage checks."],
   ["mcp-gateway", "MCP gateway", "Tools", false, "Optional governed tools pass negotiation, discovery, calls, cancellation, authorization, and token-boundary checks."],
   ["enterprise-oidc", "Enterprise OIDC", "Identity", false, "Production identity passes discovery, signatures, PKCE, state, nonce, groups, logout, and revocation."],
   ["signed-installer", "OrcaSynapse signed installer", "Deployment", true, "The signed release-bundle installer passes clean install, isolation, upgrade, rollback, and recovery."],
@@ -71,8 +70,8 @@ const STEPS = [
   ["activate-installation", 1, "Activate installation", "Confirm the local administrator account, installed release, and host identity.", "Run installation validation"],
   ["system-topology", 2, "System and topology", "Validate the host and select Compact, Control-plane only, or Segmented production.", "Save topology, then validate this host"],
   ["identity-recovery", 3, "Identity and recovery", "Configure final trust, enterprise identity, recovery ownership, and a verified encrypted recovery kit.", "Export and verify recovery; configure OIDC for Production"],
-  ["ai-services", 4, "AI services and Hermes node", "Connect an inference server, then enroll and validate the isolated Hermes + Supermemory runtime.", "Test the inference server, then enroll the Hermes VM"],
-  ["knowledge-workflow", 5, "Knowledge workflow", "Validate direct Supermemory ingestion, indexing, authorized retrieval, and deletion.", "Publish and retrieve a representative knowledge source"],
+  ["ai-services", 4, "AI services and Hermes node", "Connect an inference server, then enroll and validate the isolated Hermes runtime.", "Test the inference server, then enroll the Hermes VM"],
+  ["knowledge-workflow", 5, "Knowledge workflow", "Validate local extraction, embedding, authorized retrieval, and deletion.", "Publish and retrieve a representative knowledge source"],
   ["hermes-profiles", 6, "Hermes and Profiles", "Validate the Hermes boundary and move an immutable Profile Distribution into standby.", "Create, evaluate, and validate a standby Profile"],
   ["guardrails-tools", 7, "Guardrails and tools", "Prove conservative policy, zero-tool operation, approvals, and bounded governed tools.", "Activate a guardrail baseline and validate tool posture"],
   ["validate-activate", 8, "Validate and activate", "Run the target-environment gate and record Development, Pilot, or Production activation.", "Run all validation and resolve remaining blockers"],
@@ -82,7 +81,7 @@ const STEPS = [
 const DRIZZLE_VERSION = "0.45.2";
 
 const CANONICAL_STEP_KEYS = STEPS.map(([key]) => key);
-const CORE_RUNTIME_COMPONENTS = new Set(["postgresql", "inference-server", "supermemory-local", "hermes-api", "hermes-native-memory"]);
+const CORE_RUNTIME_COMPONENTS = new Set(["postgresql", "inference-server", "knowledge-index", "hermes-api"]);
 
 type StoredArchitecture = typeof platformArchitectureDecision.$inferSelect;
 type StoredComponent = typeof componentCompatibility.$inferSelect;
@@ -295,7 +294,7 @@ export class DrizzleOnboardingManager implements OnboardingManager {
             eq(componentCompatibility.category, "Deployment"),
             ne(componentCompatibility.key, "signed-installer"),
           ),
-          inArray(componentCompatibility.key, ["supermemory-external-backend", "qwen3-embedding"]),
+          inArray(componentCompatibility.key, ["supermemory-external-backend", "qwen3-embedding", "supermemory-local", "hermes-native-memory"]),
         ));
       for (const [key, ordinal, title, description] of STEPS) {
         await transaction
@@ -642,7 +641,7 @@ export class DrizzleOnboardingManager implements OnboardingManager {
       const [connections, runtimeNodes] = await Promise.all([
         this.database.select().from(serviceConnection)
           .where(and(
-            inArray(serviceConnection.kind, ["INFERENCE", "SUPERMEMORY", "HERMES"]),
+            inArray(serviceConnection.kind, ["INFERENCE", "HERMES"]),
             eq(serviceConnection.enabled, true),
           ))
           .orderBy(desc(serviceConnection.updatedAt)),
@@ -664,9 +663,9 @@ export class DrizzleOnboardingManager implements OnboardingManager {
           .orderBy(desc(hermesRuntimeNode.lastSeenAt)).limit(1),
       ]);
       const runtimeNode = runtimeNodes[0];
-      const required: Array<["INFERENCE" | "SUPERMEMORY" | "HERMES", string, string]> = [
+      const required: Array<["INFERENCE" | "HERMES", string, string]> = [
         ["INFERENCE", "inference-server", "Inference Server"],
-        ["SUPERMEMORY", "supermemory-local", "Supermemory"], ["HERMES", "hermes-api", "Hermes"],
+        ["HERMES", "hermes-api", "Hermes"],
       ];
       const serviceChecks = required.map(([kind, componentKey, label]) => {
         const connection = connections.find((item) => item.kind === kind);
@@ -701,9 +700,9 @@ export class DrizzleOnboardingManager implements OnboardingManager {
         .where(eq(document.status, "READY"))
         .groupBy(document.id, document.completedAt)
         .orderBy(desc(document.completedAt)).limit(1);
-      // The contract key must name a seeded component; "supermemory-knowledge"
+      // The contract key must name a seeded component; an unseeded key
       // never existed, so this stage threw before it could record evidence.
-      return [{ stageKey, componentKey: "supermemory-local", outcome: contractOutcome(Boolean(indexed)), code: "knowledge-roundtrip", summary: indexed ? `A knowledge source was embedded into ${indexed.chunks} retrievable chunk${indexed.chunks === 1 ? "" : "s"}; Production still requires malformed-input and deletion evidence.` : "Publish one representative knowledge source and confirm indexing completes.", details: indexed ? { documentId: indexed.id, chunks: indexed.chunks, embeddingModel: indexed.embeddingModel } : {} }];
+      return [{ stageKey, componentKey: "knowledge-index", outcome: contractOutcome(Boolean(indexed)), code: "knowledge-roundtrip", summary: indexed ? `A knowledge source was embedded into ${indexed.chunks} retrievable chunk${indexed.chunks === 1 ? "" : "s"}; Production still requires malformed-input and deletion evidence.` : "Publish one representative knowledge source and confirm indexing completes.", details: indexed ? { documentId: indexed.id, chunks: indexed.chunks, embeddingModel: indexed.embeddingModel } : {} }];
     }
     if (stageKey === "hermes-profiles") {
       const [released] = await this.database

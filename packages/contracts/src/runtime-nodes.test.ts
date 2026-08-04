@@ -4,7 +4,6 @@ import {
   enrollHermesNodeSchema,
   hermesNodeHeartbeatSchema,
   mutateHermesRuntimeNodeSchema,
-  registerHermesNodeMemorySchema,
 } from "./runtime-nodes.js";
 
 describe("Hermes runtime-node contracts", () => {
@@ -15,18 +14,15 @@ describe("Hermes runtime-node contracts", () => {
       baseUrl: "http://10.0.0.12:8642",
       controlPlaneUrl: "https://orcasynapse.internal",
       hermesImage: `nousresearch/hermes-agent@sha256:${"a".repeat(64)}`,
-      supermemoryVersion: "v1.2.3",
       expiresInMinutes: 30,
     });
     expect(invitation.success).toBe(true);
-    if (invitation.success) expect(invitation.data.supermemoryVersion).toBe("v1.2.3");
     expect(createHermesNodeInvitationSchema.safeParse({
       slug: "hermes-runtime-mirror",
       displayName: "Hermes Runtime Mirror",
       baseUrl: "http://10.0.0.13:8642",
       controlPlaneUrl: "https://orcasynapse.internal",
       hermesImage: `registry.internal:5000/nous/hermes:accepted@sha256:${"b".repeat(64)}`,
-      supermemoryVersion: "0.0.5",
       expiresInMinutes: 30,
     }).success).toBe(true);
     expect(createHermesNodeInvitationSchema.safeParse({
@@ -35,16 +31,6 @@ describe("Hermes runtime-node contracts", () => {
       baseUrl: "ssh://10.0.0.12",
       controlPlaneUrl: "https://orcasynapse.internal",
       hermesImage: "nousresearch/hermes-agent",
-      supermemoryVersion: "rolling",
-    }).success).toBe(false);
-    expect(createHermesNodeInvitationSchema.safeParse({
-      slug: "hermes-runtime-broken",
-      displayName: "Hermes Runtime Broken",
-      baseUrl: "http://10.0.0.15:8642",
-      controlPlaneUrl: "https://orcasynapse.internal",
-      hermesImage: "nousresearch/hermes-agent:latest",
-      supermemoryVersion: "v0.0.6",
-      expiresInMinutes: 30,
     }).success).toBe(false);
     expect(createHermesNodeInvitationSchema.safeParse({
       slug: "hermes-runtime-01",
@@ -61,7 +47,7 @@ describe("Hermes runtime-node contracts", () => {
       hermesImage: "nousresearch/hermes-agent:latest",
       expiresInMinutes: 30,
     });
-    expect(safeDefault.supermemoryVersion).toBe("0.0.7-rc.2");
+    expect(safeDefault.hermesImage).toBe("nousresearch/hermes-agent:latest");
   });
 
   it("keeps enrollment identity and runtime API credentials explicit", () => {
@@ -114,16 +100,6 @@ describe("Hermes runtime-node contracts", () => {
   });
 
   it("rejects unbounded heartbeat and lifecycle input", () => {
-    expect(registerHermesNodeMemorySchema.safeParse({
-      baseUrl: "http://10.0.0.12:6767",
-      apiKey: `sm_${"a".repeat(32)}`,
-      observedVersion: "0.1.0",
-    }).success).toBe(true);
-    expect(registerHermesNodeMemorySchema.safeParse({
-      baseUrl: "http://10.0.0.12:6767/v3",
-      apiKey: `sm_${"a".repeat(32)}`,
-      observedVersion: "0.1.0",
-    }).success).toBe(false);
     expect(hermesNodeHeartbeatSchema.safeParse({
       observedAt: "2026-07-30T00:00:00.000Z",
       status: "ONLINE",

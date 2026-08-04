@@ -10,8 +10,6 @@ import {
   hermesRuntimeNodeSchema,
   mutateHermesRuntimeNodeSchema,
   removeHermesRuntimeNodeSchema,
-  registerHermesNodeMemoryResultSchema,
-  registerHermesNodeMemorySchema,
   resolveHermesNodeInvitationSchema,
 } from "@orcasynapse/contracts";
 import { readFile } from "node:fs/promises";
@@ -147,22 +145,6 @@ export async function registerRuntimeNodeRoutes(app: FastifyInstance, options: R
     try {
       return hermesNodeHeartbeatResultSchema.parse(
         await manager.heartbeat(request.params.nodeId, signatureHeaders(request), input.data),
-      );
-    } catch (error) {
-      return sendError(error, reply);
-    }
-  });
-
-  app.post<{ Params: { nodeId: string } }>("/:nodeId/memory", async (request, reply) => {
-    const manager = managerOrLocked(options, reply);
-    if (!manager) return reply;
-    const input = registerHermesNodeMemorySchema.safeParse(request.body);
-    if (!input.success) {
-      return reply.code(400).send({ error: "INVALID_MEMORY_REGISTRATION", message: input.error.issues[0]?.message });
-    }
-    try {
-      return registerHermesNodeMemoryResultSchema.parse(
-        await manager.registerMemory(request.params.nodeId, signatureHeaders(request), input.data),
       );
     } catch (error) {
       return sendError(error, reply);

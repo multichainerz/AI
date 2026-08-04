@@ -4,7 +4,7 @@
 
 OrcaSynapse gives an organization one on-premises dashboard for local-AI chat, document knowledge, Hermes agents, model routes, policies, integrations, and operational evidence without turning the agent runtime into an infrastructure administrator.
 
-The product should feel usable after two actions: install OrcaSynapse on the control-plane host, then use the dashboard to connect an OpenAI-compatible inference server and enroll the isolated Hermes/Supermemory host.
+The product should feel usable after two actions: install OrcaSynapse on the control-plane host, then use the dashboard to connect an OpenAI-compatible inference server and enroll the isolated Hermes host.
 
 ## Users
 
@@ -45,7 +45,6 @@ OrcaSynapse manages immutable Profile Distributions: behavior instruction, selec
 Hermes runs in an isolated environment and can reach only:
 
 - OrcaSynapse's authenticated inference gateway;
-- its local scoped Supermemory service;
 - the OrcaSynapse-governed MCP gateway when an approved profile grants it;
 - explicitly allowlisted runtime destinations.
 
@@ -53,9 +52,7 @@ OrcaSynapse does not give Hermes PostgreSQL credentials, Docker control, host fi
 
 ### Memory
 
-Self-hosted Supermemory Local on VM2 is the **agent-memory** plane: Hermes gets a node-scoped native memory container for durable recall and capture. Enterprise document knowledge is deliberately not stored there — it lives in OrcaSynapse's local pgvector index and never transits VM2.
-
-Hermes's native bounded memory remains active alongside Supermemory. OrcaSynapse must preserve and document both recovery domains.
+VM2 holds no durable memory plane. Cross-conversation agent memory is not part of this release; a governed replacement served from OrcaSynapse's own pgvector plane is the next planned change. Hermes's small native runtime files (`MEMORY.md`, `USER.md`) remain, and within a conversation OrcaSynapse replays bounded complete-turn history on every run.
 
 ### Inference and guardrails
 
@@ -90,12 +87,10 @@ The dashboard creates a short-lived one-use enrollment claim. The customer downl
 2. starts a constrained official Hermes container;
 3. enrolls it with OrcaSynapse;
 4. receives an OrcaSynapse inference-gateway route, alias, and node key;
-5. installs checksum-verified Supermemory Local using the exact v0.0.7-rc.2 large-document-fix baseline, requests CPU-local `Xenova/bge-m3` embeddings (1024 dimensions), displays first-boot download progress, and reports the observed release and model rather than misrepresenting runtime capability;
-6. configures Hermes's native Supermemory provider with a profile-scoped tag;
-7. registers Supermemory with OrcaSynapse;
-8. enables signed heartbeats.
+5. applies the OrcaSynapse-managed policy and guardrail baseline;
+6. enables signed heartbeats.
 
-The node persists a root-only recovery journal immediately after enrollment so all subsequent provisioning steps can be resumed without issuing another claim. Production invitations require a digest-pinned Hermes image, an exact Supermemory release, and an HTTPS OrcaSynapse origin.
+The node persists a root-only recovery journal immediately after enrollment so all subsequent provisioning steps can be resumed without issuing another claim. Production invitations require a digest-pinned Hermes image and an HTTPS OrcaSynapse origin.
 
 OrcaSynapse retains no SSH password/key and no remote Docker socket. Upgrades use a separately signed/pinned release workflow rather than standing remote administration.
 

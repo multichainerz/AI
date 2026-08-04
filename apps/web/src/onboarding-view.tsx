@@ -227,11 +227,9 @@ export function OnboardingView({
 
   const inference = connectionFor(connections, "INFERENCE");
   const hermes = connectionFor(connections, "HERMES");
-  const memory = connectionFor(connections, "SUPERMEMORY");
   const readiness = deriveWorkspaceReadiness({ connections, runtimeNodes, profiles, runtime: agentRuntime });
   const {
     inferenceReady,
-    knowledgeReady: memoryReady,
     runtimeNodeReady: nodeReady,
     executionReady,
     agenticInfrastructureReady,
@@ -245,7 +243,7 @@ export function OnboardingView({
         <div>
           <p className="page-kicker">Platform · Agentic System</p>
           <h1>Enroll the isolated agent runtime</h1>
-          <p>The VM2 installer provisions Hermes, Supermemory, managed policy, and signed monitoring as one controlled layer.</p>
+          <p>The VM2 installer provisions Hermes, managed policy, and signed monitoring as one controlled layer.</p>
         </div>
         <button className="secondary-button" type="button" onClick={() => setPanel("overview")}>Back to setup</button>
       </header>
@@ -273,13 +271,13 @@ export function OnboardingView({
     {
       number: "02",
       title: "Agentic System",
-      description: "Enroll one isolated Ubuntu VM containing Hermes and its local Supermemory brain.",
-      detail: hermes || memory
-        ? `Hermes: ${connectionReadiness(hermes).label} · Knowledge: ${connectionReadiness(memory).label} · VM2: ${nodeReady ? "Online" : "Not online"} · Profile: ${executionReady ? "Active" : "Needs activation"}`
+      description: "Enroll one isolated Ubuntu VM running the governed Hermes runtime.",
+      detail: hermes
+        ? `Hermes: ${connectionReadiness(hermes).label} · VM2: ${nodeReady ? "Online" : "Not online"} · Profile: ${executionReady ? "Active" : "Needs activation"}`
         : "One generated command installs and binds the complete VM2 runtime.",
       readiness: agenticReady
         ? { label: "Ready", tone: "ready" as const }
-        : hermes || memory
+        : hermes
           ? { label: "Needs attention", tone: "degraded" as const }
           : { label: "Not configured", tone: "neutral" as const },
       action: () => !inferenceReady ? onConfigure("INFERENCE") : agenticInfrastructureReady ? executionReady ? setPanel("nodes") : onOpenWorkspace("Agents") : setPanel("nodes"),
@@ -341,10 +339,8 @@ export function OnboardingView({
       <article>
         <p className="section-kicker">Enterprise knowledge</p>
         <h2>Knowledge</h2>
-        <p>Send approved source files through OrcaSynapse authorization into Supermemory without retaining a second file copy.</p>
-        <button className="primary-button" type="button" disabled={!memoryReady} onClick={() => onOpenWorkspace("Documents")}>
-          {memoryReady ? "Open Knowledge" : "Enroll Agentic System first"}
-        </button>
+        <p>Extract and index approved source files into the control plane's own knowledge index without retaining a copy of the file.</p>
+        <button className="primary-button" type="button" onClick={() => onOpenWorkspace("Documents")}>Open Knowledge</button>
       </article>
     </section>
 

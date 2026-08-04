@@ -46,7 +46,6 @@ describe("OnboardingView", () => {
     const html = renderToStaticMarkup(<OnboardingView
       connections={[
         connection("INFERENCE", "http://vllm.internal:8000"),
-        connection("SUPERMEMORY", "http://supermemory.internal:6767"),
       ]}
       unlocked
       oidcConfigured={false}
@@ -72,9 +71,13 @@ describe("OnboardingView", () => {
       {...callbacks}
     />);
 
+    // Chat runs on VM2, so it stays gated on the inference route that feeds it.
     expect(html).toContain("Set up inference first");
-    expect(html).toContain("Enroll Agentic System first");
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Enroll Agentic System first<\/button>/);
+    // Knowledge does not: extraction, embedding, and retrieval are local to the
+    // control plane, so it must never wait on the agent runtime.
+    expect(html).toContain("Open Knowledge");
+    expect(html).not.toContain("Enroll Agentic System first");
+    expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>Open Knowledge<\/button>/);
   });
 
   it("opens Agentic System configuration on the VM2 installer rather than connector fields", () => {
@@ -98,7 +101,6 @@ describe("OnboardingView", () => {
       connections={[
         connection("INFERENCE", "http://vllm.internal:8000"),
         connection("HERMES", "http://hermes.internal:8642"),
-        connection("SUPERMEMORY", "http://supermemory.internal:6767"),
       ]}
       unlocked
       oidcConfigured={false}

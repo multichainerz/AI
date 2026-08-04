@@ -125,6 +125,11 @@ try {
   if (!serviceKindLabels.has("INFERENCE") || serviceKindLabels.has("VLLM")) {
     throw new Error("The provider-neutral inference service kind was not migrated correctly.");
   }
+  // The enum type was recreated to drop this value; PostgreSQL cannot remove
+  // one in place, so a partial migration would leave it behind.
+  if (serviceKindLabels.has("SUPERMEMORY")) {
+    throw new Error("The retired SUPERMEMORY service kind is still present in the ServiceKind enum.");
+  }
   // Onboarding stages and component-compatibility rows are seeded at API
   // runtime by the onboarding manager, not by migrations; row-level coverage
   // lives in the apps/api test suite. Here we only prove the relations exist.

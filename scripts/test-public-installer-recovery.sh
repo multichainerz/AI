@@ -25,7 +25,7 @@ cmp "${test_root}/download-source" "${test_root}/download-target"
 # library, self-contained scripts embed it, and the sync tool proves the
 # embedded regions have not drifted.
 grep -Fq 'scripts/lib/installer-ui.sh' "${SCRIPT_ROOT}/scripts/install-orcasynapse.sh"
-grep -Fq 'render_supermemory_progress' "${SCRIPT_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq '>>> ORCASYNAPSE-INSTALLER-UI v1' "${SCRIPT_ROOT}/scripts/install-agentic-node.sh"
 bash "${SCRIPT_ROOT}/scripts/sync-installer-ui.sh" --check
 
 old_commit="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"

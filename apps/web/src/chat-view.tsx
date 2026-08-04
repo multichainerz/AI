@@ -1061,7 +1061,7 @@ export function ChatView({
           <div className="chat-composer-status">
             <span className={working ? "generating" : routeReady ? "ready" : "degraded"}><i aria-hidden="true" />{working ? currentActivity ?? "Hermes is working" : routeReady ? "Hermes route ready" : readinessTitle}</span>
             <span>{identityMode === "ENTERPRISE" ? "Enterprise session" : "Administrator preview"}</span>
-            <span>OrcaSynapse policy · Hermes execution · Supermemory knowledge</span>
+            <span>OrcaSynapse policy · Hermes execution · private knowledge</span>
           </div>
         </div>
       </div>

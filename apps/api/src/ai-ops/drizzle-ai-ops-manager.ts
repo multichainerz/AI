@@ -50,7 +50,7 @@ import type { AuditManager } from "../audit/audit-manager.js";
 import { AiOpsConflictError, AiOpsNotFoundError, type AiOpsManager } from "./ai-ops-manager.js";
 
 const HEALTH_FRESHNESS_MS = 15 * 60 * 1_000;
-const REQUIRED_SERVICE_KINDS = ["INFERENCE", "HERMES", "SUPERMEMORY"] as const satisfies readonly ServiceKind[];
+const REQUIRED_SERVICE_KINDS = ["INFERENCE", "HERMES"] as const satisfies readonly ServiceKind[];
 
 export interface AiOpsDependencies {
   connections: ConnectionManager;
@@ -131,7 +131,6 @@ const READINESS_APPROVAL_ROLES = ["SECURITY", "INFRASTRUCTURE", "PRODUCT", "BUSI
 const serviceMetadata: Record<ServiceKind, { label: string; workflows: AiOpsWorkflow[] }> = {
   INFERENCE: { label: "Inference server", workflows: ["CHAT", "AGENTS"] },
   HERMES: { label: "Hermes runtime", workflows: ["AGENTS", "TOOLS"] },
-  SUPERMEMORY: { label: "Supermemory", workflows: ["CHAT", "KNOWLEDGE", "AGENTS"] },
   MCP: { label: "MCP gateway", workflows: ["AGENTS", "TOOLS"] },
   OIDC: { label: "Enterprise identity", workflows: ["CHAT", "KNOWLEDGE", "AGENTS", "TOOLS"] },
   SIEM: { label: "SIEM forwarding", workflows: [] },
@@ -190,7 +189,7 @@ function guardrailPosture(active: ActiveGuardrailPolicy | null): GuardrailContro
     layer: "RETRIEVAL",
     label: "Retrieval authorization",
     status: "ENFORCED",
-    summary: "Remote Supermemory results are rejected unless PostgreSQL confirms current owner and publication eligibility.",
+    summary: "Retrieval is a PostgreSQL query whose owner predicate is part of the statement, so no caller can widen its scope.",
     evidence: "Private-scope retrieval performs local ownership and lifecycle rechecks before a source reaches chat or Hermes.",
   },
   {

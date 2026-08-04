@@ -7,9 +7,9 @@ OrcaSynapse's Models workspace is the approved workload catalogue. It does not d
 | Workload | Serving connection | Use |
 | --- | --- | --- |
 | Chat | Inference Server | default route for direct OrcaSynapse Chat |
-| Agent | Inference Server | alias pinned by the internal gateway for Hermes and Supermemory |
+| Agent | Inference Server | alias pinned by the internal gateway for Hermes |
 
-Chat and Agent routes must use an approved OpenAI-compatible Inference Server connection. Supermemory's CPU-local embedding model is a VM2 agent-memory deployment concern and does not create an OrcaSynapse model route; OrcaSynapse's own document-knowledge embeddings (BGE-M3, 1024 dimensions, pgvector) run locally on VM1 and are likewise not a model route. The VM2 installer requests multilingual `Xenova/bge-m3` for Supermemory and verifies the model reported during first boot. New nodes pin v0.0.7-rc.2 because it fixes the upstream 128 KiB large-document workflow limit; v0.0.6 remains blocked because its published workflow runtime cannot process documents.
+Chat and Agent routes must use an approved OpenAI-compatible Inference Server connection. OrcaSynapse's knowledge embeddings (BGE-M3, 1024 dimensions, pgvector) run locally on VM1 in the API and worker processes and are deliberately not a model route: they are a control-plane capability, not an approved workload alias.
 
 ## Lifecycle
 
@@ -24,7 +24,7 @@ After first activation for a workload, OrcaSynapse fails closed if its governed 
 
 ## Runtime behavior
 
-Direct Chat uses the active default Chat alias. The internal runtime gateway uses the active Agent alias and replaces any caller-supplied model. It caps requested output tokens to the route and connection limits. The upstream inference API key is decrypted only in the API process and is never returned to the browser, Hermes, or Supermemory.
+Direct Chat uses the active default Chat alias. The internal runtime gateway uses the active Agent alias and replaces any caller-supplied model. It caps requested output tokens to the route and connection limits. The upstream inference API key is decrypted only in the API process and is never returned to the browser or to Hermes.
 
 ## Acceptance
 
@@ -35,7 +35,7 @@ Against the exact production inference-backend/model build, retain evidence for:
 - streaming chunks and terminal usage fields;
 - cancellation and timeout propagation;
 - context and maximum-output boundaries;
-- structured output and tool calls used by Hermes/Supermemory;
+- structured output and tool calls used by Hermes;
 - malformed/upstream failure sanitization;
 - RTX 6000 PRO capacity, concurrency, KV-cache pressure, thermals, and soak behavior;
 - rollback to the previous approved alias/build.

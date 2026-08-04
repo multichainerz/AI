@@ -3,15 +3,12 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="ai-v1.28.2"
+INSTALLER_VERSION="ai-v1.29.0"
 # Honor the same state-root overrides the installer accepts, so a non-default
 # layout installed with ORCASYNAPSE_*_STATE_ROOT can be removed the same way.
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
-SUPERMEMORY_ROOT="${ORCASYNAPSE_SUPERMEMORY_STATE_ROOT:-/var/lib/orcasynapse-supermemory}"
 CONTAINER_NAME="orcasynapse-hermes"
 HEARTBEAT_SERVICE="orcasynapse-hermes-heartbeat"
-SUPERMEMORY_SERVICE="orcasynapse-supermemory"
-SUPERMEMORY_USER="orcasynapse-supermemory"
 HEARTBEAT_CLIENT="/usr/local/lib/orcasynapse/hermes-heartbeat.sh"
 
 # >>> ORCASYNAPSE-INSTALLER-UI v1 - generated from scripts/lib/installer-ui.sh; edit the library, then run: bash scripts/sync-installer-ui.sh >>>
@@ -357,17 +354,15 @@ require_safe_host() {
   [[ "${ID:-}" == "ubuntu" ]] || fail "the managed Agentic System remover supports Ubuntu VM2 hosts only"
   [[ -d /run/systemd/system ]] || fail "systemd is not active on this host"
   validate_state_root "Hermes" "${STATE_ROOT}"
-  validate_state_root "Supermemory" "${SUPERMEMORY_ROOT}"
-  if [[ "${STATE_ROOT}" != "/var/lib/orcasynapse-hermes" || "${SUPERMEMORY_ROOT}" != "/var/lib/orcasynapse-supermemory" ]]; then
-    warning "Removing a non-default state layout: ${STATE_ROOT} and ${SUPERMEMORY_ROOT}"
+  if [[ "${STATE_ROOT}" != "/var/lib/orcasynapse-hermes" ]]; then
+    warning "Removing a non-default state layout: ${STATE_ROOT}"
   fi
 }
 
 managed_install_exists() {
-  [[ -e "${STATE_ROOT}" || -e "${SUPERMEMORY_ROOT}" \
+  [[ -e "${STATE_ROOT}" \
     || -e "/etc/systemd/system/${HEARTBEAT_SERVICE}.service" \
     || -e "/etc/systemd/system/${HEARTBEAT_SERVICE}.timer" \
-    || -e "/etc/systemd/system/${SUPERMEMORY_SERVICE}.service" \
     || -e "${HEARTBEAT_CLIENT}" ]] && return 0
   command -v docker >/dev/null 2>&1 && docker inspect "${CONTAINER_NAME}" >/dev/null 2>&1
 }
@@ -393,9 +388,8 @@ confirm_destruction() {
   This removes only OrcaSynapse-managed Agentic System resources:
 
     - Hermes container and its locally cached image when unused elsewhere
-    - Supermemory service, model cache, API key, and durable memory data
     - Node identity, enrollment state, managed policy, and runtime data
-    - Signed-heartbeat services and the dedicated Supermemory service account
+    - Signed-heartbeat service and timer
 
   Docker itself, Ubuntu packages, unrelated containers, and external backups
   are preserved. Storage snapshots must be retired under your own policy.
@@ -410,8 +404,7 @@ EOF
 stop_managed_services() {
   systemctl disable --now "${HEARTBEAT_SERVICE}.timer" >/dev/null 2>&1 || true
   systemctl stop "${HEARTBEAT_SERVICE}.service" >/dev/null 2>&1 || true
-  systemctl disable --now "${SUPERMEMORY_SERVICE}.service" >/dev/null 2>&1 || true
-  success "Managed heartbeat and memory services stopped."
+  success "Managed heartbeat services stopped."
 }
 
 remove_hermes_runtime() {
@@ -444,19 +437,15 @@ remove_managed_state() {
   rm -f -- \
     "/etc/systemd/system/${HEARTBEAT_SERVICE}.service" \
     "/etc/systemd/system/${HEARTBEAT_SERVICE}.timer" \
-    "/etc/systemd/system/${SUPERMEMORY_SERVICE}.service" \
     "${HEARTBEAT_CLIENT}"
   systemctl daemon-reload
-  systemctl reset-failed "${HEARTBEAT_SERVICE}.service" "${SUPERMEMORY_SERVICE}.service" >/dev/null 2>&1 || true
+  systemctl reset-failed "${HEARTBEAT_SERVICE}.service" >/dev/null 2>&1 || true
 
-  rm -rf --one-file-system -- "${STATE_ROOT}" "${SUPERMEMORY_ROOT}"
-  [[ ! -e "${STATE_ROOT}" && ! -e "${SUPERMEMORY_ROOT}" ]] \
-    || fail "a managed state root could not be removed; check for a mounted filesystem and rerun"
+  rm -rf --one-file-system -- "${STATE_ROOT}"
+  [[ ! -e "${STATE_ROOT}" ]] \
+    || fail "the managed state root could not be removed; check for a mounted filesystem and rerun"
   rmdir /usr/local/lib/orcasynapse >/dev/null 2>&1 || true
-  if getent passwd "${SUPERMEMORY_USER}" >/dev/null 2>&1; then
-    userdel "${SUPERMEMORY_USER}" >/dev/null
-  fi
-  success "Identity keys, runtime state, memory data, units, and service account removed."
+  success "Identity keys, runtime state, managed policy, and units removed."
 }
 
 main() {

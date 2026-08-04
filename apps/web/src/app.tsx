@@ -282,12 +282,10 @@ function App() {
   const healthyConnections = managedConnections.filter(({ enabled, status }) => enabled && status === "HEALTHY").length;
   const inferenceConnection = connectionFor(managedConnections, "INFERENCE");
   const hermesConnection = connectionFor(managedConnections, "HERMES");
-  const supermemoryConnection = connectionFor(managedConnections, "SUPERMEMORY");
   const oidcConnection = connectionFor(managedConnections, "OIDC");
   const hermesChatReady = readiness.chatReady;
-  const knowledgeReady = readiness.knowledgeReady;
   const agenticReady = readiness.agenticReady;
-  const agenticConfigured = Boolean(hermesConnection || supermemoryConnection);
+  const agenticConfigured = Boolean(hermesConnection);
   const agenticState = !unlocked
     ? { label: "Unlock to view", tone: "disabled" }
     : agenticReady
@@ -308,13 +306,12 @@ function App() {
     {
       key: "agentic",
       name: "Agentic System",
-      role: "Hermes execution and Supermemory",
+      role: "Governed Hermes execution",
       mark: "AS",
       tone: "violet",
       state: agenticState,
       components: unlocked ? [
         { name: "Hermes", label: hermesChatReady ? "Ready" : readiness.runtimeNodeReady ? "Needs Profile or policy" : connectionState(hermesConnection).label, tone: hermesChatReady ? "ready" : readiness.runtimeNodeReady ? "degraded" : connectionState(hermesConnection).tone },
-        { name: "Knowledge", ...connectionState(supermemoryConnection) },
       ] : [],
     },
     {
@@ -352,19 +349,10 @@ function App() {
       ready: readiness.executionReady,
       action: "Agents" as ActiveView,
     },
-    {
-      // knowledgeReady tracks the SUPERMEMORY connection, which since the
-      // pgvector migration backs Hermes agent memory only - document knowledge
-      // is indexed locally and needs no VM2 service.
-      label: "Agent memory",
-      detail: knowledgeReady ? "Supermemory is reachable on the enrolled VM2 runtime" : "Verify Supermemory on VM2",
-      ready: knowledgeReady,
-      action: knowledgeReady ? "Agents" as ActiveView : "Deployment" as ActiveView,
-    },
   ];
 
   const openConnectionSettings = (kind: ServiceKind = "INFERENCE") => {
-    if (kind === "HERMES" || kind === "SUPERMEMORY") {
+    if (kind === "HERMES") {
       setDrawerOpen(false);
       selectView("Deployment", "nodes");
       return;
@@ -737,7 +725,7 @@ function App() {
             administrator={adminSession !== null}
             oidcConfigured={oidcStatus?.configured === true}
             onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23knowledge%2Fdocuments")}
-            onConfigure={() => openConnectionSettings("SUPERMEMORY")}
+            onConfigure={() => openConnectionSettings("HERMES")}
             onUnauthorized={() => {
               sessionGeneration.current += 1;
               setAdminSession(null);

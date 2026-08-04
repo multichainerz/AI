@@ -59,7 +59,6 @@ const noKnowledge: AgentKnowledgeRetriever = { search: vi.fn(async (_owner?: unk
 async function healthyBoundary(
   options: {
     runtimeStatus?: typeof hermesRuntimeNode.$inferInsert["status"];
-    memoryStatus?: typeof serviceConnection.$inferInsert["status"];
   } = {},
 ) {
   await context.database
@@ -79,17 +78,6 @@ async function healthyBoundary(
       configuration: {},
     })
     .returning({ id: serviceConnection.id });
-
-  await context.database.insert(serviceConnection).values({
-    slug: `memory-${randomUUID().slice(0, 8)}`,
-    displayName: "Supermemory",
-    kind: "SUPERMEMORY",
-    environment: "DEVELOPMENT",
-    enabled: true,
-    status: options.memoryStatus ?? "HEALTHY",
-    baseUrl: "http://127.0.0.1:6767",
-    configuration: {},
-  });
 
   await context.database.insert(hermesRuntimeNode).values({
     slug: `node-${randomUUID().slice(0, 8)}`,
@@ -232,22 +220,6 @@ describe("DrizzleAgentProcessor", () => {
       .resolves.toMatchObject({ status: "DENIED" });
     expect(runtime.start).not.toHaveBeenCalled();
     expect(knowledge.search).not.toHaveBeenCalled();
-  });
-
-  it("denies a run when Hermes reports online but its memory plane is unhealthy", async () => {
-    await healthyBoundary({ memoryStatus: "UNREACHABLE" });
-    const id = await queuedRun();
-    const runtime = hermes();
-
-    await expect(processor(runtime).process({ runId: id }, await jobIdOf(id), WORKER))
-      .resolves.toMatchObject({ status: "DENIED" });
-    expect(runtime.start).not.toHaveBeenCalled();
-
-    const [stored] = await context.database
-      .select({ failureCode: agentRun.failureCode })
-      .from(agentRun)
-      .where(eq(agentRun.id, id));
-    expect(stored?.failureCode).toBe("SUPERMEMORY_UNHEALTHY");
   });
 
   it("does not start queued work while the runtime is draining", async () => {

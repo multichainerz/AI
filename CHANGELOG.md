@@ -5,6 +5,38 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.29.0 — 2026-08-05
+
+Remove Supermemory. VM2 now runs exactly one plane — the Hermes runtime — and
+holds no durable data store of its own.
+
+- delete ~450 lines from the VM2 installer: the checksum-verified binary
+  download, the systemd unit and service account, the 600-second first-boot
+  model wait, the API-key capture from journald, the disposable document check,
+  the Hermes memory-provider bootstrap, and the memory registration round trip
+- **stop gating agent runs on a remote memory plane** — the worker previously
+  refused every run with `SUPERMEMORY_UNAVAILABLE`/`SUPERMEMORY_UNHEALTHY`, so
+  a VM2 memory outage stopped all agent execution
+- simplify the ONLINE rule to the single plane that now exists, in both the
+  post-enroll trust proof and the heartbeat client
+- remove the `/:nodeId/memory` route, `registerMemory`, the diagnostics
+  adapter, the AI-Ops component, and the `supermemoryVersion` invitation
+  artifact along with its release-pin contract
+- drop `SUPERMEMORY` from the `ServiceKind` enum (migration 0008 recreates the
+  type, since PostgreSQL cannot remove an enum value in place, and disposes of
+  the obsolete rows first) and drop `HermesNodeEnrollment.supermemoryVersion`
+- retire the `supermemory-local` and `hermes-native-memory` onboarding
+  components through the existing withdrawal reaper, and rename the knowledge
+  attestation to `knowledge-index` — it has queried `DocumentChunk` and nothing
+  else since the pgvector migration
+- stop gating the dashboard's Knowledge workspace on the VM2 memory service,
+  which never served document knowledge after that migration
+
+Cross-conversation agent memory is not part of this release. Within a
+conversation nothing changes: OrcaSynapse replays bounded complete-turn history
+on every run. A governed replacement served from OrcaSynapse's own pgvector
+plane is the next planned change.
+
 ## ai-v1.28.2 — 2026-08-05
 
 Shorten every install command to the canonical `curl -fsSL` form.

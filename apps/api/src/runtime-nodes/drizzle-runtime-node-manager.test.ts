@@ -88,7 +88,6 @@ function invitationInput(overrides: Record<string, unknown> = {}) {
     baseUrl: "https://hermes.internal",
     controlPlaneUrl: CONTROL_PLANE,
     hermesImage: "ghcr.io/example/hermes:1.0.0",
-    supermemoryVersion: "0.0.5",
     expiresInMinutes: 60,
     ...overrides,
   } as never;
@@ -206,10 +205,6 @@ describe("DrizzleHermesRuntimeNodeManager invitations", () => {
 
     await expect(manager().createInvitation(principal, invitationInput()))
       .rejects.toThrow(/digest-pinned Hermes image/);
-    await expect(manager().createInvitation(principal, invitationInput({
-      hermesImage: "ghcr.io/example/hermes@sha256:" + "a".repeat(64),
-      supermemoryVersion: "latest",
-    }))).rejects.toThrow(/exact Supermemory release/);
     await expect(manager().createInvitation(principal, invitationInput({
       hermesImage: "ghcr.io/example/hermes@sha256:" + "a".repeat(64),
       controlPlaneUrl: "http://orcasynapse.example",

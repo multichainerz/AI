@@ -86,9 +86,9 @@ describe("DrizzleModelManager", () => {
   });
 
   it("refuses a connection of the wrong kind for the workload", async () => {
-    const supermemory = await connection({ kind: "SUPERMEMORY" });
-    await expect(manager().create(principal, draft(supermemory))).rejects.toThrow(
-      /cannot use a SUPERMEMORY connection/,
+    const hermes = await connection({ kind: "HERMES" });
+    await expect(manager().create(principal, draft(hermes))).rejects.toThrow(
+      /cannot use a HERMES connection/,
     );
   });
 

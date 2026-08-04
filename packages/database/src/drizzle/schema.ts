@@ -59,7 +59,7 @@ export const productionReadinessControlStatus = pgEnum("ProductionReadinessContr
 export const productionReadinessDomain = pgEnum("ProductionReadinessDomain", ['SECURITY', 'INFRASTRUCTURE', 'RECOVERY', 'OPERATIONS', 'TRAINING', 'BUSINESS'])
 export const promptPurpose = pgEnum("PromptPurpose", ['CHAT_SYSTEM'])
 export const promptTemplateStatus = pgEnum("PromptTemplateStatus", ['DRAFT', 'ACTIVE', 'SUSPENDED'])
-export const serviceKind = pgEnum("ServiceKind", ['INFERENCE', 'HERMES', 'SUPERMEMORY', 'MCP', 'OIDC', 'SIEM', 'NOTIFICATION', 'OTHER'])
+export const serviceKind = pgEnum("ServiceKind", ['INFERENCE', 'HERMES', 'MCP', 'OIDC', 'SIEM', 'NOTIFICATION', 'OTHER'])
 export const toolApprovalStatus = pgEnum("ToolApprovalStatus", ['PENDING', 'APPROVED', 'REJECTED', 'EXPIRED', 'CANCELLED'])
 export const toolCallStatus = pgEnum("ToolCallStatus", ['REQUESTED', 'APPROVAL_PENDING', 'EXECUTING', 'COMPLETED', 'FAILED', 'DENIED', 'CANCELLED'])
 export const toolResourceScope = pgEnum("ToolResourceScope", ['OWNER_ONLY'])
@@ -924,7 +924,6 @@ export const hermesNodeEnrollment = pgTable("HermesNodeEnrollment", {
 	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
 	controlPlaneUrl: text(),
 	hermesImage: text(),
-	supermemoryVersion: varchar({ length: 120 }).default('0.0.7-rc.2').notNull(),
 }, (table) => [
 	index("HermesNodeEnrollment_nodeId_status_idx").using("btree", table.nodeId.asc().nullsLast(), table.status.asc().nullsLast()),
 	index("HermesNodeEnrollment_status_expiresAt_idx").using("btree", table.status.asc().nullsLast(), table.expiresAt.asc().nullsLast()),

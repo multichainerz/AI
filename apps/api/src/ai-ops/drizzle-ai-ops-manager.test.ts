@@ -84,7 +84,7 @@ describe("DrizzleAiOpsManager overview", () => {
     expect(overview.components.map(({ id }) => id)).toEqual(
       expect.arrayContaining(["postgresql", "hermes-run-reconciler", "service:inference", "service:hermes"]),
     );
-    expect(overview.components.filter(({ status }) => status === "NOT_CONFIGURED")).toHaveLength(3);
+    expect(overview.components.filter(({ status }) => status === "NOT_CONFIGURED")).toHaveLength(2);
     expect(overview.incidents).toMatchObject({ open: 0, critical: 0, items: [] });
     expect(overview.evaluations).toEqual({ drafts: 0, passed: 0, failed: 0, promoted: 0 });
   });

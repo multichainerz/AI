@@ -3,7 +3,6 @@ import { z } from "zod";
 export const SERVICE_KINDS = [
   "INFERENCE",
   "HERMES",
-  "SUPERMEMORY",
   "MCP",
   "OIDC",
   "SIEM",
@@ -87,11 +86,6 @@ export const serviceConnectionConfigurationSchema = z
     eventsPath: relativeHealthPathSchema.optional(),
     /** How many audit events one forwarded batch may carry. */
     forwardBatchSize: z.number().int().min(1).max(500).optional(),
-    memoryTimeoutMs: z.number().int().min(10_000).max(900_000).optional(),
-    memoryPollIntervalMs: z.number().int().min(500).max(30_000).optional(),
-    retrievalLimit: z.number().int().min(2).max(20).optional(),
-    retrievalThreshold: z.number().min(0).max(1).optional(),
-    observedVersion: z.string().trim().min(1).max(120).optional(),
     capabilitiesPath: relativeHealthPathSchema.optional(),
     runsPath: relativeHealthPathSchema.optional(),
     toolsetsPath: relativeHealthPathSchema.optional(),
@@ -138,15 +132,6 @@ const connectionConfigurationSchemas = {
     runPollIntervalMs: true,
     governedMcpUrl: true,
     governedToolsetName: true,
-  }),
-  SUPERMEMORY: serviceConnectionConfigurationSchema.pick({
-    timeoutMs: true,
-    healthPath: true,
-    memoryTimeoutMs: true,
-    memoryPollIntervalMs: true,
-    retrievalLimit: true,
-    retrievalThreshold: true,
-    observedVersion: true,
   }),
   MCP: serviceConnectionConfigurationSchema.pick({ timeoutMs: true, healthPath: true }),
   OIDC: serviceConnectionConfigurationSchema.pick({

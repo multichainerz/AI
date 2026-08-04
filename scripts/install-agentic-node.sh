@@ -3,19 +3,12 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="ai-v1.28.2"
+INSTALLER_VERSION="ai-v1.29.0"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 CONTAINER_NAME="orcasynapse-hermes"
 HEARTBEAT_SERVICE="orcasynapse-hermes-heartbeat"
 HERMES_UID="10000"
 HERMES_GID="10000"
-SUPERMEMORY_ROOT="${ORCASYNAPSE_SUPERMEMORY_STATE_ROOT:-/var/lib/orcasynapse-supermemory}"
-SUPERMEMORY_SERVICE="orcasynapse-supermemory"
-SUPERMEMORY_USER="orcasynapse-supermemory"
-SUPERMEMORY_EMBEDDING_MODEL="Xenova/bge-m3"
-SUPERMEMORY_EMBEDDING_DIMENSIONS="1024"
-SUPERMEMORY_START_TIMEOUT_SECONDS=600
-SUPERMEMORY_READY_PATH="/v4/openapi"
 ENROLLMENT_STATE="${STATE_ROOT}/enrollment-state.json"
 TEMPORARY_FILES=()
 RESOLVED_BUNDLE=""
@@ -435,8 +428,6 @@ model:
 platform_toolsets:
   api_server:
     - no_mcp
-memory:
-  provider: supermemory
 security:
   redact_secrets: true
   allow_lazy_installs: false
@@ -446,35 +437,6 @@ tool_loop_guardrails:
     exact_failure: 5
     idempotent_no_progress: 5
 EOF
-}
-
-install_hermes_memory_provider() {
-  # Hermes' immutable Docker image deliberately redirects allowlisted optional
-  # dependencies into /opt/data/lazy-packages. Use a process-local managed
-  # scope for that one installation; the live /etc/hermes policy remains
-  # fail-closed even if this installer is interrupted.
-  remove_hermes_bootstrap_policy
-  install -d -m 0755 -o root -g root "${HERMES_BOOTSTRAP_MANAGED_DIR}"
-  write_file_from_stdin 0644 root root "${HERMES_BOOTSTRAP_MANAGED_DIR}/config.yaml" <<'EOF'
-security:
-  allow_lazy_installs: true
-EOF
-
-  local install_status=0
-  run_with_progress "Install the governed Hermes memory provider" \
-    docker exec \
-      --env HERMES_MANAGED_DIR=/opt/data/.orcasynapse-bootstrap-managed \
-      --user "${HERMES_UID}:${HERMES_GID}" \
-      "${CONTAINER_NAME}" python -c \
-      'from tools.lazy_deps import ensure; ensure("memory.supermemory", prompt=False)' \
-    || install_status=$?
-  remove_hermes_bootstrap_policy
-  (( install_status == 0 )) || return "${install_status}"
-
-  run_with_progress "Verify the locked Hermes memory provider" \
-    docker exec --user "${HERMES_UID}:${HERMES_GID}" "${CONTAINER_NAME}" python -c \
-      'from tools.lazy_deps import activate_durable_lazy_target, feature_missing; activate_durable_lazy_target(); missing = feature_missing("memory.supermemory"); assert not missing, f"missing dependencies: {missing}"; import supermemory' \
-    || return $?
 }
 
 install_host_dependencies() {
@@ -510,7 +472,6 @@ validate_bundle() {
     (.controlPlaneUrl | test("^https?://")) and
     (.hermesBaseUrl | test("^https?://")) and
     (.hermesImage | type == "string" and length >= 3) and
-    (.supermemoryVersion | type == "string" and length > 0) and
     (.expiresAt | type == "string")
   ' "${bundle}" >/dev/null || fail "the enrollment bundle is incomplete"
 
@@ -529,7 +490,6 @@ validate_resume_state() {
     (.controlPlaneUrl | test("^https?://")) and
     (.hermesBaseUrl | test("^https?://")) and
     (.hermesImage | type == "string" and length > 0) and
-    (.supermemoryVersion | type == "string" and length > 0) and
     (.hostname | type == "string" and length > 0) and
     (.apiKey | type == "string" and length >= 32) and
     ((.identityFingerprint == null) or (.identityFingerprint | test("^[a-f0-9]{64}$"))) and
@@ -537,25 +497,6 @@ validate_resume_state() {
     (.modelBootstrap.modelAlias | type == "string" and length > 0) and
     (.modelBootstrap.apiKey | type == "string" and length > 0)
   ' "${state_file}" >/dev/null
-}
-
-supermemory_release_matches() {
-  local requested_version="$1" installed_version="$2"
-  [[ "${requested_version}" == "latest" || "${installed_version#v}" == "${requested_version#v}" ]]
-}
-
-normalize_supermemory_release() {
-  local requested_version="$1"
-  [[ "${requested_version}" == "latest" ]] && printf 'latest' || printf '%s' "${requested_version#v}"
-}
-
-assert_supermemory_release_usable() {
-  local installed_version="${1#v}"
-  case "${installed_version}" in
-    0.0.6)
-      fail "Supermemory Local v0.0.6 is blocked because its published binary cannot load RivetKit; document ingestion and search are non-functional (upstream issues #1315 and #1324). Issue a new enrollment pinned to 0.0.7-rc.2 or a newer release explicitly validated by your organization"
-      ;;
-  esac
 }
 
 resolve_bundle_from_orcasynapse() {
@@ -633,11 +574,7 @@ verify_enrolled_identity() {
   local node_id="$1" control_plane_url="$2" hermes_image="$3" node_fingerprint="$4"
   local observed_at node_status payload nonce signature response_file http_status response_error
   node_status="DEGRADED"
-  # The trust proof must not claim ONLINE before the memory plane exists;
-  # mirror the heartbeat client's both-planes rule. During a fresh install this
-  # correctly reports DEGRADED until step 7 starts the heartbeat service.
-  if curl --fail --silent --max-time 5 http://127.0.0.1:8642/health >/dev/null \
-    && curl --fail --silent --max-time 5 "http://127.0.0.1:6767${SUPERMEMORY_READY_PATH}" >/dev/null; then
+  if curl --fail --silent --max-time 5 http://127.0.0.1:8642/health >/dev/null; then
     node_status="ONLINE"
   fi
   observed_at="$(date --utc '+%Y-%m-%dT%H:%M:%SZ')"
@@ -668,325 +605,6 @@ verify_enrolled_identity() {
     fail "VM1 rejected the enrolled VM2 identity ${node_fingerprint} for node ${node_id}. The retained VM2 state and dashboard record no longer share the same trust binding. Revoke and decommission the stale Agentic System node in the dashboard, run 'curl -fsSL ${control_plane_url}/install/remove-agentic-node.sh | sudo bash' on VM2, then issue a fresh installer claim. Server response: ${response_error}"
   fi
   fail "VM1 could not verify the enrolled VM2 trust binding (HTTP ${http_status}): ${response_error}"
-}
-
-install_supermemory_binary() {
-  local requested_version="$1" install_dir="$2" bin_dir="$3"
-  local release platform asset release_base binary_file checksum_file expected_checksum actual_checksum next_binary version_file
-  release="$(normalize_supermemory_release "${requested_version}")"
-  [[ "${release}" != "latest" ]] || fail "the secured VM2 installer requires an exact Supermemory release instead of mutable 'latest'"
-  case "$(uname -m)" in
-    x86_64) platform="linux-x64" ;;
-    aarch64) platform="linux-arm64" ;;
-    *) fail "Supermemory does not publish a verified binary for architecture '$(uname -m)'" ;;
-  esac
-  asset="supermemory-server-${platform}"
-  release_base="https://github.com/supermemoryai/supermemory/releases/download/server-v${release}"
-  binary_file="$(mktemp /tmp/orcasynapse-supermemory-binary.XXXXXX)"
-  checksum_file="$(mktemp /tmp/orcasynapse-supermemory-sha256.XXXXXX)"
-  TEMPORARY_FILES+=("${binary_file}" "${checksum_file}")
-  download_with_progress "Download Supermemory ${release}" "${release_base}/${asset}" "${binary_file}"
-  download_with_progress "Download Supermemory checksum" "${release_base}/${asset}.sha256" "${checksum_file}"
-  expected_checksum="$(awk 'NR == 1 && $1 ~ /^[a-f0-9]{64}$/ { print $1 }' "${checksum_file}")"
-  [[ -n "${expected_checksum}" ]] || fail "the Supermemory release checksum is malformed"
-  actual_checksum="$(sha256sum "${binary_file}" | awk '{print $1}')"
-  [[ "${actual_checksum}" == "${expected_checksum}" ]] || fail "the Supermemory release checksum did not match"
-  install -d -m 0750 "${install_dir}/bin" "${bin_dir}"
-  next_binary="${install_dir}/bin/.supermemory-server.${release}.new"
-  install -m 0755 "${binary_file}" "${next_binary}"
-  mv -f -- "${next_binary}" "${install_dir}/bin/supermemory-server"
-  version_file="${install_dir}/bin/.supermemory-server.version.new"
-  printf '%s\n' "${release}" > "${version_file}"
-  chmod 0644 "${version_file}"
-  mv -f -- "${version_file}" "${install_dir}/bin/supermemory-server.version"
-  ln -sfn "${install_dir}/bin/supermemory-server" "${bin_dir}/supermemory-server"
-  success "Verified and installed Supermemory Local ${release}."
-}
-
-supermemory_ready() {
-  local base_url="${1%/}"
-  curl --fail --silent --max-time 5 "${base_url}${SUPERMEMORY_READY_PATH}" >/dev/null 2>&1
-}
-
-supermemory_journal() {
-  local invocation_id="${1:-}"
-  if [[ -n "${invocation_id}" ]]; then
-    journalctl "_SYSTEMD_INVOCATION_ID=${invocation_id}" --no-pager -o cat 2>/dev/null
-  else
-    journalctl -u "${SUPERMEMORY_SERVICE}.service" --no-pager -o cat 2>/dev/null
-  fi
-}
-
-parse_supermemory_download_progress() {
-  sed -nE 's/^[[:space:]]*\[[=[:space:]]+\][[:space:]]+([0-9]{1,3})%[[:space:]]+[^[:alnum:]]+[[:space:]]+(.*)$/\1|\2/p' \
-    | tail -1
-}
-
-parse_supermemory_embedding_model() {
-  sed -nE 's/^[[:space:]]*[*+>][[:space:]]+local embeddings[[:space:]]+([^[:space:]]+)[[:space:]]+.*/\1/p' \
-    | grep -vE '^[0-9]+$' \
-    | head -1
-}
-
-render_supermemory_progress() {
-  local percent="$1" detail="$2" elapsed="$3" width=24 filled empty progress remainder
-  filled=$((percent * width / 100))
-  empty=$((width - filled))
-  printf -v progress '%*s' "${filled}" ''
-  printf -v remainder '%*s' "${empty}" ''
-  progress="${progress// /=}"
-  remainder="${remainder// / }"
-  printf '\r\033[2K  %b[DL]%b [%s%s] %3d%%  %-20.20s %4ss' \
-    "${UI_CYAN}${UI_BOLD}" "${UI_RESET}" "${progress}" "${remainder}" "${percent}" "${detail}" "${elapsed}"
-}
-
-print_safe_supermemory_diagnostics() {
-  local invocation_id="${1:-}"
-  supermemory_journal "${invocation_id}" \
-    | sed -E 's/sm_[A-Za-z0-9_-]{20,}/sm_[REDACTED]/g' \
-    | grep -Ei 'startup|download|embedding|fetching|worker|ready|failed|error|panic|fatal|dimension|provider|database' \
-    | tail -n 80 >&2 || true
-}
-
-wait_for_supermemory() {
-  local base_url="$1" invocation_id="$2"
-  local deadline=$((SECONDS + SUPERMEMORY_START_TIMEOUT_SECONDS))
-  local started="${SECONDS}" last_percent="" progress_record="" percent="" detail=""
-  local frame_index=0
-
-  if (( UI_INTERACTIVE )); then
-    printf '\033[?25l'
-  else
-    info "Waiting for Supermemory model initialization and API readiness."
-  fi
-
-  until supermemory_ready "${base_url}"; do
-    if ! systemctl is-active --quiet "${SUPERMEMORY_SERVICE}.service"; then
-      (( UI_INTERACTIVE )) && printf '\r\033[2K\033[?25h'
-      print_safe_supermemory_diagnostics "${invocation_id}"
-      fail "Supermemory Local stopped before its API became ready"
-    fi
-
-    progress_record="$(supermemory_journal "${invocation_id}" | parse_supermemory_download_progress || true)"
-    if [[ -n "${progress_record}" ]]; then
-      percent="${progress_record%%|*}"
-      detail="${progress_record#*|}"
-      if (( UI_INTERACTIVE )); then
-        render_supermemory_progress "${percent}" "${detail}" "$((SECONDS - started))"
-      elif [[ "${percent}" != "${last_percent}" ]]; then
-        printf '  [DL] [%-24s] %3d%%  %s\n' "$(printf '%*s' $((percent * 24 / 100)) '' | tr ' ' '=')" "${percent}" "${detail}"
-      fi
-      last_percent="${percent}"
-    elif (( UI_INTERACTIVE )); then
-      render_activity_progress "Initialize Supermemory embeddings" "$((SECONDS - started))" "${frame_index}"
-      frame_index=$((frame_index + 1))
-    fi
-
-    if (( SECONDS >= deadline )); then
-      (( UI_INTERACTIVE )) && printf '\r\033[2K\033[?25h'
-      print_safe_supermemory_diagnostics "${invocation_id}"
-      fail "Supermemory Local did not become ready within ten minutes"
-    fi
-    sleep 1
-  done
-
-  if (( UI_INTERACTIVE )); then
-    if [[ -n "${last_percent}" ]]; then
-      render_supermemory_progress 100 "model ready" "$((SECONDS - started))"
-      printf '\n\033[?25h'
-    else
-      printf '\r\033[2K\033[?25h'
-    fi
-  fi
-}
-
-verify_supermemory_document_pipeline() {
-  local base_url="${1%/}" api_key="$2"
-  local source_file response_file state_file document_id custom_id http_status status deadline
-  local started="${SECONDS}" frame_index=0 last_status=""
-  source_file="$(mktemp /tmp/orcasynapse-supermemory-check.XXXXXX.txt)"
-  response_file="$(mktemp /tmp/orcasynapse-supermemory-response.XXXXXX.json)"
-  state_file="$(mktemp /tmp/orcasynapse-supermemory-state.XXXXXX.json)"
-  TEMPORARY_FILES+=("${source_file}" "${response_file}" "${state_file}")
-  custom_id="orcasynapse_install_check_$(openssl rand -hex 12)"
-  printf '%s\n' 'OrcaSynapse verifies local document extraction, embedding, and indexing during enrollment.' > "${source_file}"
-
-  http_status="$(curl --silent --show-error --max-time 30 \
-    --output "${response_file}" --write-out '%{http_code}' \
-    --request POST \
-    --header "Authorization: Bearer ${api_key}" \
-    --form "file=@${source_file};type=text/plain;filename=orcasynapse-memory-check.txt" \
-    --form 'containerTags=orcasynapse-install-check' \
-    --form "customId=${custom_id}" \
-    "${base_url}/v3/documents/file")" \
-    || fail "Supermemory could not accept its end-to-end document verification source"
-  [[ "${http_status}" =~ ^2[0-9][0-9]$ ]] \
-    || fail "Supermemory rejected its end-to-end document verification source (HTTP ${http_status})"
-  document_id="$(jq -r '.id // .documentId // empty' "${response_file}" 2>/dev/null || true)"
-  [[ -n "${document_id}" ]] || fail "Supermemory accepted its verification source without returning a document ID"
-
-  deadline=$((SECONDS + 300))
-  if (( UI_INTERACTIVE )); then
-    printf '\033[?25l'
-  else
-    info "Verify local document extraction, BGE-M3 embedding, and indexing."
-  fi
-  while (( SECONDS < deadline )); do
-    http_status="$(curl --silent --show-error --max-time 15 \
-      --output "${state_file}" --write-out '%{http_code}' \
-      --header "Authorization: Bearer ${api_key}" \
-      "${base_url}/v3/documents/${document_id}")" || http_status="000"
-    if [[ "${http_status}" =~ ^2[0-9][0-9]$ ]]; then
-      status="$(jq -r '.status // "unknown"' "${state_file}" 2>/dev/null || printf 'unknown')"
-      if (( UI_INTERACTIVE )); then
-        render_activity_progress "Document pipeline: ${status}" "$((SECONDS - started))" "${frame_index}"
-        frame_index=$((frame_index + 1))
-      elif [[ "${status}" != "${last_status}" ]]; then
-        info "Supermemory verification status: ${status}."
-      fi
-      last_status="${status}"
-      case "${status}" in
-        done)
-          (( UI_INTERACTIVE )) && printf '\r\033[2K\033[?25h'
-          curl --fail --silent --max-time 15 --request DELETE \
-            --header "Authorization: Bearer ${api_key}" \
-            "${base_url}/v3/documents/${document_id}" >/dev/null 2>&1 || true
-          success "Supermemory document extraction, BGE-M3 embedding, and indexing passed."
-          return 0
-          ;;
-        failed)
-          (( UI_INTERACTIVE )) && printf '\r\033[2K\033[?25h'
-          curl --fail --silent --max-time 15 --request DELETE \
-            --header "Authorization: Bearer ${api_key}" \
-            "${base_url}/v3/documents/${document_id}" >/dev/null 2>&1 || true
-          print_safe_supermemory_diagnostics
-          fail "Supermemory's local document pipeline failed before enrollment completed. BGE-M3 only embeds extracted text; verify that the approved OpenAI-compatible chat model supports structured extraction, then rerun this installer"
-          ;;
-      esac
-    fi
-    sleep 2
-  done
-
-  (( UI_INTERACTIVE )) && printf '\r\033[2K\033[?25h'
-  curl --fail --silent --max-time 15 --request DELETE \
-    --header "Authorization: Bearer ${api_key}" \
-    "${base_url}/v3/documents/${document_id}" >/dev/null 2>&1 || true
-  print_safe_supermemory_diagnostics
-  fail "Supermemory's end-to-end document pipeline did not finish within five minutes"
-}
-
-install_supermemory() {
-  local inference_base_url="$1" model_alias="$2" gateway_key="$3" requested_version="$4"
-  local install_dir="${SUPERMEMORY_ROOT}/install"
-  local bin_dir="${SUPERMEMORY_ROOT}/bin"
-  local installed_version=""
-
-  if ! id -u "${SUPERMEMORY_USER}" >/dev/null 2>&1; then
-    useradd --system --user-group --no-create-home \
-      --home-dir "${SUPERMEMORY_ROOT}" --shell /usr/sbin/nologin "${SUPERMEMORY_USER}"
-  fi
-  [[ "$(id -gn "${SUPERMEMORY_USER}")" == "${SUPERMEMORY_USER}" ]] \
-    || fail "the retained Supermemory service account does not have its expected private primary group"
-  install -d -m 0750 -o "${SUPERMEMORY_USER}" -g "${SUPERMEMORY_USER}" \
-    "${SUPERMEMORY_ROOT}" "${SUPERMEMORY_ROOT}/data" "${install_dir}" "${bin_dir}"
-
-  if [[ -x "${install_dir}/bin/supermemory-server" && -s "${install_dir}/bin/supermemory-server.version" ]]; then
-    installed_version="$(<"${install_dir}/bin/supermemory-server.version")"
-    if ! supermemory_release_matches "${requested_version}" "${installed_version}"; then
-      warning "Upgrading retained Supermemory Local ${installed_version} to the dashboard-pinned ${requested_version} release. The encrypted data and embedding plan are preserved."
-      install_supermemory_binary "${requested_version}" "${install_dir}" "${bin_dir}" \
-        || fail "Supermemory Local upgrade failed"
-      installed_version="$(<"${install_dir}/bin/supermemory-server.version")"
-    else
-      info "Reusing the protected Supermemory Local installation already present on this node."
-    fi
-  else
-    install_supermemory_binary "${requested_version}" "${install_dir}" "${bin_dir}" \
-      || fail "Supermemory Local installation failed"
-    installed_version="$(<"${install_dir}/bin/supermemory-server.version")"
-  fi
-  assert_supermemory_release_usable "${installed_version}"
-  chown -R "${SUPERMEMORY_USER}:${SUPERMEMORY_USER}" "${SUPERMEMORY_ROOT}"
-
-  write_file_from_stdin 0600 "${SUPERMEMORY_USER}" "${SUPERMEMORY_USER}" "${SUPERMEMORY_ROOT}/runtime.env" <<EOF
-OPENAI_BASE_URL=${inference_base_url}
-OPENAI_API_KEY=${gateway_key}
-OPENAI_MODEL=${model_alias}
-OPENAI_FAST_MODEL=${model_alias}
-OPENAI_TEXT_MODEL=${model_alias}
-SUPERMEMORY_DATA_DIR=${SUPERMEMORY_ROOT}/data
-SUPERMEMORY_PORT=6767
-SUPERMEMORY_EMBEDDING_PROVIDER=local
-SUPERMEMORY_EMBEDDING_MODEL=${SUPERMEMORY_EMBEDDING_MODEL}
-SUPERMEMORY_EMBEDDING_DIMENSIONS=${SUPERMEMORY_EMBEDDING_DIMENSIONS}
-SUPERMEMORY_DISABLE_TELEMETRY=1
-EOF
-
-  write_file_from_stdin 0644 root root "/etc/systemd/system/${SUPERMEMORY_SERVICE}.service" <<EOF
-[Unit]
-Description=OrcaSynapse Supermemory Local runtime
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=${SUPERMEMORY_USER}
-Group=${SUPERMEMORY_USER}
-WorkingDirectory=${SUPERMEMORY_ROOT}
-EnvironmentFile=${SUPERMEMORY_ROOT}/runtime.env
-ExecStart=${install_dir}/bin/supermemory-server
-# always, not on-failure: a long-running memory plane that exits cleanly still
-# leaves Hermes without recall, and nothing else on VM2 would restart it.
-Restart=always
-RestartSec=5s
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectHome=true
-ProtectSystem=strict
-ReadWritePaths=${SUPERMEMORY_ROOT}
-
-[Install]
-WantedBy=multi-user.target
-EOF
-  info "Supermemory will initialize local embeddings; first boot downloads and prewarms model weights."
-  systemctl daemon-reload
-  systemctl enable "${SUPERMEMORY_SERVICE}.service" >/dev/null
-  systemctl restart "${SUPERMEMORY_SERVICE}.service"
-
-  local invocation_id
-  invocation_id="$(systemctl show "${SUPERMEMORY_SERVICE}.service" --property=InvocationID --value 2>/dev/null || true)"
-  wait_for_supermemory "http://127.0.0.1:6767" "${invocation_id}"
-
-  local memory_api_key="" native_api_key_file="${SUPERMEMORY_ROOT}/data/api-key"
-  if [[ -s "${SUPERMEMORY_ROOT}/api-key" ]]; then
-    memory_api_key="$(<"${SUPERMEMORY_ROOT}/api-key")"
-  elif [[ -s "${native_api_key_file}" ]]; then
-    memory_api_key="$(<"${native_api_key_file}")"
-  else
-    local key_deadline=$((SECONDS + 120))
-    while [[ -z "${memory_api_key}" && ${SECONDS} -lt ${key_deadline} ]]; do
-      memory_api_key="$(journalctl -u "${SUPERMEMORY_SERVICE}.service" --no-pager -o cat 2>/dev/null \
-        | grep -Eo 'sm_[A-Za-z0-9_-]{20,}' | tail -1 || true)"
-      [[ -n "${memory_api_key}" ]] || sleep 1
-    done
-  fi
-  [[ "${memory_api_key}" =~ ^sm_[A-Za-z0-9_-]{20,}$ ]] \
-    || fail "Supermemory Local started but its first-boot API key could not be captured safely"
-  printf '%s' "${memory_api_key}" > "${SUPERMEMORY_ROOT}/api-key"
-  chown root:root "${SUPERMEMORY_ROOT}/api-key"
-  chmod 0600 "${SUPERMEMORY_ROOT}/api-key"
-  verify_supermemory_document_pipeline "http://127.0.0.1:6767" "${memory_api_key}"
-  local actual_embedding_model
-  actual_embedding_model="$(supermemory_journal "${invocation_id}" | parse_supermemory_embedding_model || true)"
-  if [[ -n "${actual_embedding_model}" && "${actual_embedding_model}" != "${SUPERMEMORY_EMBEDDING_MODEL}" ]]; then
-    success "Supermemory Local API is ready with ${actual_embedding_model}."
-    warning "Supermemory started with ${actual_embedding_model}; its current release ignored the requested ${SUPERMEMORY_EMBEDDING_MODEL} setting (upstream issue #1336)."
-    warning "Non-English semantic recall is reduced until Supermemory ships configurable local embeddings."
-  elif [[ -n "${actual_embedding_model}" ]]; then
-    success "Supermemory Local is ready with ${actual_embedding_model} (${SUPERMEMORY_EMBEDDING_DIMENSIONS} dimensions)."
-  else
-    success "Supermemory Local API is ready; the embedding model was already cached and not reported during this start."
-  fi
 }
 
 wait_for_hermes() {
@@ -1046,14 +664,11 @@ sign_request() {
   printf '%s' "${signature}"
 }
 
-# Hermes answers /health the moment its API server binds, which is long before
-# Supermemory has loaded its embedding model - and Docker restarts the Hermes
-# container independently of the Supermemory unit. Reporting ONLINE on the
-# Hermes port alone is how a node presents a healthy runtime whose memory plane
-# is unusable. Both planes must answer before this node claims to be online.
+# Agent memory is served by OrcaSynapse from its own pgvector plane, so this
+# node runs exactly one plane: the Hermes runtime. Its API port answering is
+# the whole of what this host can attest to.
 hermes_status="DEGRADED"
-if curl --fail --silent --max-time 5 http://127.0.0.1:8642/health >/dev/null \
-  && curl --fail --silent --max-time 5 http://127.0.0.1:6767/v4/openapi >/dev/null; then
+if curl --fail --silent --max-time 5 http://127.0.0.1:8642/health >/dev/null; then
   hermes_status="ONLINE"
 fi
 observed_at="$(date --utc '+%Y-%m-%dT%H:%M:%SZ')"
@@ -1119,7 +734,7 @@ main() {
 
   step 2 7 "Resolve or resume the protected enrollment"
   local bundle="" resuming=0
-  local node_id token control_plane_url hermes_base_url hermes_image supermemory_release hostname_value public_key api_key
+  local node_id token control_plane_url hermes_base_url hermes_image hostname_value public_key api_key
   local node_fingerprint private_fingerprint retained_fingerprint enrolled_fingerprint
   if [[ -s "${ENROLLMENT_STATE}" ]]; then
     validate_resume_state "${ENROLLMENT_STATE}" || fail "the protected enrollment recovery state is invalid"
@@ -1128,7 +743,6 @@ main() {
     control_plane_url="$(jq -r '.controlPlaneUrl' "${ENROLLMENT_STATE}" | sed 's:/*$::')"
     hermes_base_url="$(jq -r '.hermesBaseUrl' "${ENROLLMENT_STATE}" | sed 's:/*$::')"
     hermes_image="$(jq -r '.hermesImage' "${ENROLLMENT_STATE}")"
-    supermemory_release="$(jq -r '.supermemoryVersion' "${ENROLLMENT_STATE}")"
     hostname_value="$(jq -r '.hostname' "${ENROLLMENT_STATE}")"
     api_key="$(jq -r '.apiKey' "${ENROLLMENT_STATE}")"
     if [[ "$#" -eq 2 && "$1" == "--connect" ]]; then
@@ -1157,7 +771,6 @@ main() {
     control_plane_url="$(jq -r '.controlPlaneUrl' "${bundle}" | sed 's:/*$::')"
     hermes_base_url="$(jq -r '.hermesBaseUrl' "${bundle}" | sed 's:/*$::')"
     hermes_image="$(jq -r '.hermesImage' "${bundle}")"
-    supermemory_release="$(jq -r '.supermemoryVersion' "${bundle}")"
     hostname_value="$(hostname --fqdn 2>/dev/null || hostname)"
     docker inspect "${CONTAINER_NAME}" >/dev/null 2>&1 && fail "a container named '${CONTAINER_NAME}' already exists without resumable enrollment state"
     success "Enrollment bundle is valid, unexpired, and bound to OrcaSynapse."
@@ -1304,11 +917,10 @@ EOF
     jq -n \
       --arg nodeId "${node_id}" --arg controlPlaneUrl "${control_plane_url}" \
       --arg hermesBaseUrl "${hermes_base_url}" --arg hermesImage "${hermes_image}" \
-      --arg supermemoryVersion "${supermemory_release}" \
       --arg hostname "${hostname_value}" --arg apiKey "${api_key}" \
       --arg identityFingerprint "${node_fingerprint}" \
       --argjson modelBootstrap "$(jq -c '.modelBootstrap' "${response_file}")" \
-      '{format:"orcasynapse-hermes-resume/v1",nodeId:$nodeId,controlPlaneUrl:$controlPlaneUrl,hermesBaseUrl:$hermesBaseUrl,hermesImage:$hermesImage,supermemoryVersion:$supermemoryVersion,hostname:$hostname,apiKey:$apiKey,identityFingerprint:$identityFingerprint,modelBootstrap:$modelBootstrap}' \
+      '{format:"orcasynapse-hermes-resume/v1",nodeId:$nodeId,controlPlaneUrl:$controlPlaneUrl,hermesBaseUrl:$hermesBaseUrl,hermesImage:$hermesImage,hostname:$hostname,apiKey:$apiKey,identityFingerprint:$identityFingerprint,modelBootstrap:$modelBootstrap}' \
       > "${resume_file}"
     install -m 0600 -o root -g root "${resume_file}" "${ENROLLMENT_STATE}"
     success "Node enrolled; protected recovery state was saved before continuing."
@@ -1317,38 +929,9 @@ EOF
   verify_enrolled_identity "${node_id}" "${control_plane_url}" "${hermes_image}" "${node_fingerprint}"
   success "VM1 accepted the signed VM2 trust handshake."
 
-  step 6 7 "Install memory and managed policy"
-  install_supermemory "${model_base_url}" "${model_alias}" "${model_api_key}" "${supermemory_release}"
-  local supermemory_api_key supermemory_version runtime_authority runtime_host supermemory_base_url
-  supermemory_api_key="$(<"${SUPERMEMORY_ROOT}/api-key")"
-  supermemory_version="$(<"${SUPERMEMORY_ROOT}/install/bin/supermemory-server.version")"
-  runtime_authority="${hermes_base_url#*://}"
-  runtime_authority="${runtime_authority%%/*}"
-  if [[ "${runtime_authority}" == \[*\]* ]]; then
-    runtime_host="${runtime_authority%%]*}]"
-  else
-    runtime_host="${runtime_authority%%:*}"
-  fi
-  [[ -n "${runtime_host}" ]] || fail "the Hermes base URL does not contain a usable runtime host"
-  supermemory_base_url="http://${runtime_host}:6767"
-  supermemory_ready "${supermemory_base_url}" \
-    || fail "Supermemory is ready on loopback but is not reachable through the invited runtime host on TCP 6767"
-
+  step 6 7 "Apply the managed runtime policy"
   install_hermes_directory 0750 "${STATE_ROOT}/data"
   write_hermes_managed_policy "${model_alias_json}" "${model_base_url_json}"
-  install_hermes_memory_provider \
-    || fail "Hermes could not install and verify its governed Supermemory provider"
-  install_hermes_file_from_stdin 0640 "${STATE_ROOT}/data/supermemory.json" <<EOF
-{
-  "base_url": "http://host.docker.internal:6767",
-  "container_tag": "orcasynapse-agent-{identity}",
-  "auto_recall": true,
-  "auto_capture": true,
-  "search_mode": "hybrid",
-  "max_recall_results": 10,
-  "enable_custom_container_tags": false
-}
-EOF
   install_hermes_file_from_stdin 0600 "${STATE_ROOT}/data/.env" <<EOF
 API_SERVER_ENABLED=true
 API_SERVER_HOST=0.0.0.0
@@ -1356,41 +939,13 @@ API_SERVER_PORT=8642
 API_SERVER_KEY=${api_key}
 OPENAI_BASE_URL=${model_base_url}
 OPENAI_API_KEY=${model_api_key}
-SUPERMEMORY_API_KEY=${supermemory_api_key}
 EOF
   run_with_progress "Apply the managed runtime policy" docker restart "${CONTAINER_NAME}" \
     || fail "Hermes could not restart with its managed policy"
   run_with_progress "Verify governed runtime recovery" wait_for_hermes 0 \
     || fail "Hermes did not recover after applying the OrcaSynapse-managed inference route"
 
-  step 7 7 "Register memory and enable monitoring"
-  local memory_payload memory_timestamp memory_nonce memory_signature memory_status
-  local memory_response_file memory_error
-  memory_payload="$(jq -cS -n \
-    --arg baseUrl "${supermemory_base_url}" \
-    --arg apiKey "${supermemory_api_key}" \
-    --arg observedVersion "${supermemory_version}" \
-    '{baseUrl:$baseUrl,apiKey:$apiKey,observedVersion:$observedVersion}')"
-  memory_timestamp="$(date --utc '+%Y-%m-%dT%H:%M:%SZ')"
-  memory_nonce="$(cat /proc/sys/kernel/random/uuid)"
-  memory_signature="$(sign_node_payload "${memory_payload}" "${memory_timestamp}" "${memory_nonce}")"
-  memory_response_file="$(mktemp)"
-  TEMPORARY_FILES+=("${memory_response_file}")
-  memory_status="$(curl --silent --show-error --output "${memory_response_file}" --write-out '%{http_code}' --max-time 30 \
-    -H 'Content-Type: application/json' \
-    -H "X-OrcaSynapse-Node-Timestamp: ${memory_timestamp}" \
-    -H "X-OrcaSynapse-Node-Nonce: ${memory_nonce}" \
-    -H "X-OrcaSynapse-Node-Signature: ${memory_signature}" \
-    --data-binary "${memory_payload}" \
-    "${control_plane_url}/api/v1/runtime-nodes/${node_id}/memory")"
-  if [[ "${memory_status}" != "200" ]]; then
-    memory_error="$(jq -r '.message // .error // empty' "${memory_response_file}" 2>/dev/null \
-      | LC_ALL=C tr -cd '[:print:]' || true)"
-    memory_error="${memory_error:0:400}"
-    [[ -n "${memory_error}" ]] || memory_error="The control plane returned no diagnostic message."
-    fail "OrcaSynapse rejected Supermemory registration (HTTP ${memory_status}): ${memory_error} Local identity fingerprint: ${node_fingerprint}"
-  fi
-
+  step 7 7 "Enable monitoring"
   printf '%s' "${node_id}" > "${STATE_ROOT}/node-id"
   printf '%s' "${control_plane_url}" > "${STATE_ROOT}/control-plane-url"
   printf '%s' "${hermes_base_url}" > "${STATE_ROOT}/hermes-base-url"
@@ -1410,7 +965,6 @@ EOF
   printf '%b|  %-68s|%b\n' "${UI_GREEN}${UI_BOLD}" "AGENTIC SYSTEM IS READY" "${UI_RESET}"
   printf '%b+======================================================================+%b\n' "${UI_GREEN}${UI_BOLD}" "${UI_RESET}"
   printf '|  %-20s %-47s|\n' 'Hermes API' "${hermes_base_url}"
-  printf '|  %-20s %-47s|\n' 'Supermemory API' "${supermemory_base_url}"
   printf '|  %-68s|\n' 'Node identity fingerprint'
   printf '|  %-68s|\n' "${node_fingerprint}"
   printf '%b+======================================================================+%b\n\n' "${UI_GREEN}${UI_BOLD}" "${UI_RESET}"
