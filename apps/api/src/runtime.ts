@@ -22,7 +22,7 @@ import { DrizzleOperationsManager } from "./operations/drizzle-operations-manage
 import type { ChatManager } from "./chat/chat-manager.js";
 import { PrismaChatManager } from "./chat/prisma-chat-manager.js";
 import {
-  PrismaEnterpriseIdentityManager,
+  DrizzleEnterpriseIdentityManager,
   type EnterpriseIdentityManager,
 } from "./identity/enterprise-session.js";
 import { DrizzleRuntimeConnectionResolver, HermesClient } from "@orcasynapse/runtime-clients";
@@ -161,8 +161,8 @@ export function createRuntimeServices(): RuntimeServices {
       connectionMonitor,
       operationsManager,
       chatManager,
-      identityManager: new PrismaEnterpriseIdentityManager(
-        prisma,
+      identityManager: new DrizzleEnterpriseIdentityManager(
+        database,
         connectionManager,
         encryption,
         fetch,
