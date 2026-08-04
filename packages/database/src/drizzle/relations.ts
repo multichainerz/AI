@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { enterpriseUser, enterpriseUserSession, serviceConnection, secretRecord, configurationRevision, chatMessage, chatFeedback, agentProfile, agentProfileVersion, document, chatConversation, agentRun, agentToolGrant, governedTool, oidcAuthorizationRequest, governedToolCall, toolApproval, toolActionDispatch, modelDeployment, evaluationRun, promptTemplate, agentRunEvent, hermesRuntimeNode, hermesNodeRequestNonce, hermesNodeEnrollment, guardrailPolicy, agentRunApproval, documentChunk } from "./schema.js";
+import { enterpriseUser, enterpriseUserSession, serviceConnection, secretRecord, configurationRevision, chatMessage, chatFeedback, agentProfile, agentProfileVersion, document, chatConversation, agentRun, agentToolGrant, governedTool, oidcAuthorizationRequest, governedToolCall, toolApproval, modelDeployment, evaluationRun, promptTemplate, agentRunEvent, hermesRuntimeNode, hermesNodeRequestNonce, hermesNodeEnrollment, guardrailPolicy, agentRunApproval, documentChunk } from "./schema.js";
 
 export const enterpriseUserSessionRelations = relations(enterpriseUserSession, ({one}) => ({
 	enterpriseUser: one(enterpriseUser, {
@@ -129,7 +129,6 @@ export const governedToolCallRelations = relations(governedToolCall, ({one, many
 		references: [agentToolGrant.id]
 	}),
 	toolApprovals: many(toolApproval),
-	toolActionDispatches: many(toolActionDispatch),
 }));
 
 export const toolApprovalRelations = relations(toolApproval, ({one}) => ({
@@ -139,12 +138,6 @@ export const toolApprovalRelations = relations(toolApproval, ({one}) => ({
 	}),
 }));
 
-export const toolActionDispatchRelations = relations(toolActionDispatch, ({one}) => ({
-	governedToolCall: one(governedToolCall, {
-		fields: [toolActionDispatch.callId],
-		references: [governedToolCall.id]
-	}),
-}));
 
 export const modelDeploymentRelations = relations(modelDeployment, ({one}) => ({
 	serviceConnection: one(serviceConnection, {

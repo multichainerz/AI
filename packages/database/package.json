@@ -1,6 +1,6 @@
 {
   "name": "@orcasynapse/database",
-  "version": "1.21.12",
+  "version": "1.22.0",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
@@ -16,7 +16,6 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests",
     "verify:postgres": "node ./scripts/verify-postgres-integration.mjs",
-    "db:introspect": "drizzle-kit pull --config=drizzle.config.ts",
     "db:generate": "drizzle-kit generate",
     "db:check": "drizzle-kit check",
     "db:migrate": "node dist/drizzle/migrate-cli.js"

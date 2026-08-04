@@ -41,6 +41,7 @@ import type { ModelManager } from "./models/model-manager.js";
 import { DrizzleModelManager } from "./models/drizzle-model-manager.js";
 import type { GuardrailManager } from "./guardrails/guardrail-manager.js";
 import { DrizzleGuardrailManager } from "./guardrails/drizzle-guardrail-manager.js";
+import { DrizzleAuditManager, type AuditManager } from "./audit/audit-manager.js";
 import type { PromptManager } from "./prompts/prompt-manager.js";
 import { DrizzlePromptManager } from "./prompts/drizzle-prompt-manager.js";
 import type { OnboardingManager } from "./onboarding/onboarding-manager.js";
@@ -65,6 +66,7 @@ export interface RuntimeServices {
   modelManager?: ModelManager;
   guardrailManager?: GuardrailManager;
   promptManager?: PromptManager;
+  auditManager?: AuditManager;
   agentManager?: AgentManager;
   toolingManager?: ToolingManager;
   aiOpsManager?: AiOpsManager;
@@ -123,6 +125,7 @@ export function createRuntimeServices(): RuntimeServices {
     const modelManager = new DrizzleModelManager(database);
     const guardrailManager = new DrizzleGuardrailManager(database);
     const promptManager = new DrizzlePromptManager(database);
+    const auditManager = new DrizzleAuditManager(database);
     const documentManager = new DrizzleDocumentManager(
       database,
       new DocumentVectorStore(database, APPROVED_EMBEDDING_MODEL),
@@ -167,6 +170,7 @@ export function createRuntimeServices(): RuntimeServices {
       modelManager,
       guardrailManager,
       promptManager,
+      auditManager,
       agentManager,
       toolingManager,
       aiOpsManager,

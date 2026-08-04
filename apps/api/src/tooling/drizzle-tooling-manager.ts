@@ -25,7 +25,6 @@ import {
   governedTool,
   governedToolCall,
   mcpGatewayCredential,
-  toolActionDispatch,
   toolApproval,
   toolRuntimeControl,
   type OrcaSynapseDatabase,
@@ -147,58 +146,6 @@ function callDto(call: CallRow): ToolCall {
     createdAt: call.createdAt.toISOString(),
     updatedAt: call.updatedAt.toISOString(),
   };
-}
-
-/** The joined approval row, flattened from Prisma's call/run/tool includes. */
-interface ApprovalRow {
-  id: string; callId: string; status: ToolApproval["status"]; expiresAt: Date; decisionReason: string | null;
-  decisionBy: string | null; decidedAt: Date | null; createdAt: Date; updatedAt: Date;
-  runId: string; arguments: unknown; ownerSubject: string; profileSlug: string;
-  toolSlug: string; toolName: string;
-}
-
-function approvalDto(approval: ApprovalRow): ToolApproval {
-  return {
-    id: approval.id,
-    callId: approval.callId,
-    runId: approval.runId,
-    profileSlug: approval.profileSlug,
-    toolSlug: approval.toolSlug,
-    toolName: approval.toolName,
-    requestedBySubject: approval.ownerSubject,
-    arguments: jsonObject(approval.arguments),
-    status: approval.status,
-    expiresAt: approval.expiresAt.toISOString(),
-    decisionReason: approval.decisionReason,
-    decisionBy: approval.decisionBy,
-    decidedAt: approval.decidedAt?.toISOString() ?? null,
-    createdAt: approval.createdAt.toISOString(),
-    updatedAt: approval.updatedAt.toISOString(),
-  };
-}
-
-/** Everything the approval authorization re-check reads, in one shape. */
-interface ApprovalAuthorizationContext {
-  callId: string;
-  toolId: string;
-  arguments: unknown;
-  runStatus: string;
-  runProfileVersion: number;
-  runProfileVersionId: string;
-  runOwnerSubject: string;
-  runRequestedBy: string;
-  toolCapabilityTokenHash: Uint8Array | null;
-  toolCapabilityExpiresAt: Date | null;
-  profileStatus: string;
-  profileActiveVersion: number | null;
-  toolStatus: string;
-  toolRisk: string;
-  grantEnabled: boolean;
-  grantToolId: string;
-  grantProfileVersionId: string;
-  grantResourceScope: string;
-  grantAllowedGroups: string[];
-  grantAllowedAdminRoles: string[];
 }
 
 const grantColumns = {
@@ -481,119 +428,13 @@ export class DrizzleToolingManager implements ToolingManager {
   }
 
   /*
-   * INCOMPLETE SUBSYSTEM - human approval for CONSEQUENTIAL governed tools.
-   *
-   * This is the consequential half of the governed MCP surface whose read-only
-   * half is live. It is deliberately parked and currently unreachable:
-   *
-   *   - nothing anywhere creates a ToolApproval, so the two methods below have
-   *     no data source;
-   *   - neither is declared on the ToolingManager interface or exposed by a
-   *     route, so nothing can call them;
-   *   - invoke() denies CONSEQUENTIAL tools outright, so no call can reach the
-   *     state that would request an approval.
-   *
-   * Before wiring this up, note that decideToolApproval is NOT inert. On
-   * approval it moves the GovernedToolCall to EXECUTING and writes a
-   * ToolActionDispatch row - and nothing reads ToolActionDispatch. Without an
-   * executor draining that table, approved calls stay EXECUTING forever. The
-   * dispatch consumer is the missing piece, not the approval flow.
+   * Human approval for CONSEQUENTIAL governed tools is not implemented. The
+   * read-only half of the governed MCP surface is live; invoke() denies
+   * CONSEQUENTIAL tools outright, so no approval can be requested. The approval
+   * flow and its durable ToolActionDispatch queue were removed rather than left
+   * parked, because nothing drained that queue: an approved call would have sat
+   * in EXECUTING forever. Rebuild both together, executor first.
    */
-  async listToolApprovals() {
-    await this.expireApprovals();
-    const items = await this.approvalQuery(this.database).orderBy(desc(toolApproval.createdAt)).limit(300);
-    return { items: items.map(approvalDto) };
-  }
-
-  /** Named for its model so it cannot be confused with the live chat approval
-   * decision on ChatManager, which acts on AgentRunApproval instead. */
-  async decideToolApproval(principal: ToolingPrincipal, approvalId: string, input: { decision: "APPROVE" | "REJECT"; reason: string }): Promise<ToolApproval> {
-    let expired = false;
-    let revokedReason: string | null = null;
-    await this.database.transaction(async (transaction) => {
-      await transaction.execute(advisoryLock(`orcasynapse-tool-approval:${approvalId}`));
-      const [found] = await transaction
-        .select({
-          id: toolApproval.id,
-          callId: toolApproval.callId,
-          status: toolApproval.status,
-          expiresAt: toolApproval.expiresAt,
-        })
-        .from(toolApproval)
-        .where(eq(toolApproval.id, approvalId))
-        .limit(1);
-      if (!found) throw new ToolingNotFoundError("The approval request does not exist.");
-      if (found.status !== "PENDING") throw new ToolingConflictError("Only a pending approval can be decided.");
-      const now = new Date();
-      if (found.expiresAt <= now) {
-        await transaction
-          .update(toolApproval)
-          .set({ status: "EXPIRED", decidedAt: now, decisionReason: "Approval expired before review." })
-          .where(eq(toolApproval.id, approvalId));
-        await transaction
-          .update(governedToolCall)
-          .set({ status: "DENIED", errorCode: "APPROVAL_EXPIRED", errorMessage: "Approval expired before review.", completedAt: now })
-          .where(eq(governedToolCall.id, found.callId));
-        await transaction.insert(auditEvent).values({
-          actorType: "USER", actorId: principal.id, action: "tool.approval_expired",
-          resourceType: "ToolApproval", resourceId: approvalId, outcome: "FAILURE",
-          metadata: { callId: found.callId },
-        });
-        expired = true;
-        return;
-      }
-      const approved = input.decision === "APPROVE";
-      if (approved) {
-        try {
-          await this.assertApprovalStillAuthorized(await this.approvalAuthorization(transaction, found.callId), transaction);
-        } catch (cause) {
-          if (!(cause instanceof ToolingDeniedError)) throw cause;
-          revokedReason = cause.message;
-          await transaction
-            .update(toolApproval)
-            .set({ status: "CANCELLED", decisionReason: cause.message, decidedAt: now })
-            .where(eq(toolApproval.id, approvalId));
-          await transaction
-            .update(governedToolCall)
-            .set({ status: "DENIED", errorCode: "AUTHORIZATION_REVOKED", errorMessage: cause.message, completedAt: now })
-            .where(eq(governedToolCall.id, found.callId));
-          await transaction.insert(auditEvent).values({
-            actorType: "USER", actorId: principal.id, action: "tool.approval_cancelled_by_policy",
-            resourceType: "ToolApproval", resourceId: approvalId, outcome: "FAILURE",
-            metadata: { callId: found.callId, reason: cause.message },
-          });
-          return;
-        }
-      }
-      await transaction
-        .update(toolApproval)
-        .set({ status: approved ? "APPROVED" : "REJECTED", decisionReason: input.reason, decisionBy: principal.id, decidedAt: now })
-        .where(eq(toolApproval.id, approvalId));
-      await transaction
-        .update(governedToolCall)
-        .set(approved
-          ? { status: "EXECUTING", startedAt: now }
-          : { status: "DENIED", errorCode: "APPROVAL_REJECTED", errorMessage: input.reason, completedAt: now })
-        .where(eq(governedToolCall.id, found.callId));
-      if (approved) {
-        // No executor drains ToolActionDispatch today, so this row is durable
-        // intent with no consumer. See the note above decideToolApproval.
-        await transaction.insert(toolActionDispatch).values({ callId: found.callId });
-      }
-      await transaction.insert(auditEvent).values({
-        actorType: "USER", actorId: principal.id, action: approved ? "tool.approval_approved" : "tool.approval_rejected",
-        resourceType: "ToolApproval", resourceId: approvalId, outcome: "SUCCESS",
-        metadata: { callId: found.callId, reason: input.reason, durableDispatchCreated: approved },
-      });
-    });
-
-    if (expired) throw new ToolingConflictError("The approval request has expired.");
-    if (revokedReason) throw new ToolingDeniedError(revokedReason);
-
-    const [refreshed] = await this.approvalQuery(this.database).where(eq(toolApproval.id, approvalId)).limit(1);
-    if (!refreshed) throw new ToolingNotFoundError("The approval request does not exist.");
-    return approvalDto(refreshed);
-  }
 
   async getRuntimeControl(): Promise<ToolRuntimeControl> {
     const control = await this.runtimeControlRow();
@@ -705,33 +546,6 @@ export class DrizzleToolingManager implements ToolingManager {
     return executor
       .select(callColumns)
       .from(governedToolCall)
-      .innerJoin(agentRun, eq(governedToolCall.runId, agentRun.id))
-      .innerJoin(agentProfile, eq(agentRun.profileId, agentProfile.id))
-      .innerJoin(governedTool, eq(governedToolCall.toolId, governedTool.id))
-      .$dynamic();
-  }
-
-  private approvalQuery(executor: Executor) {
-    return executor
-      .select({
-        id: toolApproval.id,
-        callId: toolApproval.callId,
-        status: toolApproval.status,
-        expiresAt: toolApproval.expiresAt,
-        decisionReason: toolApproval.decisionReason,
-        decisionBy: toolApproval.decisionBy,
-        decidedAt: toolApproval.decidedAt,
-        createdAt: toolApproval.createdAt,
-        updatedAt: toolApproval.updatedAt,
-        runId: governedToolCall.runId,
-        arguments: governedToolCall.arguments,
-        ownerSubject: agentRun.ownerSubject,
-        profileSlug: agentProfile.slug,
-        toolSlug: governedTool.slug,
-        toolName: governedTool.displayName,
-      })
-      .from(toolApproval)
-      .innerJoin(governedToolCall, eq(toolApproval.callId, governedToolCall.id))
       .innerJoin(agentRun, eq(governedToolCall.runId, agentRun.id))
       .innerJoin(agentProfile, eq(agentRun.profileId, agentProfile.id))
       .innerJoin(governedTool, eq(governedToolCall.toolId, governedTool.id))
@@ -887,85 +701,6 @@ export class DrizzleToolingManager implements ToolingManager {
     };
   }
 
-  /** Loads the full authorization graph the approval re-check reads. */
-  private async approvalAuthorization(executor: Executor, callId: string): Promise<ApprovalAuthorizationContext> {
-    const [row] = await executor
-      .select({
-        callId: governedToolCall.id,
-        toolId: governedToolCall.toolId,
-        arguments: governedToolCall.arguments,
-        runStatus: agentRun.status,
-        runProfileVersion: agentRun.profileVersion,
-        runProfileVersionId: agentRun.profileVersionId,
-        runOwnerSubject: agentRun.ownerSubject,
-        runRequestedBy: agentRun.requestedBy,
-        toolCapabilityTokenHash: agentRun.toolCapabilityTokenHash,
-        toolCapabilityExpiresAt: agentRun.toolCapabilityExpiresAt,
-        profileStatus: agentProfile.status,
-        profileActiveVersion: agentProfile.activeVersion,
-        toolStatus: governedTool.status,
-        toolRisk: governedTool.risk,
-        grantEnabled: agentToolGrant.enabled,
-        grantToolId: agentToolGrant.toolId,
-        grantProfileVersionId: agentToolGrant.profileVersionId,
-        grantResourceScope: agentToolGrant.resourceScope,
-        grantAllowedGroups: agentToolGrant.allowedGroups,
-        grantAllowedAdminRoles: agentToolGrant.allowedAdminRoles,
-      })
-      .from(governedToolCall)
-      .innerJoin(agentRun, eq(governedToolCall.runId, agentRun.id))
-      .innerJoin(agentProfile, eq(agentRun.profileId, agentProfile.id))
-      .innerJoin(governedTool, eq(governedToolCall.toolId, governedTool.id))
-      .innerJoin(agentToolGrant, eq(governedToolCall.grantId, agentToolGrant.id))
-      .where(eq(governedToolCall.id, callId))
-      .limit(1);
-    if (!row) throw new ToolingNotFoundError("The approved call no longer exists.");
-    return row;
-  }
-
-  private async assertApprovalStillAuthorized(
-    call: ApprovalAuthorizationContext,
-    executor: Executor,
-  ): Promise<void> {
-    const [control] = await executor
-      .select({ enabled: toolRuntimeControl.enabled })
-      .from(toolRuntimeControl)
-      .where(eq(toolRuntimeControl.id, "global"))
-      .limit(1);
-    if (
-      call.runStatus !== "RUNNING" ||
-      !call.toolCapabilityTokenHash ||
-      !call.toolCapabilityExpiresAt ||
-      call.toolCapabilityExpiresAt <= new Date()
-    ) {
-      throw new ToolingDeniedError("The originating agent run is no longer authorized for tool execution.");
-    }
-    if (!control?.enabled || call.toolStatus !== "ACTIVE" || !call.grantEnabled) throw new ToolingDeniedError("Tool execution was revoked before approval.");
-    if (call.grantToolId !== call.toolId || call.grantProfileVersionId !== call.runProfileVersionId || call.grantResourceScope !== "OWNER_ONLY") {
-      throw new ToolingDeniedError("The stored tool grant no longer matches the exact run and tool scope.");
-    }
-    if (call.toolRisk === "CONSEQUENTIAL") throw new ToolingDeniedError("No consequential tool handler is installed in this release.");
-    if (call.profileStatus !== "ACTIVE" || call.profileActiveVersion !== call.runProfileVersion) throw new ToolingDeniedError("The agent profile or version was revoked before approval.");
-    if (!(await this.requesterMatchesGrant(call.runRequestedBy, call.grantAllowedGroups, call.grantAllowedAdminRoles, executor))) {
-      throw new ToolingDeniedError("The requesting identity no longer satisfies the tool grant.");
-    }
-    const documentId = this.documentId(jsonObject(call.arguments));
-    // Eligibility is the same evidence the read path uses: a READY document the
-    // requester owns that is actually present in the retrieval index.
-    const [eligible] = await executor
-      .select({ id: document.id })
-      .from(document)
-      .innerJoin(documentChunk, eq(documentChunk.documentId, document.id))
-      .where(and(
-        eq(document.id, documentId),
-        eq(document.ownerSubject, call.runOwnerSubject),
-        eq(document.status, "READY"),
-        isNull(document.deletedAt),
-      ))
-      .limit(1);
-    if (!eligible) throw new ToolingDeniedError("The target document is no longer eligible within owner-only scope.");
-  }
-
   private async completeCall(callId: string, data: Record<string, unknown>): Promise<void> {
     await this.database.transaction(async (transaction) => {
       await transaction
@@ -1017,38 +752,5 @@ export class DrizzleToolingManager implements ToolingManager {
       throw new ToolingDeniedError("The request ID was already used for a different tool invocation.");
     }
     return this.existingResult(existing);
-  }
-
-  private async expireApprovals(): Promise<void> {
-    const expired = await this.database
-      .select({ id: toolApproval.id, callId: toolApproval.callId })
-      .from(toolApproval)
-      .where(and(eq(toolApproval.status, "PENDING"), lte(toolApproval.expiresAt, new Date())));
-    if (expired.length === 0) return;
-    const now = new Date();
-    await this.database.transaction(async (transaction) => {
-      await transaction
-        .update(toolApproval)
-        .set({ status: "EXPIRED", decidedAt: now, decisionReason: "Approval expired before review." })
-        .where(and(
-          inArray(toolApproval.id, expired.map(({ id }) => id)),
-          eq(toolApproval.status, "PENDING"),
-        ));
-      await transaction
-        .update(governedToolCall)
-        .set({ status: "DENIED", errorCode: "APPROVAL_EXPIRED", errorMessage: "Approval expired before review.", completedAt: now })
-        .where(and(
-          inArray(governedToolCall.id, expired.map(({ callId }) => callId)),
-          eq(governedToolCall.status, "APPROVAL_PENDING"),
-        ));
-      await transaction.insert(auditEvent).values(expired.map(({ id, callId }) => ({
-        actorType: "SERVICE" as const,
-        action: "tool.approval_expired",
-        resourceType: "ToolApproval",
-        resourceId: id,
-        outcome: "FAILURE" as const,
-        metadata: { callId },
-      })));
-    });
   }
 }

@@ -29,6 +29,13 @@
       "when": 1785847222256,
       "tag": "0003_drop_document_memory_publication",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1785847851085,
+      "tag": "0004_drop_tool_action_dispatch",
+      "breakpoints": true
     }
   ]
 }
