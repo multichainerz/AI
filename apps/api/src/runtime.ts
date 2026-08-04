@@ -41,7 +41,7 @@ import { PrismaAiOpsManager } from "./ai-ops/prisma-ai-ops-manager.js";
 import type { ModelManager } from "./models/model-manager.js";
 import { PrismaModelManager } from "./models/prisma-model-manager.js";
 import type { GuardrailManager } from "./guardrails/guardrail-manager.js";
-import { PrismaGuardrailManager } from "./guardrails/prisma-guardrail-manager.js";
+import { DrizzleGuardrailManager } from "./guardrails/drizzle-guardrail-manager.js";
 import type { PromptManager } from "./prompts/prompt-manager.js";
 import { DrizzlePromptManager } from "./prompts/drizzle-prompt-manager.js";
 import type { OnboardingManager } from "./onboarding/onboarding-manager.js";
@@ -124,7 +124,7 @@ export function createRuntimeServices(): RuntimeServices {
     const operationsManager = new DrizzleOperationsManager(database);
     const documentResolver = new DrizzleRuntimeConnectionResolver(database, encryption);
     const modelManager = new PrismaModelManager(prisma);
-    const guardrailManager = new PrismaGuardrailManager(prisma);
+    const guardrailManager = new DrizzleGuardrailManager(database);
     const promptManager = new DrizzlePromptManager(database);
     const documentManager = new PrismaDocumentManager(
       prisma,

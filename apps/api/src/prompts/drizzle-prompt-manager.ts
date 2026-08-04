@@ -14,25 +14,10 @@ import {
   type OrcaSynapseDatabase,
 } from "@orcasynapse/database";
 import type { AdminPrincipal } from "../auth/admin-session.js";
+import { advisoryLock, increment, isUniqueViolation } from "../database-support.js";
 import { PromptConflictError, PromptNotFoundError, type PromptManager } from "./prompt-manager.js";
 
 type StoredPrompt = typeof promptTemplate.$inferSelect;
-
-/** PostgreSQL unique-violation SQLSTATE, the driver-level equivalent of Prisma P2002. */
-const UNIQUE_VIOLATION = "23505";
-
-/**
- * Drizzle wraps driver failures, so the SQLSTATE can sit on the thrown error or
- * on its cause chain depending on where the statement failed.
- */
-function isUniqueViolation(error: unknown): boolean {
-  for (let current: unknown = error, depth = 0; current && depth < 5; depth += 1) {
-    if (typeof current !== "object") return false;
-    if ((current as { code?: unknown }).code === UNIQUE_VIOLATION) return true;
-    current = (current as { cause?: unknown }).cause;
-  }
-  return false;
-}
 
 function checksum(content: string): string {
   return createHash("sha256").update(content, "utf8").digest("hex");
@@ -57,10 +42,6 @@ function dto(prompt: StoredPrompt): PromptTemplate {
     createdAt: prompt.createdAt.toISOString(),
     updatedAt: prompt.updatedAt.toISOString(),
   };
-}
-
-function advisoryLock(key: string) {
-  return sql`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
 }
 
 export class DrizzlePromptManager implements PromptManager {
@@ -140,7 +121,7 @@ export class DrizzlePromptManager implements PromptManager {
             : { content: changes.content, contentChecksum: checksum(changes.content) }),
           status: materialChange ? "DRAFT" : current.status,
           activationEvaluationId: materialChange ? null : current.activationEvaluationId,
-          revision: sql`${promptTemplate.revision} + 1`,
+          revision: increment(promptTemplate.revision),
           updatedBy: principal.id,
         })
         .where(
@@ -226,7 +207,7 @@ export class DrizzlePromptManager implements PromptManager {
             status: "ACTIVE",
             activationEvaluationId: evaluation.id,
             firstActivatedAt: current.firstActivatedAt ?? new Date(),
-            revision: sql`${promptTemplate.revision} + 1`,
+            revision: increment(promptTemplate.revision),
             updatedBy: principal.id,
           })
           .where(
@@ -276,7 +257,7 @@ export class DrizzlePromptManager implements PromptManager {
 
       const suspended = await transaction
         .update(promptTemplate)
-        .set({ status: "SUSPENDED", revision: sql`${promptTemplate.revision} + 1`, updatedBy: principal.id })
+        .set({ status: "SUSPENDED", revision: increment(promptTemplate.revision), updatedBy: principal.id })
         .where(
           and(
             eq(promptTemplate.id, id),
