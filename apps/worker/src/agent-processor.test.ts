@@ -53,7 +53,7 @@ function hermes(status = "completed"): AgentHermesRuntime {
   };
 }
 
-const noKnowledge: AgentKnowledgeRetriever = { search: vi.fn(async () => []) };
+const noKnowledge: AgentKnowledgeRetriever = { search: vi.fn(async (_owner?: unknown, _query?: unknown, _documentIds?: unknown) => []) };
 
 /** Brings the execution boundary to a state that admits a run. */
 async function healthyBoundary(
@@ -226,7 +226,7 @@ describe("DrizzleAgentProcessor", () => {
       .where(eq(agentRuntimeControl.id, "global"));
     const id = await queuedRun();
     const runtime = hermes();
-    const knowledge: AgentKnowledgeRetriever = { search: vi.fn(async () => []) };
+    const knowledge: AgentKnowledgeRetriever = { search: vi.fn(async (_owner?: unknown, _query?: unknown, _documentIds?: unknown) => []) };
 
     await expect(processor(runtime, knowledge).process({ runId: id }, await jobIdOf(id), WORKER))
       .resolves.toMatchObject({ status: "DENIED" });
@@ -312,7 +312,7 @@ describe("DrizzleAgentProcessor", () => {
     await healthyBoundary();
     const id = await queuedRun();
     const knowledge: AgentKnowledgeRetriever = {
-      search: vi.fn(async () => [
+      search: vi.fn(async (_owner?: unknown, _query?: unknown, _documentIds?: unknown) => [
         {
           documentId: randomUUID(),
           fileName: "policy.pdf",
@@ -329,7 +329,8 @@ describe("DrizzleAgentProcessor", () => {
 
     await processor(hermes(), knowledge).process({ runId: id }, await jobIdOf(id), WORKER);
 
-    expect(knowledge.search).toHaveBeenCalledWith("user:pilot", "Summarize the policy.");
+    // A run that pins nothing passes a null scope, which means owner-wide.
+    expect(knowledge.search).toHaveBeenCalledWith("user:pilot", "Summarize the policy.", null);
     const [stored] = await context.database
       .select({ sources: agentRun.sources })
       .from(agentRun)
@@ -340,7 +341,7 @@ describe("DrizzleAgentProcessor", () => {
   it("does not retrieve evidence for a run without the knowledge capability", async () => {
     await healthyBoundary();
     const id = await queuedRun();
-    const knowledge: AgentKnowledgeRetriever = { search: vi.fn(async () => []) };
+    const knowledge: AgentKnowledgeRetriever = { search: vi.fn(async (_owner?: unknown, _query?: unknown, _documentIds?: unknown) => []) };
 
     await processor(hermes(), knowledge).process({ runId: id }, await jobIdOf(id), WORKER);
 

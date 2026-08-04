@@ -130,9 +130,11 @@ function memoryChatManager(): ChatManager {
   return {
     list: vi.fn(async () => ({ items: [summary] })),
     create: vi.fn(async () => summary),
-    get: vi.fn(async () => ({ ...summary, messages: [] })),
+    get: vi.fn(async () => ({ ...summary, messages: [], knowledgeDocuments: [] })),
     update: vi.fn(async () => summary),
-    cancelActiveRun: vi.fn(async () => ({ ...summary, messages: [] })),
+    cancelActiveRun: vi.fn(async () => ({ ...summary, messages: [], knowledgeDocuments: [] })),
+    attachDocument: vi.fn(async () => ({ ...summary, messages: [], knowledgeDocuments: [] })),
+    detachDocument: vi.fn(async () => ({ ...summary, messages: [], knowledgeDocuments: [] })),
     submitMessage: vi.fn(async () => ({
       conversationId: CONVERSATION_ID,
       userMessage,
@@ -258,7 +260,7 @@ describe("controlled chat routes", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ ...summary, messages: [] });
+    expect(response.json()).toEqual({ ...summary, messages: [], knowledgeDocuments: [] });
     expect(manager.cancelActiveRun).toHaveBeenCalledWith(
       expect.objectContaining({ identityMode: "ADMINISTRATOR_PREVIEW" }),
       CONVERSATION_ID,

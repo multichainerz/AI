@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import {
   agentProfile,
@@ -9,7 +9,9 @@ import {
   chatConversation,
   chatFeedback,
   chatMessage,
+  chatConversationDocument,
   createTestDatabase,
+  document,
   evaluationRun,
   guardrailPolicy,
   type TestDatabase,
@@ -450,5 +452,93 @@ describe("boundedConversationHistory", () => {
 
     // Two pairs is 80k characters, over the 64k budget, so only the newest survives.
     expect(history).toHaveLength(2);
+  });
+});
+
+describe("DrizzleChatManager pinned knowledge", () => {
+  async function conversationAndDocument() {
+    const profileId = await seedActiveProfile();
+    const created = await manager().create(principal, { profileId } as never);
+    const [source] = await context.database
+      .insert(document)
+      .values({
+        ownerSubject: principal.subject,
+        fileName: "runbook.pdf",
+        mediaType: "application/pdf",
+        sizeBytes: 4_096,
+        sha256: createHash("sha256").update("runbook").digest("hex"),
+        classification: "INTERNAL",
+        status: "READY",
+        retentionUntil: new Date(Date.now() + 30 * 24 * 60 * 60 * 1_000),
+      })
+      .returning({ id: document.id });
+    return { conversationId: created.id, documentId: source!.id };
+  }
+
+  it("pins a document and reports it on the conversation", async () => {
+    const { conversationId, documentId } = await conversationAndDocument();
+
+    const pinned = await manager().attachDocument(principal, conversationId, documentId);
+
+    expect(pinned.knowledgeDocuments).toEqual([
+      expect.objectContaining({ id: documentId, fileName: "runbook.pdf" }),
+    ]);
+    // Pinning twice is idempotent rather than a conflict.
+    expect((await manager().attachDocument(principal, conversationId, documentId)).knowledgeDocuments)
+      .toHaveLength(1);
+  });
+
+  it("refuses to pin another owner's document", async () => {
+    const { conversationId, documentId } = await conversationAndDocument();
+
+    await expect(manager().attachDocument(otherPrincipal, conversationId, documentId))
+      .rejects.toBeInstanceOf(ChatConversationNotFoundError);
+    await expect(manager().attachDocument(principal, conversationId, randomUUID()))
+      .rejects.toBeInstanceOf(ChatMessageNotFoundError);
+  });
+
+  it("unpins a document and leaves the conversation unscoped again", async () => {
+    const { conversationId, documentId } = await conversationAndDocument();
+    await manager().attachDocument(principal, conversationId, documentId);
+
+    const unpinned = await manager().detachDocument(principal, conversationId, documentId);
+
+    expect(unpinned.knowledgeDocuments).toEqual([]);
+    expect(await context.database.select().from(chatConversationDocument)).toHaveLength(0);
+  });
+
+  it("narrows a submitted run to the pinned documents", async () => {
+    const { conversationId, documentId } = await conversationAndDocument();
+    await manager().attachDocument(principal, conversationId, documentId);
+    const agentManager = agents();
+
+    await manager(agentManager).submitMessage(principal, conversationId, "What does the runbook say?");
+
+    // The run must carry the scope, because the worker reads it from there.
+    expect(agentManager.submitRun).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ knowledgeDocumentIds: [documentId] }),
+    );
+  });
+
+  it("leaves an unpinned conversation retrieving everything the owner holds", async () => {
+    const profileId = await seedActiveProfile();
+    const created = await manager().create(principal, { profileId } as never);
+    const agentManager = agents();
+
+    await manager(agentManager).submitMessage(principal, created.id, "Anything at all");
+
+    const options = vi.mocked(agentManager.submitRun).mock.calls[0]![2];
+    expect(options).not.toHaveProperty("knowledgeDocumentIds");
+  });
+
+  it("drops the pin when the document is deleted", async () => {
+    const { conversationId, documentId } = await conversationAndDocument();
+    await manager().attachDocument(principal, conversationId, documentId);
+
+    await context.database.delete(document).where(eq(document.id, documentId));
+
+    expect((await manager().get(principal, conversationId)).knowledgeDocuments).toEqual([]);
   });
 });

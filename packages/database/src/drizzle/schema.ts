@@ -1009,6 +1009,9 @@ export const localAdministrator = pgTable("LocalAdministrator", {
 
 export const agentRun = pgTable("AgentRun", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
+	// NULL means retrieval spans everything the owner holds; a non-null array
+	// restricts it to exactly these documents.
+	knowledgeDocumentIds: uuid().array(),
 	profileId: uuid().notNull(),
 	profileVersionId: uuid().notNull(),
 	profileVersion: integer().notNull(),
@@ -1133,5 +1136,33 @@ export const inferenceGatewayRequest = pgTable("InferenceGatewayRequest", {
 			columns: [table.connectionId],
 			foreignColumns: [serviceConnection.id],
 			name: "InferenceGatewayRequest_connectionId_fkey"
+		}).onUpdate("cascade").onDelete("cascade"),
+]);
+
+/**
+ * Documents pinned to a conversation.
+ *
+ * Retrieval defaults to everything the owner holds, which is right for an
+ * open-ended question and wrong when the operator already knows which sources
+ * matter. Pinning narrows a conversation's runs to exactly these documents.
+ */
+export const chatConversationDocument = pgTable("ChatConversationDocument", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	conversationId: uuid().notNull(),
+	documentId: uuid().notNull(),
+	ownerSubject: varchar({ length: 200 }).notNull(),
+	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+	uniqueIndex("ChatConversationDocument_conversationId_documentId_key").using("btree", table.conversationId.asc().nullsLast(), table.documentId.asc().nullsLast()),
+	index("ChatConversationDocument_documentId_idx").using("btree", table.documentId.asc().nullsLast()),
+	foreignKey({
+			columns: [table.conversationId],
+			foreignColumns: [chatConversation.id],
+			name: "ChatConversationDocument_conversationId_fkey"
+		}).onUpdate("cascade").onDelete("cascade"),
+	foreignKey({
+			columns: [table.documentId],
+			foreignColumns: [document.id],
+			name: "ChatConversationDocument_documentId_fkey"
 		}).onUpdate("cascade").onDelete("cascade"),
 ]);

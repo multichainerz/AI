@@ -501,6 +501,7 @@ export class DrizzleAgentManager implements AgentManager {
       memorySessionKey?: string;
       conversationHistory?: Array<{ role: "user" | "assistant"; content: string }>;
       outputCharacterLimit?: number;
+      knowledgeDocumentIds?: readonly string[];
     } = {},
   ): Promise<AgentRun> {
     const runId = randomUUID();
@@ -598,6 +599,8 @@ export class DrizzleAgentManager implements AgentManager {
           modelAlias: version.modelAlias,
           jobId: randomUUID(),
           effectiveCapabilities: version.allowPrivateKnowledge ? ["knowledge:private:read"] : [],
+          // Absent means owner-wide retrieval; present narrows it for this run.
+          ...(options.knowledgeDocumentIds ? { knowledgeDocumentIds: [...options.knowledgeDocumentIds] } : {}),
         })
         .returning();
       if (!created) throw new AgentConflictError("The agent run could not be queued.");
