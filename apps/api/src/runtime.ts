@@ -34,7 +34,7 @@ import {
 import type { DocumentManager } from "./documents/document-manager.js";
 import { DrizzleDocumentManager } from "./documents/drizzle-document-manager.js";
 import type { AgentManager } from "./agents/agent-manager.js";
-import { PrismaAgentManager } from "./agents/prisma-agent-manager.js";
+import { DrizzleAgentManager } from "./agents/drizzle-agent-manager.js";
 import type { ToolingManager } from "./tooling/tooling-manager.js";
 import { PrismaToolingManager } from "./tooling/prisma-tooling-manager.js";
 import type { AiOpsManager } from "./ai-ops/ai-ops-manager.js";
@@ -133,7 +133,7 @@ export function createRuntimeServices(): RuntimeServices {
       new LocalBgeM3Embedder(),
     );
     const hermesClient = new HermesClient(documentResolver);
-    const agentManager = new PrismaAgentManager(prisma, hermesClient);
+    const agentManager = new DrizzleAgentManager(database, hermesClient);
     const chatManager = new PrismaChatManager(prisma, agentManager);
     const toolingManager = new PrismaToolingManager(prisma, hermesClient);
     const aiOpsManager = new PrismaAiOpsManager(prisma, {

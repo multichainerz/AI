@@ -15,8 +15,25 @@ import type {
   UpdateAgentRuntimeControl,
 } from "@orcasynapse/contracts";
 import { agentCapabilitySchema, agentSkillReferenceSchema, knowledgeSourceSchema } from "@orcasynapse/contracts";
-import { Prisma, type OrcaSynapsePrismaClient } from "@orcasynapse/database";
+import {
+  agentProfile,
+  agentProfileVersion,
+  agentRun,
+  agentRunEvent,
+  agentRuntimeControl,
+  auditEvent,
+  componentCompatibility,
+  evaluationRun,
+  hermesRuntimeNode,
+  modelDeployment,
+  platformArchitectureDecision,
+  serviceConnection,
+  toolRuntimeControl,
+  type OrcaSynapseDatabase,
+} from "@orcasynapse/database";
+import { and, asc, count, desc, eq, inArray, isNotNull, ne } from "drizzle-orm";
 import { createHash, randomUUID } from "node:crypto";
+import { advisoryLock, isUniqueViolation } from "../database-support.js";
 import {
   AgentConflictError,
   AgentNotFoundError,
@@ -101,8 +118,40 @@ interface StoredRunEvent {
   inputTokens: number | null;
   outputTokens: number | null;
   reasoningTokens: number | null;
-  costUsd: Prisma.Decimal | number | null;
+  // PostgreSQL numeric arrives as a string; the DTO narrows it to a number.
+  costUsd: string | number | null;
   occurredAt: Date;
+}
+
+/**
+ * The relation shape that replaces the Prisma profile include. It is a function
+ * because the relational query builder requires a mutable `orderBy` array.
+ */
+function profileWith() {
+  return { agentProfileVersions: { orderBy: [desc(agentProfileVersion.version)] } };
+}
+
+/** The relation shape that replaces the Prisma run include. */
+const runWith = {
+  agentProfile: { columns: { slug: true } },
+  agentProfileVersion: { columns: { displayName: true, distributionDigest: true } },
+} as const;
+
+type LoadedProfile = { agentProfileVersions: StoredVersion[] } & Omit<StoredProfile, "versions">;
+type LoadedRun = {
+  agentProfile: { slug: string } | null;
+  agentProfileVersion: { displayName: string; distributionDigest: string | null } | null;
+} & Omit<StoredRun, "profile" | "version">;
+
+function storedProfile(loaded: LoadedProfile): StoredProfile {
+  const { agentProfileVersions, ...profile } = loaded;
+  return { ...profile, versions: agentProfileVersions };
+}
+
+function storedRun(loaded: LoadedRun): StoredRun {
+  const { agentProfile: profile, agentProfileVersion: version, ...run } = loaded;
+  if (!profile || !version) throw new AgentConflictError("The agent run has lost its profile configuration.");
+  return { ...run, profile, version };
 }
 
 function parseSkills(value: unknown) {
@@ -268,85 +317,88 @@ function runEventDto(event: StoredRunEvent): AgentRunEvent {
   };
 }
 
-const profileInclude = {
-  versions: { orderBy: { version: "desc" as const } },
-} as const;
-const runInclude = {
-  profile: { select: { slug: true } },
-  version: { select: { displayName: true, distributionDigest: true } },
-} as const;
-
-export class PrismaAgentManager implements AgentManager {
+export class DrizzleAgentManager implements AgentManager {
   constructor(
-    private readonly prisma: OrcaSynapsePrismaClient,
+    private readonly database: OrcaSynapseDatabase,
     private readonly boundaryVerifier?: AgentBoundaryVerifier,
   ) {}
 
   async listProfiles(_principal: AgentPrincipal, includeInactive: boolean): Promise<AgentProfileList> {
-    const profiles = await this.prisma.agentProfile.findMany({
-      ...(includeInactive ? {} : { where: { status: "ACTIVE" as const, activeVersion: { not: null } } }),
-      include: profileInclude,
-      orderBy: { updatedAt: "desc" },
-      take: 100,
+    const profiles = await this.database.query.agentProfile.findMany({
+      ...(includeInactive
+        ? {}
+        : { where: and(eq(agentProfile.status, "ACTIVE"), isNotNull(agentProfile.activeVersion)) }),
+      with: profileWith(),
+      orderBy: [desc(agentProfile.updatedAt)],
+      limit: 100,
     });
-    return { items: profiles.map((profile) => profileDto(profile as StoredProfile, includeInactive)) };
+    return {
+      items: (profiles as LoadedProfile[]).map((profile) => profileDto(storedProfile(profile), includeInactive)),
+    };
   }
 
   async createProfile(principal: AgentPrincipal, input: CreateAgentProfile): Promise<AgentProfile> {
     const digest = distributionDigest(input);
     let created: StoredProfile;
     try {
-      created = await this.prisma.$transaction(async (transaction) => {
-      const profile = await transaction.agentProfile.create({
-        data: {
-          slug: input.slug,
-          versions: {
-            create: {
-              version: 1,
-              displayName: input.displayName,
-              purpose: input.purpose,
-              instructions: input.instructions,
-              soulMd: input.soulMd,
-              skills: input.skills,
-              distributionDigest: digest,
-              modelAlias: input.modelAlias,
-              maxTurns: input.maxTurns,
-              timeoutSeconds: input.timeoutSeconds,
-              maxConcurrentRuns: input.maxConcurrentRuns,
-              allowPrivateKnowledge: input.allowPrivateKnowledge,
-              safeMode: input.safeMode,
-              createdBy: principal.id,
-            },
-          },
-        },
-        include: profileInclude,
-      }) as StoredProfile;
-      await transaction.auditEvent.create({ data: {
-        actorType: "USER", actorId: principal.id, action: "agent.profile_created",
-        resourceType: "AgentProfile", resourceId: profile.id, outcome: "SUCCESS",
-        metadata: { slug: input.slug, version: 1 },
-      } });
-      return profile;
+      created = await this.database.transaction(async (transaction) => {
+        const [profile] = await transaction
+          .insert(agentProfile)
+          .values({ slug: input.slug })
+          .returning();
+        if (!profile) throw new AgentConflictError("The agent profile could not be created.");
+        const [version] = await transaction
+          .insert(agentProfileVersion)
+          .values({
+            profileId: profile.id,
+            version: 1,
+            displayName: input.displayName,
+            purpose: input.purpose,
+            instructions: input.instructions,
+            soulMd: input.soulMd,
+            skills: input.skills,
+            distributionDigest: digest,
+            modelAlias: input.modelAlias,
+            maxTurns: input.maxTurns,
+            timeoutSeconds: input.timeoutSeconds,
+            maxConcurrentRuns: input.maxConcurrentRuns,
+            allowPrivateKnowledge: input.allowPrivateKnowledge,
+            safeMode: input.safeMode,
+            createdBy: principal.id,
+          })
+          .returning();
+        if (!version) throw new AgentConflictError("The agent configuration could not be created.");
+        await transaction.insert(auditEvent).values({
+          actorType: "USER", actorId: principal.id, action: "agent.profile_created",
+          resourceType: "AgentProfile", resourceId: profile.id, outcome: "SUCCESS",
+          metadata: { slug: input.slug, version: 1 },
+        });
+        return { ...profile, versions: [version] } as StoredProfile;
       });
     } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-        throw new AgentConflictError("An agent profile already uses this slug.");
-      }
+      if (isUniqueViolation(error)) throw new AgentConflictError("An agent profile already uses this slug.");
       throw error;
     }
     return profileDto(created, true);
   }
 
   async updateProfile(principal: AgentPrincipal, profileId: string, input: UpdateAgentProfile): Promise<AgentProfile> {
-    const updated = await this.prisma.$transaction(async (transaction) => {
-      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`orcasynapse-agent-profile:${profileId}`}, 0))`;
-      const profile = await transaction.agentProfile.findUnique({
-        where: { id: profileId },
-      });
+    const updated = await this.database.transaction(async (transaction) => {
+      await transaction.execute(advisoryLock(`orcasynapse-agent-profile:${profileId}`));
+      const [profile] = await transaction
+        .select()
+        .from(agentProfile)
+        .where(eq(agentProfile.id, profileId))
+        .limit(1);
       if (!profile) throw new AgentNotFoundError();
-      const current = await transaction.agentProfileVersion.findUnique({
-        where: { profileId_version: { profileId, version: profile.currentVersion } },
-      });
+      const [current] = await transaction
+        .select()
+        .from(agentProfileVersion)
+        .where(and(
+          eq(agentProfileVersion.profileId, profileId),
+          eq(agentProfileVersion.version, profile.currentVersion),
+        ))
+        .limit(1);
       if (!current) throw new AgentConflictError("The current agent configuration is missing.");
       const nextVersion = profile.currentVersion + 1;
       const skills = input.skills ?? parseSkills(current.skills);
@@ -364,69 +416,80 @@ export class PrismaAgentManager implements AgentManager {
         allowPrivateKnowledge: input.allowPrivateKnowledge ?? current.allowPrivateKnowledge,
         safeMode: input.safeMode ?? current.safeMode,
       };
-      await transaction.agentProfileVersion.create({ data: {
+      await transaction.insert(agentProfileVersion).values({
         profileId,
         version: nextVersion,
         ...nextConfiguration,
         distributionDigest: distributionDigest(nextConfiguration),
         createdBy: principal.id,
-      } });
-      await transaction.agentProfile.update({ where: { id: profileId }, data: { currentVersion: nextVersion } });
-      await transaction.auditEvent.create({ data: {
+      });
+      await transaction
+        .update(agentProfile)
+        .set({ currentVersion: nextVersion })
+        .where(eq(agentProfile.id, profileId));
+      await transaction.insert(auditEvent).values({
         actorType: "USER", actorId: principal.id, action: "agent.profile_version_created",
         resourceType: "AgentProfile", resourceId: profileId, outcome: "SUCCESS",
         metadata: { version: nextVersion, changedFields: Object.keys(input) },
-      } });
-      return transaction.agentProfile.findUniqueOrThrow({ where: { id: profileId }, include: profileInclude });
+      });
+      const reloaded = await transaction.query.agentProfile.findFirst({
+        where: eq(agentProfile.id, profileId),
+        with: profileWith(),
+      });
+      if (!reloaded) throw new AgentNotFoundError();
+      return storedProfile(reloaded as LoadedProfile);
     });
-    return profileDto(updated as StoredProfile, true);
+    return profileDto(updated, true);
   }
 
   async activateProfile(principal: AgentPrincipal, profileId: string): Promise<AgentProfile> {
-    const updated = await this.changeProfileState(principal, profileId, "ACTIVE");
-    return profileDto(updated, true);
+    return profileDto(await this.changeProfileState(principal, profileId, "ACTIVE"), true);
   }
 
   async standbyProfile(principal: AgentPrincipal, profileId: string): Promise<AgentProfile> {
-    const updated = await this.changeProfileState(principal, profileId, "STANDBY");
-    return profileDto(updated, true);
+    return profileDto(await this.changeProfileState(principal, profileId, "STANDBY"), true);
   }
 
   async suspendProfile(principal: AgentPrincipal, profileId: string): Promise<AgentProfile> {
-    const updated = await this.changeProfileState(principal, profileId, "SUSPENDED");
-    return profileDto(updated, true);
+    return profileDto(await this.changeProfileState(principal, profileId, "SUSPENDED"), true);
   }
 
   async listRuns(principal: AgentPrincipal, includeAll: boolean): Promise<AgentRunList> {
-    const runs = await this.prisma.agentRun.findMany({
-      ...(includeAll ? {} : { where: { ownerSubject: principal.subject } }),
-      include: runInclude,
-      orderBy: { createdAt: "desc" },
-      take: 200,
+    const runs = await this.database.query.agentRun.findMany({
+      ...(includeAll ? {} : { where: eq(agentRun.ownerSubject, principal.subject) }),
+      with: runWith,
+      orderBy: [desc(agentRun.createdAt)],
+      limit: 200,
     });
-    return { items: runs.map((run) => runDto(run as StoredRun)) };
+    return { items: (runs as LoadedRun[]).map((run) => runDto(storedRun(run))) };
   }
 
   async getRun(principal: AgentPrincipal, runId: string, includeAll: boolean): Promise<AgentRun> {
-    const run = await this.prisma.agentRun.findFirst({
-      where: { id: runId, ...(includeAll ? {} : { ownerSubject: principal.subject }) },
-      include: runInclude,
+    const run = await this.database.query.agentRun.findFirst({
+      where: includeAll
+        ? eq(agentRun.id, runId)
+        : and(eq(agentRun.id, runId), eq(agentRun.ownerSubject, principal.subject)),
+      with: runWith,
     });
     if (!run) throw new AgentNotFoundError();
-    return runDto(run as StoredRun);
+    return runDto(storedRun(run as LoadedRun));
   }
 
   async listRunEvents(principal: AgentPrincipal, runId: string, includeAll: boolean): Promise<AgentRunEventList> {
-    const run = await this.prisma.agentRun.findFirst({
-      where: { id: runId, ...(includeAll ? {} : { ownerSubject: principal.subject }) },
-      select: { id: true },
-    });
+    const [run] = await this.database
+      .select({ id: agentRun.id })
+      .from(agentRun)
+      .where(includeAll
+        ? eq(agentRun.id, runId)
+        : and(eq(agentRun.id, runId), eq(agentRun.ownerSubject, principal.subject)))
+      .limit(1);
     if (!run) throw new AgentNotFoundError();
-    const events = await this.prisma.agentRunEvent.findMany({
-      where: { runId },
-      orderBy: [{ occurredAt: "asc" }, { id: "asc" }],
-      take: 500,
-    });
+    const events = await this.database
+      .select()
+      .from(agentRunEvent)
+      .where(eq(agentRunEvent.runId, runId))
+      .orderBy(asc(agentRunEvent.occurredAt), asc(agentRunEvent.id))
+      .limit(500);
     return { items: events.map((event) => runEventDto(event as StoredRunEvent)) };
   }
 
@@ -453,21 +516,30 @@ export class PrismaAgentManager implements AgentManager {
       throw new AgentConflictError("The Hermes memory session key is invalid.");
     }
     const outputCharacterLimit = Math.min(200_000, Math.max(1_000, options.outputCharacterLimit ?? 200_000));
-    const run = await this.prisma.$transaction(async (transaction) => {
-      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`orcasynapse-agent-submit:${input.profileId}`}, 0))`;
-      const [control, profile, runtimeNodes] = await Promise.all([
-        transaction.agentRuntimeControl.findUnique({ where: { id: "global" } }),
-        transaction.agentProfile.findUnique({ where: { id: input.profileId } }),
-        transaction.hermesRuntimeNode.findMany({
-          where: { enrolledAt: { not: null }, status: { not: "REVOKED" } },
-          select: {
-            status: true,
-            lastSeenAt: true,
-            serviceConnection: { select: { enabled: true, status: true } },
-          },
-          take: 2,
-        }),
-      ]);
+    const run = await this.database.transaction(async (transaction) => {
+      await transaction.execute(advisoryLock(`orcasynapse-agent-submit:${input.profileId}`));
+      const [control] = await transaction
+        .select()
+        .from(agentRuntimeControl)
+        .where(eq(agentRuntimeControl.id, "global"))
+        .limit(1);
+      const [profile] = await transaction
+        .select()
+        .from(agentProfile)
+        .where(eq(agentProfile.id, input.profileId))
+        .limit(1);
+      const runtimeNodes = await transaction
+        .select({
+          status: hermesRuntimeNode.status,
+          lastSeenAt: hermesRuntimeNode.lastSeenAt,
+          connectionEnabled: serviceConnection.enabled,
+          connectionStatus: serviceConnection.status,
+        })
+        .from(hermesRuntimeNode)
+        .leftJoin(serviceConnection, eq(hermesRuntimeNode.serviceConnectionId, serviceConnection.id))
+        .where(and(isNotNull(hermesRuntimeNode.enrolledAt), ne(hermesRuntimeNode.status, "REVOKED")))
+        .limit(2);
+
       if (!control?.enabled) throw new AgentRuntimeDisabledError(control?.reason ?? undefined);
       const runtimeNode = runtimeNodes[0];
       const heartbeatIsFresh = runtimeNode?.lastSeenAt
@@ -476,8 +548,8 @@ export class PrismaAgentManager implements AgentManager {
         runtimeNodes.length !== 1
         || runtimeNode?.status !== "ONLINE"
         || !heartbeatIsFresh
-        || runtimeNode.serviceConnection?.enabled !== true
-        || runtimeNode.serviceConnection.status !== "HEALTHY"
+        || runtimeNode.connectionEnabled !== true
+        || runtimeNode.connectionStatus !== "HEALTHY"
       ) {
         const reason = runtimeNode?.status === "DRAINING"
           ? "The Hermes runtime is draining and cannot accept new work."
@@ -489,18 +561,28 @@ export class PrismaAgentManager implements AgentManager {
       if (!profile || profile.status !== "ACTIVE" || profile.activeVersion === null) {
         throw new AgentConflictError("Only an active agent profile can accept runs.");
       }
-      const version = await transaction.agentProfileVersion.findUnique({
-        where: { profileId_version: { profileId: profile.id, version: profile.activeVersion } },
-      });
+      const [version] = await transaction
+        .select()
+        .from(agentProfileVersion)
+        .where(and(
+          eq(agentProfileVersion.profileId, profile.id),
+          eq(agentProfileVersion.version, profile.activeVersion),
+        ))
+        .limit(1);
       if (!version) throw new AgentConflictError("The active agent configuration is missing.");
-      const activeRuns = await transaction.agentRun.count({
-        where: { profileId: profile.id, status: { in: ["QUEUED", "RUNNING", "WAITING_FOR_APPROVAL", "CANCEL_REQUESTED"] } },
-      });
-      if (activeRuns >= version.maxConcurrentRuns) {
+      const [activeRuns] = await transaction
+        .select({ total: count() })
+        .from(agentRun)
+        .where(and(
+          eq(agentRun.profileId, profile.id),
+          inArray(agentRun.status, ["QUEUED", "RUNNING", "WAITING_FOR_APPROVAL", "CANCEL_REQUESTED"]),
+        ));
+      if ((activeRuns?.total ?? 0) >= version.maxConcurrentRuns) {
         throw new AgentConflictError("This agent has reached its configured concurrent-run limit.");
       }
-      const created = await transaction.agentRun.create({
-        data: {
+      const [created] = await transaction
+        .insert(agentRun)
+        .values({
           id: runId,
           profileId: profile.id,
           profileVersionId: version.id,
@@ -516,38 +598,56 @@ export class PrismaAgentManager implements AgentManager {
           modelAlias: version.modelAlias,
           jobId: randomUUID(),
           effectiveCapabilities: version.allowPrivateKnowledge ? ["knowledge:private:read"] : [],
-        },
-        include: runInclude,
-      });
-      await transaction.auditEvent.create({ data: {
+        })
+        .returning();
+      if (!created) throw new AgentConflictError("The agent run could not be queued.");
+      await transaction.insert(auditEvent).values({
         actorType: "USER", actorId: principal.id, action: "agent.run_queued",
         resourceType: "AgentRun", resourceId: created.id, outcome: "SUCCESS",
         metadata: { profileId: profile.id, profileVersion: version.version },
-      } });
-      return created;
+      });
+      return {
+        ...created,
+        profile: { slug: profile.slug },
+        version: { displayName: version.displayName, distributionDigest: version.distributionDigest },
+      } as StoredRun;
     });
-    return runDto(run as StoredRun);
+    return runDto(run);
   }
 
   async cancelRun(principal: AgentPrincipal, runId: string, includeAll: boolean): Promise<AgentRun> {
-    const changed = await this.prisma.agentRun.updateMany({
-      where: { id: runId, ...(includeAll ? {} : { ownerSubject: principal.subject }), status: { in: ["QUEUED", "RUNNING", "WAITING_FOR_APPROVAL"] } },
-      data: { status: "CANCEL_REQUESTED" },
-    });
-    if (changed.count !== 1) {
-      const existing = await this.prisma.agentRun.findFirst({ where: { id: runId, ...(includeAll ? {} : { ownerSubject: principal.subject }) } });
+    const ownership = includeAll ? undefined : eq(agentRun.ownerSubject, principal.subject);
+    const changed = await this.database
+      .update(agentRun)
+      .set({ status: "CANCEL_REQUESTED" })
+      .where(and(
+        eq(agentRun.id, runId),
+        ownership,
+        inArray(agentRun.status, ["QUEUED", "RUNNING", "WAITING_FOR_APPROVAL"]),
+      ))
+      .returning({ id: agentRun.id });
+    if (changed.length !== 1) {
+      const [existing] = await this.database
+        .select({ id: agentRun.id })
+        .from(agentRun)
+        .where(and(eq(agentRun.id, runId), ownership))
+        .limit(1);
       if (!existing) throw new AgentNotFoundError();
       throw new AgentConflictError("Only queued or running agent work can be cancelled.");
     }
-    await this.prisma.auditEvent.create({ data: {
+    await this.database.insert(auditEvent).values({
       actorType: "USER", actorId: principal.id, action: "agent.run_cancel_requested",
       resourceType: "AgentRun", resourceId: runId, outcome: "SUCCESS",
-    } });
+    });
     return this.getRun(principal, runId, includeAll);
   }
 
   async getRuntimeControl(): Promise<AgentRuntimeControl> {
-    const control = await this.prisma.agentRuntimeControl.findUnique({ where: { id: "global" } });
+    const [control] = await this.database
+      .select()
+      .from(agentRuntimeControl)
+      .where(eq(agentRuntimeControl.id, "global"))
+      .limit(1);
     return {
       enabled: control?.enabled ?? false,
       reason: control?.reason ?? "Runtime control is missing; execution is denied fail-closed.",
@@ -562,30 +662,38 @@ export class PrismaAgentManager implements AgentManager {
         throw new AgentRuntimeDisabledError("Hermes boundary verification is unavailable; execution remains disabled.");
       }
       try {
-        const toolControl = await this.prisma.toolRuntimeControl.findUnique({ where: { id: "global" } });
+        const [toolControl] = await this.database
+          .select({ enabled: toolRuntimeControl.enabled })
+          .from(toolRuntimeControl)
+          .where(eq(toolRuntimeControl.id, "global"))
+          .limit(1);
         if (toolControl?.enabled) await this.boundaryVerifier.assertGovernedToolBoundary();
         else await this.boundaryVerifier.assertZeroToolBoundary();
       } catch {
-        await this.prisma.auditEvent.create({ data: {
+        await this.database.insert(auditEvent).values({
           actorType: "USER", actorId: principal.id, action: "agent.runtime_enable_denied",
           resourceType: "AgentRuntimeControl", resourceId: "global", outcome: "FAILURE",
           metadata: { reason: input.reason, failureCode: "HERMES_BOUNDARY_VERIFICATION_FAILED" },
-        } });
+        });
         throw new AgentRuntimeDisabledError("Hermes failed the authenticated execution-boundary check; execution remains disabled.");
       }
     }
-    const control = await this.prisma.$transaction(async (transaction) => {
-      const updated = await transaction.agentRuntimeControl.upsert({
-        where: { id: "global" },
-        create: { id: "global", enabled: input.enabled, reason: input.reason, updatedBy: principal.id },
-        update: { enabled: input.enabled, reason: input.reason, updatedBy: principal.id },
-      });
-      await transaction.auditEvent.create({ data: {
+    const control = await this.database.transaction(async (transaction) => {
+      const [updated] = await transaction
+        .insert(agentRuntimeControl)
+        .values({ id: "global", enabled: input.enabled, reason: input.reason, updatedBy: principal.id })
+        .onConflictDoUpdate({
+          target: agentRuntimeControl.id,
+          set: { enabled: input.enabled, reason: input.reason, updatedBy: principal.id, updatedAt: new Date() },
+        })
+        .returning();
+      if (!updated) throw new AgentConflictError("The agent runtime control could not be written.");
+      await transaction.insert(auditEvent).values({
         actorType: "USER", actorId: principal.id,
         action: input.enabled ? "agent.runtime_enabled" : "agent.runtime_disabled",
         resourceType: "AgentRuntimeControl", resourceId: "global", outcome: "SUCCESS",
         metadata: { reason: input.reason },
-      } });
+      });
       return updated;
     });
     return { enabled: control.enabled, reason: control.reason, updatedAt: control.updatedAt.toISOString(), updatedBy: control.updatedBy };
@@ -593,11 +701,19 @@ export class PrismaAgentManager implements AgentManager {
 
   async metrics(): Promise<AgentMetrics> {
     const [profiles, runs] = await Promise.all([
-      this.prisma.agentProfile.groupBy({ by: ["status"], _count: { _all: true } }),
-      this.prisma.agentRun.groupBy({ by: ["status"], _count: { _all: true } }),
+      this.database
+        .select({ status: agentProfile.status, total: count() })
+        .from(agentProfile)
+        .groupBy(agentProfile.status),
+      this.database
+        .select({ status: agentRun.status, total: count() })
+        .from(agentRun)
+        .groupBy(agentRun.status),
     ]);
-    const profileCount = (status?: string) => profiles.filter((item) => !status || item.status === status).reduce((sum, item) => sum + item._count._all, 0);
-    const runCount = (statuses: string[]) => runs.filter((item) => statuses.includes(item.status)).reduce((sum, item) => sum + item._count._all, 0);
+    const profileCount = (status?: string) =>
+      profiles.filter((item) => !status || item.status === status).reduce((sum, item) => sum + item.total, 0);
+    const runCount = (statuses: string[]) =>
+      runs.filter((item) => statuses.includes(item.status)).reduce((sum, item) => sum + item.total, 0);
     return {
       generatedAt: new Date().toISOString(), profiles: profileCount(), activeProfiles: profileCount("ACTIVE"),
       queuedRuns: runCount(["QUEUED"]), runningRuns: runCount(["RUNNING", "WAITING_FOR_APPROVAL", "CANCEL_REQUESTED"]),
@@ -610,14 +726,27 @@ export class PrismaAgentManager implements AgentManager {
     profileId: string,
     state: "ACTIVE" | "STANDBY" | "SUSPENDED",
   ): Promise<StoredProfile> {
-    return this.prisma.$transaction(async (transaction) => {
-      const profile = await transaction.agentProfile.findUnique({ where: { id: profileId } });
+    return this.database.transaction(async (transaction) => {
+      const [profile] = await transaction
+        .select()
+        .from(agentProfile)
+        .where(eq(agentProfile.id, profileId))
+        .limit(1);
       if (!profile) throw new AgentNotFoundError();
       const requiresRelease = state !== "SUSPENDED";
-      const currentVersion = requiresRelease ? await transaction.agentProfileVersion.findUnique({
-        where: { profileId_version: { profileId, version: profile.currentVersion } },
-        select: { modelAlias: true, distributionDigest: true },
-      }) : null;
+      const [currentVersion] = requiresRelease
+        ? await transaction
+          .select({
+            modelAlias: agentProfileVersion.modelAlias,
+            distributionDigest: agentProfileVersion.distributionDigest,
+          })
+          .from(agentProfileVersion)
+          .where(and(
+            eq(agentProfileVersion.profileId, profileId),
+            eq(agentProfileVersion.version, profile.currentVersion),
+          ))
+          .limit(1)
+        : [];
       if (requiresRelease && !currentVersion) {
         throw new AgentConflictError("The current agent version is missing.");
       }
@@ -625,48 +754,65 @@ export class PrismaAgentManager implements AgentManager {
         throw new AgentConflictError("Create a Profile Distribution version before standby or activation.");
       }
       if (requiresRelease) {
-        const hermesCompatibility = await transaction.componentCompatibility.findUnique({
-          where: { key: "hermes-api" },
-          select: { status: true },
-        });
+        const [hermesCompatibility] = await transaction
+          .select({ status: componentCompatibility.status })
+          .from(componentCompatibility)
+          .where(eq(componentCompatibility.key, "hermes-api"))
+          .limit(1);
         if (hermesCompatibility?.status !== "PASSED") {
           throw new AgentConflictError("Hermes compatibility is not passed. Use Create & activate in Hermes Profiles to run the check automatically, or run the AI services check from Deployment diagnostics.");
         }
       }
-      const modelCatalogueCount = requiresRelease
-        ? await transaction.modelDeployment.count({ where: { workload: "AGENT", firstActivatedAt: { not: null } } })
-        : 0;
-      const modelRoute = requiresRelease && modelCatalogueCount > 0 ? await transaction.modelDeployment.findFirst({
-        where: { workload: "AGENT", modelAlias: currentVersion!.modelAlias, status: "ACTIVE" },
-        select: { id: true },
-      }) : null;
+      const [catalogue] = requiresRelease
+        ? await transaction
+          .select({ total: count() })
+          .from(modelDeployment)
+          .where(and(eq(modelDeployment.workload, "AGENT"), isNotNull(modelDeployment.firstActivatedAt)))
+        : [];
+      const modelCatalogueCount = catalogue?.total ?? 0;
+      const [modelRoute] = requiresRelease && modelCatalogueCount > 0
+        ? await transaction
+          .select({ id: modelDeployment.id })
+          .from(modelDeployment)
+          .where(and(
+            eq(modelDeployment.workload, "AGENT"),
+            eq(modelDeployment.modelAlias, currentVersion!.modelAlias),
+            eq(modelDeployment.status, "ACTIVE"),
+          ))
+          .limit(1)
+        : [];
       if (requiresRelease && modelCatalogueCount > 0 && !modelRoute) {
         throw new AgentConflictError(`Activate the '${currentVersion!.modelAlias}' agent model route before activating this profile.`);
       }
-      const architecture = requiresRelease ? await transaction.platformArchitectureDecision.findUnique({
-        where: { id: "global" },
-        select: { targetEnvironment: true },
-      }) : null;
+      const [architecture] = requiresRelease
+        ? await transaction
+          .select({ targetEnvironment: platformArchitectureDecision.targetEnvironment })
+          .from(platformArchitectureDecision)
+          .where(eq(platformArchitectureDecision.id, "global"))
+          .limit(1)
+        : [];
       const targetEnvironment = architecture?.targetEnvironment ?? "DEVELOPMENT";
       const requiresReleaseEvidence = state === "ACTIVE" && targetEnvironment !== "DEVELOPMENT";
-      const releaseEvidence = requiresReleaseEvidence ? await transaction.evaluationRun.findFirst({
-        where: {
-          targetType: "AGENT",
-          targetReference: `agent:${profile.slug}`,
-          targetVersion: String(profile.currentVersion),
-          status: "PROMOTED",
-        },
-        select: { id: true },
-      }) : null;
+      const [releaseEvidence] = requiresReleaseEvidence
+        ? await transaction
+          .select({ id: evaluationRun.id })
+          .from(evaluationRun)
+          .where(and(
+            eq(evaluationRun.targetType, "AGENT"),
+            eq(evaluationRun.targetReference, `agent:${profile.slug}`),
+            eq(evaluationRun.targetVersion, String(profile.currentVersion)),
+            eq(evaluationRun.status, "PROMOTED"),
+          ))
+          .limit(1)
+        : [];
       if (requiresReleaseEvidence && !releaseEvidence) {
         throw new AgentConflictError(`${targetEnvironment.toLowerCase()} activation requires promoted evaluation evidence for agent:${profile.slug} version ${profile.currentVersion}. Promote the matching evaluation in Operations, or keep this installation in Development while validating the first profile.`);
       }
-      const updated = await transaction.agentProfile.update({
-        where: { id: profileId },
-        data: { status: state, ...(requiresRelease ? { activeVersion: profile.currentVersion } : {}) },
-        include: profileInclude,
-      });
-      await transaction.auditEvent.create({ data: {
+      await transaction
+        .update(agentProfile)
+        .set({ status: state, ...(requiresRelease ? { activeVersion: profile.currentVersion } : {}) })
+        .where(eq(agentProfile.id, profileId));
+      await transaction.insert(auditEvent).values({
         actorType: "USER", actorId: principal.id,
         action: state === "ACTIVE" ? "agent.profile_activated" : state === "STANDBY" ? "agent.profile_standby" : "agent.profile_suspended",
         resourceType: "AgentProfile", resourceId: profileId, outcome: "SUCCESS",
@@ -677,8 +823,13 @@ export class PrismaAgentManager implements AgentManager {
           targetEnvironment,
           releaseEvidenceRequired: requiresReleaseEvidence,
         },
-      } });
-      return updated as StoredProfile;
+      });
+      const reloaded = await transaction.query.agentProfile.findFirst({
+        where: eq(agentProfile.id, profileId),
+        with: profileWith(),
+      });
+      if (!reloaded) throw new AgentNotFoundError();
+      return storedProfile(reloaded as LoadedProfile);
     });
   }
 }
