@@ -19,7 +19,7 @@ import {
   agentToolGrant,
   auditEvent,
   document,
-  documentMemoryPublication,
+  documentChunk,
   enterpriseUser,
   enterpriseUserSession,
   governedTool,
@@ -30,7 +30,7 @@ import {
   toolRuntimeControl,
   type OrcaSynapseDatabase,
 } from "@orcasynapse/database";
-import { and, asc, count, desc, eq, gt, inArray, isNotNull, isNull, lte } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, inArray, isNull, lte, sql } from "drizzle-orm";
 import { advisoryLock } from "../database-support.js";
 import {
   ToolingConflictError,
@@ -855,18 +855,17 @@ export class DrizzleToolingManager implements ToolingManager {
         status: document.status,
         createdAt: document.createdAt,
         updatedAt: document.updatedAt,
-        memoryStatus: documentMemoryPublication.status,
-        memorySyncedAt: documentMemoryPublication.syncedAt,
-        memoryFailureCode: documentMemoryPublication.failureCode,
-        memoryExternalDocumentId: documentMemoryPublication.externalDocumentId,
+        chunkCount: count(documentChunk.id),
+        embeddingModel: sql<string | null>`max(${documentChunk.embeddingModel})`,
       })
       .from(document)
-      .leftJoin(documentMemoryPublication, eq(documentMemoryPublication.documentId, document.id))
+      .leftJoin(documentChunk, eq(documentChunk.documentId, document.id))
       .where(and(
         eq(document.id, documentId),
         eq(document.ownerSubject, ownerSubject),
         isNull(document.deletedAt),
       ))
+      .groupBy(document.id)
       .limit(1);
     if (!found) throw new ToolingDeniedError("The document is unavailable within the requesting user's owner-only scope.");
     return {
@@ -876,12 +875,13 @@ export class DrizzleToolingManager implements ToolingManager {
       sizeBytes: found.sizeBytes.toString(),
       classification: found.classification,
       status: found.status,
-      memory: found.memoryStatus ? {
-        status: found.memoryStatus,
-        externalDocumentId: found.memoryExternalDocumentId,
-        syncedAt: found.memorySyncedAt?.toISOString() ?? null,
-        failureCode: found.memoryFailureCode,
-      } : null,
+      // Retrieval state comes from the pgvector index the document was embedded
+      // into, which replaced the external memory projection.
+      retrieval: found.chunkCount > 0 ? {
+        status: "INDEXED",
+        chunks: found.chunkCount,
+        embeddingModel: found.embeddingModel,
+      } : { status: "NOT_INDEXED", chunks: 0, embeddingModel: null },
       createdAt: found.createdAt.toISOString(),
       updatedAt: found.updatedAt.toISOString(),
     };
@@ -950,17 +950,17 @@ export class DrizzleToolingManager implements ToolingManager {
       throw new ToolingDeniedError("The requesting identity no longer satisfies the tool grant.");
     }
     const documentId = this.documentId(jsonObject(call.arguments));
+    // Eligibility is the same evidence the read path uses: a READY document the
+    // requester owns that is actually present in the retrieval index.
     const [eligible] = await executor
       .select({ id: document.id })
       .from(document)
-      .innerJoin(documentMemoryPublication, eq(documentMemoryPublication.documentId, document.id))
+      .innerJoin(documentChunk, eq(documentChunk.documentId, document.id))
       .where(and(
         eq(document.id, documentId),
         eq(document.ownerSubject, call.runOwnerSubject),
         eq(document.status, "READY"),
         isNull(document.deletedAt),
-        eq(documentMemoryPublication.status, "READY"),
-        isNotNull(documentMemoryPublication.externalDocumentId),
       ))
       .limit(1);
     if (!eligible) throw new ToolingDeniedError("The target document is no longer eligible within owner-only scope.");

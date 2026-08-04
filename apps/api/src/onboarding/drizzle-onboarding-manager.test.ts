@@ -6,7 +6,7 @@ import {
   componentCompatibility,
   createTestDatabase,
   document,
-  documentMemoryPublication,
+  documentChunk,
   evaluationRun,
   guardrailPolicy,
   localAdministrator,
@@ -56,13 +56,14 @@ async function publishKnowledgeSource() {
       retentionUntil: new Date(Date.now() + 30 * 24 * 60 * 60 * 1_000),
     })
     .returning({ id: document.id });
-  await context.database.insert(documentMemoryPublication).values({
+  await context.database.insert(documentChunk).values({
     documentId: stored!.id,
     ownerSubject: "local-admin:operator",
-    scopeTag: "owner",
-    status: "READY",
-    externalDocumentId: randomUUID(),
-    syncedAt: new Date(),
+    ordinal: 0,
+    content: "Restart Hermes with the runbook procedure.",
+    characterCount: 41,
+    embeddingModel: "Xenova/bge-m3",
+    embedding: Array.from({ length: 1024 }, () => 0.01),
   });
   return stored!.id;
 }
@@ -235,6 +236,7 @@ describe("DrizzleOnboardingManager validation", () => {
     expect(roundTrip?.details).toMatchObject({ documentId });
     // The stage must attest a contract that is actually seeded, or it throws.
     expect(roundTrip?.componentKey).toBe("supermemory-local");
+    expect(roundTrip?.details).toMatchObject({ chunks: 1, embeddingModel: "Xenova/bge-m3" });
     expect(passed.components.find(({ key }) => key === "supermemory-local")?.status).toBe("PASSED");
   });
 

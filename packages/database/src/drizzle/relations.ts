@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { enterpriseUser, enterpriseUserSession, serviceConnection, secretRecord, configurationRevision, chatMessage, chatFeedback, agentProfile, agentProfileVersion, document, documentMemoryPublication, chatConversation, agentRun, agentToolGrant, governedTool, oidcAuthorizationRequest, governedToolCall, toolApproval, toolActionDispatch, modelDeployment, evaluationRun, promptTemplate, agentRunEvent, hermesRuntimeNode, hermesNodeRequestNonce, hermesNodeEnrollment, guardrailPolicy, agentRunApproval, documentChunk } from "./schema.js";
+import { enterpriseUser, enterpriseUserSession, serviceConnection, secretRecord, configurationRevision, chatMessage, chatFeedback, agentProfile, agentProfileVersion, document, chatConversation, agentRun, agentToolGrant, governedTool, oidcAuthorizationRequest, governedToolCall, toolApproval, toolActionDispatch, modelDeployment, evaluationRun, promptTemplate, agentRunEvent, hermesRuntimeNode, hermesNodeRequestNonce, hermesNodeEnrollment, guardrailPolicy, agentRunApproval, documentChunk } from "./schema.js";
 
 export const enterpriseUserSessionRelations = relations(enterpriseUserSession, ({one}) => ({
 	enterpriseUser: one(enterpriseUser, {
@@ -67,15 +67,8 @@ export const agentProfileRelations = relations(agentProfile, ({many}) => ({
 	agentRuns: many(agentRun),
 }));
 
-export const documentMemoryPublicationRelations = relations(documentMemoryPublication, ({one}) => ({
-	document: one(document, {
-		fields: [documentMemoryPublication.documentId],
-		references: [document.id]
-	}),
-}));
 
 export const documentRelations = relations(document, ({many}) => ({
-	documentMemoryPublications: many(documentMemoryPublication),
 	documentChunks: many(documentChunk),
 }));
 

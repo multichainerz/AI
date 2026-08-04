@@ -9,7 +9,7 @@ import {
   auditEvent,
   createTestDatabase,
   document,
-  documentMemoryPublication,
+  documentChunk,
   governedTool,
   governedToolCall,
   mcpGatewayCredential,
@@ -170,13 +170,14 @@ async function seedDocument(ownerSubject: string, withMemory = true) {
     })
     .returning();
   if (withMemory) {
-    await context.database.insert(documentMemoryPublication).values({
+    await context.database.insert(documentChunk).values({
       documentId: stored!.id,
       ownerSubject,
-      scopeTag: "owner",
-      status: "READY",
-      externalDocumentId: randomUUID(),
-      syncedAt: new Date(),
+      ordinal: 0,
+      content: "Restart Hermes with the runbook procedure.",
+      characterCount: 41,
+      embeddingModel: "Xenova/bge-m3",
+      embedding: Array.from({ length: 1024 }, () => 0.01),
     });
   }
   return stored!;
@@ -386,7 +387,8 @@ describe("DrizzleToolingManager invocation", () => {
       sizeBytes: "4096",
       classification: "INTERNAL",
     });
-    expect((result.data as { memory: { status: string } }).memory.status).toBe("READY");
+    expect((result.data as { retrieval: { status: string; chunks: number } }).retrieval)
+      .toMatchObject({ status: "INDEXED", chunks: 1, embeddingModel: "Xenova/bge-m3" });
 
     const [call] = await context.database.select().from(governedToolCall);
     expect(call?.status).toBe("COMPLETED");

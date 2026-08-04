@@ -25,7 +25,7 @@ import {
   componentCompatibility,
   credentialRecoveryControl,
   document,
-  documentMemoryPublication,
+  documentChunk,
   guardrailPolicy,
   hermesRuntimeNode,
   localAdministrator,
@@ -37,7 +37,7 @@ import {
   toolRuntimeControl,
   type OrcaSynapseDatabase,
 } from "@orcasynapse/database";
-import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, ne, notInArray, or, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, inArray, isNotNull, isNull, ne, notInArray, or, sql } from "drizzle-orm";
 import {
   createCredentialRecoveryKit,
   credentialKeyFingerprint,
@@ -688,19 +688,22 @@ export class DrizzleOnboardingManager implements OnboardingManager {
       }];
     }
     if (stageKey === "knowledge-workflow") {
+      // Retrieval evidence is the pgvector index itself: a READY document with
+      // at least one embedded chunk is what proves the round trip.
       const [indexed] = await this.database
-        .select({ id: document.id, externalDocumentId: documentMemoryPublication.externalDocumentId })
+        .select({
+          id: document.id,
+          chunks: count(documentChunk.id),
+          embeddingModel: sql<string | null>`max(${documentChunk.embeddingModel})`,
+        })
         .from(document)
-        .innerJoin(documentMemoryPublication, eq(documentMemoryPublication.documentId, document.id))
-        .where(and(
-          eq(document.status, "READY"),
-          eq(documentMemoryPublication.status, "READY"),
-          isNotNull(documentMemoryPublication.externalDocumentId),
-        ))
+        .innerJoin(documentChunk, eq(documentChunk.documentId, document.id))
+        .where(eq(document.status, "READY"))
+        .groupBy(document.id, document.completedAt)
         .orderBy(desc(document.completedAt)).limit(1);
       // The contract key must name a seeded component; "supermemory-knowledge"
       // never existed, so this stage threw before it could record evidence.
-      return [{ stageKey, componentKey: "supermemory-local", outcome: contractOutcome(Boolean(indexed)), code: "knowledge-roundtrip", summary: indexed ? "A knowledge source was indexed through OrcaSynapse's authenticated ingestion path; Production still requires malformed-input and deletion evidence." : "Publish one representative knowledge source and confirm indexing completes.", details: indexed ? { documentId: indexed.id, externalDocumentId: indexed.externalDocumentId } : {} }];
+      return [{ stageKey, componentKey: "supermemory-local", outcome: contractOutcome(Boolean(indexed)), code: "knowledge-roundtrip", summary: indexed ? `A knowledge source was embedded into ${indexed.chunks} retrievable chunk${indexed.chunks === 1 ? "" : "s"}; Production still requires malformed-input and deletion evidence.` : "Publish one representative knowledge source and confirm indexing completes.", details: indexed ? { documentId: indexed.id, chunks: indexed.chunks, embeddingModel: indexed.embeddingModel } : {} }];
     }
     if (stageKey === "hermes-profiles") {
       const [released] = await this.database

@@ -255,31 +255,6 @@ export const agentProfileVersion = pgTable("AgentProfileVersion", {
 	check("AgentProfileVersion_phase5_boundary_check", sql`("maxTurns" = 1) AND ("safeMode" = true)`),
 ]);
 
-export const documentMemoryPublication = pgTable("DocumentMemoryPublication", {
-	id: uuid().defaultRandom().primaryKey().notNull(),
-	documentId: uuid().notNull(),
-	ownerSubject: varchar({ length: 200 }).notNull(),
-	scopeTag: varchar({ length: 100 }).notNull(),
-	status: memorySyncStatus().default('NOT_INDEXED').notNull(),
-	externalDocumentId: varchar({ length: 255 }),
-	failureCode: varchar({ length: 80 }),
-	failureMessage: varchar({ length: 500 }),
-	queuedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
-	syncedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
-	deletedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
-	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
-}, (table) => [
-	uniqueIndex("DocumentMemoryPublication_documentId_key").using("btree", table.documentId.asc().nullsLast()),
-	index("DocumentMemoryPublication_ownerSubject_status_updatedAt_idx").using("btree", table.ownerSubject.asc().nullsLast(), table.status.asc().nullsLast(), table.updatedAt.asc().nullsLast()),
-	index("DocumentMemoryPublication_scopeTag_status_idx").using("btree", table.scopeTag.asc().nullsLast(), table.status.asc().nullsLast()),
-	index("DocumentMemoryPublication_status_queuedAt_idx").using("btree", table.status.asc().nullsLast(), table.queuedAt.asc().nullsLast()),
-	foreignKey({
-			columns: [table.documentId],
-			foreignColumns: [document.id],
-			name: "DocumentMemoryPublication_documentId_fkey"
-		}).onUpdate("cascade").onDelete("cascade"),
-]);
 
 export const chatConversation = pgTable("ChatConversation", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
