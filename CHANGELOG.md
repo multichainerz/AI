@@ -5,6 +5,43 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.30.0 — 2026-08-05
+
+Give agents memory again, on OrcaSynapse's own pgvector plane, and make what
+gets stored a choice an administrator makes per agent.
+
+- add the `AgentMemory` table and `AgentMemoryStore`, mirroring `DocumentChunk`
+  and `DocumentVectorStore`: hybrid cosine + lexical recall over an HNSW index,
+  with the (owner, agent) scope as a predicate inside every statement rather
+  than a namespace handed to a service, so nothing a caller supplies can widen it
+- add `memoryMode` to a profile version, the dashboard-facing choice of what an
+  agent does. `DOCUMENTS_ONLY` is the default, so an upgrade stores nothing
+  about anyone until someone decides otherwise:
+
+  | Mode | Recall | Captures |
+  | --- | --- | --- |
+  | `DOCUMENTS_ONLY` | documents only | nothing |
+  | `RECALL_ONLY` | documents + memory | nothing |
+  | `LEARN_USER` | documents + memory | what the person says |
+  | `LEARN_EXCHANGE` | documents + memory | both sides of the turn |
+
+- materialize the mode into `memory:agent:read` / `memory:agent:write` run
+  capabilities, frozen onto the run exactly like `knowledge:private:read`, so
+  editing a profile cannot change what an in-flight run may do
+- recall before submission and inject through the existing hardened-instruction
+  path as a `RECALLED MEMORY` block carrying the same untrusted-data framing as
+  knowledge excerpts, and telling the model to prefer what the user says now
+- **`LEARN_USER` stores the person's turn and never the model's output**, so an
+  answer the model got wrong once cannot become a durable fact that later runs
+  retrieve and treat as established; `LEARN_EXCHANGE` opts into that trade
+- prune on write rather than on a timer: expired items are dropped and the
+  oldest beyond the per-agent cap are trimmed, matching how this codebase keeps
+  other append-only tables bounded
+- capture failures are logged and swallowed - the run completed and the person
+  has their answer, so losing a memory is not a reason to retract it
+- cover every mode, the owner and agent boundaries, expiry, trimming,
+  scoped deletion, and the profile-delete cascade
+
 ## ai-v1.29.0 — 2026-08-05
 
 Remove Supermemory. VM2 now runs exactly one plane — the Hermes runtime — and

@@ -10,7 +10,7 @@ flowchart LR
 
   subgraph VM1["VM1 · control plane"]
     WEB --> API["Fastify API"]
-    API <--> PG["PostgreSQL + pgvector<br/>control-plane state, knowledge chunks,<br/>embeddings, audit trail"]
+    API <--> PG["PostgreSQL + pgvector<br/>control-plane state, knowledge chunks,<br/>agent memory, embeddings, audit trail"]
     WORKER["Hermes run reconciler"] <--> PG
   end
 
@@ -35,7 +35,7 @@ The minimum deployment is two VMs plus an existing inference endpoint. VM1 runs 
 | Component | Owns | Never owns |
 | --- | --- | --- |
 | OrcaSynapse | workforce and administrator identity, authorization, encrypted endpoints, Profile releases, policy, audit, document knowledge (extracted chunks and their embeddings), metadata, incidents, and operational evidence | agent execution, original files, or model weights |
-| PostgreSQL | OrcaSynapse control-plane state, durable Hermes-run state, extracted knowledge chunks with pgvector embeddings, and the append-only audit trail | original source bytes, Hermes session internals, or model weights |
+| PostgreSQL | OrcaSynapse control-plane state, durable Hermes-run state, extracted knowledge chunks and agent memory with pgvector embeddings, and the append-only audit trail | original source bytes, Hermes session internals, or model weights |
 | Hermes | agent sessions, loop execution, Skills, tool and sub-agent behavior, and bounded native memory | enterprise authorization, PostgreSQL access, or inference credentials |
 | AI Inference | OpenAI-compatible model serving | routing authority, durable memory, or enterprise credentials |
 
@@ -58,7 +58,9 @@ There is no OCR: scanned or image-only PDFs carry no extractable text layer and 
 
 ## Memory boundaries
 
-- **Agent memory across conversations is not part of this release.** The external memory plane that previously ran on VM2 was removed; a governed replacement served from OrcaSynapse's own pgvector plane is the next planned change. Within a conversation, continuity is unaffected: OrcaSynapse replays bounded complete-turn history to Hermes on every run, and the conversation ID remains the stable Hermes session ID.
+- **Agent memory** is served by OrcaSynapse from the same pgvector plane as document knowledge (`AgentMemory`), scoped to `(ownerSubject, agentProfileId)` by predicates inside every statement. The worker recalls before submitting a run and injects the result into the run's instructions under a `RECALLED MEMORY` heading, with the same untrusted-data framing as knowledge excerpts. With a single Hermes turn there is no loop in which the agent could request memory mid-run, so retrieving up front loses nothing and keeps the decision about what an agent may know inside OrcaSynapse.
+- **What an agent stores is a per-profile choice** (`memoryMode`), defaulting to `DOCUMENTS_ONLY` so an installation stores nothing about anyone until an administrator decides otherwise. `LEARN_USER` stores the person's own turns and never the model's output, so a wrong answer cannot become a durable fact; `LEARN_EXCHANGE` opts into storing both sides. The mode is frozen onto each run as capabilities, so editing a profile cannot change what an in-flight run may do.
+- Memory is bounded by pruning on write: expired items are dropped and the oldest beyond the per-agent cap are trimmed.
 - **Document knowledge** (enterprise sources) lives in PostgreSQL/pgvector on VM1, scoped per owner by SQL predicate — it never transits VM2.
 - Hermes `MEMORY.md` and `USER.md` remain small native runtime files because the upstream external-memory provider is additive.
 

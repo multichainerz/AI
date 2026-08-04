@@ -13,7 +13,17 @@ export const AGENT_RUN_STATUSES = [
   "TIMED_OUT",
   "DENIED",
 ] as const;
-export const AGENT_CAPABILITIES = ["knowledge:private:read"] as const;
+export const AGENT_CAPABILITIES = ["knowledge:private:read", "memory:agent:read", "memory:agent:write"] as const;
+/**
+ * What an agent does with memory, chosen per profile.
+ *
+ * DOCUMENTS_ONLY is the default so an installation stores nothing about anyone
+ * until an administrator decides otherwise. Capture is deliberately separate
+ * from recall: an agent can be given memory an operator seeded without being
+ * allowed to write more.
+ */
+export const AGENT_MEMORY_MODES = ["DOCUMENTS_ONLY", "RECALL_ONLY", "LEARN_USER", "LEARN_EXCHANGE"] as const;
+export const agentMemoryModeSchema = z.enum(AGENT_MEMORY_MODES);
 export const AGENT_RUN_EVENT_TYPES = [
   "RUN_STARTED",
   "MESSAGE_DELTA",
@@ -64,6 +74,7 @@ export const agentVersionConfigurationSchema = z.object({
   timeoutSeconds: z.number().int().min(30).max(3_600),
   maxConcurrentRuns: z.number().int().min(1).max(20),
   allowPrivateKnowledge: z.boolean(),
+  memoryMode: agentMemoryModeSchema.default("DOCUMENTS_ONLY"),
   safeMode: z.literal(true),
 }).strict();
 
@@ -203,6 +214,7 @@ export const agentRunJobPayloadSchema = z.object({ runId: z.uuid() }).strict();
 export type AgentProfileStatus = z.infer<typeof agentProfileStatusSchema>;
 export type AgentRunStatus = z.infer<typeof agentRunStatusSchema>;
 export type AgentCapability = z.infer<typeof agentCapabilitySchema>;
+export type AgentMemoryMode = z.infer<typeof agentMemoryModeSchema>;
 export type AgentRunEventType = z.infer<typeof agentRunEventTypeSchema>;
 export type AgentRunApprovalStatus = z.infer<typeof agentRunApprovalStatusSchema>;
 export type AgentVersionConfiguration = z.infer<typeof agentVersionConfigurationSchema>;

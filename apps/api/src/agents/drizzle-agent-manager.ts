@@ -1,5 +1,6 @@
 import type {
   AgentCapability,
+  AgentMemoryMode,
   AgentMetrics,
   AgentProfile,
   AgentProfileList,
@@ -57,6 +58,7 @@ interface StoredVersion {
   timeoutSeconds: number;
   maxConcurrentRuns: number;
   allowPrivateKnowledge: boolean;
+  memoryMode: AgentMemoryMode;
   safeMode: boolean;
   createdBy: string | null;
   createdAt: Date;
@@ -174,6 +176,7 @@ function distributionDigest(configuration: {
   timeoutSeconds: number;
   maxConcurrentRuns: number;
   allowPrivateKnowledge: boolean;
+  memoryMode: AgentMemoryMode;
   safeMode: boolean;
 }): string {
   const canonical = {
@@ -188,9 +191,24 @@ function distributionDigest(configuration: {
     timeoutSeconds: configuration.timeoutSeconds,
     maxConcurrentRuns: configuration.maxConcurrentRuns,
     allowPrivateKnowledge: configuration.allowPrivateKnowledge,
+    memoryMode: configuration.memoryMode,
     safeMode: configuration.safeMode,
   };
   return createHash("sha256").update(JSON.stringify(canonical), "utf8").digest("hex");
+}
+
+/**
+ * Materializes a profile's memory choice into run capabilities.
+ *
+ * Recall and capture are separate capabilities so a run can be permitted to
+ * read what an agent already knows without being permitted to write more.
+ */
+function memoryCapabilities(mode: AgentMemoryMode, allowPrivateKnowledge: boolean): AgentCapability[] {
+  const capabilities: AgentCapability[] = allowPrivateKnowledge ? ["knowledge:private:read"] : [];
+  if (mode === "DOCUMENTS_ONLY") return capabilities;
+  capabilities.push("memory:agent:read");
+  if (mode === "LEARN_USER" || mode === "LEARN_EXCHANGE") capabilities.push("memory:agent:write");
+  return capabilities;
 }
 
 function versionDto(version: StoredVersion) {
@@ -203,7 +221,7 @@ function versionDto(version: StoredVersion) {
     displayName: version.displayName, purpose: version.purpose, instructions: version.instructions,
     soulMd, skills, modelAlias: version.modelAlias, maxTurns: version.maxTurns,
     timeoutSeconds: version.timeoutSeconds, maxConcurrentRuns: version.maxConcurrentRuns,
-    allowPrivateKnowledge: version.allowPrivateKnowledge, safeMode: version.safeMode,
+    allowPrivateKnowledge: version.allowPrivateKnowledge, memoryMode: version.memoryMode, safeMode: version.safeMode,
   });
   return {
     id: version.id,
@@ -218,6 +236,7 @@ function versionDto(version: StoredVersion) {
     timeoutSeconds: version.timeoutSeconds,
     maxConcurrentRuns: version.maxConcurrentRuns,
     allowPrivateKnowledge: version.allowPrivateKnowledge,
+    memoryMode: version.memoryMode,
     safeMode: true as const,
     createdBy: version.createdBy,
     distributionDigest: digest,
@@ -363,6 +382,7 @@ export class DrizzleAgentManager implements AgentManager {
             timeoutSeconds: input.timeoutSeconds,
             maxConcurrentRuns: input.maxConcurrentRuns,
             allowPrivateKnowledge: input.allowPrivateKnowledge,
+            memoryMode: input.memoryMode,
             safeMode: input.safeMode,
             createdBy: principal.id,
           })
@@ -414,6 +434,7 @@ export class DrizzleAgentManager implements AgentManager {
         timeoutSeconds: input.timeoutSeconds ?? current.timeoutSeconds,
         maxConcurrentRuns: input.maxConcurrentRuns ?? current.maxConcurrentRuns,
         allowPrivateKnowledge: input.allowPrivateKnowledge ?? current.allowPrivateKnowledge,
+        memoryMode: input.memoryMode ?? current.memoryMode,
         safeMode: input.safeMode ?? current.safeMode,
       };
       await transaction.insert(agentProfileVersion).values({
@@ -598,7 +619,7 @@ export class DrizzleAgentManager implements AgentManager {
           outputCharacterLimit,
           modelAlias: version.modelAlias,
           jobId: randomUUID(),
-          effectiveCapabilities: version.allowPrivateKnowledge ? ["knowledge:private:read"] : [],
+          effectiveCapabilities: memoryCapabilities(version.memoryMode, version.allowPrivateKnowledge),
           // Absent means owner-wide retrieval; present narrows it for this run.
           ...(options.knowledgeDocumentIds ? { knowledgeDocumentIds: [...options.knowledgeDocumentIds] } : {}),
         })

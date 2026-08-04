@@ -22,7 +22,11 @@ const configuration = {
 
 describe("agent contracts", () => {
   it("accepts only the single-turn safe-mode boundary", () => {
-    expect(createAgentProfileSchema.parse(configuration)).toEqual(configuration);
+    // memoryMode is absent from the fixture on purpose: a profile that does not
+    // ask for memory must come back storing nothing about anyone.
+    expect(createAgentProfileSchema.parse(configuration)).toEqual({ ...configuration, memoryMode: "DOCUMENTS_ONLY" });
+    expect(createAgentProfileSchema.parse({ ...configuration, memoryMode: "LEARN_USER" }).memoryMode).toBe("LEARN_USER");
+    expect(createAgentProfileSchema.safeParse({ ...configuration, memoryMode: "LEARN_EVERYTHING" }).success).toBe(false);
     expect(createAgentProfileSchema.safeParse({ ...configuration, maxTurns: 2 }).success).toBe(false);
     expect(createAgentProfileSchema.safeParse({ ...configuration, safeMode: false }).success).toBe(false);
   });

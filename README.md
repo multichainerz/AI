@@ -76,6 +76,8 @@ VM2 generates its own identity, consumes the claim once, receives a scoped infer
 
 **Private document knowledge** — upload TXT, Markdown, HTML, CSV, JSON, PDF, DOCX, PPTX, or XLSX. Text is extracted in flight, embedded locally with BGE-M3, and retrieved from pgvector. Original files are never stored. Pin documents to a conversation to scope exactly what an agent may consult.
 
+**Agents that remember, on your terms** — memory lives in the same pgvector plane as your documents, scoped to one person and one agent. Each agent's profile chooses what it stores: nothing at all (the default), recall without writing, learn what the person says, or learn the whole exchange.
+
 **An audit trail you can actually read** — every governed action lands in an append-only trail with a filterable dashboard view. An optional forwarder ships it to your SIEM with at-least-once delivery, and reports its own health when the destination falls behind or starts rejecting batches.
 
 **Inference that configures itself** — vLLM, llama.cpp, SGLang, Ollama, TGI, or any compatible OpenAI-style server.

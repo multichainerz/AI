@@ -64,6 +64,13 @@
       "when": 1785870827429,
       "tag": "0008_remove_supermemory",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1785872651077,
+      "tag": "0009_agent_memory",
+      "breakpoints": true
     }
   ]
 }

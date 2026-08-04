@@ -25,6 +25,7 @@ import { bytea } from "./bytea.js"
 export const administratorAuthenticationMethod = pgEnum("AdministratorAuthenticationMethod", ['LOCAL_PASSWORD', 'INSTALLATION_KEY_RECOVERY', 'OIDC'])
 export const administratorRole = pgEnum("AdministratorRole", ['PLATFORM_ADMIN', 'SECURITY_ADMIN', 'OPERATIONS_ADMIN', 'AUDITOR'])
 export const agentProfileStatus = pgEnum("AgentProfileStatus", ['DRAFT', 'ACTIVE', 'SUSPENDED', 'STANDBY'])
+export const agentMemoryMode = pgEnum("AgentMemoryMode", ['DOCUMENTS_ONLY', 'RECALL_ONLY', 'LEARN_USER', 'LEARN_EXCHANGE'])
 export const agentRunApprovalStatus = pgEnum("AgentRunApprovalStatus", ['PENDING', 'APPROVED', 'DENIED', 'EXPIRED', 'CANCELLED'])
 export const agentRunStatus = pgEnum("AgentRunStatus", ['QUEUED', 'RUNNING', 'WAITING_FOR_APPROVAL', 'CANCEL_REQUESTED', 'COMPLETED', 'FAILED', 'CANCELLED', 'TIMED_OUT', 'DENIED'])
 export const auditActorType = pgEnum("AuditActorType", ['USER', 'SERVICE', 'SYSTEM'])
@@ -242,6 +243,7 @@ export const agentProfileVersion = pgTable("AgentProfileVersion", {
 	timeoutSeconds: integer().notNull(),
 	maxConcurrentRuns: integer().notNull(),
 	allowPrivateKnowledge: boolean().default(false).notNull(),
+	memoryMode: agentMemoryMode().default('DOCUMENTS_ONLY').notNull(),
 	safeMode: boolean().default(true).notNull(),
 	createdBy: uuid(),
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
@@ -1182,3 +1184,41 @@ export const auditForwardingState = pgTable("AuditForwardingState", {
 	deliveredCount: integer().default(0).notNull(),
 	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
 });
+
+/**
+ * What an agent has learned about the person it serves.
+ *
+ * This is the plane that replaced the external memory service on VM2. Keeping
+ * it here rather than beside the runtime means a runtime host can be destroyed
+ * and re-enrolled without losing what an agent knows, the same backup covers
+ * it as the rest of the control plane, and an administrator can read and
+ * delete it - none of which was true of a store that lived on the agent VM.
+ *
+ * Scope is (ownerSubject, agentProfileId): an agent recalls only what it
+ * learned, about the identity that is asking. Both halves are predicates
+ * inside the retrieval query, so nothing a caller supplies can widen them.
+ */
+export const agentMemory = pgTable("AgentMemory", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	ownerSubject: varchar({ length: 200 }).notNull(),
+	agentProfileId: uuid().notNull(),
+	content: text().notNull(),
+	characterCount: integer().notNull(),
+	embeddingModel: varchar({ length: 120 }).notNull(),
+	embedding: vector({ dimensions: 1024 }).notNull(),
+	sourceRunId: uuid(),
+	sourceConversationId: uuid(),
+	retentionUntil: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
+	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+	index("AgentMemory_content_fts_idx").using("gin", sql`to_tsvector('simple'::regconfig, content)`),
+	index("AgentMemory_embedding_idx").using("hnsw", table.embedding.asc().nullsLast().op("vector_cosine_ops")),
+	index("AgentMemory_owner_profile_idx").using("btree", table.ownerSubject.asc().nullsLast(), table.agentProfileId.asc().nullsLast()),
+	index("AgentMemory_retentionUntil_idx").using("btree", table.retentionUntil.asc().nullsLast()),
+	foreignKey({
+			columns: [table.agentProfileId],
+			foreignColumns: [agentProfile.id],
+			name: "AgentMemory_agentProfileId_fkey"
+		}).onUpdate("cascade").onDelete("cascade"),
+	check("AgentMemory_content_check", sql`(char_length(btrim(content)) >= 3) AND ("characterCount" > 0)`),
+]);

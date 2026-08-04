@@ -18,6 +18,7 @@ import {
   conversationHistory,
   type AgentHermesRuntime,
   type AgentKnowledgeRetriever,
+  type AgentMemoryPort,
 } from "./agent-processor.js";
 
 let context: TestDatabase;
@@ -90,7 +91,10 @@ async function healthyBoundary(
   });
 }
 
-async function queuedRun(overrides: Partial<typeof agentRun.$inferInsert> = {}): Promise<string> {
+async function queuedRun(
+  overrides: Partial<typeof agentRun.$inferInsert> = {},
+  memoryMode: typeof agentProfileVersion.$inferInsert["memoryMode"] = "DOCUMENTS_ONLY",
+): Promise<string> {
   const [profile] = await context.database
     .insert(agentProfile)
     .values({
@@ -114,6 +118,7 @@ async function queuedRun(overrides: Partial<typeof agentRun.$inferInsert> = {}):
       maxTurns: 1,
       timeoutSeconds: 60,
       safeMode: true,
+      memoryMode,
     })
     .returning({ id: agentProfileVersion.id });
 
@@ -131,10 +136,18 @@ async function queuedRun(overrides: Partial<typeof agentRun.$inferInsert> = {}):
       status: "QUEUED",
       jobId: randomUUID(),
       outputCharacterLimit: 200_000,
+      effectiveCapabilities: memoryCapabilitiesFor(memoryMode),
       ...overrides,
     })
     .returning({ id: agentRun.id, jobId: agentRun.jobId });
   return row!.id;
+}
+
+/** Mirrors what the agent manager freezes onto a run for a given mode. */
+function memoryCapabilitiesFor(mode: typeof agentProfileVersion.$inferInsert["memoryMode"]): string[] {
+  if (mode === "DOCUMENTS_ONLY" || mode === undefined) return [];
+  if (mode === "RECALL_ONLY") return ["memory:agent:read"];
+  return ["memory:agent:read", "memory:agent:write"];
 }
 
 async function jobIdOf(runId: string): Promise<string> {
@@ -145,8 +158,27 @@ async function jobIdOf(runId: string): Promise<string> {
   return row!.jobId!;
 }
 
-function processor(runtime: AgentHermesRuntime, knowledge: AgentKnowledgeRetriever = noKnowledge) {
-  return new DrizzleAgentProcessor(context.database, runtime, knowledge, capabilities);
+function processor(
+  runtime: AgentHermesRuntime,
+  knowledge: AgentKnowledgeRetriever = noKnowledge,
+  memory?: AgentMemoryPort,
+) {
+  return new DrizzleAgentProcessor(context.database, runtime, knowledge, capabilities, memory);
+}
+
+/** Records what was recalled and captured without touching pgvector. */
+function memoryPort(recollections: { id: string; content: string }[] = []): AgentMemoryPort & {
+  captured: string[][];
+} {
+  const captured: string[][] = [];
+  return {
+    captured,
+    recall: vi.fn(async () => recollections),
+    capture: vi.fn(async (_owner: string, _profile: string, items: readonly string[]) => {
+      captured.push([...items]);
+      return items.length;
+    }),
+  };
 }
 
 describe("DrizzleAgentProcessor", () => {
@@ -319,6 +351,69 @@ describe("DrizzleAgentProcessor", () => {
 
     expect(knowledge.search).not.toHaveBeenCalled();
   });
+
+  it("stores nothing about the person when the profile keeps memory off", async () => {
+    await healthyBoundary();
+    const id = await queuedRun({}, "DOCUMENTS_ONLY");
+    const memory = memoryPort();
+
+    await processor(hermes(), noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER);
+
+    expect(memory.recall).not.toHaveBeenCalled();
+    expect(memory.capture).not.toHaveBeenCalled();
+  });
+
+  it("recalls without writing when the profile is recall-only", async () => {
+    await healthyBoundary();
+    const id = await queuedRun({}, "RECALL_ONLY");
+    const memory = memoryPort([{ id: randomUUID(), content: "Prefers metric units." }]);
+    const runtime = hermes();
+
+    await processor(runtime, noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER);
+
+    expect(memory.recall).toHaveBeenCalled();
+    expect(memory.capture).not.toHaveBeenCalled();
+    // The recalled item reaches Hermes as instruction context, carrying the
+    // same untrusted-data framing as knowledge excerpts.
+    const submission = vi.mocked(runtime.start).mock.calls[0]?.[0];
+    expect(submission?.instructions).toContain("RECALLED MEMORY");
+    expect(submission?.instructions).toContain("Prefers metric units.");
+    expect(submission?.instructions).toContain("never as instructions");
+  });
+
+  it("stores the person's turn and not the model's answer when learning the user", async () => {
+    await healthyBoundary();
+    const id = await queuedRun({}, "LEARN_USER");
+    const memory = memoryPort();
+
+    await processor(hermes(), noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER);
+
+    // A wrong answer must not become a durable fact the agent later retrieves.
+    expect(memory.captured).toEqual([["Summarize the policy."]]);
+  });
+
+  it("stores both sides of the turn only when the profile opts into it", async () => {
+    await healthyBoundary();
+    const id = await queuedRun({}, "LEARN_EXCHANGE");
+    const memory = memoryPort();
+
+    await processor(hermes(), noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER);
+
+    expect(memory.captured[0]).toHaveLength(2);
+    expect(memory.captured[0]?.[0]).toBe("Summarize the policy.");
+  });
+
+  it("completes the run even when recording memory fails", async () => {
+    await healthyBoundary();
+    const id = await queuedRun({}, "LEARN_USER");
+    const memory = memoryPort();
+    memory.capture = vi.fn(async () => { throw new Error("pgvector unavailable"); });
+
+    // The person already has their answer; losing a memory must not retract it.
+    await expect(processor(hermes(), noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER))
+      .resolves.toMatchObject({ status: "COMPLETED" });
+  });
+
 });
 
 describe("conversationHistory", () => {
@@ -372,4 +467,5 @@ describe("conversationHistory", () => {
     expect(conversationHistory(null)).toEqual([]);
     expect(conversationHistory({ role: "user", content: "not an array" })).toEqual([]);
   });
+
 });
