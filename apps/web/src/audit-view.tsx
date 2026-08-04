@@ -1,6 +1,6 @@
-import type { AdministratorSession, AuditEvent, AuditEventQuery } from "@orcasynapse/contracts";
+import type { AdministratorSession, AuditEvent, AuditEventQuery, AuditForwardingState } from "@orcasynapse/contracts";
 import { useEffect, useState, type FormEvent } from "react";
-import { OrcaSynapseApiError, getAuditEvents } from "./api.js";
+import { OrcaSynapseApiError, getAuditEvents, getAuditForwarding } from "./api.js";
 
 interface AuditViewProps {
   session: AdministratorSession | null;
@@ -34,6 +34,7 @@ export function AuditView({ session, onSessionExpired }: AuditViewProps) {
   const [filters, setFilters] = useState<Filters>(EMPTY);
   const [applied, setApplied] = useState<Filters>(EMPTY);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [forwarding, setForwarding] = useState<AuditForwardingState | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // The trail is the AUDITOR role's entire reason to exist; without this scope
@@ -61,6 +62,11 @@ export function AuditView({ session, onSessionExpired }: AuditViewProps) {
   };
 
   useEffect(() => { void load(EMPTY, false); }, [session]);
+
+  useEffect(() => {
+    if (!session || !canRead) return;
+    void getAuditForwarding().then(setForwarding).catch(() => setForwarding(null));
+  }, [session]);
 
   const search = (event: FormEvent) => {
     event.preventDefault();
@@ -107,6 +113,26 @@ export function AuditView({ session, onSessionExpired }: AuditViewProps) {
           Refresh
         </button>
       </div>
+
+      {forwarding && (
+        <div className={`audit-forwarding ${forwarding.status.toLowerCase()}`}>
+          <div>
+            <strong>
+              {forwarding.status === "NOT_CONFIGURED" ? "Retained locally"
+                : forwarding.status === "FAILING" ? "Forwarding is failing"
+                  : forwarding.status === "BEHIND" ? "Forwarding is behind"
+                    : "Forwarding to SIEM"}
+            </strong>
+            <span>{forwarding.summary}</span>
+            {forwarding.lastError && <code>{forwarding.lastError}</code>}
+          </div>
+          <dl>
+            <div><dt>Undelivered</dt><dd>{forwarding.pendingCount.toLocaleString()}</dd></div>
+            <div><dt>Delivered</dt><dd>{forwarding.deliveredCount.toLocaleString()}</dd></div>
+            <div><dt>Last accepted</dt><dd>{forwarding.lastForwardedAt ? relativeTime(forwarding.lastForwardedAt) : "never"}</dd></div>
+          </dl>
+        </div>
+      )}
 
       <form className="audit-filters" onSubmit={search}>
         <label>

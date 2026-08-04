@@ -47,6 +47,29 @@ export const auditEventListSchema = z.object({
   }).nullable(),
 });
 
+/**
+ * Health of audit forwarding to a SIEM.
+ *
+ * BEHIND is deliberately distinct from FAILING: a destination can be accepting
+ * batches and still fall behind, and a destination can be rejecting them while
+ * the backlog is still small. They call for different responses.
+ */
+export const AUDIT_FORWARDING_STATUSES = ["NOT_CONFIGURED", "HEALTHY", "BEHIND", "FAILING"] as const;
+export const auditForwardingStatusSchema = z.enum(AUDIT_FORWARDING_STATUSES);
+
+export const auditForwardingStateSchema = z.object({
+  status: auditForwardingStatusSchema,
+  /** Events recorded but not yet accepted by the destination. */
+  pendingCount: z.number().int().nonnegative(),
+  deliveredCount: z.number().int().nonnegative(),
+  lastForwardedAt: z.string().nullable(),
+  lastAttemptAt: z.string().nullable(),
+  lastError: z.string().nullable(),
+  summary: z.string(),
+});
+
+export type AuditForwardingStatus = z.infer<typeof auditForwardingStatusSchema>;
+export type AuditForwardingState = z.infer<typeof auditForwardingStateSchema>;
 export type AuditEvent = z.infer<typeof auditEventSchema>;
 export type AuditEventQuery = z.infer<typeof auditEventQuerySchema>;
 export type AuditEventList = z.infer<typeof auditEventListSchema>;

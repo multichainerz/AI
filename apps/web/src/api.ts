@@ -1,6 +1,7 @@
 import {
   architectureDecisionSchema,
   auditEventListSchema,
+  auditForwardingStateSchema,
   connectionTestResultSchema,
   connectionMonitoringControlSchema,
   inferenceDiscoveryResultSchema,
@@ -23,6 +24,7 @@ import {
   type AdministratorSession,
   type AuditEventList,
   type AuditEventQuery,
+  type AuditForwardingState,
   type ArchitectureDecision,
   type CompleteOnboarding,
   type UpdateArchitectureDecision,
@@ -937,6 +939,11 @@ export async function runOnboardingValidation(input: RunOnboardingValidation = {
     method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
   });
   return onboardingSnapshotSchema.parse(await parsedResponse(response));
+}
+
+export async function getAuditForwarding(): Promise<AuditForwardingState> {
+  const response = await fetch("/api/v1/admin/audit/forwarding", { credentials: "same-origin" });
+  return auditForwardingStateSchema.parse(await parsedResponse(response));
 }
 
 export async function updateArchitectureDecision(

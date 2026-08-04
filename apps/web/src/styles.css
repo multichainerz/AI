@@ -2009,3 +2009,15 @@ button:disabled { opacity: .48; cursor: not-allowed; }
 .chat-knowledge li span { flex: 1; color: #c3ccd6; }
 .chat-knowledge li small { color: var(--text-faint); font-size: 9px; text-transform: uppercase; letter-spacing: .04em; }
 .chat-knowledge-empty { margin: 0; color: var(--text-muted); font-size: 10px; }
+
+.audit-forwarding { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; flex-wrap: wrap; margin-bottom: 14px; padding: 13px 15px; border: 1px solid var(--border-soft); border-left-width: 3px; border-radius: 9px; background: var(--surface-muted); }
+.audit-forwarding.healthy { border-left-color: #315746; }
+.audit-forwarding.behind { border-left-color: #5c492f; }
+.audit-forwarding.failing { border-left-color: #603842; }
+.audit-forwarding.not_configured { border-left-color: #35404c; }
+.audit-forwarding strong { display: block; color: #cdd5df; font-size: 11px; }
+.audit-forwarding span { display: block; margin-top: 3px; color: var(--text-muted); font-size: 10px; line-height: 1.5; }
+.audit-forwarding code { display: inline-block; margin-top: 6px; padding: 3px 6px; color: #f0a6ad; border-radius: 5px; background: #28191f; font-size: 9px; }
+.audit-forwarding dl { display: flex; gap: 20px; margin: 0; }
+.audit-forwarding dt { color: var(--text-faint); font-size: 9px; text-transform: uppercase; letter-spacing: .04em; }
+.audit-forwarding dd { margin: 3px 0 0; color: #c3ccd6; font-size: 13px; font-weight: 650; }
