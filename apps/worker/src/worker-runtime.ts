@@ -1,6 +1,5 @@
 import type { AgentRunJobPayload } from "@orcasynapse/contracts";
-import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
-import type { WorkerIdentity, WorkerRegistry } from "./worker-registry.js";
+import type { PendingRunSource, WorkerIdentity, WorkerRegistry } from "./worker-registry.js";
 
 export interface WorkerLogger {
   info(message: string): void;
@@ -13,8 +12,8 @@ export interface AgentWorkerHandler {
 
 /**
  * PostgreSQL remains the durable source of truth for asynchronous Hermes runs.
- * Knowledge ingestion is streamed synchronously to Supermemory by the API and
- * therefore has no duplicate worker or retry queue.
+ * Knowledge is indexed synchronously by the API during upload, so there is no
+ * duplicate worker or retry queue for ingestion.
  */
 export class WorkerRuntime {
   private heartbeatTimer?: NodeJS.Timeout;
@@ -24,7 +23,7 @@ export class WorkerRuntime {
   private started = false;
 
   constructor(
-    private readonly prisma: OrcaSynapsePrismaClient,
+    private readonly runs: PendingRunSource,
     private readonly registry: WorkerRegistry,
     private readonly identity: WorkerIdentity,
     private readonly logger: WorkerLogger,
@@ -82,28 +81,11 @@ export class WorkerRuntime {
       try {
         const capacity = this.maxConcurrentAgentRuns - this.inFlight.size;
         if (capacity <= 0) return;
-        const active = [...this.inFlight.keys()];
-        const work = await this.prisma.agentRun.findMany({
-          where: {
-            jobId: { not: null },
-            // WAITING_FOR_APPROVAL is durable state, not a transient in-process
-            // phase. Omitting it here stranded any run whose worker restarted
-            // while an approval was outstanding.
-            status: { in: ["QUEUED", "RUNNING", "WAITING_FOR_APPROVAL", "CANCEL_REQUESTED"] },
-            ...(active.length > 0 ? { id: { notIn: active } } : {}),
-            OR: [
-              { processorLeaseExpiresAt: null },
-              { processorLeaseExpiresAt: { lt: new Date() } },
-            ],
-          },
-          select: { id: true, jobId: true },
-          orderBy: { queuedAt: "asc" },
-          take: capacity,
-        });
+        const work = await this.runs.claimable(capacity, [...this.inFlight.keys()]);
         for (const item of work) {
           if (this.inFlight.has(item.id)) continue;
           const execution = this.agentHandler!
-            .process({ runId: item.id }, item.jobId!, this.identity.id)
+            .process({ runId: item.id }, item.jobId, this.identity.id)
             .then(() => undefined)
             .catch((error: unknown) => {
               this.logger.error("A durable Hermes run failed to process.", error);

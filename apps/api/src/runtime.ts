@@ -49,7 +49,7 @@ import type { OnboardingManager } from "./onboarding/onboarding-manager.js";
 import { PrismaOnboardingManager } from "./onboarding/prisma-onboarding-manager.js";
 import type { HermesRuntimeNodeManager } from "./runtime-nodes/runtime-node-manager.js";
 import { PrismaHermesRuntimeNodeManager } from "./runtime-nodes/prisma-runtime-node-manager.js";
-import { PrismaInferenceGateway } from "./inference/inference-gateway.js";
+import { DrizzleInferenceGateway } from "./inference/inference-gateway.js";
 
 export type BootstrapState = "REQUIRED" | "READY" | "LOCKED";
 
@@ -72,7 +72,7 @@ export interface RuntimeServices {
   aiOpsManager?: AiOpsManager;
   onboardingManager?: OnboardingManager;
   runtimeNodeManager?: HermesRuntimeNodeManager;
-  inferenceGateway?: PrismaInferenceGateway;
+  inferenceGateway?: DrizzleInferenceGateway;
   prisma?: OrcaSynapsePrismaClient;
   database?: OrcaSynapseDatabase;
   /** Closes the Drizzle pool. Prisma is torn down through its own client. */
@@ -148,7 +148,7 @@ export function createRuntimeServices(): RuntimeServices {
     });
     const onboardingManager = new PrismaOnboardingManager(prisma, masterKey, aiOpsManager);
     const runtimeNodeManager = new PrismaHermesRuntimeNodeManager(prisma, encryption, connectionTestService);
-    const inferenceGateway = new PrismaInferenceGateway(prisma, connectionManager);
+    const inferenceGateway = new DrizzleInferenceGateway(database, connectionManager);
     return {
       bootstrapState,
       prisma,

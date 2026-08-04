@@ -1,27 +1,25 @@
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 import { ORCASYNAPSE_VERSION } from "@orcasynapse/contracts";
-import { createDrizzleClient, createPrismaClient, readBootstrapSecret } from "@orcasynapse/database";
+import { createDrizzleClient, readBootstrapSecret } from "@orcasynapse/database";
 import { decodeMasterKey, EnvelopeEncryption, RunCapabilityIssuer } from "@orcasynapse/security";
-import {
-  DrizzleRuntimeConnectionResolver,
-  HermesClient,
-  SupermemoryClient,
-} from "@orcasynapse/runtime-clients";
+import { APPROVED_EMBEDDING_MODEL, DocumentVectorStore, LocalBgeM3Embedder } from "@orcasynapse/knowledge";
+import { DrizzleRuntimeConnectionResolver, HermesClient } from "@orcasynapse/runtime-clients";
 import { WorkerRuntime } from "./worker-runtime.js";
-import { PrismaWorkerRegistry } from "./worker-registry.js";
-import { PrismaAgentProcessor, WorkerAgentKnowledgeRetriever } from "./agent-processor.js";
+import { DrizzlePendingRunSource, DrizzleWorkerRegistry } from "./worker-registry.js";
+import { DrizzleAgentProcessor, WorkerAgentKnowledgeRetriever } from "./agent-processor.js";
 
 const databaseUrl = readBootstrapSecret("orcasynapse_database_url");
-const prisma = createPrismaClient(databaseUrl);
 const { database, close: closeDatabase } = createDrizzleClient(databaseUrl);
 const workerId = randomUUID();
 const masterKey = decodeMasterKey(readBootstrapSecret("orcasynapse_master_key"));
 const encryption = new EnvelopeEncryption({ masterKey });
-const documentResolver = new DrizzleRuntimeConnectionResolver(database, encryption);
+const connectionResolver = new DrizzleRuntimeConnectionResolver(database, encryption);
+const embedder = new LocalBgeM3Embedder();
+
 const runtime = new WorkerRuntime(
-  prisma,
-  new PrismaWorkerRegistry(prisma),
+  new DrizzlePendingRunSource(database),
+  new DrizzleWorkerRegistry(database),
   {
     id: workerId,
     name: hostname(),
@@ -33,10 +31,13 @@ const runtime = new WorkerRuntime(
     error: (message, error) => console.error(message, error),
   },
   15_000,
-  new PrismaAgentProcessor(
-    prisma,
-    new HermesClient(documentResolver),
-    new WorkerAgentKnowledgeRetriever(prisma, new SupermemoryClient(documentResolver)),
+  new DrizzleAgentProcessor(
+    database,
+    new HermesClient(connectionResolver),
+    new WorkerAgentKnowledgeRetriever(
+      new DocumentVectorStore(database, APPROVED_EMBEDDING_MODEL),
+      embedder,
+    ),
     new RunCapabilityIssuer(masterKey),
   ),
 );
@@ -52,7 +53,6 @@ const shutdown = async () => {
     process.exitCode = 1;
   } finally {
     try {
-      await prisma.$disconnect();
       await closeDatabase();
     } catch (error) {
       console.error("OrcaSynapse worker database disconnect failed.", error);
@@ -68,9 +68,6 @@ try {
   await runtime.start();
 } catch (error) {
   console.error("OrcaSynapse worker failed to start.", error);
-  await prisma.$disconnect().catch((disconnectError) =>
-    console.error("OrcaSynapse worker database disconnect failed.", disconnectError),
-  );
   await closeDatabase().catch((closeError) =>
     console.error("OrcaSynapse worker database pool close failed.", closeError),
   );
