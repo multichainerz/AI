@@ -25,13 +25,14 @@ import {
   PrismaEnterpriseIdentityManager,
   type EnterpriseIdentityManager,
 } from "./identity/enterprise-session.js";
+import { DrizzleRuntimeConnectionResolver, HermesClient } from "@orcasynapse/runtime-clients";
 import {
-  DrizzleRuntimeConnectionResolver,
-  HermesClient,
-  SupermemoryClient,
-} from "@orcasynapse/runtime-clients";
+  APPROVED_EMBEDDING_MODEL,
+  DocumentVectorStore,
+  LocalBgeM3Embedder,
+} from "@orcasynapse/knowledge";
 import type { DocumentManager } from "./documents/document-manager.js";
-import { PrismaDocumentManager } from "./documents/prisma-document-manager.js";
+import { DrizzleDocumentManager } from "./documents/drizzle-document-manager.js";
 import type { AgentManager } from "./agents/agent-manager.js";
 import { PrismaAgentManager } from "./agents/prisma-agent-manager.js";
 import type { ToolingManager } from "./tooling/tooling-manager.js";
@@ -126,9 +127,10 @@ export function createRuntimeServices(): RuntimeServices {
     const modelManager = new DrizzleModelManager(database);
     const guardrailManager = new DrizzleGuardrailManager(database);
     const promptManager = new DrizzlePromptManager(database);
-    const documentManager = new PrismaDocumentManager(
-      prisma,
-      new SupermemoryClient(documentResolver),
+    const documentManager = new DrizzleDocumentManager(
+      database,
+      new DocumentVectorStore(database, APPROVED_EMBEDDING_MODEL),
+      new LocalBgeM3Embedder(),
     );
     const hermesClient = new HermesClient(documentResolver);
     const agentManager = new PrismaAgentManager(prisma, hermesClient);

@@ -1,6 +1,6 @@
 {
   "name": "@orcasynapse/api",
-  "version": "1.19.6",
+  "version": "1.20.0",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
@@ -16,6 +16,7 @@
     "@fastify/multipart": "9.3.0",
     "@orcasynapse/contracts": "workspace:*",
     "@orcasynapse/database": "workspace:*",
+    "@orcasynapse/knowledge": "workspace:*",
     "@orcasynapse/runtime-clients": "workspace:*",
     "@orcasynapse/security": "workspace:*",
     "drizzle-orm": "0.45.2",

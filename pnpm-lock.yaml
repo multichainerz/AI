@@ -38,6 +38,9 @@ importers:
       '@orcasynapse/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@orcasynapse/knowledge':
+        specifier: workspace:*
+        version: link:../../packages/knowledge
       '@orcasynapse/runtime-clients':
         specifier: workspace:*
         version: link:../../packages/runtime-clients
