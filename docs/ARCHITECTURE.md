@@ -1,6 +1,6 @@
 # OrcaSynapse Architecture
 
-OrcaSynapse is the identity, policy, orchestration, and observability plane around an isolated Hermes runtime. It is not a second agent framework, file repository, vector database, or model server.
+OrcaSynapse is the identity, policy, orchestration, and observability plane around an isolated Hermes runtime. It is not a second agent framework, a file repository, or a model server.
 
 ## Production baseline
 
@@ -10,34 +10,34 @@ flowchart LR
 
   subgraph VM1["VM1 · control plane"]
     WEB --> API["Fastify API"]
-    API <--> PG["PostgreSQL"]
+    API <--> PG["PostgreSQL + pgvector\ncontrol-plane state, knowledge chunks,\nembeddings, audit trail"]
     WORKER["Hermes run reconciler"] <--> PG
   end
 
   subgraph VM2["VM2 · isolated agentic system"]
-    HERMES["Hermes Agent"] <--> SM["Supermemory Local"]
+    HERMES["Hermes Agent"] <--> SM["Supermemory Local\nagent memory"]
   end
 
   subgraph GPU["AI Inference"]
     SERVER["OpenAI-compatible server"] <--> MODEL["Approved local model"]
   end
 
-  API -->|"stream source after policy checks"| SM
   WORKER -->|"submit, observe, cancel"| HERMES
   HERMES -->|"node-scoped inference route"| API
   API -->|"approved alias and bounded request"| SERVER
+  API -.->|"optional audit forwarding"| SIEM["Customer SIEM"]
 ```
 
-The minimum deployment is two VMs plus an existing inference endpoint. VM1 runs OrcaSynapse and PostgreSQL. VM2 runs Hermes and Supermemory. The inference endpoint may be vLLM, llama.cpp, SGLang, Ollama, TGI, or another compatible server.
+The minimum deployment is two VMs plus an existing inference endpoint. VM1 runs OrcaSynapse and PostgreSQL (the bundled image is `pgvector/pgvector:pg17`; the migrator creates the `vector` extension). VM2 runs Hermes and Supermemory. The inference endpoint may be vLLM, llama.cpp, SGLang, Ollama, TGI, or another compatible server.
 
 ## One owner for each kind of state
 
 | Component | Owns | Never owns |
 | --- | --- | --- |
-| OrcaSynapse | workforce and administrator identity, authorization, encrypted endpoints, Profile releases, policy, audit, metadata, incidents, and operational evidence | agent execution, embeddings, original files, or model weights |
-| PostgreSQL | OrcaSynapse control-plane and durable Hermes-run state | source bytes, vectors, or Hermes session internals |
+| OrcaSynapse | workforce and administrator identity, authorization, encrypted endpoints, Profile releases, policy, audit, document knowledge (extracted chunks and their embeddings), metadata, incidents, and operational evidence | agent execution, original files, or model weights |
+| PostgreSQL | OrcaSynapse control-plane state, durable Hermes-run state, extracted knowledge chunks with pgvector embeddings, and the append-only audit trail | original source bytes, Hermes session internals, or model weights |
 | Hermes | agent sessions, loop execution, Skills, tool and sub-agent behavior, and bounded native memory | enterprise authorization, PostgreSQL access, or inference credentials |
-| Supermemory Local | semantic knowledge, long-duration agent memory, embeddings, and retrieval | enterprise authorization decisions or original-file authority |
+| Supermemory Local | long-duration agent memory for Hermes on VM2 | document knowledge, enterprise authorization decisions, or original-file authority |
 | AI Inference | OpenAI-compatible model serving | routing authority, durable memory, or enterprise credentials |
 
 There is no direct Chat-to-model path. Normal Chat creates a governed Hermes Agent Run. A PostgreSQL worker acquires an exclusive renewable processing lease, submits the run to VM2, follows safe lifecycle events, supports explicit cancellation, and finalizes both the run and linked Chat message. The browser stream is only a live subscriber: disconnecting it does not cancel durable execution. The run ID is the idempotency key; the conversation ID is the stable Hermes session ID.
@@ -46,21 +46,26 @@ After VM2 is enrolled and healthy, a Development administrator can use **Create 
 
 ## Knowledge lifecycle
 
-1. The browser uploads a source to OrcaSynapse.
-2. OrcaSynapse authenticates the identity and validates classification, file name, MIME type, retention, and the 50 MB limit.
-3. OrcaSynapse streams the multipart body to Supermemory using a server-side credential and an owner-derived container tag.
-4. PostgreSQL stores only ownership, classification, checksum, size, external Supermemory ID, projected status, retention, and audit metadata.
-5. OrcaSynapse polls Supermemory for indexing state. It keeps no retry copy; a failed transfer requires re-upload.
-6. Deletion removes the Supermemory object and marks the metadata record deleted.
+Document knowledge is entirely local to VM1; no VM2 service participates.
 
-The Supermemory Local baseline handles text and text-based documents through the VM2 OpenAI-compatible inference route. The chat model extracts and understands content; CPU-local BGE-M3 only embeds the extracted text for retrieval. New nodes pin v0.0.7-rc.2 for its upstream large-document workflow fix and must pass a disposable end-to-end document check before enrollment reports ready. Scanned PDFs, image-heavy documents, and images require an optional Gemini or Vertex document-understanding provider; the dashboard states this limitation instead of claiming universal local OCR.
+1. The browser uploads a source to OrcaSynapse.
+2. OrcaSynapse authenticates the identity and validates classification, file name, MIME type, retention, and the 50 MB limit. Supported formats: TXT, Markdown, HTML, CSV, JSON, PDF, DOCX, PPTX, XLSX (images are rejected).
+3. OrcaSynapse extracts the text **in flight** (unpdf for PDF, officeparser for Office formats, direct decoding for text formats), chunks it, and embeds each chunk with CPU-local BGE-M3 (1024 dimensions).
+4. PostgreSQL stores the chunks and embeddings (`DocumentChunk`, HNSW cosine index) plus ownership, classification, checksum, size, status, retention, and audit metadata. **Original file bytes are never stored**; a failed transfer requires re-upload.
+5. Retrieval is an owner-scoped pgvector similarity search. Chat can **pin documents to a conversation** (`ChatConversationDocument`), and each agent run records the document set it was allowed to consult (`AgentRun.knowledgeDocumentIds`).
+6. Deletion removes the chunks and marks the metadata record deleted.
+
+There is no OCR: scanned or image-only PDFs carry no extractable text layer and fail indexing with an explicit error; the dashboard states this limitation instead of claiming universal local extraction.
 
 ## Memory boundaries
 
-- Each enterprise identity receives a deterministic, hashed `orcasynapse-knowledge-*` container tag. OrcaSynapse never accepts an arbitrary namespace from the browser.
-- Hermes uses its VM2-local Supermemory provider for durable agent recall and capture.
+- **Agent memory** (Hermes recall and capture) lives in Supermemory Local on VM2, under the node-scoped `orcasynapse-agent-*` container tag configured at enrollment. New nodes pin Supermemory `v0.0.7-rc.2` (v0.0.6 is hard-blocked for its upstream document-workflow defects) and must pass a disposable end-to-end document check before enrollment reports ready.
+- **Document knowledge** (enterprise sources) lives in PostgreSQL/pgvector on VM1, scoped per owner by SQL predicate — it never transits VM2.
 - Hermes `MEMORY.md` and `USER.md` remain small native runtime files because the upstream external-memory provider is additive.
-- PostgreSQL records authorization and provenance; it is not a second vector plane.
+
+## Audit trail and SIEM forwarding
+
+Every governed action writes an append-only `AuditEvent`. The trail is readable in the dashboard (**Operations > Audit trail**, `audit:read` scope, keyset-paged) and can be forwarded to a customer SIEM configured as a service connection: a timer-driven forwarder POSTs JSON batches with a keyset cursor, at-least-once delivery (a failed batch never advances the cursor), and duplicate-safe event IDs. Forwarding health (`HEALTHY` / `BEHIND` / `FAILING` / `NOT_CONFIGURED`) is reported in the audit view and observed by AI Ops, which opens an incident when the destination rejects batches. See [AUDIT_TRAIL_RUNBOOK.md](AUDIT_TRAIL_RUNBOOK.md).
 
 ## Runtime and tool boundaries
 
@@ -79,24 +84,25 @@ Node lifecycle is an execution boundary:
 | Source | Destination | Purpose |
 | --- | --- | --- |
 | Browser | OrcaSynapse HTTPS | dashboard and API only |
-| OrcaSynapse | PostgreSQL | private control-plane data |
+| OrcaSynapse | PostgreSQL | private control-plane data, knowledge index, audit trail |
 | OrcaSynapse | Hermes TCP 8642 | governed runs, status, and stop |
-| OrcaSynapse | Supermemory TCP 6767 | knowledge upload, status, search, and deletion |
+| OrcaSynapse | Supermemory TCP 6767 | connection health and memory-registration verification |
 | Hermes | local Supermemory TCP 6767 | native agent memory |
 | Hermes | OrcaSynapse internal inference API | node-scoped model access |
 | OrcaSynapse | AI Inference | approved OpenAI-compatible model calls |
+| OrcaSynapse | Customer SIEM (optional) | forwarded audit batches |
 
 Deny browser access to VM2 and inference, Hermes access to PostgreSQL or Docker control, and unrestricted VM2 egress. Enrollment signatures identify the node but do not replace customer-approved TLS/mTLS and firewall controls.
 
 ## Durability and recovery
 
-- Back up PostgreSQL with a tested customer RPO/RTO and point-in-time recovery where required.
-- Back up the complete Supermemory data directory consistently; it contains semantic graph, auth, and embedding state.
+- Back up PostgreSQL with a tested customer RPO/RTO and point-in-time recovery where required. The backup now carries the knowledge index and audit trail alongside control-plane state.
+- Back up the complete Supermemory data directory consistently; it contains the agents' semantic graph, auth, and embedding state.
 - Back up Hermes persistent data when sessions, Skills, and native memory must survive VM replacement.
 - Store the OrcaSynapse Installation Key and encrypted recovery kit off-host, then test recovery.
-- Restore into an isolated environment and verify identity, Profile, model route, namespace, retrieval, and deletion behavior.
+- Restore into an isolated environment and verify identity, Profile, model route, knowledge retrieval, and deletion behavior.
 - Worker leases expire and can be recovered by another VM1 worker; terminal worker transitions also finalize linked Chat messages so browser or API-stream loss does not strand the conversation.
 
 ## Explicit non-dependencies
 
-OrcaSynapse does not require Redis, Valkey, pg-boss, LiteLLM, S3-compatible storage, SeaweedFS, MinIO, pgvector, or a separate OCR service.
+OrcaSynapse does not require Redis, Valkey, pg-boss, LiteLLM, S3-compatible storage, SeaweedFS, MinIO, an external vector database service, or a separate OCR service. pgvector is required and ships inside the bundled PostgreSQL image.

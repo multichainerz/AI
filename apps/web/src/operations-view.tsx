@@ -367,7 +367,7 @@ export function OperationsView({ unlocked, scopes, onConfigure, onUnauthorized }
             <article><span>Knowledge indexing</span><strong>{metrics?.documents?.processing ?? "--"}</strong><small>{metrics?.documents?.ready ?? 0} ready / {metrics?.documents?.failed ?? 0} need attention</small></article>
             <article><span>Hermes runs</span><strong>{metrics?.agents?.runningRuns ?? "--"}</strong><small>{metrics?.agents?.queuedRuns ?? 0} queued / {metrics?.agents?.failedRuns ?? 0} retained failures</small></article>
             <article><span>Governed tools</span><strong>{metrics?.tools?.executingCalls ?? "--"}</strong><small>{metrics?.tools?.pendingApprovals ?? 0} pending review / {metrics?.tools?.deniedCalls ?? 0} denied</small></article>
-            <article><span>Source bytes retained</span><strong>{metrics?.documents ? bytes(metrics.documents.retainedSourceBytes) : "--"}</strong><small>Knowledge streams directly to Supermemory</small></article>
+            <article><span>Source bytes retained</span><strong>{metrics?.documents ? bytes(metrics.documents.retainedSourceBytes) : "--"}</strong><small>Knowledge is kept as extracted chunks and embeddings, never originals</small></article>
           </div>
         </section>
 

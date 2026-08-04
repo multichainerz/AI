@@ -28,16 +28,15 @@ OrcaSynapse shows run status, projected tool/subagent activity, sources, cancell
 
 ### Documents and knowledge
 
-OrcaSynapse is an authorization and streaming gateway to Supermemory, not a permanent file server or second extraction pipeline.
+OrcaSynapse owns document knowledge end to end on the control plane. It is an extraction and retrieval plane for derived knowledge, not a permanent file server.
 
 - Original enterprise systems remain authoritative.
-- Uploaded bytes are streamed to Supermemory and are never retained by OrcaSynapse.
-- UTF-8 plain text is verified against the pinned self-hosted baseline.
-- Rich files and images are relayed to Supermemory's native endpoint; the dashboard warns that the current local extractor may fail without its upstream cloud extraction service.
-- Supermemory owns extraction, chunking, embeddings, and semantic indexing.
-- PostgreSQL stores lifecycle, authorization, provenance, checksum, and audit metadata.
-- Owner-derived container tags prevent callers from selecting arbitrary namespaces.
-- Deletion removes the durable Supermemory object and marks the metadata record deleted.
+- Uploaded bytes are processed in flight and are never retained by OrcaSynapse; only extracted chunks and their embeddings persist.
+- Supported formats are TXT, Markdown, HTML, CSV, JSON, PDF, DOCX, PPTX, and XLSX; images are rejected, and scanned PDFs without a text layer fail with an explicit error (there is no OCR).
+- OrcaSynapse performs extraction, chunking, and CPU-local BGE-M3 embedding; PostgreSQL/pgvector owns the semantic index.
+- PostgreSQL also stores lifecycle, authorization, provenance, checksum, and audit metadata.
+- Retrieval is owner-scoped by construction; conversations can pin an explicit document set, and each agent run records the knowledge it was allowed to consult.
+- Deletion removes the stored chunks and marks the metadata record deleted.
 
 ### Hermes agents
 
@@ -54,7 +53,7 @@ OrcaSynapse does not give Hermes PostgreSQL credentials, Docker control, host fi
 
 ### Memory
 
-Self-hosted Supermemory Local is the semantic-memory plane. Hermes gets a profile-scoped native memory container, while enterprise sources use deterministic owner-derived `orcasynapse-knowledge-*` tags assigned only by OrcaSynapse.
+Self-hosted Supermemory Local on VM2 is the **agent-memory** plane: Hermes gets a node-scoped native memory container for durable recall and capture. Enterprise document knowledge is deliberately not stored there — it lives in OrcaSynapse's local pgvector index and never transits VM2.
 
 Hermes's native bounded memory remains active alongside Supermemory. OrcaSynapse must preserve and document both recovery domains.
 
@@ -75,7 +74,7 @@ The initial guardrail layer is deterministic and auditable. Semantic classifiers
 
 ### Operations
 
-OrcaSynapse records connection health, model/prompt/policy revisions, evaluations, incidents, durable workflow state, agent runs, document lifecycle, onboarding evidence, and recovery state. Monitoring distinguishes live automated evidence from manual or stale attestations.
+OrcaSynapse records connection health, model/prompt/policy revisions, evaluations, incidents, durable workflow state, agent runs, document lifecycle, onboarding evidence, and recovery state. Monitoring distinguishes live automated evidence from manual or stale attestations. The append-only audit trail is readable in the dashboard under the `audit:read` scope, and an optional forwarder ships it to a customer SIEM with at-least-once delivery and health reporting observed by AI Ops.
 
 ## Installation experience
 
@@ -119,14 +118,14 @@ OrcaSynapse retains no SSH password/key and no remote Docker socket. Upgrades us
 - replacing enterprise document repositories;
 - administering arbitrary GPU hosts or downloading models;
 - implementing a general provider router comparable to LiteLLM;
-- maintaining an OrcaSynapse pgvector index or duplicate embedding plane;
+- operating an external vector database service (the knowledge index is pgvector inside the bundled PostgreSQL);
 - requiring Redis, Valkey, or S3-compatible object storage;
 - exposing unrestricted Hermes capabilities to users;
 - claiming production readiness without customer-environment tests.
 
 ## Acceptance
 
-Development acceptance requires Hermes-first Chat, direct Supermemory text ingestion, authorized status/deletion, Hermes enrollment, native agent memory, signed heartbeat, and capability-based dashboard readiness against real endpoints.
+Development acceptance requires Hermes-first Chat, local document ingestion into the pgvector knowledge index, authorized status/deletion, Hermes enrollment, native agent memory, signed heartbeat, and capability-based dashboard readiness against real endpoints.
 
 Pilot acceptance adds representative users/data, model evaluation, load/cancellation, restore practice, incident exercises, false-positive review, and operational ownership.
 

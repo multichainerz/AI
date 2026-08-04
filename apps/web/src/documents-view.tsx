@@ -5,7 +5,7 @@ import type {
   DocumentStatus,
   DocumentSummary,
 } from "@orcasynapse/contracts";
-import { DOCUMENT_UPLOAD_ACCEPT } from "@orcasynapse/contracts";
+import { DOCUMENT_UPLOAD_ACCEPT, SUPPORTED_DOCUMENT_TYPES } from "@orcasynapse/contracts";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   OrcaSynapseApiError,
@@ -19,7 +19,6 @@ import {
 interface DocumentsViewProps {
   unlocked: boolean;
   administrator: boolean;
-  serviceReady: boolean | null;
   oidcConfigured: boolean;
   onSignIn: () => void;
   onConfigure: () => void;
@@ -27,6 +26,12 @@ interface DocumentsViewProps {
 }
 
 const processingStatuses = new Set<DocumentStatus>(["QUEUED", "CONVERTING"]);
+
+// Derived from the contract so this label can never advertise a format the
+// API rejects or omit one it accepts.
+const SUPPORTED_FORMAT_LABEL = SUPPORTED_DOCUMENT_TYPES
+  .map(({ extension }) => extension.slice(1).toUpperCase())
+  .join(", ");
 
 function formatBytes(value: number): string {
   if (value < 1_024) return `${value} B`;
@@ -118,7 +123,7 @@ export function DocumentsView(props: DocumentsViewProps) {
 
   const submitUpload = async (event: FormEvent) => {
     event.preventDefault();
-    if (!file || !validRetention || busy || props.serviceReady === false) return;
+    if (!file || !validRetention || busy) return;
     setBusy(true);
     setError(null);
     try {
@@ -158,7 +163,7 @@ export function DocumentsView(props: DocumentsViewProps) {
       <div>
         <p className="page-kicker">Enterprise knowledge</p>
         <h1>{props.oidcConfigured ? "Sign in to use Knowledge" : "Enterprise access is not configured"}</h1>
-        <p>OrcaSynapse authorizes each source and streams it to Supermemory. Source bytes are not retained by the control plane.</p>
+        <p>OrcaSynapse extracts and embeds each authorized source into its private knowledge index. Original files are never retained.</p>
       </div>
       <div className="document-lock-actions">
         {props.oidcConfigured && <button className="primary-button" type="button" onClick={props.onSignIn}>Sign in with OrcaSynapse</button>}
@@ -172,35 +177,31 @@ export function DocumentsView(props: DocumentsViewProps) {
       <div>
         <p className="page-kicker">Enterprise knowledge</p>
         <h1>Knowledge</h1>
-        <p>Authorize sources into Supermemory while authoritative files remain in enterprise storage.</p>
+        <p>Extracted knowledge lives in OrcaSynapse's private vector index while authoritative files remain in enterprise storage.</p>
       </div>
-      <button className="primary-button" type="button" disabled={props.serviceReady === false} onClick={() => setUploadOpen((value) => !value)}>{uploadOpen ? "Close" : props.serviceReady === false ? "Memory unavailable" : "Add source"}</button>
+      <button className="primary-button" type="button" onClick={() => setUploadOpen((value) => !value)}>{uploadOpen ? "Close" : "Add source"}</button>
     </header>
 
     {error && <div className="documents-alert" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
-    {props.serviceReady === false && <div className="workspace-guidance" role="status">
-      <div><strong>Supermemory needs attention</strong><span>Existing metadata remains visible, but new sources cannot be indexed until the VM2 memory service is healthy.</span></div>
-      <button className="secondary-button" type="button" onClick={props.onConfigure}>Review Agentic System</button>
-    </div>}
 
-    {uploadOpen && props.serviceReady !== false && <form className="document-upload panel knowledge-upload" onSubmit={submitUpload}>
+    {uploadOpen && <form className="document-upload panel knowledge-upload" onSubmit={submitUpload}>
       <div className="knowledge-upload-intro">
-        <p className="section-kicker">Direct Supermemory ingestion</p>
+        <p className="section-kicker">Private knowledge ingestion</p>
         <h2>Add a knowledge source</h2>
-        <p>The browser sends the file to OrcaSynapse for identity and policy checks. OrcaSynapse relays the stream to VM2 and keeps metadata only.</p>
+        <p>OrcaSynapse checks identity and policy, extracts the text in flight, and embeds it into the local knowledge index. Only chunks and metadata are kept — never the file.</p>
       </div>
       <label className="document-file-field">
         <span>{file ? file.name : "Choose a source file"}</span>
-        <small>TXT, Markdown, HTML, PDF, DOCX, PNG, JPEG, or WebP · up to 50 MB</small>
+        <small>{SUPPORTED_FORMAT_LABEL} · up to 50 MB</small>
         <input ref={fileInput} type="file" required accept={DOCUMENT_UPLOAD_ACCEPT} onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
       </label>
       <div className="knowledge-capability-note">
         <strong>Local extraction compatibility</strong>
-        <span>The VM2 chat model extracts text, then BGE-M3 embeds it for retrieval. BGE-M3 does not read files or perform OCR. Scanned PDFs, image-heavy documents, and images require an optional Gemini or Vertex document-understanding provider. OrcaSynapse never retains a retry copy.</span>
+        <span>Text is extracted on the control plane, then BGE-M3 embeds it locally for retrieval. There is no OCR: scanned or image-only PDFs carry no extractable text and will fail indexing. Image files are not accepted.</span>
       </div>
       <label>Classification<select value={classification} onChange={(event) => setClassification(event.target.value as DocumentClassification)}><option value="INTERNAL">Internal</option><option value="CONFIDENTIAL">Confidential</option><option value="RESTRICTED">Restricted</option></select></label>
       <label>Metadata retention<input type="number" min={1} max={3650} value={retentionDays} onChange={(event) => setRetentionDays(Number(event.target.value))} /></label>
-      <button className="primary-button" type="submit" disabled={!file || !validRetention || busy}>{busy ? "Sending…" : "Send to Supermemory"}</button>
+      <button className="primary-button" type="submit" disabled={!file || !validRetention || busy}>{busy ? "Indexing…" : "Add to knowledge"}</button>
     </form>}
 
     <div className="document-metrics" aria-label="Knowledge summary">
@@ -226,14 +227,14 @@ export function DocumentsView(props: DocumentsViewProps) {
           <div className="document-detail-title"><div><p className="section-kicker">Knowledge record</p><h2>{active.fileName}</h2></div><span className={`document-status ${statusTone(active.status)}`}>{formatStatus(active.status)}</span></div>
           <dl className="document-facts"><div><dt>Classification</dt><dd>{active.classification.toLowerCase()}</dd></div><div><dt>Type</dt><dd>{extLabel(active.fileName)}</dd></div><div><dt>Size</dt><dd>{formatBytes(active.sizeBytes)}</dd></div><div><dt>Metadata until</dt><dd>{new Date(active.retentionUntil).toLocaleDateString()}</dd></div></dl>
 
-          {processingStatuses.has(active.status) && <div className="document-progress"><span /><div><strong>Supermemory is indexing this source</strong><small>Status is projected from VM2; OrcaSynapse is not holding a retry copy.</small></div></div>}
-          {(active.status === "FAILED" || active.status === "REJECTED") && <div className="document-failure"><strong>{active.failureCode ?? "SUPERMEMORY_PROCESSING_FAILED"}</strong><span>{active.failureMessage ?? "The installed Supermemory extractor could not process this source. Re-upload after correcting VM2 extraction compatibility."}</span></div>}
+          {processingStatuses.has(active.status) && <div className="document-progress"><span /><div><strong>OrcaSynapse is indexing this source</strong><small>Extraction, chunking, and embedding run locally; no copy leaves the control plane.</small></div></div>}
+          {(active.status === "FAILED" || active.status === "REJECTED") && <div className="document-failure"><strong>{active.failureCode ?? "INDEXING_FAILED"}</strong><span>{active.failureMessage ?? "OrcaSynapse could not extract indexable text from this source. Re-upload after correcting the file."}</span></div>}
 
           <div className="document-staging ready"><strong>No source bytes retained by OrcaSynapse</strong><span>PostgreSQL contains ownership, classification, checksum, projected status, retention, and audit metadata only.</span></div>
 
           {["READY", "FAILED", "REJECTED"].includes(active.status) && <div className="document-actions">
             {props.administrator && new Date(active.retentionUntil) > new Date() && <label>Retention override reason<textarea value={deletionReason} onChange={(event) => setDeletionReason(event.target.value)} maxLength={1000} rows={2} placeholder="Record why this source must be deleted early" /></label>}
-            <button className="danger-button" type="button" disabled={busy} onClick={() => void remove()}>Delete from Supermemory</button>
+            <button className="danger-button" type="button" disabled={busy} onClick={() => void remove()}>Delete knowledge record</button>
           </div>}
         </>}
       </section>

@@ -1,6 +1,8 @@
 {
   "name": "@orcasynapse/security",
-  "version": "1.27.0",
+  "version": "1.28.0",
+  "description": "Envelope encryption and credential primitives for OrcaSynapse",
+  "license": "BUSL-1.1",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",

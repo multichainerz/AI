@@ -9,7 +9,7 @@ OrcaSynapse's Models workspace is the approved workload catalogue. It does not d
 | Chat | Inference Server | default route for direct OrcaSynapse Chat |
 | Agent | Inference Server | alias pinned by the internal gateway for Hermes and Supermemory |
 
-Chat and Agent routes must use an approved OpenAI-compatible Inference Server connection. Supermemory's CPU-local embedding model is a Supermemory deployment concern and does not create an OrcaSynapse model route or vector plane. OrcaSynapse requests multilingual `Xenova/bge-m3` (1024 dimensions) and verifies the model reported during first boot. New nodes pin v0.0.7-rc.2 because it fixes the upstream 128 KiB large-document workflow limit; v0.0.6 remains blocked because its published workflow runtime cannot process documents.
+Chat and Agent routes must use an approved OpenAI-compatible Inference Server connection. Supermemory's CPU-local embedding model is a VM2 agent-memory deployment concern and does not create an OrcaSynapse model route; OrcaSynapse's own document-knowledge embeddings (BGE-M3, 1024 dimensions, pgvector) run locally on VM1 and are likewise not a model route. The VM2 installer requests multilingual `Xenova/bge-m3` for Supermemory and verifies the model reported during first boot. New nodes pin v0.0.7-rc.2 because it fixes the upstream 128 KiB large-document workflow limit; v0.0.6 remains blocked because its published workflow runtime cannot process documents.
 
 ## Lifecycle
 

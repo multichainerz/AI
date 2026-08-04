@@ -2,13 +2,15 @@
 
 This plan records what the current release implements and what remains environment-specific. OrcaSynapse is the enterprise control plane around one isolated Hermes/Supermemory system and one approved OpenAI-compatible inference service.
 
+> **Revision note (ai-v1.19 and later):** the document-knowledge plane described by Phase 3 was superseded. Document ingestion, embedding, and retrieval moved from Supermemory into a local pgvector index inside OrcaSynapse's PostgreSQL; Supermemory now backs Hermes agent memory only. Phase entries below are preserved as the historical delivery record; the invariants section reflects the current architecture.
+
 ## Product architecture
 
 The dashboard has six product areas with one owner each:
 
 1. **Home** — actual Chat and Knowledge readiness plus the next useful action.
 2. **Chat** — the employee-facing governed Hermes conversation surface.
-3. **Knowledge** — direct Supermemory ingestion, status, provenance, retention, and deletion.
+3. **Knowledge** — local extraction and pgvector ingestion, status, provenance, retention, and deletion.
 4. **Agents** — immutable Hermes Profiles, runtime policy, runs, safe events, tools, and approvals.
 5. **Platform** — AI Inference, Agentic System enrollment, optional Enterprise Access, models, prompts, and guardrails.
 6. **Operations** — health, incidents, Hermes run state, release evidence, and Production acceptance.
@@ -36,7 +38,7 @@ The dashboard has six product areas with one owner each:
 - Gated the VM2 installer on administrator and inference readiness.
 - Kept Production evidence and recovery details available without blocking development use.
 
-### Phase 3 — Supermemory-native Knowledge
+### Phase 3 — Supermemory-native Knowledge *(superseded by the local pgvector knowledge plane — see revision note)*
 
 - Replaced scratch storage, conversion, OCR, document workers, and publication retry queues with a bounded streaming relay to Supermemory.
 - Retained metadata only in PostgreSQL and zero source bytes in OrcaSynapse.
@@ -88,9 +90,9 @@ These are customer deployment gates, not missing dashboard architecture:
 
 1. OrcaSynapse owns enterprise identity, authorization, policy, orchestration, and audit.
 2. Hermes is the only normal Chat and agent-execution path.
-3. Supermemory is the sole semantic knowledge and vector plane.
-4. PostgreSQL owns control state and metadata, never source files or embeddings.
+3. Supermemory is the agent-memory plane on VM2; document knowledge lives in OrcaSynapse's local pgvector index and never transits VM2.
+4. PostgreSQL owns control state, metadata, extracted knowledge chunks, and their embeddings — never original source files.
 5. Original files remain authoritative in enterprise systems; failed ephemeral ingestion requires re-upload.
 6. Inference servers serve models but do not own enterprise policy or credentials.
-7. No Redis, Valkey, pg-boss, LiteLLM, object store, pgvector, or extra OCR stack is required.
+7. No Redis, Valkey, pg-boss, LiteLLM, object store, external vector database service, or OCR stack is required; pgvector ships inside the bundled PostgreSQL image.
 8. Customer-environment controls remain visibly unproven until real evidence is recorded.

@@ -353,10 +353,13 @@ function App() {
       action: "Agents" as ActiveView,
     },
     {
-      label: "Private Knowledge",
+      // knowledgeReady tracks the SUPERMEMORY connection, which since the
+      // pgvector migration backs Hermes agent memory only - document knowledge
+      // is indexed locally and needs no VM2 service.
+      label: "Agent memory",
       detail: knowledgeReady ? "Supermemory is reachable on the enrolled VM2 runtime" : "Verify Supermemory on VM2",
       ready: knowledgeReady,
-      action: knowledgeReady ? "Documents" as ActiveView : "Deployment" as ActiveView,
+      action: knowledgeReady ? "Agents" as ActiveView : "Deployment" as ActiveView,
     },
   ];
 
@@ -732,7 +735,6 @@ function App() {
           <DocumentsView
             unlocked={documentsUnlocked}
             administrator={adminSession !== null}
-            serviceReady={unlocked ? readiness.knowledgeReady : null}
             oidcConfigured={oidcStatus?.configured === true}
             onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23knowledge%2Fdocuments")}
             onConfigure={() => openConnectionSettings("SUPERMEMORY")}
