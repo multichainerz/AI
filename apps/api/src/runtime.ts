@@ -117,7 +117,7 @@ export function createRuntimeServices(): RuntimeServices {
     const connectionTestService = new ConnectionTestService(connectionManager);
     const inferenceDiscoveryService = new InferenceDiscoveryService(connectionManager);
     const connectionMonitor = new ConnectionMonitorRuntime(
-      prisma,
+      database,
       connectionTestService,
       { error: (message, error) => console.error(message, error) },
     );
