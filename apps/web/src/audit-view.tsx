@@ -1,6 +1,7 @@
 import type { AdministratorSession, AuditEvent, AuditEventQuery, AuditForwardingState } from "@orcasynapse/contracts";
 import { useEffect, useState, type FormEvent } from "react";
 import { OrcaSynapseApiError, getAuditEvents, getAuditForwarding } from "./api.js";
+import { adminAccess } from "./admin-access.js";
 
 interface AuditViewProps {
   session: AdministratorSession | null;
@@ -39,7 +40,8 @@ export function AuditView({ session, onSessionExpired }: AuditViewProps) {
   const [error, setError] = useState<string | null>(null);
   // The trail is the AUDITOR role's entire reason to exist; without this scope
   // the API refuses, so say so rather than rendering an empty table.
-  const canRead = session?.scopes.includes("audit:read") === true;
+  const { can } = adminAccess(session);
+  const canRead = can("audit:read");
 
   const load = async (next: Filters, append: false | { beforeOccurredAt: string; beforeId: string }) => {
     if (!session || !canRead) return;

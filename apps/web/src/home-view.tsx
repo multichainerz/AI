@@ -80,7 +80,7 @@ export function HomeView(props: HomeViewProps) {
     <div className="content-grid">
       <section className="panel connections-panel">
         <div className="panel-heading">
-          <div><p className="section-kicker">Platform foundation</p><h2>Three operating layers</h2><p>Inference serves models, VM2 runs governed agents and memory, and Enterprise Access adds workforce identity when required.</p></div>
+          <div><p className="section-kicker">Platform foundation</p><h2>Three operating layers</h2><p>Inference serves models, VM2 runs governed agents, and Enterprise Access adds workforce identity when required. Knowledge and agent memory stay on VM1.</p></div>
           <button className="text-button" type="button" onClick={() => props.onSelect("Deployment")}>Manage platform</button>
         </div>
         <div className="connection-list">

@@ -11,6 +11,7 @@ import {
   getGuardrailPolicies,
   updateGuardrailPolicy,
 } from "./api.js";
+import { adminAccess } from "./admin-access.js";
 
 interface GuardrailsViewProps {
   session: AdministratorSession | null;
@@ -56,10 +57,11 @@ export function GuardrailsView({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const canManage = session?.scopes.includes("guardrails:manage") === true;
+  const { unlocked, can } = adminAccess(session);
+  const canManage = can("guardrails:manage");
 
   const load = async () => {
-    if (!session) return;
+    if (!unlocked) return;
     try {
       setPolicies((await getGuardrailPolicies()).items);
       setError(null);
@@ -155,7 +157,7 @@ export function GuardrailsView({
     }
   };
 
-  if (!session) {
+  if (!unlocked) {
     return <div className="guardrails-workspace">
       <header className="guardrails-header"><div><p className="page-kicker">Policy control</p><h1>Guardrails</h1><p>Evaluated request boundaries enforced by OrcaSynapse.</p></div></header>
       <section className="guardrails-lock panel"><span className="guardrails-lock-mark">G</span><div><strong>Administrator session required</strong><p>Claim or sign in to OrcaSynapse to inspect policy versions and activation evidence.</p></div><button className="primary-button" type="button" onClick={onConfigureInference}>Open platform settings</button></section>

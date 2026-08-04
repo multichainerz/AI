@@ -34,7 +34,7 @@ interface OnboardingViewProps {
   onOpenOperations: () => void;
   onRuntimeNodesChange: (nodes: HermesRuntimeNode[]) => void;
   onSignIn: () => void;
-  onUnauthorized: () => void;
+  onSessionExpired: () => void;
 }
 
 type SetupPanel = "overview" | "nodes";
@@ -61,7 +61,7 @@ export function OnboardingView({
   onOpenOperations,
   onRuntimeNodesChange,
   onSignIn,
-  onUnauthorized,
+  onSessionExpired,
 }: OnboardingViewProps) {
   const [panel, setPanel] = useState<SetupPanel>(initialTab === "nodes" ? "nodes" : "overview");
   const [snapshot, setSnapshot] = useState<OnboardingSnapshot | null>(null);
@@ -99,11 +99,11 @@ export function OnboardingView({
       setRecoveryOwner(next.recovery.recoveryOwner ?? "");
     }).catch((cause: unknown) => {
       if (!active) return;
-      if (cause instanceof OrcaSynapseApiError && cause.status === 401) onUnauthorized();
+      if (cause instanceof OrcaSynapseApiError && cause.status === 401) onSessionExpired();
       else setError(cause instanceof Error ? cause.message : "Platform setup could not be loaded.");
     });
     return () => { active = false; };
-  }, [onUnauthorized, unlocked]);
+  }, [onSessionExpired, unlocked]);
 
   const run = async (key: string, operation: () => Promise<void>) => {
     if (busy) return;
@@ -112,7 +112,7 @@ export function OnboardingView({
     try {
       await operation();
     } catch (cause) {
-      if (cause instanceof OrcaSynapseApiError && cause.status === 401) onUnauthorized();
+      if (cause instanceof OrcaSynapseApiError && cause.status === 401) onSessionExpired();
       setError(cause instanceof Error ? cause.message : "Platform setup could not be updated.");
     } finally {
       setBusy(null);
@@ -176,7 +176,7 @@ export function OnboardingView({
       setArchitectureOpen(false);
       setError(null);
     } catch (cause) {
-      if (cause instanceof OrcaSynapseApiError && cause.status === 401) onUnauthorized();
+      if (cause instanceof OrcaSynapseApiError && cause.status === 401) onSessionExpired();
       else setError(cause instanceof Error ? cause.message : "Unable to save the architecture decision.");
     } finally {
       setBusy(null);
@@ -194,7 +194,7 @@ export function OnboardingView({
       setActivationReason("");
       setError(null);
     } catch (cause) {
-      if (cause instanceof OrcaSynapseApiError && cause.status === 401) onUnauthorized();
+      if (cause instanceof OrcaSynapseApiError && cause.status === 401) onSessionExpired();
       else setError(cause instanceof Error ? cause.message : "Unable to record activation.");
     } finally {
       setBusy(null);
@@ -253,7 +253,7 @@ export function OnboardingView({
         inferenceReady={inferenceReady}
         onConfigureInference={() => onConfigure("INFERENCE")}
         onNodesChange={onRuntimeNodesChange}
-        onUnauthorized={onUnauthorized}
+        onSessionExpired={onSessionExpired}
       />
     </section>;
   }

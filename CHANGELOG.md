@@ -5,6 +5,40 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.33.0 — 2026-08-05
+
+A coherence pass over the dashboard, before Phase 4 adds surfaces to it.
+
+- **fix four admin views that stayed operable during a forced password change.**
+  `requireAdmin` answers `403 PASSWORD_CHANGE_REQUIRED` for that session, but
+  Models, Prompts, Guardrails and Memory all treated "signed in" as "usable" —
+  so an administrator mid-password-change got a full workspace whose every
+  request failed. One shared `adminAccess(session)` now derives *usable* and
+  *what it grants* in a single place, and every admin view reads from it
+- **give Memory the same screen shape as the rest of Platform.** Signed out it
+  rendered one bare sentence with no page title and no way forward, while
+  Models, Prompts and Guardrails each showed a titled workspace and a lock panel
+  with a recovery action. All four now match
+- unify the view contract: every admin view takes `session` and reports expiry
+  as `onSessionExpired`, replacing two competing conventions (`session` +
+  `onSessionExpired` in four views, `unlocked` + `scopes` + `onUnauthorized` in
+  five). Chat, Knowledge and Agents keep their own dual-identity props but use
+  the same callback name
+- collapse the twelve copies of the session-expiry closure in `app.tsx` into
+  two — one for admin-only views, one for the views that also hold an
+  enterprise session
+- merge 101 duplicate CSS rules across the Models, Prompts and Guardrails
+  blocks, which were copy-pasted three times and differed only by accent colour;
+  Memory now shares them (2,023 → 1,922 lines, every selector's computed
+  declarations proven unchanged)
+- correct the Overview copy that still placed agent memory on VM2; knowledge and
+  agent memory have been VM1 pgvector tables since ai-v1.30.0
+- remove `GET /api/v1/connections/catalog`, an unauthenticated echo of a
+  constant the dashboard already imports from `@orcasynapse/contracts` and which
+  nothing has ever called
+- cover the locked state of all four governance screens, and that they present
+  the same shell
+
 ## ai-v1.32.0 — 2026-08-05
 
 Cohesion pass over the memory work: make the whole policy load-bearing, and give

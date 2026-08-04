@@ -2,7 +2,6 @@ import {
   healthResponseSchema,
   ORCASYNAPSE_VERSION,
   platformMetaSchema,
-  SERVICE_KINDS,
 } from "@orcasynapse/contracts";
 import helmet from "@fastify/helmet";
 import { sql } from "drizzle-orm";
@@ -161,10 +160,6 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
       bootstrapState: runtime.bootstrapState,
     }),
   );
-
-  app.get("/api/v1/connections/catalog", async () => ({
-    items: SERVICE_KINDS.map((kind) => ({ kind })),
-  }));
 
   await app.register(
     async (inference) => registerInferenceGatewayRoutes(inference, {

@@ -1,6 +1,6 @@
 import {
+  type AdministratorSession,
   EVALUATION_CATEGORIES,
-  type AdminScope,
   type AiOpsOverview,
   type EvaluationCategory,
   type EvaluationRun,
@@ -24,12 +24,12 @@ import {
   recordProductionReadinessApproval,
   updateProductionReadinessControl,
 } from "./api.js";
+import { adminAccess } from "./admin-access.js";
 
 interface OperationsViewProps {
-  unlocked: boolean;
-  scopes: readonly AdminScope[];
+  session: AdministratorSession | null;
   onConfigure: () => void;
-  onUnauthorized: () => void;
+  onSessionExpired: () => void;
 }
 
 type OperationsTab = "control" | "incidents" | "evaluations" | "readiness";
@@ -81,7 +81,7 @@ function incidentSort(items: OperationalIncident[]): OperationalIncident[] {
   });
 }
 
-export function OperationsView({ unlocked, scopes, onConfigure, onUnauthorized }: OperationsViewProps) {
+export function OperationsView({ session, onConfigure, onSessionExpired }: OperationsViewProps) {
   const [tab, setTab] = useState<OperationsTab>("control");
   const [overview, setOverview] = useState<AiOpsOverview | null>(null);
   const [incidents, setIncidents] = useState<OperationalIncident[]>([]);
@@ -101,6 +101,7 @@ export function OperationsView({ unlocked, scopes, onConfigure, onUnauthorized }
   const [readinessControlKey, setReadinessControlKey] = useState<string | null>(null);
   const [showApprovalForm, setShowApprovalForm] = useState(false);
 
+  const { unlocked, scopes } = adminAccess(session);
   const canOperate = scopes.includes("operations:execute");
   const canReadEvaluations = scopes.includes("evaluations:read");
   const canManageEvaluations = scopes.includes("evaluations:manage");
@@ -110,9 +111,9 @@ export function OperationsView({ unlocked, scopes, onConfigure, onUnauthorized }
   const canApproveReadiness = scopes.includes("readiness:approve");
 
   const handleError = useCallback((cause: unknown, fallback: string) => {
-    if (cause instanceof OrcaSynapseApiError && cause.status === 401) onUnauthorized();
+    if (cause instanceof OrcaSynapseApiError && cause.status === 401) onSessionExpired();
     setError(cause instanceof Error ? cause.message : fallback);
-  }, [onUnauthorized]);
+  }, [onSessionExpired]);
 
   const refresh = useCallback(async () => {
     if (!unlocked) return;

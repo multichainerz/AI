@@ -13,6 +13,7 @@ import {
   getModelDeployments,
   updateModelDeployment,
 } from "./api.js";
+import { adminAccess } from "./admin-access.js";
 
 interface ModelsViewProps {
   session: AdministratorSession | null;
@@ -67,7 +68,8 @@ export function ModelsView({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const canManage = session?.scopes.includes("models:manage") === true;
+  const { unlocked, can } = adminAccess(session);
+  const canManage = can("models:manage");
 
   const eligibleConnections = useMemo(
     () => connections.filter(({ kind }) => connectionKinds[draft.workload].includes(kind)),
@@ -75,7 +77,7 @@ export function ModelsView({
   );
 
   const load = async () => {
-    if (!session) return;
+    if (!unlocked) return;
     try {
       setModels((await getModelDeployments()).items);
       setError(null);
@@ -182,7 +184,7 @@ export function ModelsView({
     }
   };
 
-  if (!session) {
+  if (!unlocked) {
     return <div className="models-workspace">
       <header className="models-header"><div><p className="page-kicker">Inference control</p><h1>Models</h1><p>Central model routes, workload assignments, limits, and release evidence.</p></div></header>
       <section className="models-lock panel">

@@ -1,5 +1,5 @@
 import type {
-  AdminScope,
+  AdministratorSession,
   AgentProfile,
   GatewayCredential,
   GovernedTool,
@@ -25,12 +25,12 @@ import {
   updateToolRuntime,
   upsertToolGrant,
 } from "./api.js";
+import { adminAccess } from "./admin-access.js";
 
 interface ToolingViewProps {
-  unlocked: boolean;
-  scopes: AdminScope[];
+  session: AdministratorSession | null;
   onConfigure: () => void;
-  onUnauthorized: () => void;
+  onSessionExpired: () => void;
 }
 
 function tone(value: string): string {
@@ -45,7 +45,7 @@ function when(value: string | null): string {
   return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
 }
 
-export function ToolingView({ unlocked, scopes, onConfigure, onUnauthorized }: ToolingViewProps) {
+export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingViewProps) {
   const [tools, setTools] = useState<GovernedTool[]>([]);
   const [grants, setGrants] = useState<ToolGrant[]>([]);
   const [profiles, setProfiles] = useState<AgentProfile[]>([]);
@@ -63,6 +63,7 @@ export function ToolingView({ unlocked, scopes, onConfigure, onUnauthorized }: T
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const { unlocked, scopes } = adminAccess(session);
   const canManage = scopes.includes("tools:manage");
   const profileVersions = useMemo(() => profiles.flatMap((profile) => {
     const versions = [{ profile, version: profile.version, live: profile.activeVersion === profile.version.version }];
@@ -73,7 +74,7 @@ export function ToolingView({ unlocked, scopes, onConfigure, onUnauthorized }: T
   }), [profiles]);
 
   const fail = (cause: unknown) => {
-    if (cause instanceof OrcaSynapseApiError && cause.status === 401) onUnauthorized();
+    if (cause instanceof OrcaSynapseApiError && cause.status === 401) onSessionExpired();
     setError(cause instanceof Error ? cause.message : "OrcaSynapse could not complete the governed-tool operation.");
   };
 
