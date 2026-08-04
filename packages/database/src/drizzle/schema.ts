@@ -14,6 +14,7 @@
 
 import { pgTable, index, uniqueIndex, uuid, varchar, text, boolean, timestamp, foreignKey, inet, jsonb, integer, check, doublePrecision, bigint, numeric, bigserial, vector, pgEnum } from "drizzle-orm/pg-core"
 import { sql } from "drizzle-orm"
+import { randomUUID } from "node:crypto"
 import { bytea } from "./bytea.js"
 
 export const administratorAuthenticationMethod = pgEnum("AdministratorAuthenticationMethod", ['LOCAL_PASSWORD', 'INSTALLATION_KEY_RECOVERY', 'OIDC'])
@@ -292,7 +293,9 @@ export const chatConversation = pgTable("ChatConversation", {
 	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
 	profileId: uuid(),
 	profileName: varchar({ length: 120 }),
-	hermesMemoryKey: varchar({ length: 200 }).notNull(),
+	// Adaptation: Prisma defaulted this client-side with @default(uuid()), so the
+	// column carries no database default and needs the same stamping here.
+	hermesMemoryKey: varchar({ length: 200 }).notNull().$defaultFn(() => randomUUID()),
 }, (table) => [
 	index("ChatConversation_lastMessageAt_idx").using("btree", table.lastMessageAt.asc().nullsLast()),
 	index("ChatConversation_ownerSubject_status_updatedAt_idx").using("btree", table.ownerSubject.asc().nullsLast(), table.status.asc().nullsLast(), table.updatedAt.asc().nullsLast()),

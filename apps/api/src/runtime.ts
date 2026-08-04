@@ -20,7 +20,7 @@ import { ConnectionMonitorRuntime, type ConnectionMonitorService } from "./conne
 import type { OperationsManager } from "./operations/operations-manager.js";
 import { DrizzleOperationsManager } from "./operations/drizzle-operations-manager.js";
 import type { ChatManager } from "./chat/chat-manager.js";
-import { PrismaChatManager } from "./chat/prisma-chat-manager.js";
+import { DrizzleChatManager } from "./chat/drizzle-chat-manager.js";
 import {
   DrizzleEnterpriseIdentityManager,
   type EnterpriseIdentityManager,
@@ -134,7 +134,7 @@ export function createRuntimeServices(): RuntimeServices {
     );
     const hermesClient = new HermesClient(documentResolver);
     const agentManager = new DrizzleAgentManager(database, hermesClient);
-    const chatManager = new PrismaChatManager(prisma, agentManager);
+    const chatManager = new DrizzleChatManager(database, agentManager);
     const toolingManager = new DrizzleToolingManager(database, hermesClient);
     const aiOpsManager = new PrismaAiOpsManager(prisma, {
       connections: connectionManager,

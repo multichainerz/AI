@@ -16,7 +16,21 @@ import {
   type ForkChatConversation,
   type UpdateChatConversation,
 } from "@orcasynapse/contracts";
-import { Prisma, type OrcaSynapsePrismaClient } from "@orcasynapse/database";
+import {
+  agentProfile,
+  agentProfileVersion,
+  agentRun,
+  agentRunApproval,
+  agentRunEvent,
+  auditEvent,
+  chatConversation,
+  chatFeedback,
+  chatMessage,
+  guardrailPolicy,
+  type OrcaSynapseDatabase,
+} from "@orcasynapse/database";
+import { and, asc, count, desc, eq, gt, gte, inArray, isNotNull, ne, sql, type SQL } from "drizzle-orm";
+import { increment } from "../database-support.js";
 import type { AgentManager, AgentPrincipal } from "../agents/agent-manager.js";
 import { inspectInputText } from "../guardrails/runtime-policy.js";
 import {
@@ -49,7 +63,8 @@ interface StoredRunEvent {
   inputTokens: number | null;
   outputTokens: number | null;
   reasoningTokens: number | null;
-  costUsd: Prisma.Decimal | number | null;
+  // PostgreSQL numeric arrives as a string; the DTO narrows it to a number.
+  costUsd: string | number | null;
   occurredAt: Date;
 }
 
@@ -123,25 +138,6 @@ interface ChatPolicy {
   guardrailPolicyId: string | null;
   guardrailPolicyVersion: string | null;
 }
-
-const messageInclude = {
-  feedback: true,
-  agentRun: {
-    select: {
-      status: true,
-      lastEventCursor: true,
-      events: {
-        where: { type: { not: "MESSAGE_DELTA" } },
-        orderBy: { cursor: "asc" as const },
-        take: 500,
-      },
-      approvals: {
-        orderBy: { requestedAt: "asc" as const },
-        take: 20,
-      },
-    },
-  },
-} as const;
 
 function approvalDto(approval: StoredApproval): AgentRunApproval {
   const choices = Array.isArray(approval.choices)
@@ -284,32 +280,108 @@ function sleep(milliseconds: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
+/** The database handle or a transaction opened from it. */
+type Executor = OrcaSynapseDatabase | Parameters<Parameters<OrcaSynapseDatabase["transaction"]>[0]>[0];
+
 export async function acquireChatRateLimitLock(
-  transaction: Pick<Prisma.TransactionClient, "$executeRaw">,
+  transaction: Pick<Executor, "execute">,
   subject: string,
 ): Promise<void> {
-  await transaction.$executeRaw`
-    SELECT pg_advisory_xact_lock(hashtext(${`orcasynapse-chat:${subject}`}))
-  `;
+  await transaction.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`orcasynapse-chat:${subject}`}))`);
 }
 
-export class PrismaChatManager implements ChatManager {
+export class DrizzleChatManager implements ChatManager {
   constructor(
-    private readonly prisma: OrcaSynapsePrismaClient,
+    private readonly database: OrcaSynapseDatabase,
     private readonly agents: AgentManager,
   ) {}
 
+  /**
+   * Replaces the Prisma message include. The run's events and approvals are
+   * fetched per run rather than as a nested relation, because the event set is
+   * filtered and bounded independently of the message row.
+   */
+  private async loadMessages(where: SQL<unknown>): Promise<StoredMessage[]> {
+    const rows = await this.database
+      .select({
+        message: chatMessage,
+        feedback: chatFeedback,
+        runStatus: agentRun.status,
+        lastEventCursor: agentRun.lastEventCursor,
+      })
+      .from(chatMessage)
+      .leftJoin(chatFeedback, eq(chatFeedback.messageId, chatMessage.id))
+      .leftJoin(agentRun, eq(chatMessage.agentRunId, agentRun.id))
+      .where(where)
+      .orderBy(asc(chatMessage.ordinal));
+
+    const runIds = rows.flatMap(({ message }) => message.agentRunId ? [message.agentRunId] : []);
+    const events = runIds.length === 0 ? [] : await this.database
+      .select()
+      .from(agentRunEvent)
+      .where(and(inArray(agentRunEvent.runId, runIds), ne(agentRunEvent.type, "MESSAGE_DELTA")))
+      .orderBy(asc(agentRunEvent.cursor))
+      .limit(500);
+    const approvals = runIds.length === 0 ? [] : await this.database
+      .select()
+      .from(agentRunApproval)
+      .where(inArray(agentRunApproval.runId, runIds))
+      .orderBy(asc(agentRunApproval.requestedAt))
+      .limit(20);
+
+    return rows.map(({ message, feedback, runStatus, lastEventCursor }) => ({
+      ...message,
+      feedback,
+      agentRun: message.agentRunId && runStatus
+        ? {
+          status: runStatus,
+          lastEventCursor: lastEventCursor === null ? null : BigInt(lastEventCursor),
+          events: events.filter(({ runId }) => runId === message.agentRunId) as StoredRunEvent[],
+          approvals: approvals.filter(({ runId }) => runId === message.agentRunId) as StoredApproval[],
+        }
+        : null,
+    }) as StoredMessage);
+  }
+
+  /** Message counts per conversation, replacing Prisma's `_count`. */
+  private async messageCounts(conversationIds: string[]): Promise<Map<string, number>> {
+    if (conversationIds.length === 0) return new Map();
+    const rows = await this.database
+      .select({ conversationId: chatMessage.conversationId, total: count() })
+      .from(chatMessage)
+      .where(inArray(chatMessage.conversationId, conversationIds))
+      .groupBy(chatMessage.conversationId);
+    return new Map(rows.map(({ conversationId, total }) => [conversationId, total]));
+  }
+
   async list(principal: ChatPrincipal): Promise<ChatConversationList> {
-    const conversations = await this.prisma.chatConversation.findMany({
-      where: { ownerSubject: principal.subject },
-      orderBy: [{ lastMessageAt: "desc" }, { updatedAt: "desc" }],
-      take: 100,
-      include: {
-        _count: { select: { messages: true } },
-        messages: { where: { content: { not: "" } }, orderBy: { ordinal: "desc" }, take: 1 },
-      },
-    });
-    return { items: conversations.map((conversation) => summaryDto(conversation as StoredConversation)) };
+    const conversations = await this.database
+      .select()
+      .from(chatConversation)
+      .where(eq(chatConversation.ownerSubject, principal.subject))
+      .orderBy(desc(chatConversation.lastMessageAt), desc(chatConversation.updatedAt))
+      .limit(100);
+    const ids = conversations.map(({ id }) => id);
+    const counts = await this.messageCounts(ids);
+    // The preview is the newest message that actually carries text.
+    const previews = ids.length === 0 ? [] : await this.database
+      .selectDistinctOn([chatMessage.conversationId], {
+        conversationId: chatMessage.conversationId,
+        content: chatMessage.content,
+      })
+      .from(chatMessage)
+      .where(and(inArray(chatMessage.conversationId, ids), ne(chatMessage.content, "")))
+      .orderBy(chatMessage.conversationId, desc(chatMessage.ordinal));
+    const previewByConversation = new Map(previews.map(({ conversationId, content }) => [conversationId, content]));
+    return {
+      items: conversations.map((conversation) => summaryDto({
+        ...conversation,
+        _count: { messages: counts.get(conversation.id) ?? 0 },
+        messages: previewByConversation.has(conversation.id)
+          ? [{ content: previewByConversation.get(conversation.id)! } as StoredMessage]
+          : [],
+      } as StoredConversation)),
+    };
   }
 
   async create(principal: ChatPrincipal, input: CreateChatConversation): Promise<ChatConversationSummary> {
@@ -317,96 +389,106 @@ export class PrismaChatManager implements ChatManager {
     if (input.modelAlias && input.modelAlias !== profile.modelAlias) {
       throw new ChatConfigurationError(`Agent '${profile.displayName}' uses model '${profile.modelAlias}'.`);
     }
-    const conversation = await this.prisma.$transaction(async (transaction) => {
-      const created = await transaction.chatConversation.create({
-        data: {
+    const conversation = await this.database.transaction(async (transaction) => {
+      const [created] = await transaction
+        .insert(chatConversation)
+        .values({
           ownerSubject: principal.subject,
           title: input.title ?? "New conversation",
           modelAlias: profile.modelAlias,
           profileId: profile.id,
           profileName: profile.displayName,
-        },
-        include: { _count: { select: { messages: true } } },
-      });
-      await transaction.auditEvent.create({ data: {
+        })
+        .returning();
+      if (!created) throw new ChatConfigurationError("The conversation could not be created.");
+      await transaction.insert(auditEvent).values({
         actorType: "USER", actorId: principal.id, action: "chat.hermes_conversation_created",
         resourceType: "ChatConversation", resourceId: created.id, outcome: "SUCCESS",
         metadata: { profileId: profile.id, profileVersion: profile.version, modelAlias: profile.modelAlias, identityMode: principal.identityMode },
-      } });
+      });
       return created;
     });
-    return summaryDto(conversation as StoredConversation);
+    return summaryDto({ ...conversation, _count: { messages: 0 } } as StoredConversation);
   }
 
   async get(principal: ChatPrincipal, conversationId: string): Promise<ChatConversation> {
-    const conversation = await this.prisma.chatConversation.findFirst({
-      where: { id: conversationId, ownerSubject: principal.subject },
-      include: {
-        _count: { select: { messages: true } },
-        messages: {
-          orderBy: { ordinal: "asc" },
-          include: messageInclude,
-        },
-      },
-    });
+    const [conversation] = await this.database
+      .select()
+      .from(chatConversation)
+      .where(and(
+        eq(chatConversation.id, conversationId),
+        eq(chatConversation.ownerSubject, principal.subject),
+      ))
+      .limit(1);
     if (!conversation) throw new ChatConversationNotFoundError();
-    const stored = conversation as StoredConversation;
-    return { ...summaryDto(stored), messages: (stored.messages ?? []).map(messageDto) };
+    const messages = await this.loadMessages(eq(chatMessage.conversationId, conversationId));
+    const stored = { ...conversation, _count: { messages: messages.length }, messages } as StoredConversation;
+    return { ...summaryDto(stored), messages: messages.map(messageDto) };
   }
 
   async update(principal: ChatPrincipal, conversationId: string, input: UpdateChatConversation): Promise<ChatConversationSummary> {
-    const result = await this.prisma.$transaction(async (transaction) => {
-      const updated = await transaction.chatConversation.updateMany({
-        where: { id: conversationId, ownerSubject: principal.subject },
-        data: {
+    const result = await this.database.transaction(async (transaction) => {
+      const updated = await transaction
+        .update(chatConversation)
+        .set({
           ...(input.title === undefined ? {} : { title: input.title }),
           ...(input.status === undefined ? {} : { status: input.status }),
-        },
-      });
-      if (updated.count !== 1) throw new ChatConversationNotFoundError();
-      const conversation = await transaction.chatConversation.findUniqueOrThrow({
-        where: { id: conversationId }, include: { _count: { select: { messages: true } } },
-      });
-      await transaction.auditEvent.create({ data: {
+        })
+        .where(and(
+          eq(chatConversation.id, conversationId),
+          eq(chatConversation.ownerSubject, principal.subject),
+        ))
+        .returning();
+      const [conversation] = updated;
+      if (updated.length !== 1 || !conversation) throw new ChatConversationNotFoundError();
+      await transaction.insert(auditEvent).values({
         actorType: "USER", actorId: principal.id, action: "chat.conversation_updated",
         resourceType: "ChatConversation", resourceId: conversationId, outcome: "SUCCESS",
         metadata: { fields: Object.keys(input) },
-      } });
+      });
       return conversation;
     });
-    return summaryDto(result as StoredConversation);
+    const counts = await this.messageCounts([conversationId]);
+    return summaryDto({ ...result, _count: { messages: counts.get(conversationId) ?? 0 } } as StoredConversation);
   }
 
   async cancelActiveRun(principal: ChatPrincipal, conversationId: string): Promise<ChatConversation> {
-    const pending = await this.prisma.chatMessage.findFirst({
-      where: {
-        conversationId,
-        role: "ASSISTANT",
-        status: "PENDING",
-        conversation: { ownerSubject: principal.subject },
-      },
-      orderBy: { createdAt: "desc" },
-      select: { id: true, agentRunId: true },
-    });
+    const [pending] = await this.database
+      .select({ id: chatMessage.id, agentRunId: chatMessage.agentRunId })
+      .from(chatMessage)
+      .innerJoin(chatConversation, eq(chatMessage.conversationId, chatConversation.id))
+      .where(and(
+        eq(chatMessage.conversationId, conversationId),
+        eq(chatMessage.role, "ASSISTANT"),
+        eq(chatMessage.status, "PENDING"),
+        eq(chatConversation.ownerSubject, principal.subject),
+      ))
+      .orderBy(desc(chatMessage.createdAt))
+      .limit(1);
     if (!pending) throw new ChatConversationConflictError("No Hermes run is currently active for this conversation.");
 
     if (pending.agentRunId) {
       await this.agents.cancelRun(asAgentPrincipal(principal), pending.agentRunId, false);
     } else {
-      await this.prisma.chatMessage.updateMany({
-        where: { id: pending.id, status: "PENDING", agentRunId: null },
-        data: {
+      // The run was never submitted, so there is nothing for Hermes to cancel.
+      await this.database
+        .update(chatMessage)
+        .set({
           status: "CANCELLED",
           errorCode: "CANCELLED_BEFORE_HERMES_SUBMISSION",
           completedAt: new Date(),
-        },
-      });
+        })
+        .where(and(
+          eq(chatMessage.id, pending.id),
+          eq(chatMessage.status, "PENDING"),
+          sql`${chatMessage.agentRunId} is null`,
+        ));
     }
-    await this.prisma.auditEvent.create({ data: {
+    await this.database.insert(auditEvent).values({
       actorType: "USER", actorId: principal.id, action: "chat.hermes_run_cancel_requested",
       resourceType: "ChatMessage", resourceId: pending.id, outcome: "SUCCESS",
       metadata: { conversationId, runId: pending.agentRunId },
-    } });
+    });
     return this.get(principal, conversationId);
   }
 
@@ -429,62 +511,84 @@ export class PrismaChatManager implements ChatManager {
     const now = new Date();
     const userMessageId = randomUUID();
     const assistantMessageId = randomUUID();
-    const conversation = await this.prisma.$transaction(async (transaction) => {
+    const conversation = await this.database.transaction(async (transaction) => {
       await acquireChatRateLimitLock(transaction, principal.subject);
-      const recentRequests = await transaction.chatMessage.count({
-        where: { role: "USER", createdAt: { gte: new Date(now.getTime() - 60_000) }, conversation: { ownerSubject: principal.subject } },
-      });
-      if (recentRequests >= policy.requestsPerMinute) throw new ChatRateLimitError();
-      const stored = await transaction.chatConversation.findFirst({
-        where: { id: conversationId, ownerSubject: principal.subject },
-        include: {
-          messages: {
-            orderBy: { ordinal: "desc" },
-            take: 42,
-            select: {
-              id: true,
-              ordinal: true,
-              role: true,
-              status: true,
-              content: true,
-              createdAt: true,
-              agentRunId: true,
-            },
-          },
-        },
-      });
+      const [recent] = await transaction
+        .select({ total: count() })
+        .from(chatMessage)
+        .innerJoin(chatConversation, eq(chatMessage.conversationId, chatConversation.id))
+        .where(and(
+          eq(chatMessage.role, "USER"),
+          gte(chatMessage.createdAt, new Date(now.getTime() - 60_000)),
+          eq(chatConversation.ownerSubject, principal.subject),
+        ));
+      if ((recent?.total ?? 0) >= policy.requestsPerMinute) throw new ChatRateLimitError();
+      const [stored] = await transaction
+        .select()
+        .from(chatConversation)
+        .where(and(
+          eq(chatConversation.id, conversationId),
+          eq(chatConversation.ownerSubject, principal.subject),
+        ))
+        .limit(1);
       if (!stored) throw new ChatConversationNotFoundError();
       if (stored.status !== "ACTIVE") throw new ChatConversationConflictError("Archived conversations cannot accept new messages.");
       if (!stored.profileId || !stored.profileName) {
         throw new ChatConfigurationError("This legacy conversation has no Agent Profile. Start a new conversation.");
       }
-      const pending = stored.messages.find(({ role, status }) => role === "ASSISTANT" && status === "PENDING");
+      const history = await transaction
+        .select({
+          id: chatMessage.id,
+          ordinal: chatMessage.ordinal,
+          role: chatMessage.role,
+          status: chatMessage.status,
+          content: chatMessage.content,
+          createdAt: chatMessage.createdAt,
+          agentRunId: chatMessage.agentRunId,
+        })
+        .from(chatMessage)
+        .where(eq(chatMessage.conversationId, conversationId))
+        .orderBy(desc(chatMessage.ordinal))
+        .limit(42);
+      const pending = history.find(({ role, status }) => role === "ASSISTANT" && status === "PENDING");
       if (pending?.createdAt && pending.createdAt.getTime() > now.getTime() - STALE_PENDING_AFTER_MS) {
         throw new ChatConversationConflictError("This conversation already has a Hermes run in progress.");
       }
-      if (pending) await transaction.chatMessage.updateMany({
-        where: { id: pending.id, status: "PENDING" },
-        data: { status: "FAILED", errorCode: "HERMES_RUN_ABANDONED", completedAt: now },
-      });
+      if (pending) {
+        await transaction
+          .update(chatMessage)
+          .set({ status: "FAILED", errorCode: "HERMES_RUN_ABANDONED", completedAt: now })
+          .where(and(eq(chatMessage.id, pending.id), eq(chatMessage.status, "PENDING")));
+      }
+      // Claiming the generation is what serialises concurrent submissions.
       const generation = stored.generation + 1;
-      const claimed = await transaction.chatConversation.updateMany({
-        where: { id: stored.id, ownerSubject: principal.subject, generation: stored.generation },
-        data: { generation, lastMessageAt: now, ...(stored.title === "New conversation" ? { title: safeTitle(content) } : {}) },
-      });
-      if (claimed.count !== 1) throw new ChatConversationConflictError("Another message was submitted at the same time.");
-      await transaction.chatMessage.createMany({ data: [
+      const claimed = await transaction
+        .update(chatConversation)
+        .set({
+          generation,
+          lastMessageAt: now,
+          ...(stored.title === "New conversation" ? { title: safeTitle(content) } : {}),
+        })
+        .where(and(
+          eq(chatConversation.id, stored.id),
+          eq(chatConversation.ownerSubject, principal.subject),
+          eq(chatConversation.generation, stored.generation),
+        ))
+        .returning({ id: chatConversation.id });
+      if (claimed.length !== 1) throw new ChatConversationConflictError("Another message was submitted at the same time.");
+      await transaction.insert(chatMessage).values([
         { id: userMessageId, conversationId, ordinal: generation * 2 - 1, role: "USER", status: "COMPLETED", content, completedAt: now },
         { id: assistantMessageId, conversationId, ordinal: generation * 2, role: "ASSISTANT", status: "PENDING", content: "", modelAlias: stored.modelAlias },
-      ] });
+      ]);
       return {
         profileId: stored.profileId,
         modelAlias: stored.modelAlias,
         hermesMemoryKey: stored.hermesMemoryKey,
-        history: boundedConversationHistory(stored.messages),
+        history: boundedConversationHistory(history),
       };
     });
 
-    let run;
+    let run: Awaited<ReturnType<AgentManager["submitRun"]>> | undefined;
     try {
       run = await this.agents.submitRun(
         asAgentPrincipal(principal),
@@ -496,43 +600,44 @@ export class PrismaChatManager implements ChatManager {
           outputCharacterLimit: policy.maxOutputCharacters,
         },
       );
-      const linked = await this.prisma.chatMessage.updateMany({
-        where: { id: assistantMessageId, status: "PENDING" },
-        data: { agentRunId: run.id },
-      });
-      if (linked.count !== 1) {
+      const linked = await this.database
+        .update(chatMessage)
+        .set({ agentRunId: run.id })
+        .where(and(eq(chatMessage.id, assistantMessageId), eq(chatMessage.status, "PENDING")))
+        .returning({ id: chatMessage.id });
+      if (linked.length !== 1) {
         await this.agents.cancelRun(asAgentPrincipal(principal), run.id, false).catch(() => undefined);
         throw new ChatConversationConflictError("The pending response was cancelled before Hermes submission completed.");
       }
-      await this.prisma.auditEvent.create({ data: {
+      await this.database.insert(auditEvent).values({
         actorType: "USER", actorId: principal.id, action: "chat.hermes_run_requested",
         resourceType: "ChatMessage", resourceId: assistantMessageId, outcome: "SUCCESS",
         metadata: { conversationId, runId: run.id, profileId: run.profileId, profileVersion: run.profileVersion, enforcementPlane: "ORCASYNAPSE" },
-      } });
+      });
     } catch (error) {
       const errorCode = "HERMES_SUBMISSION_FAILED";
-      await this.prisma.$transaction([
-        this.prisma.chatMessage.updateMany({
-          where: { id: assistantMessageId, status: "PENDING" },
-          data: { status: "FAILED", errorCode, completedAt: new Date() },
-        }),
-        this.prisma.auditEvent.create({ data: {
+      await this.database.transaction(async (transaction) => {
+        await transaction
+          .update(chatMessage)
+          .set({ status: "FAILED", errorCode, completedAt: new Date() })
+          .where(and(eq(chatMessage.id, assistantMessageId), eq(chatMessage.status, "PENDING")));
+        await transaction.insert(auditEvent).values({
           actorType: "USER", actorId: principal.id, action: "chat.hermes_run_failed",
           resourceType: "ChatMessage", resourceId: assistantMessageId, outcome: "FAILURE",
           metadata: { conversationId, runId: run?.id ?? null, errorCode, guardrailPolicyId: policy.guardrailPolicyId },
-        } }),
-      ]);
+        });
+      });
       throw error;
     }
 
-    const [userMessage, assistantMessage] = await Promise.all([
-      this.prisma.chatMessage.findUniqueOrThrow({ where: { id: userMessageId }, include: messageInclude }),
-      this.prisma.chatMessage.findUniqueOrThrow({ where: { id: assistantMessageId }, include: messageInclude }),
-    ]);
+    const messages = await this.loadMessages(inArray(chatMessage.id, [userMessageId, assistantMessageId]));
+    const userMessage = messages.find(({ id }) => id === userMessageId);
+    const assistantMessage = messages.find(({ id }) => id === assistantMessageId);
+    if (!userMessage || !assistantMessage) throw new ChatMessageNotFoundError();
     return {
       conversationId,
-      userMessage: messageDto(userMessage as StoredMessage),
-      assistantMessage: messageDto(assistantMessage as StoredMessage),
+      userMessage: messageDto(userMessage),
+      assistantMessage: messageDto(assistantMessage),
     };
   }
 
@@ -544,15 +649,17 @@ export class PrismaChatManager implements ChatManager {
     emit: (event: ChatStreamEvent) => void,
     signal: AbortSignal,
   ): Promise<void> {
-    const linked = await this.prisma.chatMessage.findFirst({
-      where: {
-        id: messageId,
-        conversationId,
-        role: "ASSISTANT",
-        conversation: { ownerSubject: principal.subject },
-      },
-      select: { agentRunId: true },
-    });
+    const [linked] = await this.database
+      .select({ agentRunId: chatMessage.agentRunId })
+      .from(chatMessage)
+      .innerJoin(chatConversation, eq(chatMessage.conversationId, chatConversation.id))
+      .where(and(
+        eq(chatMessage.id, messageId),
+        eq(chatMessage.conversationId, conversationId),
+        eq(chatMessage.role, "ASSISTANT"),
+        eq(chatConversation.ownerSubject, principal.subject),
+      ))
+      .limit(1);
     if (!linked) throw new ChatMessageNotFoundError();
     if (!linked.agentRunId) throw new ChatConversationConflictError("The Hermes run has not been linked yet.");
     const runId = linked.agentRunId;
@@ -561,15 +668,17 @@ export class PrismaChatManager implements ChatManager {
     emit({ type: "started", conversationId, messageId, runId, cursor: cursor === 0n ? null : cursor.toString() });
 
     while (!signal.aborted) {
-      const events = await this.prisma.agentRunEvent.findMany({
-        where: { runId, cursor: { gt: cursor } },
-        orderBy: { cursor: "asc" },
-        take: 100,
-      });
+      const events = await this.database
+        .select()
+        .from(agentRunEvent)
+        .where(and(eq(agentRunEvent.runId, runId), gt(agentRunEvent.cursor, cursor)))
+        .orderBy(asc(agentRunEvent.cursor))
+        .limit(100);
       const approvalIds = events.flatMap(({ approvalId }) => approvalId ? [approvalId] : []);
-      const approvals = approvalIds.length === 0 ? [] : await this.prisma.agentRunApproval.findMany({
-        where: { id: { in: approvalIds }, runId },
-      });
+      const approvals = approvalIds.length === 0 ? [] : await this.database
+        .select()
+        .from(agentRunApproval)
+        .where(and(inArray(agentRunApproval.id, approvalIds), eq(agentRunApproval.runId, runId)));
       const approvalById = new Map(approvals.map((approval) => [approval.id, approval]));
       for (const event of events) {
         cursor = event.cursor;
@@ -614,10 +723,16 @@ export class PrismaChatManager implements ChatManager {
       }
       if (events.length === 100) continue;
 
-      const run = await this.prisma.agentRun.findUnique({
-        where: { id: runId },
-        select: { status: true, failureCode: true, failureMessage: true, lastEventCursor: true },
-      });
+      const [run] = await this.database
+        .select({
+          status: agentRun.status,
+          failureCode: agentRun.failureCode,
+          failureMessage: agentRun.failureMessage,
+          lastEventCursor: agentRun.lastEventCursor,
+        })
+        .from(agentRun)
+        .where(eq(agentRun.id, runId))
+        .limit(1);
       if (!run) throw new ChatConversationConflictError("The Hermes run is no longer available.");
       if (run.status !== previousStatus) {
         previousStatus = run.status;
@@ -631,11 +746,9 @@ export class PrismaChatManager implements ChatManager {
         });
       }
       if (["COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT", "DENIED"].includes(run.status)) {
-        const message = await this.prisma.chatMessage.findUniqueOrThrow({
-          where: { id: messageId },
-          include: messageInclude,
-        });
-        const dto = messageDto(message as StoredMessage);
+        const [message] = await this.loadMessages(eq(chatMessage.id, messageId));
+        if (!message) throw new ChatMessageNotFoundError();
+        const dto = messageDto(message);
         const terminalCursor = run.lastEventCursor?.toString() ?? (cursor === 0n ? null : cursor.toString());
         if (run.status === "COMPLETED") {
           emit({ type: "completed", conversationId, messageId, cursor: terminalCursor, message: dto });
@@ -663,10 +776,17 @@ export class PrismaChatManager implements ChatManager {
     input: DecideAgentRunApproval,
   ): Promise<AgentRunApproval> {
     const now = new Date();
-    const approval = await this.prisma.$transaction(async (transaction) => {
-      const current = await transaction.agentRunApproval.findFirst({
-        where: { id: approvalId, run: { ownerSubject: principal.subject } },
-      });
+    const approval = await this.database.transaction(async (transaction) => {
+      const [current] = await transaction
+        .select({ approval: agentRunApproval })
+        .from(agentRunApproval)
+        .innerJoin(agentRun, eq(agentRunApproval.runId, agentRun.id))
+        .where(and(
+          eq(agentRunApproval.id, approvalId),
+          eq(agentRun.ownerSubject, principal.subject),
+        ))
+        .limit(1)
+        .then((rows) => rows.map(({ approval: row }) => row));
       if (!current) throw new ChatMessageNotFoundError();
       if (current.status !== "PENDING") {
         throw new ChatConversationConflictError("This Hermes approval request has already been decided.");
@@ -674,17 +794,25 @@ export class PrismaChatManager implements ChatManager {
       if (current.expiresAt <= now) {
         throw new ChatConversationConflictError("This Hermes approval request has expired.");
       }
-      const changed = await transaction.agentRunApproval.updateMany({
-        where: { id: current.id, status: "PENDING", expiresAt: { gt: now } },
-        data: {
+      const changed = await transaction
+        .update(agentRunApproval)
+        .set({
           status: input.decision === "ALLOW_ONCE" ? "APPROVED" : "DENIED",
           decision: input.decision,
           decidedAt: now,
           decidedBy: principal.id,
-        },
-      });
-      if (changed.count !== 1) throw new ChatConversationConflictError("This approval changed before the decision was saved.");
-      await transaction.auditEvent.create({ data: {
+        })
+        .where(and(
+          eq(agentRunApproval.id, current.id),
+          eq(agentRunApproval.status, "PENDING"),
+          gt(agentRunApproval.expiresAt, now),
+        ))
+        .returning();
+      const [decided] = changed;
+      if (changed.length !== 1 || !decided) {
+        throw new ChatConversationConflictError("This approval changed before the decision was saved.");
+      }
+      await transaction.insert(auditEvent).values({
         actorType: "USER",
         actorId: principal.id,
         action: input.decision === "ALLOW_ONCE" ? "chat.hermes_approval_allowed_once" : "chat.hermes_approval_denied",
@@ -692,8 +820,8 @@ export class PrismaChatManager implements ChatManager {
         resourceId: current.id,
         outcome: "SUCCESS",
         metadata: { runId: current.runId, identityMode: principal.identityMode },
-      } });
-      return transaction.agentRunApproval.findUniqueOrThrow({ where: { id: current.id } });
+      });
+      return decided;
     });
     return approvalDto(approval as StoredApproval);
   }
@@ -703,10 +831,22 @@ export class PrismaChatManager implements ChatManager {
     conversationId: string,
     input: ForkChatConversation,
   ): Promise<ChatConversationSummary> {
-    const source = await this.prisma.chatConversation.findFirst({
-      where: { id: conversationId, ownerSubject: principal.subject },
-      include: { messages: { where: { status: "COMPLETED" }, orderBy: { ordinal: "asc" } } },
-    });
+    const [sourceRow] = await this.database
+      .select()
+      .from(chatConversation)
+      .where(and(
+        eq(chatConversation.id, conversationId),
+        eq(chatConversation.ownerSubject, principal.subject),
+      ))
+      .limit(1);
+    const source = sourceRow ? {
+      ...sourceRow,
+      messages: await this.database
+        .select()
+        .from(chatMessage)
+        .where(and(eq(chatMessage.conversationId, conversationId), eq(chatMessage.status, "COMPLETED")))
+        .orderBy(asc(chatMessage.ordinal)),
+    } : undefined;
     if (!source) throw new ChatConversationNotFoundError();
     if (!source.profileId) throw new ChatConfigurationError("The source conversation has no Agent Profile.");
     await this.activeProfile(source.profileId);
@@ -715,9 +855,10 @@ export class PrismaChatManager implements ChatManager {
       : source.messages.at(-1);
     if (input.throughMessageId && !through) throw new ChatMessageNotFoundError();
     const messages = through ? source.messages.filter(({ ordinal }) => ordinal <= through.ordinal) : [];
-    const created = await this.prisma.$transaction(async (transaction) => {
-      const conversation = await transaction.chatConversation.create({
-        data: {
+    const created = await this.database.transaction(async (transaction) => {
+      const [conversation] = await transaction
+        .insert(chatConversation)
+        .values({
           ownerSubject: principal.subject,
           title: `${source.title.replace(/ \(fork\)$/i, "")} (fork)`.slice(0, 160),
           modelAlias: source.modelAlias,
@@ -725,28 +866,30 @@ export class PrismaChatManager implements ChatManager {
           profileName: source.profileName,
           generation: Math.ceil(messages.length / 2),
           lastMessageAt: messages.at(-1)?.createdAt ?? null,
-          ...(messages.length === 0 ? {} : { messages: {
-            create: messages.map((message) => ({
-              ordinal: message.ordinal,
-              role: message.role,
-              status: "COMPLETED" as const,
-              content: message.content,
-              modelAlias: message.modelAlias,
-              inputTokens: message.inputTokens,
-              outputTokens: message.outputTokens,
-              reasoningTokens: message.reasoningTokens,
-              totalTokens: message.totalTokens,
-              latencyMs: message.latencyMs,
-              firstTokenLatencyMs: message.firstTokenLatencyMs,
-              finishReason: message.finishReason,
-              sources: message.sources as Prisma.InputJsonValue,
-              completedAt: message.completedAt,
-            })),
-          } }),
-        },
-        include: { _count: { select: { messages: true } } },
-      });
-      await transaction.auditEvent.create({ data: {
+        })
+        .returning();
+      if (!conversation) throw new ChatConfigurationError("The forked conversation could not be created.");
+      if (messages.length > 0) {
+        // The fork copies completed turns only; runs and feedback stay with the source.
+        await transaction.insert(chatMessage).values(messages.map((message) => ({
+          conversationId: conversation.id,
+          ordinal: message.ordinal,
+          role: message.role,
+          status: "COMPLETED" as const,
+          content: message.content,
+          modelAlias: message.modelAlias,
+          inputTokens: message.inputTokens,
+          outputTokens: message.outputTokens,
+          reasoningTokens: message.reasoningTokens,
+          totalTokens: message.totalTokens,
+          latencyMs: message.latencyMs,
+          firstTokenLatencyMs: message.firstTokenLatencyMs,
+          finishReason: message.finishReason,
+          sources: message.sources,
+          completedAt: message.completedAt,
+        })));
+      }
+      await transaction.insert(auditEvent).values({
         actorType: "USER",
         actorId: principal.id,
         action: "chat.conversation_forked",
@@ -754,50 +897,70 @@ export class PrismaChatManager implements ChatManager {
         resourceId: conversation.id,
         outcome: "SUCCESS",
         metadata: { sourceConversationId: source.id, throughMessageId: through?.id ?? null },
-      } });
+      });
       return conversation;
     });
-    return summaryDto(created as StoredConversation);
+    return summaryDto({ ...created, _count: { messages: messages.length } } as StoredConversation);
   }
 
   async delete(principal: ChatPrincipal, conversationId: string): Promise<void> {
-    await this.prisma.$transaction(async (transaction) => {
-      const conversation = await transaction.chatConversation.findFirst({
-        where: { id: conversationId, ownerSubject: principal.subject },
-        select: { id: true, messages: { where: { status: "PENDING" }, select: { id: true }, take: 1 } },
-      });
+    await this.database.transaction(async (transaction) => {
+      const [conversation] = await transaction
+        .select({ id: chatConversation.id })
+        .from(chatConversation)
+        .where(and(
+          eq(chatConversation.id, conversationId),
+          eq(chatConversation.ownerSubject, principal.subject),
+        ))
+        .limit(1);
       if (!conversation) throw new ChatConversationNotFoundError();
-      if (conversation.messages.length > 0) {
+      const active = await transaction
+        .select({ id: chatMessage.id })
+        .from(chatMessage)
+        .where(and(eq(chatMessage.conversationId, conversationId), eq(chatMessage.status, "PENDING")))
+        .limit(1);
+      if (active.length > 0) {
         throw new ChatConversationConflictError("Stop the active Hermes run before deleting this conversation.");
       }
-      await transaction.auditEvent.create({ data: {
+      await transaction.insert(auditEvent).values({
         actorType: "USER",
         actorId: principal.id,
         action: "chat.conversation_deleted",
         resourceType: "ChatConversation",
         resourceId: conversationId,
         outcome: "SUCCESS",
-      } });
-      await transaction.chatConversation.delete({ where: { id: conversationId } });
+      });
+      await transaction.delete(chatConversation).where(eq(chatConversation.id, conversationId));
     });
   }
 
   async setFeedback(principal: ChatPrincipal, messageId: string, input: SetChatFeedback): Promise<ChatFeedback> {
-    const feedback = await this.prisma.$transaction(async (transaction) => {
-      const message = await transaction.chatMessage.findFirst({
-        where: { id: messageId, role: "ASSISTANT", status: "COMPLETED", conversation: { ownerSubject: principal.subject } },
-        select: { id: true, conversationId: true },
-      });
+    const feedback = await this.database.transaction(async (transaction) => {
+      const [message] = await transaction
+        .select({ id: chatMessage.id, conversationId: chatMessage.conversationId })
+        .from(chatMessage)
+        .innerJoin(chatConversation, eq(chatMessage.conversationId, chatConversation.id))
+        .where(and(
+          eq(chatMessage.id, messageId),
+          eq(chatMessage.role, "ASSISTANT"),
+          eq(chatMessage.status, "COMPLETED"),
+          eq(chatConversation.ownerSubject, principal.subject),
+        ))
+        .limit(1);
       if (!message) throw new ChatMessageNotFoundError();
-      const saved = await transaction.chatFeedback.upsert({
-        where: { messageId },
-        create: { messageId, ownerSubject: principal.subject, rating: input.rating, comment: input.comment ?? null },
-        update: { rating: input.rating, comment: input.comment ?? null },
-      });
-      await transaction.auditEvent.create({ data: {
+      const [saved] = await transaction
+        .insert(chatFeedback)
+        .values({ messageId, ownerSubject: principal.subject, rating: input.rating, comment: input.comment ?? null })
+        .onConflictDoUpdate({
+          target: chatFeedback.messageId,
+          set: { rating: input.rating, comment: input.comment ?? null, updatedAt: new Date() },
+        })
+        .returning();
+      if (!saved) throw new ChatMessageNotFoundError();
+      await transaction.insert(auditEvent).values({
         actorType: "USER", actorId: principal.id, action: "chat.feedback_recorded", resourceType: "ChatMessage",
         resourceId: messageId, outcome: "SUCCESS", metadata: { conversationId: message.conversationId, rating: saved.rating, identityMode: principal.identityMode },
-      } });
+      });
       return saved;
     });
     return { rating: feedback.rating, comment: feedback.comment, createdAt: feedback.createdAt.toISOString(), updatedAt: feedback.updatedAt.toISOString() };
@@ -806,14 +969,27 @@ export class PrismaChatManager implements ChatManager {
   async metrics(): Promise<ChatMetrics> {
     const generatedAt = new Date();
     const windowStartedAt = new Date(generatedAt.getTime() - 24 * 60 * 60 * 1_000);
+    const feedbackCount = async (rating: "HELPFUL" | "NOT_HELPFUL") => this.database
+      .select({ total: count() })
+      .from(chatFeedback)
+      .where(and(eq(chatFeedback.rating, rating), gte(chatFeedback.createdAt, windowStartedAt)))
+      .then(([row]) => row?.total ?? 0);
     const [conversations, messages, helpful, notHelpful] = await Promise.all([
-      this.prisma.chatConversation.count({ where: { createdAt: { gte: windowStartedAt } } }),
-      this.prisma.chatMessage.findMany({
-        where: { role: "ASSISTANT", status: { in: ["COMPLETED", "FAILED", "CANCELLED"] }, createdAt: { gte: windowStartedAt } },
-        select: { status: true, totalTokens: true, latencyMs: true },
-      }),
-      this.prisma.chatFeedback.count({ where: { rating: "HELPFUL", createdAt: { gte: windowStartedAt } } }),
-      this.prisma.chatFeedback.count({ where: { rating: "NOT_HELPFUL", createdAt: { gte: windowStartedAt } } }),
+      this.database
+        .select({ total: count() })
+        .from(chatConversation)
+        .where(gte(chatConversation.createdAt, windowStartedAt))
+        .then(([row]) => row?.total ?? 0),
+      this.database
+        .select({ status: chatMessage.status, totalTokens: chatMessage.totalTokens, latencyMs: chatMessage.latencyMs })
+        .from(chatMessage)
+        .where(and(
+          eq(chatMessage.role, "ASSISTANT"),
+          inArray(chatMessage.status, ["COMPLETED", "FAILED", "CANCELLED"]),
+          gte(chatMessage.createdAt, windowStartedAt),
+        )),
+      feedbackCount("HELPFUL"),
+      feedbackCount("NOT_HELPFUL"),
     ]);
     const completed = messages.filter(({ status }) => status === "COMPLETED").length;
     const failed = messages.filter(({ status }) => status === "FAILED").length;
@@ -830,29 +1006,53 @@ export class PrismaChatManager implements ChatManager {
   }
 
   private async activeProfile(profileId?: string): Promise<{ id: string; displayName: string; modelAlias: string; version: number }> {
-    const profile = await this.prisma.agentProfile.findFirst({
-      where: { ...(profileId ? { id: profileId } : {}), status: "ACTIVE", activeVersion: { not: null } },
-      orderBy: { updatedAt: "desc" },
-      select: { id: true, activeVersion: true },
-    });
+    const [profile] = await this.database
+      .select({ id: agentProfile.id, activeVersion: agentProfile.activeVersion })
+      .from(agentProfile)
+      .where(and(
+        ...(profileId ? [eq(agentProfile.id, profileId)] : []),
+        eq(agentProfile.status, "ACTIVE"),
+        isNotNull(agentProfile.activeVersion),
+      ))
+      .orderBy(desc(agentProfile.updatedAt))
+      .limit(1);
     if (!profile?.activeVersion) throw new ChatConfigurationError(profileId
       ? "The selected Agent Profile is not active."
       : "Create and activate one Hermes Profile before starting Chat.");
-    const version = await this.prisma.agentProfileVersion.findUnique({
-      where: { profileId_version: { profileId: profile.id, version: profile.activeVersion } },
-      select: { displayName: true, modelAlias: true, version: true },
-    });
+    const [version] = await this.database
+      .select({
+        displayName: agentProfileVersion.displayName,
+        modelAlias: agentProfileVersion.modelAlias,
+        version: agentProfileVersion.version,
+      })
+      .from(agentProfileVersion)
+      .where(and(
+        eq(agentProfileVersion.profileId, profile.id),
+        eq(agentProfileVersion.version, profile.activeVersion),
+      ))
+      .limit(1);
     if (!version) throw new ChatConfigurationError("The active Agent Profile distribution is unavailable.");
     return { id: profile.id, displayName: version.displayName, modelAlias: version.modelAlias, version: version.version };
   }
 
   private async resolvePolicy(): Promise<ChatPolicy> {
-    const catalogueEnforced = await this.prisma.guardrailPolicy.count({ where: { firstActivatedAt: { not: null } } }) > 0;
-    const policies = !catalogueEnforced ? [] : await this.prisma.guardrailPolicy.findMany({
-      where: { status: "ACTIVE" },
-      select: { id: true, version: true, maxInputCharacters: true, maxOutputCharacters: true, blockControlCharacters: true, blockCredentialPatterns: true },
-      take: 2,
-    });
+    const [enforcement] = await this.database
+      .select({ total: count() })
+      .from(guardrailPolicy)
+      .where(isNotNull(guardrailPolicy.firstActivatedAt));
+    const catalogueEnforced = (enforcement?.total ?? 0) > 0;
+    const policies = !catalogueEnforced ? [] : await this.database
+      .select({
+        id: guardrailPolicy.id,
+        version: guardrailPolicy.version,
+        maxInputCharacters: guardrailPolicy.maxInputCharacters,
+        maxOutputCharacters: guardrailPolicy.maxOutputCharacters,
+        blockControlCharacters: guardrailPolicy.blockControlCharacters,
+        blockCredentialPatterns: guardrailPolicy.blockCredentialPatterns,
+      })
+      .from(guardrailPolicy)
+      .where(eq(guardrailPolicy.status, "ACTIVE"))
+      .limit(2);
     if (catalogueEnforced && policies.length === 0) throw new ChatConfigurationError("Activate one evaluated guardrail policy before using Chat.");
     if (policies.length > 1) throw new ChatConfigurationError("More than one chat guardrail policy is active.");
     const policy = policies[0];
@@ -874,14 +1074,19 @@ export class PrismaChatManager implements ChatManager {
     violation: string,
     policy: ChatPolicy,
   ): Promise<void> {
-    const conversation = await this.prisma.chatConversation.findFirst({
-      where: { id: conversationId, ownerSubject: principal.subject }, select: { id: true },
-    });
+    const [conversation] = await this.database
+      .select({ id: chatConversation.id })
+      .from(chatConversation)
+      .where(and(
+        eq(chatConversation.id, conversationId),
+        eq(chatConversation.ownerSubject, principal.subject),
+      ))
+      .limit(1);
     if (!conversation) throw new ChatConversationNotFoundError();
-    await this.prisma.auditEvent.create({ data: {
+    await this.database.insert(auditEvent).values({
       actorType: "USER", actorId: principal.id, action: "guardrail.request_blocked",
       resourceType: "ChatConversation", resourceId: conversationId, outcome: "FAILURE",
       metadata: { policyId: policy.guardrailPolicyId, policyVersion: policy.guardrailPolicyVersion, reason: violation, observedCharacters, maxInputCharacters: policy.maxInputCharacters },
-    } });
+    });
   }
 }
