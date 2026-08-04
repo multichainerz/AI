@@ -83,8 +83,6 @@ export const serviceConnectionConfigurationSchema = z
     temperature: z.number().min(0).max(2).optional(),
     inferenceTimeoutMs: z.number().int().min(5_000).max(600_000).optional(),
     requestsPerMinute: z.number().int().min(1).max(120).optional(),
-    documentsPath: relativeHealthPathSchema.optional(),
-    searchPath: relativeHealthPathSchema.optional(),
     /** Where forwarded audit batches are POSTed on a SIEM endpoint. */
     eventsPath: relativeHealthPathSchema.optional(),
     /** How many audit events one forwarded batch may carry. */
@@ -144,8 +142,6 @@ const connectionConfigurationSchemas = {
   SUPERMEMORY: serviceConnectionConfigurationSchema.pick({
     timeoutMs: true,
     healthPath: true,
-    documentsPath: true,
-    searchPath: true,
     memoryTimeoutMs: true,
     memoryPollIntervalMs: true,
     retrievalLimit: true,

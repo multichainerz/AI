@@ -91,6 +91,21 @@ try {
     throw new Error("The DocumentChunk embedding index is not the expected HNSW cosine index.");
   }
 
+  const versionColumns = await verifier.query(`
+    SELECT a.attname AS name, format_type(a.atttypid, a.atttypmod) AS type
+    FROM pg_attribute a
+    WHERE a.attrelid = '"HermesRuntimeNode"'::regclass
+      AND a.attname IN ('hermesVersion', 'installerVersion')
+  `);
+  for (const row of versionColumns.rows) {
+    if (row.type !== "character varying(256)") {
+      throw new Error(`HermesRuntimeNode.${row.name} is ${row.type}, expected character varying(256).`);
+    }
+  }
+  if (versionColumns.rows.length !== 2) {
+    throw new Error("The HermesRuntimeNode version columns were not found.");
+  }
+
   const localAdministratorColumns = await verifier.query(`
     SELECT column_name
     FROM information_schema.columns

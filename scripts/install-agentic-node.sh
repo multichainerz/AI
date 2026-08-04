@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="ai-v1.26.0"
+INSTALLER_VERSION="ai-v1.27.0"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 CONTAINER_NAME="orcasynapse-hermes"
 HEARTBEAT_SERVICE="orcasynapse-hermes-heartbeat"
@@ -633,7 +633,11 @@ verify_enrolled_identity() {
   local node_id="$1" control_plane_url="$2" hermes_image="$3" node_fingerprint="$4"
   local observed_at node_status payload nonce signature response_file http_status response_error
   node_status="DEGRADED"
-  if curl --fail --silent --max-time 5 http://127.0.0.1:8642/health >/dev/null; then
+  # The trust proof must not claim ONLINE before the memory plane exists;
+  # mirror the heartbeat client's both-planes rule. During a fresh install this
+  # correctly reports DEGRADED until step 7 starts the heartbeat service.
+  if curl --fail --silent --max-time 5 http://127.0.0.1:8642/health >/dev/null \
+    && curl --fail --silent --max-time 5 "http://127.0.0.1:6767${SUPERMEMORY_READY_PATH}" >/dev/null; then
     node_status="ONLINE"
   fi
   observed_at="$(date --utc '+%Y-%m-%dT%H:%M:%SZ')"
@@ -1350,8 +1354,8 @@ API_SERVER_ENABLED=true
 API_SERVER_HOST=0.0.0.0
 API_SERVER_PORT=8642
 API_SERVER_KEY=${api_key}
-OPENAI_BASE_URL=${model_base_url_json}
-OPENAI_API_KEY=${model_api_key_json}
+OPENAI_BASE_URL=${model_base_url}
+OPENAI_API_KEY=${model_api_key}
 SUPERMEMORY_API_KEY=${supermemory_api_key}
 EOF
   run_with_progress "Apply the managed runtime policy" docker restart "${CONTAINER_NAME}" \
@@ -1361,7 +1365,7 @@ EOF
 
   step 7 7 "Register memory and enable monitoring"
   local memory_payload memory_timestamp memory_nonce memory_signature memory_status
-  local memory_response_file memory_error node_fingerprint
+  local memory_response_file memory_error
   memory_payload="$(jq -cS -n \
     --arg baseUrl "${supermemory_base_url}" \
     --arg apiKey "${supermemory_api_key}" \

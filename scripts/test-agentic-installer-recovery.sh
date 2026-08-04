@@ -142,6 +142,17 @@ grep -Fq 'BGE-M3 only embeds extracted text' "${REPOSITORY_ROOT}/scripts/install
 # well before Supermemory has loaded its model, so the heartbeat has to observe
 # both planes or the control plane sees a healthy runtime with unusable memory.
 grep -Fq 'http://127.0.0.1:6767/v4/openapi' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+# The same rule binds the post-enroll trust proof: it reports DEGRADED until
+# the memory plane exists rather than claiming ONLINE from Hermes alone.
+grep -Fq 'The trust proof must not claim ONLINE before the memory plane exists' \
+  "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+# Hermes .env values are written raw; the JSON-quoted variants belong only in
+# the managed YAML policy, where quoted scalars are the injection-safe form.
+if grep -Eq 'OPENAI_(BASE_URL|API_KEY)=\$\{model_(base_url|api_key)_json\}' \
+  "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"; then
+  printf 'Hermes .env values must be raw, not JSON-quoted\n' >&2
+  exit 1
+fi
 if grep -Fq 'Restart=on-failure' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"; then
   printf 'Supermemory unit can stay dead after a clean exit; use Restart=always\n' >&2
   exit 1

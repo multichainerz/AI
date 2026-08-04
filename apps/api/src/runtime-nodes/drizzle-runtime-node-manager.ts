@@ -726,11 +726,14 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
         throw new RuntimeNodeConflictError("The managed Supermemory connection slug is already used by another service kind.");
       }
       const id = existing?.id ?? randomUUID();
+      // documentsPath/searchPath are deliberately absent: OrcaSynapse document
+      // knowledge moved to local pgvector, so nothing reads them any more.
+      // Legacy rows that still carry them fail the strict schema and summarize
+      // as {} until this registration overwrites the configuration wholesale -
+      // re-running the VM2 installer heals such a connection.
       const configuration = {
         timeoutMs: 8_000,
         healthPath: SUPERMEMORY_LOCAL_READY_PATH,
-        documentsPath: "/v3/documents",
-        searchPath: "/v3/search",
         memoryTimeoutMs: 300_000,
         memoryPollIntervalMs: 2_000,
         retrievalLimit: 6,

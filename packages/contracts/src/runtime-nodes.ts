@@ -103,8 +103,10 @@ export const enrollHermesNodeSchema = z.object({
   publicKeyPem: z.string().min(80).max(4_096),
   controlPlaneUrl: runtimeOriginSchema,
   apiKey: z.string().min(32).max(1_024),
-  hermesVersion: z.string().trim().min(1).max(120).default("unknown"),
-  installerVersion: z.string().trim().min(1).max(120),
+  // 256, not 120: a digest-pinned reference through a private registry mirror
+  // (host:port/team/image@sha256:...) legitimately exceeds 120 characters.
+  hermesVersion: z.string().trim().min(1).max(256).default("unknown"),
+  installerVersion: z.string().trim().min(1).max(256),
   capabilities: z.array(z.string().trim().min(1).max(120)).max(100).default([]),
 }).strict();
 
@@ -122,7 +124,7 @@ export const hermesNodeEnrollmentResultSchema = z.object({
 export const hermesNodeHeartbeatSchema = z.object({
   observedAt: z.iso.datetime(),
   status: z.enum(["ONLINE", "DEGRADED"]),
-  hermesVersion: z.string().trim().min(1).max(120),
+  hermesVersion: z.string().trim().min(1).max(256),
   capabilities: z.array(z.string().trim().min(1).max(120)).max(100).default([]),
 }).strict();
 
