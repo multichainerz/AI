@@ -112,7 +112,7 @@ export function HomeView(props: HomeViewProps) {
         <ol className="runtime-flow">
           <li><span>1</span><div><strong>OrcaSynapse</strong><small>Identity, policy, audit, and orchestration</small></div></li>
           <li><span>2</span><div><strong>Hermes</strong><small>Isolated agent session and execution</small></div></li>
-          <li><span>3</span><div><strong>Supermemory</strong><small>Durable local knowledge and memory</small></div></li>
+          <li><span>3</span><div><strong>Knowledge index</strong><small>Local pgvector retrieval, owner-scoped</small></div></li>
           <li><span>4</span><div><strong>AI Inference</strong><small>Approved OpenAI-compatible model serving</small></div></li>
         </ol>
         <div className="boundary-note"><ShieldIcon /><div><strong>Secrets terminate at OrcaSynapse</strong><p>Hermes receives node-scoped runtime access; PostgreSQL and enterprise connector credentials remain on VM1.</p></div></div>

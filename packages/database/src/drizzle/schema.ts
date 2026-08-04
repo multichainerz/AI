@@ -25,6 +25,8 @@ import { bytea } from "./bytea.js"
 export const administratorAuthenticationMethod = pgEnum("AdministratorAuthenticationMethod", ['LOCAL_PASSWORD', 'INSTALLATION_KEY_RECOVERY', 'OIDC'])
 export const administratorRole = pgEnum("AdministratorRole", ['PLATFORM_ADMIN', 'SECURITY_ADMIN', 'OPERATIONS_ADMIN', 'AUDITOR'])
 export const agentProfileStatus = pgEnum("AgentProfileStatus", ['DRAFT', 'ACTIVE', 'SUSPENDED', 'STANDBY'])
+export const agentMemoryMode = pgEnum("AgentMemoryMode", ['DOCUMENTS_ONLY', 'RECALL_ONLY', 'LEARN_USER', 'LEARN_EXCHANGE'])
+export const memoryPolicyStatus = pgEnum("MemoryPolicyStatus", ['DRAFT', 'ACTIVE', 'SUSPENDED'])
 export const agentRunApprovalStatus = pgEnum("AgentRunApprovalStatus", ['PENDING', 'APPROVED', 'DENIED', 'EXPIRED', 'CANCELLED'])
 export const agentRunStatus = pgEnum("AgentRunStatus", ['QUEUED', 'RUNNING', 'WAITING_FOR_APPROVAL', 'CANCEL_REQUESTED', 'COMPLETED', 'FAILED', 'CANCELLED', 'TIMED_OUT', 'DENIED'])
 export const auditActorType = pgEnum("AuditActorType", ['USER', 'SERVICE', 'SYSTEM'])
@@ -43,7 +45,6 @@ export const evaluationTargetType = pgEnum("EvaluationTargetType", ['MODEL', 'PR
 export const guardrailPolicyStatus = pgEnum("GuardrailPolicyStatus", ['DRAFT', 'ACTIVE', 'SUSPENDED'])
 export const hermesNodeEnrollmentStatus = pgEnum("HermesNodeEnrollmentStatus", ['ISSUED', 'CONSUMED', 'REVOKED', 'EXPIRED'])
 export const hermesRuntimeNodeStatus = pgEnum("HermesRuntimeNodeStatus", ['PENDING', 'ONLINE', 'DEGRADED', 'DRAINING', 'SUSPENDED', 'REVOKED', 'OFFLINE'])
-export const memorySyncStatus = pgEnum("MemorySyncStatus", ['NOT_INDEXED', 'QUEUED', 'PROCESSING', 'READY', 'FAILED', 'DELETE_PENDING', 'DELETED'])
 export const modelDeploymentStatus = pgEnum("ModelDeploymentStatus", ['DRAFT', 'ACTIVE', 'SUSPENDED'])
 export const modelWorkload = pgEnum("ModelWorkload", ['CHAT', 'AGENT'])
 export const onboardingEvidenceOutcome = pgEnum("OnboardingEvidenceOutcome", ['PASSED', 'FAILED', 'WARNING'])
@@ -59,7 +60,7 @@ export const productionReadinessControlStatus = pgEnum("ProductionReadinessContr
 export const productionReadinessDomain = pgEnum("ProductionReadinessDomain", ['SECURITY', 'INFRASTRUCTURE', 'RECOVERY', 'OPERATIONS', 'TRAINING', 'BUSINESS'])
 export const promptPurpose = pgEnum("PromptPurpose", ['CHAT_SYSTEM'])
 export const promptTemplateStatus = pgEnum("PromptTemplateStatus", ['DRAFT', 'ACTIVE', 'SUSPENDED'])
-export const serviceKind = pgEnum("ServiceKind", ['INFERENCE', 'HERMES', 'SUPERMEMORY', 'MCP', 'OIDC', 'SIEM', 'NOTIFICATION', 'OTHER'])
+export const serviceKind = pgEnum("ServiceKind", ['INFERENCE', 'HERMES', 'MCP', 'OIDC', 'SIEM', 'NOTIFICATION', 'OTHER'])
 export const toolApprovalStatus = pgEnum("ToolApprovalStatus", ['PENDING', 'APPROVED', 'REJECTED', 'EXPIRED', 'CANCELLED'])
 export const toolCallStatus = pgEnum("ToolCallStatus", ['REQUESTED', 'APPROVAL_PENDING', 'EXECUTING', 'COMPLETED', 'FAILED', 'DENIED', 'CANCELLED'])
 export const toolResourceScope = pgEnum("ToolResourceScope", ['OWNER_ONLY'])
@@ -242,6 +243,7 @@ export const agentProfileVersion = pgTable("AgentProfileVersion", {
 	timeoutSeconds: integer().notNull(),
 	maxConcurrentRuns: integer().notNull(),
 	allowPrivateKnowledge: boolean().default(false).notNull(),
+	memoryMode: agentMemoryMode().default('DOCUMENTS_ONLY').notNull(),
 	safeMode: boolean().default(true).notNull(),
 	createdBy: uuid(),
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
@@ -924,7 +926,6 @@ export const hermesNodeEnrollment = pgTable("HermesNodeEnrollment", {
 	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
 	controlPlaneUrl: text(),
 	hermesImage: text(),
-	supermemoryVersion: varchar({ length: 120 }).default('0.0.7-rc.2').notNull(),
 }, (table) => [
 	index("HermesNodeEnrollment_nodeId_status_idx").using("btree", table.nodeId.asc().nullsLast(), table.status.asc().nullsLast()),
 	index("HermesNodeEnrollment_status_expiresAt_idx").using("btree", table.status.asc().nullsLast(), table.expiresAt.asc().nullsLast()),
@@ -1183,3 +1184,72 @@ export const auditForwardingState = pgTable("AuditForwardingState", {
 	deliveredCount: integer().default(0).notNull(),
 	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
 });
+
+/**
+ * What an agent has learned about the person it serves.
+ *
+ * This is the plane that replaced the external memory service on VM2. Keeping
+ * it here rather than beside the runtime means a runtime host can be destroyed
+ * and re-enrolled without losing what an agent knows, the same backup covers
+ * it as the rest of the control plane, and an administrator can read and
+ * delete it - none of which was true of a store that lived on the agent VM.
+ *
+ * Scope is (ownerSubject, agentProfileId): an agent recalls only what it
+ * learned, about the identity that is asking. Both halves are predicates
+ * inside the retrieval query, so nothing a caller supplies can widen them.
+ */
+export const agentMemory = pgTable("AgentMemory", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	ownerSubject: varchar({ length: 200 }).notNull(),
+	agentProfileId: uuid().notNull(),
+	content: text().notNull(),
+	characterCount: integer().notNull(),
+	embeddingModel: varchar({ length: 120 }).notNull(),
+	embedding: vector({ dimensions: 1024 }).notNull(),
+	sourceRunId: uuid(),
+	sourceConversationId: uuid(),
+	retentionUntil: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
+	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+	index("AgentMemory_content_fts_idx").using("gin", sql`to_tsvector('simple'::regconfig, content)`),
+	index("AgentMemory_embedding_idx").using("hnsw", table.embedding.asc().nullsLast().op("vector_cosine_ops")),
+	index("AgentMemory_owner_profile_idx").using("btree", table.ownerSubject.asc().nullsLast(), table.agentProfileId.asc().nullsLast()),
+	index("AgentMemory_retentionUntil_idx").using("btree", table.retentionUntil.asc().nullsLast()),
+	foreignKey({
+			columns: [table.agentProfileId],
+			foreignColumns: [agentProfile.id],
+			name: "AgentMemory_agentProfileId_fkey"
+		}).onUpdate("cascade").onDelete("cascade"),
+	check("AgentMemory_content_check", sql`(char_length(btrim(content)) >= 3) AND ("characterCount" > 0)`),
+]);
+
+/**
+ * The installation-wide ceiling on agent memory.
+ *
+ * A profile picks its own mode; this bounds every profile at once. Exactly one
+ * policy may be ACTIVE, enforced by a partial unique index rather than by
+ * application code, so two administrators cannot race two ceilings into effect.
+ */
+export const memoryPolicy = pgTable("MemoryPolicy", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	slug: varchar({ length: 64 }).notNull(),
+	displayName: varchar({ length: 120 }).notNull(),
+	description: varchar({ length: 500 }).notNull(),
+	status: memoryPolicyStatus().default('DRAFT').notNull(),
+	maximumCaptureMode: agentMemoryMode().default('LEARN_EXCHANGE').notNull(),
+	retentionDays: integer(),
+	maximumItemsPerOwner: integer().default(500).notNull(),
+	recallLimit: integer().default(6).notNull(),
+	recallMinimumScore: doublePrecision().default(0.4).notNull(),
+	revision: integer().default(1).notNull(),
+	firstActivatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
+	createdBy: uuid(),
+	updatedBy: uuid(),
+	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
+}, (table) => [
+	uniqueIndex("MemoryPolicy_slug_key").using("btree", table.slug.asc().nullsLast()),
+	uniqueIndex("MemoryPolicy_single_active_key").on(sql`(true)`).where(sql`status = 'ACTIVE'`),
+	check("MemoryPolicy_bounds_check", sql`("maximumItemsPerOwner" >= 10) AND ("recallLimit" >= 1) AND ("recallMinimumScore" >= 0) AND ("recallMinimumScore" <= 1) AND ("retentionDays" IS NULL OR "retentionDays" >= 1) AND (revision > 0)`),
+	check("MemoryPolicy_activation_check", sql`(status <> 'ACTIVE') OR ("firstActivatedAt" IS NOT NULL)`),
+]);

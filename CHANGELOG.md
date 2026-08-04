@@ -5,6 +5,40 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v0.5.0 — 2026-08-05
+
+Supermemory is removed, and agent memory returns on OrcaSynapse's own pgvector
+plane under a governed policy.
+
+- **VM2 now runs exactly one plane** — the Hermes runtime — and holds no durable
+  data store of its own. Around 450 lines leave the VM2 installer, and the worker
+  stops refusing every run on a remote memory plane's health, which had made a
+  VM2 memory outage stop all agent execution.
+- **`AgentMemory` mirrors `DocumentChunk`**: hybrid cosine and lexical recall
+  over an HNSW index, with the (owner, agent) scope as a predicate inside every
+  statement rather than a namespace handed to a service, so nothing a caller
+  supplies can widen it.
+- `memoryMode` on a profile version is the dashboard-facing choice of what an
+  agent does — `DOCUMENTS_ONLY` by default, so an upgrade stores nothing about
+  anyone until someone decides otherwise — materialized into run capabilities
+  frozen onto the run, so editing a profile cannot change what an in-flight run
+  may do. `LEARN_USER` stores the person's turn and never the model's output, so
+  an answer the model got wrong once cannot become a durable fact.
+- **`MemoryPolicy` is one installation-wide ceiling.** `maximumCaptureMode` caps
+  every agent at once, and it is read at capture time rather than at submission,
+  so suspending capture applies to runs already in flight. An active policy
+  cannot be edited in place, because runs are being measured against it.
+- **The whole policy becomes load-bearing.** `retentionDays`,
+  `maximumItemsPerOwner`, `recallLimit` and `recallMinimumScore` were stored,
+  documented and editable while the worker used hardcoded values and never
+  stamped an expiry. `retentionUntil` is now stamped from the policy in force at
+  capture, so lengthening retention later cannot retroactively extend what is
+  already stored under a shorter promise.
+- The person a memory is about can see and delete it: both the listing and the
+  deletion take the owner from the authenticated session and never from the
+  request. Remembered content stays out of the audit trail entirely — the trail
+  records that memory changed, the reason and the count, never what it said.
+
 ## v0.4.0 — 2026-08-04 – 2026-08-05
 
 Release engineering, one terminal experience for the installer family, and a

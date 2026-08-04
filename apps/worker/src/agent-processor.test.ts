@@ -5,6 +5,7 @@ import {
   agentProfileVersion,
   agentRun,
   agentRuntimeControl,
+  memoryPolicy,
   chatMessage,
   chatConversation,
   createTestDatabase,
@@ -12,12 +13,15 @@ import {
   serviceConnection,
   type TestDatabase,
 } from "@orcasynapse/database";
+import { DEFAULT_MEMORY_POLICY } from "@orcasynapse/contracts";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DrizzleAgentProcessor,
   conversationHistory,
   type AgentHermesRuntime,
   type AgentKnowledgeRetriever,
+  type AgentMemoryPort,
+  type MemoryLimits,
 } from "./agent-processor.js";
 
 let context: TestDatabase;
@@ -59,7 +63,6 @@ const noKnowledge: AgentKnowledgeRetriever = { search: vi.fn(async (_owner?: unk
 async function healthyBoundary(
   options: {
     runtimeStatus?: typeof hermesRuntimeNode.$inferInsert["status"];
-    memoryStatus?: typeof serviceConnection.$inferInsert["status"];
   } = {},
 ) {
   await context.database
@@ -80,17 +83,6 @@ async function healthyBoundary(
     })
     .returning({ id: serviceConnection.id });
 
-  await context.database.insert(serviceConnection).values({
-    slug: `memory-${randomUUID().slice(0, 8)}`,
-    displayName: "Supermemory",
-    kind: "SUPERMEMORY",
-    environment: "DEVELOPMENT",
-    enabled: true,
-    status: options.memoryStatus ?? "HEALTHY",
-    baseUrl: "http://127.0.0.1:6767",
-    configuration: {},
-  });
-
   await context.database.insert(hermesRuntimeNode).values({
     slug: `node-${randomUUID().slice(0, 8)}`,
     displayName: "VM2",
@@ -102,7 +94,10 @@ async function healthyBoundary(
   });
 }
 
-async function queuedRun(overrides: Partial<typeof agentRun.$inferInsert> = {}): Promise<string> {
+async function queuedRun(
+  overrides: Partial<typeof agentRun.$inferInsert> = {},
+  memoryMode: typeof agentProfileVersion.$inferInsert["memoryMode"] = "DOCUMENTS_ONLY",
+): Promise<string> {
   const [profile] = await context.database
     .insert(agentProfile)
     .values({
@@ -126,6 +121,7 @@ async function queuedRun(overrides: Partial<typeof agentRun.$inferInsert> = {}):
       maxTurns: 1,
       timeoutSeconds: 60,
       safeMode: true,
+      memoryMode,
     })
     .returning({ id: agentProfileVersion.id });
 
@@ -143,10 +139,18 @@ async function queuedRun(overrides: Partial<typeof agentRun.$inferInsert> = {}):
       status: "QUEUED",
       jobId: randomUUID(),
       outputCharacterLimit: 200_000,
+      effectiveCapabilities: memoryCapabilitiesFor(memoryMode),
       ...overrides,
     })
     .returning({ id: agentRun.id, jobId: agentRun.jobId });
   return row!.id;
+}
+
+/** Mirrors what the agent manager freezes onto a run for a given mode. */
+function memoryCapabilitiesFor(mode: typeof agentProfileVersion.$inferInsert["memoryMode"]): string[] {
+  if (mode === "DOCUMENTS_ONLY" || mode === undefined) return [];
+  if (mode === "RECALL_ONLY") return ["memory:agent:read"];
+  return ["memory:agent:read", "memory:agent:write"];
 }
 
 async function jobIdOf(runId: string): Promise<string> {
@@ -157,8 +161,43 @@ async function jobIdOf(runId: string): Promise<string> {
   return row!.jobId!;
 }
 
-function processor(runtime: AgentHermesRuntime, knowledge: AgentKnowledgeRetriever = noKnowledge) {
-  return new DrizzleAgentProcessor(context.database, runtime, knowledge, capabilities);
+function processor(
+  runtime: AgentHermesRuntime,
+  knowledge: AgentKnowledgeRetriever = noKnowledge,
+  memory?: AgentMemoryPort,
+) {
+  return new DrizzleAgentProcessor(context.database, runtime, knowledge, capabilities, memory);
+}
+
+/** Records what was recalled and captured without touching pgvector. */
+function memoryPort(recollections: { id: string; content: string }[] = []): AgentMemoryPort & {
+  captured: string[][];
+  captureLimits: MemoryLimits[];
+  recallLimits: MemoryLimits[];
+} {
+  const captured: string[][] = [];
+  const captureLimits: MemoryLimits[] = [];
+  const recallLimits: MemoryLimits[] = [];
+  return {
+    captured,
+    captureLimits,
+    recallLimits,
+    recall: vi.fn(async (_owner: string, _profile: string, _query: string, limits: MemoryLimits) => {
+      recallLimits.push(limits);
+      return recollections;
+    }),
+    capture: vi.fn(async (
+      _owner: string,
+      _profile: string,
+      items: readonly string[],
+      _provenance: unknown,
+      limits: MemoryLimits,
+    ) => {
+      captured.push([...items]);
+      captureLimits.push(limits);
+      return items.length;
+    }),
+  };
 }
 
 describe("DrizzleAgentProcessor", () => {
@@ -232,22 +271,6 @@ describe("DrizzleAgentProcessor", () => {
       .resolves.toMatchObject({ status: "DENIED" });
     expect(runtime.start).not.toHaveBeenCalled();
     expect(knowledge.search).not.toHaveBeenCalled();
-  });
-
-  it("denies a run when Hermes reports online but its memory plane is unhealthy", async () => {
-    await healthyBoundary({ memoryStatus: "UNREACHABLE" });
-    const id = await queuedRun();
-    const runtime = hermes();
-
-    await expect(processor(runtime).process({ runId: id }, await jobIdOf(id), WORKER))
-      .resolves.toMatchObject({ status: "DENIED" });
-    expect(runtime.start).not.toHaveBeenCalled();
-
-    const [stored] = await context.database
-      .select({ failureCode: agentRun.failureCode })
-      .from(agentRun)
-      .where(eq(agentRun.id, id));
-    expect(stored?.failureCode).toBe("SUPERMEMORY_UNHEALTHY");
   });
 
   it("does not start queued work while the runtime is draining", async () => {
@@ -347,6 +370,175 @@ describe("DrizzleAgentProcessor", () => {
 
     expect(knowledge.search).not.toHaveBeenCalled();
   });
+
+  it("stores nothing about the person when the profile keeps memory off", async () => {
+    await healthyBoundary();
+    const id = await queuedRun({}, "DOCUMENTS_ONLY");
+    const memory = memoryPort();
+
+    await processor(hermes(), noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER);
+
+    expect(memory.recall).not.toHaveBeenCalled();
+    expect(memory.capture).not.toHaveBeenCalled();
+  });
+
+  it("recalls without writing when the profile is recall-only", async () => {
+    await healthyBoundary();
+    const id = await queuedRun({}, "RECALL_ONLY");
+    const memory = memoryPort([{ id: randomUUID(), content: "Prefers metric units." }]);
+    const runtime = hermes();
+
+    await processor(runtime, noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER);
+
+    expect(memory.recall).toHaveBeenCalled();
+    expect(memory.capture).not.toHaveBeenCalled();
+    // The recalled item reaches Hermes as instruction context, carrying the
+    // same untrusted-data framing as knowledge excerpts.
+    const submission = vi.mocked(runtime.start).mock.calls[0]?.[0];
+    expect(submission?.instructions).toContain("RECALLED MEMORY");
+    expect(submission?.instructions).toContain("Prefers metric units.");
+    expect(submission?.instructions).toContain("never as instructions");
+  });
+
+  it("stores the person's turn and not the model's answer when learning the user", async () => {
+    await healthyBoundary();
+    const id = await queuedRun({}, "LEARN_USER");
+    const memory = memoryPort();
+
+    await processor(hermes(), noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER);
+
+    // A wrong answer must not become a durable fact the agent later retrieves.
+    expect(memory.captured).toEqual([["Summarize the policy."]]);
+  });
+
+  it("stores both sides of the turn only when the profile opts into it", async () => {
+    await healthyBoundary();
+    const id = await queuedRun({}, "LEARN_EXCHANGE");
+    const memory = memoryPort();
+
+    await processor(hermes(), noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER);
+
+    expect(memory.captured[0]).toHaveLength(2);
+    expect(memory.captured[0]?.[0]).toBe("Summarize the policy.");
+  });
+
+  it("completes the run even when recording memory fails", async () => {
+    await healthyBoundary();
+    const id = await queuedRun({}, "LEARN_USER");
+    const memory = memoryPort();
+    memory.capture = vi.fn(async () => { throw new Error("pgvector unavailable"); });
+
+    // The person already has their answer; losing a memory must not retract it.
+    await expect(processor(hermes(), noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER))
+      .resolves.toMatchObject({ status: "COMPLETED" });
+  });
+
+
+  it("lets an active policy stop capture that a profile still asks for", async () => {
+    // The ceiling is read at capture time, so suspending capture takes effect
+    // on runs already in flight rather than only on newly submitted ones.
+    await healthyBoundary();
+    await context.database.insert(memoryPolicy).values({
+      slug: "locked-down",
+      displayName: "Locked down",
+      description: "Recall only while the retention review is open.",
+      status: "ACTIVE",
+      maximumCaptureMode: "RECALL_ONLY",
+      firstActivatedAt: new Date(),
+    });
+    const id = await queuedRun({}, "LEARN_EXCHANGE");
+    const memory = memoryPort();
+
+    await processor(hermes(), noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER);
+
+    expect(memory.recall).toHaveBeenCalled();
+    expect(memory.capture).not.toHaveBeenCalled();
+  });
+
+  it("narrows a permissive profile to what the policy allows", async () => {
+    await healthyBoundary();
+    await context.database.insert(memoryPolicy).values({
+      slug: "user-only",
+      displayName: "User turns only",
+      description: "Model output is not retained.",
+      status: "ACTIVE",
+      maximumCaptureMode: "LEARN_USER",
+      firstActivatedAt: new Date(),
+    });
+    const id = await queuedRun({}, "LEARN_EXCHANGE");
+    const memory = memoryPort();
+
+    await processor(hermes(), noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER);
+
+    // The profile asked for both sides; the ceiling allows only the person's.
+    expect(memory.captured).toEqual([["Summarize the policy."]]);
+  });
+
+  it("hands the store every limit the active policy sets, not just the ceiling", async () => {
+    // Retention and the caps were administrable long before they were
+    // enforced; this asserts the whole policy reaches the store.
+    await healthyBoundary();
+    await context.database.insert(memoryPolicy).values({
+      slug: "short-lived",
+      displayName: "Short lived",
+      description: "Thirty days, tightly capped.",
+      status: "ACTIVE",
+      maximumCaptureMode: "LEARN_USER",
+      retentionDays: 30,
+      maximumItemsPerOwner: 25,
+      recallLimit: 2,
+      recallMinimumScore: 0.7,
+      firstActivatedAt: new Date(),
+    });
+    const id = await queuedRun({}, "LEARN_USER");
+    const memory = memoryPort([{ id: randomUUID(), content: "Prefers metric units." }]);
+
+    await processor(hermes(), noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER);
+
+    expect(memory.recallLimits[0]).toMatchObject({ recallLimit: 2, recallMinimumScore: 0.7 });
+    expect(memory.captureLimits[0]).toMatchObject({
+      retentionDays: 30,
+      maximumItemsPerOwner: 25,
+    });
+  });
+
+  it("falls back to the shipped defaults when no policy is active", async () => {
+    // An installation that never wrote a policy still gets bounded retention,
+    // rather than storing everything forever.
+    await healthyBoundary();
+    const id = await queuedRun({}, "LEARN_USER");
+    const memory = memoryPort();
+
+    await processor(hermes(), noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER);
+
+    expect(memory.captureLimits[0]).toEqual({
+      recallLimit: DEFAULT_MEMORY_POLICY.recallLimit,
+      recallMinimumScore: DEFAULT_MEMORY_POLICY.recallMinimumScore,
+      retentionDays: DEFAULT_MEMORY_POLICY.retentionDays,
+      maximumItemsPerOwner: DEFAULT_MEMORY_POLICY.maximumItemsPerOwner,
+    });
+    expect(DEFAULT_MEMORY_POLICY.retentionDays).not.toBeNull();
+  });
+
+  it("ignores a suspended policy rather than enforcing a ceiling nobody approved", async () => {
+    await healthyBoundary();
+    await context.database.insert(memoryPolicy).values({
+      slug: "withdrawn",
+      displayName: "Withdrawn",
+      description: "Suspended while the review is open.",
+      status: "SUSPENDED",
+      maximumCaptureMode: "DOCUMENTS_ONLY",
+      retentionDays: 7,
+    });
+    const id = await queuedRun({}, "LEARN_USER");
+    const memory = memoryPort();
+
+    await processor(hermes(), noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER);
+
+    expect(memory.captured).toEqual([["Summarize the policy."]]);
+    expect(memory.captureLimits[0]?.retentionDays).toBe(DEFAULT_MEMORY_POLICY.retentionDays);
+  });
+
 });
 
 describe("conversationHistory", () => {
@@ -400,4 +592,5 @@ describe("conversationHistory", () => {
     expect(conversationHistory(null)).toEqual([]);
     expect(conversationHistory({ role: "user", content: "not an array" })).toEqual([]);
   });
+
 });

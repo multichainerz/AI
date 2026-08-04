@@ -21,7 +21,7 @@
 ## How it fits together
 
 <p align="center">
-  <img src="docs/assets/orcasynapse-architecture.svg" alt="OrcaSynapse production baseline: VM1 runs the control plane with PostgreSQL and pgvector; VM2 runs the isolated Hermes runtime with Supermemory agent memory; VM1 calls an OpenAI-compatible inference server and can forward audit batches to a SIEM" width="100%" />
+  <img src="docs/assets/orcasynapse-architecture.svg" alt="OrcaSynapse production baseline: VM1 runs the control plane with PostgreSQL and pgvector; VM2 runs only the isolated Hermes runtime; VM1 calls an OpenAI-compatible inference server and can forward audit batches to a SIEM" width="100%" />
 </p>
 
 Two VMs and an inference endpoint. Nothing leaves your network.
@@ -29,7 +29,7 @@ Two VMs and an inference endpoint. Nothing leaves your network.
 | Layer | What you do | What OrcaSynapse manages |
 | --- | --- | --- |
 | **AI Inference** | Point at an existing endpoint | Discovery, model validation, routing, credentials, health, usage |
-| **Agentic System** | Enroll one isolated VM | Hermes, Supermemory agent memory, managed policy, node identity, observability |
+| **Agentic System** | Enroll one isolated VM | Hermes runtime, managed policy, node identity, observability |
 | **Enterprise Access** | Connect your identity provider | Local recovery, OIDC / Microsoft Entra ID, roles, sessions, audit |
 
 No LiteLLM tier, Redis, Valkey, pg-boss, object store, or external vector database. pgvector ships inside the bundled PostgreSQL image.
@@ -76,6 +76,8 @@ VM2 generates its own identity, consumes the claim once, receives a scoped infer
 
 **Private document knowledge** — upload TXT, Markdown, HTML, CSV, JSON, PDF, DOCX, PPTX, or XLSX. Text is extracted in flight, embedded locally with BGE-M3, and retrieved from pgvector. Original files are never stored. Pin documents to a conversation to scope exactly what an agent may consult.
 
+**Agents that remember, on your terms** — memory lives in the same pgvector plane as your documents, scoped to one person and one agent. Each agent's profile chooses what it stores: nothing at all (the default), recall without writing, learn what the person says, or learn the whole exchange. One installation-wide policy caps every agent at once, and any stored memory can be read and deleted from the dashboard.
+
 **An audit trail you can actually read** — every governed action lands in an append-only trail with a filterable dashboard view. An optional forwarder ships it to your SIEM with at-least-once delivery, and reports its own health when the destination falls behind or starts rejecting batches.
 
 **Inference that configures itself** — vLLM, llama.cpp, SGLang, Ollama, TGI, or any compatible OpenAI-style server.
@@ -89,7 +91,7 @@ VM2 generates its own identity, consumes the claim once, receives a scoped infer
 - **OrcaSynapse** owns identity, authorization, policy, encrypted configuration, audit, and inference access.
 - **PostgreSQL** owns control-plane state plus extracted knowledge chunks and their embeddings — never original files, never model weights.
 - **Hermes** runs isolated, with only approved model, memory, and tool capabilities. It never reaches PostgreSQL, Docker, or the open network.
-- **Supermemory** owns the agents' long-lived memory on VM2. Document knowledge is served and governed entirely by OrcaSynapse and never transits VM2.
+- **VM2** runs the agent runtime and nothing else. It holds no durable store: knowledge and agent memory are served and governed entirely by OrcaSynapse, and never transit VM2.
 - **Inference credentials** stay on VM1. Agent nodes get a bounded, node-scoped gateway credential.
 
 Production acceptance still requires your own TLS/PKI, firewall policy, artifact pins, backup and restore testing, identity acceptance, GPU capacity testing, and security approval.
@@ -117,6 +119,7 @@ The test database must run a **pgvector** image — the migrator creates the `ve
 | [Installation and recovery](deploy/BOOTSTRAP.md) | Bootstrap, pinning, upgrade and erase paths, key rotation |
 | [Agentic System enrollment](docs/AGENTIC_SYSTEM_ENROLLMENT_RUNBOOK.md) | VM2 enrollment, allowlist, decommission |
 | [Audit trail and SIEM forwarding](docs/AUDIT_TRAIL_RUNBOOK.md) | Reading the trail, forwarding, health states |
+| [Agent memory](docs/AGENT_MEMORY_RUNBOOK.md) | What agents store, the installation ceiling, retention, deletion |
 | [Product requirements](docs/ORCASYNAPSE_PRD.md) · [Delivery plan](docs/ORCASYNAPSE_PHASED_PLAN.md) | Scope, roles, acceptance tiers |
 | [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [License](LICENSE) | Project meta |
 

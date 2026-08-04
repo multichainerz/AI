@@ -29,6 +29,17 @@ interface AgentsViewProps {
   onUnauthorized: () => void;
 }
 
+/**
+ * Says plainly what each mode stores, because the difference between them is a
+ * privacy decision an administrator is making on someone else's behalf.
+ */
+export function memoryModeNote(mode: CreateAgentProfile["memoryMode"]): string {
+  if (mode === "DOCUMENTS_ONLY") return "Nothing about the person is stored. Answers draw only on documents they own.";
+  if (mode === "RECALL_ONLY") return "Reads memory this agent already holds, and writes none of its own.";
+  if (mode === "LEARN_USER") return "Stores what the person says, so the agent accumulates their stable facts and preferences. The model's own replies are never stored.";
+  return "Stores both sides of each turn. Richer recall, but the model's own output becomes durable memory an error can persist into.";
+}
+
 const runningStatuses = new Set(["QUEUED", "RUNNING", "CANCEL_REQUESTED"]);
 const terminalGood = new Set(["COMPLETED"]);
 
@@ -44,6 +55,7 @@ const blankProfile: CreateAgentProfile = {
   timeoutSeconds: 600,
   maxConcurrentRuns: 2,
   allowPrivateKnowledge: true,
+  memoryMode: "DOCUMENTS_ONLY",
   safeMode: true,
 };
 
@@ -95,6 +107,7 @@ function draftFromProfile(profile: AgentProfile): CreateAgentProfile {
     timeoutSeconds: profile.version.timeoutSeconds,
     maxConcurrentRuns: profile.version.maxConcurrentRuns,
     allowPrivateKnowledge: profile.version.allowPrivateKnowledge,
+    memoryMode: profile.version.memoryMode,
     safeMode: true,
   };
 }
@@ -377,6 +390,12 @@ export function AgentsView({ unlocked, administrator, activationReady, activatio
         <label>Approved Skills<textarea value={skillsDraft} placeholder={`One per line: name@version ${"a".repeat(64)}`} onChange={(event) => setSkillsDraft(event.target.value)} /><small>Only secret-free, reviewed Skill references are included in the distribution source. Runtime installation remains evidence-gated.</small></label>
         <div className="agent-editor-grid"><label>Inference model<input required value={profileDraft.modelAlias} onChange={(event) => setProfileDraft({ ...profileDraft, modelAlias: event.target.value })} /><small>Filled from the healthy AI Inference connection.</small></label><label>Timeout (seconds)<input required type="number" min={30} max={3600} value={profileDraft.timeoutSeconds} onChange={(event) => setProfileDraft({ ...profileDraft, timeoutSeconds: Number(event.target.value) })} /></label><label>Concurrent runs<input required type="number" min={1} max={20} value={profileDraft.maxConcurrentRuns} onChange={(event) => setProfileDraft({ ...profileDraft, maxConcurrentRuns: Number(event.target.value) })} /></label></div>
         <label className="agent-check"><input type="checkbox" checked={profileDraft.allowPrivateKnowledge} onChange={(event) => setProfileDraft({ ...profileDraft, allowPrivateKnowledge: event.target.checked })} /><span><strong>Allow private knowledge retrieval</strong><small>Searches only the requesting identity’s documents in the private knowledge index.</small></span></label>
+        <label>Memory<select value={profileDraft.memoryMode} onChange={(event) => setProfileDraft({ ...profileDraft, memoryMode: event.target.value as CreateAgentProfile["memoryMode"] })}>
+          <option value="DOCUMENTS_ONLY">Documents only — remembers nothing about the person</option>
+          <option value="RECALL_ONLY">Recall only — uses existing memory, never adds to it</option>
+          <option value="LEARN_USER">Learn the user — remembers what the person says</option>
+          <option value="LEARN_EXCHANGE">Learn the exchange — remembers both sides of the turn</option>
+        </select><small>{memoryModeNote(profileDraft.memoryMode)}</small></label>
         <div className="agent-editor-boundary"><strong>{activationReady === false ? "Draft until infrastructure is ready" : "Automatic activation"}</strong><span>{activationReady === false ? "This Profile will be saved safely without attempting a runtime activation. Finish Platform setup, then verify and activate it from the Profile list." : "OrcaSynapse will verify Hermes, activate this immutable Profile, and enable Chat. Personality and Skills describe behavior, never authority."}</span></div>
         <footer><button className="secondary-button" type="button" onClick={() => setEditorOpen(false)}>Cancel</button><button className="primary-button" disabled={busy !== null} type="submit">{busy === "profile-save" ? "Saving..." : editingId ? "Save new version" : activationReady === false ? "Save draft" : "Create & activate"}</button></footer>
       </form></div>}

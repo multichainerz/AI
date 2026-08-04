@@ -25,6 +25,8 @@ export const ADMIN_SCOPES = [
   "guardrails:manage",
   "prompts:read",
   "prompts:manage",
+  "memory:read",
+  "memory:manage",
   "agents:read",
   "agents:manage",
   "agents:control",

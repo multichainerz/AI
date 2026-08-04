@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="560" viewBox="0 0 1200 560" role="img" aria-labelledby="title description" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif">
   <title id="title">OrcaSynapse production baseline</title>
-  <desc id="description">Two virtual machines plus an inference server. VM1 runs the OrcaSynapse control plane with PostgreSQL and pgvector holding control-plane state, document knowledge, and the append-only audit trail. VM2 runs the isolated Hermes agent runtime with Supermemory agent memory. VM1 calls an OpenAI-compatible inference server and can optionally forward audit batches to a customer SIEM.</desc>
+  <desc id="description">Two virtual machines plus an inference server. VM1 runs the OrcaSynapse control plane with PostgreSQL and pgvector holding control-plane state, document knowledge, agent memory, and the append-only audit trail. VM2 runs only the isolated Hermes agent runtime. VM1 calls an OpenAI-compatible inference server and can optionally forward audit batches to a customer SIEM.</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#0b1016"/>
@@ -39,7 +39,7 @@
   <rect x="244" y="222" width="312" height="150" rx="12" fill="#121820" stroke="#27313c"/>
   <text x="264" y="252" fill="#f2f5fb" font-size="17" font-weight="600">PostgreSQL 17 <tspan fill="#b9f5ff">+ pgvector</tspan></text>
   <text x="264" y="283" fill="#9aa9bc" font-size="13">control-plane state · encrypted secrets</text>
-  <text x="264" y="309" fill="#9aa9bc" font-size="13">document knowledge: chunks + embeddings</text>
+  <text x="264" y="309" fill="#9aa9bc" font-size="13">knowledge + agent memory: chunks, embeddings</text>
   <text x="264" y="335" fill="#9aa9bc" font-size="13">append-only audit trail</text>
   <text x="264" y="358" fill="#54c995" font-size="12">original files are never stored</text>
 
@@ -50,14 +50,10 @@
   <!-- VM2 -->
   <rect x="700" y="90" width="460" height="172" rx="18" fill="#141b26" stroke="#3c4a63"/>
   <text x="724" y="122" fill="#b9f5ff" font-size="13" font-weight="600" letter-spacing="1.8">VM2 · ISOLATED AGENTIC SYSTEM</text>
-  <rect x="724" y="140" width="198" height="98" rx="12" fill="#121820" stroke="#27313c"/>
+  <rect x="724" y="140" width="412" height="98" rx="12" fill="#121820" stroke="#27313c"/>
   <text x="744" y="171" fill="#f2f5fb" font-size="17" font-weight="600">Hermes runtime</text>
-  <text x="744" y="196" fill="#9aa9bc" font-size="13">sessions · skills</text>
-  <text x="744" y="218" fill="#9aa9bc" font-size="13">tools · subagents</text>
-  <rect x="938" y="140" width="198" height="98" rx="12" fill="#121820" stroke="#27313c"/>
-  <text x="958" y="171" fill="#f2f5fb" font-size="17" font-weight="600">Supermemory</text>
-  <text x="958" y="196" fill="#9aa9bc" font-size="13">agent memory only</text>
-  <text x="958" y="218" fill="#9aa9bc" font-size="13">recall · capture</text>
+  <text x="744" y="196" fill="#9aa9bc" font-size="13">sessions · skills · tools · subagents</text>
+  <text x="744" y="218" fill="#54c995" font-size="12">one plane, no local data store</text>
 
   <!-- AI Inference -->
   <rect x="700" y="302" width="460" height="94" rx="18" fill="#141b26" stroke="#3c4a63"/>

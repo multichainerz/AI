@@ -21,7 +21,7 @@
 
     <text x="40" y="275" fill="#7a8798">  PRIVATE AI CONTROL PLANE  /  VM1 PROVISIONING</text>
     <text x="40" y="296" fill="#7a8798">  ----------------------------------------------------------------------</text>
-    <text x="40" y="317" fill="#7a8798">  Release v0.4.0  /  source ef58f8512ab3</text>
+    <text x="40" y="317" fill="#7a8798">  Release v0.5.0  /  source ef58f8512ab3</text>
     <text x="40" y="338"><tspan fill="#d6dee8">  Establishing secure installation context</tspan><tspan fill="#5fd7d7">...</tspan><tspan fill="#5fd787" font-weight="bold"> READY</tspan></text>
 
     <text x="40" y="380"><tspan fill="#5fd7d7" font-weight="bold">  STEP 02 OF 06</tspan><tspan fill="#f2f5fb" font-weight="bold">  Preflight the host for this release</tspan></text>
@@ -37,7 +37,7 @@
     <text x="40" y="590" fill="#5fd787" font-weight="bold">|  ORCASYNAPSE IS READY                                                |</text>
     <text x="40" y="611" fill="#5fd787" font-weight="bold">+======================================================================+</text>
     <text x="40" y="632" fill="#d6dee8">|  Dashboard            http://10.0.4.21:8080/                         |</text>
-    <text x="40" y="653" fill="#d6dee8">|  Release              v0.4.0 (ef58f8512ab3)                      |</text>
+    <text x="40" y="653" fill="#d6dee8">|  Release              v0.5.0 (ef58f8512ab3)                      |</text>
     <text x="40" y="674" fill="#5fd787" font-weight="bold">+======================================================================+</text>
 
     <text x="40" y="716"><tspan fill="#5fd7d7" font-weight="bold">  NEXT</tspan><tspan fill="#d6dee8">  Open the dashboard, change the temporary password, then connect AI Inference.</tspan></text>

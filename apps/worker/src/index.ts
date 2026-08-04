@@ -3,11 +3,11 @@ import { hostname } from "node:os";
 import { ORCASYNAPSE_VERSION } from "@orcasynapse/contracts";
 import { createDrizzleClient, readBootstrapSecret } from "@orcasynapse/database";
 import { decodeMasterKey, EnvelopeEncryption, RunCapabilityIssuer } from "@orcasynapse/security";
-import { APPROVED_EMBEDDING_MODEL, DocumentVectorStore, LocalBgeM3Embedder } from "@orcasynapse/knowledge";
+import { AgentMemoryStore, APPROVED_EMBEDDING_MODEL, DocumentVectorStore, LocalBgeM3Embedder } from "@orcasynapse/knowledge";
 import { DrizzleRuntimeConnectionResolver, HermesClient } from "@orcasynapse/runtime-clients";
 import { WorkerRuntime } from "./worker-runtime.js";
 import { DrizzlePendingRunSource, DrizzleWorkerRegistry } from "./worker-registry.js";
-import { DrizzleAgentProcessor, WorkerAgentKnowledgeRetriever } from "./agent-processor.js";
+import { DrizzleAgentProcessor, WorkerAgentKnowledgeRetriever, WorkerAgentMemory } from "./agent-processor.js";
 
 const databaseUrl = readBootstrapSecret("orcasynapse_database_url");
 const { database, close: closeDatabase } = createDrizzleClient(databaseUrl);
@@ -39,6 +39,7 @@ const runtime = new WorkerRuntime(
       embedder,
     ),
     new RunCapabilityIssuer(masterKey),
+    new WorkerAgentMemory(new AgentMemoryStore(database, APPROVED_EMBEDDING_MODEL), embedder),
   ),
 );
 

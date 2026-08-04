@@ -9,8 +9,6 @@ import type {
   HermesRuntimeNode,
   MutateHermesRuntimeNode,
   RemoveHermesRuntimeNode,
-  RegisterHermesNodeMemory,
-  RegisterHermesNodeMemoryResult,
 } from "@orcasynapse/contracts";
 import type { AdminPrincipal } from "../auth/admin-session.js";
 
@@ -38,11 +36,6 @@ export interface HermesRuntimeNodeManager {
     headers: NodeSignatureHeaders,
     input: HermesNodeHeartbeat,
   ): Promise<HermesNodeHeartbeatResult>;
-  registerMemory(
-    nodeId: string,
-    headers: NodeSignatureHeaders,
-    input: RegisterHermesNodeMemory,
-  ): Promise<RegisterHermesNodeMemoryResult>;
   mutate(principal: AdminPrincipal, nodeId: string, input: MutateHermesRuntimeNode): Promise<HermesRuntimeNode>;
   remove(principal: AdminPrincipal, nodeId: string, input: RemoveHermesRuntimeNode): Promise<void>;
 }

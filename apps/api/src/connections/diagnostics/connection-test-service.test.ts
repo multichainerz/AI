@@ -27,7 +27,7 @@ describe("ConnectionTestService", () => {
     const store = new MemoryDiagnosticStore({
       id: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d",
       activeRevision: 1,
-      kind: "SUPERMEMORY",
+      kind: "HERMES",
       baseUrl: null,
       configuration: {},
       secrets: {},
@@ -76,8 +76,8 @@ describe("ConnectionTestService", () => {
     const store = new MemoryDiagnosticStore({
       id: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d",
       activeRevision: 1,
-      kind: "SUPERMEMORY",
-      baseUrl: "https://memory.orcasynapse.internal",
+      kind: "HERMES",
+      baseUrl: "https://hermes.orcasynapse.internal",
       configuration: {},
       secrets: { accessKeyId: "key", secretAccessKey: "secret" },
     });

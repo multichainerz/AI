@@ -16,8 +16,6 @@ import type {
   HermesRuntimeNode,
   MutateHermesRuntimeNode,
   RemoveHermesRuntimeNode,
-  RegisterHermesNodeMemory,
-  RegisterHermesNodeMemoryResult,
 } from "@orcasynapse/contracts";
 import {
   auditEvent,
@@ -36,7 +34,6 @@ import { EnvelopeEncryption } from "@orcasynapse/security";
 import { advisoryLock, increment, isUniqueViolation } from "../database-support.js";
 import type { AdminPrincipal } from "../auth/admin-session.js";
 import type { ConnectionTestService } from "../connections/diagnostics/connection-test-service.js";
-import { SUPERMEMORY_LOCAL_READY_PATH } from "../connections/diagnostics/supermemory-adapter.js";
 import {
   RuntimeNodeAuthenticationError,
   RuntimeNodeConflictError,
@@ -180,11 +177,10 @@ function connectionEnvironment(target: "DEVELOPMENT" | "PILOT" | "PRODUCTION") {
 
 function productionArtifactViolation(
   target: "DEVELOPMENT" | "PILOT" | "PRODUCTION" | undefined,
-  artifacts: { hermesImage: string | null; supermemoryVersion: string; controlPlaneUrl: string | null },
+  artifacts: { hermesImage: string | null; controlPlaneUrl: string | null },
 ): string | null {
   if (target !== "PRODUCTION") return null;
   if (!artifacts.hermesImage?.includes("@sha256:")) return "Production enrollment requires a digest-pinned Hermes image.";
-  if (artifacts.supermemoryVersion === "latest") return "Production enrollment requires an exact Supermemory release.";
   if (!artifacts.controlPlaneUrl?.startsWith("https://")) return "Production enrollment requires an HTTPS OrcaSynapse origin.";
   return null;
 }
@@ -360,7 +356,6 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
           tokenHash,
           controlPlaneUrl: input.controlPlaneUrl.replace(/\/$/, ""),
           hermesImage: input.hermesImage,
-          supermemoryVersion: input.supermemoryVersion,
           expiresAt,
           createdBy: principal.id,
         });
@@ -385,7 +380,6 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
           controlPlaneUrl: input.controlPlaneUrl.replace(/\/$/, ""),
           hermesBaseUrl: input.baseUrl.replace(/\/$/, ""),
           hermesImage: input.hermesImage,
-          supermemoryVersion: input.supermemoryVersion,
           expiresAt: expiresAt.toISOString(),
         },
       };
@@ -447,7 +441,6 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
       controlPlaneUrl: enrollment.controlPlaneUrl,
       hermesBaseUrl: enrollment.node.baseUrl,
       hermesImage: enrollment.hermesImage,
-      supermemoryVersion: enrollment.supermemoryVersion,
       expiresAt: enrollment.expiresAt.toISOString(),
     };
   }
@@ -694,123 +687,6 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
     return { accepted: true, serverTime: receivedAt.toISOString() };
   }
 
-  async registerMemory(
-    nodeId: string,
-    headers: NodeSignatureHeaders,
-    input: RegisterHermesNodeMemory,
-  ): Promise<RegisterHermesNodeMemoryResult> {
-    const node = await this.authenticate(nodeId, headers, input);
-    const [hermesConnection] = node.serviceConnectionId
-      ? await this.database
-        .select({ baseUrl: serviceConnection.baseUrl })
-        .from(serviceConnection)
-        .where(eq(serviceConnection.id, node.serviceConnectionId))
-        .limit(1)
-      : [];
-    if (!hermesConnection?.baseUrl) {
-      throw new RuntimeNodeConflictError("The enrolled Hermes route is unavailable for memory registration.");
-    }
-    const hermesUrl = new URL(hermesConnection.baseUrl);
-    const memoryUrl = new URL(input.baseUrl);
-    if (memoryUrl.hostname !== hermesUrl.hostname || memoryUrl.port !== "6767") {
-      throw new RuntimeNodeConflictError("Supermemory must be registered on the enrolled Hermes host at TCP 6767.");
-    }
-    const environment = connectionEnvironment(await this.architectureTarget() ?? "DEVELOPMENT");
-    const slug = `supermemory-node-${node.slug}`.slice(0, 64);
-    const now = new Date();
-    const connectionId = await this.database.transaction(async (transaction) => {
-      await transaction.execute(advisoryLock(`orcasynapse-supermemory-node:${nodeId}`));
-      const [existing] = await transaction
-        .select().from(serviceConnection).where(eq(serviceConnection.slug, slug)).limit(1);
-      if (existing && existing.kind !== "SUPERMEMORY") {
-        throw new RuntimeNodeConflictError("The managed Supermemory connection slug is already used by another service kind.");
-      }
-      const id = existing?.id ?? randomUUID();
-      // documentsPath/searchPath are deliberately absent: OrcaSynapse document
-      // knowledge moved to local pgvector, so nothing reads them any more.
-      // Legacy rows that still carry them fail the strict schema and summarize
-      // as {} until this registration overwrites the configuration wholesale -
-      // re-running the VM2 installer heals such a connection.
-      const configuration = {
-        timeoutMs: 8_000,
-        healthPath: SUPERMEMORY_LOCAL_READY_PATH,
-        memoryTimeoutMs: 300_000,
-        memoryPollIntervalMs: 2_000,
-        retrievalLimit: 6,
-        retrievalThreshold: 0.25,
-        observedVersion: input.observedVersion,
-      };
-      const revision = (existing?.activeRevision ?? 0) + 1;
-      const revisionState = {
-        slug,
-        displayName: `${node.displayName} Supermemory`,
-        kind: "SUPERMEMORY",
-        environment,
-        baseUrl: input.baseUrl,
-        enabled: true,
-        configuration,
-        secretFieldNames: ["apiKey"],
-      };
-      if (existing) {
-        // A rotated credential is retired rather than deleted.
-        await transaction
-          .update(secretRecord)
-          .set({ active: false, retiredAt: now })
-          .where(and(
-            eq(secretRecord.serviceConnectionId, id),
-            eq(secretRecord.fieldName, "apiKey"),
-            eq(secretRecord.active, true),
-          ));
-        await transaction.insert(secretRecord).values({
-          ...encryptedSecretData(id, "apiKey", input.apiKey, this.encryption),
-          serviceConnectionId: id,
-          createdBy: null,
-        });
-        await transaction
-          .update(serviceConnection)
-          .set({ baseUrl: input.baseUrl, enabled: true, status: "NOT_TESTED", environment, configuration, activeRevision: revision })
-          .where(eq(serviceConnection.id, id));
-        await transaction.insert(configurationRevision).values({
-          serviceConnectionId: id, revision, configuration: revisionState,
-          secretFieldNames: ["apiKey"], checksum: checksum(revisionState), activatedAt: now,
-        });
-      } else {
-        await transaction.insert(serviceConnection).values({
-          id,
-          slug,
-          displayName: `${node.displayName} Supermemory`,
-          kind: "SUPERMEMORY",
-          environment,
-          baseUrl: input.baseUrl,
-          enabled: true,
-          status: "NOT_TESTED",
-          configuration,
-        });
-        await transaction.insert(secretRecord).values({
-          ...encryptedSecretData(id, "apiKey", input.apiKey, this.encryption),
-          serviceConnectionId: id,
-          createdBy: null,
-        });
-        await transaction.insert(configurationRevision).values({
-          serviceConnectionId: id, revision, configuration: revisionState,
-          secretFieldNames: ["apiKey"], checksum: checksum(revisionState), activatedAt: now,
-        });
-      }
-      await transaction.insert(auditEvent).values({
-        actorType: "SERVICE",
-        actorId: nodeId,
-        action: "hermes.node.memory_registered",
-        resourceType: "ServiceConnection",
-        resourceId: id,
-        outcome: "SUCCESS",
-        metadata: { nodeId, observedVersion: input.observedVersion, managedBy: "HermesRuntimeNode" },
-      });
-      return id;
-    });
-    await this.connectionTester?.test(connectionId).catch(() => undefined);
-    return { accepted: true, connectionId };
-  }
-
   async mutate(principal: AdminPrincipal, nodeId: string, input: MutateHermesRuntimeNode): Promise<HermesRuntimeNode> {
     const [current] = await this.database
       .select().from(hermesRuntimeNode).where(eq(hermesRuntimeNode.id, nodeId)).limit(1);
@@ -856,13 +732,6 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
             .set({ enabled: false, status: "DISABLED" })
             .where(eq(serviceConnection.id, current.serviceConnectionId));
         }
-        await transaction
-          .update(serviceConnection)
-          .set({ enabled: false, status: "DISABLED" })
-          .where(and(
-            eq(serviceConnection.slug, `supermemory-node-${current.slug}`.slice(0, 64)),
-            eq(serviceConnection.kind, "SUPERMEMORY"),
-          ));
       }
       await transaction.insert(auditEvent).values({
         actorType: "USER",
@@ -892,7 +761,6 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
       throw new RuntimeNodeConflictError(`Type '${current.slug}' to confirm permanent removal.`);
     }
 
-    const supermemorySlug = `supermemory-node-${current.slug}`.slice(0, 64);
     await this.database.transaction(async (transaction) => {
       const removed = await transaction
         .delete(hermesRuntimeNode)
@@ -906,14 +774,13 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
         throw new RuntimeNodeConflictError("The runtime node changed before permanent removal was applied.");
       }
 
-      // Only connections this enrollment generated are removed with the node.
-      const removedConnections = await transaction
-        .delete(serviceConnection)
-        .where(or(
-          ...(current.serviceConnectionId ? [eq(serviceConnection.id, current.serviceConnectionId)] : []),
-          and(eq(serviceConnection.slug, supermemorySlug), eq(serviceConnection.kind, "SUPERMEMORY")),
-        ))
-        .returning({ id: serviceConnection.id });
+      // Only the connection this enrollment generated is removed with the node.
+      const removedConnections = current.serviceConnectionId
+        ? await transaction
+          .delete(serviceConnection)
+          .where(eq(serviceConnection.id, current.serviceConnectionId))
+          .returning({ id: serviceConnection.id })
+        : [];
       await transaction.insert(auditEvent).values({
         actorType: "USER",
         actorId: principal.id,

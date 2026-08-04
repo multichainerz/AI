@@ -1,8 +1,8 @@
 # OrcaSynapse Cohesion and Delivery Plan
 
-This plan records what the current release implements and what remains environment-specific. OrcaSynapse is the enterprise control plane around one isolated Hermes/Supermemory system and one approved OpenAI-compatible inference service.
+This plan records what the current release implements and what remains environment-specific. OrcaSynapse is the enterprise control plane around one isolated Hermes runtime and one approved OpenAI-compatible inference service.
 
-> **Revision note (v0.2.0 and later):** the document-knowledge plane described by Phase 3 was superseded. Document ingestion, embedding, and retrieval moved from Supermemory into a local pgvector index inside OrcaSynapse's PostgreSQL; Supermemory now backs Hermes agent memory only. Phase entries below are preserved as the historical delivery record; the invariants section reflects the current architecture.
+> **Revision note:** the external memory plane described by Phase 0 and Phase 3 was removed in stages. Document ingestion, embedding, and retrieval moved into a local pgvector index inside OrcaSynapse's PostgreSQL (v0.2.0–1.21), and the remaining agent-memory service was removed from VM2 entirely (v0.5.0). Phase entries below are preserved as the historical delivery record; the invariants section reflects the current architecture.
 
 ## Product architecture
 
@@ -29,7 +29,7 @@ The dashboard has six product areas with one owner each:
 - Replaced duplicate top-level destinations with Home, Chat, Knowledge, Agents, Platform, and Operations.
 - Preserved legacy hashes while emitting canonical routes.
 - Extracted capability-based Home from the application shell.
-- Home now requires healthy inference, an online Hermes node, enabled execution policy, an active Profile, and healthy Supermemory instead of counting connection records.
+- Home now requires healthy inference, an online Hermes node, enabled execution policy, and an active Profile instead of counting connection records.
 
 ### Phase 2 — Simplified Platform setup
 
@@ -80,7 +80,7 @@ These are customer deployment gates, not missing dashboard architecture:
 
 - TLS/mTLS and firewall evidence for the actual VM1, VM2, and inference networks.
 - Exact image/release pins and signed artifact policy.
-- PostgreSQL, Hermes, and Supermemory backup/restore drills against the customer RPO/RTO.
+- PostgreSQL and Hermes backup/restore drills against the customer RPO/RTO.
 - GPU capacity, concurrency, cancellation, and soak tests with the selected model.
 - OIDC/Microsoft Entra ID group mapping and deprovisioning acceptance.
 - Owner-scope isolation testing between users inside the organization. Tenancy is achieved per deployment: one installation serves one organization, so there is no in-installation tenant boundary to certify.
@@ -90,7 +90,7 @@ These are customer deployment gates, not missing dashboard architecture:
 
 1. OrcaSynapse owns enterprise identity, authorization, policy, orchestration, and audit.
 2. Hermes is the only normal Chat and agent-execution path.
-3. Supermemory is the agent-memory plane on VM2; document knowledge lives in OrcaSynapse's local pgvector index and never transits VM2.
+3. VM2 runs the agent runtime and holds no durable store; knowledge lives in OrcaSynapse's local pgvector index and never transits VM2.
 4. PostgreSQL owns control state, metadata, extracted knowledge chunks, and their embeddings — never original source files.
 5. Original files remain authoritative in enterprise systems; failed ephemeral ingestion requires re-upload.
 6. Inference servers serve models but do not own enterprise policy or credentials.

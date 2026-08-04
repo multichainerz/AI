@@ -74,29 +74,6 @@ describe("service connection configuration", () => {
     expect(result.success).toBe(false);
   });
 
-  it("accepts bounded Supermemory runtime and retrieval settings", () => {
-    expect(parseServiceConnectionConfiguration("SUPERMEMORY", {
-      memoryTimeoutMs: 300_000,
-      memoryPollIntervalMs: 2_000,
-      retrievalLimit: 6,
-      retrievalThreshold: 0.25,
-      observedVersion: "0.0.7-rc.2",
-    })).toMatchObject({ retrievalLimit: 6, observedVersion: "0.0.7-rc.2" });
-
-    expect(() => parseServiceConnectionConfiguration("SUPERMEMORY", {
-      retrievalLimit: 100,
-    })).toThrow();
-
-    // The document-publication paths died with the pgvector migration; the
-    // strict schema must reject them so stale writers surface immediately.
-    expect(() => parseServiceConnectionConfiguration("SUPERMEMORY", {
-      documentsPath: "/v3/documents",
-    })).toThrow();
-    expect(() => parseServiceConnectionConfiguration("SUPERMEMORY", {
-      searchPath: "/v3/search",
-    })).toThrow();
-  });
-
   it("accepts only the Hermes control-plane paths used by the hardened worker", () => {
     expect(parseServiceConnectionConfiguration("HERMES", {
       healthPath: "/health",
@@ -120,7 +97,7 @@ describe("service connection configuration", () => {
     const result = createServiceConnectionSchema.safeParse({
       ...connectionBase,
       kind: "INFERENCE",
-      configuration: { memoryTimeoutMs: 300_000 },
+      configuration: { eventsPath: "/events" },
     });
 
     expect(result.success).toBe(false);

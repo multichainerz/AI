@@ -30,14 +30,6 @@ const imageReferenceSchema = z.string().trim().min(3).max(500).regex(
   /^(?:[a-zA-Z0-9.-]+(?::\d+)?\/)?(?:[a-zA-Z0-9._-]+\/)*[a-zA-Z0-9._-]+(?::[a-zA-Z0-9._-]+(?:@sha256:[a-f0-9]{64})?|@sha256:[a-f0-9]{64})$/,
   "Use a tagged or digest-pinned container image reference.",
 );
-const releaseVersionSchema = z.string().trim().min(1).max(120).regex(
-  /^(?:latest|v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)$/,
-  "Use 'latest' for development or an exact release version for controlled environments.",
-).refine(
-  (value) => value.replace(/^v/, "") !== "0.0.6",
-  "Supermemory v0.0.6 is blocked because its published workflow runtime cannot process documents.",
-);
-
 export const hermesRuntimeNodeSchema = z.object({
   id: z.uuid(),
   slug: nodeSlugSchema,
@@ -71,7 +63,6 @@ export const createHermesNodeInvitationSchema = z.object({
   expectedHostname: z.string().trim().min(1).max(253).optional(),
   controlPlaneUrl: runtimeOriginSchema,
   hermesImage: imageReferenceSchema.default("nousresearch/hermes-agent:latest"),
-  supermemoryVersion: releaseVersionSchema.default("0.0.7-rc.2"),
   expiresInMinutes: z.number().int().min(10).max(1_440).default(30),
 }).strict();
 
@@ -83,7 +74,6 @@ export const hermesNodeEnrollmentBundleSchema = z.object({
   controlPlaneUrl: runtimeOriginSchema,
   hermesBaseUrl: runtimeOriginSchema,
   hermesImage: imageReferenceSchema,
-  supermemoryVersion: releaseVersionSchema,
   expiresAt: z.iso.datetime(),
 }).strict();
 
@@ -133,17 +123,6 @@ export const hermesNodeHeartbeatResultSchema = z.object({
   serverTime: z.iso.datetime(),
 }).strict();
 
-export const registerHermesNodeMemorySchema = z.object({
-  baseUrl: runtimeOriginSchema,
-  apiKey: z.string().min(20).max(16_384),
-  observedVersion: z.string().trim().min(1).max(120),
-}).strict();
-
-export const registerHermesNodeMemoryResultSchema = z.object({
-  accepted: z.literal(true),
-  connectionId: z.uuid(),
-}).strict();
-
 export const mutateHermesRuntimeNodeSchema = z.object({
   action: z.enum(["DRAIN", "RESUME", "SUSPEND", "REVOKE"]),
   reason: z.string().trim().min(3).max(1_000),
@@ -167,7 +146,5 @@ export type EnrollHermesNode = z.infer<typeof enrollHermesNodeSchema>;
 export type HermesNodeEnrollmentResult = z.infer<typeof hermesNodeEnrollmentResultSchema>;
 export type HermesNodeHeartbeat = z.infer<typeof hermesNodeHeartbeatSchema>;
 export type HermesNodeHeartbeatResult = z.infer<typeof hermesNodeHeartbeatResultSchema>;
-export type RegisterHermesNodeMemory = z.infer<typeof registerHermesNodeMemorySchema>;
-export type RegisterHermesNodeMemoryResult = z.infer<typeof registerHermesNodeMemoryResultSchema>;
 export type MutateHermesRuntimeNode = z.infer<typeof mutateHermesRuntimeNodeSchema>;
 export type RemoveHermesRuntimeNode = z.infer<typeof removeHermesRuntimeNodeSchema>;

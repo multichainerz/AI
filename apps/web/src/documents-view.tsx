@@ -132,7 +132,7 @@ export function DocumentsView(props: DocumentsViewProps) {
       setFile(null);
       if (fileInput.current) fileInput.current.value = "";
       setUploadOpen(false);
-    } catch (cause) { handleError(cause, "Unable to send the source to Supermemory."); }
+    } catch (cause) { handleError(cause, "Unable to index the source."); }
     finally { setBusy(false); }
   };
 

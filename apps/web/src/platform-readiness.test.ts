@@ -35,7 +35,7 @@ const activeProfile = { status: "ACTIVE" } as AgentProfile;
 describe("deriveWorkspaceReadiness", () => {
   it("requires enabled healthy services rather than stale health evidence", () => {
     const readiness = deriveWorkspaceReadiness({
-      connections: [connection("INFERENCE", { enabled: false }), connection("HERMES"), connection("SUPERMEMORY")],
+      connections: [connection("INFERENCE", { enabled: false }), connection("HERMES")],
       runtimeNodes: [onlineNode],
       profiles: [activeProfile],
       runtime,
@@ -45,7 +45,9 @@ describe("deriveWorkspaceReadiness", () => {
     expect(readiness.nextChatStep).toMatchObject({ target: "Deployment", title: "Connect AI Inference" });
   });
 
-  it("distinguishes usable Chat from optional private knowledge availability", () => {
+  it("treats a usable Chat path as a ready agentic workspace", () => {
+    // Document knowledge is served by the control plane itself, so there is no
+    // second plane whose health could hold the workspace back.
     const readiness = deriveWorkspaceReadiness({
       connections: [connection("INFERENCE"), connection("HERMES")],
       runtimeNodes: [onlineNode],
@@ -54,14 +56,13 @@ describe("deriveWorkspaceReadiness", () => {
     });
 
     expect(readiness.chatReady).toBe(true);
-    expect(readiness.knowledgeReady).toBe(false);
-    expect(readiness.agenticReady).toBe(false);
+    expect(readiness.agenticReady).toBe(true);
     expect(readiness.nextChatStep).toBeNull();
   });
 
   it("routes the only remaining first-run action to Profiles", () => {
     const readiness = deriveWorkspaceReadiness({
-      connections: [connection("INFERENCE"), connection("HERMES"), connection("SUPERMEMORY")],
+      connections: [connection("INFERENCE"), connection("HERMES")],
       runtimeNodes: [onlineNode],
       profiles: [],
       runtime: { enabled: false } as AgentRuntimeControl,

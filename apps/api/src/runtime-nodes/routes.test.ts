@@ -65,7 +65,6 @@ function manager(): HermesRuntimeNodeManager {
         controlPlaneUrl: input.controlPlaneUrl,
         hermesBaseUrl: input.baseUrl,
         hermesImage: input.hermesImage,
-        supermemoryVersion: input.supermemoryVersion,
         expiresAt: "2026-07-30T00:30:00.000Z",
       },
     })),
@@ -77,7 +76,6 @@ function manager(): HermesRuntimeNodeManager {
       controlPlaneUrl: "https://orcasynapse.internal",
       hermesBaseUrl: node.baseUrl,
       hermesImage: "nousresearch/hermes-agent:latest",
-      supermemoryVersion: "latest",
       expiresAt: "2026-07-30T00:30:00.000Z",
     })),
     enroll: vi.fn(async () => ({
@@ -86,7 +84,6 @@ function manager(): HermesRuntimeNodeManager {
       modelBootstrap: { provider: "custom" as const, baseUrl: "https://orcasynapse.internal/internal/v1", modelAlias: "hermes-agent", apiKey: "g".repeat(64) },
     })),
     heartbeat: vi.fn(async () => ({ accepted: true as const, serverTime: NOW })),
-    registerMemory: vi.fn(async () => ({ accepted: true as const, connectionId: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb" })),
     mutate: vi.fn(async () => ({ ...node, status: "DRAINING" as const, revision: 1 })),
     remove: vi.fn(async () => undefined),
   };
@@ -115,12 +112,14 @@ describe("Hermes runtime-node routes", () => {
     expect(ready.headers["content-disposition"]).toBe("inline; filename=install-agentic-node.sh");
     expect(ready.body).toContain("#!/usr/bin/env bash");
     expect(ready.body).toContain("write_file_from_stdin()");
-    expect(ready.body).toContain("HERMES_MANAGED_DIR=/opt/data/.orcasynapse-bootstrap-managed");
-    expect(ready.body).toContain("allow_lazy_installs: true");
     expect(ready.body).toContain("allow_lazy_installs: false");
-    expect(ready.body).toContain("activate_durable_lazy_target");
+    // The memory provider bootstrap is gone with Supermemory; agent memory is
+    // served by the control plane, so VM2 installs exactly one plane.
+    expect(ready.body).not.toContain("supermemory");
     expect(ready.body).toContain("-in \"${message_file}\"");
-    expect(ready.body).toContain("Local identity fingerprint:");
+    // A trust mismatch must still name the identity this VM2 actually holds,
+    // so an operator can compare it against the dashboard record.
+    expect(ready.body).toContain("VM1 rejected the enrolled VM2 identity ${node_fingerprint}");
     expect(ready.body).not.toContain("/dev/stdin");
     expect((await app.inject({ method: "GET", url: "/install/hermes-node.sh" })).statusCode).toBe(404);
     const remover = await app.inject({ method: "GET", url: "/install/remove-agentic-node.sh" });
@@ -129,7 +128,7 @@ describe("Hermes runtime-node routes", () => {
     expect(remover.body).toContain("VM2 SECURE DECOMMISSION");
     expect(remover.body).toContain("Type %bDESTROY%b to continue");
     expect(remover.body).toContain("validate_container_ownership");
-    expect(remover.body).toContain('rm -rf --one-file-system -- "${STATE_ROOT}" "${SUPERMEMORY_ROOT}"');
+    expect(remover.body).toContain('rm -rf --one-file-system -- "${STATE_ROOT}"');
     expect(remover.body).not.toMatch(/docker system prune|apt(?:-get)? remove|rm -rf \/(?:\s|$)/);
 
     for (const state of [
@@ -194,7 +193,7 @@ describe("Hermes runtime-node routes", () => {
     expect(invitation.json()).toMatchObject({ bundle: { format: "orcasynapse-hermes-enrollment/v1", token: "t".repeat(43) } });
     expect(runtimeNodeManager.createInvitation).toHaveBeenCalledWith(
       expect.objectContaining({ id: ADMIN_ID }),
-      expect.objectContaining({ slug: node.slug, supermemoryVersion: "0.0.7-rc.2" }),
+      expect.objectContaining({ slug: node.slug, hermesImage: "nousresearch/hermes-agent:latest" }),
     );
 
     const bootstrap = await app.inject({

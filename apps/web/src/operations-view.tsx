@@ -388,7 +388,7 @@ export function OperationsView({ unlocked, scopes, onConfigure, onUnauthorized }
         {showIncidentForm && <form className="panel aiops-form" onSubmit={(event) => void createIncident(event)}>
           <label><span>Title</span><input name="title" minLength={3} maxLength={160} required /></label>
           <label><span>Severity</span><select name="severity"><option value="WARNING">Warning</option><option value="CRITICAL">Critical</option></select></label>
-          <label><span>Component</span><input name="component" minLength={1} maxLength={80} placeholder="e.g. supermemory-vm2" required /></label>
+          <label><span>Component</span><input name="component" minLength={1} maxLength={80} placeholder="e.g. hermes-vm2" required /></label>
           <label><span>Owner</span><input name="owner" maxLength={160} placeholder="Optional team or operator" /></label>
           <label className="wide"><span>Summary</span><textarea name="summary" minLength={3} maxLength={1000} rows={3} required /></label>
           <div className="wide form-actions"><button className="primary-button" type="submit" disabled={busy}>Create incident</button></div>

@@ -235,9 +235,9 @@ describe("DrizzleOnboardingManager validation", () => {
     const roundTrip = evidence.find(({ code, outcome }) => code === "knowledge-roundtrip" && outcome === "PASSED");
     expect(roundTrip?.details).toMatchObject({ documentId });
     // The stage must attest a contract that is actually seeded, or it throws.
-    expect(roundTrip?.componentKey).toBe("supermemory-local");
+    expect(roundTrip?.componentKey).toBe("knowledge-index");
     expect(roundTrip?.details).toMatchObject({ chunks: 1, embeddingModel: "Xenova/bge-m3" });
-    expect(passed.components.find(({ key }) => key === "supermemory-local")?.status).toBe("PASSED");
+    expect(passed.components.find(({ key }) => key === "knowledge-index")?.status).toBe("PASSED");
   });
 
   it("passes the Hermes profile stage from a checksummed distribution", async () => {
