@@ -3,6 +3,8 @@ import {
   documentListSchema,
   documentMetricsSchema,
   documentUploadMetadataSchema,
+  isSupportedDocumentMediaType,
+  SUPPORTED_DOCUMENT_TYPES,
   type AdminScope,
 } from "@orcasynapse/contracts";
 import multipart from "@fastify/multipart";
@@ -141,6 +143,14 @@ export async function registerDocumentRoutes(
     try {
       const file = await request.file();
       if (!file) return reply.code(400).send({ error: "INVALID_REQUEST", message: "One document file is required." });
+      // Reject an unsupported type here rather than letting extraction fail
+      // after the bytes have already been read and hashed.
+      if (!isSupportedDocumentMediaType(file.mimetype)) {
+        return reply.code(415).send({
+          error: "UNSUPPORTED_MEDIA_TYPE",
+          message: `OrcaSynapse cannot extract text from '${file.mimetype}'. Supported formats: ${SUPPORTED_DOCUMENT_TYPES.map(({ extension }) => extension).join(", ")}.`,
+        });
+      }
       const result = await manager.upload(principal, {
         fileName: file.filename,
         declaredMediaType: file.mimetype,

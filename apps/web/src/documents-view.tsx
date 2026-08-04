@@ -5,6 +5,7 @@ import type {
   DocumentStatus,
   DocumentSummary,
 } from "@orcasynapse/contracts";
+import { DOCUMENT_UPLOAD_ACCEPT } from "@orcasynapse/contracts";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   OrcaSynapseApiError,
@@ -191,7 +192,7 @@ export function DocumentsView(props: DocumentsViewProps) {
       <label className="document-file-field">
         <span>{file ? file.name : "Choose a source file"}</span>
         <small>TXT, Markdown, HTML, PDF, DOCX, PNG, JPEG, or WebP · up to 50 MB</small>
-        <input ref={fileInput} type="file" required accept=".txt,.md,.html,.pdf,.docx,.png,.jpg,.jpeg,.webp,text/plain,text/markdown,text/html,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/png,image/jpeg,image/webp" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
+        <input ref={fileInput} type="file" required accept={DOCUMENT_UPLOAD_ACCEPT} onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
       </label>
       <div className="knowledge-capability-note">
         <strong>Local extraction compatibility</strong>

@@ -92,6 +92,68 @@ describe("document routes", () => {
     await app.close();
   });
 
+  it("refuses a format the extractor cannot read, before the manager sees it", async () => {
+    const documentManager = manager();
+    const app = Fastify();
+    await app.register(async (router) => registerDocumentRoutes(router, { sessionManager: sessionManager(), manager: documentManager }), { prefix: "/api/v1/documents" });
+    const boundary = "orcasynapse-test-boundary";
+    const body = [
+      `--${boundary}`,
+      'Content-Disposition: form-data; name="file"; filename="scan.png"',
+      "Content-Type: image/png",
+      "",
+      "not text",
+      `--${boundary}--`,
+      "",
+    ].join("\r\n");
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/documents?classification=INTERNAL&retentionDays=30",
+      headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+      payload: body,
+    });
+
+    expect(response.statusCode).toBe(415);
+    expect(response.json()).toMatchObject({ error: "UNSUPPORTED_MEDIA_TYPE" });
+    // The message names what the operator can actually upload.
+    expect(response.json().message).toContain(".xlsx");
+    // Rejection happens at the boundary, not after ingestion has read the file.
+    expect(documentManager.upload).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it("accepts a spreadsheet, which the picker previously could not offer", async () => {
+    const documentManager = manager();
+    const app = Fastify();
+    await app.register(async (router) => registerDocumentRoutes(router, { sessionManager: sessionManager(), manager: documentManager }), { prefix: "/api/v1/documents" });
+    const boundary = "orcasynapse-test-boundary";
+    const body = [
+      `--${boundary}`,
+      'Content-Disposition: form-data; name="file"; filename="capacity.xlsx"',
+      "Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "",
+      "workbook bytes",
+      `--${boundary}--`,
+      "",
+    ].join("\r\n");
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/documents?classification=INTERNAL&retentionDays=30",
+      headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+      payload: body,
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(documentManager.upload).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ fileName: "capacity.xlsx" }),
+      expect.anything(),
+    );
+    await app.close();
+  });
+
   it("reports zero retained source bytes", async () => {
     const app = Fastify();
     await app.register(async (router) => registerDocumentRoutes(router, { sessionManager: sessionManager(), manager: manager() }), { prefix: "/api/v1/documents" });
