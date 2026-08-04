@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import type { PrismaRuntimeConnectionResolver } from "./connection-resolver.js";
+import type { DrizzleRuntimeConnectionResolver } from "./connection-resolver.js";
 import { HermesClient } from "./hermes-client.js";
 
-function resolver(configuration: Record<string, unknown> = {}): PrismaRuntimeConnectionResolver {
+function resolver(configuration: Record<string, unknown> = {}): DrizzleRuntimeConnectionResolver {
   return {
     resolveOne: vi.fn(async () => ({
       id: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb",
@@ -11,7 +11,7 @@ function resolver(configuration: Record<string, unknown> = {}): PrismaRuntimeCon
       configuration,
       secrets: { apiKey: "strong-hermes-key" },
     })),
-  } as unknown as PrismaRuntimeConnectionResolver;
+  } as unknown as DrizzleRuntimeConnectionResolver;
 }
 
 const capabilities = {

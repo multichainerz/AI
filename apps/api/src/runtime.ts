@@ -26,7 +26,7 @@ import {
   type EnterpriseIdentityManager,
 } from "./identity/enterprise-session.js";
 import {
-  PrismaRuntimeConnectionResolver,
+  DrizzleRuntimeConnectionResolver,
   HermesClient,
   SupermemoryClient,
 } from "@orcasynapse/runtime-clients";
@@ -122,7 +122,7 @@ export function createRuntimeServices(): RuntimeServices {
     );
     const sessionManager = new PrismaAdminSessionManager(prisma, authenticator);
     const operationsManager = new DrizzleOperationsManager(database);
-    const documentResolver = new PrismaRuntimeConnectionResolver(prisma, encryption);
+    const documentResolver = new DrizzleRuntimeConnectionResolver(database, encryption);
     const modelManager = new PrismaModelManager(prisma);
     const guardrailManager = new PrismaGuardrailManager(prisma);
     const promptManager = new PrismaPromptManager(prisma);

@@ -1,6 +1,6 @@
 {
   "name": "@orcasynapse/runtime-clients",
-  "version": "1.19.2",
+  "version": "1.19.3",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
@@ -13,6 +13,7 @@
   "dependencies": {
     "@orcasynapse/contracts": "workspace:*",
     "@orcasynapse/database": "workspace:*",
-    "@orcasynapse/security": "workspace:*"
+    "@orcasynapse/security": "workspace:*",
+    "drizzle-orm": "0.45.2"
   }
 }

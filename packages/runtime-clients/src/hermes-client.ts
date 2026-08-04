@@ -1,4 +1,4 @@
-import type { PrismaRuntimeConnectionResolver, RuntimeConnection } from "./connection-resolver.js";
+import type { DrizzleRuntimeConnectionResolver, RuntimeConnection } from "./connection-resolver.js";
 
 const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
 const MAX_SSE_EVENT_BYTES = 64 * 1024;
@@ -213,7 +213,7 @@ export interface HermesRunState {
 
 export class HermesClient {
   constructor(
-    private readonly resolver: PrismaRuntimeConnectionResolver,
+    private readonly resolver: DrizzleRuntimeConnectionResolver,
     private readonly fetcher: typeof fetch = fetch,
   ) {}
 

@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 import { ORCASYNAPSE_VERSION } from "@orcasynapse/contracts";
-import { createPrismaClient, readBootstrapSecret } from "@orcasynapse/database";
+import { createDrizzleClient, createPrismaClient, readBootstrapSecret } from "@orcasynapse/database";
 import { decodeMasterKey, EnvelopeEncryption, RunCapabilityIssuer } from "@orcasynapse/security";
 import {
-  PrismaRuntimeConnectionResolver,
+  DrizzleRuntimeConnectionResolver,
   HermesClient,
   SupermemoryClient,
 } from "@orcasynapse/runtime-clients";
@@ -14,10 +14,11 @@ import { PrismaAgentProcessor, WorkerAgentKnowledgeRetriever } from "./agent-pro
 
 const databaseUrl = readBootstrapSecret("orcasynapse_database_url");
 const prisma = createPrismaClient(databaseUrl);
+const { database, close: closeDatabase } = createDrizzleClient(databaseUrl);
 const workerId = randomUUID();
 const masterKey = decodeMasterKey(readBootstrapSecret("orcasynapse_master_key"));
 const encryption = new EnvelopeEncryption({ masterKey });
-const documentResolver = new PrismaRuntimeConnectionResolver(prisma, encryption);
+const documentResolver = new DrizzleRuntimeConnectionResolver(database, encryption);
 const runtime = new WorkerRuntime(
   prisma,
   new PrismaWorkerRegistry(prisma),
@@ -52,6 +53,7 @@ const shutdown = async () => {
   } finally {
     try {
       await prisma.$disconnect();
+      await closeDatabase();
     } catch (error) {
       console.error("OrcaSynapse worker database disconnect failed.", error);
       process.exitCode = 1;
@@ -68,6 +70,9 @@ try {
   console.error("OrcaSynapse worker failed to start.", error);
   await prisma.$disconnect().catch((disconnectError) =>
     console.error("OrcaSynapse worker database disconnect failed.", disconnectError),
+  );
+  await closeDatabase().catch((closeError) =>
+    console.error("OrcaSynapse worker database pool close failed.", closeError),
   );
   process.exitCode = 1;
 }

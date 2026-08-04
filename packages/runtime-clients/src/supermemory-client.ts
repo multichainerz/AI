@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { Readable } from "node:stream";
-import type { PrismaRuntimeConnectionResolver, RuntimeConnection } from "./connection-resolver.js";
+import type { DrizzleRuntimeConnectionResolver, RuntimeConnection } from "./connection-resolver.js";
 
 const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
 
@@ -139,7 +139,7 @@ export interface SupermemorySearchHit {
 
 export class SupermemoryClient {
   constructor(
-    private readonly resolver: PrismaRuntimeConnectionResolver,
+    private readonly resolver: DrizzleRuntimeConnectionResolver,
     private readonly fetcher: typeof fetch = fetch,
   ) {}
 
