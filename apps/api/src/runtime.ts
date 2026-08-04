@@ -13,7 +13,7 @@ import {
   type AdminSessionManager,
 } from "./auth/admin-session.js";
 import type { ConnectionManager } from "./connections/connection-manager.js";
-import { PrismaConnectionManager } from "./connections/prisma-connection-manager.js";
+import { DrizzleConnectionManager } from "./connections/drizzle-connection-manager.js";
 import { ConnectionTestService } from "./connections/diagnostics/connection-test-service.js";
 import { InferenceDiscoveryService } from "./connections/diagnostics/inference-discovery-service.js";
 import { ConnectionMonitorRuntime, type ConnectionMonitorService } from "./connections/connection-monitor.js";
@@ -113,7 +113,7 @@ export function createRuntimeServices(): RuntimeServices {
       readBootstrapSecret("orcasynapse_installation_key"),
     );
 
-    const connectionManager = new PrismaConnectionManager(prisma, encryption);
+    const connectionManager = new DrizzleConnectionManager(database, encryption);
     const connectionTestService = new ConnectionTestService(connectionManager);
     const inferenceDiscoveryService = new InferenceDiscoveryService(connectionManager);
     const connectionMonitor = new ConnectionMonitorRuntime(
