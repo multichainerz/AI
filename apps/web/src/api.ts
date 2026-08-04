@@ -1,4 +1,5 @@
 import {
+  auditEventListSchema,
   connectionTestResultSchema,
   connectionMonitoringControlSchema,
   inferenceDiscoveryResultSchema,
@@ -19,6 +20,8 @@ import {
   enterpriseSessionSchema,
   oidcStatusSchema,
   type AdministratorSession,
+  type AuditEventList,
+  type AuditEventQuery,
   type CreateServiceConnection,
   type ConnectionTestResult,
   type ConnectionMonitoringControl,
@@ -892,6 +895,15 @@ export async function recordProductionReadinessApproval(
     method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
   });
   return productionReadinessApprovalSchema.parse(await parsedResponse(response));
+}
+
+export async function getAuditEvents(query: AuditEventQuery): Promise<AuditEventList> {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && value !== null && value !== "") search.set(key, String(value));
+  }
+  const response = await fetch(`/api/v1/admin/audit/events?${search.toString()}`, { credentials: "same-origin" });
+  return auditEventListSchema.parse(await parsedResponse(response));
 }
 
 export async function getOnboardingSnapshot(): Promise<OnboardingSnapshot> {

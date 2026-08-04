@@ -64,6 +64,7 @@ const ModelsView = lazy(() => import("./models-view.js").then((module) => ({ def
 const GuardrailsView = lazy(() => import("./guardrails-view.js").then((module) => ({ default: module.GuardrailsView })));
 const PromptsView = lazy(() => import("./prompts-view.js").then((module) => ({ default: module.PromptsView })));
 const OnboardingView = lazy(() => import("./onboarding-view.js").then((module) => ({ default: module.OnboardingView })));
+const AuditView = lazy(() => import("./audit-view.js").then((module) => ({ default: module.AuditView })));
 
 function Glyph({ name }: { name: string }) {
   const glyphs: Record<string, ReactNode> = {
@@ -776,6 +777,14 @@ function App() {
              onOpenOperations={() => selectView("Operations")}
              onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23platform%2Fsetup")}
             onUnauthorized={() => {
+              sessionGeneration.current += 1;
+              setAdminSession(null);
+            }}
+          />
+        ) : activeView === "Audit" ? (
+          <AuditView
+            session={adminSession}
+            onSessionExpired={() => {
               sessionGeneration.current += 1;
               setAdminSession(null);
             }}
