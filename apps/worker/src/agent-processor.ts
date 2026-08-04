@@ -1,4 +1,4 @@
-import { agentCapabilitySchema, effectiveMemoryMode, knowledgeSourceSchema, type AgentRunJobPayload, type KnowledgeSource } from "@orcasynapse/contracts";
+import { agentCapabilitySchema, DEFAULT_MEMORY_POLICY, effectiveMemoryMode, knowledgeSourceSchema, type AgentMemoryMode, type AgentRunJobPayload, type KnowledgeSource } from "@orcasynapse/contracts";
 import { and, desc, eq, inArray, isNotNull, isNull, lt, ne, or, sql } from "drizzle-orm";
 import {
   agentProfile,
@@ -25,7 +25,6 @@ import { HermesClient, type HermesSafeRunEvent } from "@orcasynapse/runtime-clie
 // everything else an agent learned about the person.
 const MINIMUM_MEMORY_CHARACTERS = 12;
 const MAXIMUM_MEMORY_CHARACTERS = 2_000;
-const MAXIMUM_MEMORIES_PER_AGENT = 500;
 
 const ACTIVE_HERMES_STATUSES = new Set(["queued", "started", "running", "stopping"]);
 const PROCESSOR_LEASE_MS = 90_000;
@@ -61,11 +60,33 @@ export interface AgentKnowledgeRetriever {
  * about what an agent may know inside OrcaSynapse.
  */
 export interface AgentMemoryPort {
-  recall(ownerSubject: string, agentProfileId: string, query: string): Promise<MemoryRecollection[]>;
-  capture(ownerSubject: string, agentProfileId: string, items: readonly string[], provenance: {
-    runId: string;
-    conversationId?: string | undefined;
-  }): Promise<number>;
+  recall(
+    ownerSubject: string,
+    agentProfileId: string,
+    query: string,
+    limits: MemoryLimits,
+  ): Promise<MemoryRecollection[]>;
+  capture(
+    ownerSubject: string,
+    agentProfileId: string,
+    items: readonly string[],
+    provenance: { runId: string; conversationId?: string | undefined },
+    limits: MemoryLimits,
+  ): Promise<number>;
+}
+
+/**
+ * The parts of the active memory policy that bound a single run.
+ *
+ * Passed in per call rather than read inside the store, so the boundary an
+ * administrator set is applied at the moment of use and a suspended policy
+ * takes effect on work already queued.
+ */
+export interface MemoryLimits {
+  recallLimit: number;
+  recallMinimumScore: number;
+  retentionDays: number | null;
+  maximumItemsPerOwner: number;
 }
 
 export interface MemoryRecollection {
@@ -80,12 +101,20 @@ export class WorkerAgentMemory implements AgentMemoryPort {
     private readonly embedder: TextEmbedder,
   ) {}
 
-  async recall(ownerSubject: string, agentProfileId: string, query: string): Promise<MemoryRecollection[]> {
+  async recall(
+    ownerSubject: string,
+    agentProfileId: string,
+    query: string,
+    limits: MemoryLimits,
+  ): Promise<MemoryRecollection[]> {
     const trimmed = query.trim();
     if (!trimmed) return [];
     const [queryEmbedding] = await this.embedder.embed([trimmed]);
     if (!queryEmbedding) return [];
-    const hits = await this.memories.recall(ownerSubject, agentProfileId, trimmed, queryEmbedding);
+    const hits = await this.memories.recall(ownerSubject, agentProfileId, trimmed, queryEmbedding, {
+      limit: limits.recallLimit,
+      minimumScore: limits.recallMinimumScore,
+    });
     return hits.map(({ id, content }) => ({ id, content }));
   }
 
@@ -94,6 +123,7 @@ export class WorkerAgentMemory implements AgentMemoryPort {
     agentProfileId: string,
     items: readonly string[],
     provenance: { runId: string; conversationId?: string | undefined },
+    limits: MemoryLimits,
   ): Promise<number> {
     const candidates = items
       .map((item) => item.trim())
@@ -105,8 +135,19 @@ export class WorkerAgentMemory implements AgentMemoryPort {
       .map((content, index) => ({ content, embedding: embeddings[index] }))
       .filter((item): item is { content: string; embedding: number[] } => Array.isArray(item.embedding));
     if (stored.length === 0) return 0;
-    const written = await this.memories.remember(ownerSubject, agentProfileId, stored, provenance);
-    await this.memories.prune(ownerSubject, agentProfileId, MAXIMUM_MEMORIES_PER_AGENT);
+    // The expiry is stamped now, from the policy in force at capture, so
+    // changing retention later cannot retroactively extend what was already
+    // stored under a shorter promise.
+    const retentionUntil = limits.retentionDays === null
+      ? null
+      : new Date(Date.now() + limits.retentionDays * 86_400_000);
+    const written = await this.memories.remember(
+      ownerSubject,
+      agentProfileId,
+      stored,
+      { ...provenance, retentionUntil },
+    );
+    await this.memories.prune(ownerSubject, agentProfileId, limits.maximumItemsPerOwner);
     return written;
   }
 }
@@ -446,7 +487,8 @@ export class DrizzleAgentProcessor {
         }
         let recollections: MemoryRecollection[] = [];
         if (this.memory && effectiveCapabilities(run.effectiveCapabilities).includes("memory:agent:read")) {
-          recollections = await this.memory.recall(run.ownerSubject, run.profileId, run.input);
+          const { limits } = await this.memoryLimits();
+          recollections = await this.memory.recall(run.ownerSubject, run.profileId, run.input, limits);
           assertLease();
         }
         run = await this.load(run.id);
@@ -974,22 +1016,53 @@ export class DrizzleAgentProcessor {
    * Failure here is logged and swallowed. The run completed and the person has
    * their answer; losing a memory is not a reason to fail it retroactively.
    */
+  /** The active policy's limits, or the shipped defaults when none is active. */
+  private async memoryLimits(): Promise<{ limits: MemoryLimits; ceiling: AgentMemoryMode | null }> {
+    const [policy] = await this.database
+      .select({
+        mode: memoryPolicy.maximumCaptureMode,
+        retentionDays: memoryPolicy.retentionDays,
+        maximumItemsPerOwner: memoryPolicy.maximumItemsPerOwner,
+        recallLimit: memoryPolicy.recallLimit,
+        recallMinimumScore: memoryPolicy.recallMinimumScore,
+      })
+      .from(memoryPolicy)
+      .where(eq(memoryPolicy.status, "ACTIVE"))
+      .limit(1);
+    if (!policy) {
+      return {
+        ceiling: null,
+        limits: {
+          recallLimit: DEFAULT_MEMORY_POLICY.recallLimit,
+          recallMinimumScore: DEFAULT_MEMORY_POLICY.recallMinimumScore,
+          retentionDays: DEFAULT_MEMORY_POLICY.retentionDays,
+          maximumItemsPerOwner: DEFAULT_MEMORY_POLICY.maximumItemsPerOwner,
+        },
+      };
+    }
+    return {
+      ceiling: policy.mode,
+      limits: {
+        recallLimit: policy.recallLimit,
+        recallMinimumScore: policy.recallMinimumScore,
+        retentionDays: policy.retentionDays,
+        maximumItemsPerOwner: policy.maximumItemsPerOwner,
+      },
+    };
+  }
+
   private async rememberTurn(run: LoadedRun, output: string | null, workerId: string): Promise<void> {
     if (!this.memory) return;
     const capabilities = effectiveCapabilities(run.effectiveCapabilities);
     if (!capabilities.includes("memory:agent:write")) return;
-    // The installation ceiling is read at capture time, not at submission, so
-    // suspending capture takes effect on runs that are already in flight.
-    const [policy] = await this.database
-      .select({ mode: memoryPolicy.maximumCaptureMode, retentionDays: memoryPolicy.retentionDays })
-      .from(memoryPolicy)
-      .where(eq(memoryPolicy.status, "ACTIVE"))
-      .limit(1);
-    const mode = effectiveMemoryMode(run.version.memoryMode, policy?.mode ?? null);
+    // The installation policy is read at capture time, not at submission, so
+    // suspending or tightening it takes effect on runs already in flight.
+    const { limits, ceiling } = await this.memoryLimits();
+    const mode = effectiveMemoryMode(run.version.memoryMode, ceiling);
     if (mode !== "LEARN_USER" && mode !== "LEARN_EXCHANGE") return;
     const items = [run.input, ...(mode === "LEARN_EXCHANGE" && output ? [output] : [])];
     try {
-      const stored = await this.memory.capture(run.ownerSubject, run.profileId, items, { runId: run.id });
+      const stored = await this.memory.capture(run.ownerSubject, run.profileId, items, { runId: run.id }, limits);
       if (stored === 0) return;
       await this.database.insert(auditEvent).values({
         actorType: "SERVICE",

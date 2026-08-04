@@ -1,4 +1,5 @@
 import type {
+  AgentMemoryRecord,
   AgentRunApproval,
   AgentProfile,
   ChatConversation,
@@ -21,6 +22,8 @@ import {
   forkChatConversation,
   getChatConversation,
   getDocuments,
+  getOwnAgentMemory,
+  forgetOwnAgentMemory,
   getChatConversations,
   getAgentProfiles,
   streamChatEvents,
@@ -218,6 +221,8 @@ export function ChatView({
 }: ChatViewProps) {
   const [knowledgeOpen, setKnowledgeOpen] = useState(false);
   const [library, setLibrary] = useState<DocumentSummary[]>([]);
+  const [memoryOpen, setMemoryOpen] = useState(false);
+  const [memories, setMemories] = useState<AgentMemoryRecord[] | null>(null);
   const [conversations, setConversations] = useState<ChatConversationSummary[]>([]);
   const [active, setActive] = useState<ChatConversation | null>(null);
   const [draft, setDraft] = useState("");
@@ -588,6 +593,28 @@ export function ChatView({
     }
   };
 
+  // "What does it know about me" has to be answerable by the person it is
+  // about, not only by an administrator reading Platform → Memory.
+  const openMemory = async () => {
+    setMemoryOpen(true);
+    setMemories(null);
+    try {
+      setMemories((await getOwnAgentMemory()).items);
+    } catch (cause) {
+      setMemoryOpen(false);
+      setError(cause instanceof Error ? cause.message : "Unable to load what agents remember about you.");
+    }
+  };
+
+  const forgetMemory = async (id: string) => {
+    try {
+      await forgetOwnAgentMemory(id);
+      setMemories((current) => current?.filter((item) => item.id !== id) ?? null);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to delete that memory.");
+    }
+  };
+
   const openKnowledge = async () => {
     setKnowledgeOpen(true);
     try {
@@ -831,6 +858,7 @@ export function ChatView({
               <button type="button" disabled={working || loading} onClick={() => void openKnowledge()}>
                 Knowledge{active.knowledgeDocuments.length > 0 ? ` · ${active.knowledgeDocuments.length}` : ""}
               </button>
+              <button type="button" disabled={working || loading} onClick={() => void openMemory()}>Memory</button>
               <button type="button" disabled={working || loading} onClick={() => void forkConversation()}>Fork</button>
               <button type="button" disabled={working || loading} onClick={exportConversation}>Export</button>
               <button type="button" disabled={working || loading} onClick={() => void setArchiveStatus(active.status === "ARCHIVED" ? "ACTIVE" : "ARCHIVED")}>{active.status === "ARCHIVED" ? "Restore" : "Archive"}</button>
@@ -869,6 +897,38 @@ export function ChatView({
                     </li>
                   );
                 })}
+              </ul>
+            )}
+          </div>
+        )}
+
+        {memoryOpen && (
+          <div className="chat-knowledge" role="dialog" aria-labelledby="chat-memory-title">
+            <header>
+              <div>
+                <strong id="chat-memory-title">What agents remember about you</strong>
+                <span>Stored in this installation only. Deleting an item removes it for every agent immediately.</span>
+              </div>
+              <button type="button" aria-label="Close memory" onClick={() => setMemoryOpen(false)}>×</button>
+            </header>
+            {memories === null ? (
+              <p className="chat-knowledge-empty">Loading…</p>
+            ) : memories.length === 0 ? (
+              <p className="chat-knowledge-empty">Nothing is stored about you. Agents answer from documents and the current conversation only.</p>
+            ) : (
+              <ul>
+                {memories.map((item) => (
+                  <li key={item.id}>
+                    <label>
+                      <span>{item.content}</span>
+                      <small>
+                        {item.agentProfileSlug} · {new Date(item.createdAt).toLocaleDateString()}
+                        {item.retentionUntil ? ` · expires ${new Date(item.retentionUntil).toLocaleDateString()}` : " · kept until deleted"}
+                      </small>
+                    </label>
+                    <button type="button" onClick={() => void forgetMemory(item.id)}>Forget</button>
+                  </li>
+                ))}
               </ul>
             )}
           </div>

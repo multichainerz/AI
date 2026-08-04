@@ -1,5 +1,6 @@
 import {
   attachChatDocumentSchema,
+  agentMemoryRecordListSchema,
   chatConversationSchema,
   chatConversationListSchema,
   chatConversationSummarySchema,
@@ -35,11 +36,13 @@ import {
   type ChatPrincipal,
   type ChatManager,
 } from "./chat-manager.js";
+import type { MemoryManager } from "../memory/memory-manager.js";
 
 export interface ChatRouteOptions {
   sessionManager?: AdminSessionManager;
   identityManager?: EnterpriseIdentityManager;
   manager?: ChatManager;
+  memoryManager?: MemoryManager;
 }
 
 async function requireChatPrincipal(
@@ -83,7 +86,7 @@ async function requireChatPrincipal(
   return null;
 }
 
-function conversationId(value: unknown): string | null {
+function uuidParam(value: unknown): string | null {
   return typeof value === "string" &&
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
     ? value
@@ -168,7 +171,7 @@ export async function registerChatRoutes(
     if (!options.manager) {
       return reply.code(423).send({ error: "PLATFORM_LOCKED", message: "Chat services are not ready." });
     }
-    const id = conversationId((request.params as Record<string, unknown>).conversationId);
+    const id = uuidParam((request.params as Record<string, unknown>).conversationId);
     if (!id) return reply.code(400).send({ error: "INVALID_REQUEST", message: "Conversation ID is invalid." });
     try {
       return chatConversationSchema.parse(await options.manager.get(principal, id));
@@ -183,7 +186,7 @@ export async function registerChatRoutes(
     if (!options.manager) {
       return reply.code(423).send({ error: "PLATFORM_LOCKED", message: "Chat services are not ready." });
     }
-    const id = conversationId((request.params as Record<string, unknown>).conversationId);
+    const id = uuidParam((request.params as Record<string, unknown>).conversationId);
     const input = updateChatConversationSchema.safeParse(request.body);
     if (!id || !input.success) {
       return reply.code(400).send({
@@ -204,7 +207,7 @@ export async function registerChatRoutes(
     if (!options.manager) {
       return reply.code(423).send({ error: "PLATFORM_LOCKED", message: "Chat services are not ready." });
     }
-    const id = conversationId((request.params as Record<string, unknown>).conversationId);
+    const id = uuidParam((request.params as Record<string, unknown>).conversationId);
     const input = sendChatMessageSchema.safeParse(request.body);
     if (!id || !input.success) {
       return reply.code(400).send({
@@ -229,8 +232,8 @@ export async function registerChatRoutes(
       return reply.code(423).send({ error: "PLATFORM_LOCKED", message: "Chat services are not ready." });
     }
     const parameters = request.params as Record<string, unknown>;
-    const conversation = conversationId(parameters.conversationId);
-    const message = conversationId(parameters.messageId);
+    const conversation = uuidParam(parameters.conversationId);
+    const message = uuidParam(parameters.messageId);
     if (!conversation || !message) {
       return reply.code(400).send({ error: "INVALID_REQUEST", message: "Conversation or message ID is invalid." });
     }
@@ -278,13 +281,47 @@ export async function registerChatRoutes(
     }
   });
 
+  app.get("/memory", async (request, reply) => {
+    const principal = await requireChatPrincipal(request, reply, options);
+    if (!principal) return;
+    if (!options.memoryManager) {
+      return reply.code(423).send({ error: "PLATFORM_LOCKED", message: "Chat services are not ready." });
+    }
+    void reply.header("cache-control", "no-store");
+    // Scoped to the caller's own subject inside the manager, so this can only
+    // ever return what an agent learned about the person asking.
+    return agentMemoryRecordListSchema.parse(await options.memoryManager.recordsForOwner(principal.subject));
+  });
+
+  app.delete("/memory/:memoryId", async (request, reply) => {
+    const principal = await requireChatPrincipal(request, reply, options);
+    if (!principal) return;
+    if (!options.memoryManager) {
+      return reply.code(423).send({ error: "PLATFORM_LOCKED", message: "Chat services are not ready." });
+    }
+    const memoryId = uuidParam((request.params as Record<string, unknown>).memoryId);
+    if (!memoryId) return reply.code(400).send({ error: "INVALID_REQUEST", message: "Memory ID is invalid." });
+    try {
+      await options.memoryManager.forget(
+        { id: principal.id, ownerSubject: principal.subject },
+        memoryId,
+        "The person this memory is about asked for it to be forgotten.",
+      );
+      return reply.code(204).send();
+    } catch {
+      // A memory outside the caller's scope is indistinguishable from one that
+      // does not exist, which is the point.
+      return reply.code(404).send({ error: "NOT_FOUND", message: "That memory does not exist within your scope." });
+    }
+  });
+
   app.post("/conversations/:conversationId/documents", async (request, reply) => {
     const principal = await requireChatPrincipal(request, reply, options);
     if (!principal) return;
     if (!options.manager) {
       return reply.code(423).send({ error: "PLATFORM_LOCKED", message: "Chat services are not ready." });
     }
-    const id = conversationId((request.params as Record<string, unknown>).conversationId);
+    const id = uuidParam((request.params as Record<string, unknown>).conversationId);
     if (!id) return reply.code(400).send({ error: "INVALID_REQUEST", message: "Conversation ID is invalid." });
     const input = attachChatDocumentSchema.safeParse(request.body);
     if (!input.success) return reply.code(400).send({ error: "INVALID_REQUEST", message: input.error.issues[0]?.message });
@@ -302,8 +339,8 @@ export async function registerChatRoutes(
       return reply.code(423).send({ error: "PLATFORM_LOCKED", message: "Chat services are not ready." });
     }
     const params = request.params as Record<string, unknown>;
-    const id = conversationId(params.conversationId);
-    const documentId = conversationId(params.documentId);
+    const id = uuidParam(params.conversationId);
+    const documentId = uuidParam(params.documentId);
     if (!id || !documentId) return reply.code(400).send({ error: "INVALID_REQUEST", message: "Conversation or document ID is invalid." });
     try {
       return chatConversationSchema.parse(await options.manager.detachDocument(principal, id, documentId));
@@ -316,7 +353,7 @@ export async function registerChatRoutes(
     const principal = await requireChatPrincipal(request, reply, options);
     if (!principal) return;
     if (!options.manager) return reply.code(423).send({ error: "PLATFORM_LOCKED", message: "Chat services are not ready." });
-    const id = conversationId((request.params as Record<string, unknown>).conversationId);
+    const id = uuidParam((request.params as Record<string, unknown>).conversationId);
     const input = forkChatConversationSchema.safeParse(request.body ?? {});
     if (!id || !input.success) return reply.code(400).send({ error: "INVALID_REQUEST", message: id ? input.error?.issues[0]?.message : "Conversation ID is invalid." });
     try {
@@ -330,7 +367,7 @@ export async function registerChatRoutes(
     const principal = await requireChatPrincipal(request, reply, options);
     if (!principal) return;
     if (!options.manager) return reply.code(423).send({ error: "PLATFORM_LOCKED", message: "Chat services are not ready." });
-    const id = conversationId((request.params as Record<string, unknown>).conversationId);
+    const id = uuidParam((request.params as Record<string, unknown>).conversationId);
     if (!id) return reply.code(400).send({ error: "INVALID_REQUEST", message: "Conversation ID is invalid." });
     try {
       await options.manager.delete(principal, id);
@@ -344,7 +381,7 @@ export async function registerChatRoutes(
     const principal = await requireChatPrincipal(request, reply, options);
     if (!principal) return;
     if (!options.manager) return reply.code(423).send({ error: "PLATFORM_LOCKED", message: "Chat services are not ready." });
-    const id = conversationId((request.params as Record<string, unknown>).approvalId);
+    const id = uuidParam((request.params as Record<string, unknown>).approvalId);
     const input = decideAgentRunApprovalSchema.safeParse(request.body);
     if (!id || !input.success) return reply.code(400).send({ error: "INVALID_REQUEST", message: id ? input.error?.issues[0]?.message : "Approval ID is invalid." });
     try {
@@ -360,7 +397,7 @@ export async function registerChatRoutes(
     if (!options.manager) {
       return reply.code(423).send({ error: "PLATFORM_LOCKED", message: "Chat services are not ready." });
     }
-    const id = conversationId((request.params as Record<string, unknown>).conversationId);
+    const id = uuidParam((request.params as Record<string, unknown>).conversationId);
     if (!id) return reply.code(400).send({ error: "INVALID_REQUEST", message: "Conversation ID is invalid." });
     try {
       return chatConversationSchema.parse(await options.manager.cancelActiveRun(principal, id));
@@ -375,7 +412,7 @@ export async function registerChatRoutes(
     if (!options.manager) {
       return reply.code(423).send({ error: "PLATFORM_LOCKED", message: "Chat services are not ready." });
     }
-    const id = conversationId((request.params as Record<string, unknown>).messageId);
+    const id = uuidParam((request.params as Record<string, unknown>).messageId);
     const input = setChatFeedbackSchema.safeParse(request.body);
     if (!id || !input.success) {
       return reply.code(400).send({

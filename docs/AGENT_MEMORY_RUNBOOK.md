@@ -37,12 +37,23 @@ about people" has to take effect now.
 The ceiling is read **at capture time**, not at submission, so suspending it
 also applies to runs already in flight.
 
-| Field | Meaning |
-| --- | --- |
-| `maximumCaptureMode` | The most any agent may store. |
-| `retentionDays` | How long a captured item survives. Null keeps it until deleted. |
-| `maximumItemsPerOwner` | Cap per person per agent; the oldest beyond it are trimmed. |
-| `recallLimit` / `recallMinimumScore` | How many memories a run may recall, and the similarity floor below which a hit is noise. |
+| Field | Meaning | Default with no policy |
+| --- | --- | --- |
+| `maximumCaptureMode` | The most any agent may store. | the profile's own mode |
+| `retentionDays` | How long a captured item survives. Null keeps it until deleted. | 365 |
+| `maximumItemsPerOwner` | Cap per person per agent; the oldest beyond it are trimmed. | 500 |
+| `recallLimit` | How many memories one run may recall. | 6 |
+| `recallMinimumScore` | The similarity floor below which a hit is noise. | 0.4 |
+
+Every field is enforced at the moment of use, not merely recorded. The right
+column is what applies on an installation that has never written a policy —
+capture is still bounded and still expires, so "nobody configured it" never
+means "kept forever".
+
+`retentionDays` is stamped onto each item **as it is captured**, from the policy
+in force at that moment. Lengthening retention later cannot retroactively extend
+items already stored under a shorter promise; shortening it applies to
+everything captured from then on.
 
 Lifecycle matches prompts and guardrails: `DRAFT → ACTIVE → SUSPENDED`, one
 active policy enforced by a partial unique index, `expectedRevision` on every
@@ -64,12 +75,22 @@ the evaluation machinery.
 
 ## Answering "what does it know about me"
 
-Filter **Platform → Memory** by the person's subject to see every item, which
-agent recorded it, when, and when it expires. Deleting one, or purging everything
-for a person, requires a reason and is audited.
+**The person can answer it themselves.** Anyone signed in to Chat opens
+**Memory** in the conversation toolbar and sees every item stored about them —
+its text, which agent recorded it, and when it expires — with a *Forget* button
+on each. No administrator, and no new enterprise scope: it runs on the same
+`chat:use` principal as the conversation itself.
 
-An owner deleting their own memory is scoped by the same SQL predicate as
-retrieval, so a stray identifier can never reach another person's records.
+Both the listing and the deletion are scoped server-side to the caller's own
+subject, taken from the authenticated session and never from the request. The
+scope is the same SQL conjunct retrieval uses, so a stray identifier reaches
+nothing: another person's memory returns `404`, indistinguishable from one that
+does not exist.
+
+An administrator answers the same question from **Platform → Memory**, filtered
+by the person's subject. Deleting one item, or purging everything for a person,
+requires a reason and is audited. Self-service deletions are audited too, and
+marked as such.
 
 ## Retention
 
@@ -103,3 +124,7 @@ changed and why, not what it said about someone.
 5. Delete one item and purge one person; confirm both appear in the audit trail
    with their reasons and neither carries the content.
 6. Confirm a second policy cannot be activated while one is already active.
+7. Activate a policy with `retentionDays: 30`, capture an item, and confirm its
+   `retentionUntil` in **Platform → Memory** is 30 days out — not empty.
+8. Sign in as an ordinary employee, open **Memory** from the Chat toolbar,
+   confirm it shows only their own items, and forget one.

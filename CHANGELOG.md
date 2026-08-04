@@ -5,6 +5,37 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.32.0 — 2026-08-05
+
+Cohesion pass over the memory work: make the whole policy load-bearing, and give
+the person a memory is about a way to see and delete it.
+
+- **enforce every policy field, not just the ceiling.** `retentionDays`,
+  `maximumItemsPerOwner`, `recallLimit` and `recallMinimumScore` were stored,
+  documented, and editable while the worker used hardcoded values and never
+  stamped `retentionUntil` — so every captured memory had no expiry regardless
+  of what the policy said. The active policy now resolves once per run and
+  reaches the store on both recall and capture
+- stamp `retentionUntil` from the policy in force **at capture**, so lengthening
+  retention later cannot retroactively extend items already stored under a
+  shorter promise
+- fall back to the shipped defaults (365 days, 500 items, 6 recalled, 0.4 floor)
+  when no policy is active, so an installation nobody configured still bounds
+  and expires what it stores
+- **ship the self-service surface the ceiling work only described.** Enterprise
+  principals open **Memory** from the Chat toolbar to see everything stored
+  about them and forget any of it. Both the listing and the deletion take the
+  owner from the authenticated session, never the request; another person's
+  memory returns `404`, indistinguishable from one that does not exist
+- drop the orphan `MemorySyncStatus` enum, unreferenced since
+  `DocumentMemoryPublication` was removed in migration 0003 — the last trace of
+  the external memory service in the schema
+- add `apps/api/src/memory/routes.test.ts` covering the scope gate, the reason
+  requirement on every deletion and purge, `cache-control: no-store` on
+  remembered content, and the locked state
+- cover the self-service routes and the policy limits reaching the store,
+  including a suspended policy being ignored rather than enforced
+
 ## ai-v1.31.0 — 2026-08-05
 
 Make what agents remember governable: one installation-wide ceiling, and a

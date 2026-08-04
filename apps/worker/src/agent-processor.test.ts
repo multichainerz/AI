@@ -13,6 +13,7 @@ import {
   serviceConnection,
   type TestDatabase,
 } from "@orcasynapse/database";
+import { DEFAULT_MEMORY_POLICY } from "@orcasynapse/contracts";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DrizzleAgentProcessor,
@@ -20,6 +21,7 @@ import {
   type AgentHermesRuntime,
   type AgentKnowledgeRetriever,
   type AgentMemoryPort,
+  type MemoryLimits,
 } from "./agent-processor.js";
 
 let context: TestDatabase;
@@ -170,13 +172,29 @@ function processor(
 /** Records what was recalled and captured without touching pgvector. */
 function memoryPort(recollections: { id: string; content: string }[] = []): AgentMemoryPort & {
   captured: string[][];
+  captureLimits: MemoryLimits[];
+  recallLimits: MemoryLimits[];
 } {
   const captured: string[][] = [];
+  const captureLimits: MemoryLimits[] = [];
+  const recallLimits: MemoryLimits[] = [];
   return {
     captured,
-    recall: vi.fn(async () => recollections),
-    capture: vi.fn(async (_owner: string, _profile: string, items: readonly string[]) => {
+    captureLimits,
+    recallLimits,
+    recall: vi.fn(async (_owner: string, _profile: string, _query: string, limits: MemoryLimits) => {
+      recallLimits.push(limits);
+      return recollections;
+    }),
+    capture: vi.fn(async (
+      _owner: string,
+      _profile: string,
+      items: readonly string[],
+      _provenance: unknown,
+      limits: MemoryLimits,
+    ) => {
       captured.push([...items]);
+      captureLimits.push(limits);
       return items.length;
     }),
   };
@@ -454,6 +472,71 @@ describe("DrizzleAgentProcessor", () => {
 
     // The profile asked for both sides; the ceiling allows only the person's.
     expect(memory.captured).toEqual([["Summarize the policy."]]);
+  });
+
+  it("hands the store every limit the active policy sets, not just the ceiling", async () => {
+    // Retention and the caps were administrable long before they were
+    // enforced; this asserts the whole policy reaches the store.
+    await healthyBoundary();
+    await context.database.insert(memoryPolicy).values({
+      slug: "short-lived",
+      displayName: "Short lived",
+      description: "Thirty days, tightly capped.",
+      status: "ACTIVE",
+      maximumCaptureMode: "LEARN_USER",
+      retentionDays: 30,
+      maximumItemsPerOwner: 25,
+      recallLimit: 2,
+      recallMinimumScore: 0.7,
+      firstActivatedAt: new Date(),
+    });
+    const id = await queuedRun({}, "LEARN_USER");
+    const memory = memoryPort([{ id: randomUUID(), content: "Prefers metric units." }]);
+
+    await processor(hermes(), noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER);
+
+    expect(memory.recallLimits[0]).toMatchObject({ recallLimit: 2, recallMinimumScore: 0.7 });
+    expect(memory.captureLimits[0]).toMatchObject({
+      retentionDays: 30,
+      maximumItemsPerOwner: 25,
+    });
+  });
+
+  it("falls back to the shipped defaults when no policy is active", async () => {
+    // An installation that never wrote a policy still gets bounded retention,
+    // rather than storing everything forever.
+    await healthyBoundary();
+    const id = await queuedRun({}, "LEARN_USER");
+    const memory = memoryPort();
+
+    await processor(hermes(), noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER);
+
+    expect(memory.captureLimits[0]).toEqual({
+      recallLimit: DEFAULT_MEMORY_POLICY.recallLimit,
+      recallMinimumScore: DEFAULT_MEMORY_POLICY.recallMinimumScore,
+      retentionDays: DEFAULT_MEMORY_POLICY.retentionDays,
+      maximumItemsPerOwner: DEFAULT_MEMORY_POLICY.maximumItemsPerOwner,
+    });
+    expect(DEFAULT_MEMORY_POLICY.retentionDays).not.toBeNull();
+  });
+
+  it("ignores a suspended policy rather than enforcing a ceiling nobody approved", async () => {
+    await healthyBoundary();
+    await context.database.insert(memoryPolicy).values({
+      slug: "withdrawn",
+      displayName: "Withdrawn",
+      description: "Suspended while the review is open.",
+      status: "SUSPENDED",
+      maximumCaptureMode: "DOCUMENTS_ONLY",
+      retentionDays: 7,
+    });
+    const id = await queuedRun({}, "LEARN_USER");
+    const memory = memoryPort();
+
+    await processor(hermes(), noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER);
+
+    expect(memory.captured).toEqual([["Summarize the policy."]]);
+    expect(memory.captureLimits[0]?.retentionDays).toBe(DEFAULT_MEMORY_POLICY.retentionDays);
   });
 
 });

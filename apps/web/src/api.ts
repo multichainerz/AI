@@ -1083,6 +1083,24 @@ export async function deleteAgentMemoryRecord(id: string, reason: string): Promi
   await parsedResponse(response);
 }
 
+/**
+ * What agents have learned about the signed-in person.
+ *
+ * Scoped server-side to the caller's own subject, so this asks "what do you
+ * know about me" without needing an administrator or a new enterprise scope.
+ */
+export async function getOwnAgentMemory(): Promise<AgentMemoryRecordList> {
+  const response = await fetch("/api/v1/chat/memory", { credentials: "same-origin" });
+  return agentMemoryRecordListSchema.parse(await parsedResponse(response));
+}
+
+export async function forgetOwnAgentMemory(id: string): Promise<void> {
+  const response = await fetch(`/api/v1/chat/memory/${encodeURIComponent(id)}`, {
+    method: "DELETE", headers: adminHeaders(), credentials: "same-origin",
+  });
+  await parsedResponse(response);
+}
+
 export async function purgeAgentMemory(ownerSubject: string, reason: string): Promise<{ removed: number }> {
   const response = await fetch("/api/v1/admin/memory/records/purge", {
     method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify({ ownerSubject, reason }),

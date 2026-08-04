@@ -234,6 +234,7 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
         ...(runtime.sessionManager ? { sessionManager: runtime.sessionManager } : {}),
         ...(runtime.identityManager ? { identityManager: runtime.identityManager } : {}),
         ...(runtime.chatManager ? { manager: runtime.chatManager } : {}),
+        ...(runtime.memoryManager ? { memoryManager: runtime.memoryManager } : {}),
       }),
     { prefix: "/api/v1/chat" },
   );

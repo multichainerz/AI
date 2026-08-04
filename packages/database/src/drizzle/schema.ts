@@ -45,7 +45,6 @@ export const evaluationTargetType = pgEnum("EvaluationTargetType", ['MODEL', 'PR
 export const guardrailPolicyStatus = pgEnum("GuardrailPolicyStatus", ['DRAFT', 'ACTIVE', 'SUSPENDED'])
 export const hermesNodeEnrollmentStatus = pgEnum("HermesNodeEnrollmentStatus", ['ISSUED', 'CONSUMED', 'REVOKED', 'EXPIRED'])
 export const hermesRuntimeNodeStatus = pgEnum("HermesRuntimeNodeStatus", ['PENDING', 'ONLINE', 'DEGRADED', 'DRAINING', 'SUSPENDED', 'REVOKED', 'OFFLINE'])
-export const memorySyncStatus = pgEnum("MemorySyncStatus", ['NOT_INDEXED', 'QUEUED', 'PROCESSING', 'READY', 'FAILED', 'DELETE_PENDING', 'DELETED'])
 export const modelDeploymentStatus = pgEnum("ModelDeploymentStatus", ['DRAFT', 'ACTIVE', 'SUSPENDED'])
 export const modelWorkload = pgEnum("ModelWorkload", ['CHAT', 'AGENT'])
 export const onboardingEvidenceOutcome = pgEnum("OnboardingEvidenceOutcome", ['PASSED', 'FAILED', 'WARNING'])
