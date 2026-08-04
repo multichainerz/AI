@@ -1,4 +1,4 @@
-import { agentCapabilitySchema, knowledgeSourceSchema, type AgentRunJobPayload, type KnowledgeSource } from "@orcasynapse/contracts";
+import { agentCapabilitySchema, effectiveMemoryMode, knowledgeSourceSchema, type AgentRunJobPayload, type KnowledgeSource } from "@orcasynapse/contracts";
 import { and, desc, eq, inArray, isNotNull, isNull, lt, ne, or, sql } from "drizzle-orm";
 import {
   agentProfile,
@@ -12,6 +12,7 @@ import {
   chatMessage,
   governedTool,
   hermesRuntimeNode,
+  memoryPolicy,
   serviceConnection,
   toolRuntimeControl,
   type OrcaSynapseDatabase,
@@ -977,7 +978,16 @@ export class DrizzleAgentProcessor {
     if (!this.memory) return;
     const capabilities = effectiveCapabilities(run.effectiveCapabilities);
     if (!capabilities.includes("memory:agent:write")) return;
-    const items = [run.input, ...(run.version.memoryMode === "LEARN_EXCHANGE" && output ? [output] : [])];
+    // The installation ceiling is read at capture time, not at submission, so
+    // suspending capture takes effect on runs that are already in flight.
+    const [policy] = await this.database
+      .select({ mode: memoryPolicy.maximumCaptureMode, retentionDays: memoryPolicy.retentionDays })
+      .from(memoryPolicy)
+      .where(eq(memoryPolicy.status, "ACTIVE"))
+      .limit(1);
+    const mode = effectiveMemoryMode(run.version.memoryMode, policy?.mode ?? null);
+    if (mode !== "LEARN_USER" && mode !== "LEARN_EXCHANGE") return;
+    const items = [run.input, ...(mode === "LEARN_EXCHANGE" && output ? [output] : [])];
     try {
       const stored = await this.memory.capture(run.ownerSubject, run.profileId, items, { runId: run.id });
       if (stored === 0) return;
@@ -990,7 +1000,7 @@ export class DrizzleAgentProcessor {
         outcome: "SUCCESS",
         // Counts and mode only: the trail records that memory was written, not
         // what it says about the person.
-        metadata: { items: stored, memoryMode: run.version.memoryMode, profileId: run.profileId },
+        metadata: { items: stored, memoryMode: mode, profileId: run.profileId },
       });
     } catch (cause) {
       console.error("OrcaSynapse could not record agent memory for run", run.id, cause);

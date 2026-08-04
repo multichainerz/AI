@@ -26,6 +26,7 @@ export const administratorAuthenticationMethod = pgEnum("AdministratorAuthentica
 export const administratorRole = pgEnum("AdministratorRole", ['PLATFORM_ADMIN', 'SECURITY_ADMIN', 'OPERATIONS_ADMIN', 'AUDITOR'])
 export const agentProfileStatus = pgEnum("AgentProfileStatus", ['DRAFT', 'ACTIVE', 'SUSPENDED', 'STANDBY'])
 export const agentMemoryMode = pgEnum("AgentMemoryMode", ['DOCUMENTS_ONLY', 'RECALL_ONLY', 'LEARN_USER', 'LEARN_EXCHANGE'])
+export const memoryPolicyStatus = pgEnum("MemoryPolicyStatus", ['DRAFT', 'ACTIVE', 'SUSPENDED'])
 export const agentRunApprovalStatus = pgEnum("AgentRunApprovalStatus", ['PENDING', 'APPROVED', 'DENIED', 'EXPIRED', 'CANCELLED'])
 export const agentRunStatus = pgEnum("AgentRunStatus", ['QUEUED', 'RUNNING', 'WAITING_FOR_APPROVAL', 'CANCEL_REQUESTED', 'COMPLETED', 'FAILED', 'CANCELLED', 'TIMED_OUT', 'DENIED'])
 export const auditActorType = pgEnum("AuditActorType", ['USER', 'SERVICE', 'SYSTEM'])
@@ -1221,4 +1222,35 @@ export const agentMemory = pgTable("AgentMemory", {
 			name: "AgentMemory_agentProfileId_fkey"
 		}).onUpdate("cascade").onDelete("cascade"),
 	check("AgentMemory_content_check", sql`(char_length(btrim(content)) >= 3) AND ("characterCount" > 0)`),
+]);
+
+/**
+ * The installation-wide ceiling on agent memory.
+ *
+ * A profile picks its own mode; this bounds every profile at once. Exactly one
+ * policy may be ACTIVE, enforced by a partial unique index rather than by
+ * application code, so two administrators cannot race two ceilings into effect.
+ */
+export const memoryPolicy = pgTable("MemoryPolicy", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	slug: varchar({ length: 64 }).notNull(),
+	displayName: varchar({ length: 120 }).notNull(),
+	description: varchar({ length: 500 }).notNull(),
+	status: memoryPolicyStatus().default('DRAFT').notNull(),
+	maximumCaptureMode: agentMemoryMode().default('LEARN_EXCHANGE').notNull(),
+	retentionDays: integer(),
+	maximumItemsPerOwner: integer().default(500).notNull(),
+	recallLimit: integer().default(6).notNull(),
+	recallMinimumScore: doublePrecision().default(0.4).notNull(),
+	revision: integer().default(1).notNull(),
+	firstActivatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
+	createdBy: uuid(),
+	updatedBy: uuid(),
+	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
+}, (table) => [
+	uniqueIndex("MemoryPolicy_slug_key").using("btree", table.slug.asc().nullsLast()),
+	uniqueIndex("MemoryPolicy_single_active_key").on(sql`(true)`).where(sql`status = 'ACTIVE'`),
+	check("MemoryPolicy_bounds_check", sql`("maximumItemsPerOwner" >= 10) AND ("recallLimit" >= 1) AND ("recallMinimumScore" >= 0) AND ("recallMinimumScore" <= 1) AND ("retentionDays" IS NULL OR "retentionDays" >= 1) AND (revision > 0)`),
+	check("MemoryPolicy_activation_check", sql`(status <> 'ACTIVE') OR ("firstActivatedAt" IS NOT NULL)`),
 ]);

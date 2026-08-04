@@ -20,6 +20,7 @@ import { registerAiOpsRoutes } from "./ai-ops/routes.js";
 import { registerModelRoutes } from "./models/routes.js";
 import { registerGuardrailRoutes } from "./guardrails/routes.js";
 import { registerPromptRoutes } from "./prompts/routes.js";
+import { registerMemoryRoutes } from "./memory/routes.js";
 import { registerAuditRoutes } from "./audit/routes.js";
 import { registerOnboardingRoutes } from "./onboarding/routes.js";
 import {
@@ -209,6 +210,14 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
       ...(runtime.promptManager ? { manager: runtime.promptManager } : {}),
     }),
     { prefix: "/api/v1/admin/prompts" },
+  );
+
+  await app.register(
+    async (memory) => registerMemoryRoutes(memory, {
+      ...(runtime.sessionManager ? { sessionManager: runtime.sessionManager } : {}),
+      ...(runtime.memoryManager ? { manager: runtime.memoryManager } : {}),
+    }),
+    { prefix: "/api/v1/admin/memory" },
   );
 
   await app.register(

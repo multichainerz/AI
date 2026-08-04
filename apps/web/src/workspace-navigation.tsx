@@ -6,6 +6,7 @@ export type ActiveView =
   | "Chat"
   | "Models"
   | "Prompts"
+  | "Memory"
   | "Agents"
   | "Documents"
   | "Integrations"
@@ -62,6 +63,7 @@ export const sectionNavigation: Partial<Record<ProductArea, ReadonlyArray<Sectio
     { label: "Setup", view: "Deployment" },
     { label: "Models", view: "Models" },
     { label: "Prompts", view: "Prompts" },
+    { label: "Memory", view: "Memory" },
     { label: "Guardrails", view: "Guardrails" },
   ],
 };
@@ -75,6 +77,7 @@ const areaByView: Record<ActiveView, ProductArea> = {
   Deployment: "Platform",
   Models: "Platform",
   Prompts: "Platform",
+  Memory: "Platform",
   Guardrails: "Platform",
   Operations: "Operations",
   Audit: "Operations",
@@ -89,6 +92,7 @@ const pathByView: Record<ActiveView, string> = {
   Deployment: "#platform/setup",
   Models: "#platform/models",
   Prompts: "#platform/prompts",
+  Memory: "#platform/memory",
   Guardrails: "#platform/guardrails",
   Operations: "#operations",
   Audit: "#operations/audit",
@@ -132,6 +136,8 @@ export function viewFromHash(hash: string): ActiveView {
     case "#platform/prompts":
     case "#prompts":
       return "Prompts";
+    case "#platform/memory":
+      return "Memory";
     case "#platform/guardrails":
     case "#guardrails":
       return "Guardrails";

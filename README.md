@@ -76,7 +76,7 @@ VM2 generates its own identity, consumes the claim once, receives a scoped infer
 
 **Private document knowledge** — upload TXT, Markdown, HTML, CSV, JSON, PDF, DOCX, PPTX, or XLSX. Text is extracted in flight, embedded locally with BGE-M3, and retrieved from pgvector. Original files are never stored. Pin documents to a conversation to scope exactly what an agent may consult.
 
-**Agents that remember, on your terms** — memory lives in the same pgvector plane as your documents, scoped to one person and one agent. Each agent's profile chooses what it stores: nothing at all (the default), recall without writing, learn what the person says, or learn the whole exchange.
+**Agents that remember, on your terms** — memory lives in the same pgvector plane as your documents, scoped to one person and one agent. Each agent's profile chooses what it stores: nothing at all (the default), recall without writing, learn what the person says, or learn the whole exchange. One installation-wide policy caps every agent at once, and any stored memory can be read and deleted from the dashboard.
 
 **An audit trail you can actually read** — every governed action lands in an append-only trail with a filterable dashboard view. An optional forwarder ships it to your SIEM with at-least-once delivery, and reports its own health when the destination falls behind or starts rejecting batches.
 
@@ -119,6 +119,7 @@ The test database must run a **pgvector** image — the migrator creates the `ve
 | [Installation and recovery](deploy/BOOTSTRAP.md) | Bootstrap, pinning, upgrade and erase paths, key rotation |
 | [Agentic System enrollment](docs/AGENTIC_SYSTEM_ENROLLMENT_RUNBOOK.md) | VM2 enrollment, allowlist, decommission |
 | [Audit trail and SIEM forwarding](docs/AUDIT_TRAIL_RUNBOOK.md) | Reading the trail, forwarding, health states |
+| [Agent memory](docs/AGENT_MEMORY_RUNBOOK.md) | What agents store, the installation ceiling, retention, deletion |
 | [Product requirements](docs/ORCASYNAPSE_PRD.md) · [Delivery plan](docs/ORCASYNAPSE_PHASED_PLAN.md) | Scope, roles, acceptance tiers |
 | [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [License](LICENSE) | Project meta |
 

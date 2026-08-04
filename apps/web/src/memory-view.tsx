@@ -1,0 +1,223 @@
+import type {
+  AdminScope,
+  AgentMemoryRecord,
+  CreateMemoryPolicy,
+  MemoryPolicy,
+} from "@orcasynapse/contracts";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
+import {
+  OrcaSynapseApiError,
+  changeMemoryPolicyState,
+  createMemoryPolicy,
+  deleteAgentMemoryRecord,
+  getAgentMemoryRecords,
+  getMemoryPolicies,
+  purgeAgentMemory,
+  updateMemoryPolicy,
+} from "./api.js";
+
+interface MemoryViewProps {
+  unlocked: boolean;
+  scopes: readonly AdminScope[];
+  onUnauthorized: () => void;
+}
+
+const blankPolicy: CreateMemoryPolicy = {
+  slug: "default-memory",
+  displayName: "Default memory policy",
+  description: "Bounds what every agent may remember about the people it serves.",
+  maximumCaptureMode: "LEARN_USER",
+  retentionDays: 365,
+  maximumItemsPerOwner: 500,
+  recallLimit: 6,
+  recallMinimumScore: 0.4,
+};
+
+/**
+ * Explains the ceiling in terms of the effect it has, not the enum value, so an
+ * operator can tell at a glance whether anything is being stored about anyone.
+ */
+export function ceilingSummary(mode: CreateMemoryPolicy["maximumCaptureMode"]): string {
+  if (mode === "DOCUMENTS_ONLY") return "No agent stores anything about a person, whatever its profile asks for.";
+  if (mode === "RECALL_ONLY") return "Agents may use memory that already exists, but none may add to it.";
+  if (mode === "LEARN_USER") return "Agents may store what a person says. Model output is never retained.";
+  return "Agents may store both sides of a turn, including model output, when their profile asks for it.";
+}
+
+function statusTone(status: MemoryPolicy["status"]): string {
+  if (status === "ACTIVE") return "ready";
+  if (status === "SUSPENDED") return "failed";
+  return "neutral";
+}
+
+export function MemoryView({ unlocked, scopes, onUnauthorized }: MemoryViewProps) {
+  const [policies, setPolicies] = useState<MemoryPolicy[]>([]);
+  const [records, setRecords] = useState<AgentMemoryRecord[]>([]);
+  const [ownerFilter, setOwnerFilter] = useState("");
+  const [draft, setDraft] = useState<CreateMemoryPolicy>(blankPolicy);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [reason, setReason] = useState("Memory retention reviewed and approved.");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const canManage = scopes.includes("memory:manage");
+  const active = policies.find(({ status }) => status === "ACTIVE") ?? null;
+
+  const fail = useCallback((cause: unknown) => {
+    if (cause instanceof OrcaSynapseApiError && cause.status === 401) onUnauthorized();
+    setError(cause instanceof Error ? cause.message : "OrcaSynapse could not complete the memory operation.");
+  }, [onUnauthorized]);
+
+  const load = useCallback(async () => {
+    const [policyList, recordList] = await Promise.all([
+      getMemoryPolicies(),
+      getAgentMemoryRecords(ownerFilter.trim() ? { ownerSubject: ownerFilter.trim(), limit: 100 } : { limit: 100 }),
+    ]);
+    setPolicies(policyList.items);
+    setRecords(recordList.items);
+  }, [ownerFilter]);
+
+  useEffect(() => {
+    if (!unlocked) { setPolicies([]); setRecords([]); return; }
+    let live = true;
+    void load().catch((cause) => live && fail(cause));
+    return () => { live = false; };
+  }, [unlocked, load, fail]);
+
+  const savePolicy = async (event: FormEvent) => {
+    event.preventDefault();
+    if (busy || !canManage) return;
+    setBusy(true); setError(null);
+    try {
+      if (editingId) {
+        const current = policies.find(({ id }) => id === editingId);
+        if (current) await updateMemoryPolicy(editingId, { ...draft, expectedRevision: current.revision });
+      } else {
+        await createMemoryPolicy(draft);
+      }
+      setEditingId(null);
+      setDraft(blankPolicy);
+      await load();
+    } catch (cause) { fail(cause); } finally { setBusy(false); }
+  };
+
+  const changeState = async (policy: MemoryPolicy, action: "activate" | "suspend") => {
+    if (busy || !canManage || reason.trim().length < 3) return;
+    setBusy(true); setError(null);
+    try {
+      await changeMemoryPolicyState(policy.id, action, { expectedRevision: policy.revision, reason: reason.trim() });
+      await load();
+    } catch (cause) { fail(cause); } finally { setBusy(false); }
+  };
+
+  const forget = async (record: AgentMemoryRecord) => {
+    if (busy || !canManage || reason.trim().length < 3) return;
+    setBusy(true); setError(null);
+    try {
+      await deleteAgentMemoryRecord(record.id, reason.trim());
+      await load();
+    } catch (cause) { fail(cause); } finally { setBusy(false); }
+  };
+
+  const purgeOwner = async () => {
+    if (busy || !canManage || !ownerFilter.trim() || reason.trim().length < 3) return;
+    setBusy(true); setError(null);
+    try {
+      await purgeAgentMemory(ownerFilter.trim(), reason.trim());
+      await load();
+    } catch (cause) { fail(cause); } finally { setBusy(false); }
+  };
+
+  if (!unlocked) {
+    return <section className="panel"><p>Sign in to review what agents remember.</p></section>;
+  }
+
+  return <section className="memory-workspace">
+    <header className="documents-header">
+      <div>
+        <p className="page-kicker">Platform · Governance</p>
+        <h1>Agent memory</h1>
+        <p>What agents may remember about the people they serve, and everything they currently hold.</p>
+      </div>
+    </header>
+
+    {error && <div className="documents-alert" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
+
+    <section className="panel">
+      <div className="document-section-heading">
+        <div><p className="section-kicker">Installation ceiling</p><h2>Memory policy</h2></div>
+      </div>
+      <p className="memory-ceiling-note">
+        {active
+          ? ceilingSummary(active.maximumCaptureMode)
+          : "No policy is active, so each agent's own profile governs what it stores."}
+      </p>
+
+      <div className="memory-policy-list">
+        {policies.map((policy) => <article key={policy.id}>
+          <div>
+            <strong>{policy.displayName}</strong>
+            <span className={`document-status ${statusTone(policy.status)}`}>{policy.status.toLowerCase()}</span>
+            <small>{ceilingSummary(policy.maximumCaptureMode)}</small>
+            <small>
+              Retention {policy.retentionDays === null ? "indefinite" : `${policy.retentionDays} days`} ·
+              up to {policy.maximumItemsPerOwner} items per person · recall {policy.recallLimit} above {policy.recallMinimumScore}
+            </small>
+          </div>
+          {canManage && <div className="memory-policy-actions">
+            {policy.status !== "ACTIVE" && <button type="button" className="secondary-button" disabled={busy} onClick={() => { setEditingId(policy.id); setDraft({ ...policy }); }}>Edit</button>}
+            {policy.status === "ACTIVE"
+              ? <button type="button" className="danger-button" disabled={busy || reason.trim().length < 3} onClick={() => void changeState(policy, "suspend")}>Suspend</button>
+              : <button type="button" className="primary-button" disabled={busy || reason.trim().length < 3} onClick={() => void changeState(policy, "activate")}>Activate</button>}
+          </div>}
+        </article>)}
+        {policies.length === 0 && <p className="document-empty"><strong>No memory policy yet</strong><span>Create one to bound every agent at once.</span></p>}
+      </div>
+
+      {canManage && <form className="memory-policy-form" onSubmit={savePolicy}>
+        <label>Slug<input required value={draft.slug} disabled={editingId !== null} onChange={(event) => setDraft({ ...draft, slug: event.target.value })} /></label>
+        <label>Name<input required value={draft.displayName} onChange={(event) => setDraft({ ...draft, displayName: event.target.value })} /></label>
+        <label>Description<input required value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })} /></label>
+        <label>Most an agent may store<select value={draft.maximumCaptureMode} onChange={(event) => setDraft({ ...draft, maximumCaptureMode: event.target.value as CreateMemoryPolicy["maximumCaptureMode"] })}>
+          <option value="DOCUMENTS_ONLY">Nothing about people</option>
+          <option value="RECALL_ONLY">Recall only, no new memory</option>
+          <option value="LEARN_USER">What the person says</option>
+          <option value="LEARN_EXCHANGE">Both sides of the turn</option>
+        </select><small>{ceilingSummary(draft.maximumCaptureMode)}</small></label>
+        <label>Retention (days)<input type="number" min={1} max={3650} value={draft.retentionDays ?? ""} placeholder="Indefinite" onChange={(event) => setDraft({ ...draft, retentionDays: event.target.value ? Number(event.target.value) : null })} /></label>
+        <label>Items per person<input type="number" min={10} max={10000} value={draft.maximumItemsPerOwner} onChange={(event) => setDraft({ ...draft, maximumItemsPerOwner: Number(event.target.value) })} /></label>
+        <footer>
+          {editingId && <button type="button" className="secondary-button" onClick={() => { setEditingId(null); setDraft(blankPolicy); }}>Cancel</button>}
+          <button type="submit" className="primary-button" disabled={busy}>{editingId ? "Save policy" : "Create policy"}</button>
+        </footer>
+      </form>}
+
+      {canManage && <label className="memory-reason">Decision reason<input minLength={3} maxLength={500} value={reason} onChange={(event) => setReason(event.target.value)} /><small>Recorded in the audit trail with every activation, suspension, and deletion.</small></label>}
+    </section>
+
+    <section className="panel">
+      <div className="document-section-heading">
+        <div><p className="section-kicker">Stored memory</p><h2>What agents currently hold</h2></div>
+        <div className="memory-filter">
+          <input placeholder="Filter by person" value={ownerFilter} onChange={(event) => setOwnerFilter(event.target.value)} />
+          {canManage && ownerFilter.trim() && <button type="button" className="danger-button" disabled={busy || reason.trim().length < 3} onClick={() => void purgeOwner()}>Forget everything for this person</button>}
+        </div>
+      </div>
+
+      {records.length === 0
+        ? <div className="document-empty"><strong>Nothing stored</strong><span>No agent has recorded anything about anyone in this scope.</span></div>
+        : <div className="memory-record-list">{records.map((record) => <article key={record.id}>
+          <div>
+            <strong>{record.ownerSubject}</strong>
+            <span className="document-status neutral">{record.agentProfileSlug}</span>
+            <p>{record.content}</p>
+            <small>
+              Recorded {new Date(record.createdAt).toLocaleString()}
+              {record.retentionUntil ? ` · expires ${new Date(record.retentionUntil).toLocaleDateString()}` : " · no expiry"}
+            </small>
+          </div>
+          {canManage && <button type="button" className="danger-button" disabled={busy || reason.trim().length < 3} onClick={() => void forget(record)}>Forget</button>}
+        </article>)}</div>}
+    </section>
+  </section>;
+}

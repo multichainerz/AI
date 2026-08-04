@@ -5,6 +5,7 @@ import {
   agentProfileVersion,
   agentRun,
   agentRuntimeControl,
+  memoryPolicy,
   chatMessage,
   chatConversation,
   createTestDatabase,
@@ -412,6 +413,47 @@ describe("DrizzleAgentProcessor", () => {
     // The person already has their answer; losing a memory must not retract it.
     await expect(processor(hermes(), noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER))
       .resolves.toMatchObject({ status: "COMPLETED" });
+  });
+
+
+  it("lets an active policy stop capture that a profile still asks for", async () => {
+    // The ceiling is read at capture time, so suspending capture takes effect
+    // on runs already in flight rather than only on newly submitted ones.
+    await healthyBoundary();
+    await context.database.insert(memoryPolicy).values({
+      slug: "locked-down",
+      displayName: "Locked down",
+      description: "Recall only while the retention review is open.",
+      status: "ACTIVE",
+      maximumCaptureMode: "RECALL_ONLY",
+      firstActivatedAt: new Date(),
+    });
+    const id = await queuedRun({}, "LEARN_EXCHANGE");
+    const memory = memoryPort();
+
+    await processor(hermes(), noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER);
+
+    expect(memory.recall).toHaveBeenCalled();
+    expect(memory.capture).not.toHaveBeenCalled();
+  });
+
+  it("narrows a permissive profile to what the policy allows", async () => {
+    await healthyBoundary();
+    await context.database.insert(memoryPolicy).values({
+      slug: "user-only",
+      displayName: "User turns only",
+      description: "Model output is not retained.",
+      status: "ACTIVE",
+      maximumCaptureMode: "LEARN_USER",
+      firstActivatedAt: new Date(),
+    });
+    const id = await queuedRun({}, "LEARN_EXCHANGE");
+    const memory = memoryPort();
+
+    await processor(hermes(), noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER);
+
+    // The profile asked for both sides; the ceiling allows only the person's.
+    expect(memory.captured).toEqual([["Summarize the policy."]]);
   });
 
 });

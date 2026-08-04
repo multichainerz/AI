@@ -63,6 +63,7 @@ const ToolingView = lazy(() => import("./tooling-view.js").then((module) => ({ d
 const ModelsView = lazy(() => import("./models-view.js").then((module) => ({ default: module.ModelsView })));
 const GuardrailsView = lazy(() => import("./guardrails-view.js").then((module) => ({ default: module.GuardrailsView })));
 const PromptsView = lazy(() => import("./prompts-view.js").then((module) => ({ default: module.PromptsView })));
+const MemoryView = lazy(() => import("./memory-view.js").then((module) => ({ default: module.MemoryView })));
 const OnboardingView = lazy(() => import("./onboarding-view.js").then((module) => ({ default: module.OnboardingView })));
 const AuditView = lazy(() => import("./audit-view.js").then((module) => ({ default: module.AuditView })));
 
@@ -685,6 +686,15 @@ function App() {
             onConfigureConnections={() => openConnectionSettings("INFERENCE")}
             onOpenOperations={() => selectView("Operations")}
             onSessionExpired={() => {
+              sessionGeneration.current += 1;
+              setAdminSession(null);
+            }}
+          />
+        ) : activeView === "Memory" ? (
+          <MemoryView
+            unlocked={adminSession !== null}
+            scopes={adminSession?.scopes ?? []}
+            onUnauthorized={() => {
               sessionGeneration.current += 1;
               setAdminSession(null);
             }}

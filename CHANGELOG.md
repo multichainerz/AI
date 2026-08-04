@@ -5,6 +5,37 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.31.0 — 2026-08-05
+
+Make what agents remember governable: one installation-wide ceiling, and a
+surface where an administrator can see and delete everything stored.
+
+- add `MemoryPolicy` with the prompt-template lifecycle — `DRAFT → ACTIVE →
+  SUSPENDED`, one active policy enforced by a partial unique index,
+  `expectedRevision` on every mutation, and a decision reason in the audit
+  trail. Deliberately no evaluation-evidence gate: guardrails and prompts
+  require evidence because they change model behavior, and this is a
+  data-retention control
+- `maximumCaptureMode` caps every agent at once. A profile may be narrower but
+  never wider, so setting the ceiling to `RECALL_ONLY` stops all capture
+  fleet-wide without editing a single profile
+- **the ceiling is read at capture time, not at submission**, so suspending
+  capture applies to runs already in flight
+- refuse to edit an active policy: runs are being measured against it, and
+  editing in place would move the boundary under work already admitted
+- add a **Platform → Memory** view listing every stored item with its owner,
+  agent, provenance and expiry; delete one or purge everything for one person,
+  each requiring a reason
+- add `memory:read` (PLATFORM_ADMIN, SECURITY_ADMIN, OPERATIONS_ADMIN, AUDITOR)
+  and `memory:manage` (PLATFORM_ADMIN, SECURITY_ADMIN)
+- scope self-service deletion by the same SQL predicate as retrieval, so a stray
+  identifier can never reach another person's memory
+- keep remembered content out of the audit trail entirely — the trail records
+  that memory changed, the reason, and the count, never what it said
+- add docs/AGENT_MEMORY_RUNBOOK.md
+- cover the lifecycle, the ceiling narrowing a permissive profile at capture
+  time, revision conflicts, scoped and administrative deletion, and purge
+
 ## ai-v1.30.0 — 2026-08-05
 
 Give agents memory again, on OrcaSynapse's own pgvector plane, and make what

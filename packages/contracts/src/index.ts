@@ -11,6 +11,7 @@ export * from "./models.js";
 export * from "./onboarding.js";
 export * from "./guardrails.js";
 export * from "./prompts.js";
+export * from "./memory-policy.js";
 export * from "./runtime-nodes.js";
 export * from "./documents.js";
 export * from "./platform.js";

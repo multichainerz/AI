@@ -136,9 +136,18 @@ import {
   type UpdateGuardrailPolicy,
   type ChangeGuardrailPolicyState,
   promptTemplateListSchema,
+  memoryPolicySchema,
+  memoryPolicyListSchema,
+  agentMemoryRecordListSchema,
   promptTemplateSchema,
   type PromptTemplate,
   type PromptTemplateList,
+  type MemoryPolicy,
+  type MemoryPolicyList,
+  type CreateMemoryPolicy,
+  type UpdateMemoryPolicy,
+  type ChangeMemoryPolicyState,
+  type AgentMemoryRecordList,
   type CreatePromptTemplate,
   type UpdatePromptTemplate,
   type ChangePromptTemplateState,
@@ -1026,4 +1035,57 @@ export async function removeHermesRuntimeNode(
     method: "DELETE", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
   });
   await parsedResponse(response);
+}
+
+export async function getMemoryPolicies(): Promise<MemoryPolicyList> {
+  const response = await fetch("/api/v1/admin/memory/policies", { credentials: "same-origin" });
+  return memoryPolicyListSchema.parse(await parsedResponse(response));
+}
+
+export async function createMemoryPolicy(input: CreateMemoryPolicy): Promise<MemoryPolicy> {
+  const response = await fetch("/api/v1/admin/memory/policies", {
+    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return memoryPolicySchema.parse(await parsedResponse(response));
+}
+
+export async function updateMemoryPolicy(id: string, input: UpdateMemoryPolicy): Promise<MemoryPolicy> {
+  const response = await fetch(`/api/v1/admin/memory/policies/${encodeURIComponent(id)}`, {
+    method: "PATCH", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return memoryPolicySchema.parse(await parsedResponse(response));
+}
+
+export async function changeMemoryPolicyState(
+  id: string,
+  action: "activate" | "suspend",
+  input: ChangeMemoryPolicyState,
+): Promise<MemoryPolicy> {
+  const response = await fetch(`/api/v1/admin/memory/policies/${encodeURIComponent(id)}/${action}`, {
+    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return memoryPolicySchema.parse(await parsedResponse(response));
+}
+
+export async function getAgentMemoryRecords(query: { ownerSubject?: string; limit?: number } = {}): Promise<AgentMemoryRecordList> {
+  const search = new URLSearchParams();
+  if (query.ownerSubject) search.set("ownerSubject", query.ownerSubject);
+  if (query.limit) search.set("limit", String(query.limit));
+  const suffix = search.toString();
+  const response = await fetch(`/api/v1/admin/memory/records${suffix ? `?${suffix}` : ""}`, { credentials: "same-origin" });
+  return agentMemoryRecordListSchema.parse(await parsedResponse(response));
+}
+
+export async function deleteAgentMemoryRecord(id: string, reason: string): Promise<void> {
+  const response = await fetch(`/api/v1/admin/memory/records/${encodeURIComponent(id)}`, {
+    method: "DELETE", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify({ reason }),
+  });
+  await parsedResponse(response);
+}
+
+export async function purgeAgentMemory(ownerSubject: string, reason: string): Promise<{ removed: number }> {
+  const response = await fetch("/api/v1/admin/memory/records/purge", {
+    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify({ ownerSubject, reason }),
+  });
+  return await parsedResponse(response) as { removed: number };
 }
