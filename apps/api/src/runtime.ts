@@ -36,7 +36,7 @@ import { DrizzleDocumentManager } from "./documents/drizzle-document-manager.js"
 import type { AgentManager } from "./agents/agent-manager.js";
 import { DrizzleAgentManager } from "./agents/drizzle-agent-manager.js";
 import type { ToolingManager } from "./tooling/tooling-manager.js";
-import { PrismaToolingManager } from "./tooling/prisma-tooling-manager.js";
+import { DrizzleToolingManager } from "./tooling/drizzle-tooling-manager.js";
 import type { AiOpsManager } from "./ai-ops/ai-ops-manager.js";
 import { PrismaAiOpsManager } from "./ai-ops/prisma-ai-ops-manager.js";
 import type { ModelManager } from "./models/model-manager.js";
@@ -135,7 +135,7 @@ export function createRuntimeServices(): RuntimeServices {
     const hermesClient = new HermesClient(documentResolver);
     const agentManager = new DrizzleAgentManager(database, hermesClient);
     const chatManager = new PrismaChatManager(prisma, agentManager);
-    const toolingManager = new PrismaToolingManager(prisma, hermesClient);
+    const toolingManager = new DrizzleToolingManager(database, hermesClient);
     const aiOpsManager = new PrismaAiOpsManager(prisma, {
       connections: connectionManager,
       connectionMonitoring: connectionMonitor,
