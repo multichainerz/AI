@@ -23,6 +23,13 @@ beforeEach(async () => { await context.reset(); });
 
 const principal = { id: randomUUID(), subject: "local-admin:operator" } as AdminPrincipal;
 
+function forwarding(status: "NOT_CONFIGURED" | "HEALTHY" | "BEHIND" | "FAILING", summary = "state") {
+  return {
+    status, pendingCount: 0, deliveredCount: 0,
+    lastForwardedAt: null, lastAttemptAt: null, lastError: null, summary,
+  };
+}
+
 /** Every collaborator is a separate, already-converted manager. */
 function dependencies(overrides: Partial<AiOpsDependencies> = {}): AiOpsDependencies {
   return {
@@ -34,6 +41,7 @@ function dependencies(overrides: Partial<AiOpsDependencies> = {}): AiOpsDependen
     documents: { metrics: vi.fn(async () => null) },
     agents: { metrics: vi.fn(async () => null) },
     tools: { metrics: vi.fn(async () => null) },
+    audit: { forwarding: vi.fn(async () => forwarding("HEALTHY")) },
     ...overrides,
   } as unknown as AiOpsDependencies;
 }
@@ -343,5 +351,52 @@ describe("DrizzleAiOpsManager production readiness", () => {
     const readiness = await manager().productionReadiness();
     expect(readiness.status).toBe("READY");
     expect(readiness.blockers).toEqual([]);
+  });
+});
+
+describe("DrizzleAiOpsManager audit forwarding", () => {
+  it("reports a rejecting SIEM as degraded and opens an incident for it", async () => {
+    const failing = manager({
+      audit: { forwarding: vi.fn(async () => forwarding("FAILING", "The SIEM endpoint is rejecting batches.")) } as never,
+    });
+
+    const overview = await failing.overview();
+
+    const component = overview.components.find(({ id }) => id === "audit-forwarding");
+    expect(component).toMatchObject({ status: "DEGRADED", label: "Audit forwarding" });
+    expect(component?.summary).toContain("rejecting batches");
+    // The existing automated reconciler turns a degraded component into an incident.
+    expect(overview.incidents.items.some(({ component: name }) => name === "audit-forwarding")).toBe(true);
+  });
+
+  it("treats a backlog behind a healthy destination as degraded too", async () => {
+    const behind = manager({
+      audit: { forwarding: vi.fn(async () => forwarding("BEHIND", "900 events are still queued.")) } as never,
+    });
+
+    const component = (await behind.overview()).components.find(({ id }) => id === "audit-forwarding");
+
+    expect(component?.status).toBe("DEGRADED");
+  });
+
+  it("raises no incident when forwarding is healthy or unconfigured", async () => {
+    const healthy = await manager().overview();
+    expect(healthy.components.find(({ id }) => id === "audit-forwarding")?.status).toBe("HEALTHY");
+    expect(healthy.incidents.items.some(({ component }) => component === "audit-forwarding")).toBe(false);
+
+    const unconfigured = await manager({
+      audit: { forwarding: vi.fn(async () => forwarding("NOT_CONFIGURED", "Retained locally.")) } as never,
+    }).overview();
+    expect(unconfigured.components.find(({ id }) => id === "audit-forwarding")?.status).toBe("NOT_CONFIGURED");
+    expect(unconfigured.incidents.items.some(({ component }) => component === "audit-forwarding")).toBe(false);
+  });
+
+  it("omits the component entirely when no audit manager is wired", async () => {
+    // The dependency is optional, so the overview must not assume it exists.
+    const { audit, ...withoutAudit } = dependencies();
+    const overview = await new DrizzleAiOpsManager(context.database, withoutAudit).overview();
+
+    expect(audit).toBeDefined();
+    expect(overview.components.find(({ id }) => id === "audit-forwarding")).toBeUndefined();
   });
 });

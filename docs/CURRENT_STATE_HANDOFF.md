@@ -63,7 +63,7 @@ The minimum production-shaped deployment is two VMs plus an inference endpoint. 
 - Node.js 24+, pnpm 10, TypeScript 7
 - React 19 and Vite 8 for the dashboard
 - Fastify API
-- PostgreSQL 17 and Prisma 7
+- PostgreSQL 17 with pgvector, and Drizzle ORM
 - Docker Compose for VM1
 - Official Hermes container plus Supermemory Local systemd service on VM2
 
@@ -75,7 +75,7 @@ Important locations:
 | `apps/api` | Authentication, connections, inference gateway, Chat, Agents, Knowledge, Operations, onboarding, and runtime-node APIs |
 | `apps/worker` | Durable Hermes Agent Run reconciliation and lifecycle processing |
 | `packages/contracts` | Shared validated API contracts |
-| `packages/database` | Prisma schema, migrations, and database bootstrap |
+| `packages/database` | Drizzle schema, generated migrations, and database bootstrap |
 | `packages/runtime-clients` | Hermes and Supermemory server-side clients (renamed from `document-runtime`, which predated the removal of the local document pipeline) |
 | `packages/security` | Password hashing, envelope encryption, capability checks, and recovery-kit primitives |
 | `install.sh` | Public VM1 bootstrap wrapper |
@@ -151,7 +151,7 @@ Result on baseline commit `5209c11`:
 - TypeScript typecheck: passed across all workspace projects.
 - Tests: 72 test files and 359 tests passed.
 - Production build: passed.
-- Prisma schema validation: passed.
+- Drizzle schema check (`pnpm db:validate`): passed.
 - Web production build: passed; the largest generated chunks are the application shell (`index`, 380.87 kB) and Chat workspace (`chat-view`, 179.72 kB).
 
 Since that capture, `v0.2.0` on branch `fix/worker-run-durability` landed five worker defects found by review rather than by a failing test. `pnpm verify` passes there with 72 test files and 368 tests; worker coverage went from 14 to 23 tests. The fixes are:
@@ -191,7 +191,7 @@ Never include the Supermemory API key, node private key, installation key, admin
 
 This is the highest-priority issue for the next session.
 
-The repository currently defaults new VM2 enrollments to Supermemory `0.0.7-rc.2` in contracts, Prisma defaults, UI, installer expectations, migrations, and documentation. That change was made because the release fixes a large-document Rivet workflow limit.
+The repository currently defaults new VM2 enrollments to Supermemory `0.0.7-rc.2` in contracts, UI, installer expectations, and documentation. This concerns the memory layer Hermes runs on VM2; OrcaSynapse's own document store moved to pgvector and no longer involves Supermemory. That change was made because the release fixes a large-document Rivet workflow limit.
 
 However, later verification found an open upstream bug showing that the published `0.0.7-rc.2` binary ignores these documented variables:
 
@@ -242,7 +242,7 @@ Do not solve the document problem by silently accepting BGE-base. The coherent p
 ### 1. Correct the release policy
 
 - Restore the new-node baseline to the actually verified `0.0.5` release until upstream fixes issue `#1336`, or introduce an explicitly audited custom build if the organization accepts maintaining it.
-- Update all matching defaults and claims in contracts, Prisma schema/migration, runtime-node UI, installer guards, tests, PRD, architecture, model runbook, and enrollment runbook.
+- Update all matching defaults and claims in contracts, runtime-node UI, installer guards, tests, PRD, architecture, model runbook, and enrollment runbook.
 - Add an explicit blocked-release rule for `0.0.7-rc.2` when multilingual BGE-M3 is required.
 - Preserve existing VM2 data and do not mutate its 1024-dimensional embedding plan in place.
 
@@ -254,8 +254,8 @@ rg -n "0\.0\.7-rc\.2|bge-m3|bge-base" scripts apps packages docs README.md deplo
 
 Two corrections to the framing above, confirmed against the tree:
 
-- The contradiction is **internal to the repository**, not repository-versus-reality. `scripts/install-agentic-node.sh` already names issue `#1336` and warns when the runtime loads a different embedding model than requested, and the enrollment runbook already documents that fallback. What disagrees with the installer is the rest of the tree: contracts, the Prisma default, the migration, the runtime-node panel, and `docs/ARCHITECTURE.md` still steer to `0.0.7-rc.2` with no embedding caveat. Preserve the installer's existing warning rather than adding it fresh; the work is to upgrade it to a hard failure or a visibly degraded node state.
-- **`apps/api/src/documents/prisma-document-manager.ts` ships operator-facing guidance that contradicts this plan.** On a large-document failure it instructs the operator to "Upgrade or re-enroll VM2 with the supported 0.0.7-rc.2 release." That message must change with the release policy; it is the highest-impact stale reference because it reaches operators directly rather than sitting in documentation.
+- The contradiction is **internal to the repository**, not repository-versus-reality. `scripts/install-agentic-node.sh` already names issue `#1336` and warns when the runtime loads a different embedding model than requested, and the enrollment runbook already documents that fallback. What disagrees with the installer is the rest of the tree: contracts, the runtime-node panel, and `docs/ARCHITECTURE.md` still steer to `0.0.7-rc.2` with no embedding caveat. Preserve the installer's existing warning rather than adding it fresh; the work is to upgrade it to a hard failure or a visibly degraded node state.
+- ~~The document manager shipped operator-facing guidance telling the operator to "Upgrade or re-enroll VM2 with the supported 0.0.7-rc.2 release" on a large-document failure.~~ Resolved: document ingestion moved to pgvector, that code path no longer exists, and the embedding model is now pinned by the `vector(1024)` column width rather than by a Supermemory release.
 - The installer's existing block on `0.0.6` is for the RivetKit packaging defect (`#1315`, `#1324`), which is a **different** bug from `#1336`. Do not merge the two block rules.
 
 ### 2. Decouple local text extraction from semantic indexing

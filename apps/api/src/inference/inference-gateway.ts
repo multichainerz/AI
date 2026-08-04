@@ -11,6 +11,7 @@ import {
   type OrcaSynapseDatabase,
 } from "@orcasynapse/database";
 import type { ConnectionDiagnosticStore, ResolvedConnection } from "../connections/diagnostics/types.js";
+import { endpointUrl } from "../connections/diagnostics/http.js";
 import { advisoryLock } from "../database-support.js";
 import { inspectInputText, type RuntimeTextPolicy } from "../guardrails/runtime-policy.js";
 
@@ -59,9 +60,10 @@ function endpointFor(connection: ResolvedConnection): URL {
     ? connection.configuration.chatPath
     : "/v1/chat/completions";
   try {
-    const endpoint = new URL(path, `${connection.baseUrl.replace(/\/+$/, "")}/`);
-    if (!["http:", "https:"].includes(endpoint.protocol) || endpoint.username || endpoint.password) throw new Error();
-    return endpoint;
+    // Re-checked at use, not only where it was written. A stored path that
+    // reached the row without contract validation could otherwise resolve to
+    // another origin and turn the gateway into a request forwarder.
+    return endpointUrl(connection.baseUrl, path);
   } catch {
     throw new InferenceGatewayError("NOT_CONFIGURED", "The approved inference route is invalid.");
   }

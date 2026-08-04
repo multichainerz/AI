@@ -10,7 +10,8 @@ export type ActiveView =
   | "Documents"
   | "Integrations"
   | "Guardrails"
-  | "Operations";
+  | "Operations"
+  | "Audit";
 
 export type ProductArea = "Home" | "Chat" | "Knowledge" | "Agents" | "Platform" | "Operations";
 
@@ -53,6 +54,10 @@ export const sectionNavigation: Partial<Record<ProductArea, ReadonlyArray<Sectio
     { label: "Profiles & runs", view: "Agents" },
     { label: "Governed tools", view: "Integrations" },
   ],
+  Operations: [
+    { label: "Health & evidence", view: "Operations" },
+    { label: "Audit trail", view: "Audit" },
+  ],
   Platform: [
     { label: "Setup", view: "Deployment" },
     { label: "Models", view: "Models" },
@@ -72,6 +77,7 @@ const areaByView: Record<ActiveView, ProductArea> = {
   Prompts: "Platform",
   Guardrails: "Platform",
   Operations: "Operations",
+  Audit: "Operations",
 };
 
 const pathByView: Record<ActiveView, string> = {
@@ -85,6 +91,7 @@ const pathByView: Record<ActiveView, string> = {
   Prompts: "#platform/prompts",
   Guardrails: "#platform/guardrails",
   Operations: "#operations",
+  Audit: "#operations/audit",
 };
 
 export function productAreaForView(view: ActiveView): ProductArea {
@@ -99,6 +106,9 @@ export function viewFromHash(hash: string): ActiveView {
   switch (hash.toLowerCase()) {
     case "#chat":
       return "Chat";
+    case "#operations/audit":
+    case "#audit":
+      return "Audit";
     case "#knowledge":
     case "#knowledge/documents":
     case "#documents":

@@ -1,4 +1,4 @@
-import { and, cosineDistance, desc, eq, gt, sql } from "drizzle-orm";
+import { and, cosineDistance, desc, eq, gt, inArray, sql } from "drizzle-orm";
 import {
   documentChunk,
   document,
@@ -22,6 +22,9 @@ export interface ChunkHit {
 
 export interface VectorSearchOptions {
   limit: number;
+  /** When set, retrieval is confined to exactly these documents. An empty array
+   *  is not the same as omitting it: it means nothing is in scope. */
+  documentIds?: readonly string[];
   /** Cosine similarity floor. Below this a hit is noise and injecting it costs
    *  prompt budget without adding evidence. */
   minimumScore: number;
@@ -111,6 +114,8 @@ export class DocumentVectorStore {
           eq(document.status, "READY"),
           sql`${document.deletedAt} IS NULL`,
           gt(similarity, options.minimumScore),
+          // Owner scope still applies: pinning narrows retrieval, it never widens it.
+          ...(options.documentIds ? [inArray(documentChunk.documentId, [...options.documentIds])] : []),
         ),
       )
       .orderBy(desc(fused))

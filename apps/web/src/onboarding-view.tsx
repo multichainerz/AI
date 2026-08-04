@@ -1,5 +1,7 @@
 import type {
   AgentProfile,
+  DeploymentTopologyMode,
+  OnboardingTargetEnvironment,
   AgentRuntimeControl,
   HermesRuntimeNode,
   OnboardingSnapshot,
@@ -9,8 +11,10 @@ import type {
 import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 import {
   OrcaSynapseApiError,
+  completeOnboarding,
   exportCredentialRecoveryKit,
   getOnboardingSnapshot,
+  updateArchitectureDecision,
   verifyCredentialRecoveryKit,
 } from "./api.js";
 import { connectionReadiness } from "./connection-readiness.js";
@@ -67,6 +71,11 @@ export function OnboardingView({
   const [recoveryConfirm, setRecoveryConfirm] = useState("");
   const [recoveryKit, setRecoveryKit] = useState("");
   const [recoveryFileName, setRecoveryFileName] = useState("");
+  const [architectureOpen, setArchitectureOpen] = useState(false);
+  const [topologyMode, setTopologyMode] = useState<DeploymentTopologyMode>("COMPACT");
+  const [targetEnvironment, setTargetEnvironment] = useState<OnboardingTargetEnvironment>("DEVELOPMENT");
+  const [architectureReason, setArchitectureReason] = useState("");
+  const [activationReason, setActivationReason] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -141,6 +150,55 @@ export function OnboardingView({
       setRecoveryFileName("");
       setRecoveryOpen(false);
     });
+  };
+
+  useEffect(() => {
+    if (!snapshot) return;
+    setTopologyMode(snapshot.architecture.topologyMode);
+    setTargetEnvironment(snapshot.architecture.targetEnvironment);
+    setArchitectureReason(snapshot.architecture.reason ?? "");
+  }, [snapshot?.architecture.revision]);
+
+  const saveArchitecture = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!snapshot) return;
+    setBusy("architecture");
+    try {
+      await updateArchitectureDecision({
+        topologyMode,
+        targetEnvironment,
+        reason: architectureReason.trim(),
+        expectedRevision: snapshot.architecture.revision,
+      });
+      // Changing topology or target invalidates every contract, so reload the
+      // whole snapshot rather than patching the decision in place.
+      setSnapshot(await getOnboardingSnapshot());
+      setArchitectureOpen(false);
+      setError(null);
+    } catch (cause) {
+      if (cause instanceof OrcaSynapseApiError && cause.status === 401) onUnauthorized();
+      else setError(cause instanceof Error ? cause.message : "Unable to save the architecture decision.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const activate = async () => {
+    if (!snapshot) return;
+    setBusy("activate");
+    try {
+      setSnapshot(await completeOnboarding({
+        reason: activationReason.trim(),
+        expectedRevision: snapshot.journey.revision,
+      }));
+      setActivationReason("");
+      setError(null);
+    } catch (cause) {
+      if (cause instanceof OrcaSynapseApiError && cause.status === 401) onUnauthorized();
+      else setError(cause instanceof Error ? cause.message : "Unable to record activation.");
+    } finally {
+      setBusy(null);
+    }
   };
 
   const selectRecoveryFile = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -290,6 +348,64 @@ export function OnboardingView({
       </article>
     </section>
 
+    <section className="setup-activation">
+      <article>
+        <div>
+          <p className="section-kicker">Architecture decision</p>
+          <h2>Topology and target environment</h2>
+          <p>
+            {snapshot?.architecture.reason
+              ? `${snapshot.architecture.topologyMode.toLowerCase().replaceAll("_", " ")} topology recorded for ${snapshot.architecture.targetEnvironment.toLowerCase()}.`
+              : "Record a topology and rationale. Validation cannot pass the system stage until this decision exists."}
+          </p>
+        </div>
+        <button className="secondary-button" type="button" onClick={() => setArchitectureOpen(true)} disabled={!snapshot}>
+          {snapshot?.architecture.reason ? "Change decision" : "Record decision"}
+        </button>
+      </article>
+
+      <article>
+        <div>
+          <p className="section-kicker">Activation</p>
+          <h2>{snapshot?.journey.status === "COMPLETED" ? `Activated for ${snapshot.journey.activatedEnvironment?.toLowerCase()}` : "Record environment activation"}</h2>
+          <p>
+            {snapshot?.journey.status === "COMPLETED"
+              ? "This installation is activated. Re-running validation reopens the journey."
+              : snapshot?.gate.ready
+                ? "Every required contract and stage has passed. Record why this installation is being activated."
+                : `${snapshot?.gate.blockers.length ?? 0} blocker${snapshot?.gate.blockers.length === 1 ? "" : "s"} remain.`}
+          </p>
+          {snapshot && !snapshot.gate.ready && snapshot.gate.blockers.length > 0 && (
+            <ul className="setup-blockers">
+              {snapshot.gate.blockers.slice(0, 5).map((blocker) => <li key={blocker}>{blocker}</li>)}
+            </ul>
+          )}
+        </div>
+        {snapshot?.journey.status !== "COMPLETED" && (
+          <form onSubmit={(event) => { event.preventDefault(); void activate(); }}>
+            <label>
+              Activation rationale
+              <input
+                value={activationReason}
+                minLength={3}
+                maxLength={1000}
+                placeholder="First production activation approved by the platform owner"
+                disabled={!snapshot?.gate.ready}
+                onChange={(event) => setActivationReason(event.target.value)}
+              />
+            </label>
+            <button
+              className="primary-button"
+              type="submit"
+              disabled={busy !== null || !snapshot?.gate.ready || activationReason.trim().length < 3}
+            >
+              {busy === "activate" ? "Recording…" : "Activate installation"}
+            </button>
+          </form>
+        )}
+      </article>
+    </section>
+
     <footer className="platform-setup-footer">
       <div>
         <strong>Production controls stay out of the setup path.</strong>
@@ -298,6 +414,39 @@ export function OnboardingView({
       <button className="text-button" type="button" onClick={onOpenOperations}>Open Operations</button>
       <button className="text-button" type="button" onClick={() => setRecoveryOpen(true)}>Installation recovery</button>
     </footer>
+
+    {architectureOpen && <div className="agent-editor-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setArchitectureOpen(false); }}>
+      <section className="setup-evidence-editor" role="dialog" aria-modal="true" aria-labelledby="architecture-title">
+        <header>
+          <div><p className="section-kicker">Architecture decision</p><h2 id="architecture-title">Topology and target environment</h2></div>
+          <button type="button" aria-label="Close architecture decision" onClick={() => setArchitectureOpen(false)}>×</button>
+        </header>
+        <p>Changing the topology or target environment invalidates recorded contract evidence, because that evidence was proven against the previous architecture.</p>
+        <form onSubmit={(event) => void saveArchitecture(event)}>
+          <label>Topology
+            <select value={topologyMode} onChange={(event) => setTopologyMode(event.target.value as DeploymentTopologyMode)}>
+              <option value="COMPACT">Compact — one host</option>
+              <option value="CONTROL_PLANE">Control plane only</option>
+              <option value="SEGMENTED_PRODUCTION">Segmented production</option>
+            </select>
+          </label>
+          <label>Target environment
+            <select value={targetEnvironment} onChange={(event) => setTargetEnvironment(event.target.value as OnboardingTargetEnvironment)}>
+              <option value="DEVELOPMENT">Development</option>
+              <option value="PILOT">Pilot</option>
+              <option value="PRODUCTION">Production</option>
+            </select>
+          </label>
+          <label>Rationale
+            <input value={architectureReason} minLength={3} maxLength={1000} placeholder="Hermes isolated from the control plane for pilot" onChange={(event) => setArchitectureReason(event.target.value)} />
+          </label>
+          {targetEnvironment === "PRODUCTION" && <small className="field-error">Production additionally requires a verified recovery kit, enterprise identity, and promoted evaluation evidence.</small>}
+          <button className="primary-button" type="submit" disabled={busy !== null || architectureReason.trim().length < 3}>
+            {busy === "architecture" ? "Saving…" : "Save decision"}
+          </button>
+        </form>
+      </section>
+    </div>}
 
     {recoveryOpen && <div className="agent-editor-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setRecoveryOpen(false); }}>
       <section className="setup-evidence-editor setup-recovery-editor" role="dialog" aria-modal="true" aria-labelledby="recovery-title">

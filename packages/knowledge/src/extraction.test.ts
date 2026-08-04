@@ -1,3 +1,9 @@
+import {
+  DOCUMENT_UPLOAD_ACCEPT,
+  SUPPORTED_DOCUMENT_MEDIA_TYPES,
+  SUPPORTED_DOCUMENT_TYPES,
+  isSupportedDocumentMediaType,
+} from "@orcasynapse/contracts";
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_EXTRACTION_BOUNDS,
@@ -9,6 +15,40 @@ import {
 } from "./extraction.js";
 
 const encode = (value: string) => new TextEncoder().encode(value);
+
+describe("the advertised document formats and the extractor", () => {
+  // The upload picker, the upload route, and the extractor drifted apart once:
+  // the dashboard offered images the extractor rejects and withheld xlsx and
+  // pptx it accepts. This binds all three to one list.
+  it("advertises exactly the media types the extractor can handle", () => {
+    for (const mediaType of SUPPORTED_DOCUMENT_MEDIA_TYPES) {
+      expect(extractionFormatFor(mediaType), mediaType).toBeDefined();
+    }
+  });
+
+  it("advertises no type the extractor would reject", () => {
+    for (const mediaType of ["image/png", "image/jpeg", "image/webp", "application/zip"]) {
+      expect(SUPPORTED_DOCUMENT_MEDIA_TYPES).not.toContain(mediaType);
+      expect(isSupportedDocumentMediaType(mediaType), mediaType).toBe(false);
+    }
+  });
+
+  it("offers the office formats the scenario depends on", () => {
+    for (const extension of [".pdf", ".docx", ".xlsx", ".pptx", ".csv", ".json"]) {
+      expect(DOCUMENT_UPLOAD_ACCEPT).toContain(extension);
+    }
+  });
+
+  it("pairs every extension with the media type it carries", () => {
+    expect(SUPPORTED_DOCUMENT_TYPES).toHaveLength(SUPPORTED_DOCUMENT_MEDIA_TYPES.length);
+    expect(new Set(SUPPORTED_DOCUMENT_TYPES.map(({ extension }) => extension)).size)
+      .toBe(SUPPORTED_DOCUMENT_TYPES.length);
+  });
+
+  it("accepts a declared type that carries a charset", () => {
+    expect(isSupportedDocumentMediaType("TEXT/PLAIN; charset=utf-8")).toBe(true);
+  });
+});
 
 describe("extractionFormatFor", () => {
   it("maps the supported enterprise formats", () => {

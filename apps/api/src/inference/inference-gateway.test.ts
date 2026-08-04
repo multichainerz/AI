@@ -278,4 +278,13 @@ describe("DrizzleInferenceGateway rate-limit counter", () => {
     expect(recorded.every(({ resourceId }) => resourceId === hermesConnectionId)).toBe(true);
     expect(await context.database.select().from(inferenceGatewayRequest)).toHaveLength(2);
   });
+
+  it("refuses a chat path that would leave the approved inference origin", async () => {
+    const { gateway, fetcher } = await harness(okResponse(), { chatPath: "//exfiltration.example/v1/chat" });
+
+    await expect(gateway.chat("runtime-key", request, new AbortController().signal))
+      .rejects.toMatchObject({ code: "NOT_CONFIGURED" });
+    // The prompt must never reach an origin the operator did not approve.
+    expect(fetcher).not.toHaveBeenCalled();
+  });
 });

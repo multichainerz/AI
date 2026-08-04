@@ -1,4 +1,7 @@
 import {
+  architectureDecisionSchema,
+  auditEventListSchema,
+  auditForwardingStateSchema,
   connectionTestResultSchema,
   connectionMonitoringControlSchema,
   inferenceDiscoveryResultSchema,
@@ -19,6 +22,14 @@ import {
   enterpriseSessionSchema,
   oidcStatusSchema,
   type AdministratorSession,
+  type AuditEventList,
+  type AuditEventQuery,
+  type AuditForwardingState,
+  type ArchitectureDecision,
+  type CompleteOnboarding,
+  type UpdateArchitectureDecision,
+  type UpdateComponentCompatibility,
+  type UpdateOnboardingStep,
   type CreateServiceConnection,
   type ConnectionTestResult,
   type ConnectionMonitoringControl,
@@ -490,6 +501,21 @@ export async function streamChatEvents(
   if (streamError) throw new OrcaSynapseApiError(502, streamError);
 }
 
+export async function attachChatDocument(conversationId: string, documentId: string): Promise<ChatConversation> {
+  const response = await fetch(`/api/v1/chat/conversations/${encodeURIComponent(conversationId)}/documents`, {
+    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify({ documentId }),
+  });
+  return chatConversationSchema.parse(await parsedResponse(response));
+}
+
+export async function detachChatDocument(conversationId: string, documentId: string): Promise<ChatConversation> {
+  const response = await fetch(
+    `/api/v1/chat/conversations/${encodeURIComponent(conversationId)}/documents/${encodeURIComponent(documentId)}`,
+    { method: "DELETE", credentials: "same-origin" },
+  );
+  return chatConversationSchema.parse(await parsedResponse(response));
+}
+
 export async function forkChatConversation(
   conversationId: string,
   input: ForkChatConversation = {},
@@ -894,6 +920,15 @@ export async function recordProductionReadinessApproval(
   return productionReadinessApprovalSchema.parse(await parsedResponse(response));
 }
 
+export async function getAuditEvents(query: AuditEventQuery): Promise<AuditEventList> {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && value !== null && value !== "") search.set(key, String(value));
+  }
+  const response = await fetch(`/api/v1/admin/audit/events?${search.toString()}`, { credentials: "same-origin" });
+  return auditEventListSchema.parse(await parsedResponse(response));
+}
+
 export async function getOnboardingSnapshot(): Promise<OnboardingSnapshot> {
   const response = await fetch("/api/v1/admin/onboarding/", { credentials: "same-origin" });
   return onboardingSnapshotSchema.parse(await parsedResponse(response));
@@ -901,6 +936,47 @@ export async function getOnboardingSnapshot(): Promise<OnboardingSnapshot> {
 
 export async function runOnboardingValidation(input: RunOnboardingValidation = {}): Promise<OnboardingSnapshot> {
   const response = await fetch("/api/v1/admin/onboarding/validate", {
+    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return onboardingSnapshotSchema.parse(await parsedResponse(response));
+}
+
+export async function getAuditForwarding(): Promise<AuditForwardingState> {
+  const response = await fetch("/api/v1/admin/audit/forwarding", { credentials: "same-origin" });
+  return auditForwardingStateSchema.parse(await parsedResponse(response));
+}
+
+export async function updateArchitectureDecision(
+  input: UpdateArchitectureDecision,
+): Promise<ArchitectureDecision> {
+  const response = await fetch("/api/v1/admin/onboarding/architecture", {
+    method: "PATCH", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return architectureDecisionSchema.parse(await parsedResponse(response));
+}
+
+export async function updateOnboardingComponent(
+  key: string,
+  input: UpdateComponentCompatibility,
+): Promise<OnboardingSnapshot> {
+  const response = await fetch(`/api/v1/admin/onboarding/components/${encodeURIComponent(key)}`, {
+    method: "PATCH", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return onboardingSnapshotSchema.parse(await parsedResponse(response));
+}
+
+export async function updateOnboardingStep(
+  key: string,
+  input: UpdateOnboardingStep,
+): Promise<OnboardingSnapshot> {
+  const response = await fetch(`/api/v1/admin/onboarding/steps/${encodeURIComponent(key)}`, {
+    method: "PATCH", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return onboardingSnapshotSchema.parse(await parsedResponse(response));
+}
+
+export async function completeOnboarding(input: CompleteOnboarding): Promise<OnboardingSnapshot> {
+  const response = await fetch("/api/v1/admin/onboarding/complete", {
     method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
   });
   return onboardingSnapshotSchema.parse(await parsedResponse(response));

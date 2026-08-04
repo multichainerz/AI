@@ -1,4 +1,5 @@
 import {
+  attachChatDocumentSchema,
   chatConversationSchema,
   chatConversationListSchema,
   chatConversationSummarySchema,
@@ -274,6 +275,40 @@ export async function registerChatRoutes(
     } finally {
       clearInterval(heartbeat);
       if (!reply.raw.destroyed) reply.raw.end();
+    }
+  });
+
+  app.post("/conversations/:conversationId/documents", async (request, reply) => {
+    const principal = await requireChatPrincipal(request, reply, options);
+    if (!principal) return;
+    if (!options.manager) {
+      return reply.code(423).send({ error: "PLATFORM_LOCKED", message: "Chat services are not ready." });
+    }
+    const id = conversationId((request.params as Record<string, unknown>).conversationId);
+    if (!id) return reply.code(400).send({ error: "INVALID_REQUEST", message: "Conversation ID is invalid." });
+    const input = attachChatDocumentSchema.safeParse(request.body);
+    if (!input.success) return reply.code(400).send({ error: "INVALID_REQUEST", message: input.error.issues[0]?.message });
+    try {
+      return chatConversationSchema.parse(await options.manager.attachDocument(principal, id, input.data.documentId));
+    } catch (error) {
+      await sendChatError(reply, error);
+    }
+  });
+
+  app.delete("/conversations/:conversationId/documents/:documentId", async (request, reply) => {
+    const principal = await requireChatPrincipal(request, reply, options);
+    if (!principal) return;
+    if (!options.manager) {
+      return reply.code(423).send({ error: "PLATFORM_LOCKED", message: "Chat services are not ready." });
+    }
+    const params = request.params as Record<string, unknown>;
+    const id = conversationId(params.conversationId);
+    const documentId = conversationId(params.documentId);
+    if (!id || !documentId) return reply.code(400).send({ error: "INVALID_REQUEST", message: "Conversation or document ID is invalid." });
+    try {
+      return chatConversationSchema.parse(await options.manager.detachDocument(principal, id, documentId));
+    } catch (error) {
+      await sendChatError(reply, error);
     }
   });
 

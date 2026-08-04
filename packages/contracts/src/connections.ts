@@ -85,6 +85,10 @@ export const serviceConnectionConfigurationSchema = z
     requestsPerMinute: z.number().int().min(1).max(120).optional(),
     documentsPath: relativeHealthPathSchema.optional(),
     searchPath: relativeHealthPathSchema.optional(),
+    /** Where forwarded audit batches are POSTed on a SIEM endpoint. */
+    eventsPath: relativeHealthPathSchema.optional(),
+    /** How many audit events one forwarded batch may carry. */
+    forwardBatchSize: z.number().int().min(1).max(500).optional(),
     memoryTimeoutMs: z.number().int().min(10_000).max(900_000).optional(),
     memoryPollIntervalMs: z.number().int().min(500).max(30_000).optional(),
     retrievalLimit: z.number().int().min(2).max(20).optional(),
@@ -165,7 +169,7 @@ const connectionConfigurationSchemas = {
     tokenAuthMethod: true,
     caseSensitiveGroups: true,
   }),
-  SIEM: serviceConnectionConfigurationSchema.pick({ timeoutMs: true, healthPath: true }),
+  SIEM: serviceConnectionConfigurationSchema.pick({ timeoutMs: true, healthPath: true, eventsPath: true, forwardBatchSize: true }),
   NOTIFICATION: serviceConnectionConfigurationSchema.pick({
     timeoutMs: true,
     healthPath: true,

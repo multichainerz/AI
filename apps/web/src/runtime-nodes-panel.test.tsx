@@ -45,3 +45,22 @@ describe("RuntimeNodesPanel", () => {
     expect(html).not.toContain("AI Inference must be ready first");
   });
 });
+
+describe("the single-runtime cap", () => {
+  it("states the cap before an operator tries to exceed it", () => {
+    const html = renderToStaticMarkup(
+      <RuntimeNodesPanel
+        targetEnvironment="DEVELOPMENT"
+        inferenceReady
+        onConfigureInference={vi.fn()}
+        onNodesChange={vi.fn()}
+        onUnauthorized={vi.fn()}
+      />,
+    );
+
+    // Enrollment refuses a second boundary; saying so up front beats failing at
+    // the end of a VM2 install.
+    expect(html).toContain("One runtime at a time");
+    expect(html).toContain("exactly one Hermes execution boundary");
+  });
+});

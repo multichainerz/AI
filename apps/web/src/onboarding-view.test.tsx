@@ -109,4 +109,35 @@ describe("OnboardingView", () => {
 
     expect(html).toContain("Three layers. One usable AI workspace.");
   });
+
+  it("offers the architecture decision the topology gate depends on", () => {
+    // Validation's system-topology stage passes only when a rationale exists,
+    // and this control is the only thing that can write one.
+    const html = renderToStaticMarkup(<OnboardingView
+      connections={[connection("INFERENCE", "http://vllm.internal:8000")]}
+      unlocked
+      oidcConfigured={false}
+      {...runtimeState}
+      {...callbacks}
+    />);
+
+    expect(html).toContain("Architecture decision");
+    expect(html).toContain("Topology and target environment");
+    expect(html).toContain("Validation cannot pass the system stage until this decision exists");
+  });
+
+  it("offers an activation control that states what still blocks it", () => {
+    const html = renderToStaticMarkup(<OnboardingView
+      connections={[connection("INFERENCE", "http://vllm.internal:8000")]}
+      unlocked
+      oidcConfigured={false}
+      {...runtimeState}
+      {...callbacks}
+    />);
+
+    expect(html).toContain("Activation");
+    expect(html).toContain("Activate installation");
+    // Without a loaded snapshot the control must not present itself as ready.
+    expect(html).toContain("disabled");
+  });
 });

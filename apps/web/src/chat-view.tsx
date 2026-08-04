@@ -5,18 +5,22 @@ import type {
   ChatConversationSummary,
   ChatMessage,
   ChatStreamEvent,
+  DocumentSummary,
 } from "@orcasynapse/contracts";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
   OrcaSynapseApiError,
+  attachChatDocument,
   cancelChatRun,
   createChatConversation,
   decideChatApproval,
   deleteChatConversation,
+  detachChatDocument,
   forkChatConversation,
   getChatConversation,
+  getDocuments,
   getChatConversations,
   getAgentProfiles,
   streamChatEvents,
@@ -49,6 +53,24 @@ interface ClientCrypto {
 }
 
 let fallbackMessageSequence = 0;
+
+/**
+ * Only an indexed document can be pinned. Pinning one that has not finished
+ * embedding narrows retrieval to a source with no chunks, which surfaces as the
+ * agent having no answer rather than as the document not being ready.
+ */
+export function pinnableDocuments(documents: readonly DocumentSummary[]): DocumentSummary[] {
+  return documents.filter((item) => item.status === "READY");
+}
+
+/**
+ * States which knowledge an answer may draw on. The distinction changes what an
+ * answer means, so it is spelled out rather than implied by a count alone.
+ */
+export function knowledgeScopeSummary(pinnedCount: number): string {
+  if (pinnedCount === 0) return "Nothing pinned. Answers may draw on every document you own.";
+  return `Answers are restricted to ${pinnedCount} pinned document${pinnedCount === 1 ? "" : "s"}.`;
+}
 
 export function createClientMessageId(
   cryptoApi: ClientCrypto | null | undefined = globalThis.crypto as ClientCrypto | undefined,
@@ -194,6 +216,8 @@ export function ChatView({
   onOpenPlatform,
   onUnauthorized,
 }: ChatViewProps) {
+  const [knowledgeOpen, setKnowledgeOpen] = useState(false);
+  const [library, setLibrary] = useState<DocumentSummary[]>([]);
   const [conversations, setConversations] = useState<ChatConversationSummary[]>([]);
   const [active, setActive] = useState<ChatConversation | null>(null);
   const [draft, setDraft] = useState("");
@@ -564,6 +588,30 @@ export function ChatView({
     }
   };
 
+  const openKnowledge = async () => {
+    setKnowledgeOpen(true);
+    try {
+      // Only READY documents can be pinned; anything else would narrow
+      // retrieval to a source that has no embedded chunks yet.
+      setLibrary(pinnableDocuments((await getDocuments()).items));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to load your documents.");
+    }
+  };
+
+  const togglePinned = async (documentId: string, pinned: boolean) => {
+    if (!active) return;
+    try {
+      setActive(pinned
+        ? await detachChatDocument(active.id, documentId)
+        : await attachChatDocument(active.id, documentId));
+      setError(null);
+    } catch (cause) {
+      if (cause instanceof OrcaSynapseApiError && cause.status === 401) onUnauthorized();
+      else setError(cause instanceof Error ? cause.message : "Unable to change pinned knowledge.");
+    }
+  };
+
   const exportConversation = () => {
     if (!active) return;
     const payload = JSON.stringify({
@@ -780,6 +828,9 @@ export function ChatView({
           {active && !renaming && (
             <div className="chat-conversation-actions">
               <button type="button" disabled={working || loading} onClick={() => { setTitleDraft(active.title); setRenaming(true); }}>Rename</button>
+              <button type="button" disabled={working || loading} onClick={() => void openKnowledge()}>
+                Knowledge{active.knowledgeDocuments.length > 0 ? ` · ${active.knowledgeDocuments.length}` : ""}
+              </button>
               <button type="button" disabled={working || loading} onClick={() => void forkConversation()}>Fork</button>
               <button type="button" disabled={working || loading} onClick={exportConversation}>Export</button>
               <button type="button" disabled={working || loading} onClick={() => void setArchiveStatus(active.status === "ARCHIVED" ? "ACTIVE" : "ARCHIVED")}>{active.status === "ARCHIVED" ? "Restore" : "Archive"}</button>
@@ -787,6 +838,41 @@ export function ChatView({
             </div>
           )}
         </header>
+
+        {knowledgeOpen && active && (
+          <div className="chat-knowledge" role="dialog" aria-labelledby="chat-knowledge-title">
+            <header>
+              <div>
+                <strong id="chat-knowledge-title">Knowledge for this conversation</strong>
+                <span>{knowledgeScopeSummary(active.knowledgeDocuments.length)}</span>
+              </div>
+              <button type="button" aria-label="Close knowledge" onClick={() => setKnowledgeOpen(false)}>×</button>
+            </header>
+            {library.length === 0 ? (
+              <p className="chat-knowledge-empty">No indexed documents yet. Upload one in Knowledge and it becomes pinnable once indexing completes.</p>
+            ) : (
+              <ul>
+                {library.map((item) => {
+                  const pinned = active.knowledgeDocuments.some((pin) => pin.id === item.id);
+                  return (
+                    <li key={item.id}>
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={pinned}
+                          disabled={working}
+                          onChange={() => void togglePinned(item.id, pinned)}
+                        />
+                        <span>{item.fileName}</span>
+                        <small>{item.classification.toLowerCase()}</small>
+                      </label>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        )}
 
         {confirmDelete && active && (
           <div className="chat-confirmation" role="alertdialog" aria-labelledby="delete-conversation-title">

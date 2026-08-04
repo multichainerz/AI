@@ -20,6 +20,7 @@ import { registerAiOpsRoutes } from "./ai-ops/routes.js";
 import { registerModelRoutes } from "./models/routes.js";
 import { registerGuardrailRoutes } from "./guardrails/routes.js";
 import { registerPromptRoutes } from "./prompts/routes.js";
+import { registerAuditRoutes } from "./audit/routes.js";
 import { registerOnboardingRoutes } from "./onboarding/routes.js";
 import {
   registerAdminRuntimeNodeRoutes,
@@ -91,6 +92,7 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
   if (runtime.database || runtime.operationsManager || runtime.connectionMonitor) {
     app.addHook("onClose", async () => {
       try {
+        await runtime.siemForwarder?.stop();
         await runtime.connectionMonitor?.stop();
       } finally {
         try {
@@ -116,6 +118,10 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
 
   if (runtime.connectionMonitor) {
     await runtime.connectionMonitor.start();
+  }
+
+  if (runtime.siemForwarder) {
+    await runtime.siemForwarder.start();
   }
 
   app.get("/healthz", async (_request, reply) => {
@@ -203,6 +209,14 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
       ...(runtime.promptManager ? { manager: runtime.promptManager } : {}),
     }),
     { prefix: "/api/v1/admin/prompts" },
+  );
+
+  await app.register(
+    async (audit) => registerAuditRoutes(audit, {
+      ...(runtime.sessionManager ? { sessionManager: runtime.sessionManager } : {}),
+      ...(runtime.auditManager ? { manager: runtime.auditManager } : {}),
+    }),
+    { prefix: "/api/v1/admin/audit" },
   );
 
   await app.register(

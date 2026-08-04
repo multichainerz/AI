@@ -85,8 +85,22 @@ export const chatConversationSummarySchema = z.object({
   lastMessageAt: z.iso.datetime().nullable(),
 });
 
+/** A document pinned to a conversation, narrowing what its runs may retrieve. */
+export const chatKnowledgeDocumentSchema = z.object({
+  id: z.uuid(),
+  fileName: z.string().min(1).max(255),
+  classification: z.string().min(1).max(40),
+  status: z.string().min(1).max(40),
+});
+
+export const attachChatDocumentSchema = z.object({
+  documentId: z.uuid(),
+}).strict();
+
 export const chatConversationSchema = chatConversationSummarySchema.extend({
   messages: z.array(chatMessageSchema),
+  /** Empty means retrieval spans everything the owner holds. */
+  knowledgeDocuments: z.array(chatKnowledgeDocumentSchema).max(50).default([]),
 });
 
 export const chatConversationListSchema = z.object({
@@ -217,3 +231,6 @@ export type ChatMessageSubmission = z.infer<typeof chatMessageSubmissionSchema>;
 export type ForkChatConversation = z.infer<typeof forkChatConversationSchema>;
 export type ChatMetrics = z.infer<typeof chatMetricsSchema>;
 export type ChatStreamEvent = z.infer<typeof chatStreamEventSchema>;
+
+export type ChatKnowledgeDocument = z.infer<typeof chatKnowledgeDocumentSchema>;
+export type AttachChatDocument = z.infer<typeof attachChatDocumentSchema>;

@@ -42,6 +42,7 @@ export interface AgentManager {
       memorySessionKey?: string;
       conversationHistory?: Array<{ role: "user" | "assistant"; content: string }>;
       outputCharacterLimit?: number;
+      knowledgeDocumentIds?: readonly string[];
     },
   ): Promise<AgentRun>;
   cancelRun(principal: AgentPrincipal, runId: string, includeAll: boolean): Promise<AgentRun>;

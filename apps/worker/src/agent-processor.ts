@@ -41,7 +41,7 @@ function sleep(milliseconds: number): Promise<void> {
 }
 
 export interface AgentKnowledgeRetriever {
-  search(ownerSubject: string, query: string): Promise<KnowledgeSource[]>;
+  search(ownerSubject: string, query: string, documentIds?: readonly string[] | null): Promise<KnowledgeSource[]>;
 }
 
 /**
@@ -57,15 +57,19 @@ export class WorkerAgentKnowledgeRetriever implements AgentKnowledgeRetriever {
     private readonly embedder: TextEmbedder,
   ) {}
 
-  async search(ownerSubject: string, query: string): Promise<KnowledgeSource[]> {
+  async search(ownerSubject: string, query: string, documentIds?: readonly string[] | null): Promise<KnowledgeSource[]> {
     const trimmed = query.trim();
     if (!trimmed) return [];
+    // A conversation that pins nothing retrieves nothing, which is what the
+    // operator asked for; only an absent scope means "everything I own".
+    if (documentIds && documentIds.length === 0) return [];
     const [queryEmbedding] = await this.embedder.embed([trimmed]);
     if (!queryEmbedding) return [];
 
     const hits = await this.vectors.search(ownerSubject, trimmed, queryEmbedding, {
       limit: 18,
       minimumScore: 0.35,
+      ...(documentIds ? { documentIds } : {}),
     });
 
     // Several chunks of one document collapse into a single reference: the run
@@ -153,6 +157,8 @@ interface LoadedRun {
   processorLeaseOwner: string | null;
   processorLeaseExpiresAt: Date | null;
   ownerSubject: string;
+  /** NULL means owner-wide retrieval; an array narrows it to those documents. */
+  knowledgeDocumentIds: string[] | null;
   sessionId: string;
   memorySessionKey: string;
   input: string;
@@ -350,7 +356,7 @@ export class DrizzleAgentProcessor {
       if (!externalRunId) {
         let sources: KnowledgeSource[] = [];
         if (effectiveCapabilities(run.effectiveCapabilities).includes("knowledge:private:read")) {
-          sources = await this.knowledge.search(run.ownerSubject, run.input);
+          sources = await this.knowledge.search(run.ownerSubject, run.input, run.knowledgeDocumentIds);
           assertLease();
           await this.database
             .update(agentRun)

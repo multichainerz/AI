@@ -82,3 +82,59 @@ describe("DrizzleOperationsManager", () => {
     expect(stored).toHaveLength(1);
   });
 });
+
+describe("DrizzleOperationsManager reconciliation", () => {
+  async function seedExecutor(lastSeenAt: Date) {
+    const id = `worker-${randomUUID().slice(0, 8)}`;
+    const [node] = await context.database
+      .insert(workerNode)
+      .values({
+        id,
+        name: id,
+        status: "ONLINE",
+        startedAt: new Date(Date.now() - 600_000),
+        lastSeenAt,
+        version: "v1.23.2",
+        workloads: ["hermes-runs"],
+      })
+      .returning({ id: workerNode.id });
+    return node!.id;
+  }
+
+  it("marks an executor stopped once its heartbeat goes stale", async () => {
+    const alive = await seedExecutor(new Date());
+    const dead = await seedExecutor(new Date(Date.now() - 120_000));
+
+    const stopped = await new DrizzleOperationsManager(context.database).reconcile();
+
+    expect(stopped).toBe(1);
+    const rows = await context.database.select().from(workerNode);
+    expect(rows.find(({ id }) => id === dead)?.status).toBe("STOPPED");
+    expect(rows.find(({ id }) => id === alive)?.status).toBe("ONLINE");
+  });
+
+  it("reaps without anyone requesting a snapshot", async () => {
+    const dead = await seedExecutor(new Date(Date.now() - 120_000));
+    const manager = new DrizzleOperationsManager(context.database, 20);
+
+    await manager.start();
+    await new Promise((resolve) => setTimeout(resolve, 90));
+    await manager.stop();
+
+    const [row] = await context.database.select().from(workerNode).where(eq(workerNode.id, dead));
+    expect(row?.status).toBe("STOPPED");
+  });
+
+  it("stops reconciling once the manager is stopped", async () => {
+    const manager = new DrizzleOperationsManager(context.database, 20);
+    await manager.start();
+    await manager.stop();
+    const dead = await seedExecutor(new Date(Date.now() - 120_000));
+
+    await new Promise((resolve) => setTimeout(resolve, 90));
+
+    // A stopped manager must leave the row alone; the timer was cleared.
+    const [row] = await context.database.select().from(workerNode).where(eq(workerNode.id, dead));
+    expect(row?.status).toBe("ONLINE");
+  });
+});
