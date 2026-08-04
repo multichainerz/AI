@@ -273,7 +273,7 @@ interface LoadedRun {
   conversationHistory: unknown;
   partialOutput: string;
   outputCharacterLimit: number;
-  sources: unknown;
+  sources: KnowledgeSource[];
   effectiveCapabilities: unknown;
   toolCapabilityTokenHash: Uint8Array | null;
   toolCapabilityExpiresAt: Date | null;
@@ -640,7 +640,7 @@ export class DrizzleAgentProcessor {
                   ? Math.max(0, timing.firstTokenAt.getTime() - timing.startedAt.getTime())
                   : null,
                 finishReason: state.finishReason ?? "hermes_completed",
-                sources: run!.sources as never,
+                sources: run!.sources,
                 completedAt,
               })
               .where(and(eq(chatMessage.agentRunId, run!.id), eq(chatMessage.status, "PENDING")));
@@ -1005,17 +1005,6 @@ export class DrizzleAgentProcessor {
       .catch(() => undefined);
   }
 
-  /**
-   * Stores what this turn taught the agent, per the mode frozen onto the run.
-   *
-   * LEARN_USER stores only what the person said. The model's own output is
-   * excluded deliberately: an answer it got wrong once would otherwise become
-   * a durable "memory" that later runs retrieve and treat as established fact.
-   * LEARN_EXCHANGE opts into that trade explicitly.
-   *
-   * Failure here is logged and swallowed. The run completed and the person has
-   * their answer; losing a memory is not a reason to fail it retroactively.
-   */
   /** The active policy's limits, or the shipped defaults when none is active. */
   private async memoryLimits(): Promise<{ limits: MemoryLimits; ceiling: AgentMemoryMode | null }> {
     const [policy] = await this.database
@@ -1051,6 +1040,17 @@ export class DrizzleAgentProcessor {
     };
   }
 
+  /**
+   * Stores what this turn taught the agent, per the mode frozen onto the run.
+   *
+   * LEARN_USER stores only what the person said. The model's own output is
+   * excluded deliberately: an answer it got wrong once would otherwise become
+   * a durable "memory" that later runs retrieve and treat as established fact.
+   * LEARN_EXCHANGE opts into that trade explicitly.
+   *
+   * Failure here is logged and swallowed. The run completed and the person has
+   * their answer; losing a memory is not a reason to fail it retroactively.
+   */
   private async rememberTurn(run: LoadedRun, output: string | null, workerId: string): Promise<void> {
     if (!this.memory) return;
     const capabilities = effectiveCapabilities(run.effectiveCapabilities);

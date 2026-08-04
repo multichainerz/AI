@@ -51,6 +51,12 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # Declared in package.json since the first release but never wired here,
+      # so four high-severity advisories in shipped dependencies went unnoticed
+      # until ai-v1.34.0. Blocking: a high in a production dependency is a
+      # release decision, not a warning to scroll past.
+      - name: Audit production dependencies
+        run: pnpm security:audit
       - run: pnpm verify
         # Data-layer tests provision an isolated database per file rather than
         # faking Drizzle's query builder, so the suite needs a live server.

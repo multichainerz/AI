@@ -5,6 +5,36 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.34.0 — 2026-08-05
+
+A second sanity pass before Phase 4, this one over the backend, dependencies,
+and the checks that are supposed to catch these things.
+
+- **close four high-severity advisories in shipped dependencies.** `fast-uri`
+  (GHSA-7p8r-x3mc-p8w7, host confusion via a backslash authority introducer)
+  reaches the request path through Fastify's serialiser; `adm-zip` (path
+  traversal) is unpacked by onnxruntime; `sharp` ships in the image through
+  `@huggingface/transformers`. Pinned via pnpm overrides to `fast-uri >=4.1.2`,
+  `adm-zip >=0.6.0`, `sharp >=0.35.3`
+- **run `pnpm security:audit` in CI.** It has been a package script since the
+  first release and was never wired into the workflow, which is why the four
+  advisories above went unnoticed. Now blocking: a high in a production
+  dependency is a release decision, not a warning to scroll past
+- correct SECURITY.md, which still put Supermemory in the out-of-scope list and
+  asked reporters not to attach Supermemory API keys — a service removed in
+  ai-v1.29.0. The pgvector knowledge and agent-memory planes and their owner
+  scoping are now named as in scope
+- reattach the doc comment that ai-v1.32.0 stranded on `memoryLimits()` instead
+  of `rememberTurn()`, and type `LoadedRun.sources` as `KnowledgeSource[]` so
+  the `as never` cast at the completion write is gone — the last type escape in
+  the codebase
+
+Audited clean, for the record: all 117 route handlers are gated (scope,
+principal, bearer token, node signature, or public by design); all 40 error
+classes map to a status and the global handler leaks nothing; no `as any`, no
+`@ts-ignore`, no stray `console.log`; local login has failure-count lockout; CI
+matches local verify.
+
 ## ai-v1.33.0 — 2026-08-05
 
 A coherence pass over the dashboard, before Phase 4 adds surfaces to it.
