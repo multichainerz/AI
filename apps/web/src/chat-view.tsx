@@ -54,6 +54,24 @@ interface ClientCrypto {
 
 let fallbackMessageSequence = 0;
 
+/**
+ * Only an indexed document can be pinned. Pinning one that has not finished
+ * embedding narrows retrieval to a source with no chunks, which surfaces as the
+ * agent having no answer rather than as the document not being ready.
+ */
+export function pinnableDocuments(documents: readonly DocumentSummary[]): DocumentSummary[] {
+  return documents.filter((item) => item.status === "READY");
+}
+
+/**
+ * States which knowledge an answer may draw on. The distinction changes what an
+ * answer means, so it is spelled out rather than implied by a count alone.
+ */
+export function knowledgeScopeSummary(pinnedCount: number): string {
+  if (pinnedCount === 0) return "Nothing pinned. Answers may draw on every document you own.";
+  return `Answers are restricted to ${pinnedCount} pinned document${pinnedCount === 1 ? "" : "s"}.`;
+}
+
 export function createClientMessageId(
   cryptoApi: ClientCrypto | null | undefined = globalThis.crypto as ClientCrypto | undefined,
 ): string {
@@ -575,7 +593,7 @@ export function ChatView({
     try {
       // Only READY documents can be pinned; anything else would narrow
       // retrieval to a source that has no embedded chunks yet.
-      setLibrary((await getDocuments()).items.filter((item) => item.status === "READY"));
+      setLibrary(pinnableDocuments((await getDocuments()).items));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Unable to load your documents.");
     }
@@ -826,11 +844,7 @@ export function ChatView({
             <header>
               <div>
                 <strong id="chat-knowledge-title">Knowledge for this conversation</strong>
-                <span>
-                  {active.knowledgeDocuments.length === 0
-                    ? "Nothing pinned. Answers may draw on every document you own."
-                    : `Answers are restricted to ${active.knowledgeDocuments.length} pinned document${active.knowledgeDocuments.length === 1 ? "" : "s"}.`}
-                </span>
+                <span>{knowledgeScopeSummary(active.knowledgeDocuments.length)}</span>
               </div>
               <button type="button" aria-label="Close knowledge" onClick={() => setKnowledgeOpen(false)}>×</button>
             </header>
