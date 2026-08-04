@@ -19,8 +19,21 @@ import type {
   RegisterHermesNodeMemory,
   RegisterHermesNodeMemoryResult,
 } from "@orcasynapse/contracts";
-import { Prisma, type OrcaSynapsePrismaClient } from "@orcasynapse/database";
+import {
+  auditEvent,
+  configurationRevision,
+  hermesNodeEnrollment,
+  hermesNodeRequestNonce,
+  hermesRuntimeNode,
+  localAdministrator,
+  platformArchitectureDecision,
+  secretRecord,
+  serviceConnection,
+  type OrcaSynapseDatabase,
+} from "@orcasynapse/database";
+import { and, asc, count, eq, gt, inArray, isNotNull, isNull, lt, ne, or } from "drizzle-orm";
 import { EnvelopeEncryption } from "@orcasynapse/security";
+import { advisoryLock, increment, isUniqueViolation } from "../database-support.js";
 import type { AdminPrincipal } from "../auth/admin-session.js";
 import type { ConnectionTestService } from "../connections/diagnostics/connection-test-service.js";
 import { SUPERMEMORY_LOCAL_READY_PATH } from "../connections/diagnostics/supermemory-adapter.js";
@@ -220,44 +233,55 @@ export function verifyNodeRequestSignature(
   if (!valid) throw new RuntimeNodeAuthenticationError();
 }
 
-export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager {
+export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager {
   constructor(
-    private readonly prisma: OrcaSynapsePrismaClient,
+    private readonly database: OrcaSynapseDatabase,
     private readonly encryption: EnvelopeEncryption,
     private readonly connectionTester?: ConnectionTestService,
   ) {}
 
   async list(): Promise<HermesRuntimeNode[]> {
-    await this.prisma.hermesRuntimeNode.updateMany({
-      where: {
-        status: { in: ["ONLINE", "DEGRADED"] },
-        OR: [
-          { lastSeenAt: null },
-          { lastSeenAt: { lt: new Date(Date.now() - NODE_STALE_AFTER_MS) } },
-        ],
-      },
-      data: { status: "OFFLINE", revision: { increment: 1 } },
-    });
-    const nodes = await this.prisma.hermesRuntimeNode.findMany({
-      include: { serviceConnection: { select: { status: true } } },
-      orderBy: [{ displayName: "asc" }],
-    });
-    return nodes.map((node) => summarize(node as StoredNode));
+    // A node that stopped reporting must not keep presenting as available.
+    await this.database
+      .update(hermesRuntimeNode)
+      .set({ status: "OFFLINE", revision: increment(hermesRuntimeNode.revision) })
+      .where(and(
+        inArray(hermesRuntimeNode.status, ["ONLINE", "DEGRADED"]),
+        or(
+          isNull(hermesRuntimeNode.lastSeenAt),
+          lt(hermesRuntimeNode.lastSeenAt, new Date(Date.now() - NODE_STALE_AFTER_MS)),
+        ),
+      ));
+    const nodes = await this.database
+      .select({ node: hermesRuntimeNode, connectionStatus: serviceConnection.status })
+      .from(hermesRuntimeNode)
+      .leftJoin(serviceConnection, eq(hermesRuntimeNode.serviceConnectionId, serviceConnection.id))
+      .orderBy(asc(hermesRuntimeNode.displayName));
+    return nodes.map(({ node, connectionStatus }) =>
+      summarize({ ...node, serviceConnection: connectionStatus ? { status: connectionStatus } : null } as StoredNode));
   }
 
   private async runtimePrerequisites(): Promise<RuntimePrerequisites> {
-    const [configuredAdministrators, inferenceConnections] = await Promise.all([
-      this.prisma.localAdministrator.count({
-        where: { disabledAt: null, passwordChangeRequired: false },
-      }),
-      this.prisma.serviceConnection.findMany({
-        where: { kind: "INFERENCE", enabled: true, status: "HEALTHY" },
-        select: { baseUrl: true, configuration: true },
-        take: 2,
-      }),
+    const [administrators, inferenceConnections] = await Promise.all([
+      this.database
+        .select({ total: count() })
+        .from(localAdministrator)
+        .where(and(
+          isNull(localAdministrator.disabledAt),
+          eq(localAdministrator.passwordChangeRequired, false),
+        )),
+      this.database
+        .select({ baseUrl: serviceConnection.baseUrl, configuration: serviceConnection.configuration })
+        .from(serviceConnection)
+        .where(and(
+          eq(serviceConnection.kind, "INFERENCE"),
+          eq(serviceConnection.enabled, true),
+          eq(serviceConnection.status, "HEALTHY"),
+        ))
+        .limit(2),
     ]);
     return {
-      dashboardReady: configuredAdministrators > 0,
+      dashboardReady: (administrators[0]?.total ?? 0) > 0,
       inferenceReady: seedableInferenceModelAlias(inferenceConnections) !== null,
     };
   }
@@ -265,11 +289,12 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
   async installerReadiness(): Promise<HermesNodeInstallerReadiness> {
     const [prerequisites, activeInvitations] = await Promise.all([
       this.runtimePrerequisites(),
-      this.prisma.hermesNodeEnrollment.count({
-        where: { status: "ISSUED", expiresAt: { gt: new Date() } },
-      }),
+      this.database
+        .select({ total: count() })
+        .from(hermesNodeEnrollment)
+        .where(and(eq(hermesNodeEnrollment.status, "ISSUED"), gt(hermesNodeEnrollment.expiresAt, new Date()))),
     ]);
-    const invitationReady = activeInvitations > 0;
+    const invitationReady = (activeInvitations[0]?.total ?? 0) > 0;
     return {
       ...prerequisites,
       invitationReady,
@@ -288,67 +313,65 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
     if (!prerequisites.inferenceReady) {
       throw new RuntimeNodeConflictError("Configure and test exactly one healthy AI Inference route with a served model before enrolling Hermes.");
     }
-    const architecture = await this.prisma.platformArchitectureDecision.findUnique({
-      where: { id: "global" },
-      select: { targetEnvironment: true },
-    });
-    const productionViolation = productionArtifactViolation(architecture?.targetEnvironment, input);
+    const architecture = await this.architectureTarget();
+    const productionViolation = productionArtifactViolation(architecture, input);
     if (productionViolation) throw new RuntimeNodeConflictError(productionViolation);
     const token = randomBytes(32).toString("base64url");
     const tokenHash = digest(token);
     const expiresAt = new Date(Date.now() + input.expiresInMinutes * 60_000);
 
     try {
-      const node = await this.prisma.$transaction(async (transaction) => {
-        const existing = await transaction.hermesRuntimeNode.findUnique({ where: { slug: input.slug } });
+      const node = await this.database.transaction(async (transaction) => {
+        const [existing] = await transaction
+          .select().from(hermesRuntimeNode).where(eq(hermesRuntimeNode.slug, input.slug)).limit(1);
         if (existing?.identityPublicKeyPem || existing?.enrolledAt) {
           throw new RuntimeNodeConflictError(`Hermes node '${input.slug}' is already enrolled.`);
         }
-        const pending = existing
-          ? await transaction.hermesRuntimeNode.update({
-              where: { id: existing.id },
-              data: {
-                displayName: input.displayName,
-                baseUrl: input.baseUrl,
-                expectedHostname: input.expectedHostname ?? null,
-                revision: { increment: 1 },
-              },
+        const [pending] = existing
+          ? await transaction
+            .update(hermesRuntimeNode)
+            .set({
+              displayName: input.displayName,
+              baseUrl: input.baseUrl,
+              expectedHostname: input.expectedHostname ?? null,
+              revision: increment(hermesRuntimeNode.revision),
             })
-          : await transaction.hermesRuntimeNode.create({
-              data: {
-                slug: input.slug,
-                displayName: input.displayName,
-                baseUrl: input.baseUrl,
-                expectedHostname: input.expectedHostname ?? null,
-                createdBy: principal.id,
-              },
-            });
+            .where(eq(hermesRuntimeNode.id, existing.id))
+            .returning()
+          : await transaction
+            .insert(hermesRuntimeNode)
+            .values({
+              slug: input.slug,
+              displayName: input.displayName,
+              baseUrl: input.baseUrl,
+              expectedHostname: input.expectedHostname ?? null,
+              createdBy: principal.id,
+            })
+            .returning();
+        if (!pending) throw new RuntimeNodeConflictError("The runtime node record could not be prepared.");
 
-        await transaction.hermesNodeEnrollment.updateMany({
-          where: { nodeId: pending.id, status: "ISSUED" },
-          data: { status: "REVOKED", revokedAt: new Date() },
+        // Issuing a new claim retires any outstanding one for this node.
+        await transaction
+          .update(hermesNodeEnrollment)
+          .set({ status: "REVOKED", revokedAt: new Date() })
+          .where(and(eq(hermesNodeEnrollment.nodeId, pending.id), eq(hermesNodeEnrollment.status, "ISSUED")));
+        await transaction.insert(hermesNodeEnrollment).values({
+          nodeId: pending.id,
+          tokenHash,
+          controlPlaneUrl: input.controlPlaneUrl.replace(/\/$/, ""),
+          hermesImage: input.hermesImage,
+          supermemoryVersion: input.supermemoryVersion,
+          expiresAt,
+          createdBy: principal.id,
         });
-        await transaction.hermesNodeEnrollment.create({
-          data: {
-            nodeId: pending.id,
-            tokenHash,
-            controlPlaneUrl: input.controlPlaneUrl.replace(/\/$/, ""),
-            hermesImage: input.hermesImage,
-            supermemoryVersion: input.supermemoryVersion,
-            expiresAt,
-            createdBy: principal.id,
-          },
-        });
-        await transaction.auditEvent.create({
-          data: {
-            actorType: "USER",
-            actorId: principal.id,
-            action: "hermes.node.invitation-issued",
-            resourceType: "HermesRuntimeNode",
-            resourceId: pending.id,
-            outcome: "SUCCESS",
-            metadata: { expiresAt: expiresAt.toISOString(), expectedHostname: input.expectedHostname ?? null },
-          },
+        await transaction.insert(auditEvent).values({
+          actorType: "USER",
+          actorId: principal.id,
+          action: "hermes.node.invitation-issued",
+          resourceType: "HermesRuntimeNode",
+          resourceId: pending.id,
+          outcome: "SUCCESS",
+          metadata: { expiresAt: expiresAt.toISOString(), expectedHostname: input.expectedHostname ?? null },
         });
         return pending;
       });
@@ -368,19 +391,32 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
       };
     } catch (error) {
       if (error instanceof RuntimeNodeConflictError) throw error;
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      if (isUniqueViolation(error)) {
         throw new RuntimeNodeConflictError(`Hermes node '${input.slug}' already exists.`);
       }
       throw error;
     }
   }
 
+  /** The single architecture row's target, defaulting fail-safe to development. */
+  private async architectureTarget(): Promise<"DEVELOPMENT" | "PILOT" | "PRODUCTION" | undefined> {
+    const [row] = await this.database
+      .select({ targetEnvironment: platformArchitectureDecision.targetEnvironment })
+      .from(platformArchitectureDecision)
+      .where(eq(platformArchitectureDecision.id, "global"))
+      .limit(1);
+    return row?.targetEnvironment;
+  }
+
   async resolveInvitation(token: string): Promise<HermesNodeEnrollmentBundle> {
     const tokenHash = digest(token);
-    const enrollment = await this.prisma.hermesNodeEnrollment.findUnique({
-      where: { tokenHash },
-      include: { node: true },
-    });
+    const [row] = await this.database
+      .select({ enrollment: hermesNodeEnrollment, node: hermesRuntimeNode })
+      .from(hermesNodeEnrollment)
+      .innerJoin(hermesRuntimeNode, eq(hermesNodeEnrollment.nodeId, hermesRuntimeNode.id))
+      .where(eq(hermesNodeEnrollment.tokenHash, tokenHash))
+      .limit(1);
+    const enrollment = row ? { ...row.enrollment, node: row.node } : undefined;
     if (!enrollment) {
       throw new RuntimeNodeEnrollmentError("The enrollment claim is invalid.", "INVALID");
     }
@@ -391,10 +427,10 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
       throw new RuntimeNodeEnrollmentError("The enrollment claim is no longer active.", "INVALID");
     }
     if (enrollment.expiresAt <= new Date()) {
-      await this.prisma.hermesNodeEnrollment.updateMany({
-        where: { id: enrollment.id, status: "ISSUED" },
-        data: { status: "EXPIRED" },
-      });
+      await this.database
+        .update(hermesNodeEnrollment)
+        .set({ status: "EXPIRED" })
+        .where(and(eq(hermesNodeEnrollment.id, enrollment.id), eq(hermesNodeEnrollment.status, "ISSUED")));
       throw new RuntimeNodeEnrollmentError("The enrollment claim has expired.", "EXPIRED");
     }
     if (!enrollment.controlPlaneUrl || !enrollment.hermesImage) {
@@ -421,12 +457,15 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
     const tokenHash = digest(input.token);
     const now = new Date();
 
-    const enrolled = await this.prisma.$transaction(async (transaction) => {
-      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('orcasynapse-hermes-primary-runtime', 0))`;
-      const enrollment = await transaction.hermesNodeEnrollment.findUnique({
-        where: { tokenHash },
-        include: { node: true },
-      });
+    const enrolled = await this.database.transaction(async (transaction) => {
+      await transaction.execute(advisoryLock("orcasynapse-hermes-primary-runtime"));
+      const [row] = await transaction
+        .select({ enrollment: hermesNodeEnrollment, node: hermesRuntimeNode })
+        .from(hermesNodeEnrollment)
+        .innerJoin(hermesRuntimeNode, eq(hermesNodeEnrollment.nodeId, hermesRuntimeNode.id))
+        .where(eq(hermesNodeEnrollment.tokenHash, tokenHash))
+        .limit(1);
+      const enrollment = row ? { ...row.enrollment, node: row.node } : undefined;
       if (!enrollment || enrollment.nodeId !== input.nodeId) {
         throw new RuntimeNodeEnrollmentError("The enrollment claim is invalid.", "INVALID");
       }
@@ -440,27 +479,38 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
         throw new RuntimeNodeEnrollmentError("The enrollment control-plane origin does not match the invitation.", "INVALID");
       }
       if (enrollment.expiresAt <= now) {
-        await transaction.hermesNodeEnrollment.update({
-          where: { id: enrollment.id },
-          data: { status: "EXPIRED" },
-        });
+        await transaction
+          .update(hermesNodeEnrollment)
+          .set({ status: "EXPIRED" })
+          .where(eq(hermesNodeEnrollment.id, enrollment.id));
         return { expired: true as const };
       }
       if (enrollment.node.expectedHostname && enrollment.node.expectedHostname.toLowerCase() !== input.hostname.toLowerCase()) {
         throw new RuntimeNodeEnrollmentError("The runtime hostname does not match the invitation.", "HOSTNAME_MISMATCH");
       }
-      const activeRuntime = await transaction.hermesRuntimeNode.findFirst({
-        where: { id: { not: input.nodeId }, enrolledAt: { not: null }, status: { not: "REVOKED" } },
-        select: { slug: true },
-      });
+      // Exactly one runtime may hold the execution boundary at a time.
+      const [activeRuntime] = await transaction
+        .select({ slug: hermesRuntimeNode.slug })
+        .from(hermesRuntimeNode)
+        .where(and(
+          ne(hermesRuntimeNode.id, input.nodeId),
+          isNotNull(hermesRuntimeNode.enrolledAt),
+          ne(hermesRuntimeNode.status, "REVOKED"),
+        ))
+        .limit(1);
       if (activeRuntime) {
         throw new RuntimeNodeEnrollmentError(`Hermes runtime '${activeRuntime.slug}' is already the active OrcaSynapse execution boundary.`, "INVALID");
       }
 
-      const inferenceConnections = await transaction.serviceConnection.findMany({
-        where: { kind: "INFERENCE", enabled: true, status: "HEALTHY" },
-        take: 2,
-      });
+      const inferenceConnections = await transaction
+        .select()
+        .from(serviceConnection)
+        .where(and(
+          eq(serviceConnection.kind, "INFERENCE"),
+          eq(serviceConnection.enabled, true),
+          eq(serviceConnection.status, "HEALTHY"),
+        ))
+        .limit(2);
       const modelAlias = seedableInferenceModelAlias(inferenceConnections);
       if (!modelAlias) {
         throw new RuntimeNodeEnrollmentError("Exactly one healthy inference server route with a model alias is required.", "INVALID");
@@ -473,7 +523,11 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
         apiKey: gatewayKey,
       };
 
-      const architecture = await transaction.platformArchitectureDecision.findUnique({ where: { id: "global" } });
+      const [architecture] = await transaction
+        .select({ targetEnvironment: platformArchitectureDecision.targetEnvironment })
+        .from(platformArchitectureDecision)
+        .where(eq(platformArchitectureDecision.id, "global"))
+        .limit(1);
       const productionViolation = productionArtifactViolation(architecture?.targetEnvironment, enrollment);
       if (productionViolation) {
         throw new RuntimeNodeEnrollmentError(productionViolation, "INVALID");
@@ -499,77 +553,73 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
         configuration,
         secretFieldNames: ["apiKey", "inferenceGatewayKey"],
       };
-      const connection = await transaction.serviceConnection.create({
-        data: {
-          id: connectionId,
-          slug: connectionSlug,
-          displayName: `${enrollment.node.displayName} Hermes`,
-          kind: "HERMES",
-          environment,
-          baseUrl: enrollment.node.baseUrl,
-          enabled: true,
-          status: "NOT_TESTED",
-          configuration,
-          secrets: {
-            create: [
-              { ...encryptedSecretData(connectionId, "apiKey", input.apiKey, this.encryption), createdBy: null },
-              { ...encryptedSecretData(connectionId, "inferenceGatewayKey", gatewayKey, this.encryption), createdBy: null },
-            ],
-          },
-          revisions: {
-            create: {
-              revision: 1,
-              configuration: revisionState,
-              secretFieldNames: ["apiKey", "inferenceGatewayKey"],
-              checksum: checksum(revisionState),
-              activatedAt: now,
-            },
-          },
-        },
+      await transaction.insert(serviceConnection).values({
+        id: connectionId,
+        slug: connectionSlug,
+        displayName: `${enrollment.node.displayName} Hermes`,
+        kind: "HERMES",
+        environment,
+        baseUrl: enrollment.node.baseUrl,
+        enabled: true,
+        status: "NOT_TESTED",
+        configuration,
       });
-      await transaction.hermesNodeEnrollment.update({
-        where: { id: enrollment.id },
-        data: { status: "CONSUMED", consumedAt: now, consumedSourceIp: sourceIp ?? null },
+      // Prisma nested these under the connection; Drizzle writes each table.
+      await transaction.insert(secretRecord).values([
+        { ...encryptedSecretData(connectionId, "apiKey", input.apiKey, this.encryption), serviceConnectionId: connectionId, createdBy: null },
+        { ...encryptedSecretData(connectionId, "inferenceGatewayKey", gatewayKey, this.encryption), serviceConnectionId: connectionId, createdBy: null },
+      ]);
+      await transaction.insert(configurationRevision).values({
+        serviceConnectionId: connectionId,
+        revision: 1,
+        configuration: revisionState,
+        secretFieldNames: ["apiKey", "inferenceGatewayKey"],
+        checksum: checksum(revisionState),
+        activatedAt: now,
       });
-      const updated = await transaction.hermesRuntimeNode.update({
-        where: { id: enrollment.nodeId },
-        data: {
+      await transaction
+        .update(hermesNodeEnrollment)
+        .set({ status: "CONSUMED", consumedAt: now, consumedSourceIp: sourceIp ?? null })
+        .where(eq(hermesNodeEnrollment.id, enrollment.id));
+      const [updated] = await transaction
+        .update(hermesRuntimeNode)
+        .set({
           hostname: input.hostname,
           identityPublicKeyPem: identity.normalizedPem,
           identityFingerprint: identity.fingerprint,
           hermesVersion: input.hermesVersion,
           installerVersion: input.installerVersion,
           capabilities: input.capabilities,
-          serviceConnectionId: connection.id,
+          serviceConnectionId: connectionId,
           enrolledAt: now,
-          revision: { increment: 1 },
+          revision: increment(hermesRuntimeNode.revision),
+        })
+        .where(eq(hermesRuntimeNode.id, enrollment.nodeId))
+        .returning();
+      if (!updated) throw new RuntimeNodeEnrollmentError("The runtime node could not be enrolled.", "INVALID");
+      await transaction.insert(auditEvent).values([
+        {
+          actorType: "SERVICE",
+          action: "hermes.node.enrolled",
+          resourceType: "HermesRuntimeNode",
+          resourceId: updated.id,
+          outcome: "SUCCESS",
+          sourceIp: sourceIp ?? null,
+          metadata: { hostname: input.hostname, identityFingerprint: identity.fingerprint },
         },
-      });
-      await transaction.auditEvent.createMany({
-        data: [
-          {
-            actorType: "SERVICE",
-            action: "hermes.node.enrolled",
-            resourceType: "HermesRuntimeNode",
-            resourceId: updated.id,
-            outcome: "SUCCESS",
-            sourceIp: sourceIp ?? null,
-            metadata: { hostname: input.hostname, identityFingerprint: identity.fingerprint },
-          },
-          {
-            actorType: "SYSTEM",
-            action: "connection.created",
-            resourceType: "ServiceConnection",
-            resourceId: connection.id,
-            outcome: "SUCCESS",
-            metadata: { kind: "HERMES", environment, managedBy: "HermesRuntimeNode" },
-          },
-        ],
-      });
+        {
+          actorType: "SYSTEM",
+          action: "connection.created",
+          resourceType: "ServiceConnection",
+          resourceId: connectionId,
+          outcome: "SUCCESS",
+          metadata: { kind: "HERMES", environment, managedBy: "HermesRuntimeNode" },
+        },
+      ]);
       return { expired: false as const, node: updated, modelBootstrap };
     }).catch((error: unknown) => {
       if (error instanceof RuntimeNodeEnrollmentError) throw error;
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      if (isUniqueViolation(error)) {
         throw new RuntimeNodeEnrollmentError(
           "The runtime identity or generated Hermes connection is already enrolled.",
           "INVALID",
@@ -595,7 +645,8 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
     if (!nonce) {
       throw new RuntimeNodeAuthenticationError();
     }
-    const node = await this.prisma.hermesRuntimeNode.findUnique({ where: { id: nodeId } });
+    const [node] = await this.database
+      .select().from(hermesRuntimeNode).where(eq(hermesRuntimeNode.id, nodeId)).limit(1);
     if (!node?.identityPublicKeyPem) {
       throw new RuntimeNodeAuthenticationError();
     }
@@ -608,17 +659,19 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
         `The runtime node is ${node.status.toLowerCase()} and is not allowed to authenticate.`,
       );
     }
+    // The unique constraint on the nonce is what makes a replay impossible.
     try {
-      await this.prisma.hermesNodeRequestNonce.create({ data: { nodeId, nonce } });
+      await this.database.insert(hermesNodeRequestNonce).values({ nodeId, nonce });
     } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      if (isUniqueViolation(error)) {
         throw new RuntimeNodeAuthenticationError("The runtime node request was replayed.");
       }
       throw error;
     }
-    void this.prisma.hermesNodeRequestNonce.deleteMany({
-      where: { receivedAt: { lt: new Date(Date.now() - NONCE_RETENTION_MS) } },
-    }).catch(() => undefined);
+    void this.database
+      .delete(hermesNodeRequestNonce)
+      .where(lt(hermesNodeRequestNonce.receivedAt, new Date(Date.now() - NONCE_RETENTION_MS)))
+      .catch(() => undefined);
     return node;
   }
 
@@ -626,18 +679,18 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
     const current = await this.authenticate(nodeId, headers, input);
     const effectiveStatus = current.status === "DRAINING" ? "DRAINING" : input.status;
     const receivedAt = new Date();
-    await this.prisma.hermesRuntimeNode.update({
-      where: { id: nodeId },
-      data: {
+    await this.database
+      .update(hermesRuntimeNode)
+      .set({
         status: effectiveStatus,
         hermesVersion: input.hermesVersion,
         capabilities: input.capabilities,
         // Availability is based on control-plane receipt time. A skewed or
         // malicious node clock must not keep a dead runtime looking online.
         lastSeenAt: receivedAt,
-        revision: { increment: 1 },
-      },
-    });
+        revision: increment(hermesRuntimeNode.revision),
+      })
+      .where(eq(hermesRuntimeNode.id, nodeId));
     return { accepted: true, serverTime: receivedAt.toISOString() };
   }
 
@@ -647,9 +700,13 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
     input: RegisterHermesNodeMemory,
   ): Promise<RegisterHermesNodeMemoryResult> {
     const node = await this.authenticate(nodeId, headers, input);
-    const hermesConnection = node.serviceConnectionId
-      ? await this.prisma.serviceConnection.findUnique({ where: { id: node.serviceConnectionId }, select: { baseUrl: true } })
-      : null;
+    const [hermesConnection] = node.serviceConnectionId
+      ? await this.database
+        .select({ baseUrl: serviceConnection.baseUrl })
+        .from(serviceConnection)
+        .where(eq(serviceConnection.id, node.serviceConnectionId))
+        .limit(1)
+      : [];
     if (!hermesConnection?.baseUrl) {
       throw new RuntimeNodeConflictError("The enrolled Hermes route is unavailable for memory registration.");
     }
@@ -658,13 +715,13 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
     if (memoryUrl.hostname !== hermesUrl.hostname || memoryUrl.port !== "6767") {
       throw new RuntimeNodeConflictError("Supermemory must be registered on the enrolled Hermes host at TCP 6767.");
     }
-    const architecture = await this.prisma.platformArchitectureDecision.findUnique({ where: { id: "global" } });
-    const environment = connectionEnvironment(architecture?.targetEnvironment ?? "DEVELOPMENT");
+    const environment = connectionEnvironment(await this.architectureTarget() ?? "DEVELOPMENT");
     const slug = `supermemory-node-${node.slug}`.slice(0, 64);
     const now = new Date();
-    const connectionId = await this.prisma.$transaction(async (transaction) => {
-      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`orcasynapse-supermemory-node:${nodeId}`}, 0))`;
-      const existing = await transaction.serviceConnection.findUnique({ where: { slug } });
+    const connectionId = await this.database.transaction(async (transaction) => {
+      await transaction.execute(advisoryLock(`orcasynapse-supermemory-node:${nodeId}`));
+      const [existing] = await transaction
+        .select().from(serviceConnection).where(eq(serviceConnection.slug, slug)).limit(1);
       if (existing && existing.kind !== "SUPERMEMORY") {
         throw new RuntimeNodeConflictError("The managed Supermemory connection slug is already used by another service kind.");
       }
@@ -692,22 +749,30 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
         secretFieldNames: ["apiKey"],
       };
       if (existing) {
-        await transaction.secretRecord.updateMany({
-          where: { serviceConnectionId: id, fieldName: "apiKey", active: true },
-          data: { active: false, retiredAt: now },
+        // A rotated credential is retired rather than deleted.
+        await transaction
+          .update(secretRecord)
+          .set({ active: false, retiredAt: now })
+          .where(and(
+            eq(secretRecord.serviceConnectionId, id),
+            eq(secretRecord.fieldName, "apiKey"),
+            eq(secretRecord.active, true),
+          ));
+        await transaction.insert(secretRecord).values({
+          ...encryptedSecretData(id, "apiKey", input.apiKey, this.encryption),
+          serviceConnectionId: id,
+          createdBy: null,
         });
-        await transaction.secretRecord.create({
-          data: { ...encryptedSecretData(id, "apiKey", input.apiKey, this.encryption), serviceConnectionId: id, createdBy: null },
-        });
-        await transaction.serviceConnection.update({
-          where: { id },
-          data: { baseUrl: input.baseUrl, enabled: true, status: "NOT_TESTED", environment, configuration, activeRevision: revision },
-        });
-        await transaction.configurationRevision.create({
-          data: { serviceConnectionId: id, revision, configuration: revisionState, secretFieldNames: ["apiKey"], checksum: checksum(revisionState), activatedAt: now },
+        await transaction
+          .update(serviceConnection)
+          .set({ baseUrl: input.baseUrl, enabled: true, status: "NOT_TESTED", environment, configuration, activeRevision: revision })
+          .where(eq(serviceConnection.id, id));
+        await transaction.insert(configurationRevision).values({
+          serviceConnectionId: id, revision, configuration: revisionState,
+          secretFieldNames: ["apiKey"], checksum: checksum(revisionState), activatedAt: now,
         });
       } else {
-        await transaction.serviceConnection.create({ data: {
+        await transaction.insert(serviceConnection).values({
           id,
           slug,
           displayName: `${node.displayName} Supermemory`,
@@ -717,11 +782,18 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
           enabled: true,
           status: "NOT_TESTED",
           configuration,
-          secrets: { create: { ...encryptedSecretData(id, "apiKey", input.apiKey, this.encryption), createdBy: null } },
-          revisions: { create: { revision, configuration: revisionState, secretFieldNames: ["apiKey"], checksum: checksum(revisionState), activatedAt: now } },
-        } });
+        });
+        await transaction.insert(secretRecord).values({
+          ...encryptedSecretData(id, "apiKey", input.apiKey, this.encryption),
+          serviceConnectionId: id,
+          createdBy: null,
+        });
+        await transaction.insert(configurationRevision).values({
+          serviceConnectionId: id, revision, configuration: revisionState,
+          secretFieldNames: ["apiKey"], checksum: checksum(revisionState), activatedAt: now,
+        });
       }
-      await transaction.auditEvent.create({ data: {
+      await transaction.insert(auditEvent).values({
         actorType: "SERVICE",
         actorId: nodeId,
         action: "hermes.node.memory_registered",
@@ -729,7 +801,7 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
         resourceId: id,
         outcome: "SUCCESS",
         metadata: { nodeId, observedVersion: input.observedVersion, managedBy: "HermesRuntimeNode" },
-      } });
+      });
       return id;
     });
     await this.connectionTester?.test(connectionId).catch(() => undefined);
@@ -737,7 +809,8 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
   }
 
   async mutate(principal: AdminPrincipal, nodeId: string, input: MutateHermesRuntimeNode): Promise<HermesRuntimeNode> {
-    const current = await this.prisma.hermesRuntimeNode.findUnique({ where: { id: nodeId } });
+    const [current] = await this.database
+      .select().from(hermesRuntimeNode).where(eq(hermesRuntimeNode.id, nodeId)).limit(1);
     if (!current) throw new RuntimeNodeNotFoundError();
     if (current.status === "REVOKED") throw new RuntimeNodeConflictError("A revoked runtime node cannot be changed.");
     const nextStatus = input.action === "DRAIN"
@@ -750,50 +823,61 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
             ? "ONLINE"
             : "OFFLINE";
     const now = new Date();
-    const result = await this.prisma.$transaction(async (transaction) => {
-      const updated = await transaction.hermesRuntimeNode.updateMany({
-        where: { id: nodeId, revision: input.expectedRevision },
-        data: {
+    const result = await this.database.transaction(async (transaction) => {
+      const updated = await transaction
+        .update(hermesRuntimeNode)
+        .set({
           status: nextStatus,
           revokedAt: nextStatus === "REVOKED" ? now : null,
-          revision: { increment: 1 },
-        },
-      });
-      if (updated.count !== 1) throw new RuntimeNodeConflictError("The runtime node changed before this action was applied.");
-      if (nextStatus === "REVOKED") {
-        await transaction.hermesNodeEnrollment.updateMany({
-          where: { nodeId, status: "ISSUED" },
-          data: { status: "REVOKED", revokedAt: now },
-        });
-        if (current.serviceConnectionId) {
-          await transaction.serviceConnection.update({
-            where: { id: current.serviceConnectionId },
-            data: { enabled: false, status: "DISABLED" },
-          });
-        }
-        await transaction.serviceConnection.updateMany({
-          where: { slug: `supermemory-node-${current.slug}`.slice(0, 64), kind: "SUPERMEMORY" },
-          data: { enabled: false, status: "DISABLED" },
-        });
+          revision: increment(hermesRuntimeNode.revision),
+        })
+        .where(and(
+          eq(hermesRuntimeNode.id, nodeId),
+          eq(hermesRuntimeNode.revision, input.expectedRevision),
+        ))
+        .returning();
+      const [applied] = updated;
+      if (updated.length !== 1 || !applied) {
+        throw new RuntimeNodeConflictError("The runtime node changed before this action was applied.");
       }
-      await transaction.auditEvent.create({
-        data: {
-          actorType: "USER",
-          actorId: principal.id,
-          action: `hermes.node.${input.action.toLowerCase()}`,
-          resourceType: "HermesRuntimeNode",
-          resourceId: nodeId,
-          outcome: "SUCCESS",
-          metadata: { reason: input.reason, previousStatus: current.status, nextStatus },
-        },
+      if (nextStatus === "REVOKED") {
+        // Revocation also burns the outstanding claim and disables every
+        // connection this node's enrollment generated.
+        await transaction
+          .update(hermesNodeEnrollment)
+          .set({ status: "REVOKED", revokedAt: now })
+          .where(and(eq(hermesNodeEnrollment.nodeId, nodeId), eq(hermesNodeEnrollment.status, "ISSUED")));
+        if (current.serviceConnectionId) {
+          await transaction
+            .update(serviceConnection)
+            .set({ enabled: false, status: "DISABLED" })
+            .where(eq(serviceConnection.id, current.serviceConnectionId));
+        }
+        await transaction
+          .update(serviceConnection)
+          .set({ enabled: false, status: "DISABLED" })
+          .where(and(
+            eq(serviceConnection.slug, `supermemory-node-${current.slug}`.slice(0, 64)),
+            eq(serviceConnection.kind, "SUPERMEMORY"),
+          ));
+      }
+      await transaction.insert(auditEvent).values({
+        actorType: "USER",
+        actorId: principal.id,
+        action: `hermes.node.${input.action.toLowerCase()}`,
+        resourceType: "HermesRuntimeNode",
+        resourceId: nodeId,
+        outcome: "SUCCESS",
+        metadata: { reason: input.reason, previousStatus: current.status, nextStatus },
       });
-      return transaction.hermesRuntimeNode.findUniqueOrThrow({ where: { id: nodeId } });
+      return applied;
     });
     return summarize(result as StoredNode);
   }
 
   async remove(principal: AdminPrincipal, nodeId: string, input: RemoveHermesRuntimeNode): Promise<void> {
-    const current = await this.prisma.hermesRuntimeNode.findUnique({ where: { id: nodeId } });
+    const [current] = await this.database
+      .select().from(hermesRuntimeNode).where(eq(hermesRuntimeNode.id, nodeId)).limit(1);
     if (!current) throw new RuntimeNodeNotFoundError();
     if (current.status !== "REVOKED") {
       throw new RuntimeNodeConflictError("Revoke the runtime node before permanently removing its control-plane record.");
@@ -806,37 +890,41 @@ export class PrismaHermesRuntimeNodeManager implements HermesRuntimeNodeManager 
     }
 
     const supermemorySlug = `supermemory-node-${current.slug}`.slice(0, 64);
-    await this.prisma.$transaction(async (transaction) => {
-      const removed = await transaction.hermesRuntimeNode.deleteMany({
-        where: { id: nodeId, status: "REVOKED", revision: input.expectedRevision },
-      });
-      if (removed.count !== 1) {
+    await this.database.transaction(async (transaction) => {
+      const removed = await transaction
+        .delete(hermesRuntimeNode)
+        .where(and(
+          eq(hermesRuntimeNode.id, nodeId),
+          eq(hermesRuntimeNode.status, "REVOKED"),
+          eq(hermesRuntimeNode.revision, input.expectedRevision),
+        ))
+        .returning({ id: hermesRuntimeNode.id });
+      if (removed.length !== 1) {
         throw new RuntimeNodeConflictError("The runtime node changed before permanent removal was applied.");
       }
 
-      const generatedConnections = [
-        ...(current.serviceConnectionId ? [{ id: current.serviceConnectionId }] : []),
-        { slug: supermemorySlug, kind: "SUPERMEMORY" as const },
-      ];
-      const removedConnections = await transaction.serviceConnection.deleteMany({
-        where: { OR: generatedConnections },
-      });
-      await transaction.auditEvent.create({
-        data: {
-          actorType: "USER",
-          actorId: principal.id,
-          action: "hermes.node.removed",
-          resourceType: "HermesRuntimeNode",
-          resourceId: nodeId,
-          outcome: "SUCCESS",
-          metadata: {
-            reason: input.reason,
-            slug: current.slug,
-            displayName: current.displayName,
-            identityFingerprint: current.identityFingerprint,
-            removedConnections: removedConnections.count,
-            hostDestruction: "OPERATOR_ATTESTED",
-          },
+      // Only connections this enrollment generated are removed with the node.
+      const removedConnections = await transaction
+        .delete(serviceConnection)
+        .where(or(
+          ...(current.serviceConnectionId ? [eq(serviceConnection.id, current.serviceConnectionId)] : []),
+          and(eq(serviceConnection.slug, supermemorySlug), eq(serviceConnection.kind, "SUPERMEMORY")),
+        ))
+        .returning({ id: serviceConnection.id });
+      await transaction.insert(auditEvent).values({
+        actorType: "USER",
+        actorId: principal.id,
+        action: "hermes.node.removed",
+        resourceType: "HermesRuntimeNode",
+        resourceId: nodeId,
+        outcome: "SUCCESS",
+        metadata: {
+          reason: input.reason,
+          slug: current.slug,
+          displayName: current.displayName,
+          identityFingerprint: current.identityFingerprint,
+          removedConnections: removedConnections.length,
+          hostDestruction: "OPERATOR_ATTESTED",
         },
       });
     });

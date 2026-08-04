@@ -48,7 +48,7 @@ import { DrizzlePromptManager } from "./prompts/drizzle-prompt-manager.js";
 import type { OnboardingManager } from "./onboarding/onboarding-manager.js";
 import { DrizzleOnboardingManager } from "./onboarding/drizzle-onboarding-manager.js";
 import type { HermesRuntimeNodeManager } from "./runtime-nodes/runtime-node-manager.js";
-import { PrismaHermesRuntimeNodeManager } from "./runtime-nodes/prisma-runtime-node-manager.js";
+import { DrizzleHermesRuntimeNodeManager } from "./runtime-nodes/drizzle-runtime-node-manager.js";
 import { DrizzleInferenceGateway } from "./inference/inference-gateway.js";
 
 export type BootstrapState = "REQUIRED" | "READY" | "LOCKED";
@@ -147,7 +147,7 @@ export function createRuntimeServices(): RuntimeServices {
       tools: toolingManager,
     });
     const onboardingManager = new DrizzleOnboardingManager(database, masterKey, aiOpsManager);
-    const runtimeNodeManager = new PrismaHermesRuntimeNodeManager(prisma, encryption, connectionTestService);
+    const runtimeNodeManager = new DrizzleHermesRuntimeNodeManager(database, encryption, connectionTestService);
     const inferenceGateway = new DrizzleInferenceGateway(database, connectionManager);
     return {
       bootstrapState,
