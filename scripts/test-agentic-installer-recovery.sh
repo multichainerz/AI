@@ -123,6 +123,9 @@ grep -Fq 'VM1 accepted the signed VM2 trust handshake.' "${REPOSITORY_ROOT}/scri
 grep -Fq 'The retained VM2 state and dashboard record no longer share the same trust binding.' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 grep -Fq 'render_activity_progress()' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 grep -Fq 'download_with_progress()' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+# The UI block is generated from scripts/lib/installer-ui.sh; the marker must
+# survive refactors or the sync tool can no longer maintain this script.
+grep -Fq '>>> ORCASYNAPSE-INSTALLER-UI v1' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 grep -Fq 'resolved_image_reference()' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 grep -Fq 'the approved Hermes image has no immutable registry digest' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 grep -Fq 'releases/download/server-v${release}' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"

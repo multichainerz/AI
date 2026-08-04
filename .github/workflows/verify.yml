@@ -31,9 +31,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Validate installer scripts
-        run: bash -n install.sh scripts/*.sh
+        run: bash -n install.sh scripts/*.sh scripts/lib/*.sh
       - name: Static release and deployment consistency
         run: |
+          bash scripts/sync-installer-ui.sh --check
           bash scripts/test-docker-build-closure.sh
           bash scripts/test-release-consistency.sh
       - name: Verify installer recovery paths

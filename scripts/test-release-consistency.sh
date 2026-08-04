@@ -49,4 +49,8 @@ agentic_version="$(sed -nE 's/^INSTALLER_VERSION="([^"]+)"$/\1/p' scripts/instal
 [[ "${agentic_version}" == "ai-v${version}" ]] \
   || fail "scripts/install-agentic-node.sh INSTALLER_VERSION is '${agentic_version}', expected 'ai-v${version}'"
 
+remover_version="$(sed -nE 's/^INSTALLER_VERSION="([^"]+)"$/\1/p' scripts/remove-agentic-node.sh)"
+[[ "${remover_version}" == "ai-v${version}" ]] \
+  || fail "scripts/remove-agentic-node.sh INSTALLER_VERSION is '${remover_version}', expected 'ai-v${version}'"
+
 echo "Release consistency check passed at ai-v${version} (postgres image ${compose_image})."
