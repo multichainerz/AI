@@ -47,10 +47,10 @@ The operator journey:
 ```mermaid
 flowchart LR
   Browser["Browser"] --> VM1["VM1: OrcaSynapse"]
-  VM1 <--> PostgreSQL["PostgreSQL 17 + pgvector\n(control state, knowledge chunks,\nembeddings, audit trail)"]
+  VM1 <--> PostgreSQL["PostgreSQL 17 + pgvector<br/>(control state, knowledge chunks,<br/>embeddings, audit trail)"]
   VM1 --> Inference["OpenAI-compatible AI Inference"]
   VM1 <-->|"governed runs, policy, telemetry"| Hermes["VM2: Hermes"]
-  Hermes <--> Memory["VM2: Supermemory Local\n(agent memory)"]
+  Hermes <--> Memory["VM2: Supermemory Local<br/>(agent memory)"]
   VM1 -.->|"optional audit forwarding"| SIEM["Customer SIEM"]
 ```
 

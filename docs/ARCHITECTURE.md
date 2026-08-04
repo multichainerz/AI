@@ -10,12 +10,12 @@ flowchart LR
 
   subgraph VM1["VM1 · control plane"]
     WEB --> API["Fastify API"]
-    API <--> PG["PostgreSQL + pgvector\ncontrol-plane state, knowledge chunks,\nembeddings, audit trail"]
+    API <--> PG["PostgreSQL + pgvector<br/>control-plane state, knowledge chunks,<br/>embeddings, audit trail"]
     WORKER["Hermes run reconciler"] <--> PG
   end
 
   subgraph VM2["VM2 · isolated agentic system"]
-    HERMES["Hermes Agent"] <--> SM["Supermemory Local\nagent memory"]
+    HERMES["Hermes Agent"] <--> SM["Supermemory Local<br/>agent memory"]
   end
 
   subgraph GPU["AI Inference"]

@@ -5,6 +5,25 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.28.1 — 2026-08-05
+
+Fix the front-page architecture diagram, which did not render, and give the
+README the visual design it never had.
+
+- fix Mermaid node labels that used `\n` for line breaks, which GitHub renders
+  literally instead of wrapping — the README diagram and the ones in
+  ARCHITECTURE.md and CURRENT_STATE_HANDOFF.md were all affected (introduced in
+  ai-v1.28.0)
+- replace the README's Mermaid block with `docs/assets/orcasynapse-architecture.svg`,
+  a branded diagram matching the wordmark that shows both planes, what
+  PostgreSQL actually holds, the optional SIEM egress, and the credential
+  boundary
+- add `docs/assets/orcasynapse-installer.svg`, a faithful rendering of the VM1
+  installer's terminal output — the README's first picture of the product
+- restructure the README so the architecture comes before the install command,
+  trim the badge row, and rewrite the feature list with bolded lead-ins and a
+  documentation index
+
 ## ai-v1.28.0 — 2026-08-05
 
 The public-descriptor and brand-coherence release: the repository now tells the
