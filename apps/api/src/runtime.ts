@@ -46,7 +46,7 @@ import { DrizzleGuardrailManager } from "./guardrails/drizzle-guardrail-manager.
 import type { PromptManager } from "./prompts/prompt-manager.js";
 import { DrizzlePromptManager } from "./prompts/drizzle-prompt-manager.js";
 import type { OnboardingManager } from "./onboarding/onboarding-manager.js";
-import { PrismaOnboardingManager } from "./onboarding/prisma-onboarding-manager.js";
+import { DrizzleOnboardingManager } from "./onboarding/drizzle-onboarding-manager.js";
 import type { HermesRuntimeNodeManager } from "./runtime-nodes/runtime-node-manager.js";
 import { PrismaHermesRuntimeNodeManager } from "./runtime-nodes/prisma-runtime-node-manager.js";
 import { DrizzleInferenceGateway } from "./inference/inference-gateway.js";
@@ -146,7 +146,7 @@ export function createRuntimeServices(): RuntimeServices {
       agents: agentManager,
       tools: toolingManager,
     });
-    const onboardingManager = new PrismaOnboardingManager(prisma, masterKey, aiOpsManager);
+    const onboardingManager = new DrizzleOnboardingManager(database, masterKey, aiOpsManager);
     const runtimeNodeManager = new PrismaHermesRuntimeNodeManager(prisma, encryption, connectionTestService);
     const inferenceGateway = new DrizzleInferenceGateway(database, connectionManager);
     return {
