@@ -195,4 +195,24 @@ describe("SiemForwarder", () => {
     expect(callsWhileRunning).toBeGreaterThan(0);
     expect(vi.mocked(fetcher).mock.calls.length).toBe(callsWhileRunning);
   });
+
+  it("refuses an events path that would leave the configured origin", async () => {
+    const id = await seedSiem();
+    await record("first", base);
+    const fetcher = accepted();
+
+    // relativeHealthPathSchema blocks this at write time; the forwarder checks
+    // again at use, because a row can reach the database another way.
+    const result = await new SiemForwarder(
+      context.database,
+      connections(id, { eventsPath: "//exfiltration.example/ingest" }),
+      logger,
+      fetcher,
+    ).forward();
+
+    expect(result).toMatchObject({ forwarded: 0, reason: "The SIEM connection endpoint is invalid." });
+    expect(fetcher).not.toHaveBeenCalled();
+    const [state] = await context.database.select().from(auditForwardingState);
+    expect(state?.lastForwardedId ?? null).toBeNull();
+  });
 });

@@ -5,6 +5,7 @@ import {
   type OrcaSynapseDatabase,
 } from "@orcasynapse/database";
 import { and, asc, eq, gt, or, sql } from "drizzle-orm";
+import { endpointUrl } from "../connections/diagnostics/http.js";
 import type { ConnectionDiagnosticStore, ResolvedConnection } from "../connections/diagnostics/types.js";
 
 const TICK_INTERVAL_MS = 15_000;
@@ -114,10 +115,17 @@ export class SiemForwarder {
       .limit(batchSize);
     if (batch.length === 0) return { forwarded: 0 };
 
-    const endpoint = new URL(
-      typeof destination.configuration.eventsPath === "string" ? destination.configuration.eventsPath : "/events",
-      `${destination.baseUrl.replace(/\/+$/, "")}/`,
-    );
+    // Resolved through the shared helper so a stored path cannot move the
+    // destination to another origin.
+    let endpoint: URL;
+    try {
+      endpoint = endpointUrl(
+        destination.baseUrl,
+        typeof destination.configuration.eventsPath === "string" ? destination.configuration.eventsPath : "/events",
+      );
+    } catch {
+      return { forwarded: 0, reason: "The SIEM connection endpoint is invalid." };
+    }
     const timeoutMs = typeof destination.configuration.timeoutMs === "number"
       ? destination.configuration.timeoutMs
       : DEFAULT_TIMEOUT_MS;
