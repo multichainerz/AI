@@ -5,6 +5,22 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.28.2 — 2026-08-05
+
+Shorten every install command to the canonical `curl -fsSL` form.
+
+- replace the four long flag names with `-fsSL` in the README, the enrollment
+  runbook, the dashboard's generated VM2 install and removal commands, and the
+  installer's own recovery message; `deploy/BOOTSTRAP.md` already used this
+  form, so the estate is now consistent
+- drop `--progress-bar` outright: it decorated a 21 KB download that finishes
+  before it can render, and the installer draws its own progress once running
+- keep fail-on-error, quiet, show-errors, and follow-redirects behavior
+  unchanged — those cannot move into the script, because they govern the fetch
+  that delivers it
+- guard the canonical form in test-release-consistency.sh so the verbose
+  spelling cannot return
+
 ## ai-v1.28.1 — 2026-08-05
 
 Fix the front-page architecture diagram, which did not render, and give the

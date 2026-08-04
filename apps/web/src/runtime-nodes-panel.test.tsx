@@ -4,14 +4,14 @@ import { RuntimeNodesPanel, agenticNodeInstallCommand, agenticNodeRemovalCommand
 
 describe("RuntimeNodesPanel", () => {
   it("builds one canonical Agentic System command from origins with or without a trailing slash", () => {
-    const expected = "curl --fail --show-error --location --progress-bar https://orcasynapse.internal/install/agentic-node.sh | sudo bash -s -- --connect https://orcasynapse.internal";
+    const expected = "curl -fsSL https://orcasynapse.internal/install/agentic-node.sh | sudo bash -s -- --connect https://orcasynapse.internal";
     expect(agenticNodeInstallCommand("https://orcasynapse.internal")).toBe(expected);
     expect(agenticNodeInstallCommand("https://orcasynapse.internal/")).toBe(expected);
     expect(expected).not.toContain("hermes-node.sh");
   });
 
   it("builds a canonical interactive VM2 removal command without embedding node credentials", () => {
-    const expected = "curl --fail --show-error --location --progress-bar https://orcasynapse.internal/install/remove-agentic-node.sh | sudo bash";
+    const expected = "curl -fsSL https://orcasynapse.internal/install/remove-agentic-node.sh | sudo bash";
     expect(agenticNodeRemovalCommand("https://orcasynapse.internal")).toBe(expected);
     expect(agenticNodeRemovalCommand("https://orcasynapse.internal/")).toBe(expected);
     expect(expected).not.toMatch(/token|claim|nodeId/i);

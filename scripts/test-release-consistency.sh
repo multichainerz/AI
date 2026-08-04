@@ -33,6 +33,17 @@ for secret in postgres_password orcasynapse_database_url orcasynapse_master_key 
   grep -Fq "${secret}" scripts/install-orcasynapse.sh || fail "secret '${secret}' is not managed by scripts/install-orcasynapse.sh"
 done
 
+# --- install commands use the canonical short form --------------------------
+# Every place an operator is told to pipe a script into a root shell must show
+# the same command. -fsSL is the whole contract: fail on an HTTP error rather
+# than piping an error page into bash, stay quiet, still report transport
+# errors, and follow redirects.
+# The bracket keeps this pattern from matching its own source line.
+if grep -rn -- '--fail --show[-]error' README.md docs deploy scripts apps/web/src 2>/dev/null; then
+  fail "the lines above must use the canonical 'curl -fsSL' install command form"
+fi
+grep -Fq 'curl -fsSL' README.md || fail "README.md no longer shows the canonical curl -fsSL install command"
+
 # --- version surfaces agree -------------------------------------------------
 version="$(node -p "require('./package.json').version")"
 [[ -n "${version}" ]] || fail "the root package.json version is empty"

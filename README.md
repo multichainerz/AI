@@ -39,7 +39,7 @@ No LiteLLM tier, Redis, Valkey, pg-boss, object store, or external vector databa
 One clean Debian or Ubuntu VM. One command. It provisions Docker, PostgreSQL with pgvector, the API, worker, dashboard, encrypted secrets, and your first administrator.
 
 ```bash
-curl --fail --show-error --location --progress-bar https://raw.githubusercontent.com/multichainerz/AI/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/multichainerz/AI/main/install.sh | sudo bash
 ```
 
 <p align="center">
@@ -52,7 +52,7 @@ Open the dashboard URL it prints. That is the only command needed on VM1.
 <summary>Prefer to inspect the bootstrap first?</summary>
 
 ```bash
-curl --fail --show-error --location --progress-bar --output orcasynapse-install.sh https://raw.githubusercontent.com/multichainerz/AI/main/install.sh
+curl -fsSL -o orcasynapse-install.sh https://raw.githubusercontent.com/multichainerz/AI/main/install.sh
 sed -n '1,260p' orcasynapse-install.sh
 sudo bash orcasynapse-install.sh
 ```
