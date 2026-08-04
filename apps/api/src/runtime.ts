@@ -42,6 +42,7 @@ import { DrizzleModelManager } from "./models/drizzle-model-manager.js";
 import type { GuardrailManager } from "./guardrails/guardrail-manager.js";
 import { DrizzleGuardrailManager } from "./guardrails/drizzle-guardrail-manager.js";
 import { DrizzleAuditManager, type AuditManager } from "./audit/audit-manager.js";
+import { SiemForwarder } from "./audit/siem-forwarder.js";
 import type { PromptManager } from "./prompts/prompt-manager.js";
 import { DrizzlePromptManager } from "./prompts/drizzle-prompt-manager.js";
 import type { OnboardingManager } from "./onboarding/onboarding-manager.js";
@@ -67,6 +68,7 @@ export interface RuntimeServices {
   guardrailManager?: GuardrailManager;
   promptManager?: PromptManager;
   auditManager?: AuditManager;
+  siemForwarder?: SiemForwarder;
   agentManager?: AgentManager;
   toolingManager?: ToolingManager;
   aiOpsManager?: AiOpsManager;
@@ -126,6 +128,9 @@ export function createRuntimeServices(): RuntimeServices {
     const guardrailManager = new DrizzleGuardrailManager(database);
     const promptManager = new DrizzlePromptManager(database);
     const auditManager = new DrizzleAuditManager(database);
+    const siemForwarder = new SiemForwarder(database, connectionManager, {
+      error: (message, error) => console.error(message, error),
+    });
     const documentManager = new DrizzleDocumentManager(
       database,
       new DocumentVectorStore(database, APPROVED_EMBEDDING_MODEL),
@@ -171,6 +176,7 @@ export function createRuntimeServices(): RuntimeServices {
       guardrailManager,
       promptManager,
       auditManager,
+      siemForwarder,
       agentManager,
       toolingManager,
       aiOpsManager,

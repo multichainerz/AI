@@ -43,6 +43,13 @@
       "when": 1785853842767,
       "tag": "0005_conversation_scoped_knowledge",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1785855657566,
+      "tag": "0006_audit_forwarding_state",
+      "breakpoints": true
     }
   ]
 }

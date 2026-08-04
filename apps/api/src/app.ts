@@ -92,6 +92,7 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
   if (runtime.database || runtime.operationsManager || runtime.connectionMonitor) {
     app.addHook("onClose", async () => {
       try {
+        await runtime.siemForwarder?.stop();
         await runtime.connectionMonitor?.stop();
       } finally {
         try {
@@ -117,6 +118,10 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
 
   if (runtime.connectionMonitor) {
     await runtime.connectionMonitor.start();
+  }
+
+  if (runtime.siemForwarder) {
+    await runtime.siemForwarder.start();
   }
 
   app.get("/healthz", async (_request, reply) => {

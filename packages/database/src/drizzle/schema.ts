@@ -1166,3 +1166,20 @@ export const chatConversationDocument = pgTable("ChatConversationDocument", {
 			name: "ChatConversationDocument_documentId_fkey"
 		}).onUpdate("cascade").onDelete("cascade"),
 ]);
+
+/**
+ * How far the audit trail has been forwarded to a SIEM.
+ *
+ * The trail is append-only and ordered by (occurredAt, id), so a keyset cursor
+ * is enough to resume: everything at or before the cursor has been delivered.
+ * Failures leave the cursor untouched, so a batch is retried rather than lost.
+ */
+export const auditForwardingState = pgTable("AuditForwardingState", {
+	id: varchar({ length: 32 }).default('global').primaryKey().notNull(),
+	lastForwardedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
+	lastForwardedId: uuid(),
+	lastAttemptAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
+	lastError: varchar({ length: 500 }),
+	deliveredCount: integer().default(0).notNull(),
+	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
+});
