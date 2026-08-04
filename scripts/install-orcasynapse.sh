@@ -110,9 +110,17 @@ run_with_progress() {
   shift
   if (( ! UI_INTERACTIVE )); then
     info "${label}"
-    "$@"
-    success "${label}"
-    return
+    # Capture the status explicitly: call sites guard with `|| fail`, which
+    # suppresses errexit inside this function, so a bare "$@" would fall
+    # through to success on failure.
+    local direct_status=0
+    "$@" || direct_status=$?
+    if (( direct_status == 0 )); then
+      success "${label}"
+    else
+      printf '  %b[FAIL]%b %s\n' "${UI_RED}${UI_BOLD}" "${UI_RESET}" "${label}" >&2
+    fi
+    return "${direct_status}"
   fi
 
   local log_file pid status=0 frame_index=0 started elapsed
@@ -286,6 +294,26 @@ wait_for_orcasynapse() {
   done
 }
 
+# The postgres service moved from postgres:17-alpine (musl) to
+# pgvector/pgvector:pg17 (glibc). Locale collation differs between the two
+# libcs, so text btree indexes built under the old image can be mis-ordered
+# under the new one. Reindex once for data volumes that predate the switch,
+# then record completion so subsequent runs skip it.
+reindex_after_libc_migration() {
+  local volume_preexisted="$1"
+  local state_dir="${ORCASYNAPSE_ROOT}/.local/state"
+  local marker="${state_dir}/postgres-libc-reindexed"
+  [[ -f "${marker}" ]] && return 0
+  if (( volume_preexisted )); then
+    run_with_progress "Reindex PostgreSQL after the base-image migration" \
+      docker compose exec -T postgres reindexdb --username orcasynapse --dbname orcasynapse --quiet \
+      || fail "could not reindex PostgreSQL after the base-image migration"
+  fi
+  install -d -m 0700 "${state_dir}"
+  : > "${marker}"
+  chmod 0600 "${marker}"
+}
+
 provision_local_administrator() {
   local temporary_password result
   temporary_password="$(openssl rand -base64 24 | tr -d '\n=' | tr '+/' '-_')"
@@ -337,9 +365,14 @@ main() {
   success "Secrets are host-protected and readable only by their intended container identities."
 
   step 4 5 "Migrate PostgreSQL and start services"
+  local postgres_volume_preexisted=0
+  if docker volume inspect orcasynapse_postgres_data >/dev/null 2>&1; then
+    postgres_volume_preexisted=1
+  fi
   start_stack
   run_with_progress "Wait for control-plane readiness" wait_for_orcasynapse \
     || fail "control-plane readiness checks failed"
+  reindex_after_libc_migration "${postgres_volume_preexisted}"
 
   step 5 5 "Provision administrator access"
   provision_local_administrator

@@ -114,9 +114,17 @@ run_with_progress() {
   shift
   if (( ! UI_INTERACTIVE )); then
     info "${label}"
-    "$@"
-    success "${label}"
-    return
+    # Capture the status explicitly: call sites guard with `|| fail`, which
+    # suppresses errexit inside this function, so a bare "$@" would fall
+    # through to success on failure.
+    local direct_status=0
+    "$@" || direct_status=$?
+    if (( direct_status == 0 )); then
+      success "${label}"
+    else
+      printf '  %b[FAIL]%b %s\n' "${UI_RED}${UI_BOLD}" "${UI_RESET}" "${label}" >&2
+    fi
+    return "${direct_status}"
   fi
 
   local log_file pid status=0 frame_index=0 started elapsed
