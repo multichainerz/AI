@@ -5,6 +5,20 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.34.1 — 2026-08-05
+
+- cover PDF ingestion end to end. Every existing document test uploaded UTF-8
+  text, so the binary path — extraction through `unpdf`, then chunking,
+  embedding and the pgvector write — was wired up and working but never
+  exercised. A dependency bump could have broken it silently, and ai-v1.34.0
+  moved three transitive dependencies. The new test builds a real two-page PDF
+  in-process (reviewable bytes rather than a committed binary), uploads it
+  through `DrizzleDocumentManager`, and asserts the chunks land in
+  `DocumentChunk` with a 1024-dimension vector, that retrieval finds them inside
+  the owner boundary and not outside it, that a text-free PDF fails with
+  `OCR_PROVIDER_REQUIRED` and stores no chunks, and that bytes which are not a
+  PDF fail as `EXTRACTION_FAILED`
+
 ## ai-v1.34.0 — 2026-08-05
 
 A second sanity pass before Phase 4, this one over the backend, dependencies,
