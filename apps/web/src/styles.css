@@ -1997,3 +1997,15 @@ button:disabled { opacity: .48; cursor: not-allowed; }
 .setup-activation form { display: grid; gap: 9px; }
 .setup-activation form label { display: grid; gap: 5px; color: var(--text-faint); font-size: 9px; font-weight: 650; text-transform: uppercase; letter-spacing: .04em; }
 .setup-blockers { margin: 9px 0 0; padding-left: 16px; color: #e7c78d; font-size: 10px; line-height: 1.6; }
+
+.chat-knowledge { display: grid; gap: 12px; margin: 0 20px 14px; padding: 16px; border: 1px solid var(--border-soft); border-radius: 10px; background: var(--surface-muted); }
+.chat-knowledge > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.chat-knowledge > header strong { display: block; color: #cdd5df; font-size: 12px; }
+.chat-knowledge > header span { display: block; margin-top: 4px; color: var(--text-muted); font-size: 10px; line-height: 1.5; }
+.chat-knowledge > header button { min-height: 28px; padding: 0 9px; color: var(--text-muted); border: 0; border-radius: 6px; background: transparent; cursor: pointer; font-size: 15px; }
+.chat-knowledge ul { display: grid; gap: 4px; margin: 0; padding: 0; max-height: 240px; overflow-y: auto; list-style: none; }
+.chat-knowledge li label { display: flex; align-items: center; gap: 9px; padding: 7px 9px; border-radius: 7px; cursor: pointer; font-size: 11px; }
+.chat-knowledge li label:hover { background: #1b2430; }
+.chat-knowledge li span { flex: 1; color: #c3ccd6; }
+.chat-knowledge li small { color: var(--text-faint); font-size: 9px; text-transform: uppercase; letter-spacing: .04em; }
+.chat-knowledge-empty { margin: 0; color: var(--text-muted); font-size: 10px; }

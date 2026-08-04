@@ -5,18 +5,22 @@ import type {
   ChatConversationSummary,
   ChatMessage,
   ChatStreamEvent,
+  DocumentSummary,
 } from "@orcasynapse/contracts";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
   OrcaSynapseApiError,
+  attachChatDocument,
   cancelChatRun,
   createChatConversation,
   decideChatApproval,
   deleteChatConversation,
+  detachChatDocument,
   forkChatConversation,
   getChatConversation,
+  getDocuments,
   getChatConversations,
   getAgentProfiles,
   streamChatEvents,
@@ -194,6 +198,8 @@ export function ChatView({
   onOpenPlatform,
   onUnauthorized,
 }: ChatViewProps) {
+  const [knowledgeOpen, setKnowledgeOpen] = useState(false);
+  const [library, setLibrary] = useState<DocumentSummary[]>([]);
   const [conversations, setConversations] = useState<ChatConversationSummary[]>([]);
   const [active, setActive] = useState<ChatConversation | null>(null);
   const [draft, setDraft] = useState("");
@@ -564,6 +570,30 @@ export function ChatView({
     }
   };
 
+  const openKnowledge = async () => {
+    setKnowledgeOpen(true);
+    try {
+      // Only READY documents can be pinned; anything else would narrow
+      // retrieval to a source that has no embedded chunks yet.
+      setLibrary((await getDocuments()).items.filter((item) => item.status === "READY"));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to load your documents.");
+    }
+  };
+
+  const togglePinned = async (documentId: string, pinned: boolean) => {
+    if (!active) return;
+    try {
+      setActive(pinned
+        ? await detachChatDocument(active.id, documentId)
+        : await attachChatDocument(active.id, documentId));
+      setError(null);
+    } catch (cause) {
+      if (cause instanceof OrcaSynapseApiError && cause.status === 401) onUnauthorized();
+      else setError(cause instanceof Error ? cause.message : "Unable to change pinned knowledge.");
+    }
+  };
+
   const exportConversation = () => {
     if (!active) return;
     const payload = JSON.stringify({
@@ -780,6 +810,9 @@ export function ChatView({
           {active && !renaming && (
             <div className="chat-conversation-actions">
               <button type="button" disabled={working || loading} onClick={() => { setTitleDraft(active.title); setRenaming(true); }}>Rename</button>
+              <button type="button" disabled={working || loading} onClick={() => void openKnowledge()}>
+                Knowledge{active.knowledgeDocuments.length > 0 ? ` · ${active.knowledgeDocuments.length}` : ""}
+              </button>
               <button type="button" disabled={working || loading} onClick={() => void forkConversation()}>Fork</button>
               <button type="button" disabled={working || loading} onClick={exportConversation}>Export</button>
               <button type="button" disabled={working || loading} onClick={() => void setArchiveStatus(active.status === "ARCHIVED" ? "ACTIVE" : "ARCHIVED")}>{active.status === "ARCHIVED" ? "Restore" : "Archive"}</button>
@@ -787,6 +820,45 @@ export function ChatView({
             </div>
           )}
         </header>
+
+        {knowledgeOpen && active && (
+          <div className="chat-knowledge" role="dialog" aria-labelledby="chat-knowledge-title">
+            <header>
+              <div>
+                <strong id="chat-knowledge-title">Knowledge for this conversation</strong>
+                <span>
+                  {active.knowledgeDocuments.length === 0
+                    ? "Nothing pinned. Answers may draw on every document you own."
+                    : `Answers are restricted to ${active.knowledgeDocuments.length} pinned document${active.knowledgeDocuments.length === 1 ? "" : "s"}.`}
+                </span>
+              </div>
+              <button type="button" aria-label="Close knowledge" onClick={() => setKnowledgeOpen(false)}>×</button>
+            </header>
+            {library.length === 0 ? (
+              <p className="chat-knowledge-empty">No indexed documents yet. Upload one in Knowledge and it becomes pinnable once indexing completes.</p>
+            ) : (
+              <ul>
+                {library.map((item) => {
+                  const pinned = active.knowledgeDocuments.some((pin) => pin.id === item.id);
+                  return (
+                    <li key={item.id}>
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={pinned}
+                          disabled={working}
+                          onChange={() => void togglePinned(item.id, pinned)}
+                        />
+                        <span>{item.fileName}</span>
+                        <small>{item.classification.toLowerCase()}</small>
+                      </label>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        )}
 
         {confirmDelete && active && (
           <div className="chat-confirmation" role="alertdialog" aria-labelledby="delete-conversation-title">

@@ -499,6 +499,21 @@ export async function streamChatEvents(
   if (streamError) throw new OrcaSynapseApiError(502, streamError);
 }
 
+export async function attachChatDocument(conversationId: string, documentId: string): Promise<ChatConversation> {
+  const response = await fetch(`/api/v1/chat/conversations/${encodeURIComponent(conversationId)}/documents`, {
+    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify({ documentId }),
+  });
+  return chatConversationSchema.parse(await parsedResponse(response));
+}
+
+export async function detachChatDocument(conversationId: string, documentId: string): Promise<ChatConversation> {
+  const response = await fetch(
+    `/api/v1/chat/conversations/${encodeURIComponent(conversationId)}/documents/${encodeURIComponent(documentId)}`,
+    { method: "DELETE", credentials: "same-origin" },
+  );
+  return chatConversationSchema.parse(await parsedResponse(response));
+}
+
 export async function forkChatConversation(
   conversationId: string,
   input: ForkChatConversation = {},
