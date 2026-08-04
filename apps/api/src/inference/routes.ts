@@ -1,10 +1,10 @@
 import { Readable } from "node:stream";
 import { inferenceGatewayChatRequestSchema } from "@orcasynapse/contracts";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { InferenceGatewayError, type InferenceGatewayResult, type PrismaInferenceGateway } from "./inference-gateway.js";
+import { InferenceGatewayError, type InferenceGatewayResult, type DrizzleInferenceGateway } from "./inference-gateway.js";
 
 export interface InferenceGatewayRouteOptions {
-  gateway?: Pick<PrismaInferenceGateway, "models" | "chat">;
+  gateway?: Pick<DrizzleInferenceGateway, "models" | "chat">;
 }
 
 function bearer(request: FastifyRequest): string | undefined {

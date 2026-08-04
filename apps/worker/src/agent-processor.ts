@@ -1,8 +1,24 @@
 import { agentCapabilitySchema, knowledgeSourceSchema, type AgentRunJobPayload, type KnowledgeSource } from "@orcasynapse/contracts";
-import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
-import { HermesClient, SupermemoryClient, type HermesSafeRunEvent } from "@orcasynapse/runtime-clients";
+import { and, desc, eq, inArray, isNotNull, isNull, lt, ne, or, sql } from "drizzle-orm";
+import {
+  agentProfile,
+  agentProfileVersion,
+  agentRun,
+  agentRunApproval,
+  agentRunEvent,
+  agentRuntimeControl,
+  agentToolGrant,
+  auditEvent,
+  chatMessage,
+  governedTool,
+  hermesRuntimeNode,
+  serviceConnection,
+  toolRuntimeControl,
+  type OrcaSynapseDatabase,
+} from "@orcasynapse/database";
+import type { DocumentVectorStore, TextEmbedder } from "@orcasynapse/knowledge";
+import { HermesClient, type HermesSafeRunEvent } from "@orcasynapse/runtime-clients";
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ACTIVE_HERMES_STATUSES = new Set(["queued", "started", "running", "stopping"]);
 const PROCESSOR_LEASE_MS = 90_000;
 const PROCESSOR_LEASE_RENEW_MS = 30_000;
@@ -28,39 +44,63 @@ export interface AgentKnowledgeRetriever {
   search(ownerSubject: string, query: string): Promise<KnowledgeSource[]>;
 }
 
+/**
+ * Retrieves authorized knowledge from OrcaSynapse's own vector store.
+ *
+ * The owner boundary is a predicate inside the query rather than a namespace
+ * handed to an external service, and the store already restricts results to
+ * READY, undeleted documents - so nothing here can widen the caller's scope.
+ */
 export class WorkerAgentKnowledgeRetriever implements AgentKnowledgeRetriever {
   constructor(
-    private readonly prisma: OrcaSynapsePrismaClient,
-    private readonly client: SupermemoryClient,
+    private readonly vectors: DocumentVectorStore,
+    private readonly embedder: TextEmbedder,
   ) {}
 
   async search(ownerSubject: string, query: string): Promise<KnowledgeSource[]> {
-    const hits = await this.client.search(ownerSubject, query);
-    const ids = [...new Set(hits.flatMap(({ metadata }) => {
-      const id = metadata.orcasynapseDocumentId;
-      return typeof id === "string" && UUID.test(id) ? [id] : [];
-    }))];
-    if (ids.length === 0) return [];
-    const documents = await this.prisma.document.findMany({
-      where: { id: { in: ids }, ownerSubject, status: "READY", deletedAt: null, supermemoryProjection: { status: "READY" } },
-      select: { id: true, fileName: true, classification: true },
+    const trimmed = query.trim();
+    if (!trimmed) return [];
+    const [queryEmbedding] = await this.embedder.embed([trimmed]);
+    if (!queryEmbedding) return [];
+
+    const hits = await this.vectors.search(ownerSubject, trimmed, queryEmbedding, {
+      limit: 18,
+      minimumScore: 0.35,
     });
-    const authorized = new Map(documents.map((document) => [document.id, document]));
-    const seen = new Set<string>();
-    return hits.flatMap((hit): KnowledgeSource[] => {
-      const id = hit.metadata.orcasynapseDocumentId;
-      if (typeof id !== "string" || seen.has(id)) return [];
-      const document = authorized.get(id);
-      if (!document) return [];
-      const excerpt = hit.chunks.filter(({ content }) => content.trim()).slice(0, 3)
-        .map(({ content }) => content.trim()).join("\n\n").slice(0, 4_000);
-      if (!excerpt) return [];
-      seen.add(id);
-      return [knowledgeSourceSchema.parse({
-        documentId: document.id, fileName: document.fileName, classification: document.classification,
-        score: hit.score, excerpt,
-      })];
-    }).slice(0, 6);
+
+    // Several chunks of one document collapse into a single reference: the run
+    // gets the strongest passages without spending its prompt budget repeating
+    // the same source.
+    const byDocument = new Map<string, { fileName: string; classification: KnowledgeSource["classification"]; score: number; passages: string[] }>();
+    for (const hit of hits) {
+      const existing = byDocument.get(hit.documentId);
+      if (existing) {
+        if (existing.passages.length < 3) existing.passages.push(hit.content.trim());
+        continue;
+      }
+      byDocument.set(hit.documentId, {
+        fileName: hit.fileName,
+        classification: hit.classification,
+        score: hit.score,
+        passages: [hit.content.trim()],
+      });
+    }
+
+    return [...byDocument.entries()]
+      .slice(0, 6)
+      .flatMap(([documentId, entry]): KnowledgeSource[] => {
+        const excerpt = entry.passages.filter(Boolean).join("\n\n").slice(0, 4_000);
+        if (!excerpt) return [];
+        return [
+          knowledgeSourceSchema.parse({
+            documentId,
+            fileName: entry.fileName,
+            classification: entry.classification,
+            score: entry.score,
+            excerpt,
+          }),
+        ];
+      });
   }
 }
 
@@ -185,9 +225,9 @@ function hardenedInstructions(run: LoadedRun, sources: KnowledgeSource[], govern
     `Answer only the user's request using the supplied reference material when relevant.\n\nPRIVATE KNOWLEDGE REFERENCES\n${sourceContext(sources)}`;
 }
 
-export class PrismaAgentProcessor {
+export class DrizzleAgentProcessor {
   constructor(
-    private readonly prisma: OrcaSynapsePrismaClient,
+    private readonly database: OrcaSynapseDatabase,
     private readonly hermes: AgentHermesRuntime | HermesClient,
     private readonly knowledge: AgentKnowledgeRetriever,
     private readonly capabilityIssuer: AgentRunCapabilityIssuer,
@@ -199,21 +239,24 @@ export class PrismaAgentProcessor {
     if (!["QUEUED", "RUNNING", "WAITING_FOR_APPROVAL", "CANCEL_REQUESTED"].includes(original.status)) {
       return { skipped: true, reason: "stale-or-ineligible" };
     }
-    const acquired = await this.prisma.agentRun.updateMany({
-      where: {
-        id: original.id,
-        status: { in: ["QUEUED", "RUNNING", "WAITING_FOR_APPROVAL", "CANCEL_REQUESTED"] },
-        OR: [
-          { processorLeaseExpiresAt: null },
-          { processorLeaseExpiresAt: { lt: new Date() } },
-        ],
-      },
-      data: {
+    const acquired = await this.database
+      .update(agentRun)
+      .set({
         processorLeaseOwner: workerId,
         processorLeaseExpiresAt: new Date(Date.now() + PROCESSOR_LEASE_MS),
-      },
-    });
-    if (acquired.count !== 1) return { skipped: true, reason: "leased-by-another-worker" };
+      })
+      .where(
+        and(
+          eq(agentRun.id, original.id),
+          inArray(agentRun.status, ["QUEUED", "RUNNING", "WAITING_FOR_APPROVAL", "CANCEL_REQUESTED"]),
+          or(
+            isNull(agentRun.processorLeaseExpiresAt),
+            lt(agentRun.processorLeaseExpiresAt, new Date()),
+          ),
+        ),
+      )
+      .returning({ id: agentRun.id });
+    if (acquired.length !== 1) return { skipped: true, reason: "leased-by-another-worker" };
     original = await this.load(payload.runId);
     if (!original || original.processorLeaseOwner !== workerId) {
       return { skipped: true, reason: "lease-lost" };
@@ -222,15 +265,18 @@ export class PrismaAgentProcessor {
     let leaseLost = false;
     let renewal: Promise<void> | null = null;
     const renewLease = async () => {
-      const renewed = await this.prisma.agentRun.updateMany({
-        where: {
-          id: payload.runId,
-          processorLeaseOwner: workerId,
-          status: { in: ["QUEUED", "RUNNING", "WAITING_FOR_APPROVAL", "CANCEL_REQUESTED"] },
-        },
-        data: { processorLeaseExpiresAt: new Date(Date.now() + PROCESSOR_LEASE_MS) },
-      });
-      if (renewed.count !== 1) leaseLost = true;
+      const renewed = await this.database
+        .update(agentRun)
+        .set({ processorLeaseExpiresAt: new Date(Date.now() + PROCESSOR_LEASE_MS) })
+        .where(
+          and(
+            eq(agentRun.id, payload.runId),
+            eq(agentRun.processorLeaseOwner, workerId),
+            inArray(agentRun.status, ["QUEUED", "RUNNING", "WAITING_FOR_APPROVAL", "CANCEL_REQUESTED"]),
+          ),
+        )
+        .returning({ id: agentRun.id });
+      if (renewed.length !== 1) leaseLost = true;
     };
     const assertLease = () => {
       if (leaseLost) throw new ProcessorLeaseLostError();
@@ -267,15 +313,28 @@ export class PrismaAgentProcessor {
       await this.finish(original.id, "DENIED", boundary.code, boundary.message, workerId);
       return { runId: original.id, status: "DENIED" };
     }
-    const claimed = await this.prisma.agentRun.updateMany({
-      where: {
-        id: original.id,
-        processorLeaseOwner: workerId,
-        OR: [{ status: "QUEUED" }, { status: "RUNNING", jobId }, { status: "WAITING_FOR_APPROVAL", jobId }],
-      },
-      data: { status: "RUNNING", jobId, startedAt: original.startedAt ?? new Date(), failureCode: null, failureMessage: null },
-    });
-    if (claimed.count !== 1) {
+    const claimed = await this.database
+      .update(agentRun)
+      .set({
+        status: "RUNNING",
+        jobId,
+        startedAt: original.startedAt ?? new Date(),
+        failureCode: null,
+        failureMessage: null,
+      })
+      .where(
+        and(
+          eq(agentRun.id, original.id),
+          eq(agentRun.processorLeaseOwner, workerId),
+          or(
+            eq(agentRun.status, "QUEUED"),
+            and(eq(agentRun.status, "RUNNING"), eq(agentRun.jobId, jobId)),
+            and(eq(agentRun.status, "WAITING_FOR_APPROVAL"), eq(agentRun.jobId, jobId)),
+          ),
+        ),
+      )
+      .returning({ id: agentRun.id });
+    if (claimed.length !== 1) {
       await this.releaseLease(original.id, workerId);
       return { skipped: true, reason: "claim-lost" };
     }
@@ -293,7 +352,10 @@ export class PrismaAgentProcessor {
         if (effectiveCapabilities(run.effectiveCapabilities).includes("knowledge:private:read")) {
           sources = await this.knowledge.search(run.ownerSubject, run.input);
           assertLease();
-          await this.prisma.agentRun.updateMany({ where: { id: run.id, processorLeaseOwner: workerId }, data: { sources } });
+          await this.database
+            .update(agentRun)
+            .set({ sources })
+            .where(and(eq(agentRun.id, run.id), eq(agentRun.processorLeaseOwner, workerId)));
         }
         run = await this.load(run.id);
         if (!run) return { skipped: true, reason: "run-removed" };
@@ -308,11 +370,12 @@ export class PrismaAgentProcessor {
           await this.hermes.assertGovernedToolBoundary();
           const capability = this.capabilityIssuer.issue(run.id);
           const expiresAt = new Date((run.startedAt?.getTime() ?? Date.now()) + run.version.timeoutSeconds * 1_000);
-          const capabilityStored = await this.prisma.agentRun.updateMany({
-            where: { id: run.id, processorLeaseOwner: workerId },
-            data: { toolCapabilityTokenHash: capability.tokenHash, toolCapabilityExpiresAt: expiresAt },
-          });
-          if (capabilityStored.count !== 1) throw new ProcessorLeaseLostError();
+          const capabilityStored = await this.database
+            .update(agentRun)
+            .set({ toolCapabilityTokenHash: capability.tokenHash, toolCapabilityExpiresAt: expiresAt })
+            .where(and(eq(agentRun.id, run.id), eq(agentRun.processorLeaseOwner, workerId)))
+            .returning({ id: agentRun.id });
+          if (capabilityStored.length !== 1) throw new ProcessorLeaseLostError();
           governedMcp = { authorization: `${run.id}.${capability.token}`, expiresAt };
         } else {
           await this.hermes.assertZeroToolBoundary();
@@ -328,11 +391,12 @@ export class PrismaAgentProcessor {
           ...(governedMcp ? { governedMcp } : {}),
         });
         assertLease();
-        const linked = await this.prisma.agentRun.updateMany({
-          where: { id: run.id, processorLeaseOwner: workerId },
-          data: { externalRunId },
-        });
-        if (linked.count !== 1) throw new ProcessorLeaseLostError();
+        const linked = await this.database
+          .update(agentRun)
+          .set({ externalRunId })
+          .where(and(eq(agentRun.id, run.id), eq(agentRun.processorLeaseOwner, workerId)))
+          .returning({ id: agentRun.id });
+        if (linked.length !== 1) throw new ProcessorLeaseLostError();
       } else {
         // A recovered job must verify Hermes again, but it must not retrieve a
         // different evidence set after the original prompt has been submitted.
@@ -342,11 +406,12 @@ export class PrismaAgentProcessor {
 
       if (this.hermes.events) {
         const orcasynapseRunId = run.id;
-        const latest = await this.prisma.agentRunEvent.findFirst({
-          where: { runId: orcasynapseRunId, sourceEventId: { not: null } },
-          orderBy: [{ occurredAt: "desc" }, { id: "desc" }],
-          select: { sourceEventId: true },
-        });
+        const [latest] = await this.database
+          .select({ sourceEventId: agentRunEvent.sourceEventId })
+          .from(agentRunEvent)
+          .where(and(eq(agentRunEvent.runId, orcasynapseRunId), isNotNull(agentRunEvent.sourceEventId)))
+          .orderBy(desc(agentRunEvent.occurredAt), desc(agentRunEvent.id))
+          .limit(1);
         eventController = new AbortController();
         eventStream = this.hermes.events(
           externalRunId,
@@ -355,7 +420,7 @@ export class PrismaAgentProcessor {
           latest?.sourceEventId ?? undefined,
         ).catch(async (error) => {
           if (!eventController?.signal.aborted) {
-            await this.prisma.auditEvent.create({ data: {
+            await this.database.insert(auditEvent).values({
               actorType: "SERVICE",
               actorId: workerId,
               action: "agent.run_event_stream_degraded",
@@ -363,7 +428,7 @@ export class PrismaAgentProcessor {
               resourceId: orcasynapseRunId,
               outcome: "FAILURE",
               metadata: { message: safeFailure(error), reconciliation: "RUN_STATUS_POLLING" },
-            } }).catch(() => undefined);
+            }).catch(() => undefined);
           }
         });
       }
@@ -394,59 +459,72 @@ export class PrismaAgentProcessor {
             throw new Error("Hermes output exceeded the active OrcaSynapse guardrail limit.");
           }
           const completedOutput = state.output;
-          await this.prisma.$transaction(async (transaction) => {
+          const totalTokens = state.totalTokens ?? (
+            state.inputTokens === null && state.outputTokens === null && state.reasoningTokens === null
+              ? null
+              : (state.inputTokens ?? 0) + (state.outputTokens ?? 0) + (state.reasoningTokens ?? 0)
+          );
+          await this.database.transaction(async (transaction) => {
             const completedAt = new Date();
-            const completed = await transaction.agentRun.updateMany({ where: { id: run!.id, processorLeaseOwner: workerId }, data: {
-              status: "COMPLETED", output: completedOutput, partialOutput: completedOutput, completedAt,
-              modelAlias: state.modelAlias ?? run!.version.modelAlias,
-              inputTokens: state.inputTokens,
-              outputTokens: state.outputTokens,
-              reasoningTokens: state.reasoningTokens,
-              totalTokens: state.totalTokens ?? (
-                state.inputTokens === null && state.outputTokens === null && state.reasoningTokens === null
-                  ? null
-                  : (state.inputTokens ?? 0) + (state.outputTokens ?? 0) + (state.reasoningTokens ?? 0)
-              ),
-              finishReason: state.finishReason ?? "hermes_completed",
-              toolCapabilityTokenHash: null, toolCapabilityExpiresAt: null,
-              processorLeaseOwner: null, processorLeaseExpiresAt: null,
-            } });
-            if (completed.count !== 1) throw new ProcessorLeaseLostError();
-            const timing = await transaction.agentRun.findUnique({
-              where: { id: run!.id },
-              select: { startedAt: true, firstTokenAt: true },
-            });
-            await transaction.chatMessage.updateMany({
-              where: { agentRunId: run!.id, status: "PENDING" },
-              data: {
+            const completed = await transaction
+              .update(agentRun)
+              .set({
+                status: "COMPLETED",
+                output: completedOutput,
+                partialOutput: completedOutput,
+                completedAt,
+                modelAlias: state.modelAlias ?? run!.version.modelAlias,
+                inputTokens: state.inputTokens,
+                outputTokens: state.outputTokens,
+                reasoningTokens: state.reasoningTokens,
+                totalTokens,
+                finishReason: state.finishReason ?? "hermes_completed",
+                toolCapabilityTokenHash: null,
+                toolCapabilityExpiresAt: null,
+                processorLeaseOwner: null,
+                processorLeaseExpiresAt: null,
+              })
+              .where(and(eq(agentRun.id, run!.id), eq(agentRun.processorLeaseOwner, workerId)))
+              .returning({ startedAt: agentRun.startedAt, firstTokenAt: agentRun.firstTokenAt });
+            // Exactly one row, or another worker owns the lease and this result
+            // is not ours to write.
+            const timing = completed[0];
+            if (completed.length !== 1 || !timing) throw new ProcessorLeaseLostError();
+
+            await transaction
+              .update(chatMessage)
+              .set({
                 status: "COMPLETED",
                 content: completedOutput,
                 modelAlias: state.modelAlias ?? run!.version.modelAlias,
                 inputTokens: state.inputTokens,
                 outputTokens: state.outputTokens,
                 reasoningTokens: state.reasoningTokens,
-                totalTokens: state.totalTokens ?? (
-                  state.inputTokens === null && state.outputTokens === null && state.reasoningTokens === null
-                    ? null
-                    : (state.inputTokens ?? 0) + (state.outputTokens ?? 0) + (state.reasoningTokens ?? 0)
-                ),
+                totalTokens,
                 latencyMs: Math.max(0, completedAt.getTime() - (run!.startedAt?.getTime() ?? completedAt.getTime())),
-                firstTokenLatencyMs: timing?.startedAt && timing.firstTokenAt
+                firstTokenLatencyMs: timing.startedAt && timing.firstTokenAt
                   ? Math.max(0, timing.firstTokenAt.getTime() - timing.startedAt.getTime())
                   : null,
                 finishReason: state.finishReason ?? "hermes_completed",
                 sources: run!.sources as never,
                 completedAt,
-              },
+              })
+              .where(and(eq(chatMessage.agentRunId, run!.id), eq(chatMessage.status, "PENDING")));
+
+            await transaction
+              .update(agentRunApproval)
+              .set({ status: "CANCELLED", decidedAt: completedAt, decision: "DENY" })
+              .where(and(eq(agentRunApproval.runId, run!.id), eq(agentRunApproval.status, "PENDING")));
+
+            await transaction.insert(auditEvent).values({
+              actorType: "SERVICE",
+              actorId: workerId,
+              action: "agent.run_completed",
+              resourceType: "AgentRun",
+              resourceId: run!.id,
+              outcome: "SUCCESS",
+              metadata: { externalRunId, profileVersion: run!.profileVersion },
             });
-            await transaction.agentRunApproval.updateMany({
-              where: { runId: run!.id, status: "PENDING" },
-              data: { status: "CANCELLED", decidedAt: completedAt, decision: "DENY" },
-            });
-            await transaction.auditEvent.create({ data: {
-              actorType: "SERVICE", actorId: workerId, action: "agent.run_completed", resourceType: "AgentRun",
-              resourceId: run!.id, outcome: "SUCCESS", metadata: { externalRunId, profileVersion: run!.profileVersion },
-            } });
           });
           return { runId: run.id, status: "COMPLETED" };
         }
@@ -491,47 +569,61 @@ export class PrismaAgentProcessor {
     externalRunId: string,
     workerId: string,
   ): Promise<"WAIT" | "DENIED"> {
-    let approval = await this.prisma.agentRunApproval.findFirst({
-      where: { runId: run.id, status: { in: ["PENDING", "APPROVED", "DENIED", "EXPIRED"] } },
-      orderBy: { requestedAt: "desc" },
-    });
+    const waitForDecision = async () => {
+      await this.database
+        .update(agentRun)
+        .set({ status: "WAITING_FOR_APPROVAL" })
+        .where(
+          and(
+            eq(agentRun.id, run.id),
+            eq(agentRun.processorLeaseOwner, workerId),
+            eq(agentRun.status, "RUNNING"),
+          ),
+        );
+      return "WAIT" as const;
+    };
+
+    let [approval] = await this.database
+      .select()
+      .from(agentRunApproval)
+      .where(
+        and(
+          eq(agentRunApproval.runId, run.id),
+          inArray(agentRunApproval.status, ["PENDING", "APPROVED", "DENIED", "EXPIRED"]),
+        ),
+      )
+      .orderBy(desc(agentRunApproval.requestedAt))
+      .limit(1);
+
     if (!approval) {
-      approval = await this.prisma.agentRunApproval.create({
-        data: {
-          runId: run.id,
-          summary: "Hermes requested permission to continue. Detailed approval telemetry was unavailable.",
-          choices: ["ALLOW_ONCE", "DENY"],
-          expiresAt: new Date(Math.min(
-            Date.now() + 10 * 60 * 1_000,
-            (run.startedAt?.getTime() ?? Date.now()) + run.version.timeoutSeconds * 1_000,
-          )),
-        },
+      await this.database.insert(agentRunApproval).values({
+        runId: run.id,
+        summary: "Hermes requested permission to continue. Detailed approval telemetry was unavailable.",
+        choices: ["ALLOW_ONCE", "DENY"],
+        expiresAt: new Date(Math.min(
+          Date.now() + 10 * 60 * 1_000,
+          (run.startedAt?.getTime() ?? Date.now()) + run.version.timeoutSeconds * 1_000,
+        )),
       });
-      await this.prisma.agentRun.updateMany({
-        where: { id: run.id, processorLeaseOwner: workerId, status: "RUNNING" },
-        data: { status: "WAITING_FOR_APPROVAL" },
-      });
-      return "WAIT";
+      return waitForDecision();
     }
+
     if (approval.status === "PENDING" && approval.expiresAt <= new Date()) {
-      approval = await this.prisma.agentRunApproval.update({
-        where: { id: approval.id },
-        data: { status: "EXPIRED", decidedAt: new Date(), decision: "DENY" },
-      });
+      const [expired] = await this.database
+        .update(agentRunApproval)
+        .set({ status: "EXPIRED", decidedAt: new Date(), decision: "DENY" })
+        .where(eq(agentRunApproval.id, approval.id))
+        .returning();
+      if (expired) approval = expired;
     }
-    if (approval.status === "PENDING") {
-      await this.prisma.agentRun.updateMany({
-        where: { id: run.id, processorLeaseOwner: workerId, status: "RUNNING" },
-        data: { status: "WAITING_FOR_APPROVAL" },
-      });
-      return "WAIT";
-    }
+    if (approval.status === "PENDING") return waitForDecision();
+
     if (!approval.forwardedAt) {
       await this.hermes.decideApproval(externalRunId, approval.status === "APPROVED" ? "once" : "deny");
-      await this.prisma.agentRunApproval.update({
-        where: { id: approval.id },
-        data: { forwardedAt: new Date() },
-      });
+      await this.database
+        .update(agentRunApproval)
+        .set({ forwardedAt: new Date() })
+        .where(eq(agentRunApproval.id, approval.id));
     }
     if (approval.status !== "APPROVED") {
       await this.finish(
@@ -543,44 +635,66 @@ export class PrismaAgentProcessor {
       );
       return "DENIED";
     }
-    await this.prisma.agentRun.updateMany({
-      where: { id: run.id, processorLeaseOwner: workerId, status: "WAITING_FOR_APPROVAL" },
-      data: { status: "RUNNING" },
-    });
+    await this.database
+      .update(agentRun)
+      .set({ status: "RUNNING" })
+      .where(
+        and(
+          eq(agentRun.id, run.id),
+          eq(agentRun.processorLeaseOwner, workerId),
+          eq(agentRun.status, "WAITING_FOR_APPROVAL"),
+        ),
+      );
     return "WAIT";
   }
 
   private async recordSafeEvent(runId: string, event: HermesSafeRunEvent): Promise<void> {
-    await this.prisma.$transaction(async (transaction) => {
+    await this.database.transaction(async (transaction) => {
       if (event.sourceEventId) {
-        const duplicate = await transaction.agentRunEvent.findUnique({
-          where: { runId_sourceEventId: { runId, sourceEventId: event.sourceEventId } },
-          select: { id: true },
-        });
+        const [duplicate] = await transaction
+          .select({ id: agentRunEvent.id })
+          .from(agentRunEvent)
+          .where(
+            and(
+              eq(agentRunEvent.runId, runId),
+              eq(agentRunEvent.sourceEventId, event.sourceEventId),
+            ),
+          )
+          .limit(1);
+        // Hermes replays events after a stream reconnect; the source identifier
+        // is what keeps a resumed stream from duplicating stored history.
         if (duplicate) return;
       }
+
       let approvalId: string | null = null;
       if (event.type === "APPROVAL_REQUIRED") {
-        const existing = await transaction.agentRunApproval.findFirst({
-          where: { runId, status: "PENDING" },
-          orderBy: { requestedAt: "desc" },
-          select: { id: true },
-        });
-        const approval = existing ?? await transaction.agentRunApproval.create({
-          data: {
-            runId,
-            externalApprovalId: event.approvalExternalId,
-            command: event.approvalCommand,
-            summary: event.summary ?? "Hermes requested permission to continue.",
-            choices: event.approvalChoices,
-            expiresAt: new Date(Date.now() + 10 * 60 * 1_000),
-          },
-          select: { id: true },
-        });
-        approvalId = approval.id;
+        const [existing] = await transaction
+          .select({ id: agentRunApproval.id })
+          .from(agentRunApproval)
+          .where(and(eq(agentRunApproval.runId, runId), eq(agentRunApproval.status, "PENDING")))
+          .orderBy(desc(agentRunApproval.requestedAt))
+          .limit(1);
+        if (existing) {
+          approvalId = existing.id;
+        } else {
+          const [approval] = await transaction
+            .insert(agentRunApproval)
+            .values({
+              runId,
+              externalApprovalId: event.approvalExternalId,
+              command: event.approvalCommand,
+              summary: event.summary ?? "Hermes requested permission to continue.",
+              choices: event.approvalChoices,
+              expiresAt: new Date(Date.now() + 10 * 60 * 1_000),
+            })
+            .returning({ id: agentRunApproval.id });
+          approvalId = approval?.id ?? null;
+        }
       }
-      const storedEvent = await transaction.agentRunEvent.create({
-        data: {
+
+      const [storedEvent] = await transaction
+        .insert(agentRunEvent)
+        .values({
           runId,
           sourceEventId: event.sourceEventId,
           type: event.type,
@@ -596,73 +710,111 @@ export class PrismaAgentProcessor {
           inputTokens: event.inputTokens,
           outputTokens: event.outputTokens,
           reasoningTokens: event.reasoningTokens,
-          costUsd: event.costUsd,
+          // numeric(18,8) round-trips as a string, so the value is formatted
+          // rather than handed over as a float that would lose precision.
+          costUsd: event.costUsd === null || event.costUsd === undefined ? null : String(event.costUsd),
           occurredAt: event.occurredAt,
-        },
-        select: { cursor: true },
-      });
-      await transaction.agentRun.update({
-        where: { id: runId },
-        data: { lastEventCursor: storedEvent.cursor },
-      });
+        })
+        .returning({ cursor: agentRunEvent.cursor });
+      if (!storedEvent) return;
+
+      await transaction
+        .update(agentRun)
+        .set({ lastEventCursor: Number(storedEvent.cursor) })
+        .where(eq(agentRun.id, runId));
+
       if (event.type === "MESSAGE_DELTA" && event.delta) {
-        await transaction.$executeRaw`
+        // Appended in SQL so concurrent deltas cannot lose each other, and
+        // truncated against the run's own limit rather than a fixed constant.
+        const [partial] = await transaction.execute<{ partialOutput: string }>(sql`
           UPDATE "AgentRun"
           SET "partialOutput" = LEFT("partialOutput" || ${event.delta}, "outputCharacterLimit" + 1),
               "firstTokenAt" = COALESCE("firstTokenAt", CURRENT_TIMESTAMP),
               "updatedAt" = CURRENT_TIMESTAMP
           WHERE "id" = ${runId}::uuid
-        `;
-        const partial = await transaction.agentRun.findUnique({
-          where: { id: runId },
-          select: { partialOutput: true },
-        });
+          RETURNING "partialOutput"
+        `).then((result) => result.rows);
         if (partial) {
-          await transaction.chatMessage.updateMany({
-            where: { agentRunId: runId, status: "PENDING" },
-            data: { content: partial.partialOutput },
-          });
+          await transaction
+            .update(chatMessage)
+            .set({ content: partial.partialOutput })
+            .where(and(eq(chatMessage.agentRunId, runId), eq(chatMessage.status, "PENDING")));
         }
       }
     });
   }
 
   private async load(runId: string): Promise<LoadedRun | null> {
-    return this.prisma.agentRun.findUnique({
-      where: { id: runId },
-      include: {
-        profile: { select: { status: true, activeVersion: true } },
+    const [row] = await this.database
+      .select({
+        run: agentRun,
+        profileStatus: agentProfile.status,
+        profileActiveVersion: agentProfile.activeVersion,
         version: {
-          select: {
-            instructions: true, soulMd: true, modelAlias: true, maxTurns: true, timeoutSeconds: true, safeMode: true,
-            toolGrants: { where: { enabled: true }, select: { enabled: true, tool: { select: { status: true } } } },
-          },
+          instructions: agentProfileVersion.instructions,
+          soulMd: agentProfileVersion.soulMd,
+          modelAlias: agentProfileVersion.modelAlias,
+          maxTurns: agentProfileVersion.maxTurns,
+          timeoutSeconds: agentProfileVersion.timeoutSeconds,
+          safeMode: agentProfileVersion.safeMode,
         },
+        versionId: agentProfileVersion.id,
+      })
+      .from(agentRun)
+      .innerJoin(agentProfile, eq(agentProfile.id, agentRun.profileId))
+      .innerJoin(agentProfileVersion, eq(agentProfileVersion.id, agentRun.profileVersionId))
+      .where(eq(agentRun.id, runId))
+      .limit(1);
+    if (!row) return null;
+
+    // Only enabled grants matter to the boundary checks, so the join filters
+    // them here rather than making every caller remember to.
+    const toolGrants = await this.database
+      .select({ enabled: agentToolGrant.enabled, toolStatus: governedTool.status })
+      .from(agentToolGrant)
+      .innerJoin(governedTool, eq(governedTool.id, agentToolGrant.toolId))
+      .where(and(eq(agentToolGrant.profileVersionId, row.versionId), eq(agentToolGrant.enabled, true)));
+
+    return {
+      ...row.run,
+      profile: { status: row.profileStatus, activeVersion: row.profileActiveVersion },
+      version: {
+        ...row.version,
+        toolGrants: toolGrants.map((grant) => ({ enabled: grant.enabled, tool: { status: grant.toolStatus } })),
       },
-    }) as Promise<LoadedRun | null>;
+    } as unknown as LoadedRun;
   }
 
   private async boundaryState(run: LoadedRun): Promise<{ code: string; message: string } | null> {
-    const [control, runtimeNodes, memoryConnections] = await Promise.all([
-      this.prisma.agentRuntimeControl.findUnique({ where: { id: "global" } }),
-      this.prisma.hermesRuntimeNode.findMany({
-        where: { enrolledAt: { not: null }, status: { not: "REVOKED" } },
-        select: {
-          status: true,
-          lastSeenAt: true,
-          serviceConnection: { select: { enabled: true, status: true } },
-        },
-        take: 2,
-      }),
+    const [controls, runtimeNodes, memoryConnections] = await Promise.all([
+      this.database
+        .select()
+        .from(agentRuntimeControl)
+        .where(eq(agentRuntimeControl.id, "global"))
+        .limit(1),
+      this.database
+        .select({
+          status: hermesRuntimeNode.status,
+          lastSeenAt: hermesRuntimeNode.lastSeenAt,
+          connectionEnabled: serviceConnection.enabled,
+          connectionStatus: serviceConnection.status,
+        })
+        .from(hermesRuntimeNode)
+        .leftJoin(serviceConnection, eq(serviceConnection.id, hermesRuntimeNode.serviceConnectionId))
+        .where(
+          and(isNotNull(hermesRuntimeNode.enrolledAt), ne(hermesRuntimeNode.status, "REVOKED")),
+        )
+        .limit(2),
       // A runtime node links only to its Hermes connection, and the node
       // heartbeat only proves the Hermes API port answers. Supermemory is a
       // sibling connection that OrcaSynapse probes itself, so read it here.
-      this.prisma.serviceConnection.findMany({
-        where: { kind: "SUPERMEMORY", enabled: true },
-        select: { status: true },
-        take: 2,
-      }),
+      this.database
+        .select({ status: serviceConnection.status })
+        .from(serviceConnection)
+        .where(and(eq(serviceConnection.kind, "SUPERMEMORY"), eq(serviceConnection.enabled, true)))
+        .limit(2),
     ]);
+    const control = controls[0];
     if (!control?.enabled) return { code: "RUNTIME_DISABLED", message: control?.reason ?? "Agent execution is disabled fail-closed." };
     const runtimeNode = runtimeNodes[0];
     if (runtimeNodes.length !== 1 || !runtimeNode) {
@@ -677,7 +829,7 @@ export class PrismaAgentProcessor {
     if (!runtimeNode.lastSeenAt || Date.now() - runtimeNode.lastSeenAt.getTime() >= 180_000) {
       return { code: "HERMES_RUNTIME_OFFLINE", message: "The Hermes runtime heartbeat is stale." };
     }
-    if (runtimeNode.serviceConnection?.enabled !== true || runtimeNode.serviceConnection.status !== "HEALTHY") {
+    if (runtimeNode.connectionEnabled !== true || runtimeNode.connectionStatus !== "HEALTHY") {
       return { code: "HERMES_CONNECTION_UNHEALTHY", message: "The governed Hermes service connection is not healthy." };
     }
     // Supermemory is Hermes' durable memory plane. A Hermes container can
@@ -698,7 +850,11 @@ export class PrismaAgentProcessor {
     if (run.profile.activeVersion !== run.profileVersion) return { code: "PROFILE_VERSION_REVOKED", message: "The run's agent version is no longer active." };
     if (!run.version.safeMode || run.version.maxTurns !== 1) return { code: "UNSAFE_PROFILE", message: "The agent configuration does not satisfy the single-turn safe-mode boundary." };
     if (run.toolCapabilityTokenHash) {
-      const control = await this.prisma.toolRuntimeControl.findUnique({ where: { id: "global" } });
+      const [control] = await this.database
+        .select()
+        .from(toolRuntimeControl)
+        .where(eq(toolRuntimeControl.id, "global"))
+        .limit(1);
       if (!control?.enabled) return { code: "TOOL_RUNTIME_DISABLED", message: control?.reason ?? "Governed tool execution is disabled fail-closed." };
       if (!run.toolCapabilityExpiresAt || run.toolCapabilityExpiresAt <= new Date()) {
         return { code: "TOOL_CAPABILITY_EXPIRED", message: "The run's governed-tool capability has expired." };
@@ -712,7 +868,11 @@ export class PrismaAgentProcessor {
 
   private async governedToolsEnabled(run: LoadedRun): Promise<boolean> {
     if (!run.version.toolGrants.some((grant) => grant.enabled && grant.tool.status === "ACTIVE")) return false;
-    const control = await this.prisma.toolRuntimeControl.findUnique({ where: { id: "global" } });
+    const [control] = await this.database
+      .select()
+      .from(toolRuntimeControl)
+      .where(eq(toolRuntimeControl.id, "global"))
+      .limit(1);
     return control?.enabled === true;
   }
 
@@ -722,10 +882,11 @@ export class PrismaAgentProcessor {
    * term even though no worker is driving it.
    */
   private async releaseLease(runId: string, workerId: string): Promise<void> {
-    await this.prisma.agentRun.updateMany({
-      where: { id: runId, processorLeaseOwner: workerId },
-      data: { processorLeaseOwner: null, processorLeaseExpiresAt: null },
-    }).catch(() => undefined);
+    await this.database
+      .update(agentRun)
+      .set({ processorLeaseOwner: null, processorLeaseExpiresAt: null })
+      .where(and(eq(agentRun.id, runId), eq(agentRun.processorLeaseOwner, workerId)))
+      .catch(() => undefined);
   }
 
   private async finish(
@@ -735,38 +896,59 @@ export class PrismaAgentProcessor {
     failureMessage: string,
     workerId: string,
   ): Promise<void> {
-    await this.prisma.$transaction(async (transaction) => {
+    await this.database.transaction(async (transaction) => {
       const completedAt = new Date();
-      const finished = await transaction.agentRun.updateMany({
-        where: { id: runId, processorLeaseOwner: workerId, status: { in: ["QUEUED", "RUNNING", "WAITING_FOR_APPROVAL", "CANCEL_REQUESTED"] } },
-        data: {
-          status, failureCode, failureMessage: failureMessage.slice(0, 500), completedAt,
-          toolCapabilityTokenHash: null, toolCapabilityExpiresAt: null,
-          processorLeaseOwner: null, processorLeaseExpiresAt: null,
-        },
-      });
-      if (finished.count !== 1) throw new ProcessorLeaseLostError();
-      await transaction.chatMessage.updateMany({
-        where: { agentRunId: runId, status: "PENDING" },
-        data: {
+      const finished = await transaction
+        .update(agentRun)
+        .set({
+          status,
+          failureCode,
+          failureMessage: failureMessage.slice(0, 500),
+          completedAt,
+          toolCapabilityTokenHash: null,
+          toolCapabilityExpiresAt: null,
+          processorLeaseOwner: null,
+          processorLeaseExpiresAt: null,
+        })
+        .where(
+          and(
+            eq(agentRun.id, runId),
+            eq(agentRun.processorLeaseOwner, workerId),
+            inArray(agentRun.status, ["QUEUED", "RUNNING", "WAITING_FOR_APPROVAL", "CANCEL_REQUESTED"]),
+          ),
+        )
+        .returning({ id: agentRun.id });
+      // Single-writer finalisation: without our lease this outcome belongs to
+      // another worker and must not overwrite theirs.
+      if (finished.length !== 1) throw new ProcessorLeaseLostError();
+
+      await transaction
+        .update(chatMessage)
+        .set({
           status: status === "CANCELLED" ? "CANCELLED" : "FAILED",
           errorCode: failureCode,
           completedAt,
-        },
-      });
-      await transaction.agentRunApproval.updateMany({
-        where: { runId, status: "PENDING" },
-        data: {
+        })
+        .where(and(eq(chatMessage.agentRunId, runId), eq(chatMessage.status, "PENDING")));
+
+      await transaction
+        .update(agentRunApproval)
+        .set({
           status: status === "CANCELLED" ? "CANCELLED" : "DENIED",
           decidedAt: completedAt,
           decision: "DENY",
-        },
-      });
-      await transaction.auditEvent.create({ data: {
-        actorType: "SERVICE", actorId: workerId, action: `agent.run_${status.toLowerCase()}`,
-        resourceType: "AgentRun", resourceId: runId, outcome: status === "CANCELLED" ? "SUCCESS" : "FAILURE",
+        })
+        .where(and(eq(agentRunApproval.runId, runId), eq(agentRunApproval.status, "PENDING")));
+
+      await transaction.insert(auditEvent).values({
+        actorType: "SERVICE",
+        actorId: workerId,
+        action: `agent.run_${status.toLowerCase()}`,
+        resourceType: "AgentRun",
+        resourceId: runId,
+        outcome: status === "CANCELLED" ? "SUCCESS" : "FAILURE",
         metadata: { failureCode, failureMessage: failureMessage.slice(0, 500) },
-      } });
+      });
     });
   }
 }

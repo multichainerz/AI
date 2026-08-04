@@ -1,6 +1,6 @@
 {
   "name": "@orcasynapse/api",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
@@ -12,12 +12,14 @@
     "test": "vitest run --exclude=dist/**"
   },
   "dependencies": {
-    "@orcasynapse/contracts": "workspace:*",
-    "@orcasynapse/database": "workspace:*",
-    "@orcasynapse/runtime-clients": "workspace:*",
-    "@orcasynapse/security": "workspace:*",
     "@fastify/helmet": "13.1.0",
     "@fastify/multipart": "9.3.0",
+    "@orcasynapse/contracts": "workspace:*",
+    "@orcasynapse/database": "workspace:*",
+    "@orcasynapse/knowledge": "workspace:*",
+    "@orcasynapse/runtime-clients": "workspace:*",
+    "@orcasynapse/security": "workspace:*",
+    "drizzle-orm": "0.45.2",
     "fastify": "5.10.0",
     "jose": "6.2.4"
   },

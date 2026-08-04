@@ -14,6 +14,7 @@
 
 import { pgTable, index, uniqueIndex, uuid, varchar, text, boolean, timestamp, foreignKey, inet, jsonb, integer, check, doublePrecision, bigint, numeric, bigserial, vector, pgEnum } from "drizzle-orm/pg-core"
 import { sql } from "drizzle-orm"
+import { randomUUID } from "node:crypto"
 import { bytea } from "./bytea.js"
 
 export const administratorAuthenticationMethod = pgEnum("AdministratorAuthenticationMethod", ['LOCAL_PASSWORD', 'INSTALLATION_KEY_RECOVERY', 'OIDC'])
@@ -64,7 +65,7 @@ export const workerLifecycleStatus = pgEnum("WorkerLifecycleStatus", ['ONLINE', 
 
 
 export const enterpriseUser = pgTable("EnterpriseUser", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	issuer: varchar({ length: 512 }).notNull(),
 	subject: varchar({ length: 255 }).notNull(),
 	email: varchar({ length: 320 }),
@@ -75,13 +76,13 @@ export const enterpriseUser = pgTable("EnterpriseUser", {
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
 }, (table) => [
-	index("EnterpriseUser_email_idx").using("btree", table.email.asc().nullsLast().op("text_ops")),
-	index("EnterpriseUser_enabled_lastLoginAt_idx").using("btree", table.enabled.asc().nullsLast().op("bool_ops"), table.lastLoginAt.asc().nullsLast().op("bool_ops")),
-	uniqueIndex("EnterpriseUser_issuer_subject_key").using("btree", table.issuer.asc().nullsLast().op("text_ops"), table.subject.asc().nullsLast().op("text_ops")),
+	index("EnterpriseUser_email_idx").using("btree", table.email.asc().nullsLast()),
+	index("EnterpriseUser_enabled_lastLoginAt_idx").using("btree", table.enabled.asc().nullsLast(), table.lastLoginAt.asc().nullsLast()),
+	uniqueIndex("EnterpriseUser_issuer_subject_key").using("btree", table.issuer.asc().nullsLast(), table.subject.asc().nullsLast()),
 ]);
 
 export const enterpriseUserSession = pgTable("EnterpriseUserSession", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	tokenHash: bytea("tokenHash").notNull(),
 	userId: uuid().notNull(),
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
@@ -92,10 +93,10 @@ export const enterpriseUserSession = pgTable("EnterpriseUserSession", {
 	sourceIp: inet(),
 	userAgentHash: varchar({ length: 64 }),
 }, (table) => [
-	index("EnterpriseUserSession_absoluteExpiresAt_idx").using("btree", table.absoluteExpiresAt.asc().nullsLast().op("timestamptz_ops")),
-	index("EnterpriseUserSession_revokedAt_idleExpiresAt_idx").using("btree", table.revokedAt.asc().nullsLast().op("timestamptz_ops"), table.idleExpiresAt.asc().nullsLast().op("timestamptz_ops")),
-	uniqueIndex("EnterpriseUserSession_tokenHash_key").using("btree", table.tokenHash.asc().nullsLast().op("bytea_ops")),
-	index("EnterpriseUserSession_userId_createdAt_idx").using("btree", table.userId.asc().nullsLast().op("uuid_ops"), table.createdAt.asc().nullsLast().op("uuid_ops")),
+	index("EnterpriseUserSession_absoluteExpiresAt_idx").using("btree", table.absoluteExpiresAt.asc().nullsLast()),
+	index("EnterpriseUserSession_revokedAt_idleExpiresAt_idx").using("btree", table.revokedAt.asc().nullsLast(), table.idleExpiresAt.asc().nullsLast()),
+	uniqueIndex("EnterpriseUserSession_tokenHash_key").using("btree", table.tokenHash.asc().nullsLast()),
+	index("EnterpriseUserSession_userId_createdAt_idx").using("btree", table.userId.asc().nullsLast(), table.createdAt.asc().nullsLast()),
 	foreignKey({
 			columns: [table.userId],
 			foreignColumns: [enterpriseUser.id],
@@ -104,7 +105,7 @@ export const enterpriseUserSession = pgTable("EnterpriseUserSession", {
 ]);
 
 export const auditEvent = pgTable("AuditEvent", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	occurredAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	actorType: auditActorType().notNull(),
 	actorId: uuid(),
@@ -116,14 +117,14 @@ export const auditEvent = pgTable("AuditEvent", {
 	sourceIp: inet(),
 	metadata: jsonb().default({}).notNull(),
 }, (table) => [
-	index("AuditEvent_actorId_occurredAt_idx").using("btree", table.actorId.asc().nullsLast().op("timestamptz_ops"), table.occurredAt.asc().nullsLast().op("uuid_ops")),
-	index("AuditEvent_correlationId_idx").using("btree", table.correlationId.asc().nullsLast().op("uuid_ops")),
-	index("AuditEvent_occurredAt_idx").using("btree", table.occurredAt.asc().nullsLast().op("timestamptz_ops")),
-	index("AuditEvent_resourceType_resourceId_idx").using("btree", table.resourceType.asc().nullsLast().op("text_ops"), table.resourceId.asc().nullsLast().op("text_ops")),
+	index("AuditEvent_actorId_occurredAt_idx").using("btree", table.actorId.asc().nullsLast(), table.occurredAt.asc().nullsLast()),
+	index("AuditEvent_correlationId_idx").using("btree", table.correlationId.asc().nullsLast()),
+	index("AuditEvent_occurredAt_idx").using("btree", table.occurredAt.asc().nullsLast()),
+	index("AuditEvent_resourceType_resourceId_idx").using("btree", table.resourceType.asc().nullsLast(), table.resourceId.asc().nullsLast()),
 ]);
 
 export const secretRecord = pgTable("SecretRecord", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	serviceConnectionId: uuid().notNull(),
 	fieldName: varchar({ length: 120 }).notNull(),
 	encryptedValue: bytea("encryptedValue").notNull(),
@@ -139,8 +140,8 @@ export const secretRecord = pgTable("SecretRecord", {
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	retiredAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
 }, (table) => [
-	index("SecretRecord_createdAt_idx").using("btree", table.createdAt.asc().nullsLast().op("timestamptz_ops")),
-	index("SecretRecord_serviceConnectionId_fieldName_active_idx").using("btree", table.serviceConnectionId.asc().nullsLast().op("bool_ops"), table.fieldName.asc().nullsLast().op("bool_ops"), table.active.asc().nullsLast().op("text_ops")),
+	index("SecretRecord_createdAt_idx").using("btree", table.createdAt.asc().nullsLast()),
+	index("SecretRecord_serviceConnectionId_fieldName_active_idx").using("btree", table.serviceConnectionId.asc().nullsLast(), table.fieldName.asc().nullsLast(), table.active.asc().nullsLast()),
 	foreignKey({
 			columns: [table.serviceConnectionId],
 			foreignColumns: [serviceConnection.id],
@@ -149,7 +150,7 @@ export const secretRecord = pgTable("SecretRecord", {
 ]);
 
 export const configurationRevision = pgTable("ConfigurationRevision", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	serviceConnectionId: uuid().notNull(),
 	revision: integer().notNull(),
 	configuration: jsonb().notNull(),
@@ -159,8 +160,8 @@ export const configurationRevision = pgTable("ConfigurationRevision", {
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	activatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
 }, (table) => [
-	index("ConfigurationRevision_createdAt_idx").using("btree", table.createdAt.asc().nullsLast().op("timestamptz_ops")),
-	uniqueIndex("ConfigurationRevision_serviceConnectionId_revision_key").using("btree", table.serviceConnectionId.asc().nullsLast().op("int4_ops"), table.revision.asc().nullsLast().op("int4_ops")),
+	index("ConfigurationRevision_createdAt_idx").using("btree", table.createdAt.asc().nullsLast()),
+	uniqueIndex("ConfigurationRevision_serviceConnectionId_revision_key").using("btree", table.serviceConnectionId.asc().nullsLast(), table.revision.asc().nullsLast()),
 	foreignKey({
 			columns: [table.serviceConnectionId],
 			foreignColumns: [serviceConnection.id],
@@ -169,7 +170,7 @@ export const configurationRevision = pgTable("ConfigurationRevision", {
 ]);
 
 export const agentProfile = pgTable("AgentProfile", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	slug: varchar({ length: 64 }).notNull(),
 	status: agentProfileStatus().default('DRAFT').notNull(),
 	currentVersion: integer().default(1).notNull(),
@@ -177,8 +178,8 @@ export const agentProfile = pgTable("AgentProfile", {
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
 }, (table) => [
-	uniqueIndex("AgentProfile_slug_key").using("btree", table.slug.asc().nullsLast().op("text_ops")),
-	index("AgentProfile_status_updatedAt_idx").using("btree", table.status.asc().nullsLast().op("timestamptz_ops"), table.updatedAt.asc().nullsLast().op("timestamptz_ops")),
+	uniqueIndex("AgentProfile_slug_key").using("btree", table.slug.asc().nullsLast()),
+	index("AgentProfile_status_updatedAt_idx").using("btree", table.status.asc().nullsLast(), table.updatedAt.asc().nullsLast()),
 ]);
 
 export const workerNode = pgTable("WorkerNode", {
@@ -194,12 +195,12 @@ export const workerNode = pgTable("WorkerNode", {
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
 }, (table) => [
-	index("WorkerNode_lastSeenAt_idx").using("btree", table.lastSeenAt.asc().nullsLast().op("timestamptz_ops")),
-	index("WorkerNode_status_lastSeenAt_idx").using("btree", table.status.asc().nullsLast().op("timestamptz_ops"), table.lastSeenAt.asc().nullsLast().op("timestamptz_ops")),
+	index("WorkerNode_lastSeenAt_idx").using("btree", table.lastSeenAt.asc().nullsLast()),
+	index("WorkerNode_status_lastSeenAt_idx").using("btree", table.status.asc().nullsLast(), table.lastSeenAt.asc().nullsLast()),
 ]);
 
 export const chatFeedback = pgTable("ChatFeedback", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	messageId: uuid().notNull(),
 	ownerSubject: varchar({ length: 200 }).notNull(),
 	rating: chatFeedbackRating().notNull(),
@@ -207,9 +208,9 @@ export const chatFeedback = pgTable("ChatFeedback", {
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
 }, (table) => [
-	uniqueIndex("ChatFeedback_messageId_key").using("btree", table.messageId.asc().nullsLast().op("uuid_ops")),
-	index("ChatFeedback_ownerSubject_createdAt_idx").using("btree", table.ownerSubject.asc().nullsLast().op("text_ops"), table.createdAt.asc().nullsLast().op("timestamptz_ops")),
-	index("ChatFeedback_rating_createdAt_idx").using("btree", table.rating.asc().nullsLast().op("timestamptz_ops"), table.createdAt.asc().nullsLast().op("timestamptz_ops")),
+	uniqueIndex("ChatFeedback_messageId_key").using("btree", table.messageId.asc().nullsLast()),
+	index("ChatFeedback_ownerSubject_createdAt_idx").using("btree", table.ownerSubject.asc().nullsLast(), table.createdAt.asc().nullsLast()),
+	index("ChatFeedback_rating_createdAt_idx").using("btree", table.rating.asc().nullsLast(), table.createdAt.asc().nullsLast()),
 	foreignKey({
 			columns: [table.messageId],
 			foreignColumns: [chatMessage.id],
@@ -226,7 +227,7 @@ export const agentRuntimeControl = pgTable("AgentRuntimeControl", {
 });
 
 export const agentProfileVersion = pgTable("AgentProfileVersion", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	profileId: uuid().notNull(),
 	version: integer().notNull(),
 	displayName: varchar({ length: 120 }).notNull(),
@@ -244,8 +245,8 @@ export const agentProfileVersion = pgTable("AgentProfileVersion", {
 	skills: jsonb().default([]).notNull(),
 	distributionDigest: varchar({ length: 64 }),
 }, (table) => [
-	index("AgentProfileVersion_profileId_createdAt_idx").using("btree", table.profileId.asc().nullsLast().op("timestamptz_ops"), table.createdAt.asc().nullsLast().op("uuid_ops")),
-	uniqueIndex("AgentProfileVersion_profileId_version_key").using("btree", table.profileId.asc().nullsLast().op("uuid_ops"), table.version.asc().nullsLast().op("int4_ops")),
+	index("AgentProfileVersion_profileId_createdAt_idx").using("btree", table.profileId.asc().nullsLast(), table.createdAt.asc().nullsLast()),
+	uniqueIndex("AgentProfileVersion_profileId_version_key").using("btree", table.profileId.asc().nullsLast(), table.version.asc().nullsLast()),
 	foreignKey({
 			columns: [table.profileId],
 			foreignColumns: [agentProfile.id],
@@ -254,34 +255,9 @@ export const agentProfileVersion = pgTable("AgentProfileVersion", {
 	check("AgentProfileVersion_phase5_boundary_check", sql`("maxTurns" = 1) AND ("safeMode" = true)`),
 ]);
 
-export const documentMemoryPublication = pgTable("DocumentMemoryPublication", {
-	id: uuid().primaryKey().notNull(),
-	documentId: uuid().notNull(),
-	ownerSubject: varchar({ length: 200 }).notNull(),
-	scopeTag: varchar({ length: 100 }).notNull(),
-	status: memorySyncStatus().default('NOT_INDEXED').notNull(),
-	externalDocumentId: varchar({ length: 255 }),
-	failureCode: varchar({ length: 80 }),
-	failureMessage: varchar({ length: 500 }),
-	queuedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
-	syncedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
-	deletedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
-	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
-}, (table) => [
-	uniqueIndex("DocumentMemoryPublication_documentId_key").using("btree", table.documentId.asc().nullsLast().op("uuid_ops")),
-	index("DocumentMemoryPublication_ownerSubject_status_updatedAt_idx").using("btree", table.ownerSubject.asc().nullsLast().op("text_ops"), table.status.asc().nullsLast().op("timestamptz_ops"), table.updatedAt.asc().nullsLast().op("timestamptz_ops")),
-	index("DocumentMemoryPublication_scopeTag_status_idx").using("btree", table.scopeTag.asc().nullsLast().op("text_ops"), table.status.asc().nullsLast().op("enum_ops")),
-	index("DocumentMemoryPublication_status_queuedAt_idx").using("btree", table.status.asc().nullsLast().op("enum_ops"), table.queuedAt.asc().nullsLast().op("timestamptz_ops")),
-	foreignKey({
-			columns: [table.documentId],
-			foreignColumns: [document.id],
-			name: "DocumentMemoryPublication_documentId_fkey"
-		}).onUpdate("cascade").onDelete("cascade"),
-]);
 
 export const chatConversation = pgTable("ChatConversation", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	ownerSubject: varchar({ length: 200 }).notNull(),
 	title: varchar({ length: 160 }).notNull(),
 	modelAlias: varchar({ length: 200 }).notNull(),
@@ -292,14 +268,16 @@ export const chatConversation = pgTable("ChatConversation", {
 	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
 	profileId: uuid(),
 	profileName: varchar({ length: 120 }),
-	hermesMemoryKey: varchar({ length: 200 }).notNull(),
+	// Adaptation: Prisma defaulted this client-side with @default(uuid()), so the
+	// column carries no database default and needs the same stamping here.
+	hermesMemoryKey: varchar({ length: 200 }).notNull().$defaultFn(() => randomUUID()),
 }, (table) => [
-	index("ChatConversation_lastMessageAt_idx").using("btree", table.lastMessageAt.asc().nullsLast().op("timestamptz_ops")),
-	index("ChatConversation_ownerSubject_status_updatedAt_idx").using("btree", table.ownerSubject.asc().nullsLast().op("text_ops"), table.status.asc().nullsLast().op("timestamptz_ops"), table.updatedAt.asc().nullsLast().op("text_ops")),
+	index("ChatConversation_lastMessageAt_idx").using("btree", table.lastMessageAt.asc().nullsLast()),
+	index("ChatConversation_ownerSubject_status_updatedAt_idx").using("btree", table.ownerSubject.asc().nullsLast(), table.status.asc().nullsLast(), table.updatedAt.asc().nullsLast()),
 ]);
 
 export const chatMessage = pgTable("ChatMessage", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	conversationId: uuid().notNull(),
 	ordinal: integer().notNull(),
 	role: chatMessageRole().notNull(),
@@ -320,10 +298,10 @@ export const chatMessage = pgTable("ChatMessage", {
 	reasoningTokens: integer(),
 	firstTokenLatencyMs: integer(),
 }, (table) => [
-	uniqueIndex("ChatMessage_agentRunId_key").using("btree", table.agentRunId.asc().nullsLast().op("uuid_ops")),
-	index("ChatMessage_conversationId_createdAt_idx").using("btree", table.conversationId.asc().nullsLast().op("timestamptz_ops"), table.createdAt.asc().nullsLast().op("timestamptz_ops")),
-	uniqueIndex("ChatMessage_conversationId_ordinal_key").using("btree", table.conversationId.asc().nullsLast().op("int4_ops"), table.ordinal.asc().nullsLast().op("int4_ops")),
-	index("ChatMessage_status_createdAt_idx").using("btree", table.status.asc().nullsLast().op("timestamptz_ops"), table.createdAt.asc().nullsLast().op("timestamptz_ops")),
+	uniqueIndex("ChatMessage_agentRunId_key").using("btree", table.agentRunId.asc().nullsLast()),
+	index("ChatMessage_conversationId_createdAt_idx").using("btree", table.conversationId.asc().nullsLast(), table.createdAt.asc().nullsLast()),
+	uniqueIndex("ChatMessage_conversationId_ordinal_key").using("btree", table.conversationId.asc().nullsLast(), table.ordinal.asc().nullsLast()),
+	index("ChatMessage_status_createdAt_idx").using("btree", table.status.asc().nullsLast(), table.createdAt.asc().nullsLast()),
 	foreignKey({
 			columns: [table.conversationId],
 			foreignColumns: [chatConversation.id],
@@ -337,20 +315,21 @@ export const chatMessage = pgTable("ChatMessage", {
 ]);
 
 export const agentToolGrant = pgTable("AgentToolGrant", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	profileVersionId: uuid().notNull(),
 	toolId: uuid().notNull(),
 	enabled: boolean().default(true).notNull(),
 	allowedGroups: text().array().notNull(),
-	// TODO: failed to parse database type 'AdministratorRole"[]'
-	allowedAdminRoles: bytea("allowedAdminRoles").array().notNull(),
+	// Adaptation: drizzle-kit could not introspect an enum array and fell back to
+	// bytea[], which the baseline then created. Corrected by migration 0001.
+	allowedAdminRoles: administratorRole("allowedAdminRoles").array().notNull(),
 	resourceScope: toolResourceScope().default('OWNER_ONLY').notNull(),
 	createdBy: uuid(),
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
 }, (table) => [
-	uniqueIndex("AgentToolGrant_profileVersionId_toolId_key").using("btree", table.profileVersionId.asc().nullsLast().op("uuid_ops"), table.toolId.asc().nullsLast().op("uuid_ops")),
-	index("AgentToolGrant_toolId_enabled_idx").using("btree", table.toolId.asc().nullsLast().op("bool_ops"), table.enabled.asc().nullsLast().op("bool_ops")),
+	uniqueIndex("AgentToolGrant_profileVersionId_toolId_key").using("btree", table.profileVersionId.asc().nullsLast(), table.toolId.asc().nullsLast()),
+	index("AgentToolGrant_toolId_enabled_idx").using("btree", table.toolId.asc().nullsLast(), table.enabled.asc().nullsLast()),
 	foreignKey({
 			columns: [table.profileVersionId],
 			foreignColumns: [agentProfileVersion.id],
@@ -365,7 +344,7 @@ export const agentToolGrant = pgTable("AgentToolGrant", {
 ]);
 
 export const governedTool = pgTable("GovernedTool", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	slug: varchar({ length: 80 }).notNull(),
 	displayName: varchar({ length: 120 }).notNull(),
 	description: varchar({ length: 1000 }).notNull(),
@@ -376,12 +355,12 @@ export const governedTool = pgTable("GovernedTool", {
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
 }, (table) => [
-	uniqueIndex("GovernedTool_slug_key").using("btree", table.slug.asc().nullsLast().op("text_ops")),
-	index("GovernedTool_status_risk_idx").using("btree", table.status.asc().nullsLast().op("enum_ops"), table.risk.asc().nullsLast().op("enum_ops")),
+	uniqueIndex("GovernedTool_slug_key").using("btree", table.slug.asc().nullsLast()),
+	index("GovernedTool_status_risk_idx").using("btree", table.status.asc().nullsLast(), table.risk.asc().nullsLast()),
 ]);
 
 export const oidcAuthorizationRequest = pgTable("OidcAuthorizationRequest", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	serviceConnectionId: uuid().notNull(),
 	stateHash: bytea("stateHash").notNull(),
 	nonce: varchar({ length: 86 }).notNull(),
@@ -403,9 +382,9 @@ export const oidcAuthorizationRequest = pgTable("OidcAuthorizationRequest", {
 	expiresAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull(),
 	consumedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
 }, (table) => [
-	index("OidcAuthorizationRequest_expiresAt_consumedAt_idx").using("btree", table.expiresAt.asc().nullsLast().op("timestamptz_ops"), table.consumedAt.asc().nullsLast().op("timestamptz_ops")),
-	index("OidcAuthorizationRequest_serviceConnectionId_createdAt_idx").using("btree", table.serviceConnectionId.asc().nullsLast().op("timestamptz_ops"), table.createdAt.asc().nullsLast().op("uuid_ops")),
-	uniqueIndex("OidcAuthorizationRequest_stateHash_key").using("btree", table.stateHash.asc().nullsLast().op("bytea_ops")),
+	index("OidcAuthorizationRequest_expiresAt_consumedAt_idx").using("btree", table.expiresAt.asc().nullsLast(), table.consumedAt.asc().nullsLast()),
+	index("OidcAuthorizationRequest_serviceConnectionId_createdAt_idx").using("btree", table.serviceConnectionId.asc().nullsLast(), table.createdAt.asc().nullsLast()),
+	uniqueIndex("OidcAuthorizationRequest_stateHash_key").using("btree", table.stateHash.asc().nullsLast()),
 	foreignKey({
 			columns: [table.serviceConnectionId],
 			foreignColumns: [serviceConnection.id],
@@ -414,7 +393,7 @@ export const oidcAuthorizationRequest = pgTable("OidcAuthorizationRequest", {
 ]);
 
 export const mcpGatewayCredential = pgTable("McpGatewayCredential", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	name: varchar({ length: 120 }).notNull(),
 	tokenPrefix: varchar({ length: 32 }).notNull(),
 	tokenHash: bytea("tokenHash").notNull(),
@@ -424,14 +403,14 @@ export const mcpGatewayCredential = pgTable("McpGatewayCredential", {
 	createdBy: uuid(),
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
-	index("McpGatewayCredential_enabled_revokedAt_idx").using("btree", table.enabled.asc().nullsLast().op("timestamptz_ops"), table.revokedAt.asc().nullsLast().op("bool_ops")),
-	uniqueIndex("McpGatewayCredential_tokenHash_key").using("btree", table.tokenHash.asc().nullsLast().op("bytea_ops")),
-	uniqueIndex("McpGatewayCredential_tokenPrefix_key").using("btree", table.tokenPrefix.asc().nullsLast().op("text_ops")),
+	index("McpGatewayCredential_enabled_revokedAt_idx").using("btree", table.enabled.asc().nullsLast(), table.revokedAt.asc().nullsLast()),
+	uniqueIndex("McpGatewayCredential_tokenHash_key").using("btree", table.tokenHash.asc().nullsLast()),
+	uniqueIndex("McpGatewayCredential_tokenPrefix_key").using("btree", table.tokenPrefix.asc().nullsLast()),
 	check("McpGatewayCredential_tokenHash_check", sql`octet_length("tokenHash") = 32`),
 ]);
 
 export const operationalIncident = pgTable("OperationalIncident", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	activeFingerprint: varchar({ length: 160 }),
 	title: varchar({ length: 160 }).notNull(),
 	severity: operationalIncidentSeverity().notNull(),
@@ -450,10 +429,10 @@ export const operationalIncident = pgTable("OperationalIncident", {
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
 }, (table) => [
-	uniqueIndex("OperationalIncident_activeFingerprint_key").using("btree", table.activeFingerprint.asc().nullsLast().op("text_ops")),
-	index("OperationalIncident_component_status_idx").using("btree", table.component.asc().nullsLast().op("enum_ops"), table.status.asc().nullsLast().op("text_ops")),
-	index("OperationalIncident_owner_status_idx").using("btree", table.owner.asc().nullsLast().op("text_ops"), table.status.asc().nullsLast().op("enum_ops")),
-	index("OperationalIncident_status_severity_detectedAt_idx").using("btree", table.status.asc().nullsLast().op("enum_ops"), table.severity.asc().nullsLast().op("enum_ops"), table.detectedAt.asc().nullsLast().op("timestamptz_ops")),
+	uniqueIndex("OperationalIncident_activeFingerprint_key").using("btree", table.activeFingerprint.asc().nullsLast()),
+	index("OperationalIncident_component_status_idx").using("btree", table.component.asc().nullsLast(), table.status.asc().nullsLast()),
+	index("OperationalIncident_owner_status_idx").using("btree", table.owner.asc().nullsLast(), table.status.asc().nullsLast()),
+	index("OperationalIncident_status_severity_detectedAt_idx").using("btree", table.status.asc().nullsLast(), table.severity.asc().nullsLast(), table.detectedAt.asc().nullsLast()),
 	check("OperationalIncident_lifecycle_check", sql`((status = 'OPEN'::"OperationalIncidentStatus") AND ("acknowledgedAt" IS NULL) AND ("resolvedAt" IS NULL)) OR ((status = 'ACKNOWLEDGED'::"OperationalIncidentStatus") AND ("acknowledgedAt" IS NOT NULL) AND ("resolvedAt" IS NULL)) OR ((status = 'RESOLVED'::"OperationalIncidentStatus") AND ("resolvedAt" IS NOT NULL) AND ("activeFingerprint" IS NULL))`),
 ]);
 
@@ -469,7 +448,7 @@ export const toolRuntimeControl = pgTable("ToolRuntimeControl", {
 ]);
 
 export const governedToolCall = pgTable("GovernedToolCall", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	runId: uuid().notNull(),
 	toolId: uuid().notNull(),
 	grantId: uuid().notNull(),
@@ -485,10 +464,10 @@ export const governedToolCall = pgTable("GovernedToolCall", {
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
 }, (table) => [
-	index("GovernedToolCall_runId_createdAt_idx").using("btree", table.runId.asc().nullsLast().op("timestamptz_ops"), table.createdAt.asc().nullsLast().op("uuid_ops")),
-	uniqueIndex("GovernedToolCall_runId_requestId_key").using("btree", table.runId.asc().nullsLast().op("uuid_ops"), table.requestId.asc().nullsLast().op("uuid_ops")),
-	index("GovernedToolCall_status_requestedAt_idx").using("btree", table.status.asc().nullsLast().op("enum_ops"), table.requestedAt.asc().nullsLast().op("enum_ops")),
-	index("GovernedToolCall_toolId_status_createdAt_idx").using("btree", table.toolId.asc().nullsLast().op("uuid_ops"), table.status.asc().nullsLast().op("uuid_ops"), table.createdAt.asc().nullsLast().op("uuid_ops")),
+	index("GovernedToolCall_runId_createdAt_idx").using("btree", table.runId.asc().nullsLast(), table.createdAt.asc().nullsLast()),
+	uniqueIndex("GovernedToolCall_runId_requestId_key").using("btree", table.runId.asc().nullsLast(), table.requestId.asc().nullsLast()),
+	index("GovernedToolCall_status_requestedAt_idx").using("btree", table.status.asc().nullsLast(), table.requestedAt.asc().nullsLast()),
+	index("GovernedToolCall_toolId_status_createdAt_idx").using("btree", table.toolId.asc().nullsLast(), table.status.asc().nullsLast(), table.createdAt.asc().nullsLast()),
 	foreignKey({
 			columns: [table.runId],
 			foreignColumns: [agentRun.id],
@@ -508,7 +487,7 @@ export const governedToolCall = pgTable("GovernedToolCall", {
 ]);
 
 export const toolApproval = pgTable("ToolApproval", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	callId: uuid().notNull(),
 	status: toolApprovalStatus().default('PENDING').notNull(),
 	expiresAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull(),
@@ -518,8 +497,8 @@ export const toolApproval = pgTable("ToolApproval", {
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
 }, (table) => [
-	uniqueIndex("ToolApproval_callId_key").using("btree", table.callId.asc().nullsLast().op("uuid_ops")),
-	index("ToolApproval_status_expiresAt_idx").using("btree", table.status.asc().nullsLast().op("timestamptz_ops"), table.expiresAt.asc().nullsLast().op("timestamptz_ops")),
+	uniqueIndex("ToolApproval_callId_key").using("btree", table.callId.asc().nullsLast()),
+	index("ToolApproval_status_expiresAt_idx").using("btree", table.status.asc().nullsLast(), table.expiresAt.asc().nullsLast()),
 	foreignKey({
 			columns: [table.callId],
 			foreignColumns: [governedToolCall.id],
@@ -528,7 +507,7 @@ export const toolApproval = pgTable("ToolApproval", {
 ]);
 
 export const evaluationRun = pgTable("EvaluationRun", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	name: varchar({ length: 160 }).notNull(),
 	targetType: evaluationTargetType().notNull(),
 	targetReference: varchar({ length: 240 }).notNull(),
@@ -548,8 +527,8 @@ export const evaluationRun = pgTable("EvaluationRun", {
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
 }, (table) => [
-	index("EvaluationRun_status_createdAt_idx").using("btree", table.status.asc().nullsLast().op("timestamptz_ops"), table.createdAt.asc().nullsLast().op("timestamptz_ops")),
-	index("EvaluationRun_targetType_targetReference_targetVersion_idx").using("btree", table.targetType.asc().nullsLast().op("text_ops"), table.targetReference.asc().nullsLast().op("text_ops"), table.targetVersion.asc().nullsLast().op("text_ops")),
+	index("EvaluationRun_status_createdAt_idx").using("btree", table.status.asc().nullsLast(), table.createdAt.asc().nullsLast()),
+	index("EvaluationRun_targetType_targetReference_targetVersion_idx").using("btree", table.targetType.asc().nullsLast(), table.targetReference.asc().nullsLast(), table.targetVersion.asc().nullsLast()),
 	check("EvaluationRun_threshold_check", sql`("minimumPassRate" >= (0.5)::double precision) AND ("minimumPassRate" <= (1)::double precision)`),
 	check("EvaluationRun_categories_check", sql`(cardinality("requiredCategories") >= 1) AND (cardinality("requiredCategories") <= 6)`),
 	check("EvaluationRun_results_shape_check", sql`jsonb_typeof("categoryResults") = 'array'::text`),
@@ -565,7 +544,7 @@ export const productionReadinessControl = pgTable("ProductionReadinessControl", 
 	description: varchar({ length: 1000 }).notNull(),
 	status: productionReadinessControlStatus().default('NOT_STARTED').notNull(),
 	owner: varchar({ length: 160 }),
-	evidenceRefs: text().array().default(["RAY"]).notNull(),
+	evidenceRefs: text().array().default([]).notNull(),
 	note: varchar({ length: 1000 }),
 	lastUpdatedBy: varchar({ length: 160 }),
 	verifiedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
@@ -573,8 +552,8 @@ export const productionReadinessControl = pgTable("ProductionReadinessControl", 
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
 }, (table) => [
-	index("ProductionReadinessControl_domain_status_idx").using("btree", table.domain.asc().nullsLast().op("enum_ops"), table.status.asc().nullsLast().op("enum_ops")),
-	index("ProductionReadinessControl_status_updatedAt_idx").using("btree", table.status.asc().nullsLast().op("timestamptz_ops"), table.updatedAt.asc().nullsLast().op("timestamptz_ops")),
+	index("ProductionReadinessControl_domain_status_idx").using("btree", table.domain.asc().nullsLast(), table.status.asc().nullsLast()),
+	index("ProductionReadinessControl_status_updatedAt_idx").using("btree", table.status.asc().nullsLast(), table.updatedAt.asc().nullsLast()),
 	check("ProductionReadinessControl_key_check", sql`(key)::text ~ '^[a-z][a-z0-9-]{2,79}$'::text`),
 	check("ProductionReadinessControl_owner_check", sql`(status = 'NOT_STARTED'::"ProductionReadinessControlStatus") OR ((owner IS NOT NULL) AND (length(btrim((owner)::text)) > 0))`),
 	check("ProductionReadinessControl_note_check", sql`(status <> ALL (ARRAY['BLOCKED'::"ProductionReadinessControlStatus", 'VERIFIED'::"ProductionReadinessControlStatus", 'WAIVED'::"ProductionReadinessControlStatus"])) OR ((note IS NOT NULL) AND (length(btrim((note)::text)) >= 3))`),
@@ -583,7 +562,7 @@ export const productionReadinessControl = pgTable("ProductionReadinessControl", 
 ]);
 
 export const productionReadinessApproval = pgTable("ProductionReadinessApproval", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	role: productionReadinessApprovalRole().notNull(),
 	decision: productionReadinessApprovalDecision().notNull(),
 	authority: varchar({ length: 160 }).notNull(),
@@ -593,14 +572,14 @@ export const productionReadinessApproval = pgTable("ProductionReadinessApproval"
 	recordedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	controlRevisions: jsonb().default({}).notNull(),
 }, (table) => [
-	index("ProductionReadinessApproval_decision_recordedAt_idx").using("btree", table.decision.asc().nullsLast().op("timestamptz_ops"), table.recordedAt.asc().nullsLast().op("enum_ops")),
-	index("ProductionReadinessApproval_role_recordedAt_idx").using("btree", table.role.asc().nullsLast().op("enum_ops"), table.recordedAt.asc().nullsLast().op("enum_ops")),
+	index("ProductionReadinessApproval_decision_recordedAt_idx").using("btree", table.decision.asc().nullsLast(), table.recordedAt.asc().nullsLast()),
+	index("ProductionReadinessApproval_role_recordedAt_idx").using("btree", table.role.asc().nullsLast(), table.recordedAt.asc().nullsLast()),
 	check("ProductionReadinessApproval_content_check", sql`(length(btrim((authority)::text)) > 0) AND (length(btrim(("evidenceRef")::text)) > 0) AND (length(btrim((reason)::text)) >= 3) AND (length(btrim(("recordedBy")::text)) > 0)`),
 	check("ProductionReadinessApproval_snapshot_check", sql`jsonb_typeof("controlRevisions") = 'object'::text`),
 ]);
 
 export const toolActionDispatch = pgTable("ToolActionDispatch", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	callId: uuid().notNull(),
 	status: toolActionDispatchStatus().default('PENDING').notNull(),
 	attemptCount: integer().default(0).notNull(),
@@ -614,9 +593,9 @@ export const toolActionDispatch = pgTable("ToolActionDispatch", {
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
 }, (table) => [
-	uniqueIndex("ToolActionDispatch_callId_key").using("btree", table.callId.asc().nullsLast().op("uuid_ops")),
-	index("ToolActionDispatch_claimedAt_idx").using("btree", table.claimedAt.asc().nullsLast().op("timestamptz_ops")),
-	index("ToolActionDispatch_status_nextAttemptAt_idx").using("btree", table.status.asc().nullsLast().op("enum_ops"), table.nextAttemptAt.asc().nullsLast().op("enum_ops")),
+	uniqueIndex("ToolActionDispatch_callId_key").using("btree", table.callId.asc().nullsLast()),
+	index("ToolActionDispatch_claimedAt_idx").using("btree", table.claimedAt.asc().nullsLast()),
+	index("ToolActionDispatch_status_nextAttemptAt_idx").using("btree", table.status.asc().nullsLast(), table.nextAttemptAt.asc().nullsLast()),
 	foreignKey({
 			columns: [table.callId],
 			foreignColumns: [governedToolCall.id],
@@ -639,7 +618,7 @@ export const connectionMonitoringControl = pgTable("ConnectionMonitoringControl"
 ]);
 
 export const serviceConnection = pgTable("ServiceConnection", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	slug: varchar({ length: 64 }).notNull(),
 	displayName: varchar({ length: 120 }).notNull(),
 	kind: serviceKind().notNull(),
@@ -657,15 +636,15 @@ export const serviceConnection = pgTable("ServiceConnection", {
 	monitoringClaimedBy: varchar({ length: 200 }),
 	monitoringClaimToken: uuid(),
 }, (table) => [
-	index("ServiceConnection_enabled_status_idx").using("btree", table.enabled.asc().nullsLast().op("bool_ops"), table.status.asc().nullsLast().op("enum_ops")),
-	index("ServiceConnection_kind_environment_idx").using("btree", table.kind.asc().nullsLast().op("enum_ops"), table.environment.asc().nullsLast().op("enum_ops")),
-	index("ServiceConnection_monitoringClaimedAt_idx").using("btree", table.monitoringClaimedAt.asc().nullsLast().op("timestamptz_ops")),
-	uniqueIndex("ServiceConnection_slug_key").using("btree", table.slug.asc().nullsLast().op("text_ops")),
+	index("ServiceConnection_enabled_status_idx").using("btree", table.enabled.asc().nullsLast(), table.status.asc().nullsLast()),
+	index("ServiceConnection_kind_environment_idx").using("btree", table.kind.asc().nullsLast(), table.environment.asc().nullsLast()),
+	index("ServiceConnection_monitoringClaimedAt_idx").using("btree", table.monitoringClaimedAt.asc().nullsLast()),
+	uniqueIndex("ServiceConnection_slug_key").using("btree", table.slug.asc().nullsLast()),
 	check("ServiceConnection_monitoringClaim_check", sql`(("monitoringClaimedAt" IS NULL) AND ("monitoringClaimedBy" IS NULL) AND ("monitoringClaimToken" IS NULL)) OR (("monitoringClaimedAt" IS NOT NULL) AND ("monitoringClaimedBy" IS NOT NULL) AND ("monitoringClaimToken" IS NOT NULL))`),
 ]);
 
 export const modelDeployment = pgTable("ModelDeployment", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	slug: varchar({ length: 64 }).notNull(),
 	displayName: varchar({ length: 120 }).notNull(),
 	modelAlias: varchar({ length: 200 }).notNull(),
@@ -686,12 +665,12 @@ export const modelDeployment = pgTable("ModelDeployment", {
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
 }, (table) => [
-	index("ModelDeployment_activationEvaluationId_idx").using("btree", table.activationEvaluationId.asc().nullsLast().op("uuid_ops")),
-	uniqueIndex("ModelDeployment_active_default_workload_key").using("btree", table.workload.asc().nullsLast().op("enum_ops")).where(sql`((status = 'ACTIVE'::"ModelDeploymentStatus") AND ("isDefault" = true))`),
-	index("ModelDeployment_connectionId_idx").using("btree", table.connectionId.asc().nullsLast().op("uuid_ops")),
-	uniqueIndex("ModelDeployment_slug_key").using("btree", table.slug.asc().nullsLast().op("text_ops")),
-	uniqueIndex("ModelDeployment_workload_modelAlias_key").using("btree", table.workload.asc().nullsLast().op("enum_ops"), table.modelAlias.asc().nullsLast().op("enum_ops")),
-	index("ModelDeployment_workload_status_idx").using("btree", table.workload.asc().nullsLast().op("enum_ops"), table.status.asc().nullsLast().op("enum_ops")),
+	index("ModelDeployment_activationEvaluationId_idx").using("btree", table.activationEvaluationId.asc().nullsLast()),
+	uniqueIndex("ModelDeployment_active_default_workload_key").using("btree", table.workload.asc().nullsLast()).where(sql`((status = 'ACTIVE'::"ModelDeploymentStatus") AND ("isDefault" = true))`),
+	index("ModelDeployment_connectionId_idx").using("btree", table.connectionId.asc().nullsLast()),
+	uniqueIndex("ModelDeployment_slug_key").using("btree", table.slug.asc().nullsLast()),
+	uniqueIndex("ModelDeployment_workload_modelAlias_key").using("btree", table.workload.asc().nullsLast(), table.modelAlias.asc().nullsLast()),
+	index("ModelDeployment_workload_status_idx").using("btree", table.workload.asc().nullsLast(), table.status.asc().nullsLast()),
 	foreignKey({
 			columns: [table.connectionId],
 			foreignColumns: [serviceConnection.id],
@@ -708,7 +687,7 @@ export const modelDeployment = pgTable("ModelDeployment", {
 ]);
 
 export const promptTemplate = pgTable("PromptTemplate", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	slug: varchar({ length: 64 }).notNull(),
 	displayName: varchar({ length: 120 }).notNull(),
 	description: varchar({ length: 500 }).notNull(),
@@ -725,10 +704,10 @@ export const promptTemplate = pgTable("PromptTemplate", {
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
 }, (table) => [
-	index("PromptTemplate_activationEvaluationId_idx").using("btree", table.activationEvaluationId.asc().nullsLast().op("uuid_ops")),
-	index("PromptTemplate_purpose_status_idx").using("btree", table.purpose.asc().nullsLast().op("enum_ops"), table.status.asc().nullsLast().op("enum_ops")),
-	uniqueIndex("PromptTemplate_single_active_purpose_key").using("btree", table.purpose.asc().nullsLast().op("enum_ops")).where(sql`(status = 'ACTIVE'::"PromptTemplateStatus")`),
-	uniqueIndex("PromptTemplate_slug_key").using("btree", table.slug.asc().nullsLast().op("text_ops")),
+	index("PromptTemplate_activationEvaluationId_idx").using("btree", table.activationEvaluationId.asc().nullsLast()),
+	index("PromptTemplate_purpose_status_idx").using("btree", table.purpose.asc().nullsLast(), table.status.asc().nullsLast()),
+	uniqueIndex("PromptTemplate_single_active_purpose_key").using("btree", table.purpose.asc().nullsLast()).where(sql`(status = 'ACTIVE'::"PromptTemplateStatus")`),
+	uniqueIndex("PromptTemplate_slug_key").using("btree", table.slug.asc().nullsLast()),
 	foreignKey({
 			columns: [table.activationEvaluationId],
 			foreignColumns: [evaluationRun.id],
@@ -745,7 +724,7 @@ export const onboardingStep = pgTable("OnboardingStep", {
 	description: varchar({ length: 1000 }).notNull(),
 	required: boolean().default(true).notNull(),
 	status: onboardingStepStatus().default('NOT_STARTED').notNull(),
-	evidenceRefs: text().array().default(["RAY"]),
+	evidenceRefs: text().array().default([]),
 	note: varchar({ length: 1000 }),
 	revision: integer().default(0).notNull(),
 	updatedBy: uuid(),
@@ -753,8 +732,8 @@ export const onboardingStep = pgTable("OnboardingStep", {
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
 }, (table) => [
-	uniqueIndex("OnboardingStep_ordinal_key").using("btree", table.ordinal.asc().nullsLast().op("int4_ops")),
-	index("OnboardingStep_status_ordinal_idx").using("btree", table.status.asc().nullsLast().op("int4_ops"), table.ordinal.asc().nullsLast().op("int4_ops")),
+	uniqueIndex("OnboardingStep_ordinal_key").using("btree", table.ordinal.asc().nullsLast()),
+	index("OnboardingStep_status_ordinal_idx").using("btree", table.status.asc().nullsLast(), table.ordinal.asc().nullsLast()),
 ]);
 
 export const onboardingJourney = pgTable("OnboardingJourney", {
@@ -787,12 +766,12 @@ export const componentCompatibility = pgTable("ComponentCompatibility", {
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
 }, (table) => [
-	index("ComponentCompatibility_category_status_idx").using("btree", table.category.asc().nullsLast().op("text_ops"), table.status.asc().nullsLast().op("enum_ops")),
-	index("ComponentCompatibility_required_status_idx").using("btree", table.required.asc().nullsLast().op("enum_ops"), table.status.asc().nullsLast().op("enum_ops")),
+	index("ComponentCompatibility_category_status_idx").using("btree", table.category.asc().nullsLast(), table.status.asc().nullsLast()),
+	index("ComponentCompatibility_required_status_idx").using("btree", table.required.asc().nullsLast(), table.status.asc().nullsLast()),
 ]);
 
 export const document = pgTable("Document", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	ownerSubject: varchar({ length: 200 }).notNull(),
 	fileName: varchar({ length: 255 }).notNull(),
 	mediaType: varchar({ length: 160 }).notNull(),
@@ -809,10 +788,10 @@ export const document = pgTable("Document", {
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
 }, (table) => [
-	index("Document_ownerSubject_status_updatedAt_idx").using("btree", table.ownerSubject.asc().nullsLast().op("text_ops"), table.status.asc().nullsLast().op("timestamptz_ops"), table.updatedAt.asc().nullsLast().op("text_ops")),
-	index("Document_retentionUntil_status_idx").using("btree", table.retentionUntil.asc().nullsLast().op("timestamptz_ops"), table.status.asc().nullsLast().op("enum_ops")),
-	index("Document_sha256_idx").using("btree", table.sha256.asc().nullsLast().op("text_ops")),
-	index("Document_status_createdAt_idx").using("btree", table.status.asc().nullsLast().op("enum_ops"), table.createdAt.asc().nullsLast().op("enum_ops")),
+	index("Document_ownerSubject_status_updatedAt_idx").using("btree", table.ownerSubject.asc().nullsLast(), table.status.asc().nullsLast(), table.updatedAt.asc().nullsLast()),
+	index("Document_retentionUntil_status_idx").using("btree", table.retentionUntil.asc().nullsLast(), table.status.asc().nullsLast()),
+	index("Document_sha256_idx").using("btree", table.sha256.asc().nullsLast()),
+	index("Document_status_createdAt_idx").using("btree", table.status.asc().nullsLast(), table.createdAt.asc().nullsLast()),
 ]);
 
 export const installationCredential = pgTable("InstallationCredential", {
@@ -824,12 +803,12 @@ export const installationCredential = pgTable("InstallationCredential", {
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
 }, (table) => [
-	index("InstallationCredential_activatedAt_idx").using("btree", table.activatedAt.asc().nullsLast().op("timestamptz_ops")),
-	uniqueIndex("InstallationCredential_keyHash_key").using("btree", table.keyHash.asc().nullsLast().op("bytea_ops")),
+	index("InstallationCredential_activatedAt_idx").using("btree", table.activatedAt.asc().nullsLast()),
+	uniqueIndex("InstallationCredential_keyHash_key").using("btree", table.keyHash.asc().nullsLast()),
 ]);
 
 export const agentRunEvent = pgTable("AgentRunEvent", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	runId: uuid().notNull(),
 	sourceEventId: varchar({ length: 255 }),
 	type: varchar({ length: 80 }).notNull(),
@@ -850,10 +829,10 @@ export const agentRunEvent = pgTable("AgentRunEvent", {
 	approvalId: uuid(),
 	reasoningTokens: integer(),
 }, (table) => [
-	uniqueIndex("AgentRunEvent_cursor_key").using("btree", table.cursor.asc().nullsLast().op("int8_ops")),
-	index("AgentRunEvent_runId_cursor_idx").using("btree", table.runId.asc().nullsLast().op("uuid_ops"), table.cursor.asc().nullsLast().op("uuid_ops")),
-	index("AgentRunEvent_runId_occurredAt_id_idx").using("btree", table.runId.asc().nullsLast().op("uuid_ops"), table.occurredAt.asc().nullsLast().op("uuid_ops"), table.id.asc().nullsLast().op("uuid_ops")),
-	uniqueIndex("AgentRunEvent_runId_sourceEventId_key").using("btree", table.runId.asc().nullsLast().op("uuid_ops"), table.sourceEventId.asc().nullsLast().op("uuid_ops")),
+	uniqueIndex("AgentRunEvent_cursor_key").using("btree", table.cursor.asc().nullsLast()),
+	index("AgentRunEvent_runId_cursor_idx").using("btree", table.runId.asc().nullsLast(), table.cursor.asc().nullsLast()),
+	index("AgentRunEvent_runId_occurredAt_id_idx").using("btree", table.runId.asc().nullsLast(), table.occurredAt.asc().nullsLast(), table.id.asc().nullsLast()),
+	uniqueIndex("AgentRunEvent_runId_sourceEventId_key").using("btree", table.runId.asc().nullsLast(), table.sourceEventId.asc().nullsLast()),
 	foreignKey({
 			columns: [table.runId],
 			foreignColumns: [agentRun.id],
@@ -876,7 +855,7 @@ export const credentialRecoveryControl = pgTable("CredentialRecoveryControl", {
 });
 
 export const onboardingEvidence = pgTable("OnboardingEvidence", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	stageKey: varchar({ length: 80 }).notNull(),
 	componentKey: varchar({ length: 80 }),
 	source: onboardingEvidenceSource().notNull(),
@@ -889,9 +868,9 @@ export const onboardingEvidence = pgTable("OnboardingEvidence", {
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	expiresAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
 }, (table) => [
-	index("OnboardingEvidence_componentKey_createdAt_idx").using("btree", table.componentKey.asc().nullsLast().op("text_ops"), table.createdAt.asc().nullsLast().op("timestamptz_ops")),
-	index("OnboardingEvidence_source_outcome_createdAt_idx").using("btree", table.source.asc().nullsLast().op("timestamptz_ops"), table.outcome.asc().nullsLast().op("enum_ops"), table.createdAt.asc().nullsLast().op("enum_ops")),
-	index("OnboardingEvidence_stageKey_createdAt_idx").using("btree", table.stageKey.asc().nullsLast().op("timestamptz_ops"), table.createdAt.asc().nullsLast().op("text_ops")),
+	index("OnboardingEvidence_componentKey_createdAt_idx").using("btree", table.componentKey.asc().nullsLast(), table.createdAt.asc().nullsLast()),
+	index("OnboardingEvidence_source_outcome_createdAt_idx").using("btree", table.source.asc().nullsLast(), table.outcome.asc().nullsLast(), table.createdAt.asc().nullsLast()),
+	index("OnboardingEvidence_stageKey_createdAt_idx").using("btree", table.stageKey.asc().nullsLast(), table.createdAt.asc().nullsLast()),
 ]);
 
 export const platformArchitectureDecision = pgTable("PlatformArchitectureDecision", {
@@ -906,7 +885,7 @@ export const platformArchitectureDecision = pgTable("PlatformArchitectureDecisio
 });
 
 export const hermesRuntimeNode = pgTable("HermesRuntimeNode", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	slug: varchar({ length: 64 }).notNull(),
 	displayName: varchar({ length: 120 }).notNull(),
 	baseUrl: text().notNull(),
@@ -927,11 +906,11 @@ export const hermesRuntimeNode = pgTable("HermesRuntimeNode", {
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
 }, (table) => [
-	index("HermesRuntimeNode_createdAt_idx").using("btree", table.createdAt.asc().nullsLast().op("timestamptz_ops")),
-	uniqueIndex("HermesRuntimeNode_identityFingerprint_key").using("btree", table.identityFingerprint.asc().nullsLast().op("text_ops")),
-	uniqueIndex("HermesRuntimeNode_serviceConnectionId_key").using("btree", table.serviceConnectionId.asc().nullsLast().op("uuid_ops")),
-	uniqueIndex("HermesRuntimeNode_slug_key").using("btree", table.slug.asc().nullsLast().op("text_ops")),
-	index("HermesRuntimeNode_status_lastSeenAt_idx").using("btree", table.status.asc().nullsLast().op("timestamptz_ops"), table.lastSeenAt.asc().nullsLast().op("timestamptz_ops")),
+	index("HermesRuntimeNode_createdAt_idx").using("btree", table.createdAt.asc().nullsLast()),
+	uniqueIndex("HermesRuntimeNode_identityFingerprint_key").using("btree", table.identityFingerprint.asc().nullsLast()),
+	uniqueIndex("HermesRuntimeNode_serviceConnectionId_key").using("btree", table.serviceConnectionId.asc().nullsLast()),
+	uniqueIndex("HermesRuntimeNode_slug_key").using("btree", table.slug.asc().nullsLast()),
+	index("HermesRuntimeNode_status_lastSeenAt_idx").using("btree", table.status.asc().nullsLast(), table.lastSeenAt.asc().nullsLast()),
 	foreignKey({
 			columns: [table.serviceConnectionId],
 			foreignColumns: [serviceConnection.id],
@@ -940,13 +919,13 @@ export const hermesRuntimeNode = pgTable("HermesRuntimeNode", {
 ]);
 
 export const hermesNodeRequestNonce = pgTable("HermesNodeRequestNonce", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	nodeId: uuid().notNull(),
 	nonce: uuid().notNull(),
 	receivedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
-	uniqueIndex("HermesNodeRequestNonce_nodeId_nonce_key").using("btree", table.nodeId.asc().nullsLast().op("uuid_ops"), table.nonce.asc().nullsLast().op("uuid_ops")),
-	index("HermesNodeRequestNonce_receivedAt_idx").using("btree", table.receivedAt.asc().nullsLast().op("timestamptz_ops")),
+	uniqueIndex("HermesNodeRequestNonce_nodeId_nonce_key").using("btree", table.nodeId.asc().nullsLast(), table.nonce.asc().nullsLast()),
+	index("HermesNodeRequestNonce_receivedAt_idx").using("btree", table.receivedAt.asc().nullsLast()),
 	foreignKey({
 			columns: [table.nodeId],
 			foreignColumns: [hermesRuntimeNode.id],
@@ -955,7 +934,7 @@ export const hermesNodeRequestNonce = pgTable("HermesNodeRequestNonce", {
 ]);
 
 export const hermesNodeEnrollment = pgTable("HermesNodeEnrollment", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	nodeId: uuid().notNull(),
 	tokenHash: bytea("tokenHash").notNull(),
 	status: hermesNodeEnrollmentStatus().default('ISSUED').notNull(),
@@ -970,9 +949,9 @@ export const hermesNodeEnrollment = pgTable("HermesNodeEnrollment", {
 	hermesImage: text(),
 	supermemoryVersion: varchar({ length: 120 }).default('0.0.7-rc.2').notNull(),
 }, (table) => [
-	index("HermesNodeEnrollment_nodeId_status_idx").using("btree", table.nodeId.asc().nullsLast().op("uuid_ops"), table.status.asc().nullsLast().op("uuid_ops")),
-	index("HermesNodeEnrollment_status_expiresAt_idx").using("btree", table.status.asc().nullsLast().op("timestamptz_ops"), table.expiresAt.asc().nullsLast().op("timestamptz_ops")),
-	uniqueIndex("HermesNodeEnrollment_tokenHash_key").using("btree", table.tokenHash.asc().nullsLast().op("bytea_ops")),
+	index("HermesNodeEnrollment_nodeId_status_idx").using("btree", table.nodeId.asc().nullsLast(), table.status.asc().nullsLast()),
+	index("HermesNodeEnrollment_status_expiresAt_idx").using("btree", table.status.asc().nullsLast(), table.expiresAt.asc().nullsLast()),
+	uniqueIndex("HermesNodeEnrollment_tokenHash_key").using("btree", table.tokenHash.asc().nullsLast()),
 	foreignKey({
 			columns: [table.nodeId],
 			foreignColumns: [hermesRuntimeNode.id],
@@ -981,7 +960,7 @@ export const hermesNodeEnrollment = pgTable("HermesNodeEnrollment", {
 ]);
 
 export const guardrailPolicy = pgTable("GuardrailPolicy", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	slug: varchar({ length: 64 }).notNull(),
 	displayName: varchar({ length: 120 }).notNull(),
 	description: varchar({ length: 500 }).notNull(),
@@ -999,10 +978,10 @@ export const guardrailPolicy = pgTable("GuardrailPolicy", {
 	blockControlCharacters: boolean().default(true).notNull(),
 	blockCredentialPatterns: boolean().default(true).notNull(),
 }, (table) => [
-	index("GuardrailPolicy_activationEvaluationId_idx").using("btree", table.activationEvaluationId.asc().nullsLast().op("uuid_ops")),
+	index("GuardrailPolicy_activationEvaluationId_idx").using("btree", table.activationEvaluationId.asc().nullsLast()),
 	uniqueIndex("GuardrailPolicy_single_active_key").using("btree", sql`(true)`).where(sql`(status = 'ACTIVE'::"GuardrailPolicyStatus")`),
-	uniqueIndex("GuardrailPolicy_slug_key").using("btree", table.slug.asc().nullsLast().op("text_ops")),
-	index("GuardrailPolicy_status_updatedAt_idx").using("btree", table.status.asc().nullsLast().op("timestamptz_ops"), table.updatedAt.asc().nullsLast().op("timestamptz_ops")),
+	uniqueIndex("GuardrailPolicy_slug_key").using("btree", table.slug.asc().nullsLast()),
+	index("GuardrailPolicy_status_updatedAt_idx").using("btree", table.status.asc().nullsLast(), table.updatedAt.asc().nullsLast()),
 	foreignKey({
 			columns: [table.activationEvaluationId],
 			foreignColumns: [evaluationRun.id],
@@ -1012,7 +991,7 @@ export const guardrailPolicy = pgTable("GuardrailPolicy", {
 ]);
 
 export const administratorSession = pgTable("AdministratorSession", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	tokenHash: bytea("tokenHash").notNull(),
 	subject: varchar({ length: 160 }).notNull(),
 	role: administratorRole().notNull(),
@@ -1026,14 +1005,14 @@ export const administratorSession = pgTable("AdministratorSession", {
 	authenticationMethod: administratorAuthenticationMethod().default('LOCAL_PASSWORD').notNull(),
 	passwordChangeRequired: boolean().default(false).notNull(),
 }, (table) => [
-	index("AdministratorSession_absoluteExpiresAt_idx").using("btree", table.absoluteExpiresAt.asc().nullsLast().op("timestamptz_ops")),
-	index("AdministratorSession_revokedAt_idleExpiresAt_idx").using("btree", table.revokedAt.asc().nullsLast().op("timestamptz_ops"), table.idleExpiresAt.asc().nullsLast().op("timestamptz_ops")),
-	index("AdministratorSession_subject_createdAt_idx").using("btree", table.subject.asc().nullsLast().op("text_ops"), table.createdAt.asc().nullsLast().op("timestamptz_ops")),
-	uniqueIndex("AdministratorSession_tokenHash_key").using("btree", table.tokenHash.asc().nullsLast().op("bytea_ops")),
+	index("AdministratorSession_absoluteExpiresAt_idx").using("btree", table.absoluteExpiresAt.asc().nullsLast()),
+	index("AdministratorSession_revokedAt_idleExpiresAt_idx").using("btree", table.revokedAt.asc().nullsLast(), table.idleExpiresAt.asc().nullsLast()),
+	index("AdministratorSession_subject_createdAt_idx").using("btree", table.subject.asc().nullsLast(), table.createdAt.asc().nullsLast()),
+	uniqueIndex("AdministratorSession_tokenHash_key").using("btree", table.tokenHash.asc().nullsLast()),
 ]);
 
 export const localAdministrator = pgTable("LocalAdministrator", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	username: varchar({ length: 64 }).notNull(),
 	displayName: varchar({ length: 120 }).notNull(),
 	passwordHash: text().notNull(),
@@ -1047,12 +1026,12 @@ export const localAdministrator = pgTable("LocalAdministrator", {
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
 }, (table) => [
-	index("LocalAdministrator_disabledAt_lockedUntil_idx").using("btree", table.disabledAt.asc().nullsLast().op("timestamptz_ops"), table.lockedUntil.asc().nullsLast().op("timestamptz_ops")),
-	uniqueIndex("LocalAdministrator_username_key").using("btree", table.username.asc().nullsLast().op("text_ops")),
+	index("LocalAdministrator_disabledAt_lockedUntil_idx").using("btree", table.disabledAt.asc().nullsLast(), table.lockedUntil.asc().nullsLast()),
+	uniqueIndex("LocalAdministrator_username_key").using("btree", table.username.asc().nullsLast()),
 ]);
 
 export const agentRun = pgTable("AgentRun", {
-	id: uuid().primaryKey().notNull(),
+	id: uuid().defaultRandom().primaryKey().notNull(),
 	profileId: uuid().notNull(),
 	profileVersionId: uuid().notNull(),
 	profileVersion: integer().notNull(),
@@ -1092,10 +1071,10 @@ export const agentRun = pgTable("AgentRun", {
 	finishReason: varchar({ length: 120 }),
 	firstTokenAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
 }, (table) => [
-	index("AgentRun_ownerSubject_createdAt_idx").using("btree", table.ownerSubject.asc().nullsLast().op("text_ops"), table.createdAt.asc().nullsLast().op("text_ops")),
-	index("AgentRun_profileId_status_createdAt_idx").using("btree", table.profileId.asc().nullsLast().op("timestamptz_ops"), table.status.asc().nullsLast().op("timestamptz_ops"), table.createdAt.asc().nullsLast().op("timestamptz_ops")),
-	index("AgentRun_status_processorLeaseExpiresAt_idx").using("btree", table.status.asc().nullsLast().op("timestamptz_ops"), table.processorLeaseExpiresAt.asc().nullsLast().op("enum_ops")),
-	index("AgentRun_status_queuedAt_idx").using("btree", table.status.asc().nullsLast().op("enum_ops"), table.queuedAt.asc().nullsLast().op("timestamptz_ops")),
+	index("AgentRun_ownerSubject_createdAt_idx").using("btree", table.ownerSubject.asc().nullsLast(), table.createdAt.asc().nullsLast()),
+	index("AgentRun_profileId_status_createdAt_idx").using("btree", table.profileId.asc().nullsLast(), table.status.asc().nullsLast(), table.createdAt.asc().nullsLast()),
+	index("AgentRun_status_processorLeaseExpiresAt_idx").using("btree", table.status.asc().nullsLast(), table.processorLeaseExpiresAt.asc().nullsLast()),
+	index("AgentRun_status_queuedAt_idx").using("btree", table.status.asc().nullsLast(), table.queuedAt.asc().nullsLast()),
 	foreignKey({
 			columns: [table.profileId],
 			foreignColumns: [agentProfile.id],
@@ -1126,8 +1105,8 @@ export const agentRunApproval = pgTable("AgentRunApproval", {
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
 }, (table) => [
-	index("AgentRunApproval_runId_status_requestedAt_idx").using("btree", table.runId.asc().nullsLast().op("timestamptz_ops"), table.status.asc().nullsLast().op("timestamptz_ops"), table.requestedAt.asc().nullsLast().op("timestamptz_ops")),
-	index("AgentRunApproval_status_expiresAt_idx").using("btree", table.status.asc().nullsLast().op("timestamptz_ops"), table.expiresAt.asc().nullsLast().op("timestamptz_ops")),
+	index("AgentRunApproval_runId_status_requestedAt_idx").using("btree", table.runId.asc().nullsLast(), table.status.asc().nullsLast(), table.requestedAt.asc().nullsLast()),
+	index("AgentRunApproval_status_expiresAt_idx").using("btree", table.status.asc().nullsLast(), table.expiresAt.asc().nullsLast()),
 	foreignKey({
 			columns: [table.runId],
 			foreignColumns: [agentRun.id],
@@ -1148,12 +1127,34 @@ export const documentChunk = pgTable("DocumentChunk", {
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
 	index("DocumentChunk_content_fts_idx").using("gin", sql`to_tsvector('simple'::regconfig, content)`),
-	uniqueIndex("DocumentChunk_documentId_ordinal_key").using("btree", table.documentId.asc().nullsLast().op("int4_ops"), table.ordinal.asc().nullsLast().op("uuid_ops")),
+	uniqueIndex("DocumentChunk_documentId_ordinal_key").using("btree", table.documentId.asc().nullsLast(), table.ordinal.asc().nullsLast()),
 	index("DocumentChunk_embedding_idx").using("hnsw", table.embedding.asc().nullsLast().op("vector_cosine_ops")),
-	index("DocumentChunk_ownerSubject_idx").using("btree", table.ownerSubject.asc().nullsLast().op("text_ops")),
+	index("DocumentChunk_ownerSubject_idx").using("btree", table.ownerSubject.asc().nullsLast()),
 	foreignKey({
 			columns: [table.documentId],
 			foreignColumns: [document.id],
 			name: "DocumentChunk_documentId_fkey"
+		}).onUpdate("cascade").onDelete("cascade"),
+]);
+
+/**
+ * A bounded counter for the Hermes inference gateway's per-minute limit.
+ *
+ * The limit was previously counted from AuditEvent, which has no retention, so
+ * a hot path scanned a permanently growing table. Rows here are pruned to the
+ * current window on every request, keeping the table proportional to the limit
+ * rather than to lifetime traffic. The audit trail is still written separately
+ * and remains complete.
+ */
+export const inferenceGatewayRequest = pgTable("InferenceGatewayRequest", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	connectionId: uuid().notNull(),
+	occurredAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+	index("InferenceGatewayRequest_connectionId_occurredAt_idx").using("btree", table.connectionId.asc().nullsLast(), table.occurredAt.asc().nullsLast()),
+	foreignKey({
+			columns: [table.connectionId],
+			foreignColumns: [serviceConnection.id],
+			name: "InferenceGatewayRequest_connectionId_fkey"
 		}).onUpdate("cascade").onDelete("cascade"),
 ]);

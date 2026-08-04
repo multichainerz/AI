@@ -3,7 +3,13 @@ import type {
   ConnectionMonitoringControl,
   UpdateConnectionMonitoringControl,
 } from "@orcasynapse/contracts";
-import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
+import { and, eq, isNotNull, sql } from "drizzle-orm";
+import {
+  auditEvent,
+  connectionMonitoringControl,
+  serviceConnection,
+  type OrcaSynapseDatabase,
+} from "@orcasynapse/database";
 import type { AdminActor } from "./connection-manager.js";
 import type { ConnectionTestService } from "./diagnostics/connection-test-service.js";
 
@@ -31,7 +37,7 @@ export class ConnectionMonitorRuntime implements ConnectionMonitorService {
   private started = false;
 
   constructor(
-    private readonly prisma: OrcaSynapsePrismaClient,
+    private readonly database: OrcaSynapseDatabase,
     private readonly tester: ConnectionTestService,
     private readonly logger: ConnectionMonitorLogger,
     private readonly instanceId: string = randomUUID(),
@@ -54,7 +60,11 @@ export class ConnectionMonitorRuntime implements ConnectionMonitorService {
   }
 
   async getControl(): Promise<ConnectionMonitoringControl> {
-    const control = await this.prisma.connectionMonitoringControl.findUnique({ where: { id: "global" } });
+    const [control] = await this.database
+      .select()
+      .from(connectionMonitoringControl)
+      .where(eq(connectionMonitoringControl.id, "global"))
+      .limit(1);
     return {
       enabled: control?.enabled ?? false,
       intervalSeconds: control?.intervalSeconds ?? 300,
@@ -64,32 +74,42 @@ export class ConnectionMonitorRuntime implements ConnectionMonitorService {
     };
   }
 
-  async updateControl(actor: AdminActor, input: UpdateConnectionMonitoringControl): Promise<ConnectionMonitoringControl> {
-    const control = await this.prisma.$transaction(async (transaction) => {
-      const saved = await transaction.connectionMonitoringControl.upsert({
-        where: { id: "global" },
-        create: { id: "global", ...input, updatedBy: actor.id },
-        update: { ...input, updatedBy: actor.id },
-      });
+  async updateControl(
+    actor: AdminActor,
+    input: UpdateConnectionMonitoringControl,
+  ): Promise<ConnectionMonitoringControl> {
+    const control = await this.database.transaction(async (transaction) => {
+      const [saved] = await transaction
+        .insert(connectionMonitoringControl)
+        .values({ id: "global", ...input, updatedBy: actor.id })
+        .onConflictDoUpdate({
+          target: connectionMonitoringControl.id,
+          set: { ...input, updatedBy: actor.id },
+        })
+        .returning();
+      if (!saved) throw new Error("The monitoring control row could not be written.");
+
+      // Disabling releases every outstanding claim, so re-enabling starts from a
+      // clean slate rather than waiting out stale two-minute reservations.
       if (!input.enabled) {
-        await transaction.serviceConnection.updateMany({
-          where: { monitoringClaimToken: { not: null } },
-          data: { monitoringClaimedAt: null, monitoringClaimedBy: null, monitoringClaimToken: null },
-        });
+        await transaction
+          .update(serviceConnection)
+          .set({ monitoringClaimedAt: null, monitoringClaimedBy: null, monitoringClaimToken: null })
+          .where(isNotNull(serviceConnection.monitoringClaimToken));
       }
-      await transaction.auditEvent.create({
-        data: {
-          actorType: "USER",
-          actorId: actor.id,
-          action: input.enabled ? "connection.monitoring_enabled" : "connection.monitoring_disabled",
-          resourceType: "ConnectionMonitoringControl",
-          resourceId: "global",
-          outcome: "SUCCESS",
-          metadata: { intervalSeconds: input.intervalSeconds, reason: input.reason },
-        },
+
+      await transaction.insert(auditEvent).values({
+        actorType: "USER",
+        actorId: actor.id,
+        action: input.enabled ? "connection.monitoring_enabled" : "connection.monitoring_disabled",
+        resourceType: "ConnectionMonitoringControl",
+        resourceId: "global",
+        outcome: "SUCCESS",
+        metadata: { intervalSeconds: input.intervalSeconds, reason: input.reason },
       });
       return saved;
     });
+
     if (input.enabled && this.started) void this.triggerCycle();
     return {
       enabled: control.enabled,
@@ -109,10 +129,15 @@ export class ConnectionMonitorRuntime implements ConnectionMonitorService {
       await this.recordMonitorFailure(claim.connectionId, claim.claimToken);
       return true;
     }
-    await this.prisma.serviceConnection.updateMany({
-      where: { id: claim.connectionId, monitoringClaimToken: claim.claimToken },
-      data: { monitoringClaimedAt: null, monitoringClaimedBy: null, monitoringClaimToken: null },
-    });
+    await this.database
+      .update(serviceConnection)
+      .set({ monitoringClaimedAt: null, monitoringClaimedBy: null, monitoringClaimToken: null })
+      .where(
+        and(
+          eq(serviceConnection.id, claim.connectionId),
+          eq(serviceConnection.monitoringClaimToken, claim.claimToken),
+        ),
+      );
     return true;
   }
 
@@ -153,17 +178,25 @@ export class ConnectionMonitorRuntime implements ConnectionMonitorService {
     }
   }
 
+  /**
+   * Reserves one due connection for this instance.
+   *
+   * The control row is locked FOR UPDATE so a cycle cannot start against an
+   * interval that is being changed, and the candidate is taken with SKIP LOCKED
+   * so parallel lanes and other API instances never contend for the same row.
+   */
   private async claimOne(): Promise<{ connectionId: string; claimToken: string } | null> {
-    return this.prisma.$transaction(async (transaction) => {
-      const controls = await transaction.$queryRaw<Array<{ enabled: boolean; intervalSeconds: number }>>`
+    return this.database.transaction(async (transaction) => {
+      const controls = await transaction.execute<{ enabled: boolean; intervalSeconds: number }>(sql`
         SELECT "enabled", "intervalSeconds"
         FROM "ConnectionMonitoringControl"
         WHERE "id" = 'global'
         FOR UPDATE
-      `;
-      const control = controls[0];
+      `);
+      const control = controls.rows[0];
       if (!control?.enabled) return null;
-      const candidates = await transaction.$queryRaw<Array<{ id: string }>>`
+
+      const candidates = await transaction.execute<{ id: string }>(sql`
         SELECT "id"
         FROM "ServiceConnection"
         WHERE "enabled" = true
@@ -178,46 +211,54 @@ export class ConnectionMonitorRuntime implements ConnectionMonitorService {
         ORDER BY "lastHealthcheckAt" ASC NULLS FIRST, "updatedAt" ASC
         FOR UPDATE SKIP LOCKED
         LIMIT 1
-      `;
-      const candidate = candidates[0];
+      `);
+      const candidate = candidates.rows[0];
       if (!candidate) return null;
+
       const claimToken = randomUUID();
-      await transaction.serviceConnection.update({
-        where: { id: candidate.id },
-        data: {
+      await transaction
+        .update(serviceConnection)
+        .set({
           monitoringClaimedAt: new Date(),
           monitoringClaimedBy: this.instanceId,
           monitoringClaimToken: claimToken,
-        },
-      });
+        })
+        .where(eq(serviceConnection.id, candidate.id));
       return { connectionId: candidate.id, claimToken };
     });
   }
 
   private async recordMonitorFailure(connectionId: string, claimToken: string): Promise<void> {
     const checkedAt = new Date();
-    await this.prisma.$transaction(async (transaction) => {
-      const failed = await transaction.serviceConnection.updateMany({
-        where: { id: connectionId, monitoringClaimToken: claimToken },
-        data: {
+    await this.database.transaction(async (transaction) => {
+      const failed = await transaction
+        .update(serviceConnection)
+        .set({
           status: "DEGRADED",
           lastHealthcheckAt: checkedAt,
           lastHealthcheckMessage: "Automated check could not resolve the stored connection configuration.",
           monitoringClaimedAt: null,
           monitoringClaimedBy: null,
           monitoringClaimToken: null,
-        },
-      });
-      if (failed.count !== 1) return;
-      await transaction.auditEvent.create({
-        data: {
-          actorType: "SYSTEM",
-          action: "connection.monitor_failed",
-          resourceType: "ServiceConnection",
-          resourceId: connectionId,
-          outcome: "FAILURE",
-          metadata: { failure: "configuration_resolution" },
-        },
+        })
+        .where(
+          and(
+            eq(serviceConnection.id, connectionId),
+            eq(serviceConnection.monitoringClaimToken, claimToken),
+          ),
+        )
+        .returning({ id: serviceConnection.id });
+      // Another instance re-claimed the row; recording a failure against its
+      // check would attribute the wrong outcome.
+      if (failed.length !== 1) return;
+
+      await transaction.insert(auditEvent).values({
+        actorType: "SYSTEM",
+        action: "connection.monitor_failed",
+        resourceType: "ServiceConnection",
+        resourceId: connectionId,
+        outcome: "FAILURE",
+        metadata: { failure: "configuration_resolution" },
       });
     });
   }

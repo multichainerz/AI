@@ -1,6 +1,6 @@
 {
   "name": "@orcasynapse/worker",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
@@ -14,8 +14,10 @@
   "dependencies": {
     "@orcasynapse/contracts": "workspace:*",
     "@orcasynapse/database": "workspace:*",
+    "@orcasynapse/knowledge": "workspace:*",
     "@orcasynapse/runtime-clients": "workspace:*",
-    "@orcasynapse/security": "workspace:*"
+    "@orcasynapse/security": "workspace:*",
+    "drizzle-orm": "0.45.2"
   },
   "devDependencies": {
     "tsx": "4.23.1"

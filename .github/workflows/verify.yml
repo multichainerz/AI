@@ -13,7 +13,10 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:17
+        # pgvector, not stock postgres: the migrator creates the vector
+        # extension and the baseline declares a vector column, so a plain image
+        # cannot apply migrations at all.
+        image: pgvector/pgvector:pg17
         env:
           POSTGRES_DB: orcasynapse_test
           POSTGRES_USER: orcasynapse_test
@@ -44,6 +47,10 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm verify
+        # Data-layer tests provision an isolated database per file rather than
+        # faking Drizzle's query builder, so the suite needs a live server.
+        env:
+          ORCASYNAPSE_TEST_DATABASE_URL: postgresql://orcasynapse_test:orcasynapse_test@127.0.0.1:5432/postgres
       - run: pnpm verify:postgres
         env:
           ORCASYNAPSE_INTEGRATION_DATABASE_URL: postgresql://orcasynapse_test:orcasynapse_test@127.0.0.1:5432/orcasynapse_test

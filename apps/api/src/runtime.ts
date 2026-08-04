@@ -1,52 +1,53 @@
 import {
-  createPrismaClient,
+  createDrizzleClient,
   hasBootstrapSecret,
   readBootstrapSecret,
-  type OrcaSynapsePrismaClient,
+  type OrcaSynapseDatabase,
 } from "@orcasynapse/database";
 import { decodeMasterKey, EnvelopeEncryption } from "@orcasynapse/security";
 import { InstallationKeyAuthenticator } from "./auth/installation-key-auth.js";
 import {
-  PrismaAdminSessionManager,
+  DrizzleAdminSessionManager,
   type AdminSessionManager,
 } from "./auth/admin-session.js";
 import type { ConnectionManager } from "./connections/connection-manager.js";
-import { PrismaConnectionManager } from "./connections/prisma-connection-manager.js";
+import { DrizzleConnectionManager } from "./connections/drizzle-connection-manager.js";
 import { ConnectionTestService } from "./connections/diagnostics/connection-test-service.js";
 import { InferenceDiscoveryService } from "./connections/diagnostics/inference-discovery-service.js";
 import { ConnectionMonitorRuntime, type ConnectionMonitorService } from "./connections/connection-monitor.js";
 import type { OperationsManager } from "./operations/operations-manager.js";
-import { PrismaOperationsManager } from "./operations/prisma-operations-manager.js";
+import { DrizzleOperationsManager } from "./operations/drizzle-operations-manager.js";
 import type { ChatManager } from "./chat/chat-manager.js";
-import { PrismaChatManager } from "./chat/prisma-chat-manager.js";
+import { DrizzleChatManager } from "./chat/drizzle-chat-manager.js";
 import {
-  PrismaEnterpriseIdentityManager,
+  DrizzleEnterpriseIdentityManager,
   type EnterpriseIdentityManager,
 } from "./identity/enterprise-session.js";
+import { DrizzleRuntimeConnectionResolver, HermesClient } from "@orcasynapse/runtime-clients";
 import {
-  PrismaRuntimeConnectionResolver,
-  HermesClient,
-  SupermemoryClient,
-} from "@orcasynapse/runtime-clients";
+  APPROVED_EMBEDDING_MODEL,
+  DocumentVectorStore,
+  LocalBgeM3Embedder,
+} from "@orcasynapse/knowledge";
 import type { DocumentManager } from "./documents/document-manager.js";
-import { PrismaDocumentManager } from "./documents/prisma-document-manager.js";
+import { DrizzleDocumentManager } from "./documents/drizzle-document-manager.js";
 import type { AgentManager } from "./agents/agent-manager.js";
-import { PrismaAgentManager } from "./agents/prisma-agent-manager.js";
+import { DrizzleAgentManager } from "./agents/drizzle-agent-manager.js";
 import type { ToolingManager } from "./tooling/tooling-manager.js";
-import { PrismaToolingManager } from "./tooling/prisma-tooling-manager.js";
+import { DrizzleToolingManager } from "./tooling/drizzle-tooling-manager.js";
 import type { AiOpsManager } from "./ai-ops/ai-ops-manager.js";
-import { PrismaAiOpsManager } from "./ai-ops/prisma-ai-ops-manager.js";
+import { DrizzleAiOpsManager } from "./ai-ops/drizzle-ai-ops-manager.js";
 import type { ModelManager } from "./models/model-manager.js";
-import { PrismaModelManager } from "./models/prisma-model-manager.js";
+import { DrizzleModelManager } from "./models/drizzle-model-manager.js";
 import type { GuardrailManager } from "./guardrails/guardrail-manager.js";
-import { PrismaGuardrailManager } from "./guardrails/prisma-guardrail-manager.js";
+import { DrizzleGuardrailManager } from "./guardrails/drizzle-guardrail-manager.js";
 import type { PromptManager } from "./prompts/prompt-manager.js";
-import { PrismaPromptManager } from "./prompts/prisma-prompt-manager.js";
+import { DrizzlePromptManager } from "./prompts/drizzle-prompt-manager.js";
 import type { OnboardingManager } from "./onboarding/onboarding-manager.js";
-import { PrismaOnboardingManager } from "./onboarding/prisma-onboarding-manager.js";
+import { DrizzleOnboardingManager } from "./onboarding/drizzle-onboarding-manager.js";
 import type { HermesRuntimeNodeManager } from "./runtime-nodes/runtime-node-manager.js";
-import { PrismaHermesRuntimeNodeManager } from "./runtime-nodes/prisma-runtime-node-manager.js";
-import { PrismaInferenceGateway } from "./inference/inference-gateway.js";
+import { DrizzleHermesRuntimeNodeManager } from "./runtime-nodes/drizzle-runtime-node-manager.js";
+import { DrizzleInferenceGateway } from "./inference/inference-gateway.js";
 
 export type BootstrapState = "REQUIRED" | "READY" | "LOCKED";
 
@@ -69,8 +70,10 @@ export interface RuntimeServices {
   aiOpsManager?: AiOpsManager;
   onboardingManager?: OnboardingManager;
   runtimeNodeManager?: HermesRuntimeNodeManager;
-  inferenceGateway?: PrismaInferenceGateway;
-  prisma?: OrcaSynapsePrismaClient;
+  inferenceGateway?: DrizzleInferenceGateway;
+  database?: OrcaSynapseDatabase;
+  /** Closes the single connection pool the control plane opens. */
+  closeDatabase?: () => Promise<void>;
 }
 
 export function getBootstrapState(): BootstrapState {
@@ -99,36 +102,37 @@ export function createRuntimeServices(): RuntimeServices {
 
   try {
     const databaseUrl = readBootstrapSecret("orcasynapse_database_url");
-    const prisma = createPrismaClient(databaseUrl);
+    const { database, close: closeDatabase } = createDrizzleClient(databaseUrl);
     const masterKey = decodeMasterKey(readBootstrapSecret("orcasynapse_master_key"));
     const encryption = new EnvelopeEncryption({ masterKey });
     const authenticator = new InstallationKeyAuthenticator(
       readBootstrapSecret("orcasynapse_installation_key"),
     );
 
-    const connectionManager = new PrismaConnectionManager(prisma, encryption);
+    const connectionManager = new DrizzleConnectionManager(database, encryption);
     const connectionTestService = new ConnectionTestService(connectionManager);
     const inferenceDiscoveryService = new InferenceDiscoveryService(connectionManager);
     const connectionMonitor = new ConnectionMonitorRuntime(
-      prisma,
+      database,
       connectionTestService,
       { error: (message, error) => console.error(message, error) },
     );
-    const sessionManager = new PrismaAdminSessionManager(prisma, authenticator);
-    const operationsManager = new PrismaOperationsManager(prisma);
-    const documentResolver = new PrismaRuntimeConnectionResolver(prisma, encryption);
-    const modelManager = new PrismaModelManager(prisma);
-    const guardrailManager = new PrismaGuardrailManager(prisma);
-    const promptManager = new PrismaPromptManager(prisma);
-    const documentManager = new PrismaDocumentManager(
-      prisma,
-      new SupermemoryClient(documentResolver),
+    const sessionManager = new DrizzleAdminSessionManager(database, authenticator);
+    const operationsManager = new DrizzleOperationsManager(database);
+    const documentResolver = new DrizzleRuntimeConnectionResolver(database, encryption);
+    const modelManager = new DrizzleModelManager(database);
+    const guardrailManager = new DrizzleGuardrailManager(database);
+    const promptManager = new DrizzlePromptManager(database);
+    const documentManager = new DrizzleDocumentManager(
+      database,
+      new DocumentVectorStore(database, APPROVED_EMBEDDING_MODEL),
+      new LocalBgeM3Embedder(),
     );
     const hermesClient = new HermesClient(documentResolver);
-    const agentManager = new PrismaAgentManager(prisma, hermesClient);
-    const chatManager = new PrismaChatManager(prisma, agentManager);
-    const toolingManager = new PrismaToolingManager(prisma, hermesClient);
-    const aiOpsManager = new PrismaAiOpsManager(prisma, {
+    const agentManager = new DrizzleAgentManager(database, hermesClient);
+    const chatManager = new DrizzleChatManager(database, agentManager);
+    const toolingManager = new DrizzleToolingManager(database, hermesClient);
+    const aiOpsManager = new DrizzleAiOpsManager(database, {
       connections: connectionManager,
       connectionMonitoring: connectionMonitor,
       models: modelManager,
@@ -138,12 +142,13 @@ export function createRuntimeServices(): RuntimeServices {
       agents: agentManager,
       tools: toolingManager,
     });
-    const onboardingManager = new PrismaOnboardingManager(prisma, masterKey, aiOpsManager);
-    const runtimeNodeManager = new PrismaHermesRuntimeNodeManager(prisma, encryption, connectionTestService);
-    const inferenceGateway = new PrismaInferenceGateway(prisma, connectionManager);
+    const onboardingManager = new DrizzleOnboardingManager(database, masterKey, aiOpsManager);
+    const runtimeNodeManager = new DrizzleHermesRuntimeNodeManager(database, encryption, connectionTestService);
+    const inferenceGateway = new DrizzleInferenceGateway(database, connectionManager);
     return {
       bootstrapState,
-      prisma,
+      database,
+      closeDatabase,
       sessionManager,
       connectionManager,
       connectionTestService,
@@ -151,8 +156,8 @@ export function createRuntimeServices(): RuntimeServices {
       connectionMonitor,
       operationsManager,
       chatManager,
-      identityManager: new PrismaEnterpriseIdentityManager(
-        prisma,
+      identityManager: new DrizzleEnterpriseIdentityManager(
+        database,
         connectionManager,
         encryption,
         fetch,

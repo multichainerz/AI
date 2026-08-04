@@ -31,11 +31,7 @@ services:
       - orcasynapse_database_url
     command:
       - "node"
-      - "packages/database/node_modules/prisma/build/index.js"
-      - "migrate"
-      - "deploy"
-      - "--config"
-      - "packages/database/prisma.config.ts"
+      - "packages/database/dist/drizzle/migrate-cli.js"
     networks:
       - data
 

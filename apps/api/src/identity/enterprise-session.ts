@@ -6,7 +6,15 @@ import {
 } from "node:crypto";
 import { isIP } from "node:net";
 import type { AdminRole, EnterpriseSession, OidcStatus } from "@orcasynapse/contracts";
-import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
+import {
+  auditEvent,
+  enterpriseUser,
+  enterpriseUserSession,
+  oidcAuthorizationRequest,
+  serviceConnection,
+  type OrcaSynapseDatabase,
+} from "@orcasynapse/database";
+import { and, eq, gt, isNull, lt, lte } from "drizzle-orm";
 import { EnvelopeEncryption } from "@orcasynapse/security";
 import {
   createLocalJWKSet,
@@ -253,9 +261,14 @@ export async function boundedOidcJson(response: Response): Promise<unknown> {
   }
 }
 
-export class PrismaEnterpriseIdentityManager implements EnterpriseIdentityManager {
+/** A session joined to its user, which is what the principal mapper needs. */
+type LoadedSession = typeof enterpriseUserSession.$inferSelect & {
+  user: typeof enterpriseUser.$inferSelect;
+};
+
+export class DrizzleEnterpriseIdentityManager implements EnterpriseIdentityManager {
   constructor(
-    private readonly prisma: OrcaSynapsePrismaClient,
+    private readonly database: OrcaSynapseDatabase,
     private readonly connectionStore: ConnectionDiagnosticStore,
     private readonly encryption: EnvelopeEncryption,
     private readonly fetcher: typeof fetch = fetch,
@@ -297,40 +310,37 @@ export class PrismaEnterpriseIdentityManager implements EnterpriseIdentityManage
     const envelope = this.encryption.encrypt(verifier, `oidc:${id}:code-verifier`);
     const now = new Date();
 
-    await this.prisma.$transaction(async (transaction) => {
-      await transaction.oidcAuthorizationRequest.deleteMany({ where: { expiresAt: { lt: now } } });
-      await transaction.oidcAuthorizationRequest.create({
-        data: {
-          id,
-          serviceConnectionId: runtime.connectionId,
-          stateHash: tokenDigest(stateToken),
-          nonce,
-          returnTo,
-          issuer: discovery.issuer,
-          tokenEndpoint: discovery.token_endpoint,
-          jwksUri: discovery.jwks_uri,
-          clientId: runtime.clientId,
-          redirectUri: runtime.redirectUri,
-          codeVerifierEncryptedValue: byteCopy(envelope.encryptedValue),
-          codeVerifierValueNonce: byteCopy(envelope.valueNonce),
-          codeVerifierValueAuthTag: byteCopy(envelope.valueAuthTag),
-          codeVerifierWrappedDataKey: byteCopy(envelope.wrappedDataKey),
-          codeVerifierKeyNonce: byteCopy(envelope.keyNonce),
-          codeVerifierKeyAuthTag: byteCopy(envelope.keyAuthTag),
-          encryptionVersion: envelope.encryptionVersion,
-          masterKeyVersion: envelope.masterKeyVersion,
-          expiresAt: new Date(now.getTime() + OIDC_REQUEST_TTL_MS),
-        },
+    await this.database.transaction(async (transaction) => {
+      // Expired requests are pruned on start rather than by a sweeper.
+      await transaction.delete(oidcAuthorizationRequest).where(lt(oidcAuthorizationRequest.expiresAt, now));
+      await transaction.insert(oidcAuthorizationRequest).values({
+        id,
+        serviceConnectionId: runtime.connectionId,
+        stateHash: tokenDigest(stateToken),
+        nonce,
+        returnTo,
+        issuer: discovery.issuer,
+        tokenEndpoint: discovery.token_endpoint,
+        jwksUri: discovery.jwks_uri,
+        clientId: runtime.clientId,
+        redirectUri: runtime.redirectUri,
+        codeVerifierEncryptedValue: byteCopy(envelope.encryptedValue),
+        codeVerifierValueNonce: byteCopy(envelope.valueNonce),
+        codeVerifierValueAuthTag: byteCopy(envelope.valueAuthTag),
+        codeVerifierWrappedDataKey: byteCopy(envelope.wrappedDataKey),
+        codeVerifierKeyNonce: byteCopy(envelope.keyNonce),
+        codeVerifierKeyAuthTag: byteCopy(envelope.keyAuthTag),
+        encryptionVersion: envelope.encryptionVersion,
+        masterKeyVersion: envelope.masterKeyVersion,
+        expiresAt: new Date(now.getTime() + OIDC_REQUEST_TTL_MS),
       });
-      await transaction.auditEvent.create({
-        data: {
-          actorType: "SYSTEM",
-          action: "oidc.login_started",
-          resourceType: "OidcAuthorizationRequest",
-          resourceId: id,
-          outcome: "SUCCESS",
-          metadata: { connectionId: runtime.connectionId, returnTo },
-        },
+      await transaction.insert(auditEvent).values({
+        actorType: "SYSTEM",
+        action: "oidc.login_started",
+        resourceType: "OidcAuthorizationRequest",
+        resourceId: id,
+        outcome: "SUCCESS",
+        metadata: { connectionId: runtime.connectionId, returnTo },
       });
     });
 
@@ -361,17 +371,25 @@ export class PrismaEnterpriseIdentityManager implements EnterpriseIdentityManage
       throw new EnterpriseIdentityError("OIDC_STATE_MISMATCH", "The enterprise sign-in state did not match this browser.");
     }
     const now = new Date();
-    const authorization = await this.prisma.oidcAuthorizationRequest.findUnique({
-      where: { stateHash: tokenDigest(returnedState) },
-    });
+    const [authorization] = await this.database
+      .select()
+      .from(oidcAuthorizationRequest)
+      .where(eq(oidcAuthorizationRequest.stateHash, tokenDigest(returnedState)))
+      .limit(1);
     if (!authorization || authorization.consumedAt || authorization.expiresAt <= now) {
       throw new EnterpriseIdentityError("OIDC_STATE_EXPIRED", "The enterprise sign-in request has expired.");
     }
-    const consumed = await this.prisma.oidcAuthorizationRequest.updateMany({
-      where: { id: authorization.id, consumedAt: null, expiresAt: { gt: now } },
-      data: { consumedAt: now },
-    });
-    if (consumed.count !== 1) {
+    // Consuming under a guarded predicate is what makes the request single-use.
+    const consumed = await this.database
+      .update(oidcAuthorizationRequest)
+      .set({ consumedAt: now })
+      .where(and(
+        eq(oidcAuthorizationRequest.id, authorization.id),
+        isNull(oidcAuthorizationRequest.consumedAt),
+        gt(oidcAuthorizationRequest.expiresAt, now),
+      ))
+      .returning({ id: oidcAuthorizationRequest.id });
+    if (consumed.length !== 1) {
       throw new EnterpriseIdentityError("OIDC_STATE_REPLAYED", "The enterprise sign-in request was already used.");
     }
 
@@ -452,27 +470,32 @@ export class PrismaEnterpriseIdentityManager implements EnterpriseIdentityManage
     const absoluteExpiresAt = new Date(now.getTime() + ENTERPRISE_SESSION_ABSOLUTE_MS);
     const sourceIp = context.sourceIp && isIP(context.sourceIp) ? context.sourceIp : null;
 
-    const session = await this.prisma.$transaction(async (transaction) => {
-      await transaction.enterpriseUserSession.deleteMany({
-        where: { absoluteExpiresAt: { lt: new Date(now.getTime() - ENTERPRISE_SESSION_RETENTION_MS) } },
-      });
-      const user = await transaction.enterpriseUser.upsert({
-        where: { issuer_subject: { issuer: authorization.issuer, subject: payload.sub! } },
-        create: {
+    const session = await this.database.transaction(async (transaction) => {
+      await transaction
+        .delete(enterpriseUserSession)
+        .where(lt(enterpriseUserSession.absoluteExpiresAt, new Date(now.getTime() - ENTERPRISE_SESSION_RETENTION_MS)));
+      const [user] = await transaction
+        .insert(enterpriseUser)
+        .values({
           issuer: authorization.issuer,
           subject: payload.sub!,
           email,
           displayName,
           groups,
           lastLoginAt: now,
-        },
-        update: { email, displayName, groups, lastLoginAt: now },
-      });
+        })
+        .onConflictDoUpdate({
+          target: [enterpriseUser.issuer, enterpriseUser.subject],
+          set: { email, displayName, groups, lastLoginAt: now, updatedAt: now },
+        })
+        .returning();
+      if (!user) throw new EnterpriseIdentityError("OIDC_USER_UNAVAILABLE", "The enterprise user could not be recorded.", 503);
       if (!user.enabled) {
         throw new EnterpriseIdentityError("OIDC_USER_DISABLED", "This OrcaSynapse user has been disabled.", 403);
       }
-      const created = await transaction.enterpriseUserSession.create({
-        data: {
+      const [created] = await transaction
+        .insert(enterpriseUserSession)
+        .values({
           tokenHash: tokenDigest(sessionToken),
           userId: user.id,
           lastSeenAt: now,
@@ -480,22 +503,20 @@ export class PrismaEnterpriseIdentityManager implements EnterpriseIdentityManage
           absoluteExpiresAt,
           sourceIp,
           userAgentHash: userAgentDigest(context.userAgent) ?? null,
-        },
-        include: { user: true },
+        })
+        .returning();
+      if (!created) throw new EnterpriseIdentityError("OIDC_SESSION_UNAVAILABLE", "The enterprise session could not be created.", 503);
+      await transaction.insert(auditEvent).values({
+        actorType: "USER",
+        actorId: created.id,
+        action: "enterprise.session_created",
+        resourceType: "EnterpriseUserSession",
+        resourceId: created.id,
+        outcome: "SUCCESS",
+        sourceIp,
+        metadata: { userId: user.id, authenticationMethod: "oidc-pkce" },
       });
-      await transaction.auditEvent.create({
-        data: {
-          actorType: "USER",
-          actorId: created.id,
-          action: "enterprise.session_created",
-          resourceType: "EnterpriseUserSession",
-          resourceId: created.id,
-          outcome: "SUCCESS",
-          sourceIp,
-          metadata: { userId: user.id, authenticationMethod: "oidc-pkce" },
-        },
-      });
-      return created;
+      return { ...created, user } satisfies LoadedSession;
     });
     let administratorSession: IssuedAdminSession | undefined;
     if (administratorRole) {
@@ -516,19 +537,22 @@ export class PrismaEnterpriseIdentityManager implements EnterpriseIdentityManage
   async authenticate(token: string | undefined): Promise<EnterprisePrincipal | null> {
     if (!validOpaqueToken(token)) return null;
     const now = new Date();
-    const session = await this.prisma.enterpriseUserSession.findUnique({
-      where: { tokenHash: tokenDigest(token) },
-      include: { user: true },
-    });
+    const [row] = await this.database
+      .select({ session: enterpriseUserSession, user: enterpriseUser })
+      .from(enterpriseUserSession)
+      .innerJoin(enterpriseUser, eq(enterpriseUserSession.userId, enterpriseUser.id))
+      .where(eq(enterpriseUserSession.tokenHash, tokenDigest(token)))
+      .limit(1);
+    const session: LoadedSession | undefined = row ? { ...row.session, user: row.user } : undefined;
     if (
       !session || session.revokedAt || !session.user.enabled ||
       session.idleExpiresAt <= now || session.absoluteExpiresAt <= now
     ) {
       if (session && !session.revokedAt) {
-        await this.prisma.enterpriseUserSession.updateMany({
-          where: { id: session.id, revokedAt: null },
-          data: { revokedAt: now },
-        });
+        await this.database
+          .update(enterpriseUserSession)
+          .set({ revokedAt: now })
+          .where(and(eq(enterpriseUserSession.id, session.id), isNull(enterpriseUserSession.revokedAt)));
       }
       return null;
     }
@@ -538,54 +562,58 @@ export class PrismaEnterpriseIdentityManager implements EnterpriseIdentityManage
     const idleExpiresAt = new Date(
       Math.min(now.getTime() + ENTERPRISE_SESSION_IDLE_MS, session.absoluteExpiresAt.getTime()),
     );
-    const updated = await this.prisma.enterpriseUserSession.updateMany({
-      where: {
-        id: session.id,
-        revokedAt: null,
-        lastSeenAt: { lte: new Date(now.getTime() - ENTERPRISE_SESSION_TOUCH_INTERVAL_MS) },
-        idleExpiresAt: { gt: now },
-        absoluteExpiresAt: { gt: now },
-      },
-      data: { lastSeenAt: now, idleExpiresAt },
-    });
-    return updated.count === 1 ? principalFromRecord({ ...session, idleExpiresAt }) : null;
+    // The predicate re-checks every liveness condition so a concurrent revoke or
+    // expiry between the read and the write loses rather than being overwritten.
+    const updated = await this.database
+      .update(enterpriseUserSession)
+      .set({ lastSeenAt: now, idleExpiresAt })
+      .where(and(
+        eq(enterpriseUserSession.id, session.id),
+        isNull(enterpriseUserSession.revokedAt),
+        lte(enterpriseUserSession.lastSeenAt, new Date(now.getTime() - ENTERPRISE_SESSION_TOUCH_INTERVAL_MS)),
+        gt(enterpriseUserSession.idleExpiresAt, now),
+        gt(enterpriseUserSession.absoluteExpiresAt, now),
+      ))
+      .returning({ id: enterpriseUserSession.id });
+    return updated.length === 1 ? principalFromRecord({ ...session, idleExpiresAt }) : null;
   }
 
   async revoke(token: string | undefined): Promise<boolean> {
     if (!validOpaqueToken(token)) return false;
-    const session = await this.prisma.enterpriseUserSession.findUnique({
-      where: { tokenHash: tokenDigest(token) },
-      select: { id: true, revokedAt: true },
-    });
+    const [session] = await this.database
+      .select({ id: enterpriseUserSession.id, revokedAt: enterpriseUserSession.revokedAt })
+      .from(enterpriseUserSession)
+      .where(eq(enterpriseUserSession.tokenHash, tokenDigest(token)))
+      .limit(1);
     if (!session || session.revokedAt) return false;
     const now = new Date();
-    return this.prisma.$transaction(async (transaction) => {
-      const revoked = await transaction.enterpriseUserSession.updateMany({
-        where: { id: session.id, revokedAt: null },
-        data: { revokedAt: now },
-      });
-      if (revoked.count !== 1) return false;
-      await transaction.auditEvent.create({
-        data: {
-          actorType: "USER",
-          actorId: session.id,
-          action: "enterprise.session_revoked",
-          resourceType: "EnterpriseUserSession",
-          resourceId: session.id,
-          outcome: "SUCCESS",
-          metadata: {},
-        },
+    return this.database.transaction(async (transaction) => {
+      const revoked = await transaction
+        .update(enterpriseUserSession)
+        .set({ revokedAt: now })
+        .where(and(eq(enterpriseUserSession.id, session.id), isNull(enterpriseUserSession.revokedAt)))
+        .returning({ id: enterpriseUserSession.id });
+      if (revoked.length !== 1) return false;
+      await transaction.insert(auditEvent).values({
+        actorType: "USER",
+        actorId: session.id,
+        action: "enterprise.session_revoked",
+        resourceType: "EnterpriseUserSession",
+        resourceId: session.id,
+        outcome: "SUCCESS",
+        metadata: {},
       });
       return true;
     });
   }
 
   private async resolveRuntime(): Promise<OidcRuntime> {
-    const candidates = await this.prisma.serviceConnection.findMany({
-      where: { kind: "OIDC", enabled: true },
-      select: { id: true, status: true },
-      take: 2,
-    });
+    // Exactly one enabled OIDC connection may exist; two is ambiguous trust.
+    const candidates = await this.database
+      .select({ id: serviceConnection.id, status: serviceConnection.status })
+      .from(serviceConnection)
+      .where(and(eq(serviceConnection.kind, "OIDC"), eq(serviceConnection.enabled, true)))
+      .limit(2);
     if (candidates.length !== 1 || candidates[0]?.status !== "HEALTHY") {
       throw new EnterpriseIdentityError(
         "OIDC_NOT_CONFIGURED",

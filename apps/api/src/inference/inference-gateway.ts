@@ -1,7 +1,17 @@
 import { timingSafeEqual } from "node:crypto";
 import type { InferenceBackend, InferenceGatewayChatRequest } from "@orcasynapse/contracts";
-import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
+import { and, eq, gte, isNotNull, lt, notInArray, sql } from "drizzle-orm";
+import {
+  auditEvent,
+  inferenceGatewayRequest,
+  guardrailPolicy,
+  modelDeployment,
+  serviceConnection,
+  hermesRuntimeNode,
+  type OrcaSynapseDatabase,
+} from "@orcasynapse/database";
 import type { ConnectionDiagnosticStore, ResolvedConnection } from "../connections/diagnostics/types.js";
+import { advisoryLock } from "../database-support.js";
 import { inspectInputText, type RuntimeTextPolicy } from "../guardrails/runtime-policy.js";
 
 const DEFAULT_POLICY: RuntimeTextPolicy = {
@@ -88,9 +98,9 @@ async function rejectedCompatibilityHints(response: Response): Promise<Set<Compa
   return new Set(COMPATIBILITY_HINTS.filter((hint) => text.includes(hint)));
 }
 
-export class PrismaInferenceGateway {
+export class DrizzleInferenceGateway {
   constructor(
-    private readonly prisma: OrcaSynapsePrismaClient,
+    private readonly database: OrcaSynapseDatabase,
     private readonly connections: ConnectionDiagnosticStore,
     private readonly fetcher: typeof fetch = fetch,
   ) {}
@@ -101,15 +111,18 @@ export class PrismaInferenceGateway {
     // invariant the worker enforces before it will execute a run. Reading two
     // rows lets an unexpected second enrolment fail closed instead of silently
     // picking one, and keeps authentication to a single secret decryption.
-    const candidates = await this.prisma.serviceConnection.findMany({
-      where: {
-        kind: "HERMES",
-        enabled: true,
-        hermesRuntimeNode: { is: { status: { notIn: ["SUSPENDED", "REVOKED"] } } },
-      },
-      select: { id: true },
-      take: 2,
-    });
+    const candidates = await this.database
+      .select({ id: serviceConnection.id })
+      .from(serviceConnection)
+      .innerJoin(hermesRuntimeNode, eq(hermesRuntimeNode.serviceConnectionId, serviceConnection.id))
+      .where(
+        and(
+          eq(serviceConnection.kind, "HERMES"),
+          eq(serviceConnection.enabled, true),
+          notInArray(hermesRuntimeNode.status, ["SUSPENDED", "REVOKED"]),
+        ),
+      )
+      .limit(2);
     // Every failure reports one message. An unauthenticated caller must not be
     // able to tell a misconfigured installation from a wrong credential.
     const invalid = () => new InferenceGatewayError("UNAUTHORIZED", "The runtime gateway credential is invalid.");
@@ -127,18 +140,22 @@ export class PrismaInferenceGateway {
   }
 
   private async resolvePolicy(): Promise<RuntimeTextPolicy> {
-    const enforced = await this.prisma.guardrailPolicy.count({ where: { firstActivatedAt: { not: null } } }) > 0;
-    if (!enforced) return DEFAULT_POLICY;
-    const active = await this.prisma.guardrailPolicy.findMany({
-      where: { status: "ACTIVE" },
-      select: {
-        maxInputCharacters: true,
-        maxOutputCharacters: true,
-        blockControlCharacters: true,
-        blockCredentialPatterns: true,
-      },
-      take: 2,
-    });
+    const [enforced] = await this.database
+      .select({ total: sql<number>`count(*)::int` })
+      .from(guardrailPolicy)
+      .where(isNotNull(guardrailPolicy.firstActivatedAt));
+    if ((enforced?.total ?? 0) === 0) return DEFAULT_POLICY;
+
+    const active = await this.database
+      .select({
+        maxInputCharacters: guardrailPolicy.maxInputCharacters,
+        maxOutputCharacters: guardrailPolicy.maxOutputCharacters,
+        blockControlCharacters: guardrailPolicy.blockControlCharacters,
+        blockCredentialPatterns: guardrailPolicy.blockCredentialPatterns,
+      })
+      .from(guardrailPolicy)
+      .where(eq(guardrailPolicy.status, "ACTIVE"))
+      .limit(2);
     if (active.length !== 1) {
       throw new InferenceGatewayError("NOT_CONFIGURED", "Exactly one evaluated OrcaSynapse guardrail policy must be active.");
     }
@@ -146,25 +163,46 @@ export class PrismaInferenceGateway {
   }
 
   private async resolveInference(): Promise<{ connection: ResolvedConnection; modelAlias: string; maxOutputTokens: number; requestsPerMinute: number }> {
-    const catalogueEnforced = await this.prisma.modelDeployment.count({
-      where: { workload: "AGENT", firstActivatedAt: { not: null } },
-    }) > 0;
-    const routes = catalogueEnforced ? await this.prisma.modelDeployment.findMany({
-      where: { workload: "AGENT", status: "ACTIVE", isDefault: true },
-      select: { connectionId: true, modelAlias: true, maxOutputTokens: true },
-      take: 2,
-    }) : [];
+    const [enforced] = await this.database
+      .select({ total: sql<number>`count(*)::int` })
+      .from(modelDeployment)
+      .where(and(eq(modelDeployment.workload, "AGENT"), isNotNull(modelDeployment.firstActivatedAt)));
+    const catalogueEnforced = (enforced?.total ?? 0) > 0;
+
+    const routes = catalogueEnforced
+      ? await this.database
+        .select({
+          connectionId: modelDeployment.connectionId,
+          modelAlias: modelDeployment.modelAlias,
+          maxOutputTokens: modelDeployment.maxOutputTokens,
+        })
+        .from(modelDeployment)
+        .where(
+          and(
+            eq(modelDeployment.workload, "AGENT"),
+            eq(modelDeployment.status, "ACTIVE"),
+            eq(modelDeployment.isDefault, true),
+          ),
+        )
+        .limit(2)
+      : [];
     if (catalogueEnforced && routes.length !== 1) {
       throw new InferenceGatewayError("NOT_CONFIGURED", "Exactly one evaluated default Agent model route must be active.");
     }
     const route = routes[0];
-    const candidates = await this.prisma.serviceConnection.findMany({
-      where: route
-        ? { id: route.connectionId, kind: "INFERENCE", enabled: true, status: "HEALTHY" }
-        : { kind: "INFERENCE", enabled: true, status: "HEALTHY" },
-      select: { id: true },
-      take: 2,
-    });
+
+    const candidates = await this.database
+      .select({ id: serviceConnection.id })
+      .from(serviceConnection)
+      .where(
+        and(
+          eq(serviceConnection.kind, "INFERENCE"),
+          eq(serviceConnection.enabled, true),
+          eq(serviceConnection.status, "HEALTHY"),
+          ...(route ? [eq(serviceConnection.id, route.connectionId)] : []),
+        ),
+      )
+      .limit(2);
     if (candidates.length !== 1) {
       throw new InferenceGatewayError("NOT_CONFIGURED", "Exactly one healthy inference server route is required.");
     }
@@ -181,17 +219,34 @@ export class PrismaInferenceGateway {
   }
 
   private async consumeRateLimit(runtimeConnectionId: string, requestsPerMinute: number, modelAlias: string): Promise<void> {
-    await this.prisma.$transaction(async (transaction) => {
-      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`orcasynapse-inference-gateway:${runtimeConnectionId}`}, 0))`;
-      const recent = await transaction.auditEvent.count({
-        where: {
-          action: "inference.gateway_requested",
-          resourceId: runtimeConnectionId,
-          occurredAt: { gte: new Date(Date.now() - 60_000) },
-        },
-      });
-      if (recent >= requestsPerMinute) throw new InferenceGatewayError("RATE_LIMITED", "The Hermes inference gateway is at its request limit.");
-      await transaction.auditEvent.create({ data: {
+    await this.database.transaction(async (transaction) => {
+      // Serialises counting and recording for this runtime, so two concurrent
+      // requests cannot both observe a count below the limit and pass.
+      await transaction.execute(advisoryLock(`orcasynapse-inference-gateway:${runtimeConnectionId}`));
+      const windowStartedAt = new Date(Date.now() - 60_000);
+      // Pruning first keeps the counter proportional to the limit rather than to
+      // lifetime traffic, which is why this no longer counts from AuditEvent.
+      await transaction
+        .delete(inferenceGatewayRequest)
+        .where(and(
+          eq(inferenceGatewayRequest.connectionId, runtimeConnectionId),
+          lt(inferenceGatewayRequest.occurredAt, windowStartedAt),
+        ));
+      const [recent] = await transaction
+        .select({ total: sql<number>`count(*)::int` })
+        .from(inferenceGatewayRequest)
+        .where(
+          and(
+            eq(inferenceGatewayRequest.connectionId, runtimeConnectionId),
+            gte(inferenceGatewayRequest.occurredAt, windowStartedAt),
+          ),
+        );
+      if ((recent?.total ?? 0) >= requestsPerMinute) {
+        throw new InferenceGatewayError("RATE_LIMITED", "The Hermes inference gateway is at its request limit.");
+      }
+      await transaction.insert(inferenceGatewayRequest).values({ connectionId: runtimeConnectionId });
+      // The audit trail still records every gateway request in full.
+      await transaction.insert(auditEvent).values({
         actorType: "SERVICE",
         actorId: runtimeConnectionId,
         action: "inference.gateway_requested",
@@ -199,7 +254,7 @@ export class PrismaInferenceGateway {
         resourceId: runtimeConnectionId,
         outcome: "SUCCESS",
         metadata: { modelAlias, enforcementPlane: "ORCASYNAPSE" },
-      } });
+      });
     });
   }
 

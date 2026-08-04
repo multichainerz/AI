@@ -1,155 +1,199 @@
-import type { OrcaSynapsePrismaClient } from "@orcasynapse/database";
-import { describe, expect, it, vi } from "vitest";
+import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
+import {
+  auditEvent,
+  connectionMonitoringControl,
+  createTestDatabase,
+  serviceConnection,
+  type TestDatabase,
+} from "@orcasynapse/database";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConnectionMonitorRuntime } from "./connection-monitor.js";
 import type { ConnectionTestService } from "./diagnostics/connection-test-service.js";
 
-const CONNECTION_ID = "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d";
-const SESSION_ID = "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb";
+let context: TestDatabase;
+const actor = { id: randomUUID(), subject: "platform-admin" } as never;
 
-function harness(options: { enabled?: boolean; testError?: Error; releaseError?: Error } = {}) {
-  let claimToken = "";
-  const serviceUpdateMany = vi.fn(async () => {
-    if (options.releaseError) throw options.releaseError;
-    return { count: 1 };
-  });
-  const auditCreate = vi.fn(async () => ({}));
-  const prismaBase: any = {
-    connectionMonitoringControl: {
-      findUnique: vi.fn(async () => ({
-        id: "global",
-        enabled: options.enabled ?? true,
-        intervalSeconds: 300,
-        reason: "Pilot monitoring",
-        updatedBy: SESSION_ID,
-        updatedAt: new Date("2026-07-30T00:00:00.000Z"),
-      })),
-      upsert: vi.fn(async ({ update }: any) => ({
-        id: "global",
-        ...update,
-        updatedAt: new Date("2026-07-30T00:00:00.000Z"),
-      })),
-    },
-    $queryRaw: vi.fn(async (parts: TemplateStringsArray) => {
-      const query = parts.join(" ");
-      return query.includes('FROM "ConnectionMonitoringControl"')
-        ? [{ enabled: options.enabled ?? true, intervalSeconds: 300 }]
-        : [{ id: CONNECTION_ID }];
-    }),
-    serviceConnection: {
-      update: vi.fn(async ({ data }: any) => {
-        claimToken = data.monitoringClaimToken;
-        return { id: CONNECTION_ID };
-      }),
-      updateMany: serviceUpdateMany,
-    },
-    auditEvent: { create: auditCreate },
-  };
-  prismaBase.$transaction = vi.fn(async (callback: (transaction: any) => Promise<unknown>) => callback(prismaBase));
-  const tester = {
-    test: options.testError
-      ? vi.fn(async () => { throw options.testError; })
-      : vi.fn(async () => ({ connectionId: CONNECTION_ID, status: "HEALTHY" })),
-  } as unknown as ConnectionTestService;
-  const logger = { error: vi.fn() };
+beforeAll(async () => { context = await createTestDatabase(); }, 120_000);
+afterAll(async () => { await context?.drop(); });
+beforeEach(async () => { await context.reset(); });
+
+/**
+ * Stands in for ConnectionTestService, which stamps lastHealthcheckAt as part of
+ * recording a result. Without that the connection stays due and the monitor
+ * correctly re-claims it, so a fake that skips the stamp misreports a cycle.
+ */
+function tester(behaviour?: () => Promise<void>): ConnectionTestService {
   return {
-    monitor: new ConnectionMonitorRuntime(
-      prismaBase as OrcaSynapsePrismaClient,
-      tester,
-      logger,
-      "monitor-1",
-      60_000,
-    ),
-    prismaBase,
-    tester,
-    serviceUpdateMany,
-    auditCreate,
-    claimToken: () => claimToken,
-  };
+    test: vi.fn(async (id: string) => {
+      if (behaviour) await behaviour();
+      await context.database
+        .update(serviceConnection)
+        .set({ lastHealthcheckAt: new Date(), status: "HEALTHY" })
+        .where(eq(serviceConnection.id, id));
+    }),
+  } as unknown as ConnectionTestService;
+}
+
+function monitor(service: ConnectionTestService, instanceId = randomUUID()) {
+  return new ConnectionMonitorRuntime(context.database, service, { error: vi.fn() }, instanceId, 60_000);
+}
+
+async function connection(overrides: Partial<typeof serviceConnection.$inferInsert> = {}): Promise<string> {
+  const [row] = await context.database
+    .insert(serviceConnection)
+    .values({
+      slug: `conn-${randomUUID().slice(0, 8)}`,
+      displayName: "Inference",
+      kind: "INFERENCE",
+      environment: "DEVELOPMENT",
+      enabled: true,
+      status: "NOT_TESTED",
+      baseUrl: "http://127.0.0.1:8000",
+      configuration: {},
+      ...overrides,
+    })
+    .returning({ id: serviceConnection.id });
+  return row!.id;
+}
+
+// The schema enforces a 30 second floor, so a connection is made due by
+// backdating its last healthcheck rather than by shortening the interval.
+async function enableMonitoring(intervalSeconds = 30) {
+  await context.database
+    .insert(connectionMonitoringControl)
+    .values({ id: "global", enabled: true, intervalSeconds, reason: "Enabled for acceptance." })
+    .onConflictDoUpdate({
+      target: connectionMonitoringControl.id,
+      set: { enabled: true, intervalSeconds },
+    });
+}
+
+async function leaseOf(id: string) {
+  const [row] = await context.database
+    .select({
+      token: serviceConnection.monitoringClaimToken,
+      by: serviceConnection.monitoringClaimedBy,
+      status: serviceConnection.status,
+    })
+    .from(serviceConnection)
+    .where(eq(serviceConnection.id, id));
+  return row;
 }
 
 describe("ConnectionMonitorRuntime", () => {
   it("does not claim a connection while scheduled monitoring is disabled", async () => {
-    const test = harness({ enabled: false });
+    await connection({ lastHealthcheckAt: new Date(Date.now() - 3_600_000) });
+    const service = tester();
 
-    await expect(test.monitor.processOneDueConnection()).resolves.toBe(false);
-
-    expect(test.prismaBase.$queryRaw).toHaveBeenCalledTimes(1);
-    expect(test.prismaBase.serviceConnection.update).not.toHaveBeenCalled();
-    expect(test.tester.test).not.toHaveBeenCalled();
+    expect(await monitor(service).processOneDueConnection()).toBe(false);
+    expect(service.test).not.toHaveBeenCalled();
   });
 
   it("claims one due connection and releases its exact lease after testing", async () => {
-    const test = harness();
+    const id = await connection({ lastHealthcheckAt: new Date(Date.now() - 3_600_000) });
+    await enableMonitoring();
+    const service = tester();
 
-    await expect(test.monitor.processOneDueConnection()).resolves.toBe(true);
+    expect(await monitor(service).processOneDueConnection()).toBe(true);
+    expect(service.test).toHaveBeenCalledWith(id);
 
-    expect(test.tester.test).toHaveBeenCalledWith(CONNECTION_ID);
-    expect(test.claimToken()).toMatch(/^[0-9a-f-]{36}$/i);
-    const claimQuery = test.prismaBase.$queryRaw.mock.calls[1][0].join(" ");
-    expect(claimQuery).toContain("FOR UPDATE SKIP LOCKED");
-    expect(claimQuery).toContain("INTERVAL '2 minutes'");
-    expect(test.serviceUpdateMany).toHaveBeenCalledWith({
-      where: { id: CONNECTION_ID, monitoringClaimToken: test.claimToken() },
-      data: { monitoringClaimedAt: null, monitoringClaimedBy: null, monitoringClaimToken: null },
-    });
+    const lease = await leaseOf(id);
+    expect(lease?.token).toBeNull();
+    expect(lease?.by).toBeNull();
   });
 
   it("drains multiple due connections in a bounded concurrent cycle", async () => {
-    const test = harness();
-    const processOne = vi.spyOn(test.monitor, "processOneDueConnection")
-      .mockResolvedValueOnce(true)
-      .mockResolvedValueOnce(true)
-      .mockResolvedValue(false);
+    await Promise.all([connection(), connection(), connection()]);
+    await enableMonitoring();
+    const service = tester();
 
-    await expect(test.monitor.processDueConnections(4, 2)).resolves.toBe(2);
-    expect(processOne).toHaveBeenCalledTimes(4);
+    const processed = await monitor(service).processDueConnections(10, 3);
+
+    expect(processed).toBe(3);
+    expect(service.test).toHaveBeenCalledTimes(3);
   });
 
-  it("records a sanitized degraded result and releases the lease when configuration resolution fails", async () => {
-    const test = harness({ testError: new Error("private decryption detail") });
+  it("stops at the configured limit even when more connections are due", async () => {
+    await Promise.all([connection(), connection(), connection(), connection()]);
+    await enableMonitoring();
+    const service = tester();
 
-    await expect(test.monitor.processOneDueConnection()).resolves.toBe(true);
-
-    expect(test.serviceUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: CONNECTION_ID, monitoringClaimToken: test.claimToken() },
-      data: expect.objectContaining({
-        status: "DEGRADED",
-        lastHealthcheckMessage: "Automated check could not resolve the stored connection configuration.",
-        monitoringClaimToken: null,
-      }),
-    }));
-    expect(JSON.stringify(test.serviceUpdateMany.mock.calls)).not.toContain("private decryption detail");
-    expect(test.auditCreate).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ action: "connection.monitor_failed", actorType: "SYSTEM" }),
-    }));
+    expect(await monitor(service).processDueConnections(2, 2)).toBeLessThanOrEqual(2);
   });
 
-  it("does not replace a completed diagnostic when PostgreSQL fails to release its lease", async () => {
-    const test = harness({ releaseError: new Error("database unavailable") });
+  it("records a sanitized degraded result and releases the lease when resolution fails", async () => {
+    const id = await connection({ lastHealthcheckAt: new Date(Date.now() - 3_600_000) });
+    await enableMonitoring();
+    const service = tester(async () => {
+      throw new Error("postgres://user:secret@host/db unreachable");
+    });
 
-    await expect(test.monitor.processOneDueConnection()).rejects.toThrow("database unavailable");
+    expect(await monitor(service).processOneDueConnection()).toBe(true);
 
-    expect(test.tester.test).toHaveBeenCalledWith(CONNECTION_ID);
-    expect(test.serviceUpdateMany).toHaveBeenCalledTimes(1);
-    expect(test.auditCreate).not.toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ action: "connection.monitor_failed" }),
-    }));
+    const lease = await leaseOf(id);
+    expect(lease?.status).toBe("DEGRADED");
+    expect(lease?.token).toBeNull();
+
+    const [event] = await context.database
+      .select({ action: auditEvent.action, metadata: auditEvent.metadata })
+      .from(auditEvent)
+      .where(eq(auditEvent.resourceId, id));
+    expect(event?.action).toBe("connection.monitor_failed");
+    // The recorded reason must not carry the credential from the thrown error.
+    expect(JSON.stringify(event?.metadata)).not.toContain("secret");
+  });
+
+  it("does not claim a connection whose healthcheck is still inside the interval", async () => {
+    await connection({ lastHealthcheckAt: new Date(), status: "HEALTHY" });
+    await enableMonitoring(3_600);
+
+    expect(await monitor(tester()).processOneDueConnection()).toBe(false);
+  });
+
+  it("leaves a connection claimed by another instance alone until its lease expires", async () => {
+    const id = await connection({
+      monitoringClaimedAt: new Date(),
+      monitoringClaimedBy: "other-instance",
+      monitoringClaimToken: randomUUID(),
+    });
+    await enableMonitoring();
+
+    expect(await monitor(tester()).processOneDueConnection()).toBe(false);
+    expect((await leaseOf(id))?.by).toBe("other-instance");
   });
 
   it("persists dashboard control changes and clears leases when monitoring is disabled", async () => {
-    const test = harness();
-
-    await expect(test.monitor.updateControl(
-      { id: SESSION_ID, subject: "platform-admin" },
-      { enabled: false, intervalSeconds: 900, reason: "Maintenance window" },
-    )).resolves.toMatchObject({ enabled: false, intervalSeconds: 900 });
-
-    expect(test.serviceUpdateMany).toHaveBeenCalledWith({
-      where: { monitoringClaimToken: { not: null } },
-      data: { monitoringClaimedAt: null, monitoringClaimedBy: null, monitoringClaimToken: null },
+    const id = await connection({
+      monitoringClaimedAt: new Date(),
+      monitoringClaimedBy: "stale-instance",
+      monitoringClaimToken: randomUUID(),
     });
-    expect(test.auditCreate).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ action: "connection.monitoring_disabled", actorId: SESSION_ID }),
-    }));
+    const subject = monitor(tester());
+
+    const enabled = await subject.updateControl(actor, {
+      enabled: true,
+      intervalSeconds: 120,
+      reason: "Acceptance monitoring.",
+    } as never);
+    expect(enabled).toMatchObject({ enabled: true, intervalSeconds: 120 });
+
+    await subject.updateControl(actor, {
+      enabled: false,
+      intervalSeconds: 120,
+      reason: "Paused for maintenance.",
+    } as never);
+
+    const lease = await leaseOf(id);
+    expect(lease?.token).toBeNull();
+    expect(lease?.by).toBeNull();
+    expect((await subject.getControl()).enabled).toBe(false);
+  });
+
+  it("reports a safe default control before an administrator has configured one", async () => {
+    const control = await monitor(tester()).getControl();
+
+    expect(control.enabled).toBe(false);
+    expect(control.reason).toMatch(/has not been enabled/);
   });
 });

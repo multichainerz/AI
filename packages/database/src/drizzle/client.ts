@@ -1,6 +1,11 @@
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
-import * as schema from "./schema.js";
+import * as tables from "./schema.js";
+import * as relations from "./relations.js";
+
+// Relations must be registered alongside tables or db.query.*.with is unavailable,
+// which is what replaces Prisma include.
+const schema = { ...tables, ...relations };
 
 export type OrcaSynapseDatabase = NodePgDatabase<typeof schema>;
 
