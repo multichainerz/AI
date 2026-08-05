@@ -5,6 +5,41 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.36.0 — 2026-08-05
+
+Closes the three problems the sandbox exposed after ai-v1.35.0 fixed the crash:
+uploads timed out, stranded documents never recovered, and an air-gapped
+install could never embed anything at all.
+
+- **seed the embedding model during installation.** New step 4 of 7 pulls the
+  approved BGE-M3 weights into the shared cache before services start.
+  `embedding.ts` has always claimed "an air-gapped node must be seeded at
+  install time"; nothing ever did the seeding, so an installation without
+  internet could not index a single document — a direct contradiction of an
+  on-prem product. Non-fatal when the host cannot reach the model source: the
+  installer says so and everything except retrieval still works
+- **move embedding off the upload request.** The API now extracts text
+  synchronously — fast, no model, and a malformed file is still rejected while
+  the caller is listening — then queues the text and returns `QUEUED`.
+  Previously it loaded ~2 GB of weights and embedded inline, which exceeded
+  nginx's 60-second `proxy_read_timeout`: the caller saw a 504 while the server
+  quietly finished and marked the document READY
+- **give ingestion a lease, so a crash no longer strands a document.** Agent
+  runs have had lease reclamation for releases; documents had nothing, so any
+  crash mid-ingest left the row `CONVERTING` forever with no timeout and no
+  retry. The worker now claims with a 5-minute lease, reclaims expired ones,
+  and fails permanently after three attempts rather than crash-looping on a
+  poison document
+- **drop the embedder from the API entirely.** It no longer embeds, so it no
+  longer loads the model — the two processes were each holding their own ~2 GB
+  copy of the same weights. The model cache volume is now worker-only
+- add `Document.pendingText` as the queue payload, cleared once chunks exist,
+  so the extracted text is held exactly once and no source bytes are ever
+  retained — the property the audit trail asserts
+- cover the new boundary: API tests own extraction and queueing, worker tests
+  own embedding, reclaiming a document stranded by a dead worker, refusing one
+  held by a live lease, and the retry cap
+
 ## ai-v1.35.0 — 2026-08-05
 
 **Fixes a defect that made a fresh containerised install unusable.** Found by

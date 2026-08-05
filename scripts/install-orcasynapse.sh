@@ -14,7 +14,7 @@ export ORCASYNAPSE_HTTP_PORT
 
 UI_BANNER_TAGLINE="PRIVATE AI CONTROL PLANE  /  VM1 PROVISIONING"
 UI_BANNER_ACTIVITY="Establishing secure installation context"
-TOTAL_STEPS=6
+TOTAL_STEPS=7
 
 # Restore the cursor if an animated section is interrupted, and close the log.
 trap 'ui_show_cursor; ui_log "install finished status=$?"' EXIT
@@ -132,6 +132,28 @@ migrate_legacy_installation_secret() {
     rm -f -- "${legacy_expiry}"
     success "Migrated the prior bootstrap credential to the permanent Installation Key."
   fi
+}
+
+seed_embedding_model() {
+  # Pull the approved embedding weights into the shared model cache now, rather
+  # than on the first upload.
+  #
+  # Two reasons this is not optional. An air-gapped installation has no way to
+  # fetch them later, and the code has always assumed they were "seeded at
+  # install time"; and a cold first upload otherwise downloads ~2 GB inside an
+  # HTTP request, which outlives any sane proxy timeout.
+  #
+  # Non-fatal: an installation that cannot reach the model host is still usable
+  # for everything except retrieval, and saying so beats refusing to install.
+  if docker compose run --rm --no-deps \
+       -e ORCASYNAPSE_MODEL_CACHE_DIR=/var/lib/orcasynapse/models \
+       worker node -e '
+         const { LocalBgeM3Embedder } = await import("@orcasynapse/knowledge");
+         await new LocalBgeM3Embedder().embed(["installation warm-up"]);
+       ' >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
 }
 
 start_stack() {
@@ -288,7 +310,15 @@ main() {
   run_with_progress "Build verified application images" docker compose build \
     || fail "application image build failed"
 
-  step 4 "${TOTAL_STEPS}" "Protect installation secrets"
+  step 4 "${TOTAL_STEPS}" "Seed the local embedding model"
+  if run_with_progress "Download approved embedding weights" seed_embedding_model; then
+    success "Embedding weights are cached locally; retrieval works without internet access."
+  else
+    warning "The embedding model could not be downloaded now."
+    info "Knowledge upload and retrieval stay unavailable until this host can reach the model source once."
+  fi
+
+  step 5 "${TOTAL_STEPS}" "Protect installation secrets"
   if all_secrets_exist; then
     success "Existing bootstrap material found and preserved."
   else
@@ -298,7 +328,7 @@ main() {
   protect_secret_files
   success "Secrets are host-protected and readable only by their intended container identities."
 
-  step 5 "${TOTAL_STEPS}" "Migrate PostgreSQL and start services"
+  step 6 "${TOTAL_STEPS}" "Migrate PostgreSQL and start services"
   local postgres_volume_preexisted=0
   if docker volume inspect orcasynapse_postgres_data >/dev/null 2>&1; then
     postgres_volume_preexisted=1
@@ -308,7 +338,7 @@ main() {
     || fail "control-plane readiness checks failed"
   reindex_after_libc_migration "${postgres_volume_preexisted}"
 
-  step 6 "${TOTAL_STEPS}" "Provision administrator access"
+  step 7 "${TOTAL_STEPS}" "Provision administrator access"
   provision_local_administrator
 
   local host_ip installation_key

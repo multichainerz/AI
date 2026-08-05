@@ -51,7 +51,6 @@ function manager(model: TextEmbedder = embedder()) {
   return new DrizzleDocumentManager(
     context.database,
     new DocumentVectorStore(context.database, model.model),
-    model,
   );
 }
 
@@ -66,14 +65,15 @@ function upload(fileName: string, body: string, declared = "") {
 const metadata = { classification: "CONFIDENTIAL", retentionDays: 30 } as never;
 
 describe("DrizzleDocumentManager", () => {
-  it("indexes an uploaded document locally and reports it ready", async () => {
+  it("queues an uploaded document for indexing and answers immediately", async () => {
     const stored = await manager().upload(
       owner,
       upload("policy.txt", "The approved operations threshold is ten for every request."),
       metadata,
     );
 
-    expect(stored.status).toBe("READY");
+    // The upload no longer waits for the model: it extracts, queues, returns.
+    expect(stored.status).toBe("QUEUED");
     expect(stored.mediaType).toBe("text/plain");
     expect(stored.sizeBytes).toBeGreaterThan(0);
 
@@ -81,33 +81,9 @@ describe("DrizzleDocumentManager", () => {
       .select({ action: auditEvent.action, metadata: auditEvent.metadata })
       .from(auditEvent)
       .where(eq(auditEvent.resourceId, stored.id));
-    expect(event?.action).toBe("document.indexed_locally");
+    expect(event?.action).toBe("document.queued_for_indexing");
+    // The trail still proves no source bytes were kept.
     expect(JSON.stringify(event?.metadata)).toContain("retainedSourceBytes");
-  });
-
-  it("makes an indexed document retrievable within the owner boundary only", async () => {
-    const model = embedder();
-    const store = new DocumentVectorStore(context.database, model.model);
-    const mine = await new DrizzleDocumentManager(context.database, store, model).upload(
-      owner,
-      upload("mine.txt", "Ambang batas yang disetujui adalah sepuluh."),
-      metadata,
-    );
-    expect(mine.status).toBe("READY");
-
-    const [queryVector] = await model.embed(["ambang batas"]);
-    const hits = await store.search(owner.subject, "ambang batas", queryVector!, {
-      limit: 5,
-      minimumScore: -1,
-    });
-    expect(hits.length).toBeGreaterThan(0);
-    expect(hits.every((hit) => hit.documentId === mine.id)).toBe(true);
-
-    const foreign = await store.search("user:someone-else", "ambang batas", queryVector!, {
-      limit: 5,
-      minimumScore: -1,
-    });
-    expect(foreign).toHaveLength(0);
   });
 
   it("refuses an image because retrieval indexes extracted text", async () => {
@@ -141,23 +117,6 @@ describe("DrizzleDocumentManager", () => {
     expect(stored.failureMessage).toMatch(/OCR provider/i);
   });
 
-  it("leaves no chunks behind when indexing fails", async () => {
-    const failing: TextEmbedder = {
-      model: "Xenova/bge-m3",
-      dimensions: APPROVED_EMBEDDING_DIMENSIONS,
-      embed: async () => { throw new Error("embedding runtime unavailable"); },
-    };
-    const store = new DocumentVectorStore(context.database, failing.model);
-    const stored = await new DrizzleDocumentManager(context.database, store, failing).upload(
-      owner,
-      upload("policy.txt", "A body long enough to produce at least one chunk."),
-      metadata,
-    );
-
-    expect(stored.status).toBe("FAILED");
-    expect(await store.countChunks(stored.id)).toBe(0);
-  });
-
   it("holds a delete inside the retention window unless an administrator overrides it", async () => {
     const stored = await manager().upload(owner, upload("policy.txt", "Retained body text."), metadata);
 
@@ -177,7 +136,7 @@ describe("DrizzleDocumentManager", () => {
   it("stops retrieval as soon as a document is deleted", async () => {
     const model = embedder();
     const store = new DocumentVectorStore(context.database, model.model);
-    const subject = new DrizzleDocumentManager(context.database, store, model);
+    const subject = new DrizzleDocumentManager(context.database, store);
     const stored = await subject.upload(owner, upload("policy.txt", "Threshold body text."), metadata);
 
     await subject.delete(administrator, stored.id, { force: true, reason: "Legal removal request." });
@@ -192,7 +151,10 @@ describe("DrizzleDocumentManager", () => {
 
     const metrics = await manager().metrics();
     expect(metrics.total).toBe(2);
-    expect(metrics.ready).toBe(1);
+    // The first is queued for the worker; the second failed extraction on the
+    // request, because whitespace yields no text layer at all.
+    expect(metrics.processing).toBe(1);
+    expect(metrics.ready).toBe(0);
     expect(metrics.failed).toBe(1);
     expect(metrics.retainedSourceBytes).toBe(0);
   });

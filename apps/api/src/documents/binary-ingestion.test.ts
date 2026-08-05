@@ -1,18 +1,20 @@
 import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
-import { and, eq } from "drizzle-orm";
-import { createTestDatabase, documentChunk, type TestDatabase } from "@orcasynapse/database";
+import { eq } from "drizzle-orm";
+import { createTestDatabase, document, documentChunk, type TestDatabase } from "@orcasynapse/database";
 import { APPROVED_EMBEDDING_DIMENSIONS, DocumentVectorStore, type TextEmbedder } from "@orcasynapse/knowledge";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DrizzleDocumentManager } from "./drizzle-document-manager.js";
 import { type DocumentPrincipal } from "./document-manager.js";
 
 /**
- * The binary formats the product advertises, proven end to end.
+ * The binary formats the product advertises, proven at the upload boundary.
  *
- * Every other document test uploads UTF-8 text, so the PDF path — extraction
- * through unpdf, then chunking, embedding and the pgvector write — was wired up
- * but never exercised. A dependency bump could have broken it silently.
+ * Since ai-v1.36.0 the API extracts synchronously and queues the text; the
+ * worker embeds it. These tests own the extraction half — that a real PDF is
+ * parsed, accepted and queued, and that a broken one is refused on the request
+ * rather than poisoning the queue. The embedding half lives in the worker's
+ * document-ingestor tests.
  */
 
 let context: TestDatabase;
@@ -48,7 +50,6 @@ function manager(model: TextEmbedder = embedder()) {
   return new DrizzleDocumentManager(
     context.database,
     new DocumentVectorStore(context.database, model.model),
-    model,
   );
 }
 
@@ -93,7 +94,7 @@ function upload(fileName: string, bytes: Buffer, declared: string) {
 }
 
 describe("PDF ingestion", () => {
-  it("extracts, chunks, embeds and stores a PDF without any operator step", async () => {
+  it("extracts a PDF and queues its text without blocking on the model", async () => {
     const stored = await manager().upload(
       owner,
       upload("retention.pdf", pdfBytes([
@@ -103,43 +104,29 @@ describe("PDF ingestion", () => {
       metadata,
     );
 
-    expect(stored.status).toBe("READY");
+    // QUEUED, not READY: the caller gets their answer before embedding starts.
+    expect(stored.status).toBe("QUEUED");
     expect(stored.mediaType).toBe("application/pdf");
     expect(stored.failureCode).toBeNull();
 
-    // The vectors are rows in this installation's own pgvector table.
-    const chunks = await context.database
-      .select({ content: documentChunk.content, model: documentChunk.embeddingModel, embedding: documentChunk.embedding })
+    const [queued] = await context.database
+      .select({ pendingText: document.pendingText, attempts: document.ingestionAttempts })
+      .from(document)
+      .where(eq(document.id, stored.id));
+
+    // Text from both pages survived extraction and is waiting for the worker.
+    expect(queued?.pendingText).toContain("expire after 365 days");
+    expect(queued?.pendingText).toContain("ten concurrent requests");
+    expect(queued?.attempts).toBe(0);
+
+    // Nothing is embedded yet; that is the worker's job.
+    expect(await context.database
+      .select({ id: documentChunk.id })
       .from(documentChunk)
-      .where(and(eq(documentChunk.documentId, stored.id), eq(documentChunk.ownerSubject, owner.subject)));
-
-    expect(chunks.length).toBeGreaterThan(0);
-    expect(chunks[0]?.model).toBe("Xenova/bge-m3");
-    expect(chunks[0]?.embedding).toHaveLength(APPROVED_EMBEDDING_DIMENSIONS);
-    // Text from both pages survived extraction.
-    const text = chunks.map(({ content }) => content).join("\n");
-    expect(text).toContain("expire after 365 days");
-    expect(text).toContain("ten concurrent requests");
+      .where(eq(documentChunk.documentId, stored.id))).toHaveLength(0);
   });
 
-  it("makes a PDF retrievable inside the owner boundary and invisible outside it", async () => {
-    const model = embedder();
-    const store = new DocumentVectorStore(context.database, model.model);
-    const stored = await manager(model).upload(
-      owner,
-      upload("threshold.pdf", pdfBytes(["The approved operations threshold is ten."]), "application/pdf"),
-      metadata,
-    );
-
-    const [query] = await model.embed(["threshold"]);
-    const mine = await store.search(owner.subject, "threshold", query!, { limit: 10, minimumScore: -1 });
-    expect(mine.map(({ documentId }) => documentId)).toContain(stored.id);
-
-    const theirs = await store.search("user:someone-else", "threshold", query!, { limit: 10, minimumScore: -1 });
-    expect(theirs).toHaveLength(0);
-  });
-
-  it("records a scanned PDF as failed with an OCR reason rather than indexing nothing", async () => {
+  it("records a scanned PDF as failed with an OCR reason rather than queueing nothing", async () => {
     // A page with no text operators is what a scan looks like after extraction.
     const stored = await manager().upload(
       owner,
@@ -147,6 +134,8 @@ describe("PDF ingestion", () => {
       metadata,
     );
 
+    // Extraction failures are still synchronous: the caller learns immediately
+    // rather than discovering it minutes later in a queue.
     expect(stored.status).toBe("FAILED");
     expect(stored.failureCode).toBe("OCR_PROVIDER_REQUIRED");
     expect(await context.database

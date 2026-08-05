@@ -14,10 +14,9 @@ import {
   ExtractionFailedError,
   TextLayerMissingError,
   UnsupportedDocumentError,
+  extractDocumentText,
   extractionFormatFor,
-  ingestDocument,
   type DocumentVectorStore,
-  type TextEmbedder,
 } from "@orcasynapse/knowledge";
 import {
   DocumentConflictError,
@@ -131,10 +130,17 @@ async function readBounded(
 }
 
 export class DrizzleDocumentManager implements DocumentManager {
+  /**
+   * No embedder here on purpose.
+   *
+   * The API extracts text and queues it; the worker owns embedding. Keeping a
+   * TextEmbedder on this class would load ~2 GB of weights into the API process
+   * for work it no longer does. `vectors` remains because deletion still has to
+   * remove chunks.
+   */
   constructor(
     private readonly database: OrcaSynapseDatabase,
     private readonly vectors: DocumentVectorStore,
-    private readonly embedder: TextEmbedder,
   ) {}
 
   async list(principal: DocumentPrincipal): Promise<DocumentList> {
@@ -185,64 +191,31 @@ export class DrizzleDocumentManager implements DocumentManager {
     const now = new Date();
     const retentionUntil = new Date(now.getTime() + metadata.retentionDays * 24 * 60 * 60 * 1_000);
 
-    // The metadata row is written first so a failed extraction is visible in the
-    // dashboard with its reason, rather than the upload vanishing silently.
-    const [created] = await this.database
-      .insert(document)
-      .values({
-        id,
-        ownerSubject: principal.subject,
-        fileName,
-        mediaType,
-        sizeBytes: bytes.byteLength,
-        sha256,
-        classification: metadata.classification,
-        status: "CONVERTING",
-        retentionUntil,
-      })
-      .returning();
-    if (!created) throw new DocumentStorageError("The document record could not be created.");
-
+    // Text extraction happens here because it is fast and needs no model, so a
+    // malformed file is rejected while the caller is still on the request.
+    // Embedding does not: it loads ~2 GB of weights and outlives any sane proxy
+    // timeout, so the extracted text is queued and the worker owns it from here.
+    let extracted: Awaited<ReturnType<typeof extractDocumentText>>;
     try {
-      const result = await ingestDocument(this.vectors, this.embedder, {
-        documentId: id,
-        ownerSubject: principal.subject,
-        mediaType,
-        bytes,
-      });
-
-      const [ready] = await this.database
-        .update(document)
-        .set({ status: "READY", completedAt: new Date(), failureCode: null, failureMessage: null })
-        .where(eq(document.id, id))
-        .returning();
-
-      await this.database.insert(auditEvent).values({
-        actorType: "USER",
-        actorId: principal.id,
-        action: "document.indexed_locally",
-        resourceType: "Document",
-        resourceId: id,
-        outcome: "SUCCESS",
-        metadata: {
-          fileName,
-          mediaType,
-          sizeBytes: bytes.byteLength,
-          classification: metadata.classification,
-          chunks: result.chunks,
-          embeddingModel: result.embeddingModel,
-          retainedSourceBytes: 0,
-        },
-      });
-      return summaryDto(ready ?? created);
+      extracted = await extractDocumentText({ mediaType, bytes });
     } catch (error) {
       const { code, message } = this.failure(error);
       const [failed] = await this.database
-        .update(document)
-        .set({ status: "FAILED", failureCode: code, failureMessage: message.slice(0, 500) })
-        .where(eq(document.id, id))
+        .insert(document)
+        .values({
+          id,
+          ownerSubject: principal.subject,
+          fileName,
+          mediaType,
+          sizeBytes: bytes.byteLength,
+          sha256,
+          classification: metadata.classification,
+          status: "FAILED",
+          failureCode: code,
+          failureMessage: message.slice(0, 500),
+          retentionUntil,
+        })
         .returning();
-      await this.vectors.deleteDocumentChunks(id).catch(() => undefined);
       await this.database.insert(auditEvent).values({
         actorType: "USER",
         actorId: principal.id,
@@ -253,8 +226,48 @@ export class DrizzleDocumentManager implements DocumentManager {
         metadata: { fileName, mediaType, failureCode: code, retainedSourceBytes: 0 },
       });
       if (error instanceof DocumentValidationError) throw error;
-      return summaryDto(failed ?? created);
+      if (!failed) throw new DocumentStorageError("The document record could not be created.");
+      return summaryDto(failed);
     }
+
+    // QUEUED, carrying the extracted text as the queue payload. The source
+    // bytes are discarded with this function's scope; nothing retains them.
+    const [created] = await this.database
+      .insert(document)
+      .values({
+        id,
+        ownerSubject: principal.subject,
+        fileName,
+        mediaType,
+        sizeBytes: bytes.byteLength,
+        sha256,
+        classification: metadata.classification,
+        status: "QUEUED",
+        pendingText: extracted.text,
+        retentionUntil,
+      })
+      .returning();
+    if (!created) throw new DocumentStorageError("The document record could not be created.");
+
+    await this.database.insert(auditEvent).values({
+      actorType: "USER",
+      actorId: principal.id,
+      action: "document.queued_for_indexing",
+      resourceType: "Document",
+      resourceId: id,
+      outcome: "SUCCESS",
+      metadata: {
+        fileName,
+        mediaType,
+        sizeBytes: bytes.byteLength,
+        classification: metadata.classification,
+        characters: extracted.text.length,
+        pages: extracted.pages,
+        truncated: extracted.truncated,
+        retainedSourceBytes: 0,
+      },
+    });
+    return summaryDto(created);
   }
 
   private failure(error: unknown): { code: string; message: string } {

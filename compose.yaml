@@ -43,14 +43,6 @@ services:
       context: .
       dockerfile: Dockerfile.api
     restart: unless-stopped
-    environment:
-      # The transformers cache defaults inside node_modules, which these images
-      # make unwritable by running as a non-root user. Point it at a mounted
-      # volume so the first embedding succeeds and the ~2 GB of BGE-M3 weights
-      # survive a restart instead of being re-downloaded.
-      ORCASYNAPSE_MODEL_CACHE_DIR: /var/lib/orcasynapse/models
-    volumes:
-      - model_cache:/var/lib/orcasynapse/models
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -73,10 +65,11 @@ services:
       dockerfile: Dockerfile.worker
     restart: unless-stopped
     environment:
-      # The transformers cache defaults inside node_modules, which these images
-      # make unwritable by running as a non-root user. Point it at a mounted
-      # volume so the first embedding succeeds and the ~2 GB of BGE-M3 weights
-      # survive a restart instead of being re-downloaded.
+      # Only the worker embeds. The transformers cache defaults inside
+      # node_modules, which this image makes unwritable by running as a
+      # non-root user, so it is pointed at a mounted volume: the first
+      # embedding then succeeds and the ~2 GB of BGE-M3 weights survive a
+      # restart instead of being re-downloaded.
       ORCASYNAPSE_MODEL_CACHE_DIR: /var/lib/orcasynapse/models
     volumes:
       - model_cache:/var/lib/orcasynapse/models

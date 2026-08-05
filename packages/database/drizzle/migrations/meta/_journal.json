@@ -85,6 +85,13 @@
       "when": 1785875665622,
       "tag": "0011_drop_orphan_memory_sync_status",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1785906363429,
+      "tag": "0012_document_ingestion_queue",
+      "breakpoints": true
     }
   ]
 }

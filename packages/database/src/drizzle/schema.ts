@@ -761,6 +761,14 @@ export const document = pgTable("Document", {
 	status: documentStatus().default('QUEUED').notNull(),
 	failureCode: varchar({ length: 80 }),
 	failureMessage: varchar({ length: 500 }),
+	// Extracted text awaiting embedding. The API extracts synchronously because
+	// that is fast and needs no model, then hands the text to the worker, which
+	// owns the slow part. Cleared once the chunks are written, so this is a
+	// queue payload rather than storage: no source bytes are ever retained.
+	pendingText: text(),
+	ingestionAttempts: integer().default(0).notNull(),
+	ingestionLeaseOwner: uuid(),
+	ingestionLeaseExpiresAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
 	retentionUntil: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull(),
 	completedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
 	deletedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
@@ -771,6 +779,7 @@ export const document = pgTable("Document", {
 	index("Document_retentionUntil_status_idx").using("btree", table.retentionUntil.asc().nullsLast(), table.status.asc().nullsLast()),
 	index("Document_sha256_idx").using("btree", table.sha256.asc().nullsLast()),
 	index("Document_status_createdAt_idx").using("btree", table.status.asc().nullsLast(), table.createdAt.asc().nullsLast()),
+	index("Document_ingestionLease_idx").using("btree", table.status.asc().nullsLast(), table.ingestionLeaseExpiresAt.asc().nullsLast()),
 ]);
 
 export const installationCredential = pgTable("InstallationCredential", {
