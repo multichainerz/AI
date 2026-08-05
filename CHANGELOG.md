@@ -5,6 +5,25 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.39.2 — 2026-08-05
+
+Stop reporting token usage the runtime never measured.
+
+- treat an all-zero usage block on a run that produced output as **unreported**
+  rather than as a measurement of zero. Hermes returns
+  `{input_tokens: 0, output_tokens: 0, total_tokens: 0}` for providers that do
+  not report usage — llama.cpp behind an OpenAI-compatible gateway among them —
+  and every completed run on the pilot had recorded `0|0|0` while plainly
+  producing output. A completed run always consumes input tokens, because
+  instructions are never empty, so zeroes against real output mean silence.
+- apply the same reading to the `run.completed` event, which carries both the
+  zeroed usage block and the output that proves work happened. Other event types
+  are untouched: a `tool.start` legitimately has no tokens to report.
+- show **Not reported** rather than `0 tokens` for a conversation whose messages
+  were never measured, in both the chat summary and the runtime strip. Summing
+  nulls as zeroes had put the false claim back at the aggregate after the
+  per-message values became honest.
+
 ## ai-v1.39.1 — 2026-08-05
 
 Phase 4c, second slice: the approvals surface an operator can actually use.

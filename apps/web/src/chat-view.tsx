@@ -791,10 +791,12 @@ export function ChatView({
 
   const assistantResponses = active?.messages.filter(({ role }) => role === "ASSISTANT") ?? [];
   const completedResponses = assistantResponses.filter(({ status }) => status === "COMPLETED");
-  const conversationTotalTokens = completedResponses.reduce(
-    (total, message) => total + (message.totalTokens ?? 0),
-    0,
-  );
+  // Summing nulls as zeroes would put back the claim the runtime never made:
+  // a conversation nobody measured reads as a conversation that cost nothing.
+  const measuredResponses = completedResponses.filter(({ totalTokens }) => totalTokens !== null);
+  const conversationTotalTokens = measuredResponses.length === 0
+    ? null
+    : measuredResponses.reduce((total, message) => total + (message.totalTokens ?? 0), 0);
   const profileAvailable = profiles.length > 0;
   const routeReady = administratorReadiness?.ready !== false && profileAvailable;
   const chatReady = routeReady && active?.status !== "ARCHIVED";
@@ -848,7 +850,12 @@ export function ChatView({
           </div>
           <dl>
             <div><dt>Agent</dt><dd>{active?.profileName ?? "Choose below"}</dd></div>
-            <div><dt>Usage</dt><dd>{conversationTotalTokens.toLocaleString()} tokens</dd></div>
+            <div>
+              <dt>Usage</dt>
+              <dd title={conversationTotalTokens === null ? "This runtime does not report token usage." : undefined}>
+                {conversationTotalTokens === null ? "Not reported" : `${conversationTotalTokens.toLocaleString()} tokens`}
+              </dd>
+            </div>
           </dl>
         </div>
       </aside>
@@ -869,7 +876,7 @@ export function ChatView({
           <div className="chat-runtime-summary" aria-label="Conversation runtime summary">
             <span className={working ? "generating" : routeReady ? "ready" : "degraded"}><i aria-hidden="true" />{working ? `${currentActivity ?? "Hermes is working"} · ${(streamElapsedMs / 1_000).toFixed(1)} s` : routeReady ? "Hermes ready" : "Setup required"}</span>
             <span><small>Model</small><strong>{active?.modelAlias ?? "Active default"}</strong></span>
-            <span><small>Session usage</small><strong>{conversationTotalTokens.toLocaleString()} tok</strong></span>
+            <span><small>Session usage</small><strong>{conversationTotalTokens === null ? "—" : `${conversationTotalTokens.toLocaleString()} tok`}</strong></span>
           </div>
           {active && !renaming && (
             <div className="chat-conversation-actions">

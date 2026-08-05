@@ -130,6 +130,42 @@ describe("HermesClient", () => {
     await expect(client.status(id)).resolves.toMatchObject({ id, status: "completed", output: "Result", error: null });
   });
 
+  it("reports unmeasured token usage as unknown rather than as zero", async () => {
+    // llama.cpp behind an OpenAI-compatible gateway returns no usage, and Hermes
+    // forwards {0,0,0}. Recording that verbatim tells an operator the run was
+    // free — a stronger claim than the runtime ever made.
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      run_id: "run_external_1", status: "completed", output: "Red\nBlue\nGreen",
+      usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+    }), { status: 200 }));
+    await expect(new HermesClient(resolver(), fetcher).status("run_external_1")).resolves.toMatchObject({
+      output: "Red\nBlue\nGreen",
+      inputTokens: null, outputTokens: null, reasoningTokens: null, totalTokens: null,
+    });
+  });
+
+  it("keeps genuine token counts, including a real zero alongside a measured total", async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      run_id: "run_external_1", status: "completed", output: "Result",
+      usage: { input_tokens: 120, output_tokens: 0, reasoning_tokens: 0, total_tokens: 120 },
+    }), { status: 200 }));
+    await expect(new HermesClient(resolver(), fetcher).status("run_external_1")).resolves.toMatchObject({
+      inputTokens: 120, outputTokens: 0, reasoningTokens: 0, totalTokens: 120,
+    });
+  });
+
+  it("leaves zeroes alone on a run that produced no output", async () => {
+    // Nothing was produced, so zero is a plausible measurement and this client
+    // has no standing to overrule it.
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      run_id: "run_external_1", status: "failed", error: "upstream refused",
+      usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+    }), { status: 200 }));
+    await expect(new HermesClient(resolver(), fetcher).status("run_external_1")).resolves.toMatchObject({
+      status: "failed", inputTokens: 0, outputTokens: 0, totalTokens: 0,
+    });
+  });
+
   it("submits governed credentials only in private context, never in model-visible instructions", async () => {
     const configured = resolver({
       governedMcpUrl: "https://orcasynapse.internal/api/v1/mcp/",
