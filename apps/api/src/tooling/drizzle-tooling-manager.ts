@@ -1,5 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type {
+  DecideToolsetAdmission,
   GatewayCredential,
   GovernedTool,
   ToolApproval,
@@ -7,6 +8,7 @@ import type {
   ToolGrant,
   ToolMetrics,
   ToolRuntimeControl,
+  ToolsetAdmission,
   ToolStatus,
   UpdateToolRuntimeControl,
   UpsertToolGrant,
@@ -25,6 +27,7 @@ import {
   governedTool,
   governedToolCall,
   mcpGatewayCredential,
+  runtimeToolsetAdmission,
   toolApproval,
   toolRuntimeControl,
   type OrcaSynapseDatabase,
@@ -447,11 +450,17 @@ export class DrizzleToolingManager implements ToolingManager {
   /**
    * Blocks a consequential call until a human decides, or the approval expires.
    *
-   * MCP is request/response and `maxTurns = 1` means the agent cannot come back
-   * later, so the decision has to happen while the caller waits. The wait is
-   * bounded by the administrator's own `approvalTtlMinutes`, and the approval
-   * row outlives the wait either way — an expired approval is a recorded
-   * decision, not a lost one.
+   * MCP is request/response, so the decision has to happen while the caller
+   * waits: there is no channel to hand an answer back to a call that already
+   * returned. The wait is bounded by the administrator's own
+   * `approvalTtlMinutes`, and the approval row outlives the wait either way —
+   * an expired approval is a recorded decision, not a lost one.
+   *
+   * This deliberately does not rest on `maxTurns = 1`. That value is a boundary
+   * OrcaSynapse declares about its own profiles and never transmits: the run
+   * submission carries no turn field, and Hermes exposes no turn control. What
+   * actually keeps a run single-step is that no toolset is admitted, so
+   * blocking here must hold on its own once one is.
    */
   private async awaitApproval(callId: string, ttlMinutes: number): Promise<"APPROVED" | "REJECTED" | "EXPIRED"> {
     const expiresAt = new Date(Date.now() + ttlMinutes * 60_000);
@@ -577,6 +586,79 @@ export class DrizzleToolingManager implements ToolingManager {
   async listCalls() {
     const items = await this.callQuery(this.database).orderBy(desc(governedToolCall.createdAt)).limit(300);
     return { items: items.map(callDto) };
+  }
+
+  /**
+   * Toolsets an operator has admitted, by name.
+   *
+   * Read on the run path, so it stays a single indexed lookup returning only
+   * the names the boundary needs — never the whole admission history.
+   */
+  async admittedToolsetNames(): Promise<string[]> {
+    const rows = await this.database
+      .select({ toolsetName: runtimeToolsetAdmission.toolsetName })
+      .from(runtimeToolsetAdmission)
+      .where(eq(runtimeToolsetAdmission.admitted, true));
+    return rows.map((row) => row.toolsetName);
+  }
+
+  async listToolsetAdmissions(): Promise<{ items: ToolsetAdmission[] }> {
+    const rows = await this.database
+      .select()
+      .from(runtimeToolsetAdmission)
+      .orderBy(asc(runtimeToolsetAdmission.toolsetName));
+    return {
+      items: rows.map((row) => ({
+        toolsetName: row.toolsetName,
+        admitted: row.admitted,
+        reason: row.reason,
+        admittedBy: row.admittedBy,
+        createdAt: row.createdAt.toISOString(),
+        updatedAt: row.updatedAt.toISOString(),
+      })),
+    };
+  }
+
+  async decideToolsetAdmission(
+    principal: ToolingPrincipal,
+    toolsetName: string,
+    input: DecideToolsetAdmission,
+  ): Promise<ToolsetAdmission> {
+    const row = await this.database.transaction(async (transaction) => {
+      const [saved] = await transaction
+        .insert(runtimeToolsetAdmission)
+        .values({
+          toolsetName,
+          admitted: input.admitted,
+          reason: input.reason,
+          admittedBy: principal.id,
+        })
+        .onConflictDoUpdate({
+          target: runtimeToolsetAdmission.toolsetName,
+          set: {
+            admitted: input.admitted,
+            reason: input.reason,
+            admittedBy: principal.id,
+            updatedAt: new Date(),
+          },
+        })
+        .returning();
+      if (!saved) throw new ToolingConflictError("The toolset admission could not be recorded.");
+      await transaction.insert(auditEvent).values({
+        actorType: "USER", actorId: principal.id,
+        action: input.admitted ? "tool.toolset_admitted" : "tool.toolset_revoked",
+        resourceType: "RuntimeToolsetAdmission", resourceId: saved.id, outcome: "SUCCESS",
+      });
+      return saved;
+    });
+    return {
+      toolsetName: row.toolsetName,
+      admitted: row.admitted,
+      reason: row.reason,
+      admittedBy: row.admittedBy,
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
+    };
   }
 
   async getRuntimeControl(): Promise<ToolRuntimeControl> {

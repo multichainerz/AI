@@ -5,6 +5,42 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v0.8.0 — 2026-08-05 – 2026-08-06
+
+Toolset admission, and a signed desired-state document the runtime actually
+applies.
+
+- **Toolset admission is the boundary that lets a runtime have tools at all.**
+  Hermes executes its own tools server-side, so OrcaSynapse cannot scope an
+  individual call — admission is the boundary available, which makes drift the
+  thing to fail on. A run is refused when the runtime has a toolset enabled that
+  nobody admitted, naming it. With nothing admitted this is exactly the zero-tool
+  boundary it replaces.
+- **The control plane gains a signing identity.** `ControlPlaneSigningKey` is an
+  Ed25519 identity whose private half is sealed with the same envelope scheme as
+  connection secrets. The document has to be *signed* rather than merely
+  authenticated, because a node acts on it — anything able to answer the node's
+  request could otherwise reconfigure it. It is carried base64-encoded and those
+  exact bytes are signed, so a shell verifier on the node never has to reproduce
+  a canonical JSON serialization.
+- **VM2 consumes it**, which closes the loop from an operator's decision in the
+  dashboard to what the runtime is running. The control plane's public key is
+  pinned at enrollment, and a node that never received one applies nothing rather
+  than trusting an unsigned document. An empty admission set is an instruction,
+  not an omission.
+- Admission becomes something an operator can see and decide, with drift raised
+  as an alert rather than left to be inferred from failing chats.
+- Two corrections found by watching the runtime rather than the config file:
+  dropping the `no_mcp` sentinel re-enabled every globally enabled MCP server,
+  and the sentinel alone does not govern a globally enabled toolset —
+  `agent.disabled_toolsets`, subtracted after every other rule, is what produced
+  the admitted set on the pilot.
+- A cohesion pass collapses three copies of `canonicalize` into one, refuses
+  signed bodies containing numbers (`JSON.stringify(1.0)` is `1` where jq emits
+  `1.0`), and makes the secret-envelope version guard reachable.
+- The safety argument behind consequential-call blocking is corrected: `maxTurns`
+  is a boundary OrcaSynapse declares about its own profiles and never transmits.
+
 ## v0.7.0 — 2026-08-05
 
 A readable chat transcript, administrable retrieval, and tool approvals.

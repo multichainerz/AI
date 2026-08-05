@@ -9,8 +9,8 @@ This document is the sanitized transfer context for continuing OrcaSynapse work 
 - Repository: <https://github.com/multichainerz/AI>
 - Local workspace: `C:\Users\Veros\Documents\GitHub\MPM`
 - Branch: `main`, synchronized with `origin/main`.
-- Baseline release: **v0.5.0** (this file ships in that release commit; `git log -1` gives the hash). Releases are tagged starting at `v0.4.0`.
-- Baseline verification: `pnpm verify` passes — 80 test files, 618 tests, typecheck, production build, and `drizzle-kit check` all green. `pnpm verify:postgres` passes against a pgvector server.
+- Baseline release: **v0.8.0** (this file ships in that release commit; `git log -1` gives the hash). Releases are tagged starting at `v0.4.0`.
+- Baseline verification: `pnpm verify` passes — 720 tests, typecheck, production build, and `drizzle-kit check` all green. `pnpm verify:postgres` passes against a pgvector server, and the three static guards (`sync-installer-ui.sh --check`, `test-release-consistency.sh`, `test-docker-build-closure.sh`) pass.
 
 Do not copy credentials from terminals, VM environment files, Docker secrets, PostgreSQL, or service logs into issues, commits, or future handoff documents.
 
@@ -102,27 +102,54 @@ Removed in v0.5.0. The external memory service that previously ran on VM2 silent
 
 ## Pending work
 
-**Phase 4 — the Hermes experience** (deliberately deferred for deeper review):
+**Phase 4 — the Hermes experience.** The original plan was written before the
+runtime was reachable. Driving the live Hermes replaced most of its assumptions:
 
-| Option | Size | Blocker |
-| --- | --- | --- |
-| 4a slash-command passthrough | ~1 week | needs Hermes API docs or a reachable VM2 — `HermesRunSubmission` has no command channel; OrcaSynapse knows only `/v1/capabilities`, `/v1/runs`, `/v1/toolsets` |
-| 4b multi-turn conversations | ~1 month | `maxTurns = 1` is enforced in the DB check constraint, the baseline migration, and `z.literal(1)` — lifting it is a product/safety decision |
-| 4c governed tool calling | ~1 quarter | the `ToolActionDispatch` executor was removed and must be rebuilt; `ToolApproval` remains as its substrate (0 writers / 1 reader is expected residue) |
+| Item | State |
+| --- | --- |
+| 4a slash-command passthrough | **Not buildable.** Hermes has no command channel, and the heartbeat is push-only — its response is discarded. |
+| 4b multi-turn | **Reframed.** `maxTurns = 1` is declared at five points but never transmitted: the run submission carries no turn field and Hermes exposes no turn control. Conversational multi-turn already works via `conversationHistory`. What actually keeps a run single-step is that no toolset is admitted. |
+| 4c governed tool calling | **Split.** Hermes-native approvals work end to end (`AgentRunApproval`). The OrcaSynapse MCP path is inert — see below. Toolset admission shipped in v0.8.0–1.42.0. |
 
-Smaller headroom: interaction-test coverage exists only for chat (`chat-knowledge.interaction.test.tsx`); other views are render-level.
+**The governed MCP plane is inert, and the blocker is owner scoping.**
+`assertGovernedToolBoundaryFor` requires `private_run_context:
+"orcasynapse_mcp_headers_v1"`, a contract that exists only in this repository;
+no shipped Hermes advertises it. Declaring the server in VM2's managed config
+would remove the prompt-leak risk that requirement guarded, but it does not make
+the path usable: Hermes invokes a tool as `session.call_tool(name, arguments)`
+with no session, run, or user forwarded, over a connection shared by every run
+and every person. OrcaSynapse therefore cannot scope a call to its requester,
+and owner scope is a SQL predicate that needs exactly that. Tools exposed this
+way could only be ones safe for *any* user of a given profile. Settle which
+tools those are — or obtain per-run credentials from Hermes — before building.
 
-## Local lab deployment
+**Other open items:** VM2 does not yet consume the signed desired-state document
+(`GET /api/v1/runtime-nodes/:nodeId/desired-state`, shipped v0.8.0), so
+toolset admission is enforced at the boundary but not pushed to the runtime; a
+node enrolled before v0.8.0 has no pinned control-plane key and must be
+re-enrolled to receive one. Agent memory is retrieval over stored turns rather
+than a memory layer — Hermes ships a `MemoryProvider` ABC (`on_session_end`
+fact extraction, `prefetch`, tool-shaped recall) that is the principled fix.
+Interaction-test coverage exists only for chat; other views are render-level.
 
-The development host uses WSL `Ubuntu-26.04` with LXD virtual machines `synapse-dashboard` (VM1) and `synapse-agent` (VM2). LXD addresses are dynamic:
+## Deployment estate
 
-```powershell
-wsl.exe -d Ubuntu-26.04 -u root -- /snap/bin/lxc list --format compact
-```
+The pilot runs on a bare-metal LXD host reached over its HTTPS API with a client
+certificate. Instances are on a private `10.0.0.0/20` network:
 
-After the WSL/LXD environment resumes, guest agents take time to initialize — a transient `LXD VM agent is not currently running` is not an OrcaSynapse regression. The lab's VM2 predates v0.5.0 and still carries the removed memory service; re-enroll it to match the current single-plane layout.
+| Instance | Role |
+| --- | --- |
+| `mpm-vm1` | control plane — API, dashboard, worker, PostgreSQL/pgvector |
+| `mpm-vm2` | Hermes runtime, no durable store |
+| `mpm-llm` | llama.cpp serving the chat model |
 
-Never include a node private key, installation key, administrator password, or enrollment claim in another session.
+The inference connection points at `mpm-llm` over the private network, so the
+estate has no dependency on any developer workstation. Addresses are dynamic;
+list them through the LXD API rather than assuming.
+
+A development workstation may also run PostgreSQL for the test suite. On WSL the
+localhost port relay goes stale when idle — restart the cluster immediately
+before a database-backed suite if connections are refused.
 
 ## Useful verification commands
 

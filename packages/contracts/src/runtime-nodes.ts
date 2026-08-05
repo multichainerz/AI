@@ -103,12 +103,44 @@ export const enrollHermesNodeSchema = z.object({
 export const hermesNodeEnrollmentResultSchema = z.object({
   node: hermesRuntimeNodeSchema,
   heartbeatPath: z.string().startsWith("/"),
+  // Pinned by the node at enrollment. A node that never received one must
+  // refuse to act on a desired-state document rather than trust it unverified.
+  controlPlanePublicKeyPem: z.string().min(80).max(4_096),
+  desiredStatePath: z.string().startsWith("/"),
   modelBootstrap: z.object({
     provider: z.literal("custom"),
     baseUrl: serviceEndpointSchema,
     modelAlias: z.string().min(1).max(200),
     apiKey: z.string().min(1).max(16_384),
   }).strict(),
+}).strict();
+
+/**
+ * What the control plane tells a runtime node to be.
+ *
+ * `admittedToolsets` is the whole desired state: the node enables exactly
+ * these and nothing else. An empty array is a real instruction — disable
+ * everything — not an absence of one, which is why the document is always
+ * served rather than omitted when nothing is admitted.
+ */
+export const runtimeDesiredStateDocumentSchema = z.object({
+  format: z.literal("orcasynapse-runtime-desired-state/v1"),
+  nodeId: z.uuid(),
+  generatedAt: z.iso.datetime(),
+  admittedToolsets: z.array(z.string().trim().min(1).max(120)).max(200),
+}).strict();
+
+/**
+ * The document is carried base64-encoded and signed over those exact bytes.
+ *
+ * The verifier is a shell script on the runtime host, so it must not have to
+ * reproduce a canonical JSON serialization to check the signature — it decodes
+ * what it was given, verifies, and only then parses.
+ */
+export const runtimeDesiredStateSchema = z.object({
+  documentBase64: z.string().min(1).max(65_536),
+  signature: z.string().min(1).max(512),
+  publicKeyFingerprint: z.string().min(1).max(100),
 }).strict();
 
 export const hermesNodeHeartbeatSchema = z.object({
@@ -144,6 +176,8 @@ export type ResolveHermesNodeInvitation = z.infer<typeof resolveHermesNodeInvita
 export type HermesNodeEnrollmentBundle = z.infer<typeof hermesNodeEnrollmentBundleSchema>;
 export type EnrollHermesNode = z.infer<typeof enrollHermesNodeSchema>;
 export type HermesNodeEnrollmentResult = z.infer<typeof hermesNodeEnrollmentResultSchema>;
+export type RuntimeDesiredStateDocument = z.infer<typeof runtimeDesiredStateDocumentSchema>;
+export type RuntimeDesiredState = z.infer<typeof runtimeDesiredStateSchema>;
 export type HermesNodeHeartbeat = z.infer<typeof hermesNodeHeartbeatSchema>;
 export type HermesNodeHeartbeatResult = z.infer<typeof hermesNodeHeartbeatResultSchema>;
 export type MutateHermesRuntimeNode = z.infer<typeof mutateHermesRuntimeNodeSchema>;

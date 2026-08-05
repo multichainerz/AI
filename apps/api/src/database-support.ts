@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 
 /** PostgreSQL unique-violation SQLSTATE, the driver-level equivalent of Prisma P2002. */
-export const UNIQUE_VIOLATION = "23505";
+const UNIQUE_VIOLATION = "23505";
 
 /**
  * Drizzle wraps driver failures, so the SQLSTATE can sit on the thrown error or

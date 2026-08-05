@@ -4,12 +4,15 @@ import {
   issueGatewayCredentialSchema,
   issuedGatewayCredentialSchema,
   decideToolApprovalSchema,
+  decideToolsetAdmissionSchema,
   toolApprovalListSchema,
   toolCallListSchema,
   toolGrantListSchema,
   toolGrantSchema,
   toolMetricsSchema,
   toolRuntimeControlSchema,
+  toolsetAdmissionListSchema,
+  toolsetAdmissionSchema,
   updateToolRuntimeControlSchema,
   updateToolStatusSchema,
   upsertToolGrantSchema,
@@ -268,6 +271,35 @@ export async function registerAdminToolingRoutes(app: FastifyInstance, options: 
     const manager = managerOrLocked(options, reply);
     if (!principal || !manager) return;
     return toolCallListSchema.parse(await manager.listCalls());
+  });
+
+  app.get("/toolsets", async (request, reply) => {
+    const principal = await requireAdmin(request, reply, options, "tools:read");
+    const manager = managerOrLocked(options, reply);
+    if (!principal || !manager) return;
+    return toolsetAdmissionListSchema.parse(await manager.listToolsetAdmissions());
+  });
+
+  app.put<{ Params: { toolsetName: string } }>("/toolsets/:toolsetName", async (request, reply) => {
+    const principal = await requireAdmin(request, reply, options, "tools:manage");
+    const manager = managerOrLocked(options, reply);
+    if (!principal || !manager) return;
+    const name = request.params.toolsetName.trim();
+    if (name.length < 1 || name.length > 120) {
+      return reply.code(400).send({ error: "INVALID_TOOLSET", message: "The toolset name is not a valid identifier." });
+    }
+    const input = decideToolsetAdmissionSchema.safeParse(request.body);
+    if (!input.success) {
+      return reply.code(400).send({ error: "INVALID_TOOLSET_DECISION", message: input.error.issues[0]?.message });
+    }
+    try {
+      return toolsetAdmissionSchema.parse(await manager.decideToolsetAdmission(principal, name, input.data));
+    } catch (error) {
+      if (error instanceof ToolingConflictError) {
+        return reply.code(409).send({ error: "TOOLSET_ADMISSION_CONFLICT", message: error.message });
+      }
+      throw error;
+    }
   });
 
   app.get("/runtime", async (request, reply) => {

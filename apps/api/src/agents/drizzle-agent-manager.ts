@@ -29,6 +29,7 @@ import {
   hermesRuntimeNode,
   modelDeployment,
   platformArchitectureDecision,
+  runtimeToolsetAdmission,
   serviceConnection,
   toolRuntimeControl,
   type OrcaSynapseDatabase,
@@ -705,7 +706,7 @@ export class DrizzleAgentManager implements AgentManager {
           .where(eq(toolRuntimeControl.id, "global"))
           .limit(1);
         if (toolControl?.enabled) await this.boundaryVerifier.assertGovernedToolBoundary();
-        else await this.boundaryVerifier.assertZeroToolBoundary();
+        else await this.boundaryVerifier.assertAdmittedToolBoundary(await this.admittedToolsets());
       } catch {
         await this.database.insert(auditEvent).values({
           actorType: "USER", actorId: principal.id, action: "agent.runtime_enable_denied",
@@ -756,6 +757,15 @@ export class DrizzleAgentManager implements AgentManager {
       queuedRuns: runCount(["QUEUED"]), runningRuns: runCount(["RUNNING", "WAITING_FOR_APPROVAL", "CANCEL_REQUESTED"]),
       completedRuns: runCount(["COMPLETED"]), failedRuns: runCount(["FAILED", "TIMED_OUT", "DENIED"]),
     };
+  }
+
+  /** Toolsets an operator has admitted; anything else enabled fails the check. */
+  private async admittedToolsets(): Promise<string[]> {
+    const rows = await this.database
+      .select({ toolsetName: runtimeToolsetAdmission.toolsetName })
+      .from(runtimeToolsetAdmission)
+      .where(eq(runtimeToolsetAdmission.admitted, true));
+    return rows.map((row) => row.toolsetName);
   }
 
   private async changeProfileState(

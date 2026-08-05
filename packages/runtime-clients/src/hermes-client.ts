@@ -226,6 +226,8 @@ export interface HermesRunSubmission {
   modelAlias: string;
   conversationHistory: Array<{ role: "user" | "assistant"; content: string }>;
   memorySessionKey: string;
+  /** Toolsets an operator has admitted. Anything else enabled fails the run. */
+  admittedToolsets?: readonly string[];
   governedMcp?: {
     authorization: string;
     expiresAt: Date;
@@ -252,18 +254,38 @@ export class HermesClient {
     private readonly fetcher: typeof fetch = fetch,
   ) {}
 
-  async assertZeroToolBoundary(): Promise<void> {
+  async assertAdmittedToolBoundary(admitted: Iterable<string> = []): Promise<void> {
     const connection = await this.resolver.resolveOne("HERMES");
-    await this.assertZeroToolBoundaryFor(connection);
+    await this.assertAdmittedToolBoundaryFor(connection, admitted);
   }
 
-  private async assertZeroToolBoundaryFor(connection: RuntimeConnection): Promise<void> {
+  /**
+   * Refuse the run unless every enabled toolset has been admitted by an operator.
+   *
+   * Hermes executes its own tools server-side, so OrcaSynapse cannot inspect or
+   * scope an individual call the way it does its own governed tools. Admission
+   * is the only boundary available, which makes drift the thing to fail on: a
+   * toolset enabled on the runtime that nobody admitted means the runtime is no
+   * longer the one this installation approved, and that is not a run to submit.
+   *
+   * With nothing admitted this is exactly the zero-tool boundary it replaces,
+   * so an installation that never opts in keeps the behaviour it already had.
+   */
+  private async assertAdmittedToolBoundaryFor(
+    connection: RuntimeConnection,
+    admitted: Iterable<string>,
+  ): Promise<void> {
     const { toolsets } = await this.assertBaseBoundary(connection);
-    for (const toolset of toolsets) {
-      if (toolset.enabled) {
-        throw new Error("Hermes has an enabled toolset; OrcaSynapse requires a zero-tool boundary for this run.");
-      }
-    }
+    const permitted = new Set(admitted);
+    const unadmitted = toolsets
+      .filter((toolset) => toolset.enabled && !permitted.has(toolset.name))
+      .map((toolset) => toolset.name);
+    if (unadmitted.length === 0) return;
+    throw new Error(
+      permitted.size === 0
+        ? "Hermes has an enabled toolset; OrcaSynapse requires a zero-tool boundary for this run."
+        : `Hermes has enabled toolsets this installation has not admitted: ${unadmitted.slice(0, 5).join(", ")}.`,
+    );
   }
 
   async assertGovernedToolBoundary(): Promise<void> {
@@ -399,7 +421,7 @@ export class HermesClient {
   async start(input: HermesRunSubmission): Promise<string> {
     const connection = await this.resolver.resolveOne("HERMES");
     if (input.governedMcp) await this.assertGovernedToolBoundaryFor(connection);
-    else await this.assertZeroToolBoundaryFor(connection);
+    else await this.assertAdmittedToolBoundaryFor(connection, input.admittedToolsets ?? []);
     const runsPath = stringSetting(connection, "runsPath", "/v1/runs");
     const privateContext = input.governedMcp
       ? this.privateMcpContext(connection, input.governedMcp)

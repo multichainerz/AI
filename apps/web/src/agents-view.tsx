@@ -33,7 +33,7 @@ interface AgentsViewProps {
  * Says plainly what each mode stores, because the difference between them is a
  * privacy decision an administrator is making on someone else's behalf.
  */
-export function memoryModeNote(mode: CreateAgentProfile["memoryMode"]): string {
+function memoryModeNote(mode: CreateAgentProfile["memoryMode"]): string {
   if (mode === "DOCUMENTS_ONLY") return "Nothing about the person is stored. Answers draw only on documents they own.";
   if (mode === "RECALL_ONLY") return "Reads memory this agent already holds, and writes none of its own.";
   if (mode === "LEARN_USER") return "Stores what the person says, so the agent accumulates their stable facts and preferences. The model's own replies are never stored.";

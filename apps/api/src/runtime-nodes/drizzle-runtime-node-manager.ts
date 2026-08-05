@@ -1,8 +1,10 @@
 import {
   createHash,
   createPublicKey,
+  generateKeyPairSync,
   randomBytes,
   randomUUID,
+  sign,
   verify,
 } from "node:crypto";
 import type {
@@ -16,21 +18,27 @@ import type {
   HermesRuntimeNode,
   MutateHermesRuntimeNode,
   RemoveHermesRuntimeNode,
+  RuntimeDesiredState,
+  RuntimeDesiredStateDocument,
 } from "@orcasynapse/contracts";
 import {
   auditEvent,
   configurationRevision,
+  controlPlaneSigningKey,
   hermesNodeEnrollment,
   hermesNodeRequestNonce,
   hermesRuntimeNode,
   localAdministrator,
   platformArchitectureDecision,
+  runtimeToolsetAdmission,
   secretRecord,
   serviceConnection,
   type OrcaSynapseDatabase,
 } from "@orcasynapse/database";
 import { and, asc, count, eq, gt, inArray, isNotNull, isNull, lt, ne, or } from "drizzle-orm";
 import { EnvelopeEncryption } from "@orcasynapse/security";
+import { assertSignableBody, canonicalize } from "../canonical-json.js";
+import { encryptedSecretData, sealedColumns, storedEnvelope } from "../secret-envelope.js";
 import { advisoryLock, increment, isUniqueViolation } from "../database-support.js";
 import type { AdminPrincipal } from "../auth/admin-session.js";
 import type { ConnectionTestService } from "../connections/diagnostics/connection-test-service.js";
@@ -48,6 +56,8 @@ const SIGNATURE_CLOCK_SKEW_MS = 5 * 60 * 1_000;
 const NONCE_RETENTION_MS = 24 * 60 * 60 * 1_000;
 const NODE_STALE_AFTER_MS = 180_000;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+/** Envelope AAD for the control plane's own signing key. */
+const CONTROL_PLANE_KEY_CONTEXT = "control-plane:signing-key";
 
 type StoredNode = {
   id: string;
@@ -93,13 +103,6 @@ export function seedableInferenceModelAlias(connections: readonly InferenceSeedC
     : null;
 }
 
-function canonicalize(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalize).join(",")}]`;
-  const record = value as Record<string, unknown>;
-  return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${canonicalize(record[key])}`).join(",")}}`;
-}
-
 function digest(value: string): Uint8Array<ArrayBuffer> {
   const bytes = createHash("sha256").update(value, "utf8").digest();
   const result = new Uint8Array(bytes.length);
@@ -109,26 +112,6 @@ function digest(value: string): Uint8Array<ArrayBuffer> {
 
 function checksum(value: unknown): string {
   return createHash("sha256").update(canonicalize(value)).digest("hex");
-}
-
-function encryptedSecretData(connectionId: string, fieldName: string, value: string, encryption: EnvelopeEncryption) {
-  const envelope = encryption.encrypt(value, `${connectionId}:${fieldName}`);
-  const databaseBytes = (bytes: Uint8Array): Uint8Array<ArrayBuffer> => {
-    const copy = new Uint8Array(bytes.length);
-    copy.set(bytes);
-    return copy;
-  };
-  return {
-    fieldName,
-    encryptedValue: databaseBytes(envelope.encryptedValue),
-    valueNonce: databaseBytes(envelope.valueNonce),
-    valueAuthTag: databaseBytes(envelope.valueAuthTag),
-    wrappedDataKey: databaseBytes(envelope.wrappedDataKey),
-    keyNonce: databaseBytes(envelope.keyNonce),
-    keyAuthTag: databaseBytes(envelope.keyAuthTag),
-    encryptionVersion: envelope.encryptionVersion,
-    masterKeyVersion: envelope.masterKeyVersion,
-  };
 }
 
 export function inferenceGatewayBaseUrl(controlPlaneUrl: string): string {
@@ -219,6 +202,9 @@ export function verifyNodeRequestSignature(
   if (Number.isNaN(requestTime.getTime()) || Math.abs(now - requestTime.getTime()) > SIGNATURE_CLOCK_SKEW_MS) {
     throw new RuntimeNodeAuthenticationError("The runtime node request timestamp is outside the allowed window.");
   }
+  // Fails loudly if a body was added that two canonical-JSON implementations
+  // would serialize differently, rather than producing a signature mismatch.
+  assertSignableBody(body);
   const signatureBytes = Buffer.from(signature, "base64url");
   const valid = signatureBytes.length === 64 && verify(
     null,
@@ -626,9 +612,12 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
     if (enrolled.node.serviceConnectionId && this.connectionTester) {
       await this.connectionTester.test(enrolled.node.serviceConnectionId).catch(() => undefined);
     }
+    const { publicKeyPem } = await this.controlPlanePublicKey();
     return {
       node: summarize(enrolled.node as StoredNode),
       heartbeatPath: `/api/v1/runtime-nodes/${enrolled.node.id}/heartbeat`,
+      controlPlanePublicKeyPem: publicKeyPem,
+      desiredStatePath: `/api/v1/runtime-nodes/${enrolled.node.id}/desired-state`,
       modelBootstrap: enrolled.modelBootstrap,
     };
   }
@@ -666,6 +655,79 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
       .where(lt(hermesNodeRequestNonce.receivedAt, new Date(Date.now() - NONCE_RETENTION_MS)))
       .catch(() => undefined);
     return node;
+  }
+
+  /**
+   * The control plane's signing identity, generated once on first use.
+   *
+   * Created lazily rather than at install time so an existing installation
+   * gains one on upgrade without a migration that has to invent key material.
+   * The insert is conflict-tolerant because two API instances can race here,
+   * and both must end up agreeing on a single key.
+   */
+  private async signingKey(): Promise<{ privateKeyPem: string; publicKeyPem: string; fingerprint: string }> {
+    const [existing] = await this.database.select().from(controlPlaneSigningKey).limit(1);
+    if (existing) {
+      return {
+        privateKeyPem: this.encryption.decrypt(storedEnvelope(existing), CONTROL_PLANE_KEY_CONTEXT),
+        publicKeyPem: existing.publicKeyPem,
+        fingerprint: existing.publicKeyFingerprint,
+      };
+    }
+    const generated = generateKeyPairSync("ed25519");
+    const privateKeyPem = generated.privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+    const publicKeyPem = generated.publicKey.export({ type: "spki", format: "pem" }).toString();
+    const fingerprint = createHash("sha256")
+      .update(generated.publicKey.export({ type: "spki", format: "der" }))
+      .digest("hex");
+    const sealed = sealedColumns(this.encryption.encrypt(privateKeyPem, CONTROL_PLANE_KEY_CONTEXT));
+    await this.database
+      .insert(controlPlaneSigningKey)
+      .values({ id: "primary", publicKeyPem, publicKeyFingerprint: fingerprint, ...sealed })
+      .onConflictDoNothing();
+    // Re-read rather than trusting the generated pair: if another instance won
+    // the race, its key is the one nodes will have pinned.
+    const [stored] = await this.database.select().from(controlPlaneSigningKey).limit(1);
+    if (!stored) throw new Error("The control-plane signing key could not be established.");
+    return {
+      privateKeyPem: this.encryption.decrypt(storedEnvelope(stored), CONTROL_PLANE_KEY_CONTEXT),
+      publicKeyPem: stored.publicKeyPem,
+      fingerprint: stored.publicKeyFingerprint,
+    };
+  }
+
+  async controlPlanePublicKey(): Promise<{ publicKeyPem: string; fingerprint: string }> {
+    const { publicKeyPem, fingerprint } = await this.signingKey();
+    return { publicKeyPem, fingerprint };
+  }
+
+  /**
+   * What this node should be running, signed so the node can trust it.
+   *
+   * Authenticated by the node's own signature, exactly like the heartbeat, so
+   * one node cannot read another's desired state. A revoked or suspended node
+   * is refused by `authenticate` before any document is produced.
+   */
+  async desiredState(nodeId: string, headers: NodeSignatureHeaders): Promise<RuntimeDesiredState> {
+    await this.authenticate(nodeId, headers, null);
+    const admissions = await this.database
+      .select({ toolsetName: runtimeToolsetAdmission.toolsetName })
+      .from(runtimeToolsetAdmission)
+      .where(eq(runtimeToolsetAdmission.admitted, true))
+      .orderBy(asc(runtimeToolsetAdmission.toolsetName));
+    const document: RuntimeDesiredStateDocument = {
+      format: "orcasynapse-runtime-desired-state/v1",
+      nodeId,
+      generatedAt: new Date().toISOString(),
+      admittedToolsets: admissions.map((row) => row.toolsetName),
+    };
+    const { privateKeyPem, fingerprint } = await this.signingKey();
+    const bytes = Buffer.from(JSON.stringify(document), "utf8");
+    return {
+      documentBase64: bytes.toString("base64"),
+      signature: sign(null, bytes, privateKeyPem).toString("base64"),
+      publicKeyFingerprint: fingerprint,
+    };
   }
 
   async heartbeat(nodeId: string, headers: NodeSignatureHeaders, input: HermesNodeHeartbeat): Promise<HermesNodeHeartbeatResult> {

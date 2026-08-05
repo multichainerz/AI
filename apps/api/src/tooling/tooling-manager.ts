@@ -1,4 +1,5 @@
 import type {
+  DecideToolsetAdmission,
   ToolApproval,
   GatewayCredentialList,
   GovernedToolList,
@@ -8,6 +9,7 @@ import type {
   ToolGrantList,
   ToolMetrics,
   ToolRuntimeControl,
+  ToolsetAdmission,
   ToolStatus,
   UpdateToolRuntimeControl,
   UpsertToolGrant,
@@ -52,6 +54,13 @@ export interface ToolingManager {
   listPendingApprovals(): Promise<{ items: ToolApproval[] }>;
   /** Records a human decision on a pending consequential tool call. */
   decideApproval(principal: ToolingPrincipal, approvalId: string, approve: boolean, reason: string): Promise<void>;
+  admittedToolsetNames(): Promise<string[]>;
+  listToolsetAdmissions(): Promise<{ items: ToolsetAdmission[] }>;
+  decideToolsetAdmission(
+    principal: ToolingPrincipal,
+    toolsetName: string,
+    input: DecideToolsetAdmission,
+  ): Promise<ToolsetAdmission>;
   getRuntimeControl(): Promise<ToolRuntimeControl>;
   updateRuntimeControl(principal: ToolingPrincipal, input: UpdateToolRuntimeControl): Promise<ToolRuntimeControl>;
   metrics(): Promise<ToolMetrics>;

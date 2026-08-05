@@ -3,6 +3,7 @@ import {
   type AdministratorSession,
   type HermesRuntimeNode,
 } from "@orcasynapse/contracts";
+import { generateKeyPairSync } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.js";
 import { ADMIN_SESSION_COOKIE, type AdminSessionManager } from "../auth/admin-session.js";
@@ -12,6 +13,10 @@ const TOKEN = "n".repeat(43);
 const ADMIN_ID = "ac369dab-cad5-4fd9-83ed-b4fbf528028a";
 const NODE_ID = "9de260d7-bc51-4558-9d20-06916d393072";
 const NOW = "2026-07-30T00:00:00.000Z";
+// Generated rather than hard-coded: the contract requires a real Ed25519 SPKI
+// PEM, and a literal would silently rot if the key format ever changed.
+const CONTROL_PLANE_PUBLIC_KEY = generateKeyPairSync("ed25519")
+  .publicKey.export({ type: "spki", format: "pem" }).toString();
 
 const session: AdministratorSession = {
   id: ADMIN_ID, subject: "runtime-admin", role: "PLATFORM_ADMIN", scopes: [...ADMIN_SCOPES],
@@ -81,9 +86,19 @@ function manager(): HermesRuntimeNodeManager {
     enroll: vi.fn(async () => ({
       node: { ...node, hostname: "hermes-01.internal", enrolledAt: NOW, identityFingerprint: "a".repeat(64) },
       heartbeatPath: `/api/v1/runtime-nodes/${NODE_ID}/heartbeat`,
+      controlPlanePublicKeyPem: CONTROL_PLANE_PUBLIC_KEY,
+      desiredStatePath: `/api/v1/runtime-nodes/${NODE_ID}/desired-state`,
       modelBootstrap: { provider: "custom" as const, baseUrl: "https://orcasynapse.internal/internal/v1", modelAlias: "hermes-agent", apiKey: "g".repeat(64) },
     })),
     heartbeat: vi.fn(async () => ({ accepted: true as const, serverTime: NOW })),
+    desiredState: vi.fn(async () => ({
+      documentBase64: Buffer.from(JSON.stringify({
+        format: "orcasynapse-runtime-desired-state/v1", nodeId: NODE_ID,
+        generatedAt: NOW, admittedToolsets: ["clarify"],
+      }), "utf8").toString("base64"),
+      signature: "c".repeat(86),
+      publicKeyFingerprint: "d".repeat(64),
+    })),
     mutate: vi.fn(async () => ({ ...node, status: "DRAINING" as const, revision: 1 })),
     remove: vi.fn(async () => undefined),
   };

@@ -1949,3 +1949,16 @@ button:disabled { opacity: .48; cursor: not-allowed; }
 .tooling-approval small { display: block; margin-top: 3px; color: var(--text-faint); font-size: 9px; }
 .tooling-approval code { display: block; margin-top: 6px; overflow: hidden; color: #c8b98f; font: 9px var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
 .tooling-approval-actions { display: flex; gap: 7px; }
+
+/* Admission is a list of decisions, not a table of data: each row is one
+   toolset an operator either permits or does not. Drift is coloured because a
+   runtime running something unadmitted is refusing every run. */
+.tooling-toolsets { display: grid; gap: 12px; }
+.tooling-toolset-list { display: grid; }
+.tooling-toolset-list > article { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 12px 16px; border-bottom: 1px solid var(--border-soft); }
+.tooling-toolset-list > article:last-child { border-bottom: 0; }
+.tooling-toolset-list > article.drifted { border-left: 2px solid var(--warn); background: var(--surface-muted); }
+.tooling-toolset-list strong { font-size: 12px; }
+.tooling-toolset-list small { display: block; margin-top: 3px; overflow: hidden; color: var(--text-faint); font-size: 9px; text-overflow: ellipsis; }
+.tooling-toolset-list button { min-width: 84px; }
+.tooling-empty { color: var(--text-faint); font-size: 11px; }

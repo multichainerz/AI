@@ -40,7 +40,7 @@ const blankPolicy: CreateMemoryPolicy = {
  * Explains the ceiling in terms of the effect it has, not the enum value, so an
  * operator can tell at a glance whether anything is being stored about anyone.
  */
-export function ceilingSummary(mode: CreateMemoryPolicy["maximumCaptureMode"]): string {
+function ceilingSummary(mode: CreateMemoryPolicy["maximumCaptureMode"]): string {
   if (mode === "DOCUMENTS_ONLY") return "No agent stores anything about a person, whatever its profile asks for.";
   if (mode === "RECALL_ONLY") return "Agents may use memory that already exists, but none may add to it.";
   if (mode === "LEARN_USER") return "Agents may store what a person says. Model output is never retained.";

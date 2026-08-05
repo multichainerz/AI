@@ -122,3 +122,43 @@ export class EnvelopeEncryption {
     }
   }
 }
+
+export interface SealedRow {
+  encryptedValue: Uint8Array;
+  valueNonce: Uint8Array;
+  valueAuthTag: Uint8Array;
+  wrappedDataKey: Uint8Array;
+  keyNonce: Uint8Array;
+  keyAuthTag: Uint8Array;
+  encryptionVersion: number;
+  masterKeyVersion: number;
+}
+
+/**
+ * A stored row as an envelope, refusing a format this build cannot decrypt.
+ *
+ * Every read site used to build this object inline with `encryptionVersion: 1`
+ * hardcoded, which meant `decrypt`'s version guard could never fire: a row
+ * written under a future format would be presented as version 1 and fail later
+ * as a confusing authentication-tag error. The narrowing from the row's plain
+ * number to the literal `1` has to happen somewhere, and doing it silently is
+ * what made the guard unreachable.
+ */
+export function storedEnvelope(row: SealedRow): EncryptedEnvelope {
+  if (row.encryptionVersion !== 1) {
+    throw new Error(
+      `This build cannot read secret envelope version ${row.encryptionVersion}; it supports version 1.`,
+    );
+  }
+  return {
+    algorithm: "AES-256-GCM",
+    encryptionVersion: 1,
+    masterKeyVersion: row.masterKeyVersion,
+    encryptedValue: row.encryptedValue,
+    valueNonce: row.valueNonce,
+    valueAuthTag: row.valueAuthTag,
+    wrappedDataKey: row.wrappedDataKey,
+    keyNonce: row.keyNonce,
+    keyAuthTag: row.keyAuthTag,
+  };
+}

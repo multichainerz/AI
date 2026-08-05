@@ -86,6 +86,8 @@ import {
   gatewayCredentialListSchema,
   issuedGatewayCredentialSchema,
   toolApprovalListSchema,
+  toolsetAdmissionListSchema,
+  toolsetAdmissionSchema,
   toolCallListSchema,
   toolRuntimeControlSchema,
   toolMetricsSchema,
@@ -96,6 +98,8 @@ import {
   type IssuedGatewayCredential,
   type ToolApproval,
   type ToolApprovalList,
+  type ToolsetAdmission,
+  type ToolsetAdmissionList,
   type ToolCallList,
   type ToolRuntimeControl,
   type ToolMetrics,
@@ -992,26 +996,6 @@ export async function updateArchitectureDecision(
   return architectureDecisionSchema.parse(await parsedResponse(response));
 }
 
-export async function updateOnboardingComponent(
-  key: string,
-  input: UpdateComponentCompatibility,
-): Promise<OnboardingSnapshot> {
-  const response = await fetch(`/api/v1/admin/onboarding/components/${encodeURIComponent(key)}`, {
-    method: "PATCH", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
-  });
-  return onboardingSnapshotSchema.parse(await parsedResponse(response));
-}
-
-export async function updateOnboardingStep(
-  key: string,
-  input: UpdateOnboardingStep,
-): Promise<OnboardingSnapshot> {
-  const response = await fetch(`/api/v1/admin/onboarding/steps/${encodeURIComponent(key)}`, {
-    method: "PATCH", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
-  });
-  return onboardingSnapshotSchema.parse(await parsedResponse(response));
-}
-
 export async function completeOnboarding(input: CompleteOnboarding): Promise<OnboardingSnapshot> {
   const response = await fetch("/api/v1/admin/onboarding/complete", {
     method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
@@ -1118,6 +1102,29 @@ export async function deleteAgentMemoryRecord(id: string, reason: string): Promi
  * know about me" without needing an administrator or a new enterprise scope.
  */
 /** What the enrolled Hermes runtime reports it can do. Discovery only. */
+/** Which runtime toolsets this installation permits. Empty means none. */
+export async function getToolsetAdmissions(): Promise<ToolsetAdmissionList> {
+  const response = await fetch("/api/v1/admin/tooling/toolsets", { credentials: "same-origin" });
+  return toolsetAdmissionListSchema.parse(await parsedResponse(response));
+}
+
+export async function decideToolsetAdmission(
+  toolsetName: string,
+  admitted: boolean,
+  reason: string,
+): Promise<ToolsetAdmission> {
+  const response = await fetch(
+    `/api/v1/admin/tooling/toolsets/${encodeURIComponent(toolsetName)}`,
+    {
+      method: "PUT",
+      headers: adminHeaders(),
+      credentials: "same-origin",
+      body: JSON.stringify({ admitted, reason }),
+    },
+  );
+  return toolsetAdmissionSchema.parse(await parsedResponse(response));
+}
+
 export async function getRuntimeCatalogue(): Promise<HermesRuntimeCatalogue> {
   const response = await fetch("/api/v1/admin/agents/runtime/catalogue", { credentials: "same-origin" });
   return hermesRuntimeCatalogueSchema.parse(await parsedResponse(response));

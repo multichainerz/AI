@@ -9,6 +9,7 @@ import type {
   HermesRuntimeNode,
   MutateHermesRuntimeNode,
   RemoveHermesRuntimeNode,
+  RuntimeDesiredState,
 } from "@orcasynapse/contracts";
 import type { AdminPrincipal } from "../auth/admin-session.js";
 
@@ -31,6 +32,7 @@ export interface HermesRuntimeNodeManager {
   createInvitation(principal: AdminPrincipal, input: CreateHermesNodeInvitation): Promise<HermesNodeInvitation>;
   resolveInvitation(token: string): Promise<HermesNodeEnrollmentBundle>;
   enroll(input: EnrollHermesNode, sourceIp?: string): Promise<HermesNodeEnrollmentResult>;
+  desiredState(nodeId: string, headers: NodeSignatureHeaders): Promise<RuntimeDesiredState>;
   heartbeat(
     nodeId: string,
     headers: NodeSignatureHeaders,

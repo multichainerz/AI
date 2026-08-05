@@ -145,6 +145,31 @@ export const updateToolRuntimeControlSchema = z.object({
   approvalTtlMinutes: z.number().int().min(5).max(1_440),
 }).strict();
 
+/**
+ * Which Hermes toolsets this installation permits the runtime to enable.
+ *
+ * The runtime executes its own tools server-side, so OrcaSynapse cannot mediate
+ * each call the way it does its own governed tools. Admission is therefore the
+ * boundary: a toolset the operator has not admitted must never be enabled, and
+ * a run submitted against a runtime with an unadmitted toolset enabled is
+ * refused. Nothing is admitted by default, so a fresh install is tool-free.
+ */
+export const toolsetAdmissionSchema = z.object({
+  toolsetName: z.string().trim().min(1).max(120),
+  admitted: z.boolean(),
+  reason: z.string().max(500).nullable(),
+  admittedBy: z.uuid().nullable(),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+});
+
+export const toolsetAdmissionListSchema = z.object({ items: z.array(toolsetAdmissionSchema) });
+
+export const decideToolsetAdmissionSchema = z.object({
+  admitted: z.boolean(),
+  reason: z.string().trim().min(3).max(500),
+}).strict();
+
 export const toolMetricsSchema = z.object({
   generatedAt: z.iso.datetime(),
   activeTools: z.number().int().nonnegative(),
@@ -177,4 +202,7 @@ export type ToolApprovalList = z.infer<typeof toolApprovalListSchema>;
 export type DecideToolApproval = z.infer<typeof decideToolApprovalSchema>;
 export type ToolRuntimeControl = z.infer<typeof toolRuntimeControlSchema>;
 export type UpdateToolRuntimeControl = z.infer<typeof updateToolRuntimeControlSchema>;
+export type ToolsetAdmission = z.infer<typeof toolsetAdmissionSchema>;
+export type ToolsetAdmissionList = z.infer<typeof toolsetAdmissionListSchema>;
+export type DecideToolsetAdmission = z.infer<typeof decideToolsetAdmissionSchema>;
 export type ToolMetrics = z.infer<typeof toolMetricsSchema>;
