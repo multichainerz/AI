@@ -1,4 +1,5 @@
 import type {
+  HermesRuntimeCatalogue,
   AgentCapability,
   AgentMemoryMode,
   AgentMetrics,
@@ -664,6 +665,18 @@ export class DrizzleAgentManager implements AgentManager {
       resourceType: "AgentRun", resourceId: runId, outcome: "SUCCESS",
     });
     return this.getRun(principal, runId, includeAll);
+  }
+
+  async runtimeCatalogue(): Promise<HermesRuntimeCatalogue> {
+    if (!this.boundaryVerifier) {
+      return { toolsets: [], skills: [], enabledToolsets: 0 };
+    }
+    const { toolsets, skills } = await this.boundaryVerifier.catalogue();
+    return {
+      toolsets,
+      skills,
+      enabledToolsets: toolsets.filter((toolset) => toolset.enabled).length,
+    };
   }
 
   async getRuntimeControl(): Promise<AgentRuntimeControl> {

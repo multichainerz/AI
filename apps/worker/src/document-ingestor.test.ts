@@ -204,3 +204,23 @@ describe("DocumentIngestor", () => {
     expect(serialized).not.toContain("approved operations threshold");
   });
 });
+
+describe("documents stranded before the ingestion queue existed", () => {
+  it("fails a CONVERTING document that has no queue payload at all", async () => {
+    // Anything uploaded before v0.6.0 sits in CONVERTING with pendingText
+    // NULL, because the API used to embed inline and never wrote one. Such a
+    // row must still reach a terminal state rather than pending forever.
+    const id = await queued("placeholder", {
+      status: "CONVERTING",
+      pendingText: null,
+      ingestionLeaseExpiresAt: null,
+    });
+
+    const outcome = await ingestor().processNext(WORKER);
+
+    expect(outcome).toMatchObject({ documentId: id, status: "FAILED" });
+    const after = await stateOf(id);
+    expect(after.status).toBe("FAILED");
+    expect(after.failureCode).toBe("EXTRACTION_FAILED");
+  });
+});

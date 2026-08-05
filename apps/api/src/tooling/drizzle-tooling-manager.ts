@@ -45,6 +45,19 @@ import {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const GATEWAY_TOKEN = /^orcasynapse_mcp_([A-Za-z0-9_-]{43})$/;
 const RUN_AUTHORIZATION = /^([0-9a-f-]{36})\.([A-Za-z0-9_-]{43})$/i;
+/** How often a waiting consequential call re-checks for a human decision. */
+const APPROVAL_POLL_MS = 1_000;
+
+/**
+ * The longest a tool call will hold its caller open waiting for a human.
+ *
+ * approvalTtlMinutes may be set as high as 1440, which is a sensible lifetime
+ * for the decision but an absurd one for an HTTP request. When this cap is hit
+ * the approval is expired too, so the record never claims a decision was
+ * pending on a call that already failed.
+ */
+const MAXIMUM_INLINE_WAIT_MS = 5 * 60_000;
+
 const SUPPORTED_TOOL_HANDLERS = ["builtin.document_metadata_read"] as const;
 
 /** The database handle or a transaction opened from it. */
@@ -372,9 +385,10 @@ export class DrizzleToolingManager implements ToolingManager {
     if (!control?.enabled) throw new ToolingDeniedError(control?.reason ?? "The tool gateway is disabled fail-closed.");
     this.assertRunIsExecutable(run, capability, "execution");
     if (!tool || tool.status !== "ACTIVE") throw new ToolingDeniedError("The requested tool is not active.");
-    if (tool.risk === "CONSEQUENTIAL") {
-      throw new ToolingDeniedError("No consequential tool handler is installed in this release.");
-    }
+    // CONSEQUENTIAL tools are no longer refused outright; they request a human
+    // decision. Everything below this point still applies to them — the grant,
+    // the requester check, and idempotency — because an approval must never be
+    // able to widen what the grant already allows.
     const grants = await this.enabledGrantsForVersion(run!.profileVersionId);
     const grant = grants.find((item) => item.toolId === tool.id);
     if (!grant) throw new ToolingDeniedError("The active agent version does not grant this tool.");
@@ -392,7 +406,9 @@ export class DrizzleToolingManager implements ToolingManager {
         .insert(governedToolCall)
         .values({
           runId, toolId: tool.id, grantId: grant.id, requestId: invocation.requestId,
-          status: "EXECUTING", arguments: sanitizedArguments, startedAt: new Date(),
+          status: tool.risk === "CONSEQUENTIAL" ? "APPROVAL_PENDING" : "EXECUTING",
+          arguments: sanitizedArguments,
+          ...(tool.risk === "CONSEQUENTIAL" ? {} : { startedAt: new Date() }),
         })
         .returning({ id: governedToolCall.id });
       if (!created) throw new ToolingConflictError("The tool call could not be recorded.");
@@ -402,6 +418,21 @@ export class DrizzleToolingManager implements ToolingManager {
       if (raced) return raced;
       throw cause;
     }
+    if (tool.risk === "CONSEQUENTIAL") {
+      const decision = await this.awaitApproval(callId, control.approvalTtlMinutes ?? 15);
+      if (decision !== "APPROVED") {
+        const reason = decision === "REJECTED"
+          ? "A human rejected this tool call."
+          : "No human decision was recorded before the approval expired.";
+        await this.failCall(callId, `TOOL_APPROVAL_${decision}`, reason);
+        return { callId, status: "FAILED", data: { message: reason }, isError: true };
+      }
+      await this.database
+        .update(governedToolCall)
+        .set({ status: "EXECUTING", startedAt: new Date() })
+        .where(eq(governedToolCall.id, callId));
+    }
+
     try {
       const data = await this.executeRead(tool.handlerKey, run!.ownerSubject, documentId);
       await this.completeCall(callId, data);
@@ -411,6 +442,127 @@ export class DrizzleToolingManager implements ToolingManager {
       await this.failCall(callId, "TOOL_EXECUTION_FAILED", message);
       return { callId, status: "FAILED", data: { message }, isError: true };
     }
+  }
+
+  /**
+   * Blocks a consequential call until a human decides, or the approval expires.
+   *
+   * MCP is request/response and `maxTurns = 1` means the agent cannot come back
+   * later, so the decision has to happen while the caller waits. The wait is
+   * bounded by the administrator's own `approvalTtlMinutes`, and the approval
+   * row outlives the wait either way — an expired approval is a recorded
+   * decision, not a lost one.
+   */
+  private async awaitApproval(callId: string, ttlMinutes: number): Promise<"APPROVED" | "REJECTED" | "EXPIRED"> {
+    const expiresAt = new Date(Date.now() + ttlMinutes * 60_000);
+    await this.database.insert(toolApproval).values({ callId, status: "PENDING", expiresAt });
+    const giveUpAt = Math.min(expiresAt.getTime(), Date.now() + MAXIMUM_INLINE_WAIT_MS);
+
+    while (Date.now() < giveUpAt) {
+      const [row] = await this.database
+        .select({ status: toolApproval.status })
+        .from(toolApproval)
+        .where(eq(toolApproval.callId, callId))
+        .limit(1);
+      if (row && row.status !== "PENDING") {
+        return row.status === "APPROVED" ? "APPROVED" : "REJECTED";
+      }
+      await new Promise((resolve) => setTimeout(resolve, APPROVAL_POLL_MS));
+    }
+
+    // Expire it durably, so the record reflects why nothing ran.
+    await this.database
+      .update(toolApproval)
+      .set({ status: "EXPIRED", decidedAt: new Date() })
+      .where(and(eq(toolApproval.callId, callId), eq(toolApproval.status, "PENDING")));
+    return "EXPIRED";
+  }
+
+  /** Approvals still awaiting a human, newest first. */
+  async listPendingApprovals(): Promise<{ items: ToolApproval[] }> {
+    const rows = await this.database
+      .select({
+        approval: toolApproval,
+        call: governedToolCall,
+        toolSlug: governedTool.slug,
+        toolName: governedTool.displayName,
+        profileSlug: agentProfile.slug,
+        requestedBy: agentRun.requestedBy,
+        ownerSubject: agentRun.ownerSubject,
+      })
+      .from(toolApproval)
+      .innerJoin(governedToolCall, eq(toolApproval.callId, governedToolCall.id))
+      .innerJoin(governedTool, eq(governedToolCall.toolId, governedTool.id))
+      .innerJoin(agentRun, eq(governedToolCall.runId, agentRun.id))
+      .innerJoin(agentProfile, eq(agentRun.profileId, agentProfile.id))
+      .where(and(eq(toolApproval.status, "PENDING"), gt(toolApproval.expiresAt, new Date())))
+      .orderBy(desc(toolApproval.createdAt))
+      .limit(100);
+
+    return {
+      items: rows.map(({ approval, call, toolSlug, toolName, profileSlug, ownerSubject }) => ({
+        id: approval.id,
+        callId: approval.callId,
+        runId: call.runId,
+        profileSlug,
+        toolSlug,
+        toolName,
+        requestedBySubject: ownerSubject,
+        arguments: call.arguments as Record<string, unknown>,
+        status: approval.status,
+        expiresAt: approval.expiresAt.toISOString(),
+        decisionReason: approval.decisionReason,
+        decisionBy: approval.decisionBy,
+        decidedAt: approval.decidedAt?.toISOString() ?? null,
+        createdAt: approval.createdAt.toISOString(),
+        updatedAt: approval.updatedAt.toISOString(),
+      })),
+    };
+  }
+
+  /**
+   * Records a human decision on a pending tool call.
+   *
+   * The update is conditional on the row still being PENDING and unexpired, so
+   * two administrators racing cannot both decide, and a decision cannot be
+   * applied to a call whose approval already lapsed.
+   */
+  async decideApproval(
+    principal: ToolingPrincipal,
+    approvalId: string,
+    approve: boolean,
+    reason: string,
+  ): Promise<void> {
+    const decided = await this.database
+      .update(toolApproval)
+      .set({
+        status: approve ? "APPROVED" : "REJECTED",
+        decisionReason: reason.slice(0, 1_000),
+        decisionBy: principal.id,
+        decidedAt: new Date(),
+      })
+      .where(and(
+        eq(toolApproval.id, approvalId),
+        eq(toolApproval.status, "PENDING"),
+        gt(toolApproval.expiresAt, new Date()),
+      ))
+      .returning({ callId: toolApproval.callId });
+
+    if (decided.length !== 1) {
+      throw new ToolingConflictError("That approval was already decided, or it expired.");
+    }
+
+    await this.database.insert(auditEvent).values({
+      actorType: "USER",
+      actorId: principal.id,
+      action: approve ? "tool.call_approved" : "tool.call_rejected",
+      resourceType: "GovernedToolCall",
+      resourceId: decided[0]!.callId,
+      outcome: approve ? "SUCCESS" : "FAILURE",
+      // The reason, never the arguments: those can carry the very data the
+      // approval exists to protect.
+      metadata: { reason: reason.slice(0, 500) },
+    });
   }
 
   async recordDeniedInvocation(toolSlug: string, invocation: GovernedToolInvocation, reason: string): Promise<void> {
@@ -426,15 +578,6 @@ export class DrizzleToolingManager implements ToolingManager {
     const items = await this.callQuery(this.database).orderBy(desc(governedToolCall.createdAt)).limit(300);
     return { items: items.map(callDto) };
   }
-
-  /*
-   * Human approval for CONSEQUENTIAL governed tools is not implemented. The
-   * read-only half of the governed MCP surface is live; invoke() denies
-   * CONSEQUENTIAL tools outright, so no approval can be requested. The approval
-   * flow and its durable ToolActionDispatch queue were removed rather than left
-   * parked, because nothing drained that queue: an approved call would have sat
-   * in EXECUTING forever. Rebuild both together, executor first.
-   */
 
   async getRuntimeControl(): Promise<ToolRuntimeControl> {
     const control = await this.runtimeControlRow();

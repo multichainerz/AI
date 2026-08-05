@@ -85,6 +85,7 @@ import {
   toolGrantSchema,
   gatewayCredentialListSchema,
   issuedGatewayCredentialSchema,
+  toolApprovalListSchema,
   toolCallListSchema,
   toolRuntimeControlSchema,
   toolMetricsSchema,
@@ -93,6 +94,8 @@ import {
   type ToolGrantList,
   type GatewayCredentialList,
   type IssuedGatewayCredential,
+  type ToolApproval,
+  type ToolApprovalList,
   type ToolCallList,
   type ToolRuntimeControl,
   type ToolMetrics,
@@ -139,6 +142,7 @@ import {
   memoryPolicySchema,
   memoryPolicyListSchema,
   agentMemoryRecordListSchema,
+  hermesRuntimeCatalogueSchema,
   promptTemplateSchema,
   type PromptTemplate,
   type PromptTemplateList,
@@ -148,6 +152,7 @@ import {
   type UpdateMemoryPolicy,
   type ChangeMemoryPolicyState,
   type AgentMemoryRecordList,
+  type HermesRuntimeCatalogue,
   type CreatePromptTemplate,
   type UpdatePromptTemplate,
   type ChangePromptTemplateState,
@@ -828,6 +833,29 @@ export async function revokeGatewayCredential(id: string): Promise<void> {
   if (!response.ok) await parsedResponse(response);
 }
 
+/** Consequential tool calls waiting on a human. Polled, so never cached. */
+export async function getPendingToolApprovals(): Promise<ToolApprovalList> {
+  const response = await fetch("/api/v1/admin/tooling/approvals", { credentials: "same-origin" });
+  return toolApprovalListSchema.parse(await parsedResponse(response));
+}
+
+export async function decideToolApproval(
+  approvalId: string,
+  decision: "APPROVE" | "REJECT",
+  reason: string,
+): Promise<void> {
+  const response = await fetch(
+    `/api/v1/admin/tooling/approvals/${encodeURIComponent(approvalId)}/decision`,
+    {
+      method: "POST",
+      headers: adminHeaders(),
+      credentials: "same-origin",
+      body: JSON.stringify({ decision, reason }),
+    },
+  );
+  if (!response.ok) await parsedResponse(response);
+}
+
 export async function getToolCalls(): Promise<ToolCallList> {
   const response = await fetch("/api/v1/admin/tooling/calls", { credentials: "same-origin" });
   return toolCallListSchema.parse(await parsedResponse(response));
@@ -1089,6 +1117,12 @@ export async function deleteAgentMemoryRecord(id: string, reason: string): Promi
  * Scoped server-side to the caller's own subject, so this asks "what do you
  * know about me" without needing an administrator or a new enterprise scope.
  */
+/** What the enrolled Hermes runtime reports it can do. Discovery only. */
+export async function getRuntimeCatalogue(): Promise<HermesRuntimeCatalogue> {
+  const response = await fetch("/api/v1/admin/agents/runtime/catalogue", { credentials: "same-origin" });
+  return hermesRuntimeCatalogueSchema.parse(await parsedResponse(response));
+}
+
 export async function getOwnAgentMemory(): Promise<AgentMemoryRecordList> {
   const response = await fetch("/api/v1/chat/memory", { credentials: "same-origin" });
   return agentMemoryRecordListSchema.parse(await parsedResponse(response));

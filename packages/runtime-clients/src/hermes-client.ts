@@ -77,6 +77,37 @@ function safeNonnegativeInteger(value: unknown): number | null {
   return number === null ? null : Math.floor(number);
 }
 
+/**
+ * Token counts, or nulls when the runtime did not actually measure them.
+ *
+ * Hermes reports `usage: {input_tokens: 0, output_tokens: 0, total_tokens: 0}`
+ * for providers that do not return usage — llama.cpp behind an OpenAI-compatible
+ * gateway among them — even for a run that plainly produced output. Recording
+ * those as measured zeroes tells an operator the run was free, which is a
+ * stronger and more misleading claim than admitting the runtime stayed silent.
+ *
+ * A completed run always consumes input tokens, because instructions are never
+ * empty. So an all-zero block against real output means "not reported", and the
+ * dashboard already renders null as an em dash.
+ */
+function reportedUsage(
+  value: Record<string, unknown>,
+  usage: Record<string, unknown>,
+  output: string | null,
+): Pick<HermesRunState, "inputTokens" | "outputTokens" | "reasoningTokens" | "totalTokens"> {
+  const counts = {
+    inputTokens: safeNonnegativeInteger(value.input_tokens ?? usage.input_tokens),
+    outputTokens: safeNonnegativeInteger(value.output_tokens ?? usage.output_tokens),
+    reasoningTokens: safeNonnegativeInteger(value.reasoning_tokens ?? usage.reasoning_tokens),
+    totalTokens: safeNonnegativeInteger(value.total_tokens ?? usage.total_tokens),
+  };
+  const silent = Object.values(counts).every((count) => count === null || count === 0);
+  if (silent && output !== null && output.length > 0) {
+    return { inputTokens: null, outputTokens: null, reasoningTokens: null, totalTokens: null };
+  }
+  return counts;
+}
+
 function safeApprovalChoices(value: unknown): Array<"ALLOW_ONCE" | "DENY"> {
   if (!Array.isArray(value)) return ["ALLOW_ONCE", "DENY"];
   const normalized = new Set(value.flatMap((choice) => {
@@ -107,6 +138,10 @@ function safeRunEvent(eventName: string, sourceEventId: string | null, data: unk
     const seconds = safeNonnegativeNumber(value.duration ?? value.duration_seconds);
     return seconds === null ? null : Math.round(seconds * 1_000);
   })();
+  // `run.completed` carries the same zeroed usage block as the run state, and it
+  // is the only event that also carries output — so it is the only one where
+  // zeroes can be read as silence rather than as a measurement.
+  const tokens = reportedUsage(value, usage, typeof value.output === "string" ? value.output : null);
   return {
     sourceEventId: safeEventText(sourceEventId ?? value.event_id ?? value.id, 255),
     type,
@@ -118,9 +153,9 @@ function safeRunEvent(eventName: string, sourceEventId: string | null, data: unk
     toolName: safeEventText(value.tool ?? value.tool_name ?? value.name, 160),
     childSessionId: safeEventText(value.child_session_id ?? value.subagent_id ?? value.task_id, 255),
     durationMs,
-    inputTokens: safeNonnegativeInteger(value.input_tokens ?? usage.input_tokens),
-    outputTokens: safeNonnegativeInteger(value.output_tokens ?? usage.output_tokens),
-    reasoningTokens: safeNonnegativeInteger(value.reasoning_tokens ?? usage.reasoning_tokens),
+    inputTokens: tokens.inputTokens,
+    outputTokens: tokens.outputTokens,
+    reasoningTokens: tokens.reasoningTokens,
     costUsd: safeNonnegativeNumber(value.cost_usd ?? usage.cost_usd),
     approvalExternalId: type === "APPROVAL_REQUIRED"
       ? safeEventText(value.approval_id ?? value.request_id ?? value.id, 255)
@@ -309,6 +344,58 @@ export class HermesClient {
     return { capabilities: value, toolsets };
   }
 
+  /**
+   * What the runtime reports it can do: toolsets and skills.
+   *
+   * Discovery only, and deliberately lenient — an unrecognised entry is skipped
+   * rather than thrown on. `assertBaseBoundary` is the fail-closed gate that
+   * decides whether a run may proceed; this one only describes, so refusing to
+   * render a catalogue because one skill lacked a description would be the
+   * wrong trade.
+   */
+  async catalogue(): Promise<{
+    toolsets: Array<{ name: string; label: string | null; enabled: boolean; toolCount: number }>;
+    skills: Array<{ name: string; description: string | null; category: string | null }>;
+  }> {
+    const connection = await this.resolver.resolveOne("HERMES");
+    const { toolsets } = await this.assertBaseBoundary(connection);
+
+    const detailed = toolsets.map((toolset) => {
+      const record = toolset as unknown as Record<string, unknown>;
+      const tools = Array.isArray(record.tools) ? record.tools : [];
+      return {
+        name: toolset.name,
+        label: typeof record.label === "string" ? record.label : null,
+        enabled: toolset.enabled,
+        toolCount: tools.length,
+      };
+    });
+
+    let skills: Array<{ name: string; description: string | null; category: string | null }> = [];
+    try {
+      const path = stringSetting(connection, "skillsPath", "/v1/skills");
+      const response = await this.request(connection, endpoint(connection, path), { method: "GET" });
+      const values = response && typeof response === "object" && Array.isArray((response as { data?: unknown }).data)
+        ? (response as { data: unknown[] }).data
+        : [];
+      skills = values.flatMap((value) => {
+        if (!value || typeof value !== "object") return [];
+        const record = value as Record<string, unknown>;
+        if (typeof record.name !== "string") return [];
+        return [{
+          name: record.name,
+          description: typeof record.description === "string" ? record.description : null,
+          category: typeof record.category === "string" ? record.category : null,
+        }];
+      });
+    } catch {
+      // A runtime without /v1/skills is still usable; the panel simply shows none.
+      skills = [];
+    }
+
+    return { toolsets: detailed, skills };
+  }
+
   async start(input: HermesRunSubmission): Promise<string> {
     const connection = await this.resolver.resolveOne("HERMES");
     if (input.governedMcp) await this.assertGovernedToolBoundaryFor(connection);
@@ -439,10 +526,7 @@ export class HermesClient {
       error: typeof value.error === "string" ? value.error.slice(0, 500) : null,
       modelAlias: safeEventText(value.model, 200),
       sessionId: safeEventText(value.session_id, 200),
-      inputTokens: safeNonnegativeInteger(value.input_tokens ?? usage.input_tokens),
-      outputTokens: safeNonnegativeInteger(value.output_tokens ?? usage.output_tokens),
-      reasoningTokens: safeNonnegativeInteger(value.reasoning_tokens ?? usage.reasoning_tokens),
-      totalTokens: safeNonnegativeInteger(value.total_tokens ?? usage.total_tokens),
+      ...reportedUsage(value, usage, typeof value.output === "string" ? value.output : null),
       finishReason: safeEventText(value.finish_reason, 120),
     };
   }

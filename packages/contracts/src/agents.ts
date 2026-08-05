@@ -235,3 +235,33 @@ export type AgentRuntimeControl = z.infer<typeof agentRuntimeControlSchema>;
 export type UpdateAgentRuntimeControl = z.infer<typeof updateAgentRuntimeControlSchema>;
 export type AgentMetrics = z.infer<typeof agentMetricsSchema>;
 export type AgentRunJobPayload = z.infer<typeof agentRunJobPayloadSchema>;
+
+/**
+ * What the enrolled Hermes runtime can do, as it reports itself.
+ *
+ * Discovery only. Reading this never enables anything: the managed runtime
+ * policy decides what is on, and `enabledToolsets` exists so an operator can
+ * see that boundary rather than infer it from an empty screen.
+ */
+export const hermesToolsetSchema = z.object({
+  name: z.string().min(1).max(120),
+  label: z.string().max(200).nullable(),
+  enabled: z.boolean(),
+  toolCount: z.number().int().nonnegative(),
+});
+
+export const hermesSkillSchema = z.object({
+  name: z.string().min(1).max(160),
+  description: z.string().max(600).nullable(),
+  category: z.string().max(120).nullable(),
+});
+
+export const hermesRuntimeCatalogueSchema = z.object({
+  toolsets: z.array(hermesToolsetSchema),
+  skills: z.array(hermesSkillSchema),
+  enabledToolsets: z.number().int().nonnegative(),
+});
+
+export type HermesToolset = z.infer<typeof hermesToolsetSchema>;
+export type HermesSkill = z.infer<typeof hermesSkillSchema>;
+export type HermesRuntimeCatalogue = z.infer<typeof hermesRuntimeCatalogueSchema>;

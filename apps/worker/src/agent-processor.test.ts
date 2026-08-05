@@ -21,6 +21,7 @@ import {
   type AgentHermesRuntime,
   type AgentKnowledgeRetriever,
   type AgentMemoryPort,
+  type KnowledgeLimits,
   type MemoryLimits,
 } from "./agent-processor.js";
 
@@ -57,7 +58,19 @@ function hermes(status = "completed"): AgentHermesRuntime {
   };
 }
 
-const noKnowledge: AgentKnowledgeRetriever = { search: vi.fn(async (_owner?: unknown, _query?: unknown, _documentIds?: unknown) => []) };
+const noKnowledge: AgentKnowledgeRetriever = { search: vi.fn(async () => []) };
+
+/** Records the retrieval bounds the processor hands the store. */
+function recordingKnowledge(): AgentKnowledgeRetriever & { limits: KnowledgeLimits[] } {
+  const limits: KnowledgeLimits[] = [];
+  return {
+    limits,
+    search: vi.fn(async (_owner: string, _query: string, bounds: KnowledgeLimits) => {
+      limits.push(bounds);
+      return [];
+    }),
+  };
+}
 
 /** Brings the execution boundary to a state that admits a run. */
 async function healthyBoundary(
@@ -335,7 +348,7 @@ describe("DrizzleAgentProcessor", () => {
     await healthyBoundary();
     const id = await queuedRun();
     const knowledge: AgentKnowledgeRetriever = {
-      search: vi.fn(async (_owner?: unknown, _query?: unknown, _documentIds?: unknown) => [
+      search: vi.fn(async () => [
         {
           documentId: randomUUID(),
           fileName: "policy.pdf",
@@ -353,7 +366,14 @@ describe("DrizzleAgentProcessor", () => {
     await processor(hermes(), knowledge).process({ runId: id }, await jobIdOf(id), WORKER);
 
     // A run that pins nothing passes a null scope, which means owner-wide.
-    expect(knowledge.search).toHaveBeenCalledWith("user:pilot", "Summarize the policy.", null);
+    // The governed bounds now travel with every retrieval, alongside the
+    // owner scope and the pinned-document filter.
+    expect(knowledge.search).toHaveBeenCalledWith(
+      "user:pilot",
+      "Summarize the policy.",
+      { limit: DEFAULT_MEMORY_POLICY.knowledgeRecallLimit, minimumScore: DEFAULT_MEMORY_POLICY.knowledgeMinimumScore },
+      null,
+    );
     const [stored] = await context.database
       .select({ sources: agentRun.sources })
       .from(agentRun)
@@ -537,6 +557,50 @@ describe("DrizzleAgentProcessor", () => {
 
     expect(memory.captured).toEqual([["Summarize the policy."]]);
     expect(memory.captureLimits[0]?.retentionDays).toBe(DEFAULT_MEMORY_POLICY.retentionDays);
+  });
+
+  it("retrieves documents with the bounds the active policy sets", async () => {
+    // These were constants in the worker while the memory equivalents were
+    // administrable, so an operator could tune what an agent remembers but not
+    // what it retrieves.
+    await healthyBoundary();
+    await context.database.insert(memoryPolicy).values({
+      slug: "tuned-retrieval",
+      displayName: "Tuned retrieval",
+      description: "Wider recall with a lower relevance floor.",
+      status: "ACTIVE",
+      maximumCaptureMode: "DOCUMENTS_ONLY",
+      knowledgeRecallLimit: 25,
+      knowledgeMinimumScore: 0.2,
+      firstActivatedAt: new Date(),
+    });
+    const id = await queuedRun();
+    await context.database
+      .update(agentRun)
+      .set({ effectiveCapabilities: ["knowledge:private:read"] })
+      .where(eq(agentRun.id, id));
+    const knowledge = recordingKnowledge();
+
+    await processor(hermes(), knowledge).process({ runId: id }, await jobIdOf(id), WORKER);
+
+    expect(knowledge.limits[0]).toEqual({ limit: 25, minimumScore: 0.2 });
+  });
+
+  it("falls back to the shipped retrieval bounds when no policy is active", async () => {
+    await healthyBoundary();
+    const id = await queuedRun();
+    await context.database
+      .update(agentRun)
+      .set({ effectiveCapabilities: ["knowledge:private:read"] })
+      .where(eq(agentRun.id, id));
+    const knowledge = recordingKnowledge();
+
+    await processor(hermes(), knowledge).process({ runId: id }, await jobIdOf(id), WORKER);
+
+    expect(knowledge.limits[0]).toEqual({
+      limit: DEFAULT_MEMORY_POLICY.knowledgeRecallLimit,
+      minimumScore: DEFAULT_MEMORY_POLICY.knowledgeMinimumScore,
+    });
   });
 
 });

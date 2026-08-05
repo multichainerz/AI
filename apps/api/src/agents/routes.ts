@@ -6,6 +6,7 @@ import {
   agentRunEventListSchema,
   agentRunSchema,
   agentRuntimeControlSchema,
+  hermesRuntimeCatalogueSchema,
   createAgentProfileSchema,
   submitAgentRunSchema,
   updateAgentProfileSchema,
@@ -244,6 +245,14 @@ export async function registerAdminAgentRoutes(app: FastifyInstance, options: Ag
     } catch (error) {
       await sendAgentError(reply, error);
     }
+  });
+
+  app.get("/runtime/catalogue", async (request, reply) => {
+    const principal = await admin("agents:read")(request, reply);
+    const manager = managerOrLocked(options, reply);
+    if (!principal || !manager) return;
+    void reply.header("cache-control", "no-store");
+    return hermesRuntimeCatalogueSchema.parse(await manager.runtimeCatalogue());
   });
 
   app.get("/runtime", async (request, reply) => {

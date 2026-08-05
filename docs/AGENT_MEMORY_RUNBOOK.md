@@ -44,11 +44,21 @@ also applies to runs already in flight.
 | `maximumItemsPerOwner` | Cap per person per agent; the oldest beyond it are trimmed. | 500 |
 | `recallLimit` | How many memories one run may recall. | 6 |
 | `recallMinimumScore` | The similarity floor below which a hit is noise. | 0.4 |
+| `knowledgeRecallLimit` | How many document excerpts one run may retrieve. | 18 |
+| `knowledgeMinimumScore` | The similarity floor for document retrieval. | 0.35 |
 
 Every field is enforced at the moment of use, not merely recorded. The right
 column is what applies on an installation that has never written a policy —
 capture is still bounded and still expires, so "nobody configured it" never
 means "kept forever".
+
+The last two govern **document** retrieval, not memory. They were constants in
+the worker while their memory equivalents were administrable, so an operator
+could tune what an agent remembered but not what it retrieved. The floor is the
+one worth understanding: a question phrased unlike the source text scores lower,
+so a schedule asked about as "what must X do" can land just under a floor that
+"list the sessions" clears comfortably. Lower it when your people ask in their
+own words; raise it if answers drift onto irrelevant passages.
 
 `retentionDays` is stamped onto each item **as it is captured**, from the policy
 in force at that moment. Lengthening retention later cannot retroactively extend

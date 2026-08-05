@@ -233,7 +233,10 @@ button:disabled { opacity: .48; cursor: not-allowed; }
 .chat-runtime-summary small { overflow: hidden; color: var(--text-faint); font-size: 6px; font-weight: 700; letter-spacing: .04em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
 .chat-runtime-summary strong { max-width: 150px; overflow: hidden; color: #cad4df; font-family: var(--font-mono); font-size: 8px; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
 .chat-topbar > button { min-height: 34px; padding: 7px 10px; color: var(--text-muted); border: 1px solid var(--border); border-radius: 7px; background: var(--surface); cursor: pointer; font-size: 9px; }
-.chat-conversation-actions { display: flex; align-items: center; gap: 5px; }
+.chat-conversation-actions { position: relative; display: flex; align-items: center; gap: 5px; }
+.chat-actions-more { position: absolute; top: calc(100% + 6px); right: 0; z-index: 40; min-width: 172px; display: grid; gap: 2px; padding: 6px; border: 1px solid var(--border); border-radius: 10px; background: #131a23; box-shadow: 0 18px 40px #0007; }
+.chat-actions-more button { width: 100%; justify-content: flex-start; text-align: left; border-color: transparent; background: transparent; }
+.chat-actions-more button:hover { border-color: var(--border); background: var(--surface); }
 .chat-conversation-actions button, .chat-title-editor button { min-height: 32px; padding: 6px 9px; color: var(--text-muted); border: 1px solid var(--border); border-radius: 7px; background: var(--surface); cursor: pointer; font-size: 8px; white-space: nowrap; }
 .chat-conversation-actions .danger, .chat-confirmation .danger { color: #f0aeb4; border-color: #603a42; background: #291a20; }
 .chat-title-editor { display: flex; align-items: center; gap: 5px; }
@@ -264,6 +267,11 @@ button:disabled { opacity: .48; cursor: not-allowed; }
 .chat-suggestions button:disabled { color: #65717e; border-color: #252f39; background: #10161d; cursor: not-allowed; }
 .chat-message { max-width: 940px; display: grid; grid-template-columns: 37px minmax(0, 1fr); gap: 14px; padding: 20px 0; margin: 0 auto; border-bottom: 1px solid #1d2630; }
 .chat-message:last-of-type { border-bottom: 0; }
+/* The person's turn: a bounded card, so the eye can find where each exchange
+   begins without reading the text. */
+.chat-message.user { padding: 16px 18px; margin: 14px auto; border: 1px solid #2b3742; border-bottom-color: #2b3742; border-radius: 12px; background: #141b23; }
+.chat-message.assistant { border-bottom: 0; }
+.chat-message.assistant + .chat-message.assistant { border-top: 1px solid #1d2630; }
 .message-avatar { width: 36px; height: 36px; display: grid; place-items: center; color: #d4dcff; border: 1px solid #3d4e72; border-radius: 10px; background: #24314d; font-size: 9px; font-weight: 700; }
 .chat-message.user .message-avatar { color: #d2dae4; background: #27313c; }
 .message-body { min-width: 0; }
@@ -361,7 +369,10 @@ button:disabled { opacity: .48; cursor: not-allowed; }
 .message-feedback button:hover:not(:disabled) { color: #cad4e0; border-color: #455466; }
 .message-feedback button[aria-pressed="true"] { color: #c8d4ff; border-color: #4e6294; background: #202b44; }
 .message-failure-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.chat-composer-wrap { padding: 10px clamp(22px, 6vw, 84px) 14px; border-top: 1px solid #18212b; background: linear-gradient(180deg, #0c1117e6, #0c1117 22%); }
+/* Same horizontal padding AND the same reserved scrollbar gutter as
+   .chat-messages, otherwise the composer and the transcript disagree on where
+   the column ends. */
+.chat-composer-wrap { scrollbar-gutter: stable; padding: 10px clamp(22px, 6vw, 84px) 14px; border-top: 1px solid #18212b; background: linear-gradient(180deg, #0c1117e6, #0c1117 22%); }
 .chat-composer, .chat-error, .chat-composer-status { max-width: 940px; margin-left: auto; margin-right: auto; }
 .chat-composer { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 10px; padding: 9px 9px 9px 14px; border: 1px solid #354252; border-radius: 12px; background: #121922; box-shadow: 0 12px 35px #0003; }
 .chat-composer:focus-within { border-color: #586f9e; box-shadow: 0 0 0 3px #7894ff14, 0 12px 35px #0003; }
@@ -1908,6 +1919,12 @@ button:disabled { opacity: .48; cursor: not-allowed; }
 .chat-knowledge li label:hover { background: #1b2430; }
 .chat-knowledge li span { flex: 1; color: #c3ccd6; }
 .chat-knowledge li small { color: var(--text-faint); font-size: 9px; text-transform: uppercase; letter-spacing: .04em; }
+.chat-skill-group { margin-top: 10px; }
+.chat-skill-group > strong { display: block; margin-bottom: 6px; color: var(--text-muted); font-size: 9px; text-transform: uppercase; letter-spacing: .05em; }
+.chat-skill-pill { display: inline-flex; align-items: center; gap: 5px; margin: 0 5px 5px 0; padding: 4px 8px; border: 1px solid var(--border-soft); border-radius: 999px; background: var(--surface-muted); font-size: 9px; }
+.chat-skill-pill.off { color: var(--text-faint); }
+.chat-skill-pill i { width: 6px; height: 6px; border-radius: 50%; background: #4b5563; }
+.chat-policy-note { margin: 10px 0 0; padding: 9px 11px; border: 1px solid #3c4a3f; border-radius: 8px; background: #141c16; color: #a9c9b3; font-size: 9px; line-height: 1.5; }
 .chat-knowledge-empty { margin: 0; color: var(--text-muted); font-size: 10px; }
 
 .audit-forwarding { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; flex-wrap: wrap; margin-bottom: 14px; padding: 13px 15px; border: 1px solid var(--border-soft); border-left-width: 3px; border-radius: 9px; background: var(--surface-muted); }
@@ -1921,3 +1938,14 @@ button:disabled { opacity: .48; cursor: not-allowed; }
 .audit-forwarding dl { display: flex; gap: 20px; margin: 0; }
 .audit-forwarding dt { color: var(--text-faint); font-size: 9px; text-transform: uppercase; letter-spacing: .04em; }
 .audit-forwarding dd { margin: 3px 0 0; color: #c3ccd6; font-size: 13px; font-weight: 650; }
+
+/* A blocked agent is the most urgent thing on this page, so the panel reads as
+   an action list rather than another table. */
+.tooling-approvals { display: grid; gap: 12px; border-color: #6a5a34; background: #1c1810; }
+.tooling-approval-reason { display: grid; gap: 5px; color: #8d9aa8; font-size: 10px; font-weight: 650; }
+.tooling-approval-reason input { width: 100%; min-height: 38px; padding: 8px 10px; color: var(--text); border: 1px solid #4a4535; border-radius: 7px; background: #12100a; font-size: 11px; }
+.tooling-approval { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 13px 15px; border: 1px solid #4d4126; border-radius: 9px; background: #14110b; }
+.tooling-approval strong { display: block; font-size: 12px; }
+.tooling-approval small { display: block; margin-top: 3px; color: var(--text-faint); font-size: 9px; }
+.tooling-approval code { display: block; margin-top: 6px; overflow: hidden; color: #c8b98f; font: 9px var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.tooling-approval-actions { display: flex; gap: 7px; }

@@ -5,6 +5,38 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v0.7.0 — 2026-08-05
+
+A readable chat transcript, administrable retrieval, and tool approvals.
+
+- **Tell the two speakers apart.** User and assistant turns rendered as identical
+  729px rows distinguished only by an avatar tint, so a transcript was a wall of
+  text you could not scan. The person's turn is now a bounded card and the
+  agent's is open content, the composer is aligned with the transcript, and six
+  of the header's seven actions move behind one overflow menu — they had left the
+  title 219px of a 912px column.
+- **Surface what the runtime can actually do.** A new catalogue route reads
+  Hermes's own toolset and skill endpoints — a live node reports 28 toolsets and
+  67 skills, none of which the dashboard had ever shown — and states the policy
+  plainly rather than leaving an empty screen to be interpreted.
+- **Document retrieval becomes administrable**, closing an asymmetry: memory
+  recall had a governed policy while knowledge retrieval was two constants in the
+  worker. `knowledgeRecallLimit` and `knowledgeMinimumScore` join `MemoryPolicy`,
+  defaulting to exactly the previous values.
+- **Consequential tools can be approved instead of refused.** `invoke()` threw
+  before any grant or human was consulted; it now records the call as
+  `APPROVAL_PENDING` and opens a `ToolApproval`. No migration was needed — the
+  table, the status and the TTL were all already in the schema, and only the code
+  had been removed. Approval authorises the call and not the data, and the inline
+  wait is capped at five minutes independent of the configured TTL.
+- An approval nobody can see is a boundary nobody can operate, so a **Waiting on
+  you** panel lists every blocked call with its exact arguments and when the
+  decision lapses.
+- **Stop reporting token usage the runtime never measured.** Hermes returns an
+  all-zero usage block for providers that do not report it, and a completed run
+  always consumes input tokens — so zeroes beside real output mean silence, not a
+  measurement of zero.
+
 ## v0.6.0 — 2026-08-05
 
 The audits taken before the next phase of work, and the shakeout a fresh
