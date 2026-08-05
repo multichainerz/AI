@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="ai-v1.45.0"
+INSTALLER_VERSION="ai-v1.45.1"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 CONTAINER_NAME="orcasynapse-hermes"
 HEARTBEAT_SERVICE="orcasynapse-hermes-heartbeat"
@@ -702,13 +702,21 @@ document_node="$(jq -r '.nodeId // empty' "${WORK}/document.json")"
 [[ "$(jq -r '.format // empty' "${WORK}/document.json")" == "orcasynapse-runtime-desired-state/v1" ]] \
   || { echo "orcasynapse: unrecognized desired-state format; nothing applied" >&2; exit 1; }
 
-# An empty admission set is an instruction, not an absence of one: it restores
-# the no_mcp sentinel so the runtime goes back to being tool-free.
+# The no_mcp sentinel stays in every case, admitted names or not.
+#
+# Hermes treats an explicit toolset list as an allowlist for its own toolsets,
+# but without the sentinel it also re-enables every globally enabled MCP server.
+# Verified on the pilot: admitting `clarify` alone brought up `bfl` too, which
+# the control plane then correctly refused as an unadmitted toolset. Keeping the
+# sentinel suppresses those defaults while the explicit names still take effect.
+#
+# When OrcaSynapse's own MCP server becomes admittable, this has to change: the
+# sentinel would suppress that too, so the desired-state document will need to
+# distinguish a native toolset from an MCP server.
 mapfile -t admitted < <(jq -r '.admittedToolsets[]?' "${WORK}/document.json")
-if (( ${#admitted[@]} == 0 )); then
-  printf '    - %s\n' 'no_mcp' > "${WORK}/toolsets"
-else
-  printf '    - %s\n' "${admitted[@]}" > "${WORK}/toolsets"
+printf '    - %s\n' 'no_mcp' > "${WORK}/toolsets"
+if (( ${#admitted[@]} > 0 )); then
+  printf '    - %s\n' "${admitted[@]}" >> "${WORK}/toolsets"
 fi
 
 # Replace only the api_server toolset list, leaving every other managed setting

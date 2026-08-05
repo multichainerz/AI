@@ -5,6 +5,25 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.45.1 — 2026-08-06
+
+Keep the `no_mcp` sentinel when applying an admitted toolset.
+
+Found by watching the runtime rather than the config file: admitting `clarify`
+alone left Hermes reporting `['bfl', 'clarify']` enabled. Hermes treats an
+explicit toolset list as an allowlist for its own toolsets, but dropping the
+sentinel also re-enables every globally enabled MCP server — so one admission
+silently brought up Black Forest Labs image generation as well.
+
+The control plane then refused every run over the unadmitted toolset, which is
+the ai-v1.40.0 boundary working exactly as intended; the drift it caught was
+real. The reconciler now writes the sentinel in every case, admitted names or
+not, which suppresses the defaults while explicit names still take effect.
+
+When OrcaSynapse's own MCP server becomes admittable the sentinel would suppress
+that too, so the desired-state document will need to distinguish a native
+toolset from an MCP server. Noted at the point of change.
+
 ## ai-v1.45.0 — 2026-08-06
 
 The runtime applies the toolset allowlist OrcaSynapse admitted for it.
