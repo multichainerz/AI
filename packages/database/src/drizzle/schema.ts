@@ -815,6 +815,32 @@ export const installationCredential = pgTable("InstallationCredential", {
 	uniqueIndex("InstallationCredential_keyHash_key").using("btree", table.keyHash.asc().nullsLast()),
 ]);
 
+/**
+ * The control plane's own signing identity, used to sign what it tells a
+ * runtime node to be.
+ *
+ * Runtime nodes already sign what they report upward; this is the other
+ * direction, and it has to be signed rather than merely authenticated because
+ * a node acts on the document — anything that can answer the node's request
+ * could otherwise reconfigure it. Singleton, generated on first use, private
+ * half sealed with the same envelope scheme as connection secrets.
+ */
+export const controlPlaneSigningKey = pgTable("ControlPlaneSigningKey", {
+	id: varchar({ length: 32 }).default('primary').primaryKey().notNull(),
+	publicKeyPem: text().notNull(),
+	publicKeyFingerprint: varchar({ length: 100 }).notNull(),
+	encryptedValue: bytea("encryptedValue").notNull(),
+	valueNonce: bytea("valueNonce").notNull(),
+	valueAuthTag: bytea("valueAuthTag").notNull(),
+	wrappedDataKey: bytea("wrappedDataKey").notNull(),
+	keyNonce: bytea("keyNonce").notNull(),
+	keyAuthTag: bytea("keyAuthTag").notNull(),
+	encryptionVersion: integer().default(1).notNull(),
+	masterKeyVersion: integer().default(1).notNull(),
+	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()),
+	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
+});
+
 export const agentRunEvent = pgTable("AgentRunEvent", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	runId: uuid().notNull(),

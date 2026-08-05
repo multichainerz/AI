@@ -5,6 +5,33 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.41.0 — 2026-08-05
+
+The control plane gains a signing identity, and can state what a node should be.
+
+Nothing consumes the document yet, so no runtime behaviour changes. The node
+side lands separately, which keeps the installer out of this release.
+
+- add `ControlPlaneSigningKey`: an Ed25519 identity generated on first use,
+  private half sealed with the same envelope scheme as connection secrets.
+  Runtime nodes already sign what they report upward; this is the other
+  direction, and it has to be *signed* rather than merely authenticated,
+  because a node acts on the document — anything able to answer the node's
+  request could otherwise reconfigure it.
+- serve `GET /api/v1/runtime-nodes/:nodeId/desired-state`, authenticated by the
+  node's own signature exactly like the heartbeat, so one node cannot read
+  another's desired state and a revoked node is refused before a document
+  exists.
+- carry the document base64-encoded and sign those exact bytes. The verifier is
+  a shell script on the runtime host, and it must not have to reproduce a
+  canonical JSON serialization to check a signature — it decodes what it was
+  given, verifies, and only then parses.
+- state an empty admission set explicitly rather than omitting it. "Enable
+  nothing" is an instruction; a node that received no list must not be free to
+  keep whatever it already had running.
+- return `controlPlanePublicKeyPem` and `desiredStatePath` from enrollment, so
+  a node pins the key it will verify against at the moment it joins.
+
 ## ai-v1.40.0 — 2026-08-05
 
 Toolset admission: the boundary that lets a runtime have tools at all.

@@ -1,14 +1,16 @@
-import { createHash, generateKeyPairSync, randomUUID, sign } from "node:crypto";
+import { createHash, generateKeyPairSync, randomUUID, sign, verify } from "node:crypto";
 import { eq } from "drizzle-orm";
 import {
   auditEvent,
   configurationRevision,
+  controlPlaneSigningKey,
   createTestDatabase,
   hermesNodeEnrollment,
   hermesNodeRequestNonce,
   hermesRuntimeNode,
   localAdministrator,
   platformArchitectureDecision,
+  runtimeToolsetAdmission,
   secretRecord,
   serviceConnection,
   type TestDatabase,
@@ -491,5 +493,70 @@ describe("runtime node pure helpers", () => {
     expect(() => verifyNodeRequestSignature(
       publicKeyPem, { ...signedHeaders(privateKey, body), nonce: "not-a-uuid" }, body,
     )).toThrow(RuntimeNodeAuthenticationError);
+  });
+
+  describe("signed desired state", () => {
+    it("serves a document the node can verify with the key it was given at enrollment", async () => {
+      const { node, identity } = await enrolledNode();
+      await context.database.insert(runtimeToolsetAdmission).values({
+        toolsetName: "clarify", admitted: true, reason: "Safe to enable.",
+      });
+
+      const state = await manager().desiredState(node.id, signedHeaders(identity.privateKey, null));
+      const { publicKeyPem } = await manager().controlPlanePublicKey();
+      const bytes = Buffer.from(state.documentBase64, "base64");
+
+      // The node verifies over exactly the bytes it received, then parses.
+      expect(verify(null, bytes, publicKeyPem, Buffer.from(state.signature, "base64"))).toBe(true);
+      expect(JSON.parse(bytes.toString("utf8"))).toMatchObject({
+        format: "orcasynapse-runtime-desired-state/v1",
+        nodeId: node.id,
+        admittedToolsets: ["clarify"],
+      });
+    });
+
+    it("states an empty admission set rather than omitting it", async () => {
+      // "Enable nothing" is an instruction. A node that received no list must
+      // not be free to keep whatever it already had running.
+      const { node, identity } = await enrolledNode();
+      const state = await manager().desiredState(node.id, signedHeaders(identity.privateKey, null));
+      const document = JSON.parse(Buffer.from(state.documentBase64, "base64").toString("utf8"));
+      expect(document.admittedToolsets).toEqual([]);
+    });
+
+    it("omits a toolset whose admission was revoked", async () => {
+      const { node, identity } = await enrolledNode();
+      await context.database.insert(runtimeToolsetAdmission).values([
+        { toolsetName: "clarify", admitted: true, reason: "Safe to enable." },
+        { toolsetName: "code_execution", admitted: false, reason: "Withdrawn." },
+      ]);
+      const state = await manager().desiredState(node.id, signedHeaders(identity.privateKey, null));
+      const document = JSON.parse(Buffer.from(state.documentBase64, "base64").toString("utf8"));
+      expect(document.admittedToolsets).toEqual(["clarify"]);
+    });
+
+    it("refuses to tell an unauthenticated caller what a node should run", async () => {
+      const { node } = await enrolledNode();
+      await expect(manager().desiredState(node.id, signedHeaders(nodeIdentity().privateKey, null)))
+        .rejects.toBeInstanceOf(RuntimeNodeAuthenticationError);
+    });
+
+    it("keeps one signing identity across calls and instances", async () => {
+      // Nodes pin the key at enrollment, so a second API instance generating
+      // its own would make every previously enrolled node reject the document.
+      const first = await manager().controlPlanePublicKey();
+      const second = await manager().controlPlanePublicKey();
+      expect(second.publicKeyPem).toBe(first.publicKeyPem);
+      expect(second.fingerprint).toBe(first.fingerprint);
+      expect(await context.database.select().from(controlPlaneSigningKey)).toHaveLength(1);
+    });
+
+    it("never stores the private half in the clear", async () => {
+      await manager().controlPlanePublicKey();
+      const [row] = await context.database.select().from(controlPlaneSigningKey);
+      const sealed = Buffer.from(row!.encryptedValue).toString("utf8");
+      expect(sealed).not.toContain("PRIVATE KEY");
+      expect(row!.publicKeyPem).toContain("PUBLIC KEY");
+    });
   });
 });

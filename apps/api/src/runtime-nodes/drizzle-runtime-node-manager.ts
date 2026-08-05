@@ -1,8 +1,10 @@
 import {
   createHash,
   createPublicKey,
+  generateKeyPairSync,
   randomBytes,
   randomUUID,
+  sign,
   verify,
 } from "node:crypto";
 import type {
@@ -16,15 +18,19 @@ import type {
   HermesRuntimeNode,
   MutateHermesRuntimeNode,
   RemoveHermesRuntimeNode,
+  RuntimeDesiredState,
+  RuntimeDesiredStateDocument,
 } from "@orcasynapse/contracts";
 import {
   auditEvent,
   configurationRevision,
+  controlPlaneSigningKey,
   hermesNodeEnrollment,
   hermesNodeRequestNonce,
   hermesRuntimeNode,
   localAdministrator,
   platformArchitectureDecision,
+  runtimeToolsetAdmission,
   secretRecord,
   serviceConnection,
   type OrcaSynapseDatabase,
@@ -48,6 +54,8 @@ const SIGNATURE_CLOCK_SKEW_MS = 5 * 60 * 1_000;
 const NONCE_RETENTION_MS = 24 * 60 * 60 * 1_000;
 const NODE_STALE_AFTER_MS = 180_000;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+/** Envelope AAD for the control plane's own signing key. */
+const CONTROL_PLANE_KEY_CONTEXT = "control-plane:signing-key";
 
 type StoredNode = {
   id: string;
@@ -128,6 +136,50 @@ function encryptedSecretData(connectionId: string, fieldName: string, value: str
     keyAuthTag: databaseBytes(envelope.keyAuthTag),
     encryptionVersion: envelope.encryptionVersion,
     masterKeyVersion: envelope.masterKeyVersion,
+  };
+}
+
+/** Envelope fields as the database wants them: owned, copyable buffers. */
+function sealedColumns(envelope: ReturnType<EnvelopeEncryption["encrypt"]>) {
+  const own = (bytes: Uint8Array): Uint8Array<ArrayBuffer> => {
+    const copy = new Uint8Array(bytes.length);
+    copy.set(bytes);
+    return copy;
+  };
+  return {
+    encryptedValue: own(envelope.encryptedValue),
+    valueNonce: own(envelope.valueNonce),
+    valueAuthTag: own(envelope.valueAuthTag),
+    wrappedDataKey: own(envelope.wrappedDataKey),
+    keyNonce: own(envelope.keyNonce),
+    keyAuthTag: own(envelope.keyAuthTag),
+    encryptionVersion: envelope.encryptionVersion,
+    masterKeyVersion: envelope.masterKeyVersion,
+  };
+}
+
+/**
+ * A stored row read back as an envelope.
+ *
+ * The columns are nullable-free but untyped as literals, so the algorithm and
+ * encryption version are reasserted here rather than trusted from the row —
+ * a row claiming a version this build cannot decrypt should fail in decrypt,
+ * not silently take a different code path.
+ */
+function storedEnvelope(row: {
+  encryptedValue: Uint8Array; valueNonce: Uint8Array; valueAuthTag: Uint8Array;
+  wrappedDataKey: Uint8Array; keyNonce: Uint8Array; keyAuthTag: Uint8Array; masterKeyVersion: number;
+}) {
+  return {
+    algorithm: "AES-256-GCM" as const,
+    encryptionVersion: 1 as const,
+    masterKeyVersion: row.masterKeyVersion,
+    encryptedValue: row.encryptedValue,
+    valueNonce: row.valueNonce,
+    valueAuthTag: row.valueAuthTag,
+    wrappedDataKey: row.wrappedDataKey,
+    keyNonce: row.keyNonce,
+    keyAuthTag: row.keyAuthTag,
   };
 }
 
@@ -626,9 +678,12 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
     if (enrolled.node.serviceConnectionId && this.connectionTester) {
       await this.connectionTester.test(enrolled.node.serviceConnectionId).catch(() => undefined);
     }
+    const { publicKeyPem } = await this.controlPlanePublicKey();
     return {
       node: summarize(enrolled.node as StoredNode),
       heartbeatPath: `/api/v1/runtime-nodes/${enrolled.node.id}/heartbeat`,
+      controlPlanePublicKeyPem: publicKeyPem,
+      desiredStatePath: `/api/v1/runtime-nodes/${enrolled.node.id}/desired-state`,
       modelBootstrap: enrolled.modelBootstrap,
     };
   }
@@ -666,6 +721,79 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
       .where(lt(hermesNodeRequestNonce.receivedAt, new Date(Date.now() - NONCE_RETENTION_MS)))
       .catch(() => undefined);
     return node;
+  }
+
+  /**
+   * The control plane's signing identity, generated once on first use.
+   *
+   * Created lazily rather than at install time so an existing installation
+   * gains one on upgrade without a migration that has to invent key material.
+   * The insert is conflict-tolerant because two API instances can race here,
+   * and both must end up agreeing on a single key.
+   */
+  private async signingKey(): Promise<{ privateKeyPem: string; publicKeyPem: string; fingerprint: string }> {
+    const [existing] = await this.database.select().from(controlPlaneSigningKey).limit(1);
+    if (existing) {
+      return {
+        privateKeyPem: this.encryption.decrypt(storedEnvelope(existing), CONTROL_PLANE_KEY_CONTEXT),
+        publicKeyPem: existing.publicKeyPem,
+        fingerprint: existing.publicKeyFingerprint,
+      };
+    }
+    const generated = generateKeyPairSync("ed25519");
+    const privateKeyPem = generated.privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+    const publicKeyPem = generated.publicKey.export({ type: "spki", format: "pem" }).toString();
+    const fingerprint = createHash("sha256")
+      .update(generated.publicKey.export({ type: "spki", format: "der" }))
+      .digest("hex");
+    const sealed = sealedColumns(this.encryption.encrypt(privateKeyPem, CONTROL_PLANE_KEY_CONTEXT));
+    await this.database
+      .insert(controlPlaneSigningKey)
+      .values({ id: "primary", publicKeyPem, publicKeyFingerprint: fingerprint, ...sealed })
+      .onConflictDoNothing();
+    // Re-read rather than trusting the generated pair: if another instance won
+    // the race, its key is the one nodes will have pinned.
+    const [stored] = await this.database.select().from(controlPlaneSigningKey).limit(1);
+    if (!stored) throw new Error("The control-plane signing key could not be established.");
+    return {
+      privateKeyPem: this.encryption.decrypt(storedEnvelope(stored), CONTROL_PLANE_KEY_CONTEXT),
+      publicKeyPem: stored.publicKeyPem,
+      fingerprint: stored.publicKeyFingerprint,
+    };
+  }
+
+  async controlPlanePublicKey(): Promise<{ publicKeyPem: string; fingerprint: string }> {
+    const { publicKeyPem, fingerprint } = await this.signingKey();
+    return { publicKeyPem, fingerprint };
+  }
+
+  /**
+   * What this node should be running, signed so the node can trust it.
+   *
+   * Authenticated by the node's own signature, exactly like the heartbeat, so
+   * one node cannot read another's desired state. A revoked or suspended node
+   * is refused by `authenticate` before any document is produced.
+   */
+  async desiredState(nodeId: string, headers: NodeSignatureHeaders): Promise<RuntimeDesiredState> {
+    await this.authenticate(nodeId, headers, null);
+    const admissions = await this.database
+      .select({ toolsetName: runtimeToolsetAdmission.toolsetName })
+      .from(runtimeToolsetAdmission)
+      .where(eq(runtimeToolsetAdmission.admitted, true))
+      .orderBy(asc(runtimeToolsetAdmission.toolsetName));
+    const document: RuntimeDesiredStateDocument = {
+      format: "orcasynapse-runtime-desired-state/v1",
+      nodeId,
+      generatedAt: new Date().toISOString(),
+      admittedToolsets: admissions.map((row) => row.toolsetName),
+    };
+    const { privateKeyPem, fingerprint } = await this.signingKey();
+    const bytes = Buffer.from(JSON.stringify(document), "utf8");
+    return {
+      documentBase64: bytes.toString("base64"),
+      signature: sign(null, bytes, privateKeyPem).toString("base64"),
+      publicKeyFingerprint: fingerprint,
+    };
   }
 
   async heartbeat(nodeId: string, headers: NodeSignatureHeaders, input: HermesNodeHeartbeat): Promise<HermesNodeHeartbeatResult> {

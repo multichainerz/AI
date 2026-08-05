@@ -11,6 +11,7 @@ import {
   mutateHermesRuntimeNodeSchema,
   removeHermesRuntimeNodeSchema,
   resolveHermesNodeInvitationSchema,
+  runtimeDesiredStateSchema,
 } from "@orcasynapse/contracts";
 import { readFile } from "node:fs/promises";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
@@ -145,6 +146,20 @@ export async function registerRuntimeNodeRoutes(app: FastifyInstance, options: R
     try {
       return hermesNodeHeartbeatResultSchema.parse(
         await manager.heartbeat(request.params.nodeId, signatureHeaders(request), input.data),
+      );
+    } catch (error) {
+      return sendError(error, reply);
+    }
+  });
+
+  // GET, but signed like every other node request: the node proves who it is
+  // before the control plane will say anything about what it should be running.
+  app.get<{ Params: { nodeId: string } }>("/:nodeId/desired-state", async (request, reply) => {
+    const manager = managerOrLocked(options, reply);
+    if (!manager) return reply;
+    try {
+      return runtimeDesiredStateSchema.parse(
+        await manager.desiredState(request.params.nodeId, signatureHeaders(request)),
       );
     } catch (error) {
       return sendError(error, reply);
