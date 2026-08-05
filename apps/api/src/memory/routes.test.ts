@@ -44,6 +44,8 @@ const policy: MemoryPolicy = {
   maximumItemsPerOwner: 500,
   recallLimit: 6,
   recallMinimumScore: 0.4,
+  knowledgeRecallLimit: 18,
+  knowledgeMinimumScore: 0.35,
   revision: 2,
   firstActivatedAt: "2026-08-01T00:00:00.000Z",
   createdBy: session.id,
@@ -146,6 +148,7 @@ describe("memory policy routes", () => {
         slug: "forever", displayName: "Forever", description: "Keeps everything.",
         maximumCaptureMode: "LEARN_EXCHANGE", retentionDays: 0,
         maximumItemsPerOwner: 500, recallLimit: 6, recallMinimumScore: 0.4,
+        knowledgeRecallLimit: 18, knowledgeMinimumScore: 0.35,
       },
     });
     expect(response.statusCode).toBe(400);

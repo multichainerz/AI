@@ -34,6 +34,8 @@ const draft = {
   maximumItemsPerOwner: 500,
   recallLimit: 6,
   recallMinimumScore: 0.4,
+  knowledgeRecallLimit: 18,
+  knowledgeMinimumScore: 0.35,
 };
 
 async function seedMemory(ownerSubject: string, slug = `agent-${randomUUID().slice(0, 8)}`) {

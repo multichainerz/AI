@@ -40,6 +40,8 @@ function dto(policy: StoredPolicy): MemoryPolicy {
     maximumItemsPerOwner: policy.maximumItemsPerOwner,
     recallLimit: policy.recallLimit,
     recallMinimumScore: policy.recallMinimumScore,
+    knowledgeRecallLimit: policy.knowledgeRecallLimit,
+    knowledgeMinimumScore: policy.knowledgeMinimumScore,
     revision: policy.revision,
     firstActivatedAt: policy.firstActivatedAt?.toISOString() ?? null,
     createdBy: policy.createdBy,

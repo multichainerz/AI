@@ -32,6 +32,8 @@ const blankPolicy: CreateMemoryPolicy = {
   maximumItemsPerOwner: 500,
   recallLimit: 6,
   recallMinimumScore: 0.4,
+  knowledgeRecallLimit: 18,
+  knowledgeMinimumScore: 0.35,
 };
 
 /**
@@ -177,6 +179,7 @@ export function MemoryView({ session, onOpenSettings, onSessionExpired }: Memory
               Retention {policy.retentionDays === null ? "indefinite" : `${policy.retentionDays} days`} ·
               up to {policy.maximumItemsPerOwner} items per person · recall {policy.recallLimit} above {policy.recallMinimumScore}
             </small>
+            <small>Documents: up to {policy.knowledgeRecallLimit} excerpts above {policy.knowledgeMinimumScore}</small>
           </div>
           {canManage && <div className="memory-policy-actions">
             {policy.status !== "ACTIVE" && <button type="button" className="secondary-button" disabled={busy} onClick={() => { setEditingId(policy.id); setDraft({ ...policy }); }}>Edit</button>}
@@ -200,6 +203,8 @@ export function MemoryView({ session, onOpenSettings, onSessionExpired }: Memory
         </select><small>{ceilingSummary(draft.maximumCaptureMode)}</small></label>
         <label>Retention (days)<input type="number" min={1} max={3650} value={draft.retentionDays ?? ""} placeholder="Indefinite" onChange={(event) => setDraft({ ...draft, retentionDays: event.target.value ? Number(event.target.value) : null })} /></label>
         <label>Items per person<input type="number" min={10} max={10000} value={draft.maximumItemsPerOwner} onChange={(event) => setDraft({ ...draft, maximumItemsPerOwner: Number(event.target.value) })} /></label>
+        <label>Document excerpts per answer<input type="number" min={1} max={50} value={draft.knowledgeRecallLimit} onChange={(event) => setDraft({ ...draft, knowledgeRecallLimit: Number(event.target.value) })} /><small>How many passages a run may retrieve from your documents.</small></label>
+        <label>Document relevance floor<input type="number" min={0} max={1} step={0.05} value={draft.knowledgeMinimumScore} onChange={(event) => setDraft({ ...draft, knowledgeMinimumScore: Number(event.target.value) })} /><small>Below this similarity a passage is treated as noise. Lower it when questions are phrased unlike the source text; raise it if answers drift.</small></label>
         <footer>
           {editingId && <button type="button" className="secondary-button" onClick={() => { setEditingId(null); setDraft(blankPolicy); }}>Cancel</button>}
           <button type="submit" className="primary-button" disabled={busy}>{editingId ? "Save policy" : "Create policy"}</button>

@@ -48,7 +48,12 @@ function sleep(milliseconds: number): Promise<void> {
 }
 
 export interface AgentKnowledgeRetriever {
-  search(ownerSubject: string, query: string, documentIds?: readonly string[] | null): Promise<KnowledgeSource[]>;
+  search(
+    ownerSubject: string,
+    query: string,
+    limits: KnowledgeLimits,
+    documentIds?: readonly string[] | null,
+  ): Promise<KnowledgeSource[]>;
 }
 
 /**
@@ -87,6 +92,12 @@ export interface MemoryLimits {
   recallMinimumScore: number;
   retentionDays: number | null;
   maximumItemsPerOwner: number;
+}
+
+/** Document retrieval bounds, resolved from the same active policy. */
+export interface KnowledgeLimits {
+  limit: number;
+  minimumScore: number;
 }
 
 export interface MemoryRecollection {
@@ -165,7 +176,12 @@ export class WorkerAgentKnowledgeRetriever implements AgentKnowledgeRetriever {
     private readonly embedder: TextEmbedder,
   ) {}
 
-  async search(ownerSubject: string, query: string, documentIds?: readonly string[] | null): Promise<KnowledgeSource[]> {
+  async search(
+    ownerSubject: string,
+    query: string,
+    limits: KnowledgeLimits,
+    documentIds?: readonly string[] | null,
+  ): Promise<KnowledgeSource[]> {
     const trimmed = query.trim();
     if (!trimmed) return [];
     // A conversation that pins nothing retrieves nothing, which is what the
@@ -175,8 +191,8 @@ export class WorkerAgentKnowledgeRetriever implements AgentKnowledgeRetriever {
     if (!queryEmbedding) return [];
 
     const hits = await this.vectors.search(ownerSubject, trimmed, queryEmbedding, {
-      limit: 18,
-      minimumScore: 0.35,
+      limit: limits.limit,
+      minimumScore: limits.minimumScore,
       ...(documentIds ? { documentIds } : {}),
     });
 
@@ -478,7 +494,10 @@ export class DrizzleAgentProcessor {
       if (!externalRunId) {
         let sources: KnowledgeSource[] = [];
         if (effectiveCapabilities(run.effectiveCapabilities).includes("knowledge:private:read")) {
-          sources = await this.knowledge.search(run.ownerSubject, run.input, run.knowledgeDocumentIds);
+          const { knowledge } = await this.memoryLimits();
+          sources = await this.knowledge.search(
+            run.ownerSubject, run.input, knowledge, run.knowledgeDocumentIds,
+          );
           assertLease();
           await this.database
             .update(agentRun)
@@ -1006,7 +1025,11 @@ export class DrizzleAgentProcessor {
   }
 
   /** The active policy's limits, or the shipped defaults when none is active. */
-  private async memoryLimits(): Promise<{ limits: MemoryLimits; ceiling: AgentMemoryMode | null }> {
+  private async memoryLimits(): Promise<{
+    limits: MemoryLimits;
+    knowledge: KnowledgeLimits;
+    ceiling: AgentMemoryMode | null;
+  }> {
     const [policy] = await this.database
       .select({
         mode: memoryPolicy.maximumCaptureMode,
@@ -1014,6 +1037,8 @@ export class DrizzleAgentProcessor {
         maximumItemsPerOwner: memoryPolicy.maximumItemsPerOwner,
         recallLimit: memoryPolicy.recallLimit,
         recallMinimumScore: memoryPolicy.recallMinimumScore,
+        knowledgeRecallLimit: memoryPolicy.knowledgeRecallLimit,
+        knowledgeMinimumScore: memoryPolicy.knowledgeMinimumScore,
       })
       .from(memoryPolicy)
       .where(eq(memoryPolicy.status, "ACTIVE"))
@@ -1027,6 +1052,10 @@ export class DrizzleAgentProcessor {
           retentionDays: DEFAULT_MEMORY_POLICY.retentionDays,
           maximumItemsPerOwner: DEFAULT_MEMORY_POLICY.maximumItemsPerOwner,
         },
+        knowledge: {
+          limit: DEFAULT_MEMORY_POLICY.knowledgeRecallLimit,
+          minimumScore: DEFAULT_MEMORY_POLICY.knowledgeMinimumScore,
+        },
       };
     }
     return {
@@ -1036,6 +1065,10 @@ export class DrizzleAgentProcessor {
         recallMinimumScore: policy.recallMinimumScore,
         retentionDays: policy.retentionDays,
         maximumItemsPerOwner: policy.maximumItemsPerOwner,
+      },
+      knowledge: {
+        limit: policy.knowledgeRecallLimit,
+        minimumScore: policy.knowledgeMinimumScore,
       },
     };
   }

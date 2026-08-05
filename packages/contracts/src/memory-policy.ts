@@ -21,6 +21,17 @@ export const memoryPolicySettingsSchema = z.object({
   maximumItemsPerOwner: z.number().int().min(10).max(10_000),
   recallLimit: z.number().int().min(1).max(20),
   recallMinimumScore: z.number().min(0).max(1),
+  /**
+   * Document retrieval, governed here rather than hardcoded in the worker.
+   *
+   * These were constants (`limit: 18, minimumScore: 0.35`) while the memory
+   * equivalents above were administrable — so an operator could tune what an
+   * agent remembers but not what it retrieves. The floor matters: a question
+   * phrased unlike the source text can score just over it, or just under, and
+   * only the operator knows which documents their people actually ask about.
+   */
+  knowledgeRecallLimit: z.number().int().min(1).max(50),
+  knowledgeMinimumScore: z.number().min(0).max(1),
 });
 
 export const memoryPolicySchema = memoryPolicySettingsSchema.extend({
@@ -122,4 +133,8 @@ export const DEFAULT_MEMORY_POLICY: MemoryPolicySettings = {
   maximumItemsPerOwner: 500,
   recallLimit: 6,
   recallMinimumScore: 0.4,
+  // The values the worker used as constants, so behaviour is unchanged until
+  // an administrator decides otherwise.
+  knowledgeRecallLimit: 18,
+  knowledgeMinimumScore: 0.35,
 };

@@ -1250,6 +1250,8 @@ export const memoryPolicy = pgTable("MemoryPolicy", {
 	maximumItemsPerOwner: integer().default(500).notNull(),
 	recallLimit: integer().default(6).notNull(),
 	recallMinimumScore: doublePrecision().default(0.4).notNull(),
+	knowledgeRecallLimit: integer().default(18).notNull(),
+	knowledgeMinimumScore: doublePrecision().default(0.35).notNull(),
 	revision: integer().default(1).notNull(),
 	firstActivatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
 	createdBy: uuid(),
@@ -1259,6 +1261,6 @@ export const memoryPolicy = pgTable("MemoryPolicy", {
 }, (table) => [
 	uniqueIndex("MemoryPolicy_slug_key").using("btree", table.slug.asc().nullsLast()),
 	uniqueIndex("MemoryPolicy_single_active_key").on(sql`(true)`).where(sql`status = 'ACTIVE'`),
-	check("MemoryPolicy_bounds_check", sql`("maximumItemsPerOwner" >= 10) AND ("recallLimit" >= 1) AND ("recallMinimumScore" >= 0) AND ("recallMinimumScore" <= 1) AND ("retentionDays" IS NULL OR "retentionDays" >= 1) AND (revision > 0)`),
+	check("MemoryPolicy_bounds_check", sql`("maximumItemsPerOwner" >= 10) AND ("recallLimit" >= 1) AND ("recallMinimumScore" >= 0) AND ("recallMinimumScore" <= 1) AND ("knowledgeRecallLimit" >= 1) AND ("knowledgeMinimumScore" >= 0) AND ("knowledgeMinimumScore" <= 1) AND ("retentionDays" IS NULL OR "retentionDays" >= 1) AND (revision > 0)`),
 	check("MemoryPolicy_activation_check", sql`(status <> 'ACTIVE') OR ("firstActivatedAt" IS NOT NULL)`),
 ]);

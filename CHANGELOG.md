@@ -5,6 +5,32 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.38.0 — 2026-08-05
+
+Document retrieval becomes administrable, closing an asymmetry: memory recall
+had a governed policy while knowledge retrieval was two constants in the worker.
+
+- add `knowledgeRecallLimit` and `knowledgeMinimumScore` to `MemoryPolicy`,
+  replacing the hardcoded `limit: 18, minimumScore: 0.35` in
+  `agent-processor.ts`. An operator could tune what an agent remembered but not
+  what it retrieved
+- both default to exactly the previous constants, so behaviour is unchanged
+  until someone decides otherwise, and the bounds check rejects a limit below 1
+  or a score outside 0–1
+- resolve them in `memoryLimits()` beside the memory bounds, so one active
+  policy governs all retrieval and the value in force at retrieval time is the
+  one that applies
+- surface both in the policy editor with guidance rather than bare numbers: the
+  floor is what decides whether a question phrased unlike the source text
+  retrieves anything at all
+- extended these as fields on the existing policy rather than adding a fifth
+  policy table. Retrieval limits are tuning, not governance — the owner boundary
+  that actually protects data is a SQL conjunct and is not tunable — so the
+  DRAFT/ACTIVE/SUSPENDED lifecycle would have been machinery without a decision
+  behind it
+- cover that an active policy reaches document retrieval and that the shipped
+  defaults apply when none is active
+
 ## ai-v1.37.0 — 2026-08-05
 
 Chat gets a readable transcript and a window into what the runtime can do.
