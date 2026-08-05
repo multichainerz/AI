@@ -3,6 +3,8 @@ import {
   governedToolListSchema,
   issueGatewayCredentialSchema,
   issuedGatewayCredentialSchema,
+  decideToolApprovalSchema,
+  toolApprovalListSchema,
   toolCallListSchema,
   toolGrantListSchema,
   toolGrantSchema,
@@ -230,6 +232,35 @@ export async function registerAdminToolingRoutes(app: FastifyInstance, options: 
     if (!credentialId) return reply.code(400).send({ error: "INVALID_REQUEST", message: "Credential ID is invalid." });
     try { await manager.revokeCredential(principal, credentialId); return reply.code(204).send(); }
     catch (cause) { await sendToolingError(reply, cause); }
+  });
+
+  app.get("/approvals", async (request, reply) => {
+    const principal = await requireAdmin(request, reply, options, "tools:read");
+    const manager = managerOrLocked(options, reply);
+    if (!principal || !manager) return;
+    void reply.header("cache-control", "no-store");
+    return toolApprovalListSchema.parse(await manager.listPendingApprovals());
+  });
+
+  app.post<{ Params: { approvalId: string } }>("/approvals/:approvalId/decision", async (request, reply) => {
+    // tools:manage, not tools:read: approving a consequential call is the act
+    // the whole approval boundary exists to gate.
+    const principal = await requireAdmin(request, reply, options, "tools:manage");
+    const manager = managerOrLocked(options, reply);
+    if (!principal || !manager) return;
+    const input = decideToolApprovalSchema.safeParse(request.body);
+    if (!input.success) {
+      return reply.code(400).send({ error: "INVALID_TOOL_DECISION", message: input.error.issues[0]?.message });
+    }
+    try {
+      await manager.decideApproval(principal, request.params.approvalId, input.data.decision === "APPROVE", input.data.reason);
+      return reply.code(204).send();
+    } catch (error) {
+      if (error instanceof ToolingConflictError) {
+        return reply.code(409).send({ error: "TOOL_APPROVAL_CONFLICT", message: error.message });
+      }
+      throw error;
+    }
   });
 
   app.get("/calls", async (request, reply) => {

@@ -12,6 +12,7 @@ import {
   documentChunk,
   governedTool,
   governedToolCall,
+  toolApproval,
   mcpGatewayCredential,
   toolRuntimeControl,
   type TestDatabase,
@@ -148,11 +149,24 @@ async function grantTool(profileVersionId: string, toolId: string, overrides: Re
   return grant!;
 }
 
-async function enableGateway() {
+async function enableGateway(approvalTtlMinutes = 15) {
   await context.database
     .insert(toolRuntimeControl)
-    .values({ id: "global", enabled: true, reason: "Enabled for tests" })
-    .onConflictDoUpdate({ target: toolRuntimeControl.id, set: { enabled: true } });
+    .values({ id: "global", enabled: true, reason: "Enabled for tests", approvalTtlMinutes })
+    .onConflictDoUpdate({
+      target: toolRuntimeControl.id,
+      set: { enabled: true, approvalTtlMinutes },
+    });
+}
+
+/** Waits for a blocking invoke() to register its approval, then returns its id. */
+async function waitForPendingApproval(subject: ReturnType<typeof manager>): Promise<string> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const { items } = await subject.listPendingApprovals();
+    if (items[0]) return items[0].id;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error("no approval was registered");
 }
 
 async function seedDocument(ownerSubject: string, withMemory = true) {
@@ -455,15 +469,95 @@ describe("DrizzleToolingManager invocation", () => {
     expect(await context.database.select().from(governedToolCall)).toHaveLength(0);
   });
 
-  it("refuses a consequential tool because no handler is installed", async () => {
-    await enableGateway();
+  it("holds a consequential tool for a human decision instead of refusing it", async () => {
+    // The schema's minimum; every test here decides promptly, so the wait ends
+    // on the decision rather than on the clock.
+    await enableGateway(5);
     const tool = await seedTool({ risk: "CONSEQUENTIAL" });
     const { version, authorization } = await seedRunnableAgent();
     await grantTool(version.id, tool.id);
+    const subject = manager();
+
+    // The call blocks until someone decides, so drive the decision alongside it.
+    const invocation = subject.invoke(tool.slug, {
+      authorization, requestId: randomUUID(), arguments: { documentId: randomUUID() },
+    });
+
+    const approvalId = await waitForPendingApproval(subject);
+    await subject.decideApproval(principal, approvalId, true, "Reviewed and approved.");
+
+    const result = await invocation;
+    // The approval opened the gate and execution ran — and was then refused by
+    // the owner boundary, because the document belongs to nobody. That is the
+    // property worth pinning: a human decision authorises the *call*, it does
+    // not widen whose data the call may touch.
+    expect(result.status).toBe("FAILED");
+    expect(result.data).toMatchObject({ message: expect.stringContaining("owner-only scope") });
+
+    const [approval] = await context.database.select().from(toolApproval);
+    expect(approval?.status).toBe("APPROVED");
+    expect(approval?.decisionReason).toBe("Reviewed and approved.");
+  });
+
+  it("does not execute a consequential tool a human rejected", async () => {
+    // The schema's minimum; every test here decides promptly, so the wait ends
+    // on the decision rather than on the clock.
+    await enableGateway(5);
+    const tool = await seedTool({ risk: "CONSEQUENTIAL" });
+    const { version, authorization } = await seedRunnableAgent();
+    await grantTool(version.id, tool.id);
+    const subject = manager();
+
+    const invocation = subject.invoke(tool.slug, {
+      authorization, requestId: randomUUID(), arguments: { documentId: randomUUID() },
+    });
+    const approvalId = await waitForPendingApproval(subject);
+    await subject.decideApproval(principal, approvalId, false, "Not authorized for this data.");
+
+    const result = await invocation;
+    expect(result.status).toBe("FAILED");
+    expect(result.data).toMatchObject({ message: expect.stringContaining("rejected") });
+
+    const [call] = await context.database.select().from(governedToolCall);
+    expect(call?.errorCode).toBe("TOOL_APPROVAL_REJECTED");
+    // Nothing ran, so nothing was started.
+    expect(call?.startedAt).toBeNull();
+  });
+
+  it("refuses to decide an approval twice", async () => {
+    // The schema's minimum; every test here decides promptly, so the wait ends
+    // on the decision rather than on the clock.
+    await enableGateway(5);
+    const tool = await seedTool({ risk: "CONSEQUENTIAL" });
+    const { version, authorization } = await seedRunnableAgent();
+    await grantTool(version.id, tool.id);
+    const subject = manager();
+
+    const invocation = subject.invoke(tool.slug, {
+      authorization, requestId: randomUUID(), arguments: { documentId: randomUUID() },
+    });
+    const approvalId = await waitForPendingApproval(subject);
+    await subject.decideApproval(principal, approvalId, true, "First decision wins.");
+
+    // A second administrator racing the first must not overturn the decision.
+    await expect(subject.decideApproval(principal, approvalId, false, "Changed my mind."))
+      .rejects.toBeInstanceOf(ToolingConflictError);
+    await invocation;
+  });
+
+  it("still refuses a consequential tool the active version does not grant", async () => {
+    // Approval must never widen a grant: an ungranted tool is refused before
+    // any human is ever asked.
+    // The schema's minimum; every test here decides promptly, so the wait ends
+    // on the decision rather than on the clock.
+    await enableGateway(5);
+    const tool = await seedTool({ risk: "CONSEQUENTIAL" });
+    const { authorization } = await seedRunnableAgent();
 
     await expect(manager().invoke(tool.slug, {
       authorization, requestId: randomUUID(), arguments: { documentId: randomUUID() },
-    })).rejects.toThrow(/consequential tool handler/);
+    })).rejects.toThrow(/does not grant this tool/);
+    expect(await context.database.select().from(toolApproval)).toHaveLength(0);
   });
 
   it("refuses a tool the active version does not grant", async () => {

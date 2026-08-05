@@ -1,1 +1,1 @@
-export const ORCASYNAPSE_VERSION = "ai-v1.38.0" as const;
+export const ORCASYNAPSE_VERSION = "ai-v1.39.0" as const;

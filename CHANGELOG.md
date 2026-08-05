@@ -5,6 +5,40 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.39.0 — 2026-08-05
+
+Phase 4c, first slice: consequential tools can be approved instead of refused.
+
+- **stop refusing CONSEQUENTIAL tools outright.** `invoke()` threw "no
+  consequential tool handler is installed" before any grant or human was
+  consulted. It now records the call as `APPROVAL_PENDING`, opens a
+  `ToolApproval`, and waits for a decision
+- **no migration was needed.** `APPROVAL_PENDING`, the `ToolApproval` table with
+  its call FK and expiry, and `approvalTtlMinutes` in runtime control were all
+  already in the schema — only the code had been removed. The estimate of
+  "rebuild the executor from scratch" was wrong about how much survived
+- add `GET /admin/tooling/approvals` (`tools:read`) and
+  `POST /admin/tooling/approvals/:id/decision` (`tools:manage`). Approving is
+  the act the boundary exists to gate, so it takes the stronger scope
+- the decision is a conditional update on `PENDING` and unexpired, so two
+  administrators racing cannot both decide and a lapsed approval cannot be
+  revived
+- **cap the inline wait at 5 minutes**, independent of `approvalTtlMinutes`.
+  That setting may be 1440, which is a reasonable lifetime for a decision and an
+  absurd one to hold an HTTP request open for. Hitting the cap expires the
+  approval too, so the record never shows a decision pending on a failed call
+- the audit trail records the reason and never the arguments, which can carry
+  the very data the approval exists to protect
+
+**Approval authorises the call, not the data.** A test pins this: an approved
+call proceeds to execution and is then refused by the owner boundary. Grant
+checks and requester checks also still run *before* any human is asked, so an
+approval can never widen what the grant already allowed.
+
+Still to come in 4c: consequential handlers themselves (only
+`builtin.document_metadata_read` exists), per-profile toolset enablement, and
+the dashboard surface for pending approvals.
+
 ## ai-v1.38.0 — 2026-08-05
 
 Document retrieval becomes administrable, closing an asymmetry: memory recall

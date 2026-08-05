@@ -1,4 +1,5 @@
 import type {
+  ToolApproval,
   GatewayCredentialList,
   GovernedToolList,
   IssuedGatewayCredential,
@@ -47,6 +48,10 @@ export interface ToolingManager {
   invoke(toolSlug: string, invocation: GovernedToolInvocation): Promise<GovernedToolResult>;
   recordDeniedInvocation(toolSlug: string, invocation: GovernedToolInvocation, reason: string): Promise<void>;
   listCalls(): Promise<ToolCallList>;
+  /** Approvals still awaiting a human decision. */
+  listPendingApprovals(): Promise<{ items: ToolApproval[] }>;
+  /** Records a human decision on a pending consequential tool call. */
+  decideApproval(principal: ToolingPrincipal, approvalId: string, approve: boolean, reason: string): Promise<void>;
   getRuntimeControl(): Promise<ToolRuntimeControl>;
   updateRuntimeControl(principal: ToolingPrincipal, input: UpdateToolRuntimeControl): Promise<ToolRuntimeControl>;
   metrics(): Promise<ToolMetrics>;
