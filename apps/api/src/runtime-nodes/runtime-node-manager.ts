@@ -33,7 +33,6 @@ export interface HermesRuntimeNodeManager {
   resolveInvitation(token: string): Promise<HermesNodeEnrollmentBundle>;
   enroll(input: EnrollHermesNode, sourceIp?: string): Promise<HermesNodeEnrollmentResult>;
   desiredState(nodeId: string, headers: NodeSignatureHeaders): Promise<RuntimeDesiredState>;
-  controlPlanePublicKey(): Promise<{ publicKeyPem: string; fingerprint: string }>;
   heartbeat(
     nodeId: string,
     headers: NodeSignatureHeaders,

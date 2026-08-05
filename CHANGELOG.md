@@ -5,6 +5,36 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.43.0 — 2026-08-06
+
+Cohesion cleanup from a full-codebase audit. No behaviour changes.
+
+- **collapse three copies of `canonicalize` into one.** Two managers and a test
+  each carried an identical implementation, which meant the test validated the
+  algorithm against its own copy and could never catch a divergence. The test
+  now imports the implementation it verifies.
+- **refuse signed bodies containing numbers.** The runtime node installer signs
+  with `jq -cS` and the control plane verifies with `canonicalize`; the two
+  agree on strings, booleans, null, arrays and ASCII keys, but not on
+  non-integer numbers — `JSON.stringify(1.0)` is `1` where jq emits `1.0`. No
+  signed body carries a number today, and `assertSignableBody` now fails loudly
+  on the verification path instead of leaving the trap armed for whoever adds
+  the first numeric field.
+- **make the secret envelope version guard reachable.** `decrypt` refuses any
+  `encryptionVersion` other than 1, but `drizzle-connection-manager` built the
+  envelope inline with `1` hardcoded, so a row written under a future format
+  would have been presented as version 1 and failed later as a confusing
+  authentication-tag error. `storedEnvelope` now narrows once, in
+  `@orcasynapse/security`, and throws a format error instead. The OIDC and
+  runtime-client read paths already checked this correctly and are unchanged.
+- **remove dead code**: `booleanConfiguration` (no references anywhere), and the
+  `updateOnboardingStep` / `updateOnboardingComponent` dashboard clients, which
+  had no caller. Their backend routes remain — they are a real API, and
+  `updateStep` still lets an operator mark a stage blocked with a note.
+- de-duplicate the two byte-copying envelope helpers that had drifted into the
+  same file, narrow seven symbols exported but used only within their own file,
+  and drop `controlPlanePublicKey` from the public manager interface.
+
 ## ai-v1.42.0 — 2026-08-05
 
 Toolset admission becomes something an operator can see and decide.

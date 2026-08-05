@@ -27,7 +27,7 @@ import type { InstallationKeyVerifier } from "./installation-key-auth.js";
 
 export const ADMIN_SESSION_COOKIE = "orcasynapse_admin_session";
 export const ADMIN_SESSION_IDLE_MS = 15 * 60 * 1_000;
-export const ADMIN_SESSION_ABSOLUTE_MS = 8 * 60 * 60 * 1_000;
+const ADMIN_SESSION_ABSOLUTE_MS = 8 * 60 * 60 * 1_000;
 export const ADMIN_SESSION_TOUCH_INTERVAL_MS = 60 * 1_000;
 const ADMIN_SESSION_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
 export const LOCAL_LOGIN_FAILURE_LIMIT = 5;

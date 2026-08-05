@@ -285,7 +285,7 @@ function sleep(milliseconds: number, signal?: AbortSignal): Promise<void> {
 /** The database handle or a transaction opened from it. */
 type Executor = OrcaSynapseDatabase | Parameters<Parameters<OrcaSynapseDatabase["transaction"]>[0]>[0];
 
-export async function acquireChatRateLimitLock(
+async function acquireChatRateLimitLock(
   transaction: Pick<Executor, "execute">,
   subject: string,
 ): Promise<void> {

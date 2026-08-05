@@ -190,7 +190,7 @@ export function chatMessageTelemetry(message: ChatMessage): ChatTelemetryMetric[
   ];
 }
 
-export function MarkdownMessage({ content }: { content: string }) {
+function MarkdownMessage({ content }: { content: string }) {
   return (
     <div className="message-markdown">
       <ReactMarkdown

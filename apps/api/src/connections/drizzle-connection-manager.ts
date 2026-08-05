@@ -1,3 +1,5 @@
+import { canonicalize } from "../canonical-json.js";
+import { storedEnvelope } from "../secret-envelope.js";
 import { createHash, randomUUID } from "node:crypto";
 import {
   parseServiceConnectionConfiguration,
@@ -52,16 +54,6 @@ export function diagnosticTransitionForUpdate(
     return { status: "NOT_TESTED", clearEvidence: true };
   }
   return { status: existing.status, clearEvidence: false };
-}
-
-function canonicalize(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalize).join(",")}]`;
-  const record = value as Record<string, unknown>;
-  return `{${Object.keys(record)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${canonicalize(record[key])}`)
-    .join(",")}}`;
 }
 
 function checksum(value: unknown): string {
@@ -543,17 +535,7 @@ export class DrizzleConnectionManager implements ConnectionManager, ConnectionDi
     for (const secret of storedSecrets) {
       if (secret.encryptionVersion !== 1) throw new Error("Unsupported encrypted credential version.");
       secrets[secret.fieldName] = this.encryption.decrypt(
-        {
-          algorithm: "AES-256-GCM",
-          encryptionVersion: 1,
-          masterKeyVersion: secret.masterKeyVersion,
-          encryptedValue: secret.encryptedValue,
-          valueNonce: secret.valueNonce,
-          valueAuthTag: secret.valueAuthTag,
-          wrappedDataKey: secret.wrappedDataKey,
-          keyNonce: secret.keyNonce,
-          keyAuthTag: secret.keyAuthTag,
-        },
+        storedEnvelope(secret),
         `${id}:${secret.fieldName}`,
       );
     }

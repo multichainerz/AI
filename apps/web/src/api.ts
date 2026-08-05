@@ -996,26 +996,6 @@ export async function updateArchitectureDecision(
   return architectureDecisionSchema.parse(await parsedResponse(response));
 }
 
-export async function updateOnboardingComponent(
-  key: string,
-  input: UpdateComponentCompatibility,
-): Promise<OnboardingSnapshot> {
-  const response = await fetch(`/api/v1/admin/onboarding/components/${encodeURIComponent(key)}`, {
-    method: "PATCH", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
-  });
-  return onboardingSnapshotSchema.parse(await parsedResponse(response));
-}
-
-export async function updateOnboardingStep(
-  key: string,
-  input: UpdateOnboardingStep,
-): Promise<OnboardingSnapshot> {
-  const response = await fetch(`/api/v1/admin/onboarding/steps/${encodeURIComponent(key)}`, {
-    method: "PATCH", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
-  });
-  return onboardingSnapshotSchema.parse(await parsedResponse(response));
-}
-
 export async function completeOnboarding(input: CompleteOnboarding): Promise<OnboardingSnapshot> {
   const response = await fetch("/api/v1/admin/onboarding/complete", {
     method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),

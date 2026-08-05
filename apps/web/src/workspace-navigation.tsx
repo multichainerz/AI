@@ -50,7 +50,7 @@ export const primaryNavigationGroups: ReadonlyArray<{
   },
 ];
 
-export const sectionNavigation: Partial<Record<ProductArea, ReadonlyArray<SectionNavigationItem>>> = {
+const sectionNavigation: Partial<Record<ProductArea, ReadonlyArray<SectionNavigationItem>>> = {
   Agents: [
     { label: "Profiles & runs", view: "Agents" },
     { label: "Governed tools", view: "Integrations" },

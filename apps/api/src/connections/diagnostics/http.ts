@@ -8,14 +8,6 @@ export function stringConfiguration(
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-export function booleanConfiguration(
-  connection: ResolvedConnection,
-  name: string,
-): boolean | undefined {
-  const value = connection.configuration[name];
-  return typeof value === "boolean" ? value : undefined;
-}
-
 export function endpointUrl(baseUrl: string | null, path: string): URL {
   if (!baseUrl) throw new Error("Connection endpoint URL is not configured.");
   const base = new URL(baseUrl);

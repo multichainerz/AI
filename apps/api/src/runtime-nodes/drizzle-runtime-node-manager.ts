@@ -37,6 +37,8 @@ import {
 } from "@orcasynapse/database";
 import { and, asc, count, eq, gt, inArray, isNotNull, isNull, lt, ne, or } from "drizzle-orm";
 import { EnvelopeEncryption } from "@orcasynapse/security";
+import { assertSignableBody, canonicalize } from "../canonical-json.js";
+import { encryptedSecretData, sealedColumns, storedEnvelope } from "../secret-envelope.js";
 import { advisoryLock, increment, isUniqueViolation } from "../database-support.js";
 import type { AdminPrincipal } from "../auth/admin-session.js";
 import type { ConnectionTestService } from "../connections/diagnostics/connection-test-service.js";
@@ -101,13 +103,6 @@ export function seedableInferenceModelAlias(connections: readonly InferenceSeedC
     : null;
 }
 
-function canonicalize(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalize).join(",")}]`;
-  const record = value as Record<string, unknown>;
-  return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${canonicalize(record[key])}`).join(",")}}`;
-}
-
 function digest(value: string): Uint8Array<ArrayBuffer> {
   const bytes = createHash("sha256").update(value, "utf8").digest();
   const result = new Uint8Array(bytes.length);
@@ -117,70 +112,6 @@ function digest(value: string): Uint8Array<ArrayBuffer> {
 
 function checksum(value: unknown): string {
   return createHash("sha256").update(canonicalize(value)).digest("hex");
-}
-
-function encryptedSecretData(connectionId: string, fieldName: string, value: string, encryption: EnvelopeEncryption) {
-  const envelope = encryption.encrypt(value, `${connectionId}:${fieldName}`);
-  const databaseBytes = (bytes: Uint8Array): Uint8Array<ArrayBuffer> => {
-    const copy = new Uint8Array(bytes.length);
-    copy.set(bytes);
-    return copy;
-  };
-  return {
-    fieldName,
-    encryptedValue: databaseBytes(envelope.encryptedValue),
-    valueNonce: databaseBytes(envelope.valueNonce),
-    valueAuthTag: databaseBytes(envelope.valueAuthTag),
-    wrappedDataKey: databaseBytes(envelope.wrappedDataKey),
-    keyNonce: databaseBytes(envelope.keyNonce),
-    keyAuthTag: databaseBytes(envelope.keyAuthTag),
-    encryptionVersion: envelope.encryptionVersion,
-    masterKeyVersion: envelope.masterKeyVersion,
-  };
-}
-
-/** Envelope fields as the database wants them: owned, copyable buffers. */
-function sealedColumns(envelope: ReturnType<EnvelopeEncryption["encrypt"]>) {
-  const own = (bytes: Uint8Array): Uint8Array<ArrayBuffer> => {
-    const copy = new Uint8Array(bytes.length);
-    copy.set(bytes);
-    return copy;
-  };
-  return {
-    encryptedValue: own(envelope.encryptedValue),
-    valueNonce: own(envelope.valueNonce),
-    valueAuthTag: own(envelope.valueAuthTag),
-    wrappedDataKey: own(envelope.wrappedDataKey),
-    keyNonce: own(envelope.keyNonce),
-    keyAuthTag: own(envelope.keyAuthTag),
-    encryptionVersion: envelope.encryptionVersion,
-    masterKeyVersion: envelope.masterKeyVersion,
-  };
-}
-
-/**
- * A stored row read back as an envelope.
- *
- * The columns are nullable-free but untyped as literals, so the algorithm and
- * encryption version are reasserted here rather than trusted from the row —
- * a row claiming a version this build cannot decrypt should fail in decrypt,
- * not silently take a different code path.
- */
-function storedEnvelope(row: {
-  encryptedValue: Uint8Array; valueNonce: Uint8Array; valueAuthTag: Uint8Array;
-  wrappedDataKey: Uint8Array; keyNonce: Uint8Array; keyAuthTag: Uint8Array; masterKeyVersion: number;
-}) {
-  return {
-    algorithm: "AES-256-GCM" as const,
-    encryptionVersion: 1 as const,
-    masterKeyVersion: row.masterKeyVersion,
-    encryptedValue: row.encryptedValue,
-    valueNonce: row.valueNonce,
-    valueAuthTag: row.valueAuthTag,
-    wrappedDataKey: row.wrappedDataKey,
-    keyNonce: row.keyNonce,
-    keyAuthTag: row.keyAuthTag,
-  };
 }
 
 export function inferenceGatewayBaseUrl(controlPlaneUrl: string): string {
@@ -271,6 +202,9 @@ export function verifyNodeRequestSignature(
   if (Number.isNaN(requestTime.getTime()) || Math.abs(now - requestTime.getTime()) > SIGNATURE_CLOCK_SKEW_MS) {
     throw new RuntimeNodeAuthenticationError("The runtime node request timestamp is outside the allowed window.");
   }
+  // Fails loudly if a body was added that two canonical-JSON implementations
+  // would serialize differently, rather than producing a signature mismatch.
+  assertSignableBody(body);
   const signatureBytes = Buffer.from(signature, "base64url");
   const valid = signatureBytes.length === 64 && verify(
     null,

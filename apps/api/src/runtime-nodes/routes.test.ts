@@ -99,7 +99,6 @@ function manager(): HermesRuntimeNodeManager {
       signature: "c".repeat(86),
       publicKeyFingerprint: "d".repeat(64),
     })),
-    controlPlanePublicKey: vi.fn(async () => ({ publicKeyPem: CONTROL_PLANE_PUBLIC_KEY, fingerprint: "d".repeat(64) })),
     mutate: vi.fn(async () => ({ ...node, status: "DRAINING" as const, revision: 1 })),
     remove: vi.fn(async () => undefined),
   };

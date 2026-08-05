@@ -17,6 +17,7 @@ import {
 } from "@orcasynapse/database";
 import { EnvelopeEncryption } from "@orcasynapse/security";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { canonicalize } from "../canonical-json.js";
 import type { AdminPrincipal } from "../auth/admin-session.js";
 import {
   DrizzleHermesRuntimeNodeManager,
@@ -43,13 +44,6 @@ const CONTROL_PLANE = "https://orcasynapse.example";
 
 function manager() {
   return new DrizzleHermesRuntimeNodeManager(context.database, encryption);
-}
-
-function canonicalize(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalize).join(",")}]`;
-  const record = value as Record<string, unknown>;
-  return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${canonicalize(record[key])}`).join(",")}}`;
 }
 
 /** Signs a request the way an enrolled VM2 node would. */
