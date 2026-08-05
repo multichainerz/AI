@@ -27,7 +27,6 @@ import { DrizzleRuntimeConnectionResolver, HermesClient } from "@orcasynapse/run
 import {
   APPROVED_EMBEDDING_MODEL,
   DocumentVectorStore,
-  LocalBgeM3Embedder,
 } from "@orcasynapse/knowledge";
 import type { DocumentManager } from "./documents/document-manager.js";
 import { DrizzleDocumentManager } from "./documents/drizzle-document-manager.js";
@@ -138,7 +137,6 @@ export function createRuntimeServices(): RuntimeServices {
     const documentManager = new DrizzleDocumentManager(
       database,
       new DocumentVectorStore(database, APPROVED_EMBEDDING_MODEL),
-      new LocalBgeM3Embedder(),
     );
     const hermesClient = new HermesClient(documentResolver);
     const agentManager = new DrizzleAgentManager(database, hermesClient);

@@ -47,7 +47,7 @@ interface ChatViewProps {
   onConfigure: () => void;
   onOpenAgents: () => void;
   onOpenPlatform: () => void;
-  onUnauthorized: () => void;
+  onSessionExpired: () => void;
 }
 
 interface ClientCrypto {
@@ -217,7 +217,7 @@ export function ChatView({
   onConfigure,
   onOpenAgents,
   onOpenPlatform,
-  onUnauthorized,
+  onSessionExpired,
 }: ChatViewProps) {
   const [knowledgeOpen, setKnowledgeOpen] = useState(false);
   const [library, setLibrary] = useState<DocumentSummary[]>([]);
@@ -250,7 +250,7 @@ export function ChatView({
   const working = busy || submitting;
 
   const handleError = (cause: unknown, fallback: string) => {
-    if (cause instanceof OrcaSynapseApiError && cause.status === 401) onUnauthorized();
+    if (cause instanceof OrcaSynapseApiError && cause.status === 401) onSessionExpired();
     setError(cause instanceof Error ? cause.message : fallback);
   };
 
@@ -337,7 +337,7 @@ export function ChatView({
         } catch (cause) {
           if (controller.signal.aborted || (cause instanceof DOMException && cause.name === "AbortError")) return;
           if (cause instanceof OrcaSynapseApiError && cause.status === 401) {
-            onUnauthorized();
+            onSessionExpired();
             return;
           }
           retry += 1;
@@ -634,7 +634,7 @@ export function ChatView({
         : await attachChatDocument(active.id, documentId));
       setError(null);
     } catch (cause) {
-      if (cause instanceof OrcaSynapseApiError && cause.status === 401) onUnauthorized();
+      if (cause instanceof OrcaSynapseApiError && cause.status === 401) onSessionExpired();
       else setError(cause instanceof Error ? cause.message : "Unable to change pinned knowledge.");
     }
   };

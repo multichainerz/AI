@@ -1,5 +1,5 @@
 import type {
-  AdminScope,
+  AdministratorSession,
   AgentMemoryRecord,
   CreateMemoryPolicy,
   MemoryPolicy,
@@ -15,11 +15,12 @@ import {
   purgeAgentMemory,
   updateMemoryPolicy,
 } from "./api.js";
+import { adminAccess } from "./admin-access.js";
 
 interface MemoryViewProps {
-  unlocked: boolean;
-  scopes: readonly AdminScope[];
-  onUnauthorized: () => void;
+  session: AdministratorSession | null;
+  onOpenSettings: () => void;
+  onSessionExpired: () => void;
 }
 
 const blankPolicy: CreateMemoryPolicy = {
@@ -50,7 +51,7 @@ function statusTone(status: MemoryPolicy["status"]): string {
   return "neutral";
 }
 
-export function MemoryView({ unlocked, scopes, onUnauthorized }: MemoryViewProps) {
+export function MemoryView({ session, onOpenSettings, onSessionExpired }: MemoryViewProps) {
   const [policies, setPolicies] = useState<MemoryPolicy[]>([]);
   const [records, setRecords] = useState<AgentMemoryRecord[]>([]);
   const [ownerFilter, setOwnerFilter] = useState("");
@@ -60,13 +61,14 @@ export function MemoryView({ unlocked, scopes, onUnauthorized }: MemoryViewProps
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const canManage = scopes.includes("memory:manage");
+  const { unlocked, can } = adminAccess(session);
+  const canManage = can("memory:manage");
   const active = policies.find(({ status }) => status === "ACTIVE") ?? null;
 
   const fail = useCallback((cause: unknown) => {
-    if (cause instanceof OrcaSynapseApiError && cause.status === 401) onUnauthorized();
+    if (cause instanceof OrcaSynapseApiError && cause.status === 401) onSessionExpired();
     setError(cause instanceof Error ? cause.message : "OrcaSynapse could not complete the memory operation.");
-  }, [onUnauthorized]);
+  }, [onSessionExpired]);
 
   const load = useCallback(async () => {
     const [policyList, recordList] = await Promise.all([
@@ -128,18 +130,30 @@ export function MemoryView({ unlocked, scopes, onUnauthorized }: MemoryViewProps
     } catch (cause) { fail(cause); } finally { setBusy(false); }
   };
 
+  const heading = <header className="memory-header">
+    <div>
+      <p className="page-kicker">Retention governance</p>
+      <h1>Memory</h1>
+      <p>What agents may remember about the people they serve, and everything they currently hold.</p>
+    </div>
+  </header>;
+
   if (!unlocked) {
-    return <section className="panel"><p>Sign in to review what agents remember.</p></section>;
+    return <div className="memory-workspace">
+      {heading}
+      <section className="memory-lock panel">
+        <span className="memory-lock-mark">M</span>
+        <div>
+          <strong>Administrator session required</strong>
+          <p>Unlock OrcaSynapse to review the retention ceiling and everything agents currently remember.</p>
+        </div>
+        <button className="primary-button" type="button" onClick={onOpenSettings}>Open platform settings</button>
+      </section>
+    </div>;
   }
 
   return <section className="memory-workspace">
-    <header className="documents-header">
-      <div>
-        <p className="page-kicker">Platform · Governance</p>
-        <h1>Agent memory</h1>
-        <p>What agents may remember about the people they serve, and everything they currently hold.</p>
-      </div>
-    </header>
+    {heading}
 
     {error && <div className="documents-alert" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
 

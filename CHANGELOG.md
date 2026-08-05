@@ -5,6 +5,37 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v0.6.0 — 2026-08-05
+
+The audits taken before the next phase of work, and the shakeout a fresh
+containerised install produced.
+
+- **A coherence pass over the dashboard.** Four admin views stayed operable
+  during a forced password change, so an administrator mid-change got a full
+  workspace whose every request failed; one shared `adminAccess(session)` now
+  derives what is usable and what it grants. Every admin view takes the same
+  props, replacing two competing conventions, and 101 duplicate CSS rules across
+  three copy-pasted blocks are merged.
+- **Four high-severity advisories in shipped dependencies**, closed by pnpm
+  overrides. `pnpm security:audit` had been a package script since the first
+  release and was never wired into CI, which is why they went unnoticed; it is
+  blocking now.
+- **A fresh containerised install was unusable, and only building one showed
+  it.** Both call sites constructed the embedder with no cache directory, so the
+  library defaulted to a folder under `node_modules` that every shipped image
+  makes unwritable — the first embedding failed with `EACCES` in any container,
+  which left every chat turn `RUNNING` and every upload stranded in `CONVERTING`.
+  It never showed up in tests, which run outside a container.
+- **Three more the sandbox exposed**: uploads exceeded nginx's 60-second read
+  timeout because the API loaded ~2 GB of weights and embedded inline; a crash
+  mid-ingest stranded a document forever, since agent runs had lease reclamation
+  and documents had nothing; and an air-gapped install could never embed
+  anything, because the code had always claimed the model must be seeded at
+  install time and nothing ever did the seeding.
+- PDF ingestion gets its first end-to-end test, which immediately caught that
+  moving extraction ahead of the insert made the recorded byte size read `0` —
+  pdf.js takes ownership of the typed array it is handed and detaches it.
+
 ## v0.5.0 — 2026-08-05
 
 Supermemory is removed, and agent memory returns on OrcaSynapse's own pgvector

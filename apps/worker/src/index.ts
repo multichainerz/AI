@@ -6,6 +6,7 @@ import { decodeMasterKey, EnvelopeEncryption, RunCapabilityIssuer } from "@orcas
 import { AgentMemoryStore, APPROVED_EMBEDDING_MODEL, DocumentVectorStore, LocalBgeM3Embedder } from "@orcasynapse/knowledge";
 import { DrizzleRuntimeConnectionResolver, HermesClient } from "@orcasynapse/runtime-clients";
 import { WorkerRuntime } from "./worker-runtime.js";
+import { DocumentIngestor } from "./document-ingestor.js";
 import { DrizzlePendingRunSource, DrizzleWorkerRegistry } from "./worker-registry.js";
 import { DrizzleAgentProcessor, WorkerAgentKnowledgeRetriever, WorkerAgentMemory } from "./agent-processor.js";
 
@@ -24,7 +25,7 @@ const runtime = new WorkerRuntime(
     id: workerId,
     name: hostname(),
     version: ORCASYNAPSE_VERSION,
-    workloads: ["hermes-runs"],
+    workloads: ["hermes-runs", "knowledge-ingestion"],
   },
   {
     info: (message) => console.info(message),
@@ -40,6 +41,13 @@ const runtime = new WorkerRuntime(
     ),
     new RunCapabilityIssuer(masterKey),
     new WorkerAgentMemory(new AgentMemoryStore(database, APPROVED_EMBEDDING_MODEL), embedder),
+  ),
+  1_000,
+  5,
+  new DocumentIngestor(
+    database,
+    new DocumentVectorStore(database, APPROVED_EMBEDDING_MODEL),
+    embedder,
   ),
 );
 

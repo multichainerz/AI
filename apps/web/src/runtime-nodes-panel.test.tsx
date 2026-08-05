@@ -22,7 +22,7 @@ describe("RuntimeNodesPanel", () => {
       targetEnvironment="DEVELOPMENT"
       inferenceReady={false}
       onConfigureInference={vi.fn()}
-      onUnauthorized={vi.fn()}
+      onSessionExpired={vi.fn()}
     />);
 
     expect(html).toContain("AI Inference must be ready first");
@@ -37,7 +37,7 @@ describe("RuntimeNodesPanel", () => {
       targetEnvironment="DEVELOPMENT"
       inferenceReady
       onConfigureInference={vi.fn()}
-      onUnauthorized={vi.fn()}
+      onSessionExpired={vi.fn()}
     />);
 
     expect(html).toContain("Install the Agentic System on VM2");
@@ -54,7 +54,7 @@ describe("the single-runtime cap", () => {
         inferenceReady
         onConfigureInference={vi.fn()}
         onNodesChange={vi.fn()}
-        onUnauthorized={vi.fn()}
+        onSessionExpired={vi.fn()}
       />,
     );
 

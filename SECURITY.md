@@ -33,14 +33,14 @@ branch.
   installer scripts (`install.sh`, `scripts/*.sh`), the Ed25519 node
   enrollment and signed-heartbeat scheme, envelope encryption of secret
   records, session and scope enforcement, guardrail bypasses, the inference
-  gateway, and the audit trail / SIEM forwarding path.
-- **Out of scope:** vulnerabilities in Hermes, Supermemory, or your inference
-  server itself (report those upstream), denial of service against your own
+  gateway, the pgvector knowledge and agent-memory planes and their owner
+  scoping, and the audit trail / SIEM forwarding path.
+- **Out of scope:** vulnerabilities in Hermes or your inference server itself
+  (report those upstream), denial of service against your own
   deployment, and findings that require an already-compromised root account on
   VM1 or VM2.
 
 ## Handling expectations
 
-Never include live credentials in a report: no Supermemory API keys, node
-private keys, Installation Keys, administrator passwords, or enrollment
-claims. Redact environment files and logs before attaching them.
+Never include live credentials in a report: no node private keys, Installation
+Keys, administrator passwords, database URLs, or enrollment claims. Redact environment files and logs before attaching them.

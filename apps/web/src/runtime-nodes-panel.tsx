@@ -19,7 +19,7 @@ interface RuntimeNodesPanelProps {
   inferenceReady: boolean;
   onConfigureInference: () => void;
   onNodesChange?: (nodes: HermesRuntimeNode[]) => void;
-  onUnauthorized: () => void;
+  onSessionExpired: () => void;
 }
 
 function nodeTone(status: string): string {
@@ -71,7 +71,7 @@ export function RuntimeNodesPanel({
   inferenceReady,
   onConfigureInference,
   onNodesChange,
-  onUnauthorized,
+  onSessionExpired,
 }: RuntimeNodesPanelProps) {
   const [nodes, setNodes] = useState<HermesRuntimeNode[]>([]);
   const [form, setForm] = useState<CreateHermesNodeInvitation>(defaultForm);
@@ -89,7 +89,7 @@ export function RuntimeNodesPanel({
   const activeRuntimeExists = nodes.some((node) => node.enrolledAt && node.status !== "REVOKED");
 
   const fail = (cause: unknown) => {
-    if (cause instanceof OrcaSynapseApiError && cause.status === 401) onUnauthorized();
+    if (cause instanceof OrcaSynapseApiError && cause.status === 401) onSessionExpired();
     setError(cause instanceof Error ? cause.message : "OrcaSynapse could not update the Hermes runtime fleet.");
   };
 

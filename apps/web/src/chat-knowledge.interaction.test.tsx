@@ -65,7 +65,7 @@ const props = {
   onConfigure: vi.fn(),
   onOpenAgents: vi.fn(),
   onOpenPlatform: vi.fn(),
-  onUnauthorized: vi.fn(),
+  onSessionExpired: vi.fn(),
 };
 
 beforeEach(() => { attachChatDocument.mockClear(); detachChatDocument.mockClear(); });

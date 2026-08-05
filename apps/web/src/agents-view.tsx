@@ -26,7 +26,7 @@ interface AgentsViewProps {
   onConfigure: () => void;
   onOpenChat: () => void;
   onOpenReadiness: () => void;
-  onUnauthorized: () => void;
+  onSessionExpired: () => void;
 }
 
 /**
@@ -112,7 +112,7 @@ function draftFromProfile(profile: AgentProfile): CreateAgentProfile {
   };
 }
 
-export function AgentsView({ unlocked, administrator, activationReady, activationMessage, oidcConfigured, onSignIn, onConfigure, onOpenChat, onOpenReadiness, onUnauthorized }: AgentsViewProps) {
+export function AgentsView({ unlocked, administrator, activationReady, activationMessage, oidcConfigured, onSignIn, onConfigure, onOpenChat, onOpenReadiness, onSessionExpired }: AgentsViewProps) {
   const runsRef = useRef<AgentRun[]>([]);
   const [profiles, setProfiles] = useState<AgentProfile[]>([]);
   const [runs, setRuns] = useState<AgentRun[]>([]);
@@ -134,7 +134,7 @@ export function AgentsView({ unlocked, administrator, activationReady, activatio
   const selectedRun = useMemo(() => runs.find(({ id }) => id === selectedRunId) ?? runs[0] ?? null, [runs, selectedRunId]);
 
   const fail = (cause: unknown) => {
-    if (cause instanceof OrcaSynapseApiError && cause.status === 401) onUnauthorized();
+    if (cause instanceof OrcaSynapseApiError && cause.status === 401) onSessionExpired();
     setError(cause instanceof Error ? cause.message : "OrcaSynapse could not complete the agent operation.");
   };
 

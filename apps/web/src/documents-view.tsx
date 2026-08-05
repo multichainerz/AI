@@ -22,7 +22,7 @@ interface DocumentsViewProps {
   oidcConfigured: boolean;
   onSignIn: () => void;
   onConfigure: () => void;
-  onUnauthorized: () => void;
+  onSessionExpired: () => void;
 }
 
 const processingStatuses = new Set<DocumentStatus>(["QUEUED", "CONVERTING"]);
@@ -68,7 +68,7 @@ export function DocumentsView(props: DocumentsViewProps) {
   const validRetention = Number.isInteger(retentionDays) && retentionDays >= 1 && retentionDays <= 3_650;
 
   const handleError = (cause: unknown, fallback: string) => {
-    if (cause instanceof OrcaSynapseApiError && cause.status === 401) props.onUnauthorized();
+    if (cause instanceof OrcaSynapseApiError && cause.status === 401) props.onSessionExpired();
     setError(cause instanceof Error ? cause.message : fallback);
   };
 

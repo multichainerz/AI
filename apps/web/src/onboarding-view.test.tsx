@@ -18,7 +18,7 @@ const callbacks = {
   onOpenOperations: vi.fn(),
   onRuntimeNodesChange: vi.fn(),
   onSignIn: vi.fn(),
-  onUnauthorized: vi.fn(),
+  onSessionExpired: vi.fn(),
 };
 
 const runtimeState = {

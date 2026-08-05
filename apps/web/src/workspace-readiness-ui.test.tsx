@@ -20,7 +20,7 @@ describe("workspace readiness UI", () => {
       onConfigure={vi.fn()}
       onOpenAgents={vi.fn()}
       onOpenPlatform={vi.fn()}
-      onUnauthorized={vi.fn()}
+      onSessionExpired={vi.fn()}
     />);
 
     expect(html).toContain("Setup required");
@@ -39,7 +39,7 @@ describe("workspace readiness UI", () => {
       oidcConfigured={false}
       onSignIn={vi.fn()}
       onConfigure={vi.fn()}
-      onUnauthorized={vi.fn()}
+      onSessionExpired={vi.fn()}
     />);
 
     expect(html).toContain("Add source");

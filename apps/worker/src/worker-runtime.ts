@@ -10,16 +10,24 @@ export interface AgentWorkerHandler {
   process(payload: AgentRunJobPayload, jobId: string, workerId: string): Promise<object>;
 }
 
+export interface DocumentIngestionHandler {
+  processNext(workerId: string): Promise<{ documentId: string; status: string } | null>;
+}
+
 /**
- * PostgreSQL remains the durable source of truth for asynchronous Hermes runs.
- * Knowledge is indexed synchronously by the API during upload, so there is no
- * duplicate worker or retry queue for ingestion.
+ * PostgreSQL remains the durable source of truth for asynchronous work.
+ *
+ * Both Hermes runs and knowledge ingestion are queued here. Ingestion moved off
+ * the upload request because embedding loads ~2 GB of weights and outlived the
+ * proxy timeout, and a crash mid-embed stranded the document with nothing to
+ * recover it.
  */
 export class WorkerRuntime {
   private heartbeatTimer?: NodeJS.Timeout;
   private reconcileTimer?: NodeJS.Timeout;
   private readonly inFlight = new Map<string, Promise<void>>();
   private dispatching: Promise<void> | undefined;
+  private ingesting = false;
   private started = false;
 
   constructor(
@@ -31,6 +39,7 @@ export class WorkerRuntime {
     private readonly agentHandler?: AgentWorkerHandler,
     private readonly reconcileIntervalMs = 1_000,
     private readonly maxConcurrentAgentRuns = 5,
+    private readonly ingestionHandler?: DocumentIngestionHandler,
   ) {}
 
   async start(): Promise<void> {
@@ -59,6 +68,30 @@ export class WorkerRuntime {
 
   private async reconcile(): Promise<void> {
     await this.dispatchAgents();
+    await this.dispatchIngestion();
+  }
+
+  /**
+   * Embeds one queued document per tick.
+   *
+   * Serialised deliberately: the embedder holds the model in this process, so
+   * running several at once would multiply peak memory on the host that is
+   * already the tightest part of the deployment. The guard also stops a slow
+   * document from being started twice by overlapping ticks.
+   */
+  private async dispatchIngestion(): Promise<void> {
+    if (!this.ingestionHandler || this.ingesting) return;
+    this.ingesting = true;
+    try {
+      const outcome = await this.ingestionHandler.processNext(this.identity.id);
+      if (outcome) {
+        this.logger.info(`Document ${outcome.documentId} indexing finished as ${outcome.status}.`);
+      }
+    } catch (error) {
+      this.logger.error("Document ingestion failed.", error);
+    } finally {
+      this.ingesting = false;
+    }
   }
 
   private async heartbeat(): Promise<void> {

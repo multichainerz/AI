@@ -222,6 +222,18 @@ function App() {
   const bootstrapState = platform?.bootstrapState ?? (apiAvailable ? "REQUIRED" : "LOCKED");
   const passwordChangePending = adminSession?.passwordChangeRequired === true;
   const unlocked = adminSession !== null && adminSession.passwordChangeRequired !== true;
+  // Every admin view reports an expired session the same way: bump the
+  // generation so in-flight restores are ignored, then drop the session.
+  const forgetAdminSession = () => {
+    sessionGeneration.current += 1;
+    setAdminSession(null);
+  };
+  // Chat, Knowledge and Agents also serve enterprise identities, so an expiry
+  // there has to drop both sessions rather than only the administrator one.
+  const forgetAnySession = () => {
+    forgetAdminSession();
+    setEnterpriseSession(null);
+  };
   const chatUnlocked = enterpriseSession !== null || unlocked;
   const documentsUnlocked = unlocked || enterpriseSession?.scopes.includes("documents:use") === true;
   const agentsUnlocked = unlocked || enterpriseSession?.scopes.includes("agents:use") === true;
@@ -673,11 +685,7 @@ function App() {
             onConfigure={() => openConnectionSettings("OIDC")}
             onOpenAgents={() => selectView("Agents")}
             onOpenPlatform={() => selectView("Deployment")}
-            onUnauthorized={() => {
-              sessionGeneration.current += 1;
-              setAdminSession(null);
-              setEnterpriseSession(null);
-            }}
+            onSessionExpired={forgetAnySession}
           />
         ) : activeView === "Models" ? (
           <ModelsView
@@ -685,29 +693,20 @@ function App() {
             connections={managedConnections}
             onConfigureConnections={() => openConnectionSettings("INFERENCE")}
             onOpenOperations={() => selectView("Operations")}
-            onSessionExpired={() => {
-              sessionGeneration.current += 1;
-              setAdminSession(null);
-            }}
+            onSessionExpired={forgetAdminSession}
           />
         ) : activeView === "Memory" ? (
           <MemoryView
-            unlocked={adminSession !== null}
-            scopes={adminSession?.scopes ?? []}
-            onUnauthorized={() => {
-              sessionGeneration.current += 1;
-              setAdminSession(null);
-            }}
+            session={adminSession}
+            onOpenSettings={() => openConnectionSettings()}
+            onSessionExpired={forgetAdminSession}
           />
         ) : activeView === "Prompts" ? (
           <PromptsView
             session={adminSession}
             onOpenOperations={() => selectView("Operations")}
             onOpenSettings={() => openConnectionSettings("INFERENCE")}
-            onSessionExpired={() => {
-              sessionGeneration.current += 1;
-              setAdminSession(null);
-            }}
+            onSessionExpired={forgetAdminSession}
           />
         ) : activeView === "Agents" ? (
           <AgentsView
@@ -723,11 +722,7 @@ function App() {
               selectView("Chat");
             }}
             onOpenReadiness={() => selectView("Deployment", "nodes")}
-            onUnauthorized={() => {
-              sessionGeneration.current += 1;
-              setAdminSession(null);
-              setEnterpriseSession(null);
-            }}
+            onSessionExpired={forgetAnySession}
           />
         ) : activeView === "Documents" ? (
           <DocumentsView
@@ -736,31 +731,20 @@ function App() {
             oidcConfigured={oidcStatus?.configured === true}
             onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23knowledge%2Fdocuments")}
             onConfigure={() => openConnectionSettings("HERMES")}
-            onUnauthorized={() => {
-              sessionGeneration.current += 1;
-              setAdminSession(null);
-              setEnterpriseSession(null);
-            }}
+            onSessionExpired={forgetAnySession}
           />
         ) : activeView === "Integrations" ? (
           <ToolingView
-            unlocked={unlocked}
-            scopes={adminSession?.scopes ?? []}
+            session={adminSession}
             onConfigure={() => openConnectionSettings("MCP")}
-            onUnauthorized={() => {
-              sessionGeneration.current += 1;
-              setAdminSession(null);
-            }}
+            onSessionExpired={forgetAdminSession}
           />
         ) : activeView === "Guardrails" ? (
           <GuardrailsView
             session={adminSession}
             onConfigureInference={() => openConnectionSettings("INFERENCE")}
             onOpenOperations={() => selectView("Operations")}
-            onSessionExpired={() => {
-              sessionGeneration.current += 1;
-              setAdminSession(null);
-            }}
+            onSessionExpired={forgetAdminSession}
           />
         ) : activeView === "Deployment" ? (
           <OnboardingView
@@ -776,28 +760,18 @@ function App() {
              onRuntimeNodesChange={setRuntimeNodes}
              onOpenOperations={() => selectView("Operations")}
              onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23platform%2Fsetup")}
-            onUnauthorized={() => {
-              sessionGeneration.current += 1;
-              setAdminSession(null);
-            }}
+            onSessionExpired={forgetAdminSession}
           />
         ) : activeView === "Audit" ? (
           <AuditView
             session={adminSession}
-            onSessionExpired={() => {
-              sessionGeneration.current += 1;
-              setAdminSession(null);
-            }}
+            onSessionExpired={forgetAdminSession}
           />
         ) : activeView === "Operations" ? (
           <OperationsView
-            unlocked={unlocked}
-            scopes={adminSession?.scopes ?? []}
+            session={adminSession}
             onConfigure={() => openConnectionSettings()}
-            onUnauthorized={() => {
-              sessionGeneration.current += 1;
-              setAdminSession(null);
-            }}
+            onSessionExpired={forgetAdminSession}
           />
         ) : (
           <HomeView
