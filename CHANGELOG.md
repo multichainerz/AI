@@ -5,6 +5,35 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.46.0 — 2026-08-06
+
+Agent memory stores extracted facts instead of whole turns.
+
+Capturing raw turns does not produce memory, and the pilot proved it. Of 21
+stored "memories", every one was a question (`what is your name?`), a command
+(`Summarize the main considerations…`), a greeting, the model describing itself
+(`I am LFM, which stands for Liquid Foundation Model…`), or the operator's own
+system prompt. Recall then embeds a new question and matches previous
+*questions*, so the highest-scoring hits were the least useful rows in the
+store — which is why memory never visibly helped.
+
+- add `MemoryDistiller`: after the answer is delivered, one model call extracts
+  durable facts about the person and returns an empty list when the turn taught
+  nothing, which is the common case. The instruction names the categories that
+  actually polluted the store — questions, tasks, greetings, the assistant's own
+  self-description, system prompts, inferences — because each was observed.
+- **a distiller that cannot be reached stores nothing.** Falling back to raw
+  turns would quietly reinstate the behaviour this replaces.
+- parse strictly: a fenced or prose-wrapped answer is read where it clearly
+  contains an array, and anything else yields no facts. A model that ignored
+  "JSON only" also ignored the prohibitions, so its prose must not become a
+  memory through a salvage attempt.
+- add `distillCapture` to the memory policy, on by default and editable from
+  the Memory card. A profile only reaches capture by opting into a LEARN mode,
+  and the behaviour being replaced is measurably not memory.
+- record `distilled` on the `memory.captured` audit event, so the trail
+  distinguishes an extracted fact from a stored turn without recording either.
+
 ## ai-v1.45.2 — 2026-08-06
 
 Suppress unadmitted toolsets with `agent.disabled_toolsets`.

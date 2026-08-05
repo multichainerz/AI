@@ -1298,6 +1298,7 @@ export const memoryPolicy = pgTable("MemoryPolicy", {
 	recallMinimumScore: doublePrecision().default(0.4).notNull(),
 	knowledgeRecallLimit: integer().default(18).notNull(),
 	knowledgeMinimumScore: doublePrecision().default(0.35).notNull(),
+	distillCapture: boolean().default(true).notNull(),
 	revision: integer().default(1).notNull(),
 	firstActivatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
 	createdBy: uuid(),

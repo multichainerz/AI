@@ -42,6 +42,7 @@ function dto(policy: StoredPolicy): MemoryPolicy {
     recallMinimumScore: policy.recallMinimumScore,
     knowledgeRecallLimit: policy.knowledgeRecallLimit,
     knowledgeMinimumScore: policy.knowledgeMinimumScore,
+    distillCapture: policy.distillCapture,
     revision: policy.revision,
     firstActivatedAt: policy.firstActivatedAt?.toISOString() ?? null,
     createdBy: policy.createdBy,

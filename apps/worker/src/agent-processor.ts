@@ -101,6 +101,11 @@ export interface KnowledgeLimits {
   minimumScore: number;
 }
 
+/** Extracts durable facts from a turn; see `memory-distiller.ts` for why. */
+export interface MemoryDistillerPort {
+  distil(userTurn: string, assistantTurn: string | null): Promise<{ facts: string[]; succeeded: boolean }>;
+}
+
 export interface MemoryRecollection {
   id: string;
   content: string;
@@ -376,6 +381,7 @@ export class DrizzleAgentProcessor {
     private readonly knowledge: AgentKnowledgeRetriever,
     private readonly capabilityIssuer: AgentRunCapabilityIssuer,
     private readonly memory?: AgentMemoryPort,
+    private readonly distiller?: MemoryDistillerPort,
   ) {}
 
   async process(payload: AgentRunJobPayload, jobId: string, workerId: string): Promise<object> {
@@ -1046,6 +1052,7 @@ export class DrizzleAgentProcessor {
     limits: MemoryLimits;
     knowledge: KnowledgeLimits;
     ceiling: AgentMemoryMode | null;
+    distil: boolean;
   }> {
     const [policy] = await this.database
       .select({
@@ -1056,6 +1063,7 @@ export class DrizzleAgentProcessor {
         recallMinimumScore: memoryPolicy.recallMinimumScore,
         knowledgeRecallLimit: memoryPolicy.knowledgeRecallLimit,
         knowledgeMinimumScore: memoryPolicy.knowledgeMinimumScore,
+        distillCapture: memoryPolicy.distillCapture,
       })
       .from(memoryPolicy)
       .where(eq(memoryPolicy.status, "ACTIVE"))
@@ -1063,6 +1071,7 @@ export class DrizzleAgentProcessor {
     if (!policy) {
       return {
         ceiling: null,
+        distil: DEFAULT_MEMORY_POLICY.distillCapture,
         limits: {
           recallLimit: DEFAULT_MEMORY_POLICY.recallLimit,
           recallMinimumScore: DEFAULT_MEMORY_POLICY.recallMinimumScore,
@@ -1077,6 +1086,7 @@ export class DrizzleAgentProcessor {
     }
     return {
       ceiling: policy.mode,
+      distil: policy.distillCapture,
       limits: {
         recallLimit: policy.recallLimit,
         recallMinimumScore: policy.recallMinimumScore,
@@ -1107,10 +1117,28 @@ export class DrizzleAgentProcessor {
     if (!capabilities.includes("memory:agent:write")) return;
     // The installation policy is read at capture time, not at submission, so
     // suspending or tightening it takes effect on runs already in flight.
-    const { limits, ceiling } = await this.memoryLimits();
+    const { limits, ceiling, distil } = await this.memoryLimits();
     const mode = effectiveMemoryMode(run.version.memoryMode, ceiling);
     if (mode !== "LEARN_USER" && mode !== "LEARN_EXCHANGE") return;
-    const items = [run.input, ...(mode === "LEARN_EXCHANGE" && output ? [output] : [])];
+
+    let items: string[];
+    let distilled = false;
+    if (distil && this.distiller) {
+      const extraction = await this.distiller.distil(run.input, output);
+      // A distiller that could not be reached stores nothing. Falling back to
+      // raw turns would quietly reinstate the behaviour this replaced, and an
+      // empty result is the honest outcome of a capture that did not happen.
+      if (!extraction.succeeded) {
+        console.error("OrcaSynapse could not distil agent memory for run", run.id);
+        return;
+      }
+      if (extraction.facts.length === 0) return;
+      items = extraction.facts;
+      distilled = true;
+    } else {
+      items = [run.input, ...(mode === "LEARN_EXCHANGE" && output ? [output] : [])];
+    }
+
     try {
       const stored = await this.memory.capture(run.ownerSubject, run.profileId, items, { runId: run.id }, limits);
       if (stored === 0) return;
@@ -1123,7 +1151,7 @@ export class DrizzleAgentProcessor {
         outcome: "SUCCESS",
         // Counts and mode only: the trail records that memory was written, not
         // what it says about the person.
-        metadata: { items: stored, memoryMode: mode, profileId: run.profileId },
+        metadata: { items: stored, memoryMode: mode, profileId: run.profileId, distilled },
       });
     } catch (cause) {
       console.error("OrcaSynapse could not record agent memory for run", run.id, cause);

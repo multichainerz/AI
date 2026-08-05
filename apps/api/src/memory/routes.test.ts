@@ -45,7 +45,7 @@ const policy: MemoryPolicy = {
   recallLimit: 6,
   recallMinimumScore: 0.4,
   knowledgeRecallLimit: 18,
-  knowledgeMinimumScore: 0.35,
+  knowledgeMinimumScore: 0.35, distillCapture: true,
   revision: 2,
   firstActivatedAt: "2026-08-01T00:00:00.000Z",
   createdBy: session.id,

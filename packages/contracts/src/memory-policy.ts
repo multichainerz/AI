@@ -32,6 +32,16 @@ export const memoryPolicySettingsSchema = z.object({
    */
   knowledgeRecallLimit: z.number().int().min(1).max(50),
   knowledgeMinimumScore: z.number().min(0).max(1),
+  /**
+   * Extract durable facts from a turn instead of storing the turn itself.
+   *
+   * Storing raw turns does not produce memory. On the pilot it produced 21 rows
+   * of questions, greetings, and the model describing itself — content that
+   * then scored highest on recall, because a new question resembles an old one.
+   * With this on, a second model call is made after the answer is delivered and
+   * only what it extracts is stored, which is usually nothing.
+   */
+  distillCapture: z.boolean(),
 });
 
 export const memoryPolicySchema = memoryPolicySettingsSchema.extend({
@@ -137,4 +147,7 @@ export const DEFAULT_MEMORY_POLICY: MemoryPolicySettings = {
   // an administrator decides otherwise.
   knowledgeRecallLimit: 18,
   knowledgeMinimumScore: 0.35,
+  // On by default: a profile only reaches capture by opting into a LEARN mode,
+  // and the raw-turn behaviour it replaces is measurably not memory.
+  distillCapture: true,
 };
