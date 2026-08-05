@@ -671,4 +671,51 @@ describe("DrizzleToolingManager metrics", () => {
       executingCalls: 0, completedCalls: 1, deniedCalls: 0, failedCalls: 0,
     });
   });
+
+  describe("toolset admission", () => {
+    it("admits nothing until an operator says so", async () => {
+      // A fresh installation must be tool-free without anyone configuring it,
+      // so absence of a row is the same refusal as an explicit revocation.
+      await expect(manager().admittedToolsetNames()).resolves.toEqual([]);
+      await expect(manager().listToolsetAdmissions()).resolves.toEqual({ items: [] });
+    });
+
+    it("records who admitted a toolset and why, and reports it as admitted", async () => {
+      const saved = await manager().decideToolsetAdmission(principal, "clarify", {
+        admitted: true, reason: "Asks the operator a question; touches no data.",
+      });
+      expect(saved).toMatchObject({
+        toolsetName: "clarify", admitted: true, admittedBy: principal.id,
+        reason: "Asks the operator a question; touches no data.",
+      });
+      await expect(manager().admittedToolsetNames()).resolves.toEqual(["clarify"]);
+    });
+
+    it("keeps the reason on record when a toolset is revoked", async () => {
+      await manager().decideToolsetAdmission(principal, "clarify", { admitted: true, reason: "Safe to enable." });
+      const revoked = await manager().decideToolsetAdmission(principal, "clarify", {
+        admitted: false, reason: "Withdrawn pending review.",
+      });
+      expect(revoked).toMatchObject({ admitted: false, reason: "Withdrawn pending review." });
+      // Revocation removes it from the boundary set but not from the record.
+      await expect(manager().admittedToolsetNames()).resolves.toEqual([]);
+      const { items } = await manager().listToolsetAdmissions();
+      expect(items).toHaveLength(1);
+      expect(items[0]).toMatchObject({ toolsetName: "clarify", admitted: false });
+    });
+
+    it("decides a toolset once, not once per attempt", async () => {
+      await manager().decideToolsetAdmission(principal, "todo", { admitted: true, reason: "Run-local scratch list." });
+      await manager().decideToolsetAdmission(principal, "todo", { admitted: true, reason: "Re-confirmed after review." });
+      const { items } = await manager().listToolsetAdmissions();
+      expect(items).toHaveLength(1);
+      expect(items[0]?.reason).toBe("Re-confirmed after review.");
+    });
+
+    it("writes an audit event naming the toolset decision", async () => {
+      await manager().decideToolsetAdmission(principal, "clarify", { admitted: true, reason: "Safe to enable." });
+      const events = await context.database.select().from(auditEvent);
+      expect(events.map((event) => event.action)).toContain("tool.toolset_admitted");
+    });
+  });
 });

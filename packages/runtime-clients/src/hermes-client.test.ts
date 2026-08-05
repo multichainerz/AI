@@ -30,7 +30,7 @@ describe("HermesClient", () => {
         ? capabilities
         : [{ name: "terminal", enabled: false, tools: ["terminal"] }]), { status: 200 });
     });
-    await expect(new HermesClient(resolver(), fetcher).assertZeroToolBoundary()).resolves.toBeUndefined();
+    await expect(new HermesClient(resolver(), fetcher).assertAdmittedToolBoundary()).resolves.toBeUndefined();
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
@@ -40,7 +40,67 @@ describe("HermesClient", () => {
         ? capabilities
         : { object: "list", platform: "api_server", data: [{ name: "terminal", enabled: true, tools: ["terminal"] }] },
     ), { status: 200 }));
-    await expect(new HermesClient(resolver(), fetcher).assertZeroToolBoundary()).rejects.toThrow("enabled toolset");
+    await expect(new HermesClient(resolver(), fetcher).assertAdmittedToolBoundary()).rejects.toThrow("enabled toolset");
+  });
+
+  it("accepts an enabled toolset once an operator has admitted it", async () => {
+    const fetcher = vi.fn<typeof fetch>(async (input) => new Response(JSON.stringify(
+      input.toString().endsWith("/v1/capabilities")
+        ? capabilities
+        : { object: "list", platform: "api_server", data: [{ name: "clarify", enabled: true, tools: ["clarify"] }] },
+    ), { status: 200 }));
+    await expect(new HermesClient(resolver(), fetcher).assertAdmittedToolBoundary(["clarify"]))
+      .resolves.toBeUndefined();
+  });
+
+  it("refuses a runtime running a toolset nobody admitted, and names it", async () => {
+    // Drift is the thing worth failing on: the runtime is no longer the one
+    // this installation approved, whatever else it still has enabled.
+    const fetcher = vi.fn<typeof fetch>(async (input) => new Response(JSON.stringify(
+      input.toString().endsWith("/v1/capabilities")
+        ? capabilities
+        : { object: "list", platform: "api_server", data: [
+          { name: "clarify", enabled: true, tools: ["clarify"] },
+          { name: "code_execution", enabled: true, tools: ["execute_code"] },
+        ] },
+    ), { status: 200 }));
+    await expect(new HermesClient(resolver(), fetcher).assertAdmittedToolBoundary(["clarify"]))
+      .rejects.toThrow("code_execution");
+  });
+
+  it("does not let an admission list excuse a toolset that is merely admitted, not enabled", async () => {
+    // Admitting something the runtime never turned on is not an error, and must
+    // not be reported as drift in either direction.
+    const fetcher = vi.fn<typeof fetch>(async (input) => new Response(JSON.stringify(
+      input.toString().endsWith("/v1/capabilities")
+        ? capabilities
+        : { object: "list", platform: "api_server", data: [{ name: "clarify", enabled: false, tools: ["clarify"] }] },
+    ), { status: 200 }));
+    await expect(new HermesClient(resolver(), fetcher).assertAdmittedToolBoundary(["clarify", "todo"]))
+      .resolves.toBeUndefined();
+  });
+
+  it("refuses governed tools against a Hermes that advertises what real builds advertise", async () => {
+    // Regression guard for a design assumption: `orcasynapse_mcp_headers_v1` is
+    // OrcaSynapse's own name for a handoff no shipped Hermes implements. The
+    // capabilities document below is the one the pilot actually returns, and
+    // the boundary must keep failing closed against it.
+    const realWorldCapabilities = {
+      platform: "hermes-agent",
+      auth: { type: "bearer", required: true },
+      runtime: { mode: "server_agent", tool_execution: "server", split_runtime: false },
+      features: {
+        chat_completions: true, run_submission: true, run_status: true, run_events_sse: true,
+        run_stop: true, run_approval_response: true, tool_progress_events: true, approval_events: true,
+      },
+    };
+    const fetcher = vi.fn<typeof fetch>(async (input) => new Response(JSON.stringify(
+      input.toString().endsWith("/v1/capabilities")
+        ? realWorldCapabilities
+        : { object: "list", platform: "api_server", data: [] },
+    ), { status: 200 }));
+    await expect(new HermesClient(resolver(), fetcher).assertGovernedToolBoundary())
+      .rejects.toThrow("private, redacted");
   });
 
   it("accepts governed tools only through the exact private run-context contract", async () => {
@@ -94,7 +154,7 @@ describe("HermesClient", () => {
         ? capabilities
         : { object: "list", platform: "api_server", data: [{ name: "terminal" }] },
     ), { status: 200 }));
-    await expect(new HermesClient(resolver(), fetcher).assertZeroToolBoundary()).rejects.toThrow("unrecognized entry");
+    await expect(new HermesClient(resolver(), fetcher).assertAdmittedToolBoundary()).rejects.toThrow("unrecognized entry");
   });
 
   it("submits idempotently and parses pollable output", async () => {
@@ -229,7 +289,7 @@ describe("HermesClient", () => {
   it("rejects configured request paths that escape the Hermes origin", async () => {
     const fetcher = vi.fn<typeof fetch>();
     const client = new HermesClient(resolver({ capabilitiesPath: "https://outside.example/capabilities" }), fetcher);
-    await expect(client.assertZeroToolBoundary()).rejects.toThrow("configured origin");
+    await expect(client.assertAdmittedToolBoundary()).rejects.toThrow("configured origin");
     expect(fetcher).not.toHaveBeenCalled();
   });
 

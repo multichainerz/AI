@@ -33,7 +33,7 @@ const principal: AgentPrincipal = { id: randomUUID(), subject: "local-admin:oper
 const otherPrincipal: AgentPrincipal = { id: randomUUID(), subject: "local-admin:someone-else" } as AgentPrincipal;
 
 const passingBoundary: AgentBoundaryVerifier = {
-  assertZeroToolBoundary: vi.fn(async () => undefined),
+  assertAdmittedToolBoundary: vi.fn(async () => undefined),
   assertGovernedToolBoundary: vi.fn(async () => undefined),
       catalogue: vi.fn(async () => ({ toolsets: [], skills: [] })),
 };
@@ -334,7 +334,7 @@ describe("DrizzleAgentManager runtime control", () => {
 
   it("records a denial when Hermes fails the boundary check", async () => {
     const failing: AgentBoundaryVerifier = {
-      assertZeroToolBoundary: vi.fn(async () => { throw new Error("boundary breached"); }),
+      assertAdmittedToolBoundary: vi.fn(async () => { throw new Error("boundary breached"); }),
       assertGovernedToolBoundary: vi.fn(async () => undefined),
       catalogue: vi.fn(async () => ({ toolsets: [], skills: [] })),
     };

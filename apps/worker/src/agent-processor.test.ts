@@ -36,7 +36,7 @@ const capabilities = { issue: vi.fn(() => ({ token: "r".repeat(43), tokenHash: n
 
 function hermes(status = "completed"): AgentHermesRuntime {
   return {
-    assertZeroToolBoundary: vi.fn(async () => undefined),
+    assertAdmittedToolBoundary: vi.fn(async () => undefined),
     assertGovernedToolBoundary: vi.fn(async () => undefined),
     start: vi.fn(async () => "run_external_1"),
     status: vi.fn(async () => ({

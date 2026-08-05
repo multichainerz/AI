@@ -5,6 +5,35 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.40.0 — 2026-08-05
+
+Toolset admission: the boundary that lets a runtime have tools at all.
+
+Nothing observable changes for an existing installation. With no toolset
+admitted this is exactly the zero-tool boundary it replaces, and a fresh
+install admits nothing.
+
+- add `RuntimeToolsetAdmission`, recording which Hermes toolsets an operator
+  permits the runtime to enable, who decided, and why. The row survives
+  revocation so the reason stays on record; absence means never admitted,
+  which refuses identically.
+- replace the zero-tool boundary with one that refuses a run when the runtime
+  has a toolset enabled that nobody admitted, naming it. Hermes executes its
+  own tools server-side, so OrcaSynapse cannot scope an individual call the way
+  it scopes its own governed tools — admission is the boundary available, which
+  makes drift the thing to fail on.
+- resolve admissions per run rather than caching them, so a revocation takes
+  effect on the next run instead of whenever a worker happens to restart.
+- expose `GET /admin/tooling/toolsets` on `tools:read` and
+  `PUT /admin/tooling/toolsets/:name` on `tools:manage`, audited as
+  `tool.toolset_admitted` / `tool.toolset_revoked`.
+- assert that the governed-MCP boundary still fails closed against the
+  capabilities document a real Hermes returns. `private_run_context:
+  "orcasynapse_mcp_headers_v1"` is OrcaSynapse's own name for a handoff no
+  shipped Hermes advertises, and the existing tests only ever exercised it
+  against a mock that claimed support — so the path was never reachable in
+  practice and nothing said so.
+
 ## ai-v1.39.2 — 2026-08-05
 
 Stop reporting token usage the runtime never measured.

@@ -13,6 +13,7 @@ import {
   governedTool,
   hermesRuntimeNode,
   memoryPolicy,
+  runtimeToolsetAdmission,
   serviceConnection,
   toolRuntimeControl,
   type OrcaSynapseDatabase,
@@ -233,7 +234,7 @@ export class WorkerAgentKnowledgeRetriever implements AgentKnowledgeRetriever {
 }
 
 export interface AgentHermesRuntime {
-  assertZeroToolBoundary(): Promise<void>;
+  assertAdmittedToolBoundary(admitted?: Iterable<string>): Promise<void>;
   assertGovernedToolBoundary(): Promise<void>;
   start(input: {
     input: string;
@@ -518,6 +519,7 @@ export class DrizzleAgentProcessor {
           return { runId: run.id, status: "DENIED" };
         }
         const governedTools = await this.governedToolsEnabled(run);
+        const admittedToolsets = await this.admittedToolsets();
         let governedMcp: { authorization: string; expiresAt: Date } | undefined;
         if (governedTools) {
           await this.hermes.assertGovernedToolBoundary();
@@ -531,7 +533,7 @@ export class DrizzleAgentProcessor {
           if (capabilityStored.length !== 1) throw new ProcessorLeaseLostError();
           governedMcp = { authorization: `${run.id}.${capability.token}`, expiresAt };
         } else {
-          await this.hermes.assertZeroToolBoundary();
+          await this.hermes.assertAdmittedToolBoundary(admittedToolsets);
         }
         externalRunId = await this.hermes.start({
           input: run.input,
@@ -541,6 +543,7 @@ export class DrizzleAgentProcessor {
           modelAlias: run.version.modelAlias,
           conversationHistory: conversationHistory(run.conversationHistory),
           memorySessionKey: run.memorySessionKey,
+          admittedToolsets,
           ...(governedMcp ? { governedMcp } : {}),
         });
         assertLease();
@@ -554,7 +557,7 @@ export class DrizzleAgentProcessor {
         // A recovered job must verify Hermes again, but it must not retrieve a
         // different evidence set after the original prompt has been submitted.
         if (run.toolCapabilityTokenHash) await this.hermes.assertGovernedToolBoundary();
-        else await this.hermes.assertZeroToolBoundary();
+        else await this.hermes.assertAdmittedToolBoundary(await this.admittedToolsets());
       }
 
       if (this.hermes.events) {
@@ -999,6 +1002,20 @@ export class DrizzleAgentProcessor {
       }
     }
     return null;
+  }
+
+  /**
+   * Toolsets an operator has admitted for this installation.
+   *
+   * Resolved per run rather than cached, because a revocation has to bite on
+   * the next run rather than whenever a worker happens to restart.
+   */
+  private async admittedToolsets(): Promise<string[]> {
+    const rows = await this.database
+      .select({ toolsetName: runtimeToolsetAdmission.toolsetName })
+      .from(runtimeToolsetAdmission)
+      .where(eq(runtimeToolsetAdmission.admitted, true));
+    return rows.map((row) => row.toolsetName);
   }
 
   private async governedToolsEnabled(run: LoadedRun): Promise<boolean> {

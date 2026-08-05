@@ -21,7 +21,7 @@ export interface AgentPrincipal {
 }
 
 export interface AgentBoundaryVerifier {
-  assertZeroToolBoundary(): Promise<void>;
+  assertAdmittedToolBoundary(admitted?: Iterable<string>): Promise<void>;
   assertGovernedToolBoundary(): Promise<void>;
   /** Read-only description of the runtime; never a gate on execution. */
   catalogue(): Promise<{

@@ -453,6 +453,26 @@ export const toolRuntimeControl = pgTable("ToolRuntimeControl", {
 	check("ToolRuntimeControl_approvalTtlMinutes_check", sql`("approvalTtlMinutes" >= 5) AND ("approvalTtlMinutes" <= 1440)`),
 ]);
 
+/**
+ * Which Hermes toolsets this installation permits the runtime to enable.
+ *
+ * A row exists only once an operator has decided about a toolset, and the row
+ * survives revocation so the reason and the deciding administrator stay on
+ * record. Absence means "never admitted", which is the same refusal as
+ * `admitted = false` — a fresh install has no rows and therefore admits nothing.
+ */
+export const runtimeToolsetAdmission = pgTable("RuntimeToolsetAdmission", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	toolsetName: varchar({ length: 120 }).notNull(),
+	admitted: boolean().default(false).notNull(),
+	reason: varchar({ length: 500 }).notNull(),
+	admittedBy: uuid(),
+	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()),
+	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
+}, (table) => [
+	uniqueIndex("RuntimeToolsetAdmission_toolsetName_key").on(table.toolsetName),
+]);
+
 export const governedToolCall = pgTable("GovernedToolCall", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	runId: uuid().notNull(),
