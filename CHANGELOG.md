@@ -5,6 +5,30 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.45.0 — 2026-08-06
+
+The runtime applies the toolset allowlist OrcaSynapse admitted for it.
+
+`ai-v1.41.0` began serving a signed desired-state document and nothing consumed
+it. VM2 now does, which closes the loop from an operator's decision in the
+dashboard to what the runtime is actually running.
+
+- **pin the control plane's public key at enrollment.** A node that never
+  received one applies nothing rather than trusting an unsigned document, so a
+  node enrolled before `ai-v1.41.0` stays fail-closed until it is re-enrolled.
+- add a reconciler that fetches the document with the same signed-request scheme
+  as the heartbeat, verifies the Ed25519 signature over the exact bytes it
+  received before parsing them, and refuses a document addressed to another node
+  so one cannot be replayed across runtimes.
+- rewrite only the `api_server` toolset list in the managed policy, leaving every
+  other managed setting exactly as the installer wrote it, and restart Hermes
+  only when the file actually changed.
+- **treat an empty admission set as an instruction.** It restores the `no_mcp`
+  sentinel, so revoking every toolset returns the runtime to tool-free rather
+  than leaving whatever was already enabled in place.
+- run it on a five-minute timer, and teach the remover to stop, disable and
+  delete the new unit so removal stays complete.
+
 ## ai-v1.44.0 — 2026-08-06
 
 Stop asserting a boundary that is never transmitted, and describe the estate

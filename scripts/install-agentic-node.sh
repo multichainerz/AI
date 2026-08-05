@@ -3,10 +3,11 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="ai-v1.44.0"
+INSTALLER_VERSION="ai-v1.45.0"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 CONTAINER_NAME="orcasynapse-hermes"
 HEARTBEAT_SERVICE="orcasynapse-hermes-heartbeat"
+DESIRED_STATE_SERVICE="orcasynapse-hermes-desired-state"
 HERMES_UID="10000"
 HERMES_GID="10000"
 ENROLLMENT_STATE="${STATE_ROOT}/enrollment-state.json"
@@ -633,6 +634,130 @@ resolved_image_reference() {
   printf '%s' "${digest}"
 }
 
+write_desired_state_client() {
+  install -d -m 0755 /usr/local/lib/orcasynapse
+  write_file_from_stdin 0755 root root /usr/local/lib/orcasynapse/hermes-desired-state.sh <<'DESIREDSTATE'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+# Applies the toolset allowlist OrcaSynapse has admitted for this installation.
+#
+# The document is carried base64-encoded and signed over those exact bytes, so
+# this never has to reproduce a canonical JSON serialization to check the
+# signature: decode, verify, and only then parse.
+
+STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
+CONTROL_PLANE_KEY="${STATE_ROOT}/control-plane-key.pem"
+MANAGED_CONFIG="${STATE_ROOT}/managed/config.yaml"
+CONTAINER_NAME="${ORCASYNAPSE_HERMES_CONTAINER:-orcasynapse-hermes}"
+
+# A node enrolled before the control plane could sign has nothing to verify
+# against. Applying an unverified document would be worse than applying none.
+[[ -s "${CONTROL_PLANE_KEY}" ]] || exit 0
+[[ -s "${MANAGED_CONFIG}" ]] || exit 0
+
+CONTROL_PLANE_URL="$(<"${STATE_ROOT}/control-plane-url")"
+NODE_ID="$(<"${STATE_ROOT}/node-id")"
+PRIVATE_KEY="${STATE_ROOT}/identity/node.key"
+
+WORK="$(mktemp -d /tmp/orcasynapse-desired-state.XXXXXX)"
+trap 'rm -rf -- "${WORK}"' EXIT
+
+sign_request() {
+  local timestamp="$1" nonce="$2" body="$3" body_digest
+  body_digest="$(printf '%s' "${body}" | sha256sum | awk '{print $1}')"
+  printf '%s\n%s\n%s' "${timestamp}" "${nonce}" "${body_digest}" > "${WORK}/message"
+  openssl pkeyutl -sign -rawin -inkey "${PRIVATE_KEY}" -in "${WORK}/message" \
+    | openssl base64 -A | tr '+/' '-_' | tr -d '='
+}
+
+timestamp="$(date --utc '+%Y-%m-%dT%H:%M:%SZ')"
+nonce="$(cat /proc/sys/kernel/random/uuid)"
+# A GET carries no body; the control plane checksums the literal JSON null.
+signature="$(sign_request "${timestamp}" "${nonce}" 'null')"
+
+http_status="$(curl --silent --show-error --max-time 20 \
+  --output "${WORK}/response.json" --write-out '%{http_code}' \
+  -H "X-OrcaSynapse-Node-Timestamp: ${timestamp}" \
+  -H "X-OrcaSynapse-Node-Nonce: ${nonce}" \
+  -H "X-OrcaSynapse-Node-Signature: ${signature}" \
+  "${CONTROL_PLANE_URL}/api/v1/runtime-nodes/${NODE_ID}/desired-state")" || exit 0
+
+# A control plane that does not serve desired state yet is not an error.
+[[ "${http_status}" == "200" ]] || exit 0
+
+jq -r '.documentBase64' "${WORK}/response.json" | base64 -d > "${WORK}/document.json"
+jq -r '.signature' "${WORK}/response.json" | base64 -d > "${WORK}/document.sig"
+
+openssl pkeyutl -verify -pubin -inkey "${CONTROL_PLANE_KEY}" -rawin \
+  -in "${WORK}/document.json" -sigfile "${WORK}/document.sig" >/dev/null 2>&1 \
+  || { echo "orcasynapse: desired-state signature did not verify; nothing applied" >&2; exit 1; }
+
+# The signature proves the control plane wrote it; this proves it wrote it for
+# this node, so a document meant for another runtime cannot be replayed here.
+document_node="$(jq -r '.nodeId // empty' "${WORK}/document.json")"
+[[ "${document_node}" == "${NODE_ID}" ]] \
+  || { echo "orcasynapse: desired state addressed to another node; nothing applied" >&2; exit 1; }
+
+[[ "$(jq -r '.format // empty' "${WORK}/document.json")" == "orcasynapse-runtime-desired-state/v1" ]] \
+  || { echo "orcasynapse: unrecognized desired-state format; nothing applied" >&2; exit 1; }
+
+# An empty admission set is an instruction, not an absence of one: it restores
+# the no_mcp sentinel so the runtime goes back to being tool-free.
+mapfile -t admitted < <(jq -r '.admittedToolsets[]?' "${WORK}/document.json")
+if (( ${#admitted[@]} == 0 )); then
+  printf '    - %s\n' 'no_mcp' > "${WORK}/toolsets"
+else
+  printf '    - %s\n' "${admitted[@]}" > "${WORK}/toolsets"
+fi
+
+# Replace only the api_server toolset list, leaving every other managed setting
+# exactly as the installer wrote it.
+awk -v listfile="${WORK}/toolsets" '
+  /^platform_toolsets:/ { print; in_block = 1; next }
+  in_block && /^  api_server:/ { print; while ((getline line < listfile) > 0) print line; close(listfile); in_list = 1; next }
+  in_list && /^    - / { next }
+  in_list { in_list = 0; in_block = 0 }
+  { print }
+' "${MANAGED_CONFIG}" > "${WORK}/config.yaml"
+
+if cmp -s "${WORK}/config.yaml" "${MANAGED_CONFIG}"; then
+  exit 0
+fi
+
+install -m 0644 -o root -g root "${WORK}/config.yaml" "${MANAGED_CONFIG}"
+echo "orcasynapse: applied toolset allowlist (${#admitted[@]} admitted); restarting Hermes" >&2
+docker restart "${CONTAINER_NAME}" >/dev/null
+DESIREDSTATE
+
+  write_file_from_stdin 0644 root root "/etc/systemd/system/${DESIRED_STATE_SERVICE}.service" <<EOF
+[Unit]
+Description=Apply the OrcaSynapse toolset allowlist to the Hermes runtime
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/orcasynapse/hermes-desired-state.sh
+EOF
+
+  write_file_from_stdin 0644 root root "/etc/systemd/system/${DESIRED_STATE_SERVICE}.timer" <<EOF
+[Unit]
+Description=Reconcile the OrcaSynapse toolset allowlist every five minutes
+
+[Timer]
+OnBootSec=90s
+OnUnitActiveSec=5min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target
+EOF
+
+  systemctl daemon-reload
+  systemctl enable --now "${DESIRED_STATE_SERVICE}.timer" >/dev/null
+}
+
 write_heartbeat_client() {
   install -d -m 0755 /usr/local/lib/orcasynapse
   write_file_from_stdin 0755 root root /usr/local/lib/orcasynapse/hermes-heartbeat.sh <<'HEARTBEAT'
@@ -911,6 +1036,10 @@ EOF
     model_base_url="$(jq -r '.modelBootstrap.baseUrl' "${response_file}")"
     model_alias="$(jq -r '.modelBootstrap.modelAlias' "${response_file}")"
     model_api_key="$(jq -r '.modelBootstrap.apiKey' "${response_file}")"
+    # Absent on a control plane older than ai-v1.41.0. A node with no pinned
+    # key applies no desired state rather than trusting an unsigned document.
+    control_plane_key="$(jq -r '.controlPlanePublicKeyPem // empty' "${response_file}")"
+    desired_state_path="$(jq -r '.desiredStatePath // empty' "${response_file}")"
     enrolled_fingerprint="$(jq -r '.node.identityFingerprint // empty' "${response_file}")"
     [[ "${enrolled_fingerprint}" == "${node_fingerprint}" ]] \
       || fail "OrcaSynapse enrolled identity '${enrolled_fingerprint:-missing}' instead of the VM2 identity '${node_fingerprint}'"
@@ -919,8 +1048,10 @@ EOF
       --arg hermesBaseUrl "${hermes_base_url}" --arg hermesImage "${hermes_image}" \
       --arg hostname "${hostname_value}" --arg apiKey "${api_key}" \
       --arg identityFingerprint "${node_fingerprint}" \
+      --arg controlPlanePublicKeyPem "${control_plane_key}" \
+      --arg desiredStatePath "${desired_state_path}" \
       --argjson modelBootstrap "$(jq -c '.modelBootstrap' "${response_file}")" \
-      '{format:"orcasynapse-hermes-resume/v1",nodeId:$nodeId,controlPlaneUrl:$controlPlaneUrl,hermesBaseUrl:$hermesBaseUrl,hermesImage:$hermesImage,hostname:$hostname,apiKey:$apiKey,identityFingerprint:$identityFingerprint,modelBootstrap:$modelBootstrap}' \
+      '{format:"orcasynapse-hermes-resume/v1",nodeId:$nodeId,controlPlaneUrl:$controlPlaneUrl,hermesBaseUrl:$hermesBaseUrl,hermesImage:$hermesImage,hostname:$hostname,apiKey:$apiKey,identityFingerprint:$identityFingerprint,controlPlanePublicKeyPem:$controlPlanePublicKeyPem,desiredStatePath:$desiredStatePath,modelBootstrap:$modelBootstrap}' \
       > "${resume_file}"
     install -m 0600 -o root -g root "${resume_file}" "${ENROLLMENT_STATE}"
     success "Node enrolled; protected recovery state was saved before continuing."
@@ -950,9 +1081,14 @@ EOF
   printf '%s' "${control_plane_url}" > "${STATE_ROOT}/control-plane-url"
   printf '%s' "${hermes_base_url}" > "${STATE_ROOT}/hermes-base-url"
   printf '%s' "${hermes_image}" > "${STATE_ROOT}/image-reference"
+  if [[ -n "${control_plane_key}" ]]; then
+    printf '%s' "${control_plane_key}" > "${STATE_ROOT}/control-plane-key.pem"
+    chmod 0644 "${STATE_ROOT}/control-plane-key.pem"
+  fi
   chmod 0600 "${STATE_ROOT}/node-id" "${STATE_ROOT}/control-plane-url" "${STATE_ROOT}/hermes-base-url" "${STATE_ROOT}/image-reference"
 
   write_heartbeat_client
+  write_desired_state_client
   systemctl daemon-reload
   systemctl enable --now "${HEARTBEAT_SERVICE}.timer"
   systemctl start "${HEARTBEAT_SERVICE}.service"

@@ -3,13 +3,15 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="ai-v1.44.0"
+INSTALLER_VERSION="ai-v1.45.0"
 # Honor the same state-root overrides the installer accepts, so a non-default
 # layout installed with ORCASYNAPSE_*_STATE_ROOT can be removed the same way.
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 CONTAINER_NAME="orcasynapse-hermes"
 HEARTBEAT_SERVICE="orcasynapse-hermes-heartbeat"
 HEARTBEAT_CLIENT="/usr/local/lib/orcasynapse/hermes-heartbeat.sh"
+DESIRED_STATE_SERVICE="orcasynapse-hermes-desired-state"
+DESIRED_STATE_CLIENT="/usr/local/lib/orcasynapse/hermes-desired-state.sh"
 
 # >>> ORCASYNAPSE-INSTALLER-UI v1 - generated from scripts/lib/installer-ui.sh; edit the library, then run: bash scripts/sync-installer-ui.sh >>>
 # shellcheck shell=bash
@@ -363,7 +365,10 @@ managed_install_exists() {
   [[ -e "${STATE_ROOT}" \
     || -e "/etc/systemd/system/${HEARTBEAT_SERVICE}.service" \
     || -e "/etc/systemd/system/${HEARTBEAT_SERVICE}.timer" \
-    || -e "${HEARTBEAT_CLIENT}" ]] && return 0
+    || -e "/etc/systemd/system/${DESIRED_STATE_SERVICE}.service" \
+    || -e "/etc/systemd/system/${DESIRED_STATE_SERVICE}.timer" \
+    || -e "${HEARTBEAT_CLIENT}" \
+    || -e "${DESIRED_STATE_CLIENT}" ]] && return 0
   command -v docker >/dev/null 2>&1 && docker inspect "${CONTAINER_NAME}" >/dev/null 2>&1
 }
 
@@ -390,6 +395,7 @@ confirm_destruction() {
     - Hermes container and its locally cached image when unused elsewhere
     - Node identity, enrollment state, managed policy, and runtime data
     - Signed-heartbeat service and timer
+    - Toolset desired-state reconciler service and timer
 
   Docker itself, Ubuntu packages, unrelated containers, and external backups
   are preserved. Storage snapshots must be retired under your own policy.
@@ -404,6 +410,8 @@ EOF
 stop_managed_services() {
   systemctl disable --now "${HEARTBEAT_SERVICE}.timer" >/dev/null 2>&1 || true
   systemctl stop "${HEARTBEAT_SERVICE}.service" >/dev/null 2>&1 || true
+  systemctl disable --now "${DESIRED_STATE_SERVICE}.timer" >/dev/null 2>&1 || true
+  systemctl stop "${DESIRED_STATE_SERVICE}.service" >/dev/null 2>&1 || true
   success "Managed heartbeat services stopped."
 }
 
@@ -437,9 +445,13 @@ remove_managed_state() {
   rm -f -- \
     "/etc/systemd/system/${HEARTBEAT_SERVICE}.service" \
     "/etc/systemd/system/${HEARTBEAT_SERVICE}.timer" \
-    "${HEARTBEAT_CLIENT}"
+    "/etc/systemd/system/${DESIRED_STATE_SERVICE}.service" \
+    "/etc/systemd/system/${DESIRED_STATE_SERVICE}.timer" \
+    "${HEARTBEAT_CLIENT}" \
+    "${DESIRED_STATE_CLIENT}"
   systemctl daemon-reload
   systemctl reset-failed "${HEARTBEAT_SERVICE}.service" >/dev/null 2>&1 || true
+  systemctl reset-failed "${DESIRED_STATE_SERVICE}.service" >/dev/null 2>&1 || true
 
   rm -rf --one-file-system -- "${STATE_ROOT}"
   [[ ! -e "${STATE_ROOT}" ]] \
