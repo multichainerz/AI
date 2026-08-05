@@ -85,6 +85,7 @@ import {
   toolGrantSchema,
   gatewayCredentialListSchema,
   issuedGatewayCredentialSchema,
+  toolApprovalListSchema,
   toolCallListSchema,
   toolRuntimeControlSchema,
   toolMetricsSchema,
@@ -93,6 +94,8 @@ import {
   type ToolGrantList,
   type GatewayCredentialList,
   type IssuedGatewayCredential,
+  type ToolApproval,
+  type ToolApprovalList,
   type ToolCallList,
   type ToolRuntimeControl,
   type ToolMetrics,
@@ -827,6 +830,29 @@ export async function revokeGatewayCredential(id: string): Promise<void> {
   const response = await fetch(`/api/v1/admin/tooling/credentials/${encodeURIComponent(id)}`, {
     method: "DELETE", credentials: "same-origin",
   });
+  if (!response.ok) await parsedResponse(response);
+}
+
+/** Consequential tool calls waiting on a human. Polled, so never cached. */
+export async function getPendingToolApprovals(): Promise<ToolApprovalList> {
+  const response = await fetch("/api/v1/admin/tooling/approvals", { credentials: "same-origin" });
+  return toolApprovalListSchema.parse(await parsedResponse(response));
+}
+
+export async function decideToolApproval(
+  approvalId: string,
+  decision: "APPROVE" | "REJECT",
+  reason: string,
+): Promise<void> {
+  const response = await fetch(
+    `/api/v1/admin/tooling/approvals/${encodeURIComponent(approvalId)}/decision`,
+    {
+      method: "POST",
+      headers: adminHeaders(),
+      credentials: "same-origin",
+      body: JSON.stringify({ decision, reason }),
+    },
+  );
   if (!response.ok) await parsedResponse(response);
 }
 

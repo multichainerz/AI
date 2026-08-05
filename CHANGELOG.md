@@ -5,6 +5,26 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.39.1 — 2026-08-05
+
+Phase 4c, second slice: the approvals surface an operator can actually use.
+
+- add a **Waiting on you** panel to Governed tools listing every consequential
+  call blocked on a human — the tool, the agent profile, who asked, the exact
+  arguments, and when the decision lapses. `ai-v1.39.0` shipped the routes but
+  an approval nobody can see is a boundary nobody can operate
+- the panel states what approving does and does not do: it authorises this call
+  only, cannot reach data the requester could not already reach, and does not
+  re-grant the tool. That property is the easiest one to assume wrong
+- a decision reason of at least three characters is required before either
+  button enables, and `tools:manage` gates both
+
+Also corrects a test in this file that was passing vacuously.
+`renderToStaticMarkup` does not run effects, so the panel it claimed to assert
+against had never rendered — `expect(html).toContain("cannot")` matched an
+unrelated word elsewhere in the markup. Replaced with tests over the contract
+the panel and the API agree on, which is the part that can break silently.
+
 ## ai-v1.39.0 — 2026-08-05
 
 Phase 4c, first slice: consequential tools can be approved instead of refused.

@@ -4,6 +4,7 @@ import type {
   GatewayCredential,
   GovernedTool,
   IssuedGatewayCredential,
+  ToolApproval,
   ToolCall,
   ToolGrant,
   ToolMetrics,
@@ -15,6 +16,8 @@ import {
   getAgentProfiles,
   getGatewayCredentials,
   getGovernedTools,
+  getPendingToolApprovals,
+  decideToolApproval,
   getToolCalls,
   getToolGrants,
   getToolMetrics,
@@ -51,6 +54,8 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
   const [profiles, setProfiles] = useState<AgentProfile[]>([]);
   const [credentials, setCredentials] = useState<GatewayCredential[]>([]);
   const [calls, setCalls] = useState<ToolCall[]>([]);
+  const [approvals, setApprovals] = useState<ToolApproval[]>([]);
+  const [approvalReason, setApprovalReason] = useState("");
   const [runtime, setRuntime] = useState<ToolRuntimeControl | null>(null);
   const [metrics, setMetrics] = useState<ToolMetrics | null>(null);
   const [profileVersionId, setProfileVersionId] = useState("");
@@ -79,11 +84,13 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
   };
 
   const load = async () => {
-    const [toolList, grantList, profileList, credentialList, callList, control, nextMetrics] = await Promise.all([
+    const [toolList, grantList, profileList, credentialList, callList, control, nextMetrics, approvalList] = await Promise.all([
       getGovernedTools(), getToolGrants(), getAgentProfiles(true), getGatewayCredentials(), getToolCalls(), getToolRuntime(), getToolMetrics(),
+      getPendingToolApprovals(),
     ]);
     setTools(toolList.items); setGrants(grantList.items); setProfiles(profileList.items); setCredentials(credentialList.items);
     setCalls(callList.items); setRuntime(control); setMetrics(nextMetrics);
+    setApprovals(approvalList.items);
     setProfileVersionId((current) => current || profileList.items[0]?.activeVersionConfiguration?.id || profileList.items[0]?.version.id || "");
     setToolId((current) => current || toolList.items[0]?.id || "");
   };
@@ -163,6 +170,59 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
     </div>
 
     <section className="panel tooling-ledger"><div className="document-section-heading"><div><p className="section-kicker">Revalidated activity</p><h2>Tool-call ledger</h2></div><span>{calls.length} calls</span></div>
+      {approvals.length > 0 && (
+        <section className="panel tooling-approvals" aria-label="Tool calls awaiting approval">
+          <div className="document-section-heading">
+            <div>
+              <p className="section-kicker">Waiting on you</p>
+              <h2>{approvals.length} consequential {approvals.length === 1 ? "call" : "calls"} awaiting a decision</h2>
+            </div>
+          </div>
+          <p className="chat-policy-note">
+            An agent is blocked until you decide. Approving authorises this call only — it cannot
+            reach data the requester could not already reach, and it does not grant the tool again.
+          </p>
+          <label className="tooling-approval-reason">
+            Decision reason
+            <input
+              value={approvalReason}
+              minLength={3}
+              maxLength={1000}
+              placeholder="Why this call is or is not authorized"
+              onChange={(event) => setApprovalReason(event.target.value)}
+            />
+          </label>
+          {approvals.map((approval) => (
+            <article className="tooling-approval" key={approval.id}>
+              <div>
+                <strong>{approval.toolName}</strong>
+                <small>{approval.profileSlug} · requested by {approval.requestedBySubject}</small>
+                <small>Expires {when(approval.expiresAt)}</small>
+                <code>{JSON.stringify(approval.arguments)}</code>
+              </div>
+              <div className="tooling-approval-actions">
+                <button
+                  type="button"
+                  className="primary-button"
+                  disabled={!canManage || busy !== null || approvalReason.trim().length < 3}
+                  onClick={() => void action(`approve-${approval.id}`, async () => {
+                    await decideToolApproval(approval.id, "APPROVE", approvalReason.trim());
+                  })}
+                >Approve</button>
+                <button
+                  type="button"
+                  className="danger-button"
+                  disabled={!canManage || busy !== null || approvalReason.trim().length < 3}
+                  onClick={() => void action(`reject-${approval.id}`, async () => {
+                    await decideToolApproval(approval.id, "REJECT", approvalReason.trim());
+                  })}
+                >Reject</button>
+              </div>
+            </article>
+          ))}
+        </section>
+      )}
+
       <div className="tooling-call-table"><div className="tooling-call-head"><span>Status</span><span>Tool</span><span>Agent</span><span>Requested</span><span>Outcome</span></div>{calls.length === 0 ? <div className="document-empty"><strong>No calls recorded</strong><span>The gateway remains staged until a live Hermes configuration carries an approved per-run capability.</span></div> : calls.map((call) => <article key={call.id}><span className={`document-status ${tone(call.status)}`}>{call.status.toLowerCase().replace("_", " ")}</span><strong>{call.toolName}</strong><span>{call.profileSlug} · v{call.profileVersion}</span><span>{when(call.requestedAt)}</span><span>{call.errorMessage ?? (call.result ? "Result retained" : "Awaiting outcome")}</span></article>)}</div>
     </section>
 
