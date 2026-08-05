@@ -145,10 +145,14 @@ seed_embedding_model() {
   #
   # Non-fatal: an installation that cannot reach the model host is still usable
   # for everything except retrieval, and saying so beats refusing to install.
+  # Imported by built path, not by package name: `node -e` resolves from
+  # "[eval1]" rather than a file in the workspace, so the bare specifier
+  # "@orcasynapse/knowledge" is not found even though the worker's own entry
+  # point imports it happily.
   if docker compose run --rm --no-deps \
        -e ORCASYNAPSE_MODEL_CACHE_DIR=/var/lib/orcasynapse/models \
        worker node -e '
-         const { LocalBgeM3Embedder } = await import("@orcasynapse/knowledge");
+         const { LocalBgeM3Embedder } = await import("/app/packages/knowledge/dist/index.js");
          await new LocalBgeM3Embedder().embed(["installation warm-up"]);
        ' >/dev/null 2>&1; then
     return 0

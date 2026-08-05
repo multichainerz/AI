@@ -5,6 +5,15 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.36.1 — 2026-08-05
+
+- fix the install-time model seeding added in ai-v1.36.0, which reported
+  `[WARN] The embedding model could not be downloaded now` on every run.
+  `node -e` resolves imports from `[eval1]` rather than a file in the
+  workspace, so the bare `@orcasynapse/knowledge` specifier was never found;
+  importing the built path directly works. Caught by running the upgrade on a
+  real installation rather than trusting the step to be correct
+
 ## ai-v1.36.0 — 2026-08-05
 
 Closes the three problems the sandbox exposed after ai-v1.35.0 fixed the crash:
