@@ -173,6 +173,12 @@ export class DrizzleDocumentManager implements DocumentManager {
     const id = randomUUID();
 
     const { bytes, sha256 } = await readBounded(upload.stream, MAX_UPLOAD_BYTES);
+    // Captured now, because extraction detaches this buffer.
+    //
+    // pdf.js takes ownership of the typed array it is handed, so after
+    // extractDocumentText the ArrayBuffer is detached and byteLength reads 0.
+    // Reading the size after extraction recorded every PDF as 0 bytes.
+    const sizeBytes = bytes.byteLength;
     if (bytes.byteLength === 0) throw new DocumentValidationError("Document is empty.");
 
     const [duplicate] = await this.database
@@ -207,7 +213,7 @@ export class DrizzleDocumentManager implements DocumentManager {
           ownerSubject: principal.subject,
           fileName,
           mediaType,
-          sizeBytes: bytes.byteLength,
+          sizeBytes,
           sha256,
           classification: metadata.classification,
           status: "FAILED",
@@ -239,7 +245,7 @@ export class DrizzleDocumentManager implements DocumentManager {
         ownerSubject: principal.subject,
         fileName,
         mediaType,
-        sizeBytes: bytes.byteLength,
+        sizeBytes,
         sha256,
         classification: metadata.classification,
         status: "QUEUED",
@@ -259,7 +265,7 @@ export class DrizzleDocumentManager implements DocumentManager {
       metadata: {
         fileName,
         mediaType,
-        sizeBytes: bytes.byteLength,
+        sizeBytes,
         classification: metadata.classification,
         characters: extracted.text.length,
         pages: extracted.pages,

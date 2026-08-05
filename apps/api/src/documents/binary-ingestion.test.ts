@@ -126,6 +126,24 @@ describe("PDF ingestion", () => {
       .where(eq(documentChunk.documentId, stored.id))).toHaveLength(0);
   });
 
+  it("records the real byte size, which PDF extraction destroys if read too late", async () => {
+    // pdf.js takes ownership of the typed array it is handed and detaches the
+    // underlying ArrayBuffer, so byteLength reads 0 once extraction has run.
+    // ai-v1.36.0 moved extraction ahead of the insert and recorded every PDF as
+    // 0 bytes; the size has to be captured before the bytes are handed over.
+    const bytes = pdfBytes(["Sizing check: this document has a genuine byte length."]);
+    expect(bytes.byteLength).toBeGreaterThan(0);
+
+    const stored = await manager().upload(
+      owner,
+      upload("sized.pdf", bytes, "application/pdf"),
+      metadata,
+    );
+
+    expect(stored.sizeBytes).toBe(bytes.byteLength);
+    expect(stored.sizeBytes).toBeGreaterThan(0);
+  });
+
   it("records a scanned PDF as failed with an OCR reason rather than queueing nothing", async () => {
     // A page with no text operators is what a scan looks like after extraction.
     const stored = await manager().upload(

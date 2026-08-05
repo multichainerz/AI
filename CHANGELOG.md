@@ -5,6 +5,19 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.36.2 — 2026-08-05
+
+- record the real byte size of an uploaded document again. ai-v1.36.0 moved
+  extraction ahead of the database insert, and pdf.js takes ownership of the
+  typed array it is handed — the ArrayBuffer is detached once parsing succeeds,
+  so `bytes.byteLength` read `0`. Every PDF uploaded since was stored as
+  0 bytes. The size is now captured before the bytes are handed over
+- retrieval was never affected: the buffer is detached *by* a successful
+  extraction, so the text, chunks and vectors were always correct. Only the
+  recorded size was wrong
+- cover it with a test that fails against the previous code (`expected +0 to
+  be 629`), because the defect is invisible to every assertion about content
+
 ## ai-v1.36.1 — 2026-08-05
 
 - fix the install-time model seeding added in ai-v1.36.0, which reported
