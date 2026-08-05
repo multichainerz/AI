@@ -39,6 +39,12 @@ COPY --from=builder /app/pnpm-lock.yaml ./pnpm-lock.yaml
 COPY scripts/install-agentic-node.sh ./scripts/install-agentic-node.sh
 COPY scripts/remove-agentic-node.sh ./scripts/remove-agentic-node.sh
 
+# Created here, owned by node: a compose volume mounted at this path inherits
+# the image's ownership, so without this the non-root service still cannot
+# write the model cache on a fresh install.
+RUN mkdir -p /var/lib/orcasynapse/models && chown -R node:node /var/lib/orcasynapse
+
 USER node
+
 EXPOSE 4000
 CMD ["node", "apps/api/dist/index.js"]

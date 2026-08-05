@@ -1,4 +1,12 @@
 export const APPROVED_EMBEDDING_MODEL = "Xenova/bge-m3" as const;
+
+/**
+ * Fallback weight cache, outside the install tree so a non-root service user
+ * can always write it. Deployments should override it with a mounted volume
+ * via ORCASYNAPSE_MODEL_CACHE_DIR; without that the ~2 GB of weights are
+ * re-downloaded on every container restart.
+ */
+export const DEFAULT_MODEL_CACHE_DIR = "/var/tmp/orcasynapse-models";
 export const APPROVED_EMBEDDING_DIMENSIONS = 1024 as const;
 
 export class EmbeddingUnavailableError extends Error {
@@ -42,15 +50,44 @@ export class LocalBgeM3Embedder implements TextEmbedder {
   readonly dimensions = APPROVED_EMBEDDING_DIMENSIONS;
   #pipeline: Promise<FeatureExtractionPipeline> | undefined;
 
-  constructor(private readonly cacheDirectory?: string) {}
+  /**
+   * Where model weights are cached.
+   *
+   * This is not optional in practice. Left unset, `@huggingface/transformers`
+   * caches inside its own directory under `node_modules`, which every shipped
+   * container makes unwritable by running as a non-root user — the load then
+   * fails with EACCES on the first embedding. `ORCASYNAPSE_MODEL_CACHE_DIR`
+   * lets the deployment point this at a mounted volume so the weights also
+   * survive a restart instead of being re-fetched.
+   */
+  constructor(
+    private readonly cacheDirectory: string =
+      process.env.ORCASYNAPSE_MODEL_CACHE_DIR ?? DEFAULT_MODEL_CACHE_DIR,
+  ) {}
 
   private async resolve(): Promise<FeatureExtractionPipeline> {
     this.#pipeline ??= (async () => {
       try {
-        const transformers = await import("@huggingface/transformers");
-        if (this.cacheDirectory) {
-          transformers.env.cacheDir = this.cacheDirectory;
+        // Checked before the library touches it. Transformers writes its cache
+        // from a path deep inside model loading, where an EACCES surfaces as a
+        // bare stack trace and — because part of that write is not awaited —
+        // can escape as an unhandled rejection that kills the process. Failing
+        // here instead names the directory and the fix.
+        const { mkdir, access } = await import("node:fs/promises");
+        const { constants } = await import("node:fs");
+        try {
+          await mkdir(this.cacheDirectory, { recursive: true });
+          await access(this.cacheDirectory, constants.W_OK);
+        } catch (cause) {
+          throw new Error(
+            `the model cache directory '${this.cacheDirectory}' is not writable ` +
+            `(${cause instanceof Error ? cause.message : "unknown error"}). ` +
+            "Set ORCASYNAPSE_MODEL_CACHE_DIR to a writable path or mount a volume there.",
+          );
         }
+
+        const transformers = await import("@huggingface/transformers");
+        transformers.env.cacheDir = this.cacheDirectory;
         // Weights are resolved from the local cache; an air-gapped node must be
         // seeded at install time rather than reaching out during a request.
         const pipe = await transformers.pipeline("feature-extraction", APPROVED_EMBEDDING_MODEL);

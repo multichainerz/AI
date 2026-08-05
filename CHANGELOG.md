@@ -5,6 +5,40 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.35.0 — 2026-08-05
+
+**Fixes a defect that made a fresh containerised install unusable.** Found by
+building the sandbox from the public installer and actually using it: every
+chat turn hung, and an uploaded PDF sat in `CONVERTING` forever.
+
+- **give the embedding model a writable cache directory.** `LocalBgeM3Embedder`
+  has always accepted a `cacheDirectory` and set `transformers.env.cacheDir`
+  from it, but both call sites — `apps/worker/src/index.ts` and
+  `apps/api/src/runtime.ts` — constructed it with no argument. The library then
+  defaulted its cache to its own folder under `node_modules`, which every
+  shipped image makes unwritable by running as `USER node`. The first embedding
+  therefore failed with `EACCES` in *any* container:
+  - the worker died mid-run, the 90-second lease expired, the run was reclaimed,
+    and it crashed again — an endless loop that left every chat turn `RUNNING`
+  - the API died mid-upload, stranding the document in `CONVERTING` with zero
+    chunks and no failure recorded
+  - it never showed up in tests, which run outside a container against a
+    writable `node_modules`
+- default the cache to `/var/tmp/orcasynapse-models`, overridable with
+  `ORCASYNAPSE_MODEL_CACHE_DIR`
+- mount a `model_cache` volume for both services in compose and pre-create the
+  directory as `node` in both Dockerfiles, so a mounted volume does not
+  reintroduce the ownership problem — and the ~2 GB of BGE-M3 weights survive a
+  restart instead of being re-downloaded
+- check the cache directory is writable *before* handing it to the library, so
+  the failure names the directory and the environment variable rather than
+  surfacing as a bare `EACCES` stack from deep inside model loading, part of
+  which is not awaited and escapes as an unhandled rejection
+
+Known and not fixed here: a document stranded in `CONVERTING` is never
+reconciled. Agent runs have a lease that reclaims them; documents have no
+equivalent timeout, so a crash during ingestion leaves the row pending forever.
+
 ## ai-v1.34.1 — 2026-08-05
 
 - cover PDF ingestion end to end. Every existing document test uploaded UTF-8
