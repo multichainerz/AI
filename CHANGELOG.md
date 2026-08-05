@@ -5,6 +5,36 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.37.0 — 2026-08-05
+
+Chat gets a readable transcript and a window into what the runtime can do.
+
+- **tell the two speakers apart.** User and assistant turns rendered as
+  identical 729px rows — same width, same left edge, distinguished only by an
+  avatar tint — so a transcript was a wall of text you could not scan. The
+  person's turn is now a bounded card and the agent's is open content
+- **align the composer with the transcript.** `.chat-messages` reserves a
+  scrollbar gutter and `.chat-composer-wrap` did not, so their right edges sat
+  ~15px apart at every width. Measured on a live install: transcript 729px,
+  composer 744px
+- **stop the header competing with the conversation.** Seven action buttons plus
+  telemetry left the title 219px of a 912px column. Knowledge and Skills stay
+  inline; Rename, memory, Fork, Export, Archive and Delete move behind one
+  overflow menu
+- **surface what the runtime can actually do.** New `GET
+  /admin/agents/runtime/catalogue` reads Hermes's own `/v1/toolsets` and
+  `/v1/skills`. A live node reports **28 toolsets and 67 skills**, none of which
+  the dashboard has ever shown. The panel states the policy plainly — "all 28
+  toolsets are disabled by the managed runtime policy" — so the boundary is
+  visible instead of being inferred from an empty screen
+- discovery is deliberately lenient where the execution gate is not:
+  `assertBaseBoundary` still fails closed on an unrecognised toolset, while
+  `catalogue()` skips a malformed skill rather than refusing to render
+
+Recorded from probing the live runtime: Hermes exposes 24 endpoints and
+OrcaSynapse calls 6. `memory_write_api: false` on this build, which
+independently vindicates owning memory in pgvector rather than delegating it.
+
 ## ai-v1.36.2 — 2026-08-05
 
 - record the real byte size of an uploaded document again. ai-v1.36.0 moved

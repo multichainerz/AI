@@ -1,5 +1,6 @@
 import type {
   AgentMemoryRecord,
+  HermesRuntimeCatalogue,
   AgentRunApproval,
   AgentProfile,
   ChatConversation,
@@ -23,6 +24,7 @@ import {
   getChatConversation,
   getDocuments,
   getOwnAgentMemory,
+  getRuntimeCatalogue,
   forgetOwnAgentMemory,
   getChatConversations,
   getAgentProfiles,
@@ -222,6 +224,9 @@ export function ChatView({
   const [knowledgeOpen, setKnowledgeOpen] = useState(false);
   const [library, setLibrary] = useState<DocumentSummary[]>([]);
   const [memoryOpen, setMemoryOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [skillsOpen, setSkillsOpen] = useState(false);
+  const [catalogue, setCatalogue] = useState<HermesRuntimeCatalogue | null>(null);
   const [memories, setMemories] = useState<AgentMemoryRecord[] | null>(null);
   const [conversations, setConversations] = useState<ChatConversationSummary[]>([]);
   const [active, setActive] = useState<ChatConversation | null>(null);
@@ -593,6 +598,20 @@ export function ChatView({
     }
   };
 
+  // What the runtime can actually do, read from Hermes rather than assumed.
+  // Discovery only: nothing here enables anything, and the panel says so.
+  const openSkills = async () => {
+    setSkillsOpen(true);
+    setMoreOpen(false);
+    if (catalogue) return;
+    try {
+      setCatalogue(await getRuntimeCatalogue());
+    } catch (cause) {
+      setSkillsOpen(false);
+      setError(cause instanceof Error ? cause.message : "Unable to read the runtime catalogue.");
+    }
+  };
+
   // "What does it know about me" has to be answerable by the person it is
   // about, not only by an administrator reading Platform → Memory.
   const openMemory = async () => {
@@ -854,15 +873,21 @@ export function ChatView({
           </div>
           {active && !renaming && (
             <div className="chat-conversation-actions">
-              <button type="button" disabled={working || loading} onClick={() => { setTitleDraft(active.title); setRenaming(true); }}>Rename</button>
               <button type="button" disabled={working || loading} onClick={() => void openKnowledge()}>
                 Knowledge{active.knowledgeDocuments.length > 0 ? ` · ${active.knowledgeDocuments.length}` : ""}
               </button>
-              <button type="button" disabled={working || loading} onClick={() => void openMemory()}>Memory</button>
-              <button type="button" disabled={working || loading} onClick={() => void forkConversation()}>Fork</button>
-              <button type="button" disabled={working || loading} onClick={exportConversation}>Export</button>
-              <button type="button" disabled={working || loading} onClick={() => void setArchiveStatus(active.status === "ARCHIVED" ? "ACTIVE" : "ARCHIVED")}>{active.status === "ARCHIVED" ? "Restore" : "Archive"}</button>
-              <button className="danger" type="button" disabled={working || loading} onClick={() => setConfirmDelete(true)}>Delete</button>
+              <button type="button" disabled={working || loading} onClick={() => void openSkills()}>Skills</button>
+              <button type="button" aria-haspopup="menu" aria-expanded={moreOpen} disabled={working || loading} onClick={() => setMoreOpen((open) => !open)}>More ⌄</button>
+              {moreOpen && (
+                <div className="chat-actions-more" role="menu">
+                  <button type="button" role="menuitem" onClick={() => { setMoreOpen(false); setTitleDraft(active.title); setRenaming(true); }}>Rename</button>
+                  <button type="button" role="menuitem" onClick={() => { setMoreOpen(false); void openMemory(); }}>What it remembers</button>
+                  <button type="button" role="menuitem" onClick={() => { setMoreOpen(false); void forkConversation(); }}>Fork</button>
+                  <button type="button" role="menuitem" onClick={() => { setMoreOpen(false); exportConversation(); }}>Export</button>
+                  <button type="button" role="menuitem" onClick={() => { setMoreOpen(false); void setArchiveStatus(active.status === "ARCHIVED" ? "ACTIVE" : "ARCHIVED"); }}>{active.status === "ARCHIVED" ? "Restore" : "Archive"}</button>
+                  <button className="danger" type="button" role="menuitem" onClick={() => { setMoreOpen(false); setConfirmDelete(true); }}>Delete</button>
+                </div>
+              )}
             </div>
           )}
         </header>
@@ -898,6 +923,43 @@ export function ChatView({
                   );
                 })}
               </ul>
+            )}
+          </div>
+        )}
+
+        {skillsOpen && (
+          <div className="chat-knowledge" role="dialog" aria-labelledby="chat-skills-title">
+            <header>
+              <div>
+                <strong id="chat-skills-title">What this runtime can do</strong>
+                <span>Read from Hermes on the enrolled node. Nothing here is enabled by viewing it.</span>
+              </div>
+              <button type="button" aria-label="Close skills" onClick={() => setSkillsOpen(false)}>×</button>
+            </header>
+            {catalogue === null ? (
+              <p className="chat-knowledge-empty">Loading…</p>
+            ) : (
+              <>
+                <p className="chat-policy-note">
+                  {catalogue.enabledToolsets === 0
+                    ? `All ${catalogue.toolsets.length} toolsets are disabled by the managed runtime policy. Agents answer from your documents and this conversation only.`
+                    : `${catalogue.enabledToolsets} of ${catalogue.toolsets.length} toolsets are enabled by the managed runtime policy.`}
+                </p>
+                <div className="chat-skill-group">
+                  <strong>Toolsets · {catalogue.toolsets.length}</strong>
+                  {catalogue.toolsets.map((toolset) => (
+                    <span className={toolset.enabled ? "chat-skill-pill" : "chat-skill-pill off"} key={toolset.name}>
+                      <i />{toolset.label ?? toolset.name}
+                    </span>
+                  ))}
+                </div>
+                <div className="chat-skill-group">
+                  <strong>Skills · {catalogue.skills.length}</strong>
+                  {catalogue.skills.map((skill) => (
+                    <span className="chat-skill-pill" key={skill.name} title={skill.description ?? ""}>{skill.name}</span>
+                  ))}
+                </div>
+              </>
             )}
           </div>
         )}

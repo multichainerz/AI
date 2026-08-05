@@ -309,6 +309,58 @@ export class HermesClient {
     return { capabilities: value, toolsets };
   }
 
+  /**
+   * What the runtime reports it can do: toolsets and skills.
+   *
+   * Discovery only, and deliberately lenient — an unrecognised entry is skipped
+   * rather than thrown on. `assertBaseBoundary` is the fail-closed gate that
+   * decides whether a run may proceed; this one only describes, so refusing to
+   * render a catalogue because one skill lacked a description would be the
+   * wrong trade.
+   */
+  async catalogue(): Promise<{
+    toolsets: Array<{ name: string; label: string | null; enabled: boolean; toolCount: number }>;
+    skills: Array<{ name: string; description: string | null; category: string | null }>;
+  }> {
+    const connection = await this.resolver.resolveOne("HERMES");
+    const { toolsets } = await this.assertBaseBoundary(connection);
+
+    const detailed = toolsets.map((toolset) => {
+      const record = toolset as unknown as Record<string, unknown>;
+      const tools = Array.isArray(record.tools) ? record.tools : [];
+      return {
+        name: toolset.name,
+        label: typeof record.label === "string" ? record.label : null,
+        enabled: toolset.enabled,
+        toolCount: tools.length,
+      };
+    });
+
+    let skills: Array<{ name: string; description: string | null; category: string | null }> = [];
+    try {
+      const path = stringSetting(connection, "skillsPath", "/v1/skills");
+      const response = await this.request(connection, endpoint(connection, path), { method: "GET" });
+      const values = response && typeof response === "object" && Array.isArray((response as { data?: unknown }).data)
+        ? (response as { data: unknown[] }).data
+        : [];
+      skills = values.flatMap((value) => {
+        if (!value || typeof value !== "object") return [];
+        const record = value as Record<string, unknown>;
+        if (typeof record.name !== "string") return [];
+        return [{
+          name: record.name,
+          description: typeof record.description === "string" ? record.description : null,
+          category: typeof record.category === "string" ? record.category : null,
+        }];
+      });
+    } catch {
+      // A runtime without /v1/skills is still usable; the panel simply shows none.
+      skills = [];
+    }
+
+    return { toolsets: detailed, skills };
+  }
+
   async start(input: HermesRunSubmission): Promise<string> {
     const connection = await this.resolver.resolveOne("HERMES");
     if (input.governedMcp) await this.assertGovernedToolBoundaryFor(connection);

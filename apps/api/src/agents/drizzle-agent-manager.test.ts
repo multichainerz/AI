@@ -35,6 +35,7 @@ const otherPrincipal: AgentPrincipal = { id: randomUUID(), subject: "local-admin
 const passingBoundary: AgentBoundaryVerifier = {
   assertZeroToolBoundary: vi.fn(async () => undefined),
   assertGovernedToolBoundary: vi.fn(async () => undefined),
+      catalogue: vi.fn(async () => ({ toolsets: [], skills: [] })),
 };
 
 function manager(boundaryVerifier?: AgentBoundaryVerifier) {
@@ -335,6 +336,7 @@ describe("DrizzleAgentManager runtime control", () => {
     const failing: AgentBoundaryVerifier = {
       assertZeroToolBoundary: vi.fn(async () => { throw new Error("boundary breached"); }),
       assertGovernedToolBoundary: vi.fn(async () => undefined),
+      catalogue: vi.fn(async () => ({ toolsets: [], skills: [] })),
     };
 
     await expect(manager(failing).updateRuntimeControl(principal, { enabled: true, reason: "go" } as never))

@@ -64,6 +64,7 @@ function manager(): AgentManager {
     }] })),
     submitRun: vi.fn(async () => run),
     cancelRun: vi.fn(async (): Promise<AgentRun> => ({ ...run, status: "CANCEL_REQUESTED" })),
+    runtimeCatalogue: vi.fn(async () => ({ toolsets: [], skills: [], enabledToolsets: 0 })),
     getRuntimeControl: vi.fn(async () => ({ enabled: false, reason: "Acceptance pending.", updatedAt: "2026-07-30T00:00:00.000Z", updatedBy: null })),
     updateRuntimeControl: vi.fn(async (_principal, input) => ({ enabled: input.enabled, reason: input.reason, updatedAt: "2026-07-30T00:00:00.000Z", updatedBy: session.id })),
     metrics: vi.fn(async () => ({ generatedAt: "2026-07-30T00:00:00.000Z", profiles: 1, activeProfiles: 1, queuedRuns: 1, runningRuns: 0, completedRuns: 0, failedRuns: 0 })),

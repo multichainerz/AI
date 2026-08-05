@@ -1,4 +1,5 @@
 import type {
+  HermesRuntimeCatalogue,
   AgentMetrics,
   AgentProfile,
   AgentProfileList,
@@ -22,6 +23,11 @@ export interface AgentPrincipal {
 export interface AgentBoundaryVerifier {
   assertZeroToolBoundary(): Promise<void>;
   assertGovernedToolBoundary(): Promise<void>;
+  /** Read-only description of the runtime; never a gate on execution. */
+  catalogue(): Promise<{
+    toolsets: Array<{ name: string; label: string | null; enabled: boolean; toolCount: number }>;
+    skills: Array<{ name: string; description: string | null; category: string | null }>;
+  }>;
 }
 
 export interface AgentManager {
@@ -46,6 +52,8 @@ export interface AgentManager {
     },
   ): Promise<AgentRun>;
   cancelRun(principal: AgentPrincipal, runId: string, includeAll: boolean): Promise<AgentRun>;
+  /** What the enrolled Hermes runtime reports it can do. Discovery only. */
+  runtimeCatalogue(): Promise<HermesRuntimeCatalogue>;
   getRuntimeControl(): Promise<AgentRuntimeControl>;
   updateRuntimeControl(principal: AgentPrincipal, input: UpdateAgentRuntimeControl): Promise<AgentRuntimeControl>;
   metrics(): Promise<AgentMetrics>;
