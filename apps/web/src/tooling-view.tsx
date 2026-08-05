@@ -3,12 +3,14 @@ import type {
   AgentProfile,
   GatewayCredential,
   GovernedTool,
+  HermesRuntimeCatalogue,
   IssuedGatewayCredential,
   ToolApproval,
   ToolCall,
   ToolGrant,
   ToolMetrics,
   ToolRuntimeControl,
+  ToolsetAdmission,
 } from "@orcasynapse/contracts";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import {
@@ -16,8 +18,11 @@ import {
   getAgentProfiles,
   getGatewayCredentials,
   getGovernedTools,
-  getPendingToolApprovals,
   decideToolApproval,
+  decideToolsetAdmission,
+  getPendingToolApprovals,
+  getRuntimeCatalogue,
+  getToolsetAdmissions,
   getToolCalls,
   getToolGrants,
   getToolMetrics,
@@ -56,6 +61,9 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
   const [calls, setCalls] = useState<ToolCall[]>([]);
   const [approvals, setApprovals] = useState<ToolApproval[]>([]);
   const [approvalReason, setApprovalReason] = useState("");
+  const [admissions, setAdmissions] = useState<ToolsetAdmission[]>([]);
+  const [catalogue, setCatalogue] = useState<HermesRuntimeCatalogue | null>(null);
+  const [admissionReason, setAdmissionReason] = useState("");
   const [runtime, setRuntime] = useState<ToolRuntimeControl | null>(null);
   const [metrics, setMetrics] = useState<ToolMetrics | null>(null);
   const [profileVersionId, setProfileVersionId] = useState("");
@@ -78,19 +86,64 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
     return versions;
   }), [profiles]);
 
+  const admittedNames = useMemo(
+    () => new Set(admissions.filter(({ admitted }) => admitted).map(({ toolsetName }) => toolsetName)),
+    [admissions],
+  );
+
+  /**
+   * Every toolset the runtime knows about, plus any admitted one it does not.
+   *
+   * An admission for a toolset the runtime has never reported still belongs on
+   * screen — it is a decision this installation made, and hiding it would make
+   * a revocation look like it had already happened.
+   */
+  const toolsetRows = useMemo(() => {
+    const reasons = new Map(admissions.map((entry) => [entry.toolsetName, entry.reason]));
+    const rows = (catalogue?.toolsets ?? []).map((toolset) => ({
+      name: toolset.name,
+      toolCount: toolset.toolCount,
+      enabled: toolset.enabled,
+      admitted: admittedNames.has(toolset.name),
+      reason: reasons.get(toolset.name) ?? null,
+    }));
+    const known = new Set(rows.map(({ name }) => name));
+    for (const entry of admissions) {
+      if (known.has(entry.toolsetName)) continue;
+      rows.push({
+        name: entry.toolsetName,
+        toolCount: 0,
+        enabled: false,
+        admitted: entry.admitted,
+        reason: entry.reason,
+      });
+    }
+    return rows.sort((left, right) => left.name.localeCompare(right.name));
+  }, [catalogue, admissions, admittedNames]);
+
+  // What the boundary is currently refusing runs over.
+  const drifted = useMemo(
+    () => toolsetRows.filter((row) => row.enabled && !row.admitted).map(({ name }) => name),
+    [toolsetRows],
+  );
+
   const fail = (cause: unknown) => {
     if (cause instanceof OrcaSynapseApiError && cause.status === 401) onSessionExpired();
     setError(cause instanceof Error ? cause.message : "OrcaSynapse could not complete the governed-tool operation.");
   };
 
   const load = async () => {
-    const [toolList, grantList, profileList, credentialList, callList, control, nextMetrics, approvalList] = await Promise.all([
+    const [toolList, grantList, profileList, credentialList, callList, control, nextMetrics, approvalList, admissionList, runtimeCatalogue] = await Promise.all([
       getGovernedTools(), getToolGrants(), getAgentProfiles(true), getGatewayCredentials(), getToolCalls(), getToolRuntime(), getToolMetrics(),
-      getPendingToolApprovals(),
+      getPendingToolApprovals(), getToolsetAdmissions(),
+      // The runtime may be unreachable; its catalogue is informative, not
+      // load-bearing, so a failure must not blank the whole page.
+      getRuntimeCatalogue().catch(() => null),
     ]);
     setTools(toolList.items); setGrants(grantList.items); setProfiles(profileList.items); setCredentials(credentialList.items);
     setCalls(callList.items); setRuntime(control); setMetrics(nextMetrics);
     setApprovals(approvalList.items);
+    setAdmissions(admissionList.items); setCatalogue(runtimeCatalogue);
     setProfileVersionId((current) => current || profileList.items[0]?.activeVersionConfiguration?.id || profileList.items[0]?.version.id || "");
     setToolId((current) => current || toolList.items[0]?.id || "");
   };
@@ -135,6 +188,69 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
         <label>Operator reason<input disabled={!canManage} minLength={3} maxLength={500} value={runtimeReason} onChange={(event) => setRuntimeReason(event.target.value)} /></label>
         <button className={runtime?.enabled ? "danger-button" : "primary-button"} disabled={!canManage || busy !== null || runtimeReason.trim().length < 3} type="submit">{canManage ? busy === "runtime" ? "Applying…" : runtime?.enabled ? "Disable gateway" : "Enable gateway" : "Read-only access"}</button>
       </form>
+    </section>
+
+    <section className="panel tooling-toolsets" aria-label="Runtime toolset admission">
+      <div className="document-section-heading">
+        <div>
+          <p className="section-kicker">Runtime boundary</p>
+          <h2>Toolset admission</h2>
+        </div>
+        <span>{admittedNames.size} of {toolsetRows.length} admitted</span>
+      </div>
+      <p className="chat-policy-note">
+        The runtime executes these itself, so OrcaSynapse cannot inspect an individual call the way
+        it does its own governed tools. Admitting one permits the runtime to enable it at all. A run
+        is refused outright if the runtime has anything enabled that is not admitted here.
+      </p>
+      {drifted.length > 0 && (
+        <div className="documents-alert" role="alert">
+          <span>
+            The runtime is running {drifted.length === 1 ? "a toolset" : "toolsets"} nobody admitted
+            ({drifted.join(", ")}). Every run is being refused until this agrees.
+          </span>
+        </div>
+      )}
+      <label className="tooling-approval-reason">
+        Decision reason
+        <input
+          value={admissionReason}
+          minLength={3}
+          maxLength={500}
+          placeholder="Why this toolset is or is not permitted here"
+          onChange={(event) => setAdmissionReason(event.target.value)}
+        />
+      </label>
+      {toolsetRows.length === 0
+        ? <p className="tooling-empty">The runtime has not reported a catalogue. Admissions can still be recorded once it does.</p>
+        : <div className="tooling-toolset-list">
+          {toolsetRows.map((row) => (
+            <article key={row.name} className={row.enabled && !row.admitted ? "drifted" : undefined}>
+              <div>
+                <div className="tooling-tool-title">
+                  <strong>{row.name}</strong>
+                  <span className={row.admitted ? "document-status ready" : "document-status"}>
+                    {row.admitted ? "admitted" : "not admitted"}
+                  </span>
+                  {row.enabled && (
+                    <span className={row.admitted ? "document-status ready" : "document-status quarantined"}>
+                      enabled on runtime
+                    </span>
+                  )}
+                </div>
+                <small>{row.toolCount} {row.toolCount === 1 ? "tool" : "tools"}{row.reason ? ` · ${row.reason}` : ""}</small>
+              </div>
+              <button
+                type="button"
+                className={row.admitted ? "danger-button" : "primary-button"}
+                disabled={!canManage || busy !== null || admissionReason.trim().length < 3}
+                onClick={() => void action(`toolset-${row.name}`, async () => {
+                  await decideToolsetAdmission(row.name, !row.admitted, admissionReason.trim());
+                })}
+              >{row.admitted ? "Revoke" : "Admit"}</button>
+            </article>
+          ))}
+        </div>}
     </section>
 
     <div className="tooling-metrics" aria-label="Governed tooling summary">

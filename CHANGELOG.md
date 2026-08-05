@@ -5,6 +5,25 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.42.0 — 2026-08-05
+
+Toolset admission becomes something an operator can see and decide.
+
+- add a **Toolset admission** panel to Governed tools, merging the runtime's
+  reported catalogue with this installation's decisions. Every toolset the
+  runtime knows about is listed with its admission state; admitting one permits
+  the runtime to enable it at all.
+- surface drift as an alert. A toolset the runtime has enabled that nobody
+  admitted is the state that refuses every run, so it is named rather than left
+  for someone to infer from failing chats.
+- keep an admitted toolset on screen even when the runtime never reported it.
+  Hiding it would make a pending revocation look like it had already happened.
+- require a reason of at least three characters to admit or revoke, matching
+  every other governed decision in the console.
+- treat the runtime catalogue as informative rather than load-bearing: if the
+  runtime is unreachable the panel still renders from recorded admissions
+  instead of blanking the page.
+
 ## ai-v1.41.0 — 2026-08-05
 
 The control plane gains a signing identity, and can state what a node should be.
