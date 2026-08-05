@@ -5,6 +5,31 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.45.2 — 2026-08-06
+
+Suppress unadmitted toolsets with `agent.disabled_toolsets`.
+
+`ai-v1.45.1` kept the `no_mcp` sentinel and still did not work: admitting
+`clarify` left the runtime reporting `['bfl', 'clarify']`. The sentinel governs
+MCP servers, and `bfl` is not one — a toolset enabled globally runs regardless
+of the platform allowlist.
+
+`agent.disabled_toolsets` is subtracted after every other rule. Naming every
+unadmitted toolset there produced exactly `['clarify']` on the pilot, verified
+by hand before this was written rather than after.
+
+- the reconciler now maintains two settings: `platform_toolsets.api_server`
+  allowlists the admitted names beside the sentinel, and
+  `agent.disabled_toolsets` names everything the runtime knows about that was
+  not admitted.
+- the runtime's own catalogue supplies the complete name list, since the desired
+  state carries only what was admitted. If it is unavailable the admitted set
+  still applies and nothing extra is suppressed that pass — the control plane
+  keeps refusing runs until one succeeds.
+- the rewrite moved from awk to python3 because it now maintains two blocks
+  idempotently, which is verified: applying the same admission twice leaves the
+  file byte-identical, so Hermes is not restarted for nothing.
+
 ## ai-v1.45.1 — 2026-08-06
 
 Keep the `no_mcp` sentinel when applying an admitted toolset.

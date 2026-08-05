@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="ai-v1.45.1"
+INSTALLER_VERSION="ai-v1.45.2"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 CONTAINER_NAME="orcasynapse-hermes"
 HEARTBEAT_SERVICE="orcasynapse-hermes-heartbeat"
@@ -702,39 +702,60 @@ document_node="$(jq -r '.nodeId // empty' "${WORK}/document.json")"
 [[ "$(jq -r '.format // empty' "${WORK}/document.json")" == "orcasynapse-runtime-desired-state/v1" ]] \
   || { echo "orcasynapse: unrecognized desired-state format; nothing applied" >&2; exit 1; }
 
-# The no_mcp sentinel stays in every case, admitted names or not.
+# Admitted names drive two settings, because one is not enough.
 #
-# Hermes treats an explicit toolset list as an allowlist for its own toolsets,
-# but without the sentinel it also re-enables every globally enabled MCP server.
-# Verified on the pilot: admitting `clarify` alone brought up `bfl` too, which
-# the control plane then correctly refused as an unadmitted toolset. Keeping the
-# sentinel suppresses those defaults while the explicit names still take effect.
-#
-# When OrcaSynapse's own MCP server becomes admittable, this has to change: the
-# sentinel would suppress that too, so the desired-state document will need to
-# distinguish a native toolset from an MCP server.
-mapfile -t admitted < <(jq -r '.admittedToolsets[]?' "${WORK}/document.json")
-printf '    - %s\n' 'no_mcp' > "${WORK}/toolsets"
-if (( ${#admitted[@]} > 0 )); then
-  printf '    - %s\n' "${admitted[@]}" >> "${WORK}/toolsets"
-fi
+# `platform_toolsets` allowlists this platform, and `no_mcp` suppresses MCP
+# servers — but a toolset enabled globally still runs regardless of both.
+# Verified on the pilot: admitting `clarify` alone left `bfl` enabled too, which
+# the control plane then correctly refused as drift. `agent.disabled_toolsets`
+# is subtracted after every other rule, so naming everything unadmitted there is
+# what actually produces the admitted set and nothing else.
+KEY="$(sed -n 's/^API_SERVER_KEY=//p' "${STATE_ROOT}/data/.env" 2>/dev/null || true)"
+curl -s -m 10 -H "Authorization: Bearer ${KEY}" http://127.0.0.1:8642/v1/toolsets \
+  > "${WORK}/catalogue.json" 2>/dev/null || : > "${WORK}/catalogue.json"
 
-# Replace only the api_server toolset list, leaving every other managed setting
-# exactly as the installer wrote it.
-awk -v listfile="${WORK}/toolsets" '
-  /^platform_toolsets:/ { print; in_block = 1; next }
-  in_block && /^  api_server:/ { print; while ((getline line < listfile) > 0) print line; close(listfile); in_list = 1; next }
-  in_list && /^    - / { next }
-  in_list { in_list = 0; in_block = 0 }
-  { print }
-' "${MANAGED_CONFIG}" > "${WORK}/config.yaml"
+python3 - "${MANAGED_CONFIG}" "${WORK}/document.json" "${WORK}/catalogue.json" "${WORK}/config.yaml" <<'RECONCILE'
+import json, re, sys
+
+config_path, document_path, catalogue_path, output_path = sys.argv[1:5]
+admitted = json.load(open(document_path)).get("admittedToolsets") or []
+
+# The runtime's own catalogue is the only complete list of names. If it is
+# unavailable the admitted set still applies; nothing extra can be suppressed
+# this pass, and the control plane keeps refusing runs until one succeeds.
+try:
+    raw = json.load(open(catalogue_path))
+    items = raw if isinstance(raw, list) else raw.get("data") or raw.get("toolsets") or []
+    every = [t["name"] for t in items if isinstance(t, dict) and t.get("name")]
+except Exception:
+    every = []
+
+text = open(config_path).read()
+# Drop any block a previous pass wrote, so this stays idempotent.
+text = re.sub(r"\nagent:\n  disabled_toolsets:\n(?:    - .*\n)*", "\n", text)
+
+allowlist = ["no_mcp"] + admitted
+text = re.sub(
+    r"(platform_toolsets:\n  api_server:\n)(?:    - .*\n)+",
+    lambda m: m.group(1) + "".join(f"    - {name}\n" for name in allowlist),
+    text,
+    count=1,
+)
+
+disabled = [name for name in every if name not in admitted]
+if disabled:
+    block = "agent:\n  disabled_toolsets:\n" + "".join(f"    - {name}\n" for name in disabled)
+    text = text.rstrip("\n") + "\n" + block
+
+open(output_path, "w").write(text)
+RECONCILE
 
 if cmp -s "${WORK}/config.yaml" "${MANAGED_CONFIG}"; then
   exit 0
 fi
 
 install -m 0644 -o root -g root "${WORK}/config.yaml" "${MANAGED_CONFIG}"
-echo "orcasynapse: applied toolset allowlist (${#admitted[@]} admitted); restarting Hermes" >&2
+echo "orcasynapse: applied toolset allowlist ($(jq -r '.admittedToolsets | length' "${WORK}/document.json") admitted); restarting Hermes" >&2
 docker restart "${CONTAINER_NAME}" >/dev/null
 DESIREDSTATE
 
