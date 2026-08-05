@@ -450,11 +450,17 @@ export class DrizzleToolingManager implements ToolingManager {
   /**
    * Blocks a consequential call until a human decides, or the approval expires.
    *
-   * MCP is request/response and `maxTurns = 1` means the agent cannot come back
-   * later, so the decision has to happen while the caller waits. The wait is
-   * bounded by the administrator's own `approvalTtlMinutes`, and the approval
-   * row outlives the wait either way — an expired approval is a recorded
-   * decision, not a lost one.
+   * MCP is request/response, so the decision has to happen while the caller
+   * waits: there is no channel to hand an answer back to a call that already
+   * returned. The wait is bounded by the administrator's own
+   * `approvalTtlMinutes`, and the approval row outlives the wait either way —
+   * an expired approval is a recorded decision, not a lost one.
+   *
+   * This deliberately does not rest on `maxTurns = 1`. That value is a boundary
+   * OrcaSynapse declares about its own profiles and never transmits: the run
+   * submission carries no turn field, and Hermes exposes no turn control. What
+   * actually keeps a run single-step is that no toolset is admitted, so
+   * blocking here must hold on its own once one is.
    */
   private async awaitApproval(callId: string, ttlMinutes: number): Promise<"APPROVED" | "REJECTED" | "EXPIRED"> {
     const expiresAt = new Date(Date.now() + ttlMinutes * 60_000);

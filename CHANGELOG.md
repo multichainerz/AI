@@ -5,6 +5,29 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.44.0 — 2026-08-06
+
+Stop asserting a boundary that is never transmitted, and describe the estate
+that actually exists.
+
+- **correct the safety argument behind consequential-call blocking.** It read
+  "MCP is request/response and `maxTurns = 1` means the agent cannot come back
+  later", but `maxTurns` is a boundary OrcaSynapse declares about its own
+  profiles and never sends: the run submission carries no turn field and Hermes
+  exposes no turn control. Blocking has to hold because there is no channel to
+  answer a call that already returned — which is true on its own. What actually
+  keeps a run single-step is that no toolset is admitted.
+- correct the same claim where `maxTurns` is defined, so the contract stops
+  implying it limits the runtime rather than refusing profiles that ask for more.
+- rewrite the current-state handoff, which still described a WSL lab with
+  instances that no longer exist and a Phase 4 plan written before the runtime
+  was reachable. It now records what driving the live Hermes established: the
+  command channel does not exist, conversational multi-turn already works, and
+  the governed MCP plane is blocked on owner scoping rather than on effort —
+  Hermes invokes a tool as `session.call_tool(name, arguments)` with no session,
+  run or user forwarded, over a connection shared by every run and every person,
+  so a call cannot be scoped to its requester.
+
 ## ai-v1.43.0 — 2026-08-06
 
 Cohesion cleanup from a full-codebase audit. No behaviour changes.
