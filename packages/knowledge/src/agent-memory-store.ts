@@ -2,6 +2,19 @@ import { and, cosineDistance, desc, eq, gt, inArray, isNull, lte, or, sql } from
 import type { MemoryProfileScope } from "@orcasynapse/contracts";
 import { agentMemory, type OrcaSynapseDatabase } from "@orcasynapse/database";
 
+/**
+ * Where a new fact sits in the chain of corrections that produced it.
+ *
+ * Only set for a fact that retires another. A fact starting its own chain keeps
+ * the column defaults — version 1, no parent, and a null root meaning "this row
+ * is the origin" — so an origin never has to be updated to point at itself.
+ */
+interface MemoryLineage {
+  version: number;
+  parentMemoryId: string;
+  rootMemoryId: string;
+}
+
 export interface RememberedItem {
   content: string;
   embedding: number[];
@@ -59,9 +72,24 @@ export class AgentMemoryStore {
     // One transaction: a reader must never see both the old fact and its
     // replacement as current, nor lose the old one without the new one landing.
     return this.database.transaction(async (transaction) => {
-      for (const item of items) {
+      const lineage = new Map<number, MemoryLineage>();
+      for (const [index, item] of items.entries()) {
         const replaces = (item.replaces ?? []).filter((id) => id.length > 0);
         if (replaces.length === 0) continue;
+        // Read before writing: the new row's place in the chain is derived from
+        // what it retires, and after the update those rows are no longer latest.
+        const retired = await transaction
+          .select({ id: agentMemory.id, version: agentMemory.version, root: agentMemory.rootMemoryId })
+          .from(agentMemory)
+          .where(and(
+            eq(agentMemory.ownerSubject, ownerSubject),
+            eq(agentMemory.agentProfileId, agentProfileId),
+            inArray(agentMemory.id, [...replaces]),
+            eq(agentMemory.isLatest, true),
+          ))
+          .orderBy(desc(agentMemory.version));
+        const head = retired[0];
+        if (!head) continue;
         await transaction
           .update(agentMemory)
           .set({
@@ -72,11 +100,17 @@ export class AgentMemoryStore {
           .where(and(
             eq(agentMemory.ownerSubject, ownerSubject),
             eq(agentMemory.agentProfileId, agentProfileId),
-            inArray(agentMemory.id, [...replaces]),
-            eq(agentMemory.isLatest, true),
+            inArray(agentMemory.id, retired.map((row) => row.id)),
           ));
+        // When one fact retires several, the longest-lived chain wins the link:
+        // its root is the origin a reader following parents would arrive at.
+        lineage.set(index, {
+          version: head.version + 1,
+          parentMemoryId: head.id,
+          rootMemoryId: head.root ?? head.id,
+        });
       }
-      return this.insertFacts(transaction, ownerSubject, agentProfileId, items, provenance);
+      return this.insertFacts(transaction, ownerSubject, agentProfileId, items, provenance, lineage);
     });
   }
 
@@ -86,12 +120,16 @@ export class AgentMemoryStore {
     agentProfileId: string,
     items: readonly RememberedItem[],
     provenance: MemoryProvenance,
+    lineage: ReadonlyMap<number, MemoryLineage> = new Map(),
   ): Promise<number> {
     await executor.insert(agentMemory).values(
-      items.map((item) => ({
+      items.map((item, index) => ({
         ownerSubject,
         agentProfileId,
         content: item.content,
+        // Absent for a fact that starts its own chain: version 1, no parent, and
+        // a null root that means "this row is the origin".
+        ...lineage.get(index),
         characterCount: item.content.length,
         profileScope: item.scope ?? "EPISODIC",
         embeddingModel: this.embeddingModel,

@@ -5,6 +5,28 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.49.3 — 2026-08-06
+
+Actually write the version chain ai-v1.49.0 said it wrote.
+
+Migration 0018 added `version`, `parentMemoryId`, and `rootMemoryId`, and
+`remember()` never populated any of them. The pilot showed the shape of the bug
+plainly: a corrected fact was retired with a reason and the correction that
+replaced it still read `version = 1`, `parentMemoryId = null`,
+`rootMemoryId = null`. Retirement worked; the chain the release described did
+not exist, so "what did it used to believe" could be answered one step back and
+no further.
+
+- derive each new fact's place in the chain from the rows it actually retires,
+  read inside the same transaction before the update makes them non-latest
+- number the correction one above the highest version it replaces, point its
+  parent at that row, and carry the origin's root forward so a chain of any
+  length still resolves to where it started
+- leave a fact that starts its own chain on the column defaults, so an origin is
+  never updated to point at itself
+- skip the retirement entirely when a named id is already superseded, rather
+  than recording a second reason over the first
+
 ## ai-v1.49.2 — 2026-08-06
 
 Make the always-on facts correctable, and stop storing the same fact twice.

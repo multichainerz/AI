@@ -105,6 +105,57 @@ describe("AgentMemoryStore", () => {
     expect(retired?.supersededReason).toContain("Bandung");
   });
 
+  it("links each correction to the one it replaced, and to the chain's origin", async () => {
+    // The pilot shipped with these columns unpopulated: a fact was retired with
+    // a reason, but version stayed 1 and both links stayed null, so there was
+    // no chain to walk. Two corrections in sequence is what proves the root
+    // stays put while the parent moves.
+    const profileId = await profileFor("assistant");
+    await store().remember("user-a", profileId, [
+      { content: "The user works in Jakarta.", embedding: vector(21), scope: "STATIC" },
+    ]);
+    const [origin] = await store().list("user-a", profileId);
+    await store().remember("user-a", profileId, [{
+      content: "The user works in Bandung.", embedding: vector(22), scope: "STATIC", replaces: [origin!.id],
+    }]);
+    const [second] = await store().list("user-a", profileId);
+    await store().remember("user-a", profileId, [{
+      content: "The user works in Surabaya.", embedding: vector(23), scope: "STATIC", replaces: [second!.id],
+    }]);
+
+    const rows = await context.database.select().from(agentMemory);
+    const byContent = (needle: string) => rows.find((row) => row.content.includes(needle));
+    expect(byContent("Jakarta")).toMatchObject({ version: 1, parentMemoryId: null, rootMemoryId: null });
+    expect(byContent("Bandung")).toMatchObject({
+      version: 2, parentMemoryId: origin!.id, rootMemoryId: origin!.id,
+    });
+    expect(byContent("Surabaya")).toMatchObject({
+      version: 3, parentMemoryId: second!.id, rootMemoryId: origin!.id,
+    });
+    expect(rows.filter((row) => row.isLatest)).toHaveLength(1);
+  });
+
+  it("starts a fresh chain when the id it names is already retired", async () => {
+    // A stale id must not silently produce version 1 beside a live version 3.
+    const profileId = await profileFor("assistant");
+    await store().remember("user-a", profileId, [
+      { content: "The user works in Jakarta.", embedding: vector(24), scope: "STATIC" },
+    ]);
+    const [origin] = await store().list("user-a", profileId);
+    await store().remember("user-a", profileId, [{
+      content: "The user works in Bandung.", embedding: vector(25), scope: "STATIC", replaces: [origin!.id],
+    }]);
+    await store().remember("user-a", profileId, [{
+      content: "The user works in Medan.", embedding: vector(26), scope: "STATIC", replaces: [origin!.id],
+    }]);
+
+    const rows = await context.database.select().from(agentMemory);
+    expect(rows.find((row) => row.content.includes("Medan")))
+      .toMatchObject({ version: 1, parentMemoryId: null, rootMemoryId: null });
+    // And the already-retired row keeps its original reason.
+    expect(rows.find((row) => row.id === origin!.id)?.supersededReason).toContain("Bandung");
+  });
+
   it("cannot retire another owner's fact by naming its id", async () => {
     // Supersession is scoped by the same predicate as everything else, so a
     // borrowed id from another owner does nothing.
