@@ -5,6 +5,31 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.50.1 — 2026-08-06
+
+Do not mine the whole archive, and do not store what the assistant just said.
+
+Both faults are ai-v1.50.0's, and the pilot found them within one sweep of
+shipping it. Migration 0019 added `memoryDistilledAt` with a null default, which
+made every conversation ever held look like it owed a distillation — 17 queued on
+the pilot, going back before the feature existed. The first one the sweep read
+was a request for a conference rundown, and it stored five panel titles as
+DYNAMIC facts about the person, which meant they were then injected into every
+prompt.
+
+- mark conversations already idle at upgrade as read (migration 0020), so
+  session distillation starts from now instead of harvesting the archive. Any
+  conversation still live is left to distil normally
+- drop an extracted fact that appears verbatim in the assistant's own turn.
+  Verbatim only: paraphrase is what distillation is for, so anything short of a
+  literal copy is kept
+- add the failing shape to the instruction as an example — the person asks for a
+  listing, the assistant gives one, and the answer is `[]`
+
+The instruction already forbade recording facts about the world rather than the
+person. A 2.6B model ignored it, which is the reason the guard is in code and
+not only in the prompt.
+
 ## ai-v1.50.0 — 2026-08-06
 
 Distil a conversation once it goes quiet, instead of after every turn.

@@ -272,6 +272,39 @@ describe("MemoryDistiller", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
+  it("drops a fact the model copied out of the assistant's own answer", async () => {
+    // The pilot's first session sweep read "list the conference rundown" and
+    // stored five panel titles as DYNAMIC facts — always injected, about nobody.
+    const listing = "Day 1 - AI-Ready Data Centers: Power, Cooling, and Infrastructure. "
+      + "Day 2 - Cloud for BUMN: Open Infrastructure for National Scale.";
+    const fetcher = answering(JSON.stringify([
+      { fact: "AI-Ready Data Centers: Power, Cooling, and Infrastructure", scope: "DYNAMIC" },
+      { fact: "The user is preparing to speak at the conference.", scope: "DYNAMIC" },
+    ]));
+
+    const result = await new MemoryDistiller(resolver(), fetcher as never).distil([
+      { role: "user", content: "List all the panels in the rundown." },
+      { role: "assistant", content: listing },
+    ]);
+
+    expect(result.facts.map(({ fact }) => fact))
+      .toEqual(["The user is preparing to speak at the conference."]);
+  });
+
+  it("keeps a fact that only paraphrases the answer", async () => {
+    // Paraphrase is what distillation is for, so the guard is verbatim-only.
+    const fetcher = answering(JSON.stringify([
+      { fact: "The user works on power and cooling for data centres.", scope: "STATIC" },
+    ]));
+
+    const result = await new MemoryDistiller(resolver(), fetcher as never).distil([
+      { role: "user", content: "I handle the power and cooling side." },
+      { role: "assistant", content: "Power and cooling is a demanding part of data centre work." },
+    ]);
+
+    expect(result.facts).toHaveLength(1);
+  });
+
   it("reports failure rather than emptiness when the model is unreachable", async () => {
     // The caller stores nothing either way, but only a failure is worth logging
     // — and it must never be mistaken for "this turn taught nothing".

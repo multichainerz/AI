@@ -132,6 +132,10 @@ const DISTILLATION_INSTRUCTION = [
   "USER: I'm in Jakarta this week for the conference.",
   "[]",
   "",
+  "USER: List all the panels in the conference rundown.",
+  "ASSISTANT: Day 1 - AI-Ready Data Centers. Day 2 - Cloud for Enterprise.",
+  "[]",
+  "",
   "USER: Halo, saya bekerja di Jakarta dan saya suka nasi goreng.",
   "[{\"fact\": \"Pengguna bekerja di Jakarta.\", \"scope\": \"STATIC\"},",
   " {\"fact\": \"Pengguna menyukai nasi goreng.\", \"scope\": \"EPISODIC\"}]",
@@ -242,6 +246,36 @@ function sameFact(left: string, right: string): boolean {
   const normalise = (value: string): string =>
     value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
   return normalise(left) === normalise(right);
+}
+
+/**
+ * Drops facts the model copied out of the assistant's own answer.
+ *
+ * The pilot's session sweep read a conversation where the person asked for a
+ * conference rundown, and stored five panel titles as DYNAMIC facts — which
+ * means they were then injected into every prompt. The instruction already
+ * forbids recording facts about the world rather than the person, and a 2.6B
+ * model ignored it, so this is the enforcement.
+ *
+ * Verbatim only. A real fact is a sentence the model composed about the person,
+ * and paraphrase is exactly what distillation is for, so anything short of a
+ * literal copy stays.
+ */
+function withoutQuotedContent(
+  facts: DistilledFact[],
+  turns: readonly DistillationTurn[],
+): DistilledFact[] {
+  const answered = turns
+    .filter((turn) => turn.role === "assistant")
+    .map((turn) => turn.content.toLowerCase().replace(/\s+/g, " "));
+  if (answered.length === 0) return facts;
+  return facts.filter((candidate) => {
+    const needle = candidate.fact.toLowerCase().replace(/\s+/g, " ").replace(/[.!?]+$/, "");
+    // Short strings appear inside long answers by coincidence; a copied listing
+    // does not.
+    if (needle.length < 24) return true;
+    return !answered.some((answer) => answer.includes(needle));
+  });
 }
 
 export function parseDistillation(content: string, known: readonly KnownFact[] = []): DistilledFact[] {
@@ -375,7 +409,10 @@ export class MemoryDistiller {
         }
         return { facts: [], succeeded: false };
       }
-      return { facts: parseDistillation(content, known), succeeded: true };
+      return {
+        facts: withoutQuotedContent(parseDistillation(content, known), spoken),
+        succeeded: true,
+      };
     } catch {
       return { facts: [], succeeded: false };
     } finally {
