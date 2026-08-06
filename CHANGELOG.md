@@ -5,6 +5,28 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.49.1 — 2026-08-06
+
+Give the distiller room to think, and stop reading a truncated answer as "nothing
+learned".
+
+Supersession worked in unit tests and did nothing on the pilot. The cause was not
+the logic: LFM2.5 is a reasoning model that fills `reasoning_content` before
+`content`, and at `max_tokens: 600` any realistic exchange came back
+`finish_reason: "length"` with `content: ""`. The distiller read that empty string
+as a successful extraction of zero facts, so the turn was marked captured and the
+Jakarta fact was never retired. Probed directly with a wider budget, the same
+model returns exactly the right answer, `replaces` and all.
+
+- raise `MAXIMUM_RESPONSE_TOKENS` to 2,400 so the answer survives the reasoning
+  preamble, and `REQUEST_TIMEOUT_MS` to 120s to match what 2,400 tokens costs at
+  the pilot's throughput
+- treat an empty or whitespace-only answer as a failure rather than as nothing
+  learned, so the turn is retried instead of silently marked done
+- log the token ceiling by name when `finish_reason` is `length`, because a
+  budget exhaustion and a refusal are indistinguishable in the response body and
+  have different fixes
+
 ## ai-v1.49.0 — 2026-08-06
 
 Version chains: a corrected fact stops being recalled, without being lost.

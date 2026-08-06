@@ -187,6 +187,30 @@ describe("MemoryDistiller", () => {
       .resolves.toEqual({ facts: [], succeeded: false });
   });
 
+  it("reports failure when a reasoning model spent its budget before answering", async () => {
+    // The pilot failure: LFM2.5 fills reasoning_content first, and at a tight
+    // max_tokens any real turn came back finish_reason "length" with an empty
+    // content. That is indistinguishable from a refusal in the response body,
+    // so it must still be a failure — storing nothing rather than guessing.
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ finish_reason: "length", message: { content: "", reasoning_content: "thinking..." } }],
+    }), { status: 200 }));
+    await expect(new MemoryDistiller(resolver(), fetcher as never).distil("I moved to Bandung.", null))
+      .resolves.toEqual({ facts: [], succeeded: false });
+  });
+
+  it("treats a whitespace-only answer as a failure, not as nothing learned", async () => {
+    await expect(new MemoryDistiller(resolver(), answering("   ") as never).distil("Anything", null))
+      .resolves.toEqual({ facts: [], succeeded: false });
+  });
+
+  it("asks for enough room that reasoning does not crowd out the answer", async () => {
+    const fetcher = answering("[]");
+    await new MemoryDistiller(resolver(), fetcher as never).distil("Anything", null);
+    const [, init] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(String(init.body)).max_tokens).toBeGreaterThanOrEqual(2_000);
+  });
+
   it("reports failure when no inference route is configured", async () => {
     await expect(new MemoryDistiller(resolver({}), answering("[]") as never).distil("Anything", null))
       .resolves.toEqual({ facts: [], succeeded: false });

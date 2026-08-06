@@ -26,7 +26,18 @@ const MAXIMUM_FACTS = 5;
  * store in a turn, and a real correction retires one or two things, not ten.
  */
 const MAXIMUM_REPLACEMENTS = 3;
-const REQUEST_TIMEOUT_MS = 60_000;
+const REQUEST_TIMEOUT_MS = 120_000;
+/**
+ * Room for a reasoning model to think before it answers.
+ *
+ * LFM2.5 fills `reasoning_content` before `content`, and the budget is shared.
+ * At 600 this silently failed on the pilot: any turn carrying a real assistant
+ * answer spent the whole allowance reasoning, came back `finish_reason:
+ * "length"` with an empty `content`, and stored nothing. The answer itself is
+ * about 20 tokens; almost all of this is headroom for the thinking in front
+ * of it.
+ */
+const MAXIMUM_RESPONSE_TOKENS = 2_400;
 
 /**
  * The extraction instruction.
@@ -287,13 +298,27 @@ export class MemoryDistiller {
             { role: "user", content: exchange },
           ],
           temperature: 0,
-          max_tokens: 600,
+          max_tokens: MAXIMUM_RESPONSE_TOKENS,
         }),
       });
       if (!response.ok) return { facts: [], succeeded: false };
-      const body = await response.json() as { choices?: Array<{ message?: { content?: unknown } }> };
-      const content = body.choices?.[0]?.message?.content;
-      if (typeof content !== "string") return { facts: [], succeeded: false };
+      const body = await response.json() as {
+        choices?: Array<{ finish_reason?: unknown; message?: { content?: unknown } }>;
+      };
+      const choice = body.choices?.[0];
+      const content = choice?.message?.content;
+      if (typeof content !== "string" || content.trim().length === 0) {
+        // Worth telling apart: a reasoning model that hit the ceiling returns an
+        // empty answer that looks identical to a refusal, and the fix for one
+        // (raise the budget) is not the fix for the other.
+        if (choice?.finish_reason === "length") {
+          console.error(
+            "OrcaSynapse memory distillation ran out of tokens before answering; "
+            + `raise MAXIMUM_RESPONSE_TOKENS above ${MAXIMUM_RESPONSE_TOKENS}.`,
+          );
+        }
+        return { facts: [], succeeded: false };
+      }
       return { facts: parseDistillation(content, known), succeeded: true };
     } catch {
       return { facts: [], succeeded: false };
