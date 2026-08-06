@@ -4,6 +4,8 @@ import {
   changeMemoryPolicyStateSchema,
   createMemoryPolicySchema,
   deleteAgentMemorySchema,
+  forgetMatchingAgentMemorySchema,
+  forgetMatchingResultSchema,
   memoryPolicyListSchema,
   memoryPolicySchema,
   purgeAgentMemorySchema,
@@ -13,6 +15,7 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import { requireAdmin, type AdminSessionManager } from "../auth/admin-session.js";
 import {
   AgentMemoryNotFoundError,
+  ForgetMatchingUnavailableError,
   MemoryPolicyConflictError,
   MemoryPolicyNotFoundError,
   type MemoryManager,
@@ -29,6 +32,11 @@ function sendError(error: unknown, reply: FastifyReply) {
   }
   if (error instanceof MemoryPolicyConflictError) {
     return reply.code(409).send({ error: "MEMORY_POLICY_CONFLICT", message: error.message });
+  }
+  // 503, not 200-with-nothing-matched: an operator told nothing matched will
+  // read that as "the topic is not stored", which would be a false assurance.
+  if (error instanceof ForgetMatchingUnavailableError) {
+    return reply.code(503).send({ error: "FORGET_MATCHING_UNAVAILABLE", message: error.message });
   }
   throw error;
 }
@@ -112,6 +120,22 @@ export async function registerMemoryRoutes(app: FastifyInstance, dependencies: M
     try {
       await dependencies.manager!.forget({ id: principal.id }, request.params.id, input.data.reason);
       return reply.code(204).send();
+    } catch (error) {
+      return sendError(error, reply);
+    }
+  });
+
+  app.post("/records/forget-matching", async (request, reply) => {
+    const principal = await requireAdmin(request, reply, dependencies.sessionManager, "memory:manage");
+    if (!principal) return;
+    const input = forgetMatchingAgentMemorySchema.safeParse(request.body);
+    if (!input.success) {
+      return reply.code(400).send({ error: "INVALID_MEMORY_FORGET", message: input.error.issues[0]?.message });
+    }
+    try {
+      return forgetMatchingResultSchema.parse(
+        await dependencies.manager!.forgetMatching({ id: principal.id }, input.data),
+      );
     } catch (error) {
       return sendError(error, reply);
     }

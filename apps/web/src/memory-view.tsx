@@ -2,6 +2,7 @@ import type {
   AdministratorSession,
   AgentMemoryRecord,
   CreateMemoryPolicy,
+  ForgetMatchingResult,
   MemoryPolicy,
 } from "@orcasynapse/contracts";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
@@ -12,6 +13,7 @@ import {
   deleteAgentMemoryRecord,
   getAgentMemoryRecords,
   getMemoryPolicies,
+  forgetMatchingAgentMemory,
   purgeAgentMemory,
   updateMemoryPolicy,
 } from "./api.js";
@@ -58,6 +60,8 @@ export function MemoryView({ session, onOpenSettings, onSessionExpired }: Memory
   const [policies, setPolicies] = useState<MemoryPolicy[]>([]);
   const [records, setRecords] = useState<AgentMemoryRecord[]>([]);
   const [ownerFilter, setOwnerFilter] = useState("");
+  const [forgetTarget, setForgetTarget] = useState("");
+  const [preview, setPreview] = useState<ForgetMatchingResult | null>(null);
   const [draft, setDraft] = useState<CreateMemoryPolicy>(blankPolicy);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [reason, setReason] = useState("Memory retention reviewed and approved.");
@@ -120,6 +124,33 @@ export function MemoryView({ session, onOpenSettings, onSessionExpired }: Memory
     setBusy(true); setError(null);
     try {
       await deleteAgentMemoryRecord(record.id, reason.trim());
+      await load();
+    } catch (cause) { fail(cause); } finally { setBusy(false); }
+  };
+
+  /**
+   * Two steps on purpose: the operator sees which facts a model judged to be
+   * about the topic, and only then commits. A semantic bulk delete without the
+   * preview is not something worth offering.
+   */
+  const previewForget = async () => {
+    if (busy || !canManage || !ownerFilter.trim() || !forgetTarget.trim() || reason.trim().length < 3) return;
+    setBusy(true); setError(null); setPreview(null);
+    try {
+      setPreview(await forgetMatchingAgentMemory({
+        ownerSubject: ownerFilter.trim(), target: forgetTarget.trim(), reason: reason.trim(), dryRun: true,
+      }));
+    } catch (cause) { fail(cause); } finally { setBusy(false); }
+  };
+
+  const commitForget = async () => {
+    if (busy || !canManage || !preview || preview.candidates.length === 0) return;
+    setBusy(true); setError(null);
+    try {
+      await forgetMatchingAgentMemory({
+        ownerSubject: ownerFilter.trim(), target: forgetTarget.trim(), reason: reason.trim(), dryRun: false,
+      });
+      setPreview(null); setForgetTarget("");
       await load();
     } catch (cause) { fail(cause); } finally { setBusy(false); }
   };
@@ -225,6 +256,43 @@ export function MemoryView({ session, onOpenSettings, onSessionExpired }: Memory
           {canManage && ownerFilter.trim() && <button type="button" className="danger-button" disabled={busy || reason.trim().length < 3} onClick={() => void purgeOwner()}>Forget everything for this person</button>}
         </div>
       </div>
+
+      {canManage && ownerFilter.trim() && <div className="memory-forget-topic">
+        <label>Forget by topic
+          <input
+            placeholder="e.g. Project Titan"
+            value={forgetTarget}
+            onChange={(event) => { setForgetTarget(event.target.value); setPreview(null); }}
+          />
+        </label>
+        <button
+          type="button"
+          disabled={busy || !forgetTarget.trim() || reason.trim().length < 3}
+          onClick={() => void previewForget()}
+        >Preview what matches</button>
+        <small>Between deleting one fact and forgetting a person entirely. Nothing changes until you confirm.</small>
+
+        {preview && <div className="memory-forget-preview">
+          {preview.candidates.length === 0
+            ? <p><strong>Nothing matched.</strong> No stored fact was judged to be about “{forgetTarget.trim()}”.</p>
+            : <>
+                <p><strong>{preview.matched} fact{preview.matched === 1 ? "" : "s"}</strong> judged to be about “{forgetTarget.trim()}”:</p>
+                <ul>{preview.candidates.map((candidate) => <li key={candidate.id}>{candidate.content}</li>)}</ul>
+                {preview.capped && <p className="memory-forget-warning">
+                  More matched than the per-request limit allows; only the first {preview.candidates.length} would be forgotten.
+                </p>}
+                {preview.truncated && <p className="memory-forget-warning">
+                  This person has more stored memory than one pass can read, so the scan was partial.
+                </p>}
+                <button
+                  type="button"
+                  className="danger-button"
+                  disabled={busy}
+                  onClick={() => void commitForget()}
+                >Forget these {preview.candidates.length}</button>
+              </>}
+        </div>}
+      </div>}
 
       {records.length === 0
         ? <div className="document-empty"><strong>Nothing stored</strong><span>No agent has recorded anything about anyone in this scope.</span></div>

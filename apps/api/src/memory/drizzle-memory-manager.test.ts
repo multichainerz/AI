@@ -8,9 +8,14 @@ import {
   type TestDatabase,
 } from "@orcasynapse/database";
 import { eq } from "drizzle-orm";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DrizzleMemoryManager } from "./drizzle-memory-manager.js";
-import { AgentMemoryNotFoundError, MemoryPolicyConflictError } from "./memory-manager.js";
+import type { ForgetMatcher } from "./forget-matcher.js";
+import {
+  AgentMemoryNotFoundError,
+  ForgetMatchingUnavailableError,
+  MemoryPolicyConflictError,
+} from "./memory-manager.js";
 
 let context: TestDatabase;
 
@@ -18,8 +23,19 @@ beforeAll(async () => { context = await createTestDatabase(); }, 120_000);
 afterAll(async () => { await context?.drop(); });
 beforeEach(async () => { await context.reset(); });
 
-function manager() {
-  return new DrizzleMemoryManager(context.database);
+function manager(matcher?: ForgetMatcher) {
+  return new DrizzleMemoryManager(context.database, matcher);
+}
+
+/** Stands in for the model: matches exactly the facts whose text contains `needle`. */
+function matcherMatching(needle: string, options: { succeeded?: boolean; truncated?: boolean } = {}) {
+  return {
+    match: vi.fn(async (_target: string, candidates: readonly { id: string; content: string }[]) => ({
+      matchedIds: candidates.filter((c) => c.content.includes(needle)).map((c) => c.id),
+      succeeded: options.succeeded ?? true,
+      truncated: options.truncated ?? false,
+    })),
+  } as unknown as ForgetMatcher;
 }
 
 const principalId = randomUUID();
@@ -175,5 +191,162 @@ describe("DrizzleMemoryManager records", () => {
     expect(removed).toBe(2);
     expect((await manager().recordsForOwner("user:a")).items).toHaveLength(0);
     expect((await manager().recordsForOwner("user:b")).items).toHaveLength(1);
+  });
+});
+
+describe("forget-matching", () => {
+  /** Three facts about one owner, two of them about the same topic. */
+  async function seedTopic(ownerSubject = "user:pilot") {
+    const [profile] = await context.database
+      .insert(agentProfile)
+      .values({ slug: `agent-${randomUUID().slice(0, 8)}`, status: "ACTIVE", currentVersion: 1, activeVersion: 1 })
+      .returning({ id: agentProfile.id });
+    const contents = [
+      "The user leads the Titan migration.",
+      "The user works in Jakarta.",
+      "The user's Titan deadline is in March.",
+    ];
+    const ids: string[] = [];
+    for (const content of contents) {
+      const [row] = await context.database
+        .insert(agentMemory)
+        .values({
+          ownerSubject,
+          agentProfileId: profile!.id,
+          content,
+          characterCount: content.length,
+          embeddingModel: "Xenova/bge-m3",
+          embedding: Array.from({ length: 1024 }, () => 0.01),
+        })
+        .returning({ id: agentMemory.id });
+      ids.push(row!.id);
+    }
+    return { profileId: profile!.id, ids };
+  }
+
+  const request = {
+    ownerSubject: "user:pilot",
+    target: "Project Titan",
+    reason: "The person asked for the project to be forgotten.",
+    dryRun: true,
+    maximumForget: 25,
+  };
+
+  it("previews the decision without changing anything", async () => {
+    // The preview is what makes a semantic bulk delete safe to offer at all.
+    await seedTopic();
+
+    const result = await manager(matcherMatching("Titan")).forgetMatching({ id: principalId }, request);
+
+    expect(result).toMatchObject({ dryRun: true, matched: 2, forgotten: 0, forgetBatchId: null });
+    expect(result.candidates.map((c) => c.content).sort()).toEqual([
+      "The user leads the Titan migration.",
+      "The user's Titan deadline is in March.",
+    ]);
+    const rows = await context.database.select().from(agentMemory);
+    expect(rows.every((row) => row.forgottenAt === null)).toBe(true);
+    expect(await context.database.select().from(auditEvent)).toHaveLength(0);
+  });
+
+  it("soft-deletes exactly the matches, under one batch id", async () => {
+    await seedTopic();
+
+    const result = await manager(matcherMatching("Titan"))
+      .forgetMatching({ id: principalId }, { ...request, dryRun: false });
+
+    expect(result).toMatchObject({ dryRun: false, matched: 2, forgotten: 2, capped: false });
+    expect(result.forgetBatchId).not.toBeNull();
+    const rows = await context.database.select().from(agentMemory);
+    const forgotten = rows.filter((row) => row.forgottenAt !== null);
+    expect(forgotten).toHaveLength(2);
+    // One operator decision, one batch, so the whole action stays traceable.
+    expect(new Set(forgotten.map((row) => row.forgetBatchId)).size).toBe(1);
+    expect(forgotten[0]!.forgetBatchId).toBe(result.forgetBatchId);
+    expect(forgotten.every((row) => row.forgetReason === request.reason)).toBe(true);
+    // The row survives: soft delete, so what was forgotten stays answerable.
+    expect(rows).toHaveLength(3);
+    expect(rows.find((row) => row.content.includes("Jakarta"))?.forgottenAt).toBeNull();
+  });
+
+  it("records the target and the counts, never the content", async () => {
+    await seedTopic();
+
+    await manager(matcherMatching("Titan"))
+      .forgetMatching({ id: principalId }, { ...request, dryRun: false });
+
+    const [event] = await context.database
+      .select()
+      .from(auditEvent)
+      .where(eq(auditEvent.action, "memory.forgotten"));
+    expect(event?.metadata).toMatchObject({
+      target: "Project Titan", matched: 2, forgotten: 2, ownerSubject: "user:pilot",
+    });
+    expect(JSON.stringify(event?.metadata)).not.toContain("deadline is in March");
+  });
+
+  it("stops at the cap rather than emptying the store", async () => {
+    // A model that decided everything matches must not be able to clear an
+    // owner's memory in one call.
+    await seedTopic();
+
+    const result = await manager(matcherMatching("The user"))
+      .forgetMatching({ id: principalId }, { ...request, dryRun: false, maximumForget: 1 });
+
+    expect(result).toMatchObject({ matched: 3, forgotten: 1, capped: true });
+    expect((await context.database.select().from(agentMemory))
+      .filter((row) => row.forgottenAt !== null)).toHaveLength(1);
+  });
+
+  it("refuses rather than reporting an empty match when the model is unreachable", async () => {
+    // "Nothing matched" would be read as "the topic is not stored", and acted on.
+    await seedTopic();
+
+    await expect(manager(matcherMatching("Titan", { succeeded: false }))
+      .forgetMatching({ id: principalId }, { ...request, dryRun: false }))
+      .rejects.toBeInstanceOf(ForgetMatchingUnavailableError);
+    expect((await context.database.select().from(agentMemory))
+      .every((row) => row.forgottenAt === null)).toBe(true);
+  });
+
+  it("refuses when no inference route is configured", async () => {
+    await seedTopic();
+    await expect(manager().forgetMatching({ id: principalId }, request))
+      .rejects.toBeInstanceOf(ForgetMatchingUnavailableError);
+  });
+
+  it("cannot reach another owner's memory from a self-service principal", async () => {
+    // The owner in the request never widens an enterprise principal's scope.
+    await seedTopic("user:someone-else");
+
+    const result = await manager(matcherMatching("Titan")).forgetMatching(
+      { id: principalId, ownerSubject: "user:pilot" },
+      { ...request, ownerSubject: "user:someone-else", dryRun: false },
+    );
+
+    expect(result).toMatchObject({ matched: 0, forgotten: 0 });
+    expect((await context.database.select().from(agentMemory))
+      .every((row) => row.forgottenAt === null)).toBe(true);
+  });
+
+  it("reports a partial scan rather than letting it pass as complete", async () => {
+    await seedTopic();
+
+    const result = await manager(matcherMatching("Titan", { truncated: true }))
+      .forgetMatching({ id: principalId }, request);
+
+    expect(result.truncated).toBe(true);
+  });
+
+  it("does not offer an already-forgotten fact a second time", async () => {
+    const { ids } = await seedTopic();
+    await context.database
+      .update(agentMemory)
+      .set({ forgottenAt: new Date(), forgetReason: "Earlier request.", forgetBatchId: randomUUID() })
+      .where(eq(agentMemory.id, ids[0]!));
+
+    const result = await manager(matcherMatching("Titan")).forgetMatching({ id: principalId }, request);
+
+    expect(result.matched).toBe(1);
+    expect(result.candidates[0]?.content).toBe("The user's Titan deadline is in March.");
   });
 });

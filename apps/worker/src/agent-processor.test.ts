@@ -464,7 +464,7 @@ describe("DrizzleAgentProcessor", () => {
     );
     let offered: readonly { id: string; content: string }[] = [];
     const distiller: MemoryDistillerPort = {
-      distil: vi.fn(async (_user, _assistant, known = []) => {
+      distil: vi.fn(async (_turns, known = []) => {
         offered = known;
         return { facts: [], succeeded: true };
       }),
@@ -484,7 +484,7 @@ describe("DrizzleAgentProcessor", () => {
     memory.profileFacts.push({ id: "shared", content: "The user works in Jakarta.", scope: "STATIC" });
     let offered: readonly { id: string; content: string }[] = [];
     const distiller: MemoryDistillerPort = {
-      distil: vi.fn(async (_user, _assistant, known = []) => {
+      distil: vi.fn(async (_turns, known = []) => {
         offered = known;
         return { facts: [], succeeded: true };
       }),
@@ -494,6 +494,57 @@ describe("DrizzleAgentProcessor", () => {
       .process({ runId: id }, await jobIdOf(id), WORKER);
 
     expect(offered.filter((fact) => fact.id === "shared")).toHaveLength(1);
+  });
+
+  it("defers a conversation's turn to the session sweep", async () => {
+    // Capture waits for the conversation to go quiet, so extraction reads the
+    // arc rather than one turn of it and the model is called once per session.
+    await healthyBoundary();
+    const id = await queuedRun({}, "LEARN_EXCHANGE");
+    const [conversation] = await context.database
+      .insert(chatConversation)
+      .values({ ownerSubject: "user:pilot", title: "Pilot chat", modelAlias: "hermes-agent" })
+      .returning({ id: chatConversation.id });
+    await context.database.insert(chatMessage).values({
+      conversationId: conversation!.id,
+      ordinal: 0,
+      role: "USER",
+      status: "COMPLETED",
+      content: "Summarize the policy.",
+      agentRunId: id,
+    });
+    const memory = memoryPort();
+    const distiller: MemoryDistillerPort = {
+      distil: vi.fn(async () => ({ facts: [], succeeded: true })),
+    };
+
+    await processor(hermes(), noKnowledge, memory, distiller)
+      .process({ runId: id }, await jobIdOf(id), WORKER);
+
+    expect(distiller.distil).not.toHaveBeenCalled();
+    expect(memory.capture).not.toHaveBeenCalled();
+  });
+
+  it("still captures a run that belongs to no conversation", async () => {
+    // An agent invoked through the API has no session to wait for, so deferring
+    // it would mean never capturing at all.
+    await healthyBoundary();
+    const id = await queuedRun({}, "LEARN_EXCHANGE");
+    const memory = memoryPort();
+    const distiller: MemoryDistillerPort = {
+      distil: vi.fn(async () => ({
+        facts: [{ fact: "The user leads the platform team.", scope: "STATIC" as const, replaces: [] }],
+        succeeded: true,
+      })),
+    };
+
+    await processor(hermes(), noKnowledge, memory, distiller)
+      .process({ runId: id }, await jobIdOf(id), WORKER);
+
+    expect(distiller.distil).toHaveBeenCalledTimes(1);
+    expect(memory.captured[0]).toEqual([
+      { content: "The user leads the platform team.", scope: "STATIC", replaces: [] },
+    ]);
   });
 
   it("says so plainly when nothing is established yet", async () => {

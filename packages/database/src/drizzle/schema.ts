@@ -278,8 +278,18 @@ export const chatConversation = pgTable("ChatConversation", {
 	// Adaptation: Prisma defaulted this client-side with @default(uuid()), so the
 	// column carries no database default and needs the same stamping here.
 	hermesMemoryKey: varchar({ length: 200 }).notNull().$defaultFn(() => randomUUID()),
+	// How far memory extraction has read this conversation. Null means never;
+	// older than lastMessageAt means there is new material to distil. Capture
+	// runs once the conversation goes quiet rather than once per turn, so the
+	// model sees the whole arc and is called once instead of per message.
+	memoryDistilledAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
 }, (table) => [
 	index("ChatConversation_lastMessageAt_idx").using("btree", table.lastMessageAt.asc().nullsLast()),
+	// Drives the idle sweep: the partial predicate keeps the index to the
+	// conversations that could still owe a distillation.
+	index("ChatConversation_memoryPending_idx")
+		.using("btree", table.lastMessageAt.asc().nullsLast())
+		.where(sql`"memoryDistilledAt" IS NULL OR "memoryDistilledAt" < "lastMessageAt"`),
 	index("ChatConversation_ownerSubject_status_updatedAt_idx").using("btree", table.ownerSubject.asc().nullsLast(), table.status.asc().nullsLast(), table.updatedAt.asc().nullsLast()),
 ]);
 
@@ -1274,13 +1284,21 @@ export const agentMemory = pgTable("AgentMemory", {
 	supersededReason: varchar({ length: 300 }),
 	sourceRunId: uuid(),
 	sourceConversationId: uuid(),
+	// Bulk forgetting is a soft delete: a person asking for a topic to be
+	// forgotten is answered by the fact ceasing to be recalled, and the trail of
+	// what was forgotten, by whom and why has to outlive the rows themselves.
+	// The batch id ties one operator decision to every row it touched.
+	forgottenAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
+	forgetReason: varchar({ length: 300 }),
+	forgetBatchId: uuid(),
 	retentionUntil: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
 	index("AgentMemory_content_fts_idx").using("gin", sql`to_tsvector('simple'::regconfig, content)`),
+	index("AgentMemory_forgetBatchId_idx").using("btree", table.forgetBatchId.asc().nullsLast()),
 	index("AgentMemory_embedding_idx").using("hnsw", table.embedding.asc().nullsLast().op("vector_cosine_ops")),
 	index("AgentMemory_owner_profile_idx").using("btree", table.ownerSubject.asc().nullsLast(), table.agentProfileId.asc().nullsLast()),
-	index("AgentMemory_latest_idx").using("btree", table.ownerSubject.asc().nullsLast(), table.agentProfileId.asc().nullsLast()).where(sql`"isLatest"`),
+	index("AgentMemory_latest_idx").using("btree", table.ownerSubject.asc().nullsLast(), table.agentProfileId.asc().nullsLast()).where(sql`"isLatest" AND "forgottenAt" IS NULL`),
 	index("AgentMemory_profile_idx").using("btree", table.ownerSubject.asc().nullsLast(), table.agentProfileId.asc().nullsLast(), table.profileScope.asc().nullsLast()),
 	index("AgentMemory_retentionUntil_idx").using("btree", table.retentionUntil.asc().nullsLast()),
 	foreignKey({

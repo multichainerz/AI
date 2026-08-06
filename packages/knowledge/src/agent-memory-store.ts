@@ -306,8 +306,18 @@ export class AgentMemoryStore {
     return expired.length + trimmed.length;
   }
 
-  /** An item with no expiry never expires; one with an expiry is live until it passes. */
+  /**
+   * Everything that decides whether a fact may still be returned.
+   *
+   * Expiry and forgetting are separate decisions with the same consequence, and
+   * keeping them in one predicate is what stops a new query path from honouring
+   * one and not the other. An item with no expiry never expires; a forgotten
+   * item stays for the audit trail and is never recalled again.
+   */
   private unexpired() {
-    return or(isNull(agentMemory.retentionUntil), gt(agentMemory.retentionUntil, new Date()));
+    return and(
+      or(isNull(agentMemory.retentionUntil), gt(agentMemory.retentionUntil, new Date())),
+      isNull(agentMemory.forgottenAt),
+    );
   }
 }

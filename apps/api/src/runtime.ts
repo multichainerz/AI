@@ -44,6 +44,7 @@ import { DrizzleAuditManager, type AuditManager } from "./audit/audit-manager.js
 import { SiemForwarder } from "./audit/siem-forwarder.js";
 import type { PromptManager } from "./prompts/prompt-manager.js";
 import { DrizzleMemoryManager } from "./memory/drizzle-memory-manager.js";
+import { ForgetMatcher } from "./memory/forget-matcher.js";
 import type { MemoryManager } from "./memory/memory-manager.js";
 import { DrizzlePromptManager } from "./prompts/drizzle-prompt-manager.js";
 import type { OnboardingManager } from "./onboarding/onboarding-manager.js";
@@ -129,7 +130,9 @@ export function createRuntimeServices(): RuntimeServices {
     const modelManager = new DrizzleModelManager(database);
     const guardrailManager = new DrizzleGuardrailManager(database);
     const promptManager = new DrizzlePromptManager(database);
-    const memoryManager = new DrizzleMemoryManager(database);
+    // The matcher only speaks HTTP to the inference route, so it carries no
+    // model weights into the API process; see forget-matcher.ts.
+    const memoryManager = new DrizzleMemoryManager(database, new ForgetMatcher(documentResolver));
     const auditManager = new DrizzleAuditManager(database);
     const siemForwarder = new SiemForwarder(database, connectionManager, {
       error: (message, error) => console.error(message, error),

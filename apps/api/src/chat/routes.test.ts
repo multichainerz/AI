@@ -388,6 +388,15 @@ function selfServiceMemory(): MemoryManager {
       }],
     })),
     forget: vi.fn(async () => undefined),
+    forgetMatching: vi.fn(async () => ({
+      dryRun: true,
+      forgetBatchId: null,
+      candidates: [],
+      matched: 0,
+      forgotten: 0,
+      truncated: false,
+      capped: false,
+    })),
     purge: vi.fn(async () => 0),
   };
 }

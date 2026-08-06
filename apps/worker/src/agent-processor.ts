@@ -117,8 +117,7 @@ export interface KnowledgeLimits {
 /** Extracts durable facts from a turn; see `memory-distiller.ts` for why. */
 export interface MemoryDistillerPort {
   distil(
-    userTurn: string,
-    assistantTurn: string | null,
+    turns: readonly { role: "user" | "assistant"; content: string }[],
     known?: readonly { id: string; content: string }[],
   ): Promise<{
     facts: Array<{ fact: string; scope: MemoryProfileScope; replaces: string[] }>;
@@ -1112,6 +1111,16 @@ export class DrizzleAgentProcessor {
       .catch(() => undefined);
   }
 
+  /** Whether this run was submitted from a chat conversation. */
+  private async belongsToConversation(runId: string): Promise<boolean> {
+    const [message] = await this.database
+      .select({ conversationId: chatMessage.conversationId })
+      .from(chatMessage)
+      .where(eq(chatMessage.agentRunId, runId))
+      .limit(1);
+    return message !== undefined;
+  }
+
   /** The active policy's limits, or the shipped defaults when none is active. */
   private async memoryLimits(): Promise<{
     limits: MemoryLimits;
@@ -1186,6 +1195,12 @@ export class DrizzleAgentProcessor {
     const mode = effectiveMemoryMode(run.version.memoryMode, ceiling);
     if (mode !== "LEARN_USER" && mode !== "LEARN_EXCHANGE") return;
 
+    // A run inside a conversation waits for the session to go quiet, so
+    // extraction reads the arc rather than one turn of it and the model is
+    // called once instead of per message. A run with no conversation has no
+    // session to wait for, so it still captures here.
+    if (distil && this.distiller && await this.belongsToConversation(run.id)) return;
+
     let items: CapturedFact[];
     let distilled = false;
     if (distil && this.distiller) {
@@ -1210,8 +1225,10 @@ export class DrizzleAgentProcessor {
       const known = new Map<string, string>();
       for (const fact of [...profile, ...candidates]) known.set(fact.id, fact.content);
       const extraction = await this.distiller.distil(
-        run.input,
-        output,
+        [
+          { role: "user" as const, content: run.input },
+          ...(output ? [{ role: "assistant" as const, content: output }] : []),
+        ],
         [...known].map(([id, content]) => ({ id, content })),
       );
       // A distiller that could not be reached stores nothing. Falling back to

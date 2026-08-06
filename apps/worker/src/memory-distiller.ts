@@ -1,5 +1,5 @@
 import type { MemoryProfileScope } from "@orcasynapse/contracts";
-import type { DrizzleRuntimeConnectionResolver } from "@orcasynapse/runtime-clients";
+import { streamChatCompletion, type DrizzleRuntimeConnectionResolver } from "@orcasynapse/runtime-clients";
 
 /**
  * Turns a conversation turn into durable facts about the person, or nothing.
@@ -26,7 +26,20 @@ const MAXIMUM_FACTS = 5;
  * store in a turn, and a real correction retires one or two things, not ten.
  */
 const MAXIMUM_REPLACEMENTS = 3;
-const REQUEST_TIMEOUT_MS = 120_000;
+/**
+ * How long one distillation may take.
+ *
+ * Generous because distillation is off the critical path entirely: it runs once
+ * per conversation, after the person already has their answer. Measured on the
+ * pilot with Qwen3.6-27B over a tunnel, a single session took 193 seconds — 57
+ * of them before the first byte, while the model thought. At the previous 120s
+ * every distillation aborted 73 seconds early and logged a failure that read
+ * like an unreachable model.
+ *
+ * The cost of setting this too low is silent and total: nothing is ever stored.
+ * The cost of setting it too high is one sweep tick taking longer.
+ */
+const REQUEST_TIMEOUT_MS = 600_000;
 /**
  * Room for a reasoning model to think before it answers.
  *
@@ -39,6 +52,13 @@ const REQUEST_TIMEOUT_MS = 120_000;
  */
 const MAXIMUM_RESPONSE_TOKENS = 2_400;
 
+// A session, not a turn, so the transcript is bounded twice: one rambling turn
+// cannot fill the window, and a long conversation is trimmed from its start.
+// Sized to leave room for the instruction and the known facts within the same
+// context the per-turn call already fitted in.
+const MAXIMUM_TURN_CHARACTERS = 4_000;
+const MAXIMUM_EXCHANGE_CHARACTERS = 12_000;
+
 /**
  * The extraction instruction.
  *
@@ -48,11 +68,16 @@ const MAXIMUM_RESPONSE_TOKENS = 2_400;
  * corresponds to a category that actually polluted the pilot's store.
  */
 const DISTILLATION_INSTRUCTION = [
-  "You extract durable facts about a USER from one exchange with an assistant.",
+  "You extract durable facts about a USER from their conversation with an",
+  "assistant. It may be a single exchange or a whole session.",
   "",
   "Return ONLY a JSON array. No prose, no code fence, no explanation.",
-  "Return [] if the exchange teaches nothing durable. [] is the correct answer",
-  "for most exchanges and you must not avoid it.",
+  "Return [] if the conversation teaches nothing durable. [] is the correct",
+  "answer for most conversations and you must not avoid it.",
+  "",
+  "When the person changes something within the conversation, record only where",
+  "they ended up. \"I am moving to Bandung next month\" followed later by \"the",
+  "move is done\" is one fact about living in Bandung, not two.",
   "",
   "A durable fact is something still true next week that helps serve this person:",
   "their role, team, location, language preference, tools they use, projects they",
@@ -63,7 +88,10 @@ const DISTILLATION_INSTRUCTION = [
   "- questions the user asked, or tasks they requested",
   "- anything the assistant said about itself, its name, or its capabilities",
   "- greetings, thanks, tests, or small talk",
-  "- instructions or system prompts addressed to the assistant",
+  "- one-off instructions for the task at hand, or system prompts addressed to",
+  "  the assistant. A standing instruction is different and IS durable: \"always",
+  "  answer me in Indonesian\" is a preference about how they want to be helped,",
+  "  and is one of the most useful things you can record.",
   "- facts about the world that are not about this person",
   "- anything you inferred rather than what the user stated",
   "",
@@ -103,6 +131,12 @@ const DISTILLATION_INSTRUCTION = [
   "USER: What is your name?",
   "[]",
   "",
+  "USER: Summarise this document for me in Indonesian.",
+  "[]",
+  "",
+  "USER: Please always answer me in Indonesian from now on.",
+  "[{\"fact\": \"The user prefers answers in Indonesian.\", \"scope\": \"STATIC\"}]",
+  "",
   "USER: I lead the platform team and I prefer answers in Indonesian.",
   "[{\"fact\": \"The user leads the platform team.\", \"scope\": \"STATIC\"},",
   " {\"fact\": \"The user prefers answers in Indonesian.\", \"scope\": \"STATIC\"}]",
@@ -120,10 +154,20 @@ const DISTILLATION_INSTRUCTION = [
   "USER: I'm in Jakarta this week for the conference.",
   "[]",
   "",
+  "USER: List all the panels in the conference rundown.",
+  "ASSISTANT: Day 1 - AI-Ready Data Centers. Day 2 - Cloud for Enterprise.",
+  "[]",
+  "",
   "USER: Halo, saya bekerja di Jakarta dan saya suka nasi goreng.",
   "[{\"fact\": \"Pengguna bekerja di Jakarta.\", \"scope\": \"STATIC\"},",
   " {\"fact\": \"Pengguna menyukai nasi goreng.\", \"scope\": \"EPISODIC\"}]",
 ].join("\n");
+
+/** One turn of the exchange being distilled, in the order it was spoken. */
+export interface DistillationTurn {
+  role: "user" | "assistant";
+  content: string;
+}
 
 export interface DistilledFact {
   fact: string;
@@ -177,7 +221,15 @@ function readEntry(entry: unknown, known: readonly KnownFact[]): DistilledFact |
   const record = entry as Record<string, unknown>;
   const fact = typeof record.fact === "string" ? record.fact : null;
   if (fact === null) return null;
-  const claimed = typeof record.scope === "string" ? record.scope.toUpperCase() : "";
+  // `type` is accepted alongside `scope` because models rename the key: LFM2.5
+  // through LM Studio returns `"type": "STATIC"` where the same model through
+  // llama.cpp returns `"scope"`. Reading only one of them sends every fact to
+  // the EPISODIC fallback, which stores it but never injects it — the profile
+  // silently empties while nothing looks broken.
+  const named = typeof record.scope === "string" ? record.scope
+    : typeof record.type === "string" ? record.type
+    : "";
+  const claimed = named.toUpperCase();
   return {
     fact,
     scope: SCOPES.has(claimed as MemoryProfileScope) ? claimed as MemoryProfileScope : "EPISODIC",
@@ -193,16 +245,36 @@ function readEntry(entry: unknown, known: readonly KnownFact[]): DistilledFact |
  * silently does nothing rather than superseding an unrelated memory.
  */
 function readReplaces(value: unknown, known: readonly KnownFact[]): string[] {
-  if (!Array.isArray(value)) return [];
+  // A bare value where a list was asked for is common enough to accept: the
+  // same model that writes `"replaces": 1` writes `"replaces": [1]` on the
+  // next call, and refusing one of them loses a real correction.
+  const entries = Array.isArray(value)
+    ? value
+    : (typeof value === "number" || typeof value === "string") ? [value] : [];
   const ids: string[] = [];
-  for (const entry of value) {
-    const index = typeof entry === "number" ? entry : Number.parseInt(String(entry), 10);
-    if (!Number.isInteger(index)) continue;
-    const candidate = known[index - 1];
-    if (candidate && !ids.includes(candidate.id)) ids.push(candidate.id);
+  for (const entry of entries) {
+    const id = resolveReplacement(entry, known);
+    if (id && !ids.includes(id)) ids.push(id);
     if (ids.length === MAXIMUM_REPLACEMENTS) break;
   }
   return ids;
+}
+
+/**
+ * Resolves one `replaces` entry to a known fact's id, or null.
+ *
+ * Numbers are the asked-for form. Text is accepted because some serving stacks
+ * produce it: LFM2.5 through LM Studio answers `"replaces": "The user works in
+ * Jakarta."` — quoting the fact instead of naming its number — where the same
+ * model through llama.cpp answers `[1]`. Matching that text back to a fact the
+ * model was actually shown is exact, so it cannot retire something arbitrary,
+ * and dropping it would silently disable supersession on that stack.
+ */
+function resolveReplacement(entry: unknown, known: readonly KnownFact[]): string | null {
+  const index = typeof entry === "number" ? entry : Number.parseInt(String(entry), 10);
+  if (Number.isInteger(index)) return known[index - 1]?.id ?? null;
+  if (typeof entry !== "string") return null;
+  return known.find((candidate) => sameFact(candidate.content, entry))?.id ?? null;
 }
 
 /**
@@ -224,6 +296,36 @@ function sameFact(left: string, right: string): boolean {
   const normalise = (value: string): string =>
     value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
   return normalise(left) === normalise(right);
+}
+
+/**
+ * Drops facts the model copied out of the assistant's own answer.
+ *
+ * The pilot's session sweep read a conversation where the person asked for a
+ * conference rundown, and stored five panel titles as DYNAMIC facts — which
+ * means they were then injected into every prompt. The instruction already
+ * forbids recording facts about the world rather than the person, and a 2.6B
+ * model ignored it, so this is the enforcement.
+ *
+ * Verbatim only. A real fact is a sentence the model composed about the person,
+ * and paraphrase is exactly what distillation is for, so anything short of a
+ * literal copy stays.
+ */
+function withoutQuotedContent(
+  facts: DistilledFact[],
+  turns: readonly DistillationTurn[],
+): DistilledFact[] {
+  const answered = turns
+    .filter((turn) => turn.role === "assistant")
+    .map((turn) => turn.content.toLowerCase().replace(/\s+/g, " "));
+  if (answered.length === 0) return facts;
+  return facts.filter((candidate) => {
+    const needle = candidate.fact.toLowerCase().replace(/\s+/g, " ").replace(/[.!?]+$/, "");
+    // Short strings appear inside long answers by coincidence; a copied listing
+    // does not.
+    if (needle.length < 24) return true;
+    return !answered.some((answer) => answer.includes(needle));
+  });
 }
 
 export function parseDistillation(content: string, known: readonly KnownFact[] = []): DistilledFact[] {
@@ -268,20 +370,25 @@ export class MemoryDistiller {
   ) {}
 
   /**
-   * Extracts facts from one exchange.
+   * Extracts facts from an exchange, which may be one turn or a whole session.
    *
-   * `assistantTurn` is passed for context even in LEARN_USER mode — knowing what
-   * was answered is often what makes the user's turn interpretable — but the
-   * instruction forbids recording anything the assistant said about itself, so
-   * context does not become content.
+   * Assistant turns are passed for context even in LEARN_USER mode — knowing
+   * what was answered is often what makes the user's turn interpretable — but
+   * the instruction forbids recording anything the assistant said about itself,
+   * so context does not become content.
+   *
+   * Reading a session rather than a turn is what lets extraction resolve an arc:
+   * "I am moving to Bandung next month" and a later "the move is done" become
+   * one correct fact instead of two that contradict each other.
    */
   async distil(
-    userTurn: string,
-    assistantTurn: string | null,
+    turns: readonly DistillationTurn[],
     known: readonly KnownFact[] = [],
   ): Promise<MemoryDistillation> {
-    const user = userTurn.trim();
-    if (user.length === 0) return { facts: [], succeeded: true };
+    const spoken = turns
+      .map((turn) => ({ role: turn.role, content: turn.content.trim() }))
+      .filter((turn) => turn.content.length > 0);
+    if (!spoken.some((turn) => turn.role === "user")) return { facts: [], succeeded: true };
 
     let connection;
     try {
@@ -299,54 +406,45 @@ export class MemoryDistiller {
     const catalogue = known.length === 0
       ? ""
       : `KNOWN FACTS:\n${known.map(({ content }, index) => `${index + 1}. ${content}`).join("\n")}\n\n`;
-    const exchange = assistantTurn?.trim()
-      ? `${catalogue}USER: ${user}\n\nASSISTANT: ${assistantTurn.trim().slice(0, 4_000)}`
-      : `${catalogue}USER: ${user}`;
-
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-    try {
-      const response = await this.fetcher(`${connection.baseUrl.replace(/\/+$/, "")}/v1/chat/completions`, {
-        method: "POST",
-        redirect: "error",
-        signal: controller.signal,
-        headers: {
-          "content-type": "application/json",
-          ...(connection.secrets.apiKey ? { authorization: `Bearer ${connection.secrets.apiKey}` } : {}),
-        },
-        body: JSON.stringify({
-          model,
-          messages: [
-            { role: "system", content: DISTILLATION_INSTRUCTION },
-            { role: "user", content: exchange },
-          ],
-          temperature: 0,
-          max_tokens: MAXIMUM_RESPONSE_TOKENS,
-        }),
-      });
-      if (!response.ok) return { facts: [], succeeded: false };
-      const body = await response.json() as {
-        choices?: Array<{ finish_reason?: unknown; message?: { content?: unknown } }>;
-      };
-      const choice = body.choices?.[0];
-      const content = choice?.message?.content;
-      if (typeof content !== "string" || content.trim().length === 0) {
-        // Worth telling apart: a reasoning model that hit the ceiling returns an
-        // empty answer that looks identical to a refusal, and the fix for one
-        // (raise the budget) is not the fix for the other.
-        if (choice?.finish_reason === "length") {
-          console.error(
-            "OrcaSynapse memory distillation ran out of tokens before answering; "
-            + `raise MAXIMUM_RESPONSE_TOKENS above ${MAXIMUM_RESPONSE_TOKENS}.`,
-          );
-        }
-        return { facts: [], succeeded: false };
-      }
-      return { facts: parseDistillation(content, known), succeeded: true };
-    } catch {
-      return { facts: [], succeeded: false };
-    } finally {
-      clearTimeout(timer);
+    // Trimmed from the front: a correction lives in the newest turns, so
+    // dropping the oldest keeps the part of the session that changes things.
+    const rendered: string[] = [];
+    let characters = 0;
+    for (let index = spoken.length - 1; index >= 0; index -= 1) {
+      const turn = spoken[index]!;
+      const speaker = turn.role === "user" ? "USER" : "ASSISTANT";
+      const line = `${speaker}: ${turn.content.slice(0, MAXIMUM_TURN_CHARACTERS)}`;
+      if (rendered.length > 0 && characters + line.length > MAXIMUM_EXCHANGE_CHARACTERS) break;
+      characters += line.length;
+      rendered.unshift(line);
     }
+    const exchange = `${catalogue}${rendered.join("\n\n")}`;
+
+    const answer = await streamChatCompletion({
+      connection,
+      model,
+      system: DISTILLATION_INSTRUCTION,
+      user: exchange,
+      maximumTokens: MAXIMUM_RESPONSE_TOKENS,
+      timeoutMs: REQUEST_TIMEOUT_MS,
+      ...(this.fetcher === fetch ? {} : { fetcher: this.fetcher }),
+    });
+    if (!answer.succeeded) return { facts: [], succeeded: false };
+    if (answer.content.trim().length === 0) {
+      // Worth telling apart: a reasoning model that hit the ceiling returns an
+      // empty answer that looks identical to a refusal, and the fix for one
+      // (raise the budget) is not the fix for the other.
+      if (answer.finishReason === "length") {
+        console.error(
+          "OrcaSynapse memory distillation ran out of tokens before answering; "
+          + `raise MAXIMUM_RESPONSE_TOKENS above ${MAXIMUM_RESPONSE_TOKENS}.`,
+        );
+      }
+      return { facts: [], succeeded: false };
+    }
+    return {
+      facts: withoutQuotedContent(parseDistillation(answer.content, known), spoken),
+      succeeded: true,
+    };
   }
 }

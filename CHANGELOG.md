@@ -5,6 +5,45 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v1.0.0 — 2026-08-06 – 2026-08-07
+
+Conversation-level distillation, forget-by-topic, a memory metric that names the
+failing mechanism, and streaming inference.
+
+- **Distil a conversation once it goes quiet, instead of after every turn.**
+  Per-turn capture reads one message at a time and cannot resolve an arc — "I am
+  moving to Bandung next month" and a later "the move is done" become two facts
+  that contradict each other. Capture now waits ten minutes of quiet and reads
+  the whole session in one call, stamping the conversation as read *before*
+  distilling so a crash cannot loop on it, and rewinding that stamp when the
+  model was unreachable.
+- The migration that added the stamp defaulted it to null, which made every
+  conversation ever held look like it owed a distillation; a follow-up marks the
+  already-idle ones as read, so distillation starts from now rather than
+  harvesting the archive.
+- **"Forget everything about Project Titan", previewed before it happens.**
+  Neither a `LIKE` nor a similarity floor answers a topic, so the owner's live
+  facts are shown to the model against it. `dryRun` defaults to true, the blast
+  radius is bounded, and a partial scan is reported as partial rather than
+  presented as complete.
+- **A memory number that says which mechanism is failing.** Six cases across five
+  question types, each drawn from a failure that actually happened, scored by a
+  judge that reads anything short of an unambiguous PASS as a failure. A case
+  that could not be run is kept out of the score entirely, because counting it
+  either way reports something untrue.
+- The metric did its job on the day it shipped: "always answer me in Indonesian
+  from now on" had never been captured at all, because two rules in the
+  extraction instruction contradicted each other and a small model applied the
+  prohibition.
+- **Stream the inference calls, because some transports will not carry them
+  otherwise.** A free tunnel kills any request whose origin takes longer than
+  about 100 seconds; measured on the pilot, non-streaming returned 524 after 125s
+  where streaming returned 200 after 400s.
+- **Read the answer the model actually sends.** The same model on a different
+  serving stack renames the fields — `type` for `scope`, a quoted sentence where
+  an index was asked for — so on that stack every fact fell to the `EPISODIC`
+  fallback and no correction was ever applied. Nothing would have looked broken.
+
 ## v0.9.0 — 2026-08-06
 
 Agent memory becomes what it claims to be: extracted facts, in the third person,

@@ -23,8 +23,27 @@ function resolver(configuration: Record<string, unknown> = { modelAlias: "hermes
   } as never;
 }
 
-function answering(content: string) {
-  return vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status: 200 }));
+/** The old two-argument shape, as a transcript. */
+function exchange(user: string, assistant?: string | null) {
+  return [
+    { role: "user" as const, content: user },
+    ...(assistant ? [{ role: "assistant" as const, content: assistant }] : []),
+  ];
+}
+
+/**
+ * The callers stream now, so the stub speaks SSE.
+ *
+ * One content frame plus a terminator, which is the shape vLLM produces for a
+ * short answer. Frame reassembly itself is covered in the runtime-clients
+ * package; these cases care about what the distiller does with the result.
+ */
+function answering(content: string, finishReason = "stop") {
+  const frame = (payload: object) => `data: ${JSON.stringify(payload)}\n\n`;
+  const body = frame({ choices: [{ index: 0, delta: { content } }] })
+    + frame({ choices: [{ index: 0, delta: {}, finish_reason: finishReason }] })
+    + "data: [DONE]\n\n";
+  return vi.fn(async () => new Response(body, { status: 200 }));
 }
 
 describe("parseDistillation", () => {
@@ -47,6 +66,20 @@ describe("parseDistillation", () => {
       .toEqual([{ fact: "The user works in Jakarta.", scope: "EPISODIC", replaces: [] }]);
     expect(parseDistillation('[{"fact": "The user works in Jakarta."}]'))
       .toEqual([{ fact: "The user works in Jakarta.", scope: "EPISODIC", replaces: [] }]);
+  });
+
+  it("reads the scope from `type`, which is what some stacks name it", () => {
+    // Measured against LM Studio: LFM2.5 returns `"type": "STATIC"` there and
+    // `"scope"` through llama.cpp. Reading only `scope` sends every fact to the
+    // EPISODIC fallback, so it is stored, never injected, and nothing looks
+    // broken — the profile just stays empty.
+    expect(parseDistillation('[{"fact": "The user works in Jakarta.", "type": "STATIC"}]'))
+      .toEqual([{ fact: "The user works in Jakarta.", scope: "STATIC", replaces: [] }]);
+  });
+
+  it("prefers scope when a model sends both", () => {
+    expect(parseDistillation('[{"fact": "X about the user.", "scope": "STATIC", "type": "note"}]')[0]?.scope)
+      .toBe("STATIC");
   });
 
   it("accepts a lowercase scope, since models are inconsistent about case", () => {
@@ -133,6 +166,32 @@ describe("supersession", () => {
     ]);
   });
 
+  it("resolves a replacement the model quoted instead of numbered", () => {
+    // LFM2.5 through LM Studio answers `"replaces": "The user works in
+    // Jakarta."` where the same model through llama.cpp answers `[1]`. Dropping
+    // the quoted form disables supersession on that stack, silently.
+    expect(parseDistillation(
+      '[{"fact": "The user works in Bandung.", "scope": "STATIC",'
+      + ' "replaces": "The user works in Jakarta."}]',
+      known,
+    )).toEqual([
+      { fact: "The user works in Bandung.", scope: "STATIC", replaces: [known[1]!.id] },
+    ]);
+  });
+
+  it("accepts a bare replacement where a list was asked for", () => {
+    expect(parseDistillation('[{"fact": "X about the user.", "replaces": 1}]', known)[0]?.replaces)
+      .toEqual([known[0]!.id]);
+  });
+
+  it("retires nothing for quoted text it was never shown", () => {
+    // The match is exact, so a paraphrase cannot retire an unrelated memory.
+    expect(parseDistillation(
+      '[{"fact": "X about the user.", "replaces": "The user lives somewhere else."}]',
+      known,
+    )[0]?.replaces).toEqual([]);
+  });
+
   it("matches a restatement through case and punctuation", () => {
     expect(parseDistillation('[{"fact": "the user works in jakarta", "scope": "STATIC"}]', known))
       .toEqual([]);
@@ -177,7 +236,7 @@ describe("supersession", () => {
   it("offers the known facts to the model as a numbered list", async () => {
     const fetcher = answering("[]");
     await new MemoryDistiller(resolver(), fetcher as never)
-      .distil("I'm switching to Puma.", null, known);
+      .distil(exchange("I'm switching to Puma."), known);
     const [, init] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
     const prompt = JSON.parse(String(init.body)).messages[1].content;
     expect(prompt).toContain("1. The user loves Adidas sneakers.");
@@ -191,7 +250,7 @@ describe("MemoryDistiller", () => {
   it("asks the configured model and returns what it extracted", async () => {
     const fetcher = answering('[{"fact": "The user leads the platform team.", "scope": "STATIC"}]');
     const result = await new MemoryDistiller(resolver(), fetcher as never)
-      .distil("I lead the platform team here.", "Noted.");
+      .distil(exchange("I lead the platform team here.", "Noted."));
     expect(result).toEqual({
       facts: [{ fact: "The user leads the platform team.", scope: "STATIC", replaces: [] }],
       succeeded: true,
@@ -205,11 +264,121 @@ describe("MemoryDistiller", () => {
     expect(body.messages[1].content).toContain("USER: I lead the platform team here.");
   });
 
+  it("renders a whole session as an alternating transcript", async () => {
+    // Session-end distillation is the point of taking turns rather than a pair:
+    // extraction can only resolve "moving next month" against "the move is
+    // done" if it sees both.
+    const fetcher = answering("[]");
+    await new MemoryDistiller(resolver(), fetcher as never).distil([
+      { role: "user", content: "I am moving to Bandung next month." },
+      { role: "assistant", content: "Congratulations on the move." },
+      { role: "user", content: "The move is done, I am settled in now." },
+    ]);
+    const prompt = JSON.parse(String(
+      (fetcher.mock.calls[0] as unknown as [string, RequestInit])[1].body,
+    )).messages[1].content;
+    expect(prompt).toContain("USER: I am moving to Bandung next month.");
+    expect(prompt).toContain("ASSISTANT: Congratulations on the move.");
+    expect(prompt).toContain("USER: The move is done, I am settled in now.");
+    expect(prompt.indexOf("next month")).toBeLessThan(prompt.indexOf("settled in now"));
+  });
+
+  it("drops the oldest turns when a session outgrows the window", async () => {
+    // Trimmed from the front because a correction lives at the end: keeping the
+    // start would preserve exactly the facts the session went on to retire.
+    const fetcher = answering("[]");
+    // Each turn is capped at 4,000 characters, so it takes several to exceed
+    // the 12,000-character exchange window.
+    await new MemoryDistiller(resolver(), fetcher as never).distil([
+      { role: "user", content: `First. ${"x".repeat(9_000)}` },
+      { role: "user", content: `Second. ${"y".repeat(9_000)}` },
+      { role: "user", content: `Third. ${"z".repeat(9_000)}` },
+      { role: "user", content: `Fourth. ${"w".repeat(9_000)}` },
+      { role: "user", content: "Last, and the one that matters." },
+    ]);
+    const prompt = JSON.parse(String(
+      (fetcher.mock.calls[0] as unknown as [string, RequestInit])[1].body,
+    )).messages[1].content;
+    expect(prompt).toContain("Last, and the one that matters.");
+    expect(prompt).not.toContain("First.");
+  });
+
+  it("still sends a single turn that is longer than the whole window", async () => {
+    // The trim must never produce an empty exchange: one enormous turn is worth
+    // truncating, not discarding.
+    const fetcher = answering("[]");
+    await new MemoryDistiller(resolver(), fetcher as never)
+      .distil([{ role: "user", content: "Important. " + "z".repeat(40_000) }]);
+    const prompt = JSON.parse(String(
+      (fetcher.mock.calls[0] as unknown as [string, RequestInit])[1].body,
+    )).messages[1].content;
+    expect(prompt).toContain("USER: Important.");
+  });
+
+  it("succeeds with nothing when a session has no user turn at all", async () => {
+    const fetcher = answering('["should not be reached"]');
+    await expect(new MemoryDistiller(resolver(), fetcher as never)
+      .distil([{ role: "assistant", content: "Anything I said on my own." }]))
+      .resolves.toEqual({ facts: [], succeeded: true });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("tells the model a standing instruction is durable, not a task", async () => {
+    // The quality metric caught this: "always answer me in Indonesian" was
+    // dropped, because the prohibition on recording instructions swallowed the
+    // one preference most worth keeping. The two rules had to be separated.
+    const fetcher = answering("[]");
+    await new MemoryDistiller(resolver(), fetcher as never).distil(exchange("Anything"));
+    const instruction = JSON.parse(String(
+      (fetcher.mock.calls[0] as unknown as [string, RequestInit])[1].body,
+    )).messages[0].content;
+
+    expect(instruction).toContain("one-off instructions for the task at hand");
+    expect(instruction).toContain("A standing instruction is different and IS durable");
+    // And shown both ways round, since the distinction is what a small model
+    // gets wrong: the same words are a task once and a preference forever.
+    expect(instruction).toContain("USER: Summarise this document for me in Indonesian.");
+    expect(instruction).toContain("USER: Please always answer me in Indonesian from now on.");
+  });
+
+  it("drops a fact the model copied out of the assistant's own answer", async () => {
+    // The pilot's first session sweep read "list the conference rundown" and
+    // stored five panel titles as DYNAMIC facts — always injected, about nobody.
+    const listing = "Day 1 - AI-Ready Data Centers: Power, Cooling, and Infrastructure. "
+      + "Day 2 - Cloud for BUMN: Open Infrastructure for National Scale.";
+    const fetcher = answering(JSON.stringify([
+      { fact: "AI-Ready Data Centers: Power, Cooling, and Infrastructure", scope: "DYNAMIC" },
+      { fact: "The user is preparing to speak at the conference.", scope: "DYNAMIC" },
+    ]));
+
+    const result = await new MemoryDistiller(resolver(), fetcher as never).distil([
+      { role: "user", content: "List all the panels in the rundown." },
+      { role: "assistant", content: listing },
+    ]);
+
+    expect(result.facts.map(({ fact }) => fact))
+      .toEqual(["The user is preparing to speak at the conference."]);
+  });
+
+  it("keeps a fact that only paraphrases the answer", async () => {
+    // Paraphrase is what distillation is for, so the guard is verbatim-only.
+    const fetcher = answering(JSON.stringify([
+      { fact: "The user works on power and cooling for data centres.", scope: "STATIC" },
+    ]));
+
+    const result = await new MemoryDistiller(resolver(), fetcher as never).distil([
+      { role: "user", content: "I handle the power and cooling side." },
+      { role: "assistant", content: "Power and cooling is a demanding part of data centre work." },
+    ]);
+
+    expect(result.facts).toHaveLength(1);
+  });
+
   it("reports failure rather than emptiness when the model is unreachable", async () => {
     // The caller stores nothing either way, but only a failure is worth logging
     // — and it must never be mistaken for "this turn taught nothing".
     const fetcher = vi.fn(async () => new Response("upstream down", { status: 502 }));
-    await expect(new MemoryDistiller(resolver(), fetcher as never).distil("Anything", null))
+    await expect(new MemoryDistiller(resolver(), fetcher as never).distil(exchange("Anything")))
       .resolves.toEqual({ facts: [], succeeded: false });
   });
 
@@ -218,33 +387,31 @@ describe("MemoryDistiller", () => {
     // max_tokens any real turn came back finish_reason "length" with an empty
     // content. That is indistinguishable from a refusal in the response body,
     // so it must still be a failure — storing nothing rather than guessing.
-    const fetcher = vi.fn(async () => new Response(JSON.stringify({
-      choices: [{ finish_reason: "length", message: { content: "", reasoning_content: "thinking..." } }],
-    }), { status: 200 }));
-    await expect(new MemoryDistiller(resolver(), fetcher as never).distil("I moved to Bandung.", null))
+    const fetcher = answering("", "length");
+    await expect(new MemoryDistiller(resolver(), fetcher as never).distil(exchange("I moved to Bandung.")))
       .resolves.toEqual({ facts: [], succeeded: false });
   });
 
   it("treats a whitespace-only answer as a failure, not as nothing learned", async () => {
-    await expect(new MemoryDistiller(resolver(), answering("   ") as never).distil("Anything", null))
+    await expect(new MemoryDistiller(resolver(), answering("   ") as never).distil(exchange("Anything")))
       .resolves.toEqual({ facts: [], succeeded: false });
   });
 
   it("asks for enough room that reasoning does not crowd out the answer", async () => {
     const fetcher = answering("[]");
-    await new MemoryDistiller(resolver(), fetcher as never).distil("Anything", null);
+    await new MemoryDistiller(resolver(), fetcher as never).distil(exchange("Anything"));
     const [, init] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
     expect(JSON.parse(String(init.body)).max_tokens).toBeGreaterThanOrEqual(2_000);
   });
 
   it("reports failure when no inference route is configured", async () => {
-    await expect(new MemoryDistiller(resolver({}), answering("[]") as never).distil("Anything", null))
+    await expect(new MemoryDistiller(resolver({}), answering("[]") as never).distil(exchange("Anything")))
       .resolves.toEqual({ facts: [], succeeded: false });
   });
 
   it("succeeds with nothing for an empty turn, without calling the model", async () => {
     const fetcher = answering('["should not be reached"]');
-    await expect(new MemoryDistiller(resolver(), fetcher as never).distil("   ", null))
+    await expect(new MemoryDistiller(resolver(), fetcher as never).distil(exchange("   ")))
       .resolves.toEqual({ facts: [], succeeded: true });
     expect(fetcher).not.toHaveBeenCalled();
   });
