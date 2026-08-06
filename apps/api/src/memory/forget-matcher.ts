@@ -16,7 +16,16 @@ import { streamChatCompletion, type DrizzleRuntimeConnectionResolver } from "@or
  * would need weights loaded into this process.
  */
 
-const REQUEST_TIMEOUT_MS = 120_000;
+/**
+ * Shorter than the distiller's, because a person is waiting on this one.
+ *
+ * Forget-matching answers an HTTP request, so the ceiling is what an operator
+ * will sit through rather than what the model might want. A large reasoning
+ * model over a tunnel took 193 seconds for a single short prompt on the pilot,
+ * so 120s was refusing work that would have succeeded; 300s covers that without
+ * turning a dashboard click into an indefinite wait.
+ */
+const REQUEST_TIMEOUT_MS = 300_000;
 const MAXIMUM_RESPONSE_TOKENS = 2_400;
 
 /**

@@ -26,7 +26,20 @@ const MAXIMUM_FACTS = 5;
  * store in a turn, and a real correction retires one or two things, not ten.
  */
 const MAXIMUM_REPLACEMENTS = 3;
-const REQUEST_TIMEOUT_MS = 120_000;
+/**
+ * How long one distillation may take.
+ *
+ * Generous because distillation is off the critical path entirely: it runs once
+ * per conversation, after the person already has their answer. Measured on the
+ * pilot with Qwen3.6-27B over a tunnel, a single session took 193 seconds — 57
+ * of them before the first byte, while the model thought. At the previous 120s
+ * every distillation aborted 73 seconds early and logged a failure that read
+ * like an unreachable model.
+ *
+ * The cost of setting this too low is silent and total: nothing is ever stored.
+ * The cost of setting it too high is one sweep tick taking longer.
+ */
+const REQUEST_TIMEOUT_MS = 600_000;
 /**
  * Room for a reasoning model to think before it answers.
  *

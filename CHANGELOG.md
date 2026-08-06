@@ -5,6 +5,29 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.53.1 — 2026-08-06
+
+Wait long enough for a large model to answer.
+
+Streaming got past Cloudflare's ~100s origin cap and straight into our own 120s
+client timeout. Timed from inside the worker against Qwen3.6-27B over the
+tunnel: first byte at 57 seconds while the model thought, complete at 193. Every
+distillation aborted 73 seconds early and logged "could not distil session",
+which reads exactly like an unreachable route.
+
+- raise the distiller's timeout to 600s. Distillation is off the critical path
+  entirely — once per conversation, after the person already has their answer —
+  so the cost of waiting is one sweep tick running longer, while the cost of not
+  waiting is that nothing is ever stored
+- raise forget-matching's to 300s, and no further: that one answers an HTTP
+  request, so the ceiling is what an operator will sit through rather than what
+  the model might want
+
+Three transports' worth of failure looked identical from the outside — 502 with
+the tunnel down, 524 with it up but non-streaming, and an aborted stream — and
+all three would have read as "the big model is worse" if the suite had been run
+without checking first.
+
 ## ai-v1.53.0 — 2026-08-06
 
 Stream the inference calls, because some transports will not carry them
