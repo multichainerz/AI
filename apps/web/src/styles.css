@@ -3,6 +3,27 @@
 @tailwind utilities;
 
 /*
+ * The one piece of reset the migration needs.
+ *
+ * Tailwind's preflight is off so it cannot restyle the 2,000 lines still
+ * written against browser defaults - but that leaves a bare <button> rendering
+ * with the OS default light-grey fill. On a dark UI that is invisible until
+ * someone measures it: the rebuilt sidebar put muted text on #f0f0f0 at 2.25:1
+ * and looked merely "a bit off".
+ *
+ * An element selector loses to any class, so every existing styled button keeps
+ * its own treatment; only unclassed buttons inherit this.
+ */
+@layer base {
+  button {
+    background: transparent;
+    border: 0;
+    color: inherit;
+    font: inherit;
+  }
+}
+
+/*
  * Inter is named but not shipped.
  *
  * On a machine without it installed the product renders in the next stack

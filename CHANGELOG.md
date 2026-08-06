@@ -5,6 +5,38 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.55.1 — 2026-08-07
+
+Make the back button work, and rebuild the sidebar.
+
+Navigation wrote every route with `replaceState`, which creates no history entry
+— so pressing Back anywhere in the dashboard left the application rather than
+returning to the previous screen. It is now `pushState`, guarded so selecting
+the view already showing does not stack duplicate entries and make Back appear
+stuck. The existing `hashchange` listener already re-derives the view, so
+nothing else was needed.
+
+Verified in the browser: history grows 2 → 3 → 4 across two moves, and going
+back twice returns through Knowledge to Home with the active nav item following.
+
+- rebuild the sidebar on the ai-v1.54.0 primitives: monospace group labels, an
+  accent rule on the leading edge of the active row instead of a filled block,
+  and a truncating description line
+
+**And the trap that came with it.** Preflight is off so Tailwind cannot restyle
+the views not yet migrated — but that also means a bare `<button>` renders with
+the OS default light-grey fill. The rebuilt sidebar dropped the class that had
+been resetting it, putting muted text on `#f0f0f0` at **2.25:1**, which looks
+merely "a bit off" rather than obviously broken. Fixed for every future raw
+button with a scoped `@layer base` reset; an element selector loses to any
+class, so existing styled buttons are untouched. Back to 0 nodes below WCAG AA,
+worst 4.78, median 7.36.
+
+Not done, deliberately: replacing the twelve-branch view ternary with a lookup
+map. It is a readability change to 120 lines of prop-passing across views that
+mostly have no render test, where a silently dropped prop would not be caught.
+It belongs with the release that gives those views their tests, not before.
+
 ## ai-v1.55.0 — 2026-08-07
 
 Show what the agent actually believes, and say when it changed its mind.
