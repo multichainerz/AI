@@ -5,6 +5,28 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.49.5 — 2026-08-06
+
+Build before typechecking, and CI goes green after 76 consecutive red runs.
+
+`verify` ran `typecheck` first, then `build`. Cross-package types resolve through
+each package's emitted `dist/index.d.ts`, so on a fresh checkout — which is every
+CI run — typechecking `apps/worker` failed with `Cannot find module
+'@orcasynapse/knowledge'`, and every inferred type in the files importing it
+collapsed to `any`. It never reproduced on a development machine, because a
+`dist/` left over from any earlier build satisfies the import.
+
+Nothing was wrong with the code: the last 76 failures were the same ordering bug
+reported against whatever had most recently changed, which is why they read as
+new each time and why one of them was misdiagnosed as a stale lockfile.
+
+- run `build` before `typecheck` in `verify`, so the declarations dependents need
+  exist before anything reads them
+- verified by deleting every `dist/` and running `pnpm verify`, which is the
+  condition CI actually runs under and the one no local run had reproduced
+
+Last green run before this: 2026-08-03.
+
 ## ai-v1.49.4 — 2026-08-06
 
 A busy agent is a conflict, not a server error.
