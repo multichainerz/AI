@@ -59,7 +59,7 @@ The dashboard has six product areas with one owner each:
 - Uses Hermes concepts: Profiles, `SOUL.md`, Skills, sessions, runs, and managed configuration.
 - Supports immutable Profile revisions, standby validation, activation, suspension, runtime kill switch, and safe run inspection.
 - Removed the duplicate task composer from Agents; Chat is the single user execution surface.
-- Retired and blocked the removed document-memory resynchronization handler. Governed MCP remains zero-tool by default except for the implemented read-only metadata handler.
+- Retired and blocked the removed document-memory resynchronization handler. Governed MCP remains zero-tool by default. The read-only metadata handler is implemented but unreachable: no shipped Hermes advertises the private run-context contract it requires, and Hermes forwards no caller identity to an MCP server, so a call cannot be owner-scoped.
 
 ### Phase 6 — Correlated operations
 

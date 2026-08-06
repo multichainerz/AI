@@ -70,7 +70,7 @@ describe("MemoryDistiller", () => {
     const result = await new MemoryDistiller(resolver(), fetcher as never)
       .distil("I lead the platform team here.", "Noted.");
     expect(result).toEqual({ facts: ["The user leads the platform team."], succeeded: true });
-    const [, init] = fetcher.mock.calls[0] as [string, RequestInit];
+    const [, init] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
     const body = JSON.parse(String(init.body));
     expect(body).toMatchObject({ model: "hermes-agent", temperature: 0 });
     // The exchange is one user message; the instruction is separate, so a turn

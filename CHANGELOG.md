@@ -5,6 +5,24 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.46.1 — 2026-08-06
+
+Fix a type error `ai-v1.46.0` shipped.
+
+`memory-distiller.test.ts` narrowed `fetcher.mock.calls[0]` straight to a tuple,
+which `tsc` rejects. It was written after the last typecheck of that release and
+vitest does not typecheck, so the suite passed while `pnpm typecheck` failed —
+which is exactly the gap `pnpm verify` exists to close and which was not run
+again before tagging.
+
+Also corrects documentation that shipped claims the live runtime disproved. The
+memory runbook still said model-distilled capture was "deliberately not
+implemented" hours after `ai-v1.46.0` implemented it; ARCHITECTURE, the phased
+plan and the PRD described the governed MCP surface as default-deny with one
+working handler, when it is unreachable — no shipped Hermes advertises the
+private run-context contract it requires, and Hermes forwards no caller identity
+to an MCP server, so a call cannot be scoped to its requester.
+
 ## ai-v1.46.0 — 2026-08-06
 
 Agent memory stores extracted facts instead of whole turns.

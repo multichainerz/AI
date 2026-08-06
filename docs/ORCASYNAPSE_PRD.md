@@ -45,7 +45,7 @@ OrcaSynapse manages immutable Profile Distributions: behavior instruction, selec
 Hermes runs in an isolated environment and can reach only:
 
 - OrcaSynapse's authenticated inference gateway;
-- the OrcaSynapse-governed MCP gateway when an approved profile grants it;
+- the OrcaSynapse-governed MCP gateway when an approved profile grants it (implemented, but unreachable against current Hermes builds — see ARCHITECTURE);
 - explicitly allowlisted runtime destinations.
 
 OrcaSynapse does not give Hermes PostgreSQL credentials, Docker control, host filesystem access, enterprise-storage administration, or unrestricted outbound access.
