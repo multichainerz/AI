@@ -5,6 +5,37 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.53.2 — 2026-08-07
+
+Read the answer the model actually sends, not the one it was asked for.
+
+The same model on a different serving stack renames the fields. LFM2.5-2.6B
+through LM Studio returns `"type": "STATIC"` where llama.cpp returns `"scope"`,
+and `"replaces": "The user works in Jakarta."` where llama.cpp returns `[1]`.
+The parser read only `scope` and only numbers, so on that stack every fact fell
+to the `EPISODIC` fallback and no correction was ever applied.
+
+Nothing would have looked broken. Facts still store, search still finds them —
+the always-injected profile just stays empty and superseded facts stay current.
+Two mechanisms that took four releases to build, silently off.
+
+- accept `type` as an alias for `scope`, preferring `scope` when both are sent
+- resolve a `replaces` entry the model quoted rather than numbered, matching it
+  against the facts it was actually shown. The match is exact, so a paraphrase
+  cannot retire an unrelated memory
+- accept a bare `replaces` value where a list was asked for
+
+Verified end to end against the live model that exposed it: role, location and a
+standing language preference all classify `STATIC`, and a move retires the fact
+it replaces.
+
+**Verification is partial.** This machine lost WSL and its route to the LXD
+network, so there is no PostgreSQL for the data-layer suites. 235 tests ran —
+contracts, security, runtime-clients, web, database, and the database-free
+worker files including every case here — plus a clean typecheck and build. The
+486 API, 66 remaining worker and 43 knowledge tests could not run and are
+unverified in this release.
+
 ## ai-v1.53.1 — 2026-08-06
 
 Wait long enough for a large model to answer.

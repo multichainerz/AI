@@ -221,7 +221,15 @@ function readEntry(entry: unknown, known: readonly KnownFact[]): DistilledFact |
   const record = entry as Record<string, unknown>;
   const fact = typeof record.fact === "string" ? record.fact : null;
   if (fact === null) return null;
-  const claimed = typeof record.scope === "string" ? record.scope.toUpperCase() : "";
+  // `type` is accepted alongside `scope` because models rename the key: LFM2.5
+  // through LM Studio returns `"type": "STATIC"` where the same model through
+  // llama.cpp returns `"scope"`. Reading only one of them sends every fact to
+  // the EPISODIC fallback, which stores it but never injects it — the profile
+  // silently empties while nothing looks broken.
+  const named = typeof record.scope === "string" ? record.scope
+    : typeof record.type === "string" ? record.type
+    : "";
+  const claimed = named.toUpperCase();
   return {
     fact,
     scope: SCOPES.has(claimed as MemoryProfileScope) ? claimed as MemoryProfileScope : "EPISODIC",
@@ -237,16 +245,36 @@ function readEntry(entry: unknown, known: readonly KnownFact[]): DistilledFact |
  * silently does nothing rather than superseding an unrelated memory.
  */
 function readReplaces(value: unknown, known: readonly KnownFact[]): string[] {
-  if (!Array.isArray(value)) return [];
+  // A bare value where a list was asked for is common enough to accept: the
+  // same model that writes `"replaces": 1` writes `"replaces": [1]` on the
+  // next call, and refusing one of them loses a real correction.
+  const entries = Array.isArray(value)
+    ? value
+    : (typeof value === "number" || typeof value === "string") ? [value] : [];
   const ids: string[] = [];
-  for (const entry of value) {
-    const index = typeof entry === "number" ? entry : Number.parseInt(String(entry), 10);
-    if (!Number.isInteger(index)) continue;
-    const candidate = known[index - 1];
-    if (candidate && !ids.includes(candidate.id)) ids.push(candidate.id);
+  for (const entry of entries) {
+    const id = resolveReplacement(entry, known);
+    if (id && !ids.includes(id)) ids.push(id);
     if (ids.length === MAXIMUM_REPLACEMENTS) break;
   }
   return ids;
+}
+
+/**
+ * Resolves one `replaces` entry to a known fact's id, or null.
+ *
+ * Numbers are the asked-for form. Text is accepted because some serving stacks
+ * produce it: LFM2.5 through LM Studio answers `"replaces": "The user works in
+ * Jakarta."` — quoting the fact instead of naming its number — where the same
+ * model through llama.cpp answers `[1]`. Matching that text back to a fact the
+ * model was actually shown is exact, so it cannot retire something arbitrary,
+ * and dropping it would silently disable supersession on that stack.
+ */
+function resolveReplacement(entry: unknown, known: readonly KnownFact[]): string | null {
+  const index = typeof entry === "number" ? entry : Number.parseInt(String(entry), 10);
+  if (Number.isInteger(index)) return known[index - 1]?.id ?? null;
+  if (typeof entry !== "string") return null;
+  return known.find((candidate) => sameFact(candidate.content, entry))?.id ?? null;
 }
 
 /**

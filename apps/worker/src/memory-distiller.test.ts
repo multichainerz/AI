@@ -68,6 +68,20 @@ describe("parseDistillation", () => {
       .toEqual([{ fact: "The user works in Jakarta.", scope: "EPISODIC", replaces: [] }]);
   });
 
+  it("reads the scope from `type`, which is what some stacks name it", () => {
+    // Measured against LM Studio: LFM2.5 returns `"type": "STATIC"` there and
+    // `"scope"` through llama.cpp. Reading only `scope` sends every fact to the
+    // EPISODIC fallback, so it is stored, never injected, and nothing looks
+    // broken — the profile just stays empty.
+    expect(parseDistillation('[{"fact": "The user works in Jakarta.", "type": "STATIC"}]'))
+      .toEqual([{ fact: "The user works in Jakarta.", scope: "STATIC", replaces: [] }]);
+  });
+
+  it("prefers scope when a model sends both", () => {
+    expect(parseDistillation('[{"fact": "X about the user.", "scope": "STATIC", "type": "note"}]')[0]?.scope)
+      .toBe("STATIC");
+  });
+
   it("accepts a lowercase scope, since models are inconsistent about case", () => {
     expect(parseDistillation('[{"fact": "The user prefers Indonesian.", "scope": "static"}]'))
       .toEqual([{ fact: "The user prefers Indonesian.", scope: "STATIC", replaces: [] }]);
@@ -150,6 +164,32 @@ describe("supersession", () => {
     )).toEqual([
       { fact: "The user works in Bandung.", scope: "STATIC", replaces: [known[1]!.id] },
     ]);
+  });
+
+  it("resolves a replacement the model quoted instead of numbered", () => {
+    // LFM2.5 through LM Studio answers `"replaces": "The user works in
+    // Jakarta."` where the same model through llama.cpp answers `[1]`. Dropping
+    // the quoted form disables supersession on that stack, silently.
+    expect(parseDistillation(
+      '[{"fact": "The user works in Bandung.", "scope": "STATIC",'
+      + ' "replaces": "The user works in Jakarta."}]',
+      known,
+    )).toEqual([
+      { fact: "The user works in Bandung.", scope: "STATIC", replaces: [known[1]!.id] },
+    ]);
+  });
+
+  it("accepts a bare replacement where a list was asked for", () => {
+    expect(parseDistillation('[{"fact": "X about the user.", "replaces": 1}]', known)[0]?.replaces)
+      .toEqual([known[0]!.id]);
+  });
+
+  it("retires nothing for quoted text it was never shown", () => {
+    // The match is exact, so a paraphrase cannot retire an unrelated memory.
+    expect(parseDistillation(
+      '[{"fact": "X about the user.", "replaces": "The user lives somewhere else."}]',
+      known,
+    )[0]?.replaces).toEqual([]);
   });
 
   it("matches a restatement through case and punctuation", () => {
