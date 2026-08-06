@@ -1,5 +1,5 @@
 import type { MemoryProfileScope } from "@orcasynapse/contracts";
-import type { DrizzleRuntimeConnectionResolver } from "@orcasynapse/runtime-clients";
+import { streamChatCompletion, type DrizzleRuntimeConnectionResolver } from "@orcasynapse/runtime-clients";
 
 /**
  * Turns a conversation turn into durable facts about the person, or nothing.
@@ -379,53 +379,31 @@ export class MemoryDistiller {
     }
     const exchange = `${catalogue}${rendered.join("\n\n")}`;
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-    try {
-      const response = await this.fetcher(`${connection.baseUrl.replace(/\/+$/, "")}/v1/chat/completions`, {
-        method: "POST",
-        redirect: "error",
-        signal: controller.signal,
-        headers: {
-          "content-type": "application/json",
-          ...(connection.secrets.apiKey ? { authorization: `Bearer ${connection.secrets.apiKey}` } : {}),
-        },
-        body: JSON.stringify({
-          model,
-          messages: [
-            { role: "system", content: DISTILLATION_INSTRUCTION },
-            { role: "user", content: exchange },
-          ],
-          temperature: 0,
-          max_tokens: MAXIMUM_RESPONSE_TOKENS,
-        }),
-      });
-      if (!response.ok) return { facts: [], succeeded: false };
-      const body = await response.json() as {
-        choices?: Array<{ finish_reason?: unknown; message?: { content?: unknown } }>;
-      };
-      const choice = body.choices?.[0];
-      const content = choice?.message?.content;
-      if (typeof content !== "string" || content.trim().length === 0) {
-        // Worth telling apart: a reasoning model that hit the ceiling returns an
-        // empty answer that looks identical to a refusal, and the fix for one
-        // (raise the budget) is not the fix for the other.
-        if (choice?.finish_reason === "length") {
-          console.error(
-            "OrcaSynapse memory distillation ran out of tokens before answering; "
-            + `raise MAXIMUM_RESPONSE_TOKENS above ${MAXIMUM_RESPONSE_TOKENS}.`,
-          );
-        }
-        return { facts: [], succeeded: false };
+    const answer = await streamChatCompletion({
+      connection,
+      model,
+      system: DISTILLATION_INSTRUCTION,
+      user: exchange,
+      maximumTokens: MAXIMUM_RESPONSE_TOKENS,
+      timeoutMs: REQUEST_TIMEOUT_MS,
+      ...(this.fetcher === fetch ? {} : { fetcher: this.fetcher }),
+    });
+    if (!answer.succeeded) return { facts: [], succeeded: false };
+    if (answer.content.trim().length === 0) {
+      // Worth telling apart: a reasoning model that hit the ceiling returns an
+      // empty answer that looks identical to a refusal, and the fix for one
+      // (raise the budget) is not the fix for the other.
+      if (answer.finishReason === "length") {
+        console.error(
+          "OrcaSynapse memory distillation ran out of tokens before answering; "
+          + `raise MAXIMUM_RESPONSE_TOKENS above ${MAXIMUM_RESPONSE_TOKENS}.`,
+        );
       }
-      return {
-        facts: withoutQuotedContent(parseDistillation(content, known), spoken),
-        succeeded: true,
-      };
-    } catch {
       return { facts: [], succeeded: false };
-    } finally {
-      clearTimeout(timer);
     }
+    return {
+      facts: withoutQuotedContent(parseDistillation(answer.content, known), spoken),
+      succeeded: true,
+    };
   }
 }

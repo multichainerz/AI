@@ -25,11 +25,13 @@ function resolver(configuration: Record<string, unknown> = { modelAlias: "hermes
   } as never;
 }
 
-function answering(content: string) {
-  return vi.fn(async () => new Response(
-    JSON.stringify({ choices: [{ message: { content } }] }),
-    { status: 200 },
-  ));
+/** The matcher streams now, so the stub speaks SSE. */
+function answering(content: string, finishReason = "stop") {
+  const frame = (payload: object) => `data: ${JSON.stringify(payload)}\n\n`;
+  const body = frame({ choices: [{ index: 0, delta: { content } }] })
+    + frame({ choices: [{ index: 0, delta: {}, finish_reason: finishReason }] })
+    + "data: [DONE]\n\n";
+  return vi.fn(async () => new Response(body, { status: 200 }));
 }
 
 describe("parseMatches", () => {
@@ -96,9 +98,7 @@ describe("ForgetMatcher", () => {
   });
 
   it("reports failure when a reasoning model spent its budget before answering", async () => {
-    const fetcher = vi.fn(async () => new Response(JSON.stringify({
-      choices: [{ finish_reason: "length", message: { content: "", reasoning_content: "thinking..." } }],
-    }), { status: 200 }));
+    const fetcher = answering("", "length");
     await expect(new ForgetMatcher(resolver(), fetcher as never).match("Titan", candidates))
       .resolves.toMatchObject({ matchedIds: [], succeeded: false });
   });

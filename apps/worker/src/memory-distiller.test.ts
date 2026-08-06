@@ -31,8 +31,19 @@ function exchange(user: string, assistant?: string | null) {
   ];
 }
 
-function answering(content: string) {
-  return vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status: 200 }));
+/**
+ * The callers stream now, so the stub speaks SSE.
+ *
+ * One content frame plus a terminator, which is the shape vLLM produces for a
+ * short answer. Frame reassembly itself is covered in the runtime-clients
+ * package; these cases care about what the distiller does with the result.
+ */
+function answering(content: string, finishReason = "stop") {
+  const frame = (payload: object) => `data: ${JSON.stringify(payload)}\n\n`;
+  const body = frame({ choices: [{ index: 0, delta: { content } }] })
+    + frame({ choices: [{ index: 0, delta: {}, finish_reason: finishReason }] })
+    + "data: [DONE]\n\n";
+  return vi.fn(async () => new Response(body, { status: 200 }));
 }
 
 describe("parseDistillation", () => {
@@ -336,9 +347,7 @@ describe("MemoryDistiller", () => {
     // max_tokens any real turn came back finish_reason "length" with an empty
     // content. That is indistinguishable from a refusal in the response body,
     // so it must still be a failure — storing nothing rather than guessing.
-    const fetcher = vi.fn(async () => new Response(JSON.stringify({
-      choices: [{ finish_reason: "length", message: { content: "", reasoning_content: "thinking..." } }],
-    }), { status: 200 }));
+    const fetcher = answering("", "length");
     await expect(new MemoryDistiller(resolver(), fetcher as never).distil(exchange("I moved to Bandung.")))
       .resolves.toEqual({ facts: [], succeeded: false });
   });

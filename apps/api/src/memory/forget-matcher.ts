@@ -1,4 +1,4 @@
-import type { DrizzleRuntimeConnectionResolver } from "@orcasynapse/runtime-clients";
+import { streamChatCompletion, type DrizzleRuntimeConnectionResolver } from "@orcasynapse/runtime-clients";
 
 /**
  * Decides which stored facts a natural-language forget request is about.
@@ -134,43 +134,21 @@ export class ForgetMatcher {
       shown.map((candidate, index) => `${index + 1}. ${candidate.content}`).join("\n")
     }`;
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-    try {
-      const response = await this.fetcher(`${connection.baseUrl.replace(/\/+$/, "")}/v1/chat/completions`, {
-        method: "POST",
-        redirect: "error",
-        signal: controller.signal,
-        headers: {
-          "content-type": "application/json",
-          ...(connection.secrets.apiKey ? { authorization: `Bearer ${connection.secrets.apiKey}` } : {}),
-        },
-        body: JSON.stringify({
-          model,
-          messages: [
-            { role: "system", content: MATCHING_INSTRUCTION },
-            { role: "user", content: prompt },
-          ],
-          temperature: 0,
-          max_tokens: MAXIMUM_RESPONSE_TOKENS,
-        }),
-      });
-      if (!response.ok) return { matchedIds: [], succeeded: false, truncated };
-      const body = await response.json() as {
-        choices?: Array<{ finish_reason?: unknown; message?: { content?: unknown } }>;
-      };
-      const answer = body.choices?.[0]?.message?.content;
-      // An empty answer is a failure, not "nothing matched": a reasoning model
-      // that spent its budget thinking returns exactly that, and treating it as
-      // a decision would report a clean dry run over facts nobody read.
-      if (typeof answer !== "string" || answer.trim().length === 0) {
-        return { matchedIds: [], succeeded: false, truncated };
-      }
-      return { matchedIds: parseMatches(answer, shown), succeeded: true, truncated };
-    } catch {
+    const answer = await streamChatCompletion({
+      connection,
+      model,
+      system: MATCHING_INSTRUCTION,
+      user: prompt,
+      maximumTokens: MAXIMUM_RESPONSE_TOKENS,
+      timeoutMs: REQUEST_TIMEOUT_MS,
+      ...(this.fetcher === fetch ? {} : { fetcher: this.fetcher }),
+    });
+    // An empty answer is a failure, not "nothing matched": a reasoning model
+    // that spent its budget thinking returns exactly that, and treating it as a
+    // decision would report a clean dry run over facts nobody read.
+    if (!answer.succeeded || answer.content.trim().length === 0) {
       return { matchedIds: [], succeeded: false, truncated };
-    } finally {
-      clearTimeout(timer);
     }
+    return { matchedIds: parseMatches(answer.content, shown), succeeded: true, truncated };
   }
 }

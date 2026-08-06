@@ -5,6 +5,36 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.53.0 — 2026-08-06
+
+Stream the inference calls, because some transports will not carry them
+otherwise.
+
+Pointing the pilot at vLLM serving Qwen3.6-27B through a Cloudflare quick tunnel
+made every distillation fail. Not the model — the transport. A free
+`trycloudflare` tunnel kills any request whose origin takes longer than about
+100 seconds, and a 27B reasoning model asked for a couple of thousand tokens
+routinely takes longer. Measured on the pilot with the same prompt:
+
+    non-streaming   524  after 125s
+    streaming       200  after 400s
+
+Each chunk resets the idle timer, so streaming gets under a cap that a
+non-streaming call cannot.
+
+- add `streamChatCompletion` to `@orcasynapse/runtime-clients`, and move memory
+  distillation and forget-matching onto it. Both make the same call from
+  different apps, so writing it twice would mean two sets of SSE parsing bugs
+- reassemble frames across arbitrary chunk boundaries, keep a trailing frame
+  that arrives without its separator, and survive a keep-alive or a truncated
+  frame without discarding what came before it
+- accumulate `content` only. A reasoning model streams `reasoning_content` too,
+  which is its working rather than its answer
+
+An empty answer is still a failure rather than "nothing was learned", and
+`finish_reason: "length"` is still logged by name — those distinctions are what
+made this diagnosable at all.
+
 ## ai-v1.52.2 — 2026-08-06
 
 Make the quality harness measure memory rather than its own timing.
