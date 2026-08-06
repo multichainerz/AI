@@ -5,6 +5,39 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.52.0 — 2026-08-06
+
+A memory number that says which mechanism is failing.
+
+Every memory change in this series shipped on anecdote. Distillation was
+verified with one hand-driven conversation, and the four defects the pilot
+exposed were found by looking rather than by measuring. A single score would not
+have helped either — what makes a memory metric useful is that it names the
+mechanism, so "temporal 0/2" points at version chains and "profile 0/1" points
+at the always-injected block.
+
+- add a suite of six cases across five question types — stated fact, profile,
+  temporal, session arc, and absence — each drawn from a failure that actually
+  happened, so a regression is a regression in something that was fixed
+- score with an LLM judge, reading anything short of an unambiguous PASS as a
+  failure. A verdict the judge could not decide would otherwise inflate every
+  number it touched
+- keep a case that could not be run out of the score entirely. Counted as a
+  failure it blames the code for an environment problem; counted as a pass it
+  reports a clean run over nothing. The report names them instead
+- run it end to end against a live installation:
+  `docker compose exec worker node apps/worker/scripts/measure-memory-quality.mjs`
+
+The harness invents no endpoints. Chat goes through the API exactly as a
+person's would, distillation is the shipped sweep with its idle wait set to
+zero, and the judge is the configured inference route. Every mechanism it scores
+passed locally and then failed on the pilot for reasons no stub reproduced, so a
+metric measured against stubs would measure the stubs.
+
+Each question is asked in a fresh conversation. Asked in the one that stated the
+fact, it would be answered from the transcript and would score a broken store as
+working.
+
 ## ai-v1.51.0 — 2026-08-06
 
 "Forget everything about Project Titan", previewed before it happens.
