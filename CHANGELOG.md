@@ -5,6 +5,40 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.48.0 — 2026-08-06
+
+A profile: the facts an agent is told regardless of the question.
+
+Semantic search cannot retrieve a fact that resembles no question. On the pilot,
+`prefers answers in Indonesian` was stored correctly and never returned, because
+a language preference has nothing in common — vector-wise — with "what should I
+prepare for the event?". No `recallMinimumScore` fixes that; the fact needs to
+bypass search entirely.
+
+- classify each extracted fact as `STATIC` (role, location, language, standing
+  preferences), `DYNAMIC` (a current project or deadline), or `EPISODIC` (the
+  default — reached only by search). The distiller decides as it extracts, and
+  is told to prefer EPISODIC when unsure, because a wrong STATIC fact is
+  repeated on every message forever.
+- inject an **ABOUT THIS PERSON** block into every prompt, built from STATIC
+  plus recent DYNAMIC with **no similarity search**. Bounded twice — ten facts
+  and 1200 characters — and trimmed a whole fact at a time, since half a fact is
+  worse than one fewer. An empty profile says nothing is established yet rather
+  than implying the person has no preferences.
+- the parser accepts a bare string as well as the classified object, filing it
+  as EPISODIC: a model that ignored the format still extracted a fact, and
+  losing it is worse than filing it where only search reaches it. An
+  unrecognised scope falls back to EPISODIC for the same reason it is the
+  default — the least privileged scope, not the most.
+- an undistilled turn is never profile material; a whole turn shown on every
+  message would put a question in front of the model forever.
+- show the scope in the memory view, so an operator can see exactly which facts
+  are always-on and delete one that should not be.
+
+A profile is a view over stored facts, not a separate document — which is how
+Supermemory models it too, and why this is a column and a query rather than a
+new table.
+
 ## ai-v1.47.0 — 2026-08-06
 
 Keep extracted facts in the third person.

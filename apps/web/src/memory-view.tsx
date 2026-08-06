@@ -228,10 +228,21 @@ export function MemoryView({ session, onOpenSettings, onSessionExpired }: Memory
 
       {records.length === 0
         ? <div className="document-empty"><strong>Nothing stored</strong><span>No agent has recorded anything about anyone in this scope.</span></div>
-        : <div className="memory-record-list">{records.map((record) => <article key={record.id}>
+        : <><p className="chat-policy-note">
+            Facts marked <strong>always shown</strong> are placed in every prompt to that agent,
+            whatever the question was — that is how a preference nobody would think to ask about
+            still reaches an answer. <strong>Current context</strong> is included the same way but
+            describes something expected to change. Everything else is reached only by search.
+          </p>
+          <div className="memory-record-list">{records.map((record) => <article key={record.id}>
           <div>
             <strong>{record.ownerSubject}</strong>
             <span className="document-status neutral">{record.agentProfileSlug}</span>
+            {record.profileScope !== "EPISODIC" && (
+              <span className={record.profileScope === "STATIC" ? "document-status ready" : "document-status quarantined"}>
+                {record.profileScope === "STATIC" ? "always shown" : "current context"}
+              </span>
+            )}
             <p>{record.content}</p>
             <small>
               Recorded {new Date(record.createdAt).toLocaleString()}
@@ -239,7 +250,7 @@ export function MemoryView({ session, onOpenSettings, onSessionExpired }: Memory
             </small>
           </div>
           {canManage && <button type="button" className="danger-button" disabled={busy || reason.trim().length < 3} onClick={() => void forget(record)}>Forget</button>}
-        </article>)}</div>}
+        </article>)}</div></>}
     </section>
   </section>;
 }

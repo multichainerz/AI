@@ -78,12 +78,25 @@ export const changeMemoryPolicyStateSchema = z.object({
 }).strict();
 
 /** One stored memory, as an administrator or its owner sees it. */
+/**
+ * How long a fact stays useful, which decides whether it is always present.
+ *
+ * STATIC and DYNAMIC facts are injected with every prompt without a search;
+ * EPISODIC facts are only ever reached by similarity. The split exists because
+ * semantic search cannot retrieve a fact that resembles no question — a
+ * language preference has nothing in common, vector-wise, with "what should I
+ * prepare for the event?", so it would never surface however the floor is tuned.
+ */
+export const MEMORY_PROFILE_SCOPES = ["STATIC", "DYNAMIC", "EPISODIC"] as const;
+export const memoryProfileScopeSchema = z.enum(MEMORY_PROFILE_SCOPES);
+
 export const agentMemoryRecordSchema = z.object({
   id: z.uuid(),
   ownerSubject: z.string().min(1).max(200),
   agentProfileId: z.uuid(),
   agentProfileSlug: z.string().min(1).max(64),
   content: z.string(),
+  profileScope: memoryProfileScopeSchema,
   sourceRunId: z.uuid().nullable(),
   retentionUntil: z.iso.datetime().nullable(),
   createdAt: z.iso.datetime(),
@@ -116,6 +129,7 @@ export type MemoryPolicyList = z.infer<typeof memoryPolicyListSchema>;
 export type CreateMemoryPolicy = z.infer<typeof createMemoryPolicySchema>;
 export type UpdateMemoryPolicy = z.infer<typeof updateMemoryPolicySchema>;
 export type ChangeMemoryPolicyState = z.infer<typeof changeMemoryPolicyStateSchema>;
+export type MemoryProfileScope = z.infer<typeof memoryProfileScopeSchema>;
 export type AgentMemoryRecord = z.infer<typeof agentMemoryRecordSchema>;
 export type AgentMemoryRecordList = z.infer<typeof agentMemoryRecordListSchema>;
 export type AgentMemoryQuery = z.infer<typeof agentMemoryQuerySchema>;

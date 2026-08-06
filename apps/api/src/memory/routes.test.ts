@@ -60,6 +60,7 @@ const record: AgentMemoryRecord = {
   agentProfileId: "3e5f7a91-2c4d-4e6f-8a0b-1c2d3e4f5a6b",
   agentProfileSlug: "assistant",
   content: "Prefers concise answers.",
+  profileScope: "EPISODIC" as const,
   sourceRunId: null,
   retentionUntil: "2027-08-01T00:00:00.000Z",
   createdAt: "2026-08-01T00:00:00.000Z",

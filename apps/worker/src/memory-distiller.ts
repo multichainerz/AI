@@ -1,3 +1,4 @@
+import type { MemoryProfileScope } from "@orcasynapse/contracts";
 import type { DrizzleRuntimeConnectionResolver } from "@orcasynapse/runtime-clients";
 
 /**
@@ -31,7 +32,7 @@ const REQUEST_TIMEOUT_MS = 60_000;
 const DISTILLATION_INSTRUCTION = [
   "You extract durable facts about a USER from one exchange with an assistant.",
   "",
-  "Return ONLY a JSON array of strings. No prose, no code fence, no explanation.",
+  "Return ONLY a JSON array. No prose, no code fence, no explanation.",
   "Return [] if the exchange teaches nothing durable. [] is the correct answer",
   "for most exchanges and you must not avoid it.",
   "",
@@ -48,6 +49,17 @@ const DISTILLATION_INSTRUCTION = [
   "- facts about the world that are not about this person",
   "- anything you inferred rather than what the user stated",
   "",
+  "Return each fact as an object: {\"fact\": \"...\", \"scope\": \"STATIC\"}.",
+  "",
+  "scope says how long the fact stays useful:",
+  "- STATIC: stable for months. Role, team, employer, location, language, name,",
+  "  and standing preferences about how they want to be helped.",
+  "- DYNAMIC: true now but expected to change. What they are working on, a",
+  "  current project, a deadline they are heading toward.",
+  "- EPISODIC: a detail worth keeping but only relevant when asked about.",
+  "",
+  "Prefer EPISODIC when unsure. STATIC facts are shown to the assistant on every",
+  "single message, so a wrong one is repeated forever.",
   "",
   "Write every fact about the user in the THIRD PERSON. Never write a fact as",
   "\"I\", \"saya\", \"me\", or \"my\", even when the user spoke that way. A fact stored",
@@ -65,25 +77,28 @@ const DISTILLATION_INSTRUCTION = [
   "[]",
   "",
   "USER: I lead the platform team and I prefer answers in Indonesian.",
-  "[\"The user leads the platform team.\", \"The user prefers answers in Indonesian.\"]",
+  "[{\"fact\": \"The user leads the platform team.\", \"scope\": \"STATIC\"},",
+  " {\"fact\": \"The user prefers answers in Indonesian.\", \"scope\": \"STATIC\"}]",
+  "",
+  "USER: I'm migrating the payments service to Kubernetes this quarter.",
+  "[{\"fact\": \"The user is migrating the payments service to Kubernetes.\", \"scope\": \"DYNAMIC\"}]",
   "",
   "USER: Halo, saya bekerja di Jakarta dan saya suka nasi goreng.",
-  "[\"Pengguna bekerja di Jakarta.\", \"Pengguna menyukai nasi goreng.\"]",
+  "[{\"fact\": \"Pengguna bekerja di Jakarta.\", \"scope\": \"STATIC\"},",
+  " {\"fact\": \"Pengguna menyukai nasi goreng.\", \"scope\": \"EPISODIC\"}]",
 ].join("\n");
 
+export interface DistilledFact {
+  fact: string;
+  scope: MemoryProfileScope;
+}
+
 export interface MemoryDistillation {
-  facts: string[];
+  facts: DistilledFact[];
   /** False when the model could not be reached or answered unusably. */
   succeeded: boolean;
 }
 
-/**
- * Parses the model's answer, tolerating the wrappers small models add.
- *
- * A model that cannot be trusted to return bare JSON also cannot be trusted to
- * have followed the prohibitions, so anything unparseable yields no facts
- * rather than a salvage attempt.
- */
 /**
  * Pronouns that mean the model wrote a fact as the person rather than about them.
  *
@@ -102,7 +117,36 @@ function writtenAsTheUser(fact: string): boolean {
   return FIRST_PERSON_OPENERS.has(first);
 }
 
-export function parseDistillation(content: string): string[] {
+const SCOPES = new Set<MemoryProfileScope>(["STATIC", "DYNAMIC", "EPISODIC"]);
+
+/**
+ * Reads one entry, accepting either shape.
+ *
+ * A bare string is kept as EPISODIC rather than discarded: a model that ignored
+ * the object format still extracted a fact, and losing it would be a worse
+ * outcome than filing it where it is only reached by search.
+ */
+function readEntry(entry: unknown): DistilledFact | null {
+  if (typeof entry === "string") return { fact: entry, scope: "EPISODIC" };
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+  const record = entry as Record<string, unknown>;
+  const fact = typeof record.fact === "string" ? record.fact : null;
+  if (fact === null) return null;
+  const claimed = typeof record.scope === "string" ? record.scope.toUpperCase() : "";
+  return {
+    fact,
+    scope: SCOPES.has(claimed as MemoryProfileScope) ? claimed as MemoryProfileScope : "EPISODIC",
+  };
+}
+
+/**
+ * Parses the model's answer, tolerating the wrappers small models add.
+ *
+ * A model that cannot be trusted to return bare JSON also cannot be trusted to
+ * have followed the prohibitions, so anything unparseable yields no facts
+ * rather than a salvage attempt.
+ */
+export function parseDistillation(content: string): DistilledFact[] {
   const fenced = content.match(/```(?:json)?\s*([\s\S]*?)```/);
   const body = (fenced?.[1] ?? content).trim();
   const start = body.indexOf("[");
@@ -115,16 +159,17 @@ export function parseDistillation(content: string): string[] {
     return [];
   }
   if (!Array.isArray(parsed)) return [];
-  const facts: string[] = [];
+  const facts: DistilledFact[] = [];
   for (const entry of parsed) {
-    if (typeof entry !== "string") continue;
-    const fact = entry.replace(/\s+/g, " ").trim();
+    const read = readEntry(entry);
+    if (read === null) continue;
+    const fact = read.fact.replace(/\s+/g, " ").trim();
     if (fact.length === 0) continue;
     // Dropped rather than rewritten: a fact the model wrote as the person is
     // one it may also have attributed wrongly, and guessing at a rewrite would
     // store a sentence nobody said.
     if (writtenAsTheUser(fact)) continue;
-    facts.push(fact.slice(0, MAXIMUM_FACT_CHARACTERS));
+    facts.push({ fact: fact.slice(0, MAXIMUM_FACT_CHARACTERS), scope: read.scope });
     if (facts.length === MAXIMUM_FACTS) break;
   }
   return facts;

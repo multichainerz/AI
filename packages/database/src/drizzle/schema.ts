@@ -26,6 +26,7 @@ export const administratorAuthenticationMethod = pgEnum("AdministratorAuthentica
 export const administratorRole = pgEnum("AdministratorRole", ['PLATFORM_ADMIN', 'SECURITY_ADMIN', 'OPERATIONS_ADMIN', 'AUDITOR'])
 export const agentProfileStatus = pgEnum("AgentProfileStatus", ['DRAFT', 'ACTIVE', 'SUSPENDED', 'STANDBY'])
 export const agentMemoryMode = pgEnum("AgentMemoryMode", ['DOCUMENTS_ONLY', 'RECALL_ONLY', 'LEARN_USER', 'LEARN_EXCHANGE'])
+export const memoryProfileScope = pgEnum("MemoryProfileScope", ['STATIC', 'DYNAMIC', 'EPISODIC'])
 export const memoryPolicyStatus = pgEnum("MemoryPolicyStatus", ['DRAFT', 'ACTIVE', 'SUSPENDED'])
 export const agentRunApprovalStatus = pgEnum("AgentRunApprovalStatus", ['PENDING', 'APPROVED', 'DENIED', 'EXPIRED', 'CANCELLED'])
 export const agentRunStatus = pgEnum("AgentRunStatus", ['QUEUED', 'RUNNING', 'WAITING_FOR_APPROVAL', 'CANCEL_REQUESTED', 'COMPLETED', 'FAILED', 'CANCELLED', 'TIMED_OUT', 'DENIED'])
@@ -1261,6 +1262,7 @@ export const agentMemory = pgTable("AgentMemory", {
 	characterCount: integer().notNull(),
 	embeddingModel: varchar({ length: 120 }).notNull(),
 	embedding: vector({ dimensions: 1024 }).notNull(),
+	profileScope: memoryProfileScope().default('EPISODIC').notNull(),
 	sourceRunId: uuid(),
 	sourceConversationId: uuid(),
 	retentionUntil: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
@@ -1269,6 +1271,7 @@ export const agentMemory = pgTable("AgentMemory", {
 	index("AgentMemory_content_fts_idx").using("gin", sql`to_tsvector('simple'::regconfig, content)`),
 	index("AgentMemory_embedding_idx").using("hnsw", table.embedding.asc().nullsLast().op("vector_cosine_ops")),
 	index("AgentMemory_owner_profile_idx").using("btree", table.ownerSubject.asc().nullsLast(), table.agentProfileId.asc().nullsLast()),
+	index("AgentMemory_profile_idx").using("btree", table.ownerSubject.asc().nullsLast(), table.agentProfileId.asc().nullsLast(), table.profileScope.asc().nullsLast()),
 	index("AgentMemory_retentionUntil_idx").using("btree", table.retentionUntil.asc().nullsLast()),
 	foreignKey({
 			columns: [table.agentProfileId],

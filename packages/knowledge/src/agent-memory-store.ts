@@ -1,9 +1,12 @@
 import { and, cosineDistance, desc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import type { MemoryProfileScope } from "@orcasynapse/contracts";
 import { agentMemory, type OrcaSynapseDatabase } from "@orcasynapse/database";
 
 export interface RememberedItem {
   content: string;
   embedding: number[];
+  /** How long the fact stays useful; decides whether it is always injected. */
+  scope?: MemoryProfileScope;
 }
 
 export interface MemoryProvenance {
@@ -57,6 +60,7 @@ export class AgentMemoryStore {
         agentProfileId,
         content: item.content,
         characterCount: item.content.length,
+        profileScope: item.scope ?? "EPISODIC",
         embeddingModel: this.embeddingModel,
         embedding: item.embedding,
         sourceRunId: provenance.runId ?? null,
@@ -111,6 +115,35 @@ export class AgentMemoryStore {
   }
 
   /** Newest first, for an owner reviewing what an agent has learned. */
+  /**
+   * The facts that must be present regardless of what was asked.
+   *
+   * Deliberately not a similarity search. A language preference has nothing in
+   * common, vector-wise, with "what should I prepare for the event?", so recall
+   * would never surface it however the floor is tuned — and facts like that are
+   * exactly the ones meant to colour every answer. Ordering puts STATIC first
+   * and then the most recent, so a hard cap trims current detail rather than
+   * the standing facts.
+   */
+  async profile(
+    ownerSubject: string,
+    agentProfileId: string,
+    limit = 10,
+  ): Promise<Array<{ content: string; scope: MemoryProfileScope }>> {
+    const rows = await this.database
+      .select({ content: agentMemory.content, scope: agentMemory.profileScope })
+      .from(agentMemory)
+      .where(and(
+        eq(agentMemory.ownerSubject, ownerSubject),
+        eq(agentMemory.agentProfileId, agentProfileId),
+        inArray(agentMemory.profileScope, ["STATIC", "DYNAMIC"]),
+        this.unexpired(),
+      ))
+      .orderBy(sql`CASE WHEN ${agentMemory.profileScope} = 'STATIC' THEN 0 ELSE 1 END`, desc(agentMemory.createdAt))
+      .limit(limit);
+    return rows;
+  }
+
   async list(ownerSubject: string, agentProfileId: string, limit = 100): Promise<MemoryHit[]> {
     const rows = await this.database
       .select({ id: agentMemory.id, content: agentMemory.content, createdAt: agentMemory.createdAt })

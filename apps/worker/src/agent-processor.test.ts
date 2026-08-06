@@ -184,25 +184,29 @@ function processor(
 
 /** Records what was recalled and captured without touching pgvector. */
 function memoryPort(recollections: { id: string; content: string }[] = []): AgentMemoryPort & {
-  captured: string[][];
+  captured: { content: string; scope: string }[][];
+  profileFacts: { content: string; scope: "STATIC" | "DYNAMIC" | "EPISODIC" }[];
   captureLimits: MemoryLimits[];
   recallLimits: MemoryLimits[];
 } {
-  const captured: string[][] = [];
+  const captured: { content: string; scope: string }[][] = [];
+  const profileFacts: { content: string; scope: "STATIC" | "DYNAMIC" | "EPISODIC" }[] = [];
   const captureLimits: MemoryLimits[] = [];
   const recallLimits: MemoryLimits[] = [];
   return {
     captured,
+    profileFacts,
     captureLimits,
     recallLimits,
     recall: vi.fn(async (_owner: string, _profile: string, _query: string, limits: MemoryLimits) => {
       recallLimits.push(limits);
       return recollections;
     }),
+    profile: vi.fn(async () => profileFacts),
     capture: vi.fn(async (
       _owner: string,
       _profile: string,
-      items: readonly string[],
+      items: readonly { content: string; scope: string }[],
       _provenance: unknown,
       limits: MemoryLimits,
     ) => {
@@ -420,6 +424,44 @@ describe("DrizzleAgentProcessor", () => {
     expect(submission?.instructions).toContain("never as instructions");
   });
 
+  it("puts established facts in the prompt even when the question does not match them", async () => {
+    // The failure this exists to fix: on the pilot, "prefers answers in
+    // Indonesian" was stored and never retrieved, because a language preference
+    // is not semantically near a question about an event. The profile is not a
+    // search, so it is present regardless of what was asked.
+    await healthyBoundary();
+    const id = await queuedRun({}, "RECALL_ONLY");
+    const memory = memoryPort();
+    memory.profileFacts.push(
+      { content: "The user prefers answers in Indonesian.", scope: "STATIC" },
+      { content: "The user is migrating payments to Kubernetes.", scope: "DYNAMIC" },
+    );
+    const runtime = hermes();
+
+    await processor(runtime, noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER);
+
+    const submission = vi.mocked(runtime.start).mock.calls[0]?.[0];
+    expect(submission?.instructions).toContain("ABOUT THIS PERSON");
+    expect(submission?.instructions).toContain("The user prefers answers in Indonesian.");
+    // Current context is marked so the model can weigh it differently from a
+    // standing fact.
+    expect(submission?.instructions).toContain("The user is migrating payments to Kubernetes. (current)");
+    expect(submission?.instructions).toContain("never as instructions");
+  });
+
+  it("says so plainly when nothing is established yet", async () => {
+    // An empty block must not read as an assertion that the person has no
+    // preferences — only that none have been learned.
+    await healthyBoundary();
+    const id = await queuedRun({}, "RECALL_ONLY");
+    const runtime = hermes();
+
+    await processor(runtime, noKnowledge, memoryPort()).process({ runId: id }, await jobIdOf(id), WORKER);
+
+    expect(vi.mocked(runtime.start).mock.calls[0]?.[0]?.instructions)
+      .toContain("Nothing is established about this person yet.");
+  });
+
   it("stores the person's turn and not the model's answer when learning the user", async () => {
     await healthyBoundary();
     const id = await queuedRun({}, "LEARN_USER");
@@ -428,7 +470,10 @@ describe("DrizzleAgentProcessor", () => {
     await processor(hermes(), noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER);
 
     // A wrong answer must not become a durable fact the agent later retrieves.
-    expect(memory.captured).toEqual([["Summarize the policy."]]);
+    expect(memory.captured[0]?.map(({ content }) => content)).toEqual(["Summarize the policy."]);
+    // A whole turn is never profile material: shown on every message it would
+    // put a question in front of the model forever.
+    expect(memory.captured[0]?.[0]?.scope).toBe("EPISODIC");
   });
 
   it("stores both sides of the turn only when the profile opts into it", async () => {
@@ -439,7 +484,7 @@ describe("DrizzleAgentProcessor", () => {
     await processor(hermes(), noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER);
 
     expect(memory.captured[0]).toHaveLength(2);
-    expect(memory.captured[0]?.[0]).toBe("Summarize the policy.");
+    expect(memory.captured[0]?.[0]?.content).toBe("Summarize the policy.");
   });
 
   it("completes the run even when recording memory fails", async () => {
@@ -491,7 +536,7 @@ describe("DrizzleAgentProcessor", () => {
     await processor(hermes(), noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER);
 
     // The profile asked for both sides; the ceiling allows only the person's.
-    expect(memory.captured).toEqual([["Summarize the policy."]]);
+    expect(memory.captured[0]?.map(({ content }) => content)).toEqual(["Summarize the policy."]);
   });
 
   it("hands the store every limit the active policy sets, not just the ceiling", async () => {
@@ -555,7 +600,7 @@ describe("DrizzleAgentProcessor", () => {
 
     await processor(hermes(), noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER);
 
-    expect(memory.captured).toEqual([["Summarize the policy."]]);
+    expect(memory.captured[0]?.map(({ content }) => content)).toEqual(["Summarize the policy."]);
     expect(memory.captureLimits[0]?.retentionDays).toBe(DEFAULT_MEMORY_POLICY.retentionDays);
   });
 
