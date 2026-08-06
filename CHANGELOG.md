@@ -5,6 +5,39 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.49.0 — 2026-08-06
+
+Version chains: a corrected fact stops being recalled, without being lost.
+
+`remember()` was a plain `INSERT`. "The user works in Jakarta" and a later "the
+user works in Bandung" both persisted, both recalled, and nothing said which was
+current — so the agent could confidently assert something the person had already
+corrected.
+
+**The decision is model-judged, not threshold-judged.** A similarity floor cannot
+do this: "The user loves Adidas sneakers" and "The user prefers Puma" are not
+near-duplicates, yet the second plainly retires the first, and a change of mind
+is the common case rather than an edge case. So candidates come from a
+moderate-floor search and the model decides — inside the distillation call that
+was already being made, at no extra cost.
+
+- add `version`, `parentMemoryId`, `rootMemoryId`, `isLatest`, `supersededAt`
+  and `supersededReason`, with a partial index on the current-facts predicate.
+- **supersede and insert in one transaction**, so no reader ever sees both the
+  old fact and its replacement as current, nor loses the old one without the new
+  one landing. That guarantee is the thing an external memory service could not
+  give and owning the plane does.
+- recall, profile and the current-facts predicate all filter `isLatest`. A
+  retired fact stays for audit but is never recalled — the point of superseding
+  is that the agent stops asserting it.
+- the prompt shows the candidate facts **numbered, never by id**: a number
+  cannot be mangled into a different memory, and an index naming a fact that was
+  never offered is ignored rather than applied.
+- cap one turn at three retirements. A model that decides everything is
+  superseded must not be able to empty the store.
+- supersession is scoped by owner and agent like every other statement, so a
+  borrowed id cannot retire someone else's fact.
+
 ## ai-v1.48.0 — 2026-08-06
 
 A profile: the facts an agent is told regardless of the question.

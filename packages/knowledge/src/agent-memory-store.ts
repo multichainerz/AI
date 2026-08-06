@@ -7,6 +7,8 @@ export interface RememberedItem {
   embedding: number[];
   /** How long the fact stays useful; decides whether it is always injected. */
   scope?: MemoryProfileScope;
+  /** Ids of facts this one makes untrue; superseded in the same transaction. */
+  replaces?: readonly string[];
 }
 
 export interface MemoryProvenance {
@@ -54,7 +56,38 @@ export class AgentMemoryStore {
     provenance: MemoryProvenance = {},
   ): Promise<number> {
     if (items.length === 0) return 0;
-    await this.database.insert(agentMemory).values(
+    // One transaction: a reader must never see both the old fact and its
+    // replacement as current, nor lose the old one without the new one landing.
+    return this.database.transaction(async (transaction) => {
+      for (const item of items) {
+        const replaces = (item.replaces ?? []).filter((id) => id.length > 0);
+        if (replaces.length === 0) continue;
+        await transaction
+          .update(agentMemory)
+          .set({
+            isLatest: false,
+            supersededAt: new Date(),
+            supersededReason: `Superseded by a later statement: ${item.content}`.slice(0, 300),
+          })
+          .where(and(
+            eq(agentMemory.ownerSubject, ownerSubject),
+            eq(agentMemory.agentProfileId, agentProfileId),
+            inArray(agentMemory.id, [...replaces]),
+            eq(agentMemory.isLatest, true),
+          ));
+      }
+      return this.insertFacts(transaction, ownerSubject, agentProfileId, items, provenance);
+    });
+  }
+
+  private async insertFacts(
+    executor: OrcaSynapseDatabase | Parameters<Parameters<OrcaSynapseDatabase["transaction"]>[0]>[0],
+    ownerSubject: string,
+    agentProfileId: string,
+    items: readonly RememberedItem[],
+    provenance: MemoryProvenance,
+  ): Promise<number> {
+    await executor.insert(agentMemory).values(
       items.map((item) => ({
         ownerSubject,
         agentProfileId,
@@ -100,6 +133,9 @@ export class AgentMemoryStore {
           eq(agentMemory.ownerSubject, ownerSubject),
           eq(agentMemory.agentProfileId, agentProfileId),
           gt(similarity, options.minimumScore),
+          // A retired fact stays for audit but must never be recalled: the
+          // whole point of superseding is that the agent stops asserting it.
+          eq(agentMemory.isLatest, true),
           this.unexpired(),
         ),
       )
@@ -137,6 +173,7 @@ export class AgentMemoryStore {
         eq(agentMemory.ownerSubject, ownerSubject),
         eq(agentMemory.agentProfileId, agentProfileId),
         inArray(agentMemory.profileScope, ["STATIC", "DYNAMIC"]),
+        eq(agentMemory.isLatest, true),
         this.unexpired(),
       ))
       .orderBy(sql`CASE WHEN ${agentMemory.profileScope} = 'STATIC' THEN 0 ELSE 1 END`, desc(agentMemory.createdAt))

@@ -33,6 +33,12 @@ const MAXIMUM_MEMORY_CHARACTERS = 2_000;
 const PROFILE_FACT_LIMIT = 10;
 const PROFILE_CHARACTER_LIMIT = 1_200;
 
+// Candidates offered to the model as things this turn might retire. The floor
+// is deliberately below the recall floor: a fact that contradicts the current
+// turn often does not resemble it closely.
+const SUPERSESSION_CANDIDATES = 8;
+const SUPERSESSION_FLOOR = 0.25;
+
 const ACTIVE_HERMES_STATUSES = new Set(["queued", "started", "running", "stopping"]);
 const PROCESSOR_LEASE_MS = 90_000;
 const PROCESSOR_LEASE_RENEW_MS = 30_000;
@@ -113,7 +119,11 @@ export interface MemoryDistillerPort {
   distil(
     userTurn: string,
     assistantTurn: string | null,
-  ): Promise<{ facts: Array<{ fact: string; scope: MemoryProfileScope }>; succeeded: boolean }>;
+    known?: readonly { id: string; content: string }[],
+  ): Promise<{
+    facts: Array<{ fact: string; scope: MemoryProfileScope; replaces: string[] }>;
+    succeeded: boolean;
+  }>;
 }
 
 /** A fact present on every prompt, whatever the question was. */
@@ -126,6 +136,8 @@ export interface ProfileFact {
 export interface CapturedFact {
   content: string;
   scope: MemoryProfileScope;
+  /** Ids of facts this one retires; applied in the same transaction as the write. */
+  replaces: string[];
 }
 
 export interface MemoryRecollection {
@@ -1175,7 +1187,20 @@ export class DrizzleAgentProcessor {
     let items: CapturedFact[];
     let distilled = false;
     if (distil && this.distiller) {
-      const extraction = await this.distiller.distil(run.input, output);
+      // A moderate floor, not a near-duplicate one: "I love Adidas" and "I'm
+      // switching to Puma" are not close in vector space, yet the second plainly
+      // retires the first. Similarity narrows the field; the model decides.
+      const candidates = await this.memory.recall(
+        run.ownerSubject,
+        run.profileId,
+        run.input,
+        { ...limits, recallLimit: SUPERSESSION_CANDIDATES, recallMinimumScore: SUPERSESSION_FLOOR },
+      );
+      const extraction = await this.distiller.distil(
+        run.input,
+        output,
+        candidates.map(({ id, content }) => ({ id, content })),
+      );
       // A distiller that could not be reached stores nothing. Falling back to
       // raw turns would quietly reinstate the behaviour this replaced, and an
       // empty result is the honest outcome of a capture that did not happen.
@@ -1184,13 +1209,13 @@ export class DrizzleAgentProcessor {
         return;
       }
       if (extraction.facts.length === 0) return;
-      items = extraction.facts.map(({ fact, scope }) => ({ content: fact, scope }));
+      items = extraction.facts.map(({ fact, scope, replaces }) => ({ content: fact, scope, replaces }));
       distilled = true;
     } else {
       // Undistilled turns are never profile material: a whole turn shown on
       // every message would put a question in front of the model forever.
       items = [run.input, ...(mode === "LEARN_EXCHANGE" && output ? [output] : [])]
-        .map((content) => ({ content, scope: "EPISODIC" as const }));
+        .map((content) => ({ content, scope: "EPISODIC" as const, replaces: [] }));
     }
 
     try {
@@ -1205,7 +1230,13 @@ export class DrizzleAgentProcessor {
         outcome: "SUCCESS",
         // Counts and mode only: the trail records that memory was written, not
         // what it says about the person.
-        metadata: { items: stored, memoryMode: mode, profileId: run.profileId, distilled },
+        metadata: {
+          items: stored,
+          memoryMode: mode,
+          profileId: run.profileId,
+          distilled,
+          superseded: items.reduce((total, item) => total + item.replaces.length, 0),
+        },
       });
     } catch (cause) {
       console.error("OrcaSynapse could not record agent memory for run", run.id, cause);

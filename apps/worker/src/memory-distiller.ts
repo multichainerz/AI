@@ -19,6 +19,13 @@ import type { DrizzleRuntimeConnectionResolver } from "@orcasynapse/runtime-clie
 const MAXIMUM_FACT_CHARACTERS = 200;
 /** A single turn rarely teaches more than a couple of durable things. */
 const MAXIMUM_FACTS = 5;
+/**
+ * How many existing facts one new fact may retire.
+ *
+ * A model that decides everything is superseded must not be able to empty the
+ * store in a turn, and a real correction retires one or two things, not ten.
+ */
+const MAXIMUM_REPLACEMENTS = 3;
 const REQUEST_TIMEOUT_MS = 60_000;
 
 /**
@@ -49,7 +56,13 @@ const DISTILLATION_INSTRUCTION = [
   "- facts about the world that are not about this person",
   "- anything you inferred rather than what the user stated",
   "",
-  "Return each fact as an object: {\"fact\": \"...\", \"scope\": \"STATIC\"}.",
+  "Return each fact as an object:",
+  "{\"fact\": \"...\", \"scope\": \"STATIC\", \"replaces\": [1]}",
+  "",
+  "replaces lists the numbers of any KNOWN FACTS this one makes untrue. Use it",
+  "when the person has changed their mind, moved, switched tools, or corrected",
+  "something. Omit it or use [] when the new fact simply adds to what is known.",
+  "A fact that merely mentions the same topic does NOT replace it.",
   "",
   "scope says how long the fact stays useful:",
   "- STATIC: stable for months. Role, team, employer, location, language, name,",
@@ -83,6 +96,16 @@ const DISTILLATION_INSTRUCTION = [
   "USER: I'm migrating the payments service to Kubernetes this quarter.",
   "[{\"fact\": \"The user is migrating the payments service to Kubernetes.\", \"scope\": \"DYNAMIC\"}]",
   "",
+  "KNOWN FACTS:",
+  "1. The user loves Adidas sneakers.",
+  "USER: My Adidas fell apart after a month. I'm switching to Puma.",
+  "[{\"fact\": \"The user prefers Puma sneakers.\", \"scope\": \"STATIC\", \"replaces\": [1]}]",
+  "",
+  "KNOWN FACTS:",
+  "1. The user works in Jakarta.",
+  "USER: I'm in Jakarta this week for the conference.",
+  "[]",
+  "",
   "USER: Halo, saya bekerja di Jakarta dan saya suka nasi goreng.",
   "[{\"fact\": \"Pengguna bekerja di Jakarta.\", \"scope\": \"STATIC\"},",
   " {\"fact\": \"Pengguna menyukai nasi goreng.\", \"scope\": \"EPISODIC\"}]",
@@ -91,6 +114,14 @@ const DISTILLATION_INSTRUCTION = [
 export interface DistilledFact {
   fact: string;
   scope: MemoryProfileScope;
+  /** Ids of existing facts this one makes untrue. */
+  replaces: string[];
+}
+
+/** An existing fact offered to the model as a supersession candidate. */
+export interface KnownFact {
+  id: string;
+  content: string;
 }
 
 export interface MemoryDistillation {
@@ -126,8 +157,8 @@ const SCOPES = new Set<MemoryProfileScope>(["STATIC", "DYNAMIC", "EPISODIC"]);
  * the object format still extracted a fact, and losing it would be a worse
  * outcome than filing it where it is only reached by search.
  */
-function readEntry(entry: unknown): DistilledFact | null {
-  if (typeof entry === "string") return { fact: entry, scope: "EPISODIC" };
+function readEntry(entry: unknown, known: readonly KnownFact[]): DistilledFact | null {
+  if (typeof entry === "string") return { fact: entry, scope: "EPISODIC", replaces: [] };
   if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
   const record = entry as Record<string, unknown>;
   const fact = typeof record.fact === "string" ? record.fact : null;
@@ -136,7 +167,28 @@ function readEntry(entry: unknown): DistilledFact | null {
   return {
     fact,
     scope: SCOPES.has(claimed as MemoryProfileScope) ? claimed as MemoryProfileScope : "EPISODIC",
+    replaces: readReplaces(record.replaces, known),
   };
+}
+
+/**
+ * Resolves the model's 1-based numbers back to ids, ignoring anything else.
+ *
+ * A number is only honoured if it names a fact that was actually offered. The
+ * model cannot retire something it was never shown, and a hallucinated index
+ * silently does nothing rather than superseding an unrelated memory.
+ */
+function readReplaces(value: unknown, known: readonly KnownFact[]): string[] {
+  if (!Array.isArray(value)) return [];
+  const ids: string[] = [];
+  for (const entry of value) {
+    const index = typeof entry === "number" ? entry : Number.parseInt(String(entry), 10);
+    if (!Number.isInteger(index)) continue;
+    const candidate = known[index - 1];
+    if (candidate && !ids.includes(candidate.id)) ids.push(candidate.id);
+    if (ids.length === MAXIMUM_REPLACEMENTS) break;
+  }
+  return ids;
 }
 
 /**
@@ -146,7 +198,7 @@ function readEntry(entry: unknown): DistilledFact | null {
  * have followed the prohibitions, so anything unparseable yields no facts
  * rather than a salvage attempt.
  */
-export function parseDistillation(content: string): DistilledFact[] {
+export function parseDistillation(content: string, known: readonly KnownFact[] = []): DistilledFact[] {
   const fenced = content.match(/```(?:json)?\s*([\s\S]*?)```/);
   const body = (fenced?.[1] ?? content).trim();
   const start = body.indexOf("[");
@@ -161,7 +213,7 @@ export function parseDistillation(content: string): DistilledFact[] {
   if (!Array.isArray(parsed)) return [];
   const facts: DistilledFact[] = [];
   for (const entry of parsed) {
-    const read = readEntry(entry);
+    const read = readEntry(entry, known);
     if (read === null) continue;
     const fact = read.fact.replace(/\s+/g, " ").trim();
     if (fact.length === 0) continue;
@@ -169,7 +221,7 @@ export function parseDistillation(content: string): DistilledFact[] {
     // one it may also have attributed wrongly, and guessing at a rewrite would
     // store a sentence nobody said.
     if (writtenAsTheUser(fact)) continue;
-    facts.push({ fact: fact.slice(0, MAXIMUM_FACT_CHARACTERS), scope: read.scope });
+    facts.push({ fact: fact.slice(0, MAXIMUM_FACT_CHARACTERS), scope: read.scope, replaces: read.replaces });
     if (facts.length === MAXIMUM_FACTS) break;
   }
   return facts;
@@ -189,7 +241,11 @@ export class MemoryDistiller {
    * instruction forbids recording anything the assistant said about itself, so
    * context does not become content.
    */
-  async distil(userTurn: string, assistantTurn: string | null): Promise<MemoryDistillation> {
+  async distil(
+    userTurn: string,
+    assistantTurn: string | null,
+    known: readonly KnownFact[] = [],
+  ): Promise<MemoryDistillation> {
     const user = userTurn.trim();
     if (user.length === 0) return { facts: [], succeeded: true };
 
@@ -204,9 +260,14 @@ export class MemoryDistiller {
     const model = typeof configuration.modelAlias === "string" ? configuration.modelAlias : "";
     if (!model) return { facts: [], succeeded: false };
 
+    // Numbered so the model can point at one without repeating its text, and
+    // so an id never enters the prompt.
+    const catalogue = known.length === 0
+      ? ""
+      : `KNOWN FACTS:\n${known.map(({ content }, index) => `${index + 1}. ${content}`).join("\n")}\n\n`;
     const exchange = assistantTurn?.trim()
-      ? `USER: ${user}\n\nASSISTANT: ${assistantTurn.trim().slice(0, 4_000)}`
-      : `USER: ${user}`;
+      ? `${catalogue}USER: ${user}\n\nASSISTANT: ${assistantTurn.trim().slice(0, 4_000)}`
+      : `${catalogue}USER: ${user}`;
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -233,7 +294,7 @@ export class MemoryDistiller {
       const body = await response.json() as { choices?: Array<{ message?: { content?: unknown } }> };
       const content = body.choices?.[0]?.message?.content;
       if (typeof content !== "string") return { facts: [], succeeded: false };
-      return { facts: parseDistillation(content), succeeded: true };
+      return { facts: parseDistillation(content, known), succeeded: true };
     } catch {
       return { facts: [], succeeded: false };
     } finally {

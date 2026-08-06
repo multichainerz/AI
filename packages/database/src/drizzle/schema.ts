@@ -1263,6 +1263,15 @@ export const agentMemory = pgTable("AgentMemory", {
 	embeddingModel: varchar({ length: 120 }).notNull(),
 	embedding: vector({ dimensions: 1024 }).notNull(),
 	profileScope: memoryProfileScope().default('EPISODIC').notNull(),
+	// A fact is never edited or deleted when it changes; a new row supersedes it
+	// and the old one stays as history. `isLatest` is what recall filters on, so
+	// the current answer is one indexed predicate rather than a chain walk.
+	version: integer().default(1).notNull(),
+	parentMemoryId: uuid(),
+	rootMemoryId: uuid(),
+	isLatest: boolean().default(true).notNull(),
+	supersededAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
+	supersededReason: varchar({ length: 300 }),
 	sourceRunId: uuid(),
 	sourceConversationId: uuid(),
 	retentionUntil: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
@@ -1271,6 +1280,7 @@ export const agentMemory = pgTable("AgentMemory", {
 	index("AgentMemory_content_fts_idx").using("gin", sql`to_tsvector('simple'::regconfig, content)`),
 	index("AgentMemory_embedding_idx").using("hnsw", table.embedding.asc().nullsLast().op("vector_cosine_ops")),
 	index("AgentMemory_owner_profile_idx").using("btree", table.ownerSubject.asc().nullsLast(), table.agentProfileId.asc().nullsLast()),
+	index("AgentMemory_latest_idx").using("btree", table.ownerSubject.asc().nullsLast(), table.agentProfileId.asc().nullsLast()).where(sql`"isLatest"`),
 	index("AgentMemory_profile_idx").using("btree", table.ownerSubject.asc().nullsLast(), table.agentProfileId.asc().nullsLast(), table.profileScope.asc().nullsLast()),
 	index("AgentMemory_retentionUntil_idx").using("btree", table.retentionUntil.asc().nullsLast()),
 	foreignKey({

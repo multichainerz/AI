@@ -30,28 +30,28 @@ function answering(content: string) {
 describe("parseDistillation", () => {
   it("reads the classified object form", () => {
     expect(parseDistillation('[{"fact": "The user leads the platform team.", "scope": "STATIC"}]'))
-      .toEqual([{ fact: "The user leads the platform team.", scope: "STATIC" }]);
+      .toEqual([{ fact: "The user leads the platform team.", scope: "STATIC", replaces: [] }]);
   });
 
   it("keeps a bare string as EPISODIC rather than discarding it", () => {
     // A model that ignored the object format still extracted a fact. Filing it
     // where only search reaches it beats losing it.
     expect(parseDistillation('["The user works in Jakarta."]'))
-      .toEqual([{ fact: "The user works in Jakarta.", scope: "EPISODIC" }]);
+      .toEqual([{ fact: "The user works in Jakarta.", scope: "EPISODIC", replaces: [] }]);
   });
 
   it("falls back to EPISODIC for a scope it does not recognise", () => {
     // A wrong STATIC is shown on every message forever, so an unknown value
     // must land in the least privileged scope, not the most.
     expect(parseDistillation('[{"fact": "The user works in Jakarta.", "scope": "PERMANENT"}]'))
-      .toEqual([{ fact: "The user works in Jakarta.", scope: "EPISODIC" }]);
+      .toEqual([{ fact: "The user works in Jakarta.", scope: "EPISODIC", replaces: [] }]);
     expect(parseDistillation('[{"fact": "The user works in Jakarta."}]'))
-      .toEqual([{ fact: "The user works in Jakarta.", scope: "EPISODIC" }]);
+      .toEqual([{ fact: "The user works in Jakarta.", scope: "EPISODIC", replaces: [] }]);
   });
 
   it("accepts a lowercase scope, since models are inconsistent about case", () => {
     expect(parseDistillation('[{"fact": "The user prefers Indonesian.", "scope": "static"}]'))
-      .toEqual([{ fact: "The user prefers Indonesian.", scope: "STATIC" }]);
+      .toEqual([{ fact: "The user prefers Indonesian.", scope: "STATIC", replaces: [] }]);
   });
 
   it("reads an array a small model wrapped in a fence and commentary", () => {
@@ -107,13 +107,67 @@ describe("parseDistillation", () => {
   });
 });
 
+describe("supersession", () => {
+  const known = [
+    { id: "11111111-1111-4111-8111-111111111111", content: "The user loves Adidas sneakers." },
+    { id: "22222222-2222-4222-8222-222222222222", content: "The user works in Jakarta." },
+  ];
+
+  it("resolves the model's 1-based numbers back to ids", () => {
+    // The prompt shows numbers, never ids: an id in the prompt is a token the
+    // model can mangle, and a number it cannot misattribute.
+    expect(parseDistillation('[{"fact": "The user prefers Puma.", "scope": "STATIC", "replaces": [1]}]', known))
+      .toEqual([{ fact: "The user prefers Puma.", scope: "STATIC", replaces: [known[0]!.id] }]);
+  });
+
+  it("ignores a number naming a fact it was never shown", () => {
+    // A hallucinated index must do nothing rather than retire an unrelated
+    // memory that happened to sit at that position in some other list.
+    expect(parseDistillation('[{"fact": "X about the user.", "replaces": [9, 0, -1]}]', known)[0]?.replaces)
+      .toEqual([]);
+  });
+
+  it("caps how many facts one turn may retire", () => {
+    const many = [...known, ...Array.from({ length: 6 }, (_, i) => ({
+      id: `3333333${i}-3333-4333-8333-333333333333`, content: `Fact ${i} about the user.`,
+    }))];
+    const replaced = parseDistillation(
+      '[{"fact": "The user changed everything.", "replaces": [1,2,3,4,5,6,7,8]}]', many,
+    )[0]?.replaces;
+    // A model that decides everything is superseded must not empty the store.
+    expect(replaced).toHaveLength(3);
+  });
+
+  it("de-duplicates a number repeated by the model", () => {
+    expect(parseDistillation('[{"fact": "X about the user.", "replaces": [1, 1, 1]}]', known)[0]?.replaces)
+      .toEqual([known[0]!.id]);
+  });
+
+  it("retires nothing when the field is absent or not a list", () => {
+    expect(parseDistillation('[{"fact": "X about the user."}]', known)[0]?.replaces).toEqual([]);
+    expect(parseDistillation('[{"fact": "X about the user.", "replaces": "all"}]', known)[0]?.replaces).toEqual([]);
+  });
+
+  it("offers the known facts to the model as a numbered list", async () => {
+    const fetcher = answering("[]");
+    await new MemoryDistiller(resolver(), fetcher as never)
+      .distil("I'm switching to Puma.", null, known);
+    const [, init] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
+    const prompt = JSON.parse(String(init.body)).messages[1].content;
+    expect(prompt).toContain("1. The user loves Adidas sneakers.");
+    expect(prompt).toContain("2. The user works in Jakarta.");
+    // Ids never enter the prompt.
+    expect(prompt).not.toContain(known[0]!.id);
+  });
+});
+
 describe("MemoryDistiller", () => {
   it("asks the configured model and returns what it extracted", async () => {
     const fetcher = answering('[{"fact": "The user leads the platform team.", "scope": "STATIC"}]');
     const result = await new MemoryDistiller(resolver(), fetcher as never)
       .distil("I lead the platform team here.", "Noted.");
     expect(result).toEqual({
-      facts: [{ fact: "The user leads the platform team.", scope: "STATIC" }],
+      facts: [{ fact: "The user leads the platform team.", scope: "STATIC", replaces: [] }],
       succeeded: true,
     });
     const [, init] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
