@@ -5,6 +5,39 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.50.0 — 2026-08-06
+
+Distil a conversation once it goes quiet, instead of after every turn.
+
+Per-turn capture makes extraction read one message at a time, which cannot
+resolve an arc: "I am moving to Bandung next month" and a later "the move is
+done" become two facts that contradict each other, because nothing ever sees
+both. It is also the wrong shape for the cost. On the pilot each capture takes
+30–70s of inference *after* the answer is already delivered, and at
+`maxConcurrentRuns = 1` that is a window in which the next message is refused.
+
+Capture now waits for the conversation to be quiet for ten minutes, then reads
+the whole session in one call.
+
+- add `ChatConversation.memoryDistilledAt` (migration 0019) with a partial index
+  over the conversations that could still owe a distillation
+- take a transcript rather than a user/assistant pair in the distiller, bounded
+  per turn and overall, trimmed from the front so a correction at the end of a
+  long session survives the trim
+- tell the model to record where the person ended up when they changed something
+  mid-conversation, rather than both states
+- sweep one idle conversation per tick in the worker, serialised for the same
+  reason ingestion is: it holds an inference connection on the host that is
+  already the tightest part of the deployment
+- stamp the conversation as read *before* distilling, so a crash cannot loop on
+  it forever, and rewind that stamp when the model was unreachable, so a
+  transient failure does not silently discard a session
+- keep per-turn capture for runs that belong to no conversation: an agent
+  invoked through the API has no session to wait for
+
+A resumed conversation distils again and reads only what was said since, so
+facts already stored are not extracted a second time.
+
 ## ai-v1.49.5 — 2026-08-06
 
 Build before typechecking, and CI goes green after 76 consecutive red runs.

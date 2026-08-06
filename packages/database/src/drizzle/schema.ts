@@ -278,8 +278,18 @@ export const chatConversation = pgTable("ChatConversation", {
 	// Adaptation: Prisma defaulted this client-side with @default(uuid()), so the
 	// column carries no database default and needs the same stamping here.
 	hermesMemoryKey: varchar({ length: 200 }).notNull().$defaultFn(() => randomUUID()),
+	// How far memory extraction has read this conversation. Null means never;
+	// older than lastMessageAt means there is new material to distil. Capture
+	// runs once the conversation goes quiet rather than once per turn, so the
+	// model sees the whole arc and is called once instead of per message.
+	memoryDistilledAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
 }, (table) => [
 	index("ChatConversation_lastMessageAt_idx").using("btree", table.lastMessageAt.asc().nullsLast()),
+	// Drives the idle sweep: the partial predicate keeps the index to the
+	// conversations that could still owe a distillation.
+	index("ChatConversation_memoryPending_idx")
+		.using("btree", table.lastMessageAt.asc().nullsLast())
+		.where(sql`"memoryDistilledAt" IS NULL OR "memoryDistilledAt" < "lastMessageAt"`),
 	index("ChatConversation_ownerSubject_status_updatedAt_idx").using("btree", table.ownerSubject.asc().nullsLast(), table.status.asc().nullsLast(), table.updatedAt.asc().nullsLast()),
 ]);
 

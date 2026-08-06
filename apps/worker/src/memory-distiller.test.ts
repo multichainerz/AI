@@ -23,6 +23,14 @@ function resolver(configuration: Record<string, unknown> = { modelAlias: "hermes
   } as never;
 }
 
+/** The old two-argument shape, as a transcript. */
+function exchange(user: string, assistant?: string | null) {
+  return [
+    { role: "user" as const, content: user },
+    ...(assistant ? [{ role: "assistant" as const, content: assistant }] : []),
+  ];
+}
+
 function answering(content: string) {
   return vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status: 200 }));
 }
@@ -177,7 +185,7 @@ describe("supersession", () => {
   it("offers the known facts to the model as a numbered list", async () => {
     const fetcher = answering("[]");
     await new MemoryDistiller(resolver(), fetcher as never)
-      .distil("I'm switching to Puma.", null, known);
+      .distil(exchange("I'm switching to Puma."), known);
     const [, init] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
     const prompt = JSON.parse(String(init.body)).messages[1].content;
     expect(prompt).toContain("1. The user loves Adidas sneakers.");
@@ -191,7 +199,7 @@ describe("MemoryDistiller", () => {
   it("asks the configured model and returns what it extracted", async () => {
     const fetcher = answering('[{"fact": "The user leads the platform team.", "scope": "STATIC"}]');
     const result = await new MemoryDistiller(resolver(), fetcher as never)
-      .distil("I lead the platform team here.", "Noted.");
+      .distil(exchange("I lead the platform team here.", "Noted."));
     expect(result).toEqual({
       facts: [{ fact: "The user leads the platform team.", scope: "STATIC", replaces: [] }],
       succeeded: true,
@@ -205,11 +213,70 @@ describe("MemoryDistiller", () => {
     expect(body.messages[1].content).toContain("USER: I lead the platform team here.");
   });
 
+  it("renders a whole session as an alternating transcript", async () => {
+    // Session-end distillation is the point of taking turns rather than a pair:
+    // extraction can only resolve "moving next month" against "the move is
+    // done" if it sees both.
+    const fetcher = answering("[]");
+    await new MemoryDistiller(resolver(), fetcher as never).distil([
+      { role: "user", content: "I am moving to Bandung next month." },
+      { role: "assistant", content: "Congratulations on the move." },
+      { role: "user", content: "The move is done, I am settled in now." },
+    ]);
+    const prompt = JSON.parse(String(
+      (fetcher.mock.calls[0] as unknown as [string, RequestInit])[1].body,
+    )).messages[1].content;
+    expect(prompt).toContain("USER: I am moving to Bandung next month.");
+    expect(prompt).toContain("ASSISTANT: Congratulations on the move.");
+    expect(prompt).toContain("USER: The move is done, I am settled in now.");
+    expect(prompt.indexOf("next month")).toBeLessThan(prompt.indexOf("settled in now"));
+  });
+
+  it("drops the oldest turns when a session outgrows the window", async () => {
+    // Trimmed from the front because a correction lives at the end: keeping the
+    // start would preserve exactly the facts the session went on to retire.
+    const fetcher = answering("[]");
+    // Each turn is capped at 4,000 characters, so it takes several to exceed
+    // the 12,000-character exchange window.
+    await new MemoryDistiller(resolver(), fetcher as never).distil([
+      { role: "user", content: `First. ${"x".repeat(9_000)}` },
+      { role: "user", content: `Second. ${"y".repeat(9_000)}` },
+      { role: "user", content: `Third. ${"z".repeat(9_000)}` },
+      { role: "user", content: `Fourth. ${"w".repeat(9_000)}` },
+      { role: "user", content: "Last, and the one that matters." },
+    ]);
+    const prompt = JSON.parse(String(
+      (fetcher.mock.calls[0] as unknown as [string, RequestInit])[1].body,
+    )).messages[1].content;
+    expect(prompt).toContain("Last, and the one that matters.");
+    expect(prompt).not.toContain("First.");
+  });
+
+  it("still sends a single turn that is longer than the whole window", async () => {
+    // The trim must never produce an empty exchange: one enormous turn is worth
+    // truncating, not discarding.
+    const fetcher = answering("[]");
+    await new MemoryDistiller(resolver(), fetcher as never)
+      .distil([{ role: "user", content: "Important. " + "z".repeat(40_000) }]);
+    const prompt = JSON.parse(String(
+      (fetcher.mock.calls[0] as unknown as [string, RequestInit])[1].body,
+    )).messages[1].content;
+    expect(prompt).toContain("USER: Important.");
+  });
+
+  it("succeeds with nothing when a session has no user turn at all", async () => {
+    const fetcher = answering('["should not be reached"]');
+    await expect(new MemoryDistiller(resolver(), fetcher as never)
+      .distil([{ role: "assistant", content: "Anything I said on my own." }]))
+      .resolves.toEqual({ facts: [], succeeded: true });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it("reports failure rather than emptiness when the model is unreachable", async () => {
     // The caller stores nothing either way, but only a failure is worth logging
     // — and it must never be mistaken for "this turn taught nothing".
     const fetcher = vi.fn(async () => new Response("upstream down", { status: 502 }));
-    await expect(new MemoryDistiller(resolver(), fetcher as never).distil("Anything", null))
+    await expect(new MemoryDistiller(resolver(), fetcher as never).distil(exchange("Anything")))
       .resolves.toEqual({ facts: [], succeeded: false });
   });
 
@@ -221,30 +288,30 @@ describe("MemoryDistiller", () => {
     const fetcher = vi.fn(async () => new Response(JSON.stringify({
       choices: [{ finish_reason: "length", message: { content: "", reasoning_content: "thinking..." } }],
     }), { status: 200 }));
-    await expect(new MemoryDistiller(resolver(), fetcher as never).distil("I moved to Bandung.", null))
+    await expect(new MemoryDistiller(resolver(), fetcher as never).distil(exchange("I moved to Bandung.")))
       .resolves.toEqual({ facts: [], succeeded: false });
   });
 
   it("treats a whitespace-only answer as a failure, not as nothing learned", async () => {
-    await expect(new MemoryDistiller(resolver(), answering("   ") as never).distil("Anything", null))
+    await expect(new MemoryDistiller(resolver(), answering("   ") as never).distil(exchange("Anything")))
       .resolves.toEqual({ facts: [], succeeded: false });
   });
 
   it("asks for enough room that reasoning does not crowd out the answer", async () => {
     const fetcher = answering("[]");
-    await new MemoryDistiller(resolver(), fetcher as never).distil("Anything", null);
+    await new MemoryDistiller(resolver(), fetcher as never).distil(exchange("Anything"));
     const [, init] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
     expect(JSON.parse(String(init.body)).max_tokens).toBeGreaterThanOrEqual(2_000);
   });
 
   it("reports failure when no inference route is configured", async () => {
-    await expect(new MemoryDistiller(resolver({}), answering("[]") as never).distil("Anything", null))
+    await expect(new MemoryDistiller(resolver({}), answering("[]") as never).distil(exchange("Anything")))
       .resolves.toEqual({ facts: [], succeeded: false });
   });
 
   it("succeeds with nothing for an empty turn, without calling the model", async () => {
     const fetcher = answering('["should not be reached"]');
-    await expect(new MemoryDistiller(resolver(), fetcher as never).distil("   ", null))
+    await expect(new MemoryDistiller(resolver(), fetcher as never).distil(exchange("   ")))
       .resolves.toEqual({ facts: [], succeeded: true });
     expect(fetcher).not.toHaveBeenCalled();
   });

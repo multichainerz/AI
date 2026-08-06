@@ -14,6 +14,10 @@ export interface DocumentIngestionHandler {
   processNext(workerId: string): Promise<{ documentId: string; status: string } | null>;
 }
 
+export interface SessionDistillationHandler {
+  distilNext(workerId: string): Promise<{ conversationId: string; facts: number } | null>;
+}
+
 /**
  * PostgreSQL remains the durable source of truth for asynchronous work.
  *
@@ -25,9 +29,11 @@ export interface DocumentIngestionHandler {
 export class WorkerRuntime {
   private heartbeatTimer?: NodeJS.Timeout;
   private reconcileTimer?: NodeJS.Timeout;
+  private sessionTimer?: NodeJS.Timeout;
   private readonly inFlight = new Map<string, Promise<void>>();
   private dispatching: Promise<void> | undefined;
   private ingesting = false;
+  private distilling = false;
   private started = false;
 
   constructor(
@@ -40,6 +46,11 @@ export class WorkerRuntime {
     private readonly reconcileIntervalMs = 1_000,
     private readonly maxConcurrentAgentRuns = 5,
     private readonly ingestionHandler?: DocumentIngestionHandler,
+    private readonly sessionHandler?: SessionDistillationHandler,
+    // Slower than the run and ingestion ticks: nothing here is latency
+    // sensitive, and each pass reads a conversation that has been quiet for
+    // minutes already.
+    private readonly sessionIntervalMs = 60_000,
   ) {}
 
   async start(): Promise<void> {
@@ -51,6 +62,10 @@ export class WorkerRuntime {
     this.reconcileTimer.unref();
     this.heartbeatTimer = setInterval(() => void this.heartbeat(), this.heartbeatIntervalMs);
     this.heartbeatTimer.unref();
+    if (this.sessionHandler) {
+      this.sessionTimer = setInterval(() => void this.dispatchSessions(), this.sessionIntervalMs);
+      this.sessionTimer.unref();
+    }
     this.logger.info(`PostgreSQL runtime '${this.identity.name}' is online.`);
   }
 
@@ -58,6 +73,7 @@ export class WorkerRuntime {
     if (!this.started) return;
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     if (this.reconcileTimer) clearInterval(this.reconcileTimer);
+    if (this.sessionTimer) clearInterval(this.sessionTimer);
     // Clear the flag before draining so an in-flight tick cannot admit new work
     // behind the shutdown.
     this.started = false;
@@ -69,6 +85,30 @@ export class WorkerRuntime {
   private async reconcile(): Promise<void> {
     await this.dispatchAgents();
     await this.dispatchIngestion();
+  }
+
+  /**
+   * Distils one idle conversation per tick.
+   *
+   * Serialised for the same reason as ingestion: distillation holds an
+   * inference connection for up to two minutes, on the host that is already the
+   * tightest part of the deployment.
+   */
+  private async dispatchSessions(): Promise<void> {
+    if (!this.sessionHandler || this.distilling) return;
+    this.distilling = true;
+    try {
+      const outcome = await this.sessionHandler.distilNext(this.identity.id);
+      if (outcome && outcome.facts > 0) {
+        this.logger.info(
+          `Conversation ${outcome.conversationId} contributed ${outcome.facts} fact(s) to agent memory.`,
+        );
+      }
+    } catch (error) {
+      this.logger.error("Session memory distillation failed.", error);
+    } finally {
+      this.distilling = false;
+    }
   }
 
   /**

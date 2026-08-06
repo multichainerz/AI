@@ -1,0 +1,2 @@
+ALTER TABLE "ChatConversation" ADD COLUMN "memoryDistilledAt" timestamp (6) with time zone;--> statement-breakpoint
+CREATE INDEX "ChatConversation_memoryPending_idx" ON "ChatConversation" USING btree ("lastMessageAt") WHERE "memoryDistilledAt" IS NULL OR "memoryDistilledAt" < "lastMessageAt";

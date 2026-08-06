@@ -39,6 +39,13 @@ const REQUEST_TIMEOUT_MS = 120_000;
  */
 const MAXIMUM_RESPONSE_TOKENS = 2_400;
 
+// A session, not a turn, so the transcript is bounded twice: one rambling turn
+// cannot fill the window, and a long conversation is trimmed from its start.
+// Sized to leave room for the instruction and the known facts within the same
+// context the per-turn call already fitted in.
+const MAXIMUM_TURN_CHARACTERS = 4_000;
+const MAXIMUM_EXCHANGE_CHARACTERS = 12_000;
+
 /**
  * The extraction instruction.
  *
@@ -48,11 +55,16 @@ const MAXIMUM_RESPONSE_TOKENS = 2_400;
  * corresponds to a category that actually polluted the pilot's store.
  */
 const DISTILLATION_INSTRUCTION = [
-  "You extract durable facts about a USER from one exchange with an assistant.",
+  "You extract durable facts about a USER from their conversation with an",
+  "assistant. It may be a single exchange or a whole session.",
   "",
   "Return ONLY a JSON array. No prose, no code fence, no explanation.",
-  "Return [] if the exchange teaches nothing durable. [] is the correct answer",
-  "for most exchanges and you must not avoid it.",
+  "Return [] if the conversation teaches nothing durable. [] is the correct",
+  "answer for most conversations and you must not avoid it.",
+  "",
+  "When the person changes something within the conversation, record only where",
+  "they ended up. \"I am moving to Bandung next month\" followed later by \"the",
+  "move is done\" is one fact about living in Bandung, not two.",
   "",
   "A durable fact is something still true next week that helps serve this person:",
   "their role, team, location, language preference, tools they use, projects they",
@@ -124,6 +136,12 @@ const DISTILLATION_INSTRUCTION = [
   "[{\"fact\": \"Pengguna bekerja di Jakarta.\", \"scope\": \"STATIC\"},",
   " {\"fact\": \"Pengguna menyukai nasi goreng.\", \"scope\": \"EPISODIC\"}]",
 ].join("\n");
+
+/** One turn of the exchange being distilled, in the order it was spoken. */
+export interface DistillationTurn {
+  role: "user" | "assistant";
+  content: string;
+}
 
 export interface DistilledFact {
   fact: string;
@@ -268,20 +286,25 @@ export class MemoryDistiller {
   ) {}
 
   /**
-   * Extracts facts from one exchange.
+   * Extracts facts from an exchange, which may be one turn or a whole session.
    *
-   * `assistantTurn` is passed for context even in LEARN_USER mode — knowing what
-   * was answered is often what makes the user's turn interpretable — but the
-   * instruction forbids recording anything the assistant said about itself, so
-   * context does not become content.
+   * Assistant turns are passed for context even in LEARN_USER mode — knowing
+   * what was answered is often what makes the user's turn interpretable — but
+   * the instruction forbids recording anything the assistant said about itself,
+   * so context does not become content.
+   *
+   * Reading a session rather than a turn is what lets extraction resolve an arc:
+   * "I am moving to Bandung next month" and a later "the move is done" become
+   * one correct fact instead of two that contradict each other.
    */
   async distil(
-    userTurn: string,
-    assistantTurn: string | null,
+    turns: readonly DistillationTurn[],
     known: readonly KnownFact[] = [],
   ): Promise<MemoryDistillation> {
-    const user = userTurn.trim();
-    if (user.length === 0) return { facts: [], succeeded: true };
+    const spoken = turns
+      .map((turn) => ({ role: turn.role, content: turn.content.trim() }))
+      .filter((turn) => turn.content.length > 0);
+    if (!spoken.some((turn) => turn.role === "user")) return { facts: [], succeeded: true };
 
     let connection;
     try {
@@ -299,9 +322,19 @@ export class MemoryDistiller {
     const catalogue = known.length === 0
       ? ""
       : `KNOWN FACTS:\n${known.map(({ content }, index) => `${index + 1}. ${content}`).join("\n")}\n\n`;
-    const exchange = assistantTurn?.trim()
-      ? `${catalogue}USER: ${user}\n\nASSISTANT: ${assistantTurn.trim().slice(0, 4_000)}`
-      : `${catalogue}USER: ${user}`;
+    // Trimmed from the front: a correction lives in the newest turns, so
+    // dropping the oldest keeps the part of the session that changes things.
+    const rendered: string[] = [];
+    let characters = 0;
+    for (let index = spoken.length - 1; index >= 0; index -= 1) {
+      const turn = spoken[index]!;
+      const speaker = turn.role === "user" ? "USER" : "ASSISTANT";
+      const line = `${speaker}: ${turn.content.slice(0, MAXIMUM_TURN_CHARACTERS)}`;
+      if (rendered.length > 0 && characters + line.length > MAXIMUM_EXCHANGE_CHARACTERS) break;
+      characters += line.length;
+      rendered.unshift(line);
+    }
+    const exchange = `${catalogue}${rendered.join("\n\n")}`;
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);

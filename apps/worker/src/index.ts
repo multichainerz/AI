@@ -5,6 +5,7 @@ import { createDrizzleClient, readBootstrapSecret } from "@orcasynapse/database"
 import { decodeMasterKey, EnvelopeEncryption, RunCapabilityIssuer } from "@orcasynapse/security";
 import { AgentMemoryStore, APPROVED_EMBEDDING_MODEL, DocumentVectorStore, LocalBgeM3Embedder } from "@orcasynapse/knowledge";
 import { DrizzleRuntimeConnectionResolver, HermesClient } from "@orcasynapse/runtime-clients";
+import { SessionMemoryDistiller } from "./session-distiller.js";
 import { WorkerRuntime } from "./worker-runtime.js";
 import { DocumentIngestor } from "./document-ingestor.js";
 import { DrizzlePendingRunSource, DrizzleWorkerRegistry } from "./worker-registry.js";
@@ -18,6 +19,13 @@ const masterKey = decodeMasterKey(readBootstrapSecret("orcasynapse_master_key"))
 const encryption = new EnvelopeEncryption({ masterKey });
 const connectionResolver = new DrizzleRuntimeConnectionResolver(database, encryption);
 const embedder = new LocalBgeM3Embedder();
+// Shared by the per-run path and the session sweep so both apply the same
+// store, the same embedder, and the same policy.
+const agentMemory = new WorkerAgentMemory(
+  new AgentMemoryStore(database, APPROVED_EMBEDDING_MODEL),
+  embedder,
+);
+const distiller = new MemoryDistiller(connectionResolver);
 
 const runtime = new WorkerRuntime(
   new DrizzlePendingRunSource(database),
@@ -26,7 +34,7 @@ const runtime = new WorkerRuntime(
     id: workerId,
     name: hostname(),
     version: ORCASYNAPSE_VERSION,
-    workloads: ["hermes-runs", "knowledge-ingestion"],
+    workloads: ["hermes-runs", "knowledge-ingestion", "session-memory"],
   },
   {
     info: (message) => console.info(message),
@@ -41,8 +49,8 @@ const runtime = new WorkerRuntime(
       embedder,
     ),
     new RunCapabilityIssuer(masterKey),
-    new WorkerAgentMemory(new AgentMemoryStore(database, APPROVED_EMBEDDING_MODEL), embedder),
-    new MemoryDistiller(connectionResolver),
+    agentMemory,
+    distiller,
   ),
   1_000,
   5,
@@ -51,6 +59,7 @@ const runtime = new WorkerRuntime(
     new DocumentVectorStore(database, APPROVED_EMBEDDING_MODEL),
     embedder,
   ),
+  new SessionMemoryDistiller(database, agentMemory, distiller),
 );
 
 let shuttingDown = false;

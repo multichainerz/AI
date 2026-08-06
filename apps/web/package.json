@@ -1,6 +1,6 @@
 {
   "name": "@orcasynapse/web",
-  "version": "1.49.5",
+  "version": "1.50.0",
   "description": "OrcaSynapse dashboard: the operator and workspace UI",
   "license": "BUSL-1.1",
   "private": true,
