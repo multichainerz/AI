@@ -5,6 +5,48 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.57.0 — 2026-08-07
+
+Chat's shell on the primitives, and four dialogs that were never dialogs.
+
+Knowledge, Skills, "What agents remember about you" and the delete confirmation
+each carried `role="dialog"` and nothing that makes one: no `aria-modal`, no
+focus trap, no Escape, no scroll lock, no focus restore. A keyboard user could
+tab straight out of the memory panel into the transcript behind it while a
+screen reader went on describing the page as though nothing had opened, and the
+only way to close any of them was to find and click the `×`. They now go
+through the `Dialog` primitive, which supplies all of it once. Two of them also
+stop pushing the transcript down the page to make room for themselves.
+
+The conversation menu had no way out at all — no Escape, no click-away. Archive
+and Delete live in it, so a menu left open over the transcript is one stray
+click from an action nobody meant to take. Both now dismiss it.
+
+Rebuilt on the primitive set: the locked screen, the history rail, the topbar
+and its runtime summary, the empty state, and the composer. `LockedScreen`
+gained a `kicker` because Chat is the one governed area an employee reaches
+without an administrator session, and labelling it "Administration" was wrong;
+it also gained a stacked layout below `sm`, where three auto columns had been
+squeezing the explanation into a four-word ribbon on every one of the nine
+screens that will use it.
+
+Two layout facts now live in the component rather than in a rule keyed to a
+class name: Chat opts out of the shell's 1380px centred column, and its locked
+screen supplies the page padding the shell zeroes for the workspace.
+
+- six interaction cases covering the modal contract — `aria-modal`, scroll lock,
+  Escape, Tab staying inside the panel — plus the menu's two dismissals and the
+  locked screen's two paths
+- delete 131 lines of stylesheet the rebuilt shell no longer needs
+
+871 tests green, web at 117. Contrast on Chat: 0 nodes below WCAG AA, worst 5.30.
+
+Still on their own classes, deliberately: the message transcript and its
+telemetry, agent-activity and approval blocks. That is 200 lines of intricate
+CSS whose result cannot be seen without a signed-in session and real messages,
+and porting it blind is exactly the kind of change that looks fine in a diff.
+It follows in its own release.
+
 ## ai-v1.56.0 — 2026-08-07
 
 Rebuild Home on the primitives — and find that the design system had been

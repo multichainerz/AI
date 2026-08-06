@@ -113,14 +113,22 @@ export function LockedScreen(props: {
   reason?: ReactNode;
   actionLabel: string;
   onAction: () => void;
+  /** Chat is the one locked area an employee reaches, so it is not "Administration". */
+  kicker?: string;
 }) {
   return (
     <div className="grid gap-4">
       <header>
-        <MicroLabel className="mb-1.5 block">Administration</MicroLabel>
+        <MicroLabel className="mb-1.5 block">{props.kicker ?? "Administration"}</MicroLabel>
         <h1 className="m-0 text-xl font-semibold tracking-[-0.02em] text-text">{props.title}</h1>
       </header>
-      <Panel className="mx-auto my-16 grid max-w-[680px] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-4">
+      {/*
+        * Three columns only once there is room for them. At 375px the auto
+        * columns take what they need and the explanation is squeezed into a
+        * four-word ribbon, so below `sm` the mark and the copy share a row and
+        * the action takes the one beneath it.
+        */}
+      <Panel className="mx-auto my-16 grid max-w-[680px] grid-cols-[auto_minmax(0,1fr)] items-center gap-4 sm:grid-cols-[auto_minmax(0,1fr)_auto]">
         <span
           aria-hidden="true"
           className="grid h-11 w-11 place-items-center rounded border border-border-strong bg-raised font-mono text-[15px] font-bold text-accent"
@@ -133,7 +141,7 @@ export function LockedScreen(props: {
             {props.reason ?? "Unlock OrcaSynapse to review and change this area."}
           </p>
         </div>
-        <Button variant="primary" onClick={props.onAction}>
+        <Button variant="primary" className="col-span-2 sm:col-span-1" onClick={props.onAction}>
           {props.actionLabel}
         </Button>
       </Panel>
