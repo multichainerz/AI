@@ -68,6 +68,16 @@ const record: AgentMemoryRecord = {
   sourceRunId: null,
   retentionUntil: "2027-08-01T00:00:00.000Z",
   createdAt: "2026-08-01T00:00:00.000Z",
+  // A live fact: first version, current, never superseded or forgotten.
+  version: 1,
+  parentMemoryId: null,
+  rootMemoryId: null,
+  isLatest: true,
+  supersededAt: null,
+  supersededReason: null,
+  forgottenAt: null,
+  forgetReason: null,
+  forgetBatchId: null,
 };
 
 class Sessions implements AdminSessionManager {

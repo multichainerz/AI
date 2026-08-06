@@ -5,7 +5,7 @@
       "name": "dashboard",
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["--filter", "@orcasynapse/web", "dev"],
-      "port": 5173
+      "autoPort": true
     }
   ]
 }

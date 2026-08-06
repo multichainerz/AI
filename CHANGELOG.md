@@ -5,6 +5,44 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.55.0 — 2026-08-07
+
+Show what the agent actually believes, and say when it changed its mind.
+
+Version chains (ai-v1.49.3), supersession (ai-v1.49.0) and forget batches
+(ai-v1.51.0) all wrote to columns nothing ever read. `agentMemoryRecordSchema`
+carried nine fields and none of the lineage, so the API could not return it even
+if the interface asked.
+
+Worse than a missing feature: `records()` had **no lifecycle predicate at all**.
+A fact the person had corrected weeks ago, a fact they had asked to have
+forgotten, and the current one were all returned together and rendered
+identically. An operator auditing what an agent knows was reading a mixture of
+current belief and everything it had ever been told.
+
+- extend `agentMemoryRecordSchema` with `version`, `parentMemoryId`,
+  `rootMemoryId`, `isLatest`, `supersededAt`, `supersededReason`, `forgottenAt`,
+  `forgetReason` and `forgetBatchId`
+- filter the record list to the live set by default, so it answers "what would
+  this agent recall right now". `includeSuperseded` and `includeForgotten` make
+  history a deliberate request
+- apply the same predicate to `recordsForOwner`, which backs the end-user "what
+  do you know about me" surface. Showing a forgotten fact there would have
+  answered a deletion request with the thing that was deleted
+- surface it: a corrected fact shows its version, a retired one shows what
+  replaced it and why, a forgotten one shows its reason and batch, and Forget is
+  offered only on a fact that is still live
+- add a "show corrected and forgotten" toggle, off by default
+
+The memory view is the first screen on the ai-v1.54.0 primitives, using `Button`
+and `StatusText` in place of hand-written classes.
+
+One plan item dropped after checking it: `GET /api/v1/admin/runtime/` looked like
+a backend capability with no caller, but `aiOpsOverviewSchema` already embeds
+`runtime: runtimeOperationsSnapshotSchema` and the operations view reads it from
+there. The standalone route is a redundant sibling, not a gap — adding a second
+client for it would have been duplication dressed as cohesion.
+
 ## ai-v1.54.0 — 2026-08-07
 
 Give the dashboard a design system, and pin a vulnerable PDF parser on the way.

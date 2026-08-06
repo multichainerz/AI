@@ -18,6 +18,7 @@ import {
   updateMemoryPolicy,
 } from "./api.js";
 import { adminAccess } from "./admin-access.js";
+import { Button, StatusText } from "./ui/index.js";
 
 interface MemoryViewProps {
   session: AdministratorSession | null;
@@ -61,6 +62,7 @@ export function MemoryView({ session, onOpenSettings, onSessionExpired }: Memory
   const [records, setRecords] = useState<AgentMemoryRecord[]>([]);
   const [ownerFilter, setOwnerFilter] = useState("");
   const [forgetTarget, setForgetTarget] = useState("");
+  const [showHistory, setShowHistory] = useState(false);
   const [preview, setPreview] = useState<ForgetMatchingResult | null>(null);
   const [draft, setDraft] = useState<CreateMemoryPolicy>(blankPolicy);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -80,11 +82,15 @@ export function MemoryView({ session, onOpenSettings, onSessionExpired }: Memory
   const load = useCallback(async () => {
     const [policyList, recordList] = await Promise.all([
       getMemoryPolicies(),
-      getAgentMemoryRecords(ownerFilter.trim() ? { ownerSubject: ownerFilter.trim(), limit: 100 } : { limit: 100 }),
+      getAgentMemoryRecords({
+        ...(ownerFilter.trim() ? { ownerSubject: ownerFilter.trim() } : {}),
+        limit: 100,
+        includeHistory: showHistory,
+      }),
     ]);
     setPolicies(policyList.items);
     setRecords(recordList.items);
-  }, [ownerFilter]);
+  }, [ownerFilter, showHistory]);
 
   useEffect(() => {
     if (!unlocked) { setPolicies([]); setRecords([]); return; }
@@ -253,6 +259,16 @@ export function MemoryView({ session, onOpenSettings, onSessionExpired }: Memory
         <div><p className="section-kicker">Stored memory</p><h2>What agents currently hold</h2></div>
         <div className="memory-filter">
           <input placeholder="Filter by person" value={ownerFilter} onChange={(event) => setOwnerFilter(event.target.value)} />
+          {/*
+            * History is off by default so the list answers "what would this
+            * agent recall right now". Turning it on brings in corrections and
+            * forgotten facts, which is a different question and worth asking
+            * for deliberately.
+            */}
+          <label className="memory-history-toggle">
+            <input type="checkbox" checked={showHistory} onChange={(event) => setShowHistory(event.target.checked)} />
+            Show corrected and forgotten
+          </label>
           {canManage && ownerFilter.trim() && <button type="button" className="danger-button" disabled={busy || reason.trim().length < 3} onClick={() => void purgeOwner()}>Forget everything for this person</button>}
         </div>
       </div>
@@ -305,19 +321,42 @@ export function MemoryView({ session, onOpenSettings, onSessionExpired }: Memory
           <div className="memory-record-list">{records.map((record) => <article key={record.id}>
           <div>
             <strong>{record.ownerSubject}</strong>
-            <span className="document-status neutral">{record.agentProfileSlug}</span>
+            <StatusText>{record.agentProfileSlug}</StatusText>
             {record.profileScope !== "EPISODIC" && (
-              <span className={record.profileScope === "STATIC" ? "document-status ready" : "document-status quarantined"}>
+              <StatusText tone={record.profileScope === "STATIC" ? "good" : "warn"}>
                 {record.profileScope === "STATIC" ? "always shown" : "current context"}
-              </span>
+              </StatusText>
             )}
+            {/*
+              * A fact past its first version was corrected. Saying so beside the
+              * content is the difference between a store you can audit and a
+              * list of sentences: the chain has existed since ai-v1.49.3 and was
+              * never shown, so nothing distinguished a current belief from one
+              * the person had already changed.
+              */}
+            {record.version > 1 && <StatusText tone="accent">v{record.version}</StatusText>}
+            {!record.isLatest && <StatusText tone="neutral">superseded</StatusText>}
+            {record.forgottenAt !== null && <StatusText tone="bad">forgotten</StatusText>}
             <p>{record.content}</p>
+            {record.supersededReason && (
+              <small className="memory-record-lineage">Retired: {record.supersededReason}</small>
+            )}
+            {record.forgetReason && (
+              <small className="memory-record-lineage">
+                Forgotten: {record.forgetReason}
+                {record.forgetBatchId ? ` · batch ${record.forgetBatchId.slice(0, 8)}` : ""}
+              </small>
+            )}
             <small>
               Recorded {new Date(record.createdAt).toLocaleString()}
               {record.retentionUntil ? ` · expires ${new Date(record.retentionUntil).toLocaleDateString()}` : " · no expiry"}
             </small>
           </div>
-          {canManage && <button type="button" className="danger-button" disabled={busy || reason.trim().length < 3} onClick={() => void forget(record)}>Forget</button>}
+          {canManage && record.isLatest && record.forgottenAt === null && (
+            <Button variant="danger" size="sm" disabled={busy || reason.trim().length < 3} onClick={() => void forget(record)}>
+              Forget
+            </Button>
+          )}
         </article>)}</div></>}
     </section>
   </section>;

@@ -240,12 +240,26 @@ export class DrizzleMemoryManager implements MemoryManager {
         sourceRunId: agentMemory.sourceRunId,
         retentionUntil: agentMemory.retentionUntil,
         createdAt: agentMemory.createdAt,
+        version: agentMemory.version,
+        parentMemoryId: agentMemory.parentMemoryId,
+        rootMemoryId: agentMemory.rootMemoryId,
+        isLatest: agentMemory.isLatest,
+        supersededAt: agentMemory.supersededAt,
+        supersededReason: agentMemory.supersededReason,
+        forgottenAt: agentMemory.forgottenAt,
+        forgetReason: agentMemory.forgetReason,
+        forgetBatchId: agentMemory.forgetBatchId,
       })
       .from(agentMemory)
       .innerJoin(agentProfile, eq(agentProfile.id, agentMemory.agentProfileId))
       .where(and(
         query.ownerSubject ? eq(agentMemory.ownerSubject, query.ownerSubject) : undefined,
         query.agentProfileId ? eq(agentMemory.agentProfileId, query.agentProfileId) : undefined,
+        // The lifecycle predicate this query never had. Without it the list
+        // mixed corrected and forgotten facts in with current ones, so an
+        // operator could not tell what the agent actually believes.
+        query.includeSuperseded ? undefined : eq(agentMemory.isLatest, true),
+        query.includeForgotten ? undefined : isNull(agentMemory.forgottenAt),
       ))
       .orderBy(desc(agentMemory.createdAt))
       .limit(query.limit);
@@ -431,6 +445,15 @@ function toRecord(row: {
   sourceRunId: string | null;
   retentionUntil: Date | null;
   createdAt: Date;
+  version: number;
+  parentMemoryId: string | null;
+  rootMemoryId: string | null;
+  isLatest: boolean;
+  supersededAt: Date | null;
+  supersededReason: string | null;
+  forgottenAt: Date | null;
+  forgetReason: string | null;
+  forgetBatchId: string | null;
 }): AgentMemoryRecord {
   return {
     id: row.id,
@@ -442,5 +465,14 @@ function toRecord(row: {
     sourceRunId: row.sourceRunId,
     retentionUntil: row.retentionUntil?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
+    version: row.version,
+    parentMemoryId: row.parentMemoryId,
+    rootMemoryId: row.rootMemoryId,
+    isLatest: row.isLatest,
+    supersededAt: row.supersededAt?.toISOString() ?? null,
+    supersededReason: row.supersededReason,
+    forgottenAt: row.forgottenAt?.toISOString() ?? null,
+    forgetReason: row.forgetReason,
+    forgetBatchId: row.forgetBatchId,
   };
 }

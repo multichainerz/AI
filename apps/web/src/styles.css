@@ -2067,3 +2067,7 @@ strong, .metrics dd, .metric-value, output, time, td, th { font-variant-numeric:
 .metric-progress.is-warn::-moz-progress-bar { background: var(--warn); }
 .metric-progress.is-bad::-webkit-progress-value { background: var(--bad); }
 .metric-progress.is-bad::-moz-progress-bar { background: var(--bad); }
+
+/* A retired or forgotten fact states why, directly under what it said. */
+.memory-record-lineage { display: block; margin-top: 4px; color: var(--faint); font-size: 10px; line-height: 1.5; }
+.memory-history-toggle { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 10px; white-space: nowrap; }
