@@ -34,9 +34,21 @@ const status = cva("inline-flex items-center font-mono text-micro uppercase", {
 export function StatusText({
   className,
   tone,
+  dot,
+  children,
   ...rest
-}: HTMLAttributes<HTMLSpanElement> & VariantProps<typeof status>) {
-  return <span className={cn(status({ tone }), className)} {...rest} />;
+}: HTMLAttributes<HTMLSpanElement> & VariantProps<typeof status> & { dot?: boolean }) {
+  return (
+    <span className={cn(status({ tone }), dot ? "gap-2" : null, className)} {...rest}>
+      {/*
+       * A square, and a small one. Four stylesheet rules drew this dot as a
+       * circle at four different sizes; one shape stated once is the whole point
+       * of the set, and square is what the rest of the system is.
+       */}
+      {dot ? <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 bg-current" /> : null}
+      {children}
+    </span>
+  );
 }
 
 const alert = cva("flex items-start justify-between gap-4 rounded border px-3.5 py-3 text-body", {

@@ -83,7 +83,30 @@ function Glyph({ name }: { name: string }) {
     settings: <><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H3v-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.6V3h4v.1a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></>,
   };
 
-  return <svg viewBox="0 0 24 24" aria-hidden="true">{glyphs[name]}</svg>;
+  /*
+   * The glyph carries its own presentation.
+   *
+   * It used to inherit size and stroke from `.nav-item svg`, so rebuilding the
+   * nav row on utility classes dropped the rule and every icon fell back to the
+   * SVG default: 300x150, filled black. Nothing caught it — a black shape on a
+   * dark panel has no text for the contrast sweep to measure, and the
+   * accessibility tree does not report size. Presentation attributes rather than
+   * an inline `style`, which `style-src 'self'` refuses.
+   */
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      className="h-[18px] w-[18px] shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.7}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      {glyphs[name]}
+    </svg>
+  );
 }
 
 function OrcaSynapseMark() {
@@ -313,7 +336,6 @@ function App() {
       name: "AI Inference",
       role: "Enterprise model serving",
       mark: "AI",
-      tone: "blue",
       state: unlocked ? connectionState(inferenceConnection) : { label: "Unlock to view", tone: "disabled" },
       components: [],
     },
@@ -322,7 +344,6 @@ function App() {
       name: "Agentic System",
       role: "Governed Hermes execution",
       mark: "AS",
-      tone: "violet",
       state: agenticState,
       components: unlocked ? [
         { name: "Hermes", label: hermesChatReady ? "Ready" : readiness.runtimeNodeReady ? "Needs Profile or policy" : connectionState(hermesConnection).label, tone: hermesChatReady ? "ready" : readiness.runtimeNodeReady ? "degraded" : connectionState(hermesConnection).tone },
@@ -333,7 +354,6 @@ function App() {
       name: "Enterprise Access",
       role: "OIDC, Microsoft Entra ID and RBAC · owner-scoped access",
       mark: "EA",
-      tone: "rose",
       state: unlocked
         ? oidcStatus?.configured
           ? { label: "Ready", tone: "ready" }

@@ -5,6 +5,57 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.56.0 — 2026-08-07
+
+Rebuild Home on the primitives — and find that the design system had been
+deleting its own classes since the day it shipped.
+
+Home is the screen every operator lands on and the first view rebuilt end to end
+on the ai-v1.54.0 set: `PageHeader`, `Panel`, `PanelHeading`, `Metric`,
+`StatusText`, `Button`. Two new primitives came out of it — `PageHeader`, which
+twelve views were writing by hand with a slightly different heading level and
+description width each time, and a `dot` on `StatusText`, which four stylesheet
+rules drew as a circle at four different sizes. The four-step runtime path is now
+horizontal rather than a vertical list down one column, and reads as the flow it
+describes. Readiness gained a fill rule, because it is the one figure here with a
+denominator.
+
+Home also gets its **first render test** — seven cases covering what a locked
+session may see, where the single primary action points, and whether a layer row
+still opens the platform tab that actually configures it.
+
+**The defect underneath.** The primary button was rendering light text on the
+accent fill at **2.34:1**. The cause was not the colour: `cn()` was deleting the
+class. tailwind-merge's colour matcher accepts *any* `text-` class, so every
+custom size in `tailwind.config.ts` was being read as a colour and dropped by the
+colour beside it — `text-micro text-faint` came out as `text-faint`,
+`text-[#0a0a0b] text-body` as `text-body`. The whole type scale was inert
+everywhere, and nothing showed it: the class is simply absent from the DOM, no
+warning is logged, and the element inherits a size that looks plausible. The
+dependency was also on the v3 line, which is built for Tailwind 4 semantics while
+this project is on Tailwind 3 — that pairing was silently removing
+`focus-visible:outline`, so **no button in the dashboard had a focus ring**.
+
+- pin `tailwind-merge` to the line matching Tailwind 3 and register the theme
+  tokens it cannot infer, so a size and a colour survive together
+- `cn.test.ts` reads `tailwind.config.ts` directly: adding a size there without
+  adding it to `cn.ts` now fails a test instead of vanishing at runtime
+
+**A regression from ai-v1.55.1, found by looking.** Rebuilding the sidebar on
+utility classes dropped `.nav-item svg`, and with preflight off every navigation
+icon fell back to the SVG default — 300x150, filled black. The contrast sweep
+could not see it, because a black shape on a dark panel has no text to measure,
+and the accessibility tree does not report size. `Glyph` now carries its own
+size and stroke as presentation attributes and depends on no ancestor rule.
+
+Verified in the browser: focus ring paints 2px solid accent at 2px offset, and
+the contrast sweep reports **0 nodes below WCAG AA, worst 5.30** (up from 4.78),
+median 7.36. 865 tests green, web at 111.
+
+- delete 74 lines of stylesheet that only the old Home markup used —
+  `.setup-banner`, `.content-grid`, `.connection*` rows, `.readiness-*`,
+  `.runtime-flow`, `.boundary-note`, `.phase-tag` and their responsive blocks
+
 ## ai-v1.55.1 — 2026-08-07
 
 Make the back button work, and rebuild the sidebar.

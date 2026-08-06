@@ -20,6 +20,35 @@ export function MicroLabel({ className, ...rest }: HTMLAttributes<HTMLSpanElemen
   return <span className={cn("font-mono text-micro uppercase text-faint", className)} {...rest} />;
 }
 
+/**
+ * The band at the top of every screen: where you are, what it is, what you can
+ * do about it.
+ *
+ * Twelve views wrote this by hand as `.topbar` + `.page-heading`, which is why
+ * the heading level, the description width and the action alignment differ
+ * slightly on every one of them.
+ */
+export function PageHeader(props: {
+  kicker?: string;
+  title: ReactNode;
+  description?: ReactNode;
+  actions?: ReactNode;
+  className?: string;
+}) {
+  return (
+    <header className={cn("mb-7 flex items-start justify-between gap-7", props.className)}>
+      <div className="min-w-0 max-w-[72ch]">
+        {props.kicker ? <MicroLabel className="mb-2 block">{props.kicker}</MicroLabel> : null}
+        <h1 className="m-0 text-[26px] font-semibold leading-[1.15] tracking-[-0.03em] text-text">{props.title}</h1>
+        {props.description ? (
+          <p className="mb-0 mt-2.5 text-[12px] leading-relaxed text-muted">{props.description}</p>
+        ) : null}
+      </div>
+      {props.actions ? <div className="flex shrink-0 items-center gap-2.5 pt-1">{props.actions}</div> : null}
+    </header>
+  );
+}
+
 export function PanelHeading(props: {
   kicker?: string;
   title: ReactNode;
@@ -59,8 +88,14 @@ export interface MetricProps extends VariantProps<typeof figure> {
   label: string;
   value: ReactNode;
   caption?: ReactNode;
-  /** 0–1. Renders the thin rule the reference puts under a capacity figure. */
-  fill?: number;
+  /**
+   * 0–1. Renders the thin rule the reference puts under a capacity figure.
+   *
+   * Explicitly `| undefined` under `exactOptionalPropertyTypes`: a caller that
+   * has a fill only when a session is unlocked passes `undefined` rather than
+   * branching the whole element.
+   */
+  fill?: number | undefined;
   className?: string;
 }
 

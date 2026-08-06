@@ -1,12 +1,21 @@
 import type { ChatMetrics, ConnectionMonitoringControl } from "@orcasynapse/contracts";
+import { Button, Metric, MetricRow, MicroLabel, PageHeader, Panel, PanelHeading, StatusText, cn } from "./ui/index.js";
 import type { ActiveView } from "./workspace-navigation.js";
+
+/**
+ * The landing screen, and the reference implementation for every view that
+ * follows it onto the primitive set.
+ *
+ * It answers one question — can I use this workspace yet, and if not, what is
+ * the single next thing to do — so everything on it is either a figure, a state,
+ * or a way to act on one.
+ */
 
 export interface HomeLayer {
   key: "inference" | "agentic" | "access";
   name: string;
   role: string;
   mark: string;
-  tone: string;
   state: { label: string; tone: string };
   components: Array<{ name: string; label: string; tone: string }>;
 }
@@ -32,91 +41,259 @@ interface HomeViewProps {
   onUnlock: () => void;
 }
 
+type Tone = "neutral" | "good" | "warn" | "bad" | "accent";
+
+/**
+ * Connection vocabulary is wider than the palette on purpose: six readiness
+ * tones, plus the two this screen adds for a locked session, collapse to four
+ * colours. Anything unrecognised reads as neutral rather than inventing a fifth.
+ */
+function toneFor(value: string): Tone {
+  if (value === "ready" || value === "healthy") return "good";
+  if (value === "degraded" || value === "validation" || value === "not_tested") return "warn";
+  if (value === "blocked" || value === "unreachable") return "bad";
+  return "neutral";
+}
+
 function cadence(seconds: number): string {
   if (seconds < 60) return `Checked every ${seconds} sec`;
   if (seconds < 3_600) return `Checked every ${Math.round(seconds / 60)} min`;
   return `Checked every ${Math.round(seconds / 3_600)} hr`;
 }
 
-function ShieldIcon() {
-  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 20 5v6c0 5-3.4 9-8 11-4.6-2-8-6-8-11V5l8-3Z" /></svg>;
+function ShieldIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      aria-hidden="true"
+      className={cn("shrink-0", className)}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.6}
+    >
+      <path d="M12 2 20 5v6c0 5-3.4 9-8 11-4.6-2-8-6-8-11V5l8-3Z" />
+    </svg>
+  );
 }
+
+/** The governed path a message takes. Fixed, and stated the same way every time. */
+const RUNTIME_STEPS = [
+  { name: "OrcaSynapse", detail: "Identity, policy, audit, and orchestration" },
+  { name: "Hermes", detail: "Isolated agent session and execution" },
+  { name: "Knowledge index", detail: "Local pgvector retrieval, owner-scoped" },
+  { name: "AI Inference", detail: "Approved OpenAI-compatible model serving" },
+] as const;
 
 export function HomeView(props: HomeViewProps) {
   const readyCount = props.readiness.filter(({ ready }) => ready).length;
   const allReady = readyCount === props.readiness.length;
   const next = props.readiness.find(({ ready }) => !ready);
-  const open = (view: ActiveView) => props.unlocked ? props.onSelect(view) : props.onUnlock();
+  const open = (view: ActiveView) => (props.unlocked ? props.onSelect(view) : props.onUnlock());
 
-  return <>
-    <header className="topbar">
-      <div className="page-heading">
-        <p className="page-kicker">OrcaSynapse control center</p>
-        <h1>{allReady && props.unlocked ? "Your agentic workspace is ready" : "Finish your private AI workspace"}</h1>
-        <p>{next && props.unlocked ? `Next: ${next.detail}` : "Chat with governed Hermes agents, add durable knowledge, and operate the complete on-prem system from one place."}</p>
-      </div>
-      <div className="topbar-actions">
-        <span className={`status-chip ${props.apiAvailable ? "online" : "offline"}`}><i />{props.apiAvailable ? "Control plane online" : "Control plane offline"}</span>
-        <button className="primary-button" type="button" onClick={() => props.onSelect(allReady ? "Chat" : next?.action ?? "Deployment")}>{allReady ? "Open Chat" : "Continue setup"}</button>
-      </div>
-    </header>
+  const bannerTitle = props.bootstrapState !== "READY"
+    ? props.bootstrapState === "REQUIRED" ? "Installation required" : "Installation trust locked"
+    : !props.unlocked
+      ? props.passwordChangePending ? "Password change required" : "Local sign-in ready"
+      : allReady ? "Workspace ready" : "Administrator workspace active";
+  const bannerDetail = props.bootstrapState !== "READY"
+    ? "Run the protected VM1 installer before configuring services."
+    : !props.unlocked
+      ? props.passwordChangePending
+        ? "Replace the temporary password before opening administrative operations."
+        : "Sign in to manage encrypted endpoints, agents, and knowledge."
+      : `${readyCount} of ${props.readiness.length} required capabilities are ready.`;
 
-    <section className={`setup-banner ${props.bootstrapState.toLowerCase()}`}>
-      <div className="banner-icon"><ShieldIcon /></div>
-      <div>
-        <strong>{props.bootstrapState === "READY" ? props.unlocked ? allReady ? "Workspace ready" : "Administrator workspace active" : props.passwordChangePending ? "Password change required" : "Local sign-in ready" : props.bootstrapState === "REQUIRED" ? "Installation required" : "Installation trust locked"}</strong>
-        <p>{props.bootstrapState === "READY" ? props.unlocked ? `${readyCount} of ${props.readiness.length} required capabilities are ready.` : props.passwordChangePending ? "Replace the temporary password before opening administrative operations." : "Sign in to manage encrypted endpoints, agents, and knowledge." : "Run the protected VM1 installer before configuring services."}</p>
-      </div>
-      <button type="button" onClick={() => props.unlocked ? props.onSelect(next?.action ?? "Deployment") : props.onUnlock()}>{props.unlocked ? allReady ? "Review setup" : "Fix next step" : "Sign in"}</button>
-    </section>
+  return (
+    <>
+      <PageHeader
+        kicker="OrcaSynapse control center"
+        title={allReady && props.unlocked ? "Your agentic workspace is ready" : "Finish your private AI workspace"}
+        description={
+          next && props.unlocked
+            ? `Next: ${next.detail}`
+            : "Chat with governed Hermes agents, add durable knowledge, and operate the complete on-prem system from one place."
+        }
+        actions={
+          <>
+            <StatusText dot tone={props.apiAvailable ? "good" : "bad"} className="h-9 items-center border border-border bg-surface px-3">
+              {props.apiAvailable ? "Control plane online" : "Control plane offline"}
+            </StatusText>
+            <Button
+              variant="primary"
+              onClick={() => props.onSelect(allReady ? "Chat" : (next?.action ?? "Deployment"))}
+            >
+              {allReady ? "Open Chat" : "Continue setup"}
+            </Button>
+          </>
+        }
+      />
 
-    <section className="metrics" aria-label="Platform summary">
-      <article><span>Capability readiness</span><strong>{props.unlocked ? `${readyCount}/${props.readiness.length}` : "—"}</strong><small>{props.unlocked ? allReady ? "Chat and Knowledge are usable" : "One clear path remains" : "Sign in to verify"}</small></article>
-      <article><span>Healthy services</span><strong>{props.unlocked ? props.healthyConnections : "—"}</strong><small>{props.monitoring?.enabled ? cadence(props.monitoring.intervalSeconds) : "Credential-aware validation"}</small></article>
-      <article><span>Hermes responses</span><strong>{props.unlocked ? props.chatMetrics?.responses.toLocaleString() ?? "0" : "—"}</strong><small>Completed in the last 24 hours</small></article>
-      <article><span>Policy posture</span><strong className="metric-posture">Default deny</strong><small>Explicit identity, Profile, and tool grants</small></article>
-    </section>
-
-    <div className="content-grid">
-      <section className="panel connections-panel">
-        <div className="panel-heading">
-          <div><p className="section-kicker">Platform foundation</p><h2>Three operating layers</h2><p>Inference serves models, VM2 runs governed agents, and Enterprise Access adds workforce identity when required. Knowledge and agent memory stay on VM1.</p></div>
-          <button className="text-button" type="button" onClick={() => props.onSelect("Deployment")}>Manage platform</button>
+      <Panel
+        className={cn(
+          "mb-6 flex items-center gap-4 border-l-2 p-4",
+          props.bootstrapState === "READY" ? "border-l-accent" : "border-l-warn",
+        )}
+      >
+        <ShieldIcon className="h-5 w-5 text-accent" />
+        <div className="min-w-0 flex-1">
+          <strong className="block text-[12px] font-semibold text-text">{bannerTitle}</strong>
+          <p className="mb-0 mt-1 text-body text-muted">{bannerDetail}</p>
         </div>
-        <div className="connection-list">
-          {props.layers.map((layer) => <article className="connection connection-layer" key={layer.key}>
-            <div className={`connection-mark ${layer.tone}`}>{layer.mark}</div>
-            <div className="connection-copy">
-              <strong>{layer.name}</strong><span>{layer.role}</span>
-              {layer.components.length > 0 && <div className="connection-components">{layer.components.map((component) => <small key={component.name}><i className={component.tone} />{component.name}: {component.label}</small>)}</div>}
+        <Button
+          onClick={() => (props.unlocked ? props.onSelect(next?.action ?? "Deployment") : props.onUnlock())}
+        >
+          {props.unlocked ? (allReady ? "Review setup" : "Fix next step") : "Sign in"}
+        </Button>
+      </Panel>
+
+      <MetricRow className="mb-7 lg:grid-cols-4" aria-label="Platform summary">
+        <Metric
+          label="Capability readiness"
+          value={props.unlocked ? `${readyCount}/${props.readiness.length}` : "—"}
+          tone={props.unlocked ? (allReady ? "good" : "warn") : "neutral"}
+          caption={
+            props.unlocked
+              ? allReady ? "Chat and Knowledge are usable" : "One clear path remains"
+              : "Sign in to verify"
+          }
+          /* Readiness is a fraction, so it is the one figure on this screen that
+             has a denominator worth drawing. */
+          fill={props.unlocked ? readyCount / Math.max(1, props.readiness.length) : undefined}
+        />
+        <Metric
+          label="Healthy services"
+          value={props.unlocked ? props.healthyConnections : "—"}
+          caption={props.monitoring?.enabled ? cadence(props.monitoring.intervalSeconds) : "Credential-aware validation"}
+        />
+        <Metric
+          label="Hermes responses"
+          value={props.unlocked ? (props.chatMetrics?.responses.toLocaleString() ?? "0") : "—"}
+          caption="Completed in the last 24 hours"
+        />
+        <Metric label="Policy posture" value="Default deny" caption="Explicit identity, Profile, and tool grants" />
+      </MetricRow>
+
+      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.85fr)]">
+        <Panel>
+          <PanelHeading
+            kicker="Platform foundation"
+            title="Three operating layers"
+            description="Inference serves models, VM2 runs governed agents, and Enterprise Access adds workforce identity when required. Knowledge and agent memory stay on VM1."
+            actions={<Button variant="ghost" size="sm" onClick={() => props.onSelect("Deployment")}>Manage platform</Button>}
+          />
+          <div className="grid gap-2">
+            {props.layers.map((layer) => (
+              <article
+                className="grid grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-3.5 rounded border border-border bg-raised p-3"
+                key={layer.key}
+              >
+                <span
+                  aria-hidden="true"
+                  className="grid h-9 w-9 place-items-center rounded border border-border-strong bg-surface font-mono text-[10px] font-bold text-accent"
+                >
+                  {layer.mark}
+                </span>
+                <div className="min-w-0">
+                  <strong className="block text-[12px] font-semibold text-text">{layer.name}</strong>
+                  <span className="mt-0.5 block text-caption text-muted">{layer.role}</span>
+                  {layer.components.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+                      {layer.components.map((component) => (
+                        <StatusText dot key={component.name} tone={toneFor(component.tone)} className="normal-case">
+                          {component.name}: {component.label}
+                        </StatusText>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <StatusText dot tone={toneFor(layer.state.tone)}>{layer.state.label}</StatusText>
+                <Button
+                  size="sm"
+                  onClick={() =>
+                    props.unlocked
+                      ? props.onSelect("Deployment", layer.key === "agentic" ? "nodes" : "journey")
+                      : props.onUnlock()
+                  }
+                >
+                  {props.unlocked ? (layer.state.tone === "unconfigured" ? "Configure" : "Review") : "Sign in"}
+                </Button>
+              </article>
+            ))}
+          </div>
+        </Panel>
+
+        <Panel>
+          <PanelHeading
+            kicker="Usability, not connection count"
+            title="Required capabilities"
+            description="Chat becomes ready only when inference, an online VM2 runtime, execution policy, and an active Profile agree."
+            actions={
+              <StatusText tone={!props.unlocked ? "neutral" : allReady ? "good" : "warn"}>
+                {props.unlocked ? `${readyCount}/${props.readiness.length} ready` : "Locked"}
+              </StatusText>
+            }
+          />
+          <div className="grid gap-2">
+            {props.readiness.map((check) => (
+              <button
+                className="grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded border border-border bg-raised p-3 text-left text-text transition-colors hover:border-border-strong"
+                key={check.label}
+                type="button"
+                onClick={() => open(check.action)}
+              >
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    "h-1.5 w-1.5",
+                    !props.unlocked ? "bg-faint" : check.ready ? "bg-good" : "bg-warn",
+                  )}
+                />
+                <span className="min-w-0">
+                  <strong className="block text-[12px] font-semibold">{check.label}</strong>
+                  <small className="mt-1 block truncate text-caption text-muted">
+                    {props.unlocked ? check.detail : "Sign in to view current readiness"}
+                  </small>
+                </span>
+                <span aria-hidden="true" className="font-mono text-[12px] text-faint">
+                  →
+                </span>
+              </button>
+            ))}
+          </div>
+        </Panel>
+
+        <Panel className="lg:col-span-2">
+          <PanelHeading
+            kicker="Runtime trust boundary"
+            title="One governed execution path"
+            description="Every user message enters OrcaSynapse policy, runs through Hermes on VM2, and reaches only the approved inference route."
+            actions={<StatusText tone="accent">Default deny</StatusText>}
+          />
+          {/*
+           * Hairlines come from the gap showing the container behind, so a step
+           * needs no border of its own and the rules never double up at a seam.
+           */}
+          <ol className="m-0 grid list-none grid-cols-1 gap-px rounded border border-border bg-border p-0 sm:grid-cols-2 lg:grid-cols-4">
+            {RUNTIME_STEPS.map((step, index) => (
+              <li className="bg-surface p-3.5" key={step.name}>
+                <MicroLabel className="block text-accent">{String(index + 1).padStart(2, "0")}</MicroLabel>
+                <strong className="mt-2 block text-[12px] font-semibold text-text">{step.name}</strong>
+                <small className="mt-1 block text-caption text-muted">{step.detail}</small>
+              </li>
+            ))}
+          </ol>
+          <div className="mt-4 flex gap-3 rounded border border-border bg-raised p-3.5">
+            <ShieldIcon className="mt-0.5 h-4 w-4 text-accent" />
+            <div className="min-w-0">
+              <strong className="block text-[12px] font-semibold text-text">Secrets terminate at OrcaSynapse</strong>
+              <p className="mb-0 mt-1 text-body text-muted">
+                Hermes receives node-scoped runtime access; PostgreSQL and enterprise connector credentials remain on
+                VM1.
+              </p>
             </div>
-            <span className={`connection-status ${layer.state.tone}`}><i />{layer.state.label}</span>
-            <button type="button" onClick={() => props.unlocked ? props.onSelect("Deployment", layer.key === "agentic" ? "nodes" : "journey") : props.onUnlock()}>{props.unlocked ? layer.state.tone === "unconfigured" ? "Configure" : "Review" : "Sign in"}</button>
-          </article>)}
-        </div>
-      </section>
-
-      <section className="panel readiness-panel home-next-step">
-        <div className="panel-heading"><div><p className="section-kicker">Usability, not connection count</p><h2>Required capabilities</h2><p>Chat becomes ready only when inference, an online VM2 runtime, execution policy, and an active Profile agree.</p></div><span className={`readiness-count ${!props.unlocked ? "restricted" : allReady ? "ready" : "pending"}`}>{props.unlocked ? `${readyCount}/${props.readiness.length} ready` : "Sign in to verify"}</span></div>
-        <div className="readiness-list">
-          {props.readiness.map((check) => <button type="button" key={check.label} onClick={() => open(check.action)}>
-            <span className={`readiness-dot ${!props.unlocked ? "restricted" : check.ready ? "ready" : "pending"}`}><i /></span>
-            <span><strong>{check.label}</strong><small>{props.unlocked ? check.detail : "Sign in to view current readiness"}</small></span>
-            <span aria-hidden="true">→</span>
-          </button>)}
-        </div>
-      </section>
-
-      <section className="panel architecture-panel">
-        <div className="panel-heading"><div><p className="section-kicker">Runtime trust boundary</p><h2>One governed execution path</h2><p>Every user message enters OrcaSynapse policy, runs through Hermes on VM2, and reaches only the approved inference route.</p></div><span className="phase-tag">Default deny</span></div>
-        <ol className="runtime-flow">
-          <li><span>1</span><div><strong>OrcaSynapse</strong><small>Identity, policy, audit, and orchestration</small></div></li>
-          <li><span>2</span><div><strong>Hermes</strong><small>Isolated agent session and execution</small></div></li>
-          <li><span>3</span><div><strong>Knowledge index</strong><small>Local pgvector retrieval, owner-scoped</small></div></li>
-          <li><span>4</span><div><strong>AI Inference</strong><small>Approved OpenAI-compatible model serving</small></div></li>
-        </ol>
-        <div className="boundary-note"><ShieldIcon /><div><strong>Secrets terminate at OrcaSynapse</strong><p>Hermes receives node-scoped runtime access; PostgreSQL and enterprise connector credentials remain on VM1.</p></div></div>
-      </section>
-    </div>
-  </>;
+          </div>
+        </Panel>
+      </div>
+    </>
+  );
 }
