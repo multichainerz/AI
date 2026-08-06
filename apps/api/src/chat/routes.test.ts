@@ -6,6 +6,10 @@ import {
   ENTERPRISE_SESSION_COOKIE,
   type EnterpriseIdentityManager,
 } from "../identity/enterprise-session.js";
+import {
+  AgentConflictError,
+  AgentRuntimeDisabledError,
+} from "../agents/agent-manager.js";
 import { ChatConfigurationError, type ChatManager } from "./chat-manager.js";
 import { AgentMemoryNotFoundError, type MemoryManager } from "../memory/memory-manager.js";
 
@@ -251,6 +255,47 @@ describe("controlled chat routes", () => {
     expect(response.body).toContain("event: started");
     expect(response.body).toContain("event: delta");
     expect(response.body).toContain("event: completed");
+  });
+
+  it("answers a busy agent with a conflict, not an internal error", async () => {
+    // Sending a message submits an agent run, so submitRun's errors reach the
+    // chat route. Unmapped, the pilot answered "this agent has reached its
+    // configured concurrent-run limit" with a 500 and a stack trace, which
+    // reads as a broken control plane rather than a limit someone configured.
+    const manager = memoryChatManager();
+    manager.submitMessage = vi.fn(async () => {
+      throw new AgentConflictError("This agent has reached its configured concurrent-run limit.");
+    });
+    const app = await chatApp(manager);
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/v1/chat/conversations/${CONVERSATION_ID}/messages`,
+      headers: { cookie: `${ADMIN_SESSION_COOKIE}=${SESSION_TOKEN}` },
+      payload: { content: "Hello" },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({ error: "AGENT_CONFLICT" });
+    expect(response.json().message).toContain("concurrent-run limit");
+  });
+
+  it("answers a disabled runtime with locked, not an internal error", async () => {
+    const manager = memoryChatManager();
+    manager.submitMessage = vi.fn(async () => {
+      throw new AgentRuntimeDisabledError("An administrator paused this runtime.");
+    });
+    const app = await chatApp(manager);
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/v1/chat/conversations/${CONVERSATION_ID}/messages`,
+      headers: { cookie: `${ADMIN_SESSION_COOKIE}=${SESSION_TOKEN}` },
+      payload: { content: "Hello" },
+    });
+
+    expect(response.statusCode).toBe(423);
+    expect(response.json()).toMatchObject({ error: "AGENT_RUNTIME_DISABLED" });
   });
 
   it("cancels the active durable Hermes run explicitly", async () => {

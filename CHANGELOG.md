@@ -5,6 +5,24 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.49.4 — 2026-08-06
+
+A busy agent is a conflict, not a server error.
+
+Sending a chat message submits an agent run, so `submitRun`'s errors surface on
+the chat route — and `sendChatError` mapped only the chat-specific ones. On the
+pilot, sending a second message while the first run was still finishing produced
+`500 Internal Server Error` with a stack trace in the API log, for a limit an
+administrator had deliberately configured. Longer distillation makes the window
+wider, which is how this surfaced now rather than earlier.
+
+- map `AgentConflictError` to 409, `AgentRuntimeDisabledError` to 423, and
+  `AgentNotFoundError` to 404 on the chat path, matching what the agent routes
+  have always returned
+
+The dashboard already surfaces the API's message on a failed send, so the reason
+now reaches the person instead of a generic failure.
+
 ## ai-v1.49.3 — 2026-08-06
 
 Actually write the version chain ai-v1.49.0 said it wrote.
