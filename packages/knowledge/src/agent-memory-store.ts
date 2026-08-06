@@ -165,9 +165,9 @@ export class AgentMemoryStore {
     ownerSubject: string,
     agentProfileId: string,
     limit = 10,
-  ): Promise<Array<{ content: string; scope: MemoryProfileScope }>> {
+  ): Promise<Array<{ id: string; content: string; scope: MemoryProfileScope }>> {
     const rows = await this.database
-      .select({ content: agentMemory.content, scope: agentMemory.profileScope })
+      .select({ id: agentMemory.id, content: agentMemory.content, scope: agentMemory.profileScope })
       .from(agentMemory)
       .where(and(
         eq(agentMemory.ownerSubject, ownerSubject),

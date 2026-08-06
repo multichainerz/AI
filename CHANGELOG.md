@@ -5,6 +5,28 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.49.2 — 2026-08-06
+
+Make the always-on facts correctable, and stop storing the same fact twice.
+
+With the token budget fixed, supersession fired on the pilot for the first time —
+and retired the wrong row. A turn about moving from Jakarta to Bandung retired a
+near-identical episodic memory and left the STATIC "The user works in Jakarta."
+live, so the profile asserted both cities at once. The same turn also re-stored
+three facts it had just been shown as known, which is why "The user prefers
+answers in Indonesian." appeared twice.
+
+- offer the whole profile to the distiller as supersession candidates, unioned
+  with the similarity hits and de-duplicated by id. A fact injected into every
+  prompt is the most damaging one to leave stale, and similarity alone does not
+  reliably surface it
+- carry `id` on profile facts, so a stale one can be named as replaced rather
+  than only displayed
+- drop any extracted fact that matches one already shown as known, or an earlier
+  fact in the same answer, comparing on letters and digits only. The instruction
+  now says not to restate known facts as well, but the guard does not depend on
+  the model obeying it
+
 ## ai-v1.49.1 — 2026-08-06
 
 Give the distiller room to think, and stop reading a truncated answer as "nothing

@@ -128,6 +128,8 @@ export interface MemoryDistillerPort {
 
 /** A fact present on every prompt, whatever the question was. */
 export interface ProfileFact {
+  /** Needed so a stale profile fact can be named as replaced, not only shown. */
+  id: string;
   content: string;
   scope: MemoryProfileScope;
 }
@@ -1190,16 +1192,27 @@ export class DrizzleAgentProcessor {
       // A moderate floor, not a near-duplicate one: "I love Adidas" and "I'm
       // switching to Puma" are not close in vector space, yet the second plainly
       // retires the first. Similarity narrows the field; the model decides.
-      const candidates = await this.memory.recall(
-        run.ownerSubject,
-        run.profileId,
-        run.input,
-        { ...limits, recallLimit: SUPERSESSION_CANDIDATES, recallMinimumScore: SUPERSESSION_FLOOR },
-      );
+      const [candidates, profile] = await Promise.all([
+        this.memory.recall(
+          run.ownerSubject,
+          run.profileId,
+          run.input,
+          { ...limits, recallLimit: SUPERSESSION_CANDIDATES, recallMinimumScore: SUPERSESSION_FLOOR },
+        ),
+        // Profile facts are shown on every message, so a stale one is the most
+        // damaging kind — and it is reachable only if the model is offered it.
+        // The pilot proved similarity alone will not do that: a move from
+        // Jakarta retired a near-identical episodic row and left the STATIC
+        // "The user works in Jakarta." live, because that row was not among the
+        // eight nearest. What is always injected is always eligible to retire.
+        this.memory.profile(run.ownerSubject, run.profileId),
+      ]);
+      const known = new Map<string, string>();
+      for (const fact of [...profile, ...candidates]) known.set(fact.id, fact.content);
       const extraction = await this.distiller.distil(
         run.input,
         output,
-        candidates.map(({ id, content }) => ({ id, content })),
+        [...known].map(([id, content]) => ({ id, content })),
       );
       // A distiller that could not be reached stores nothing. Falling back to
       // raw turns would quietly reinstate the behaviour this replaced, and an

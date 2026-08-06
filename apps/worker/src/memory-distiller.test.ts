@@ -120,6 +120,32 @@ describe("supersession", () => {
       .toEqual([{ fact: "The user prefers Puma.", scope: "STATIC", replaces: [known[0]!.id] }]);
   });
 
+  it("drops a fact the model was already shown as known", () => {
+    // The pilot stored "prefers answers in Indonesian" three times. Shown a
+    // fact under KNOWN FACTS, the model still re-emits it beside whatever is
+    // genuinely new; a restatement adds nothing and costs a profile slot.
+    expect(parseDistillation(
+      '[{"fact": "The user works in Jakarta.", "scope": "STATIC"},'
+      + ' {"fact": "The user works in Bandung.", "scope": "STATIC", "replaces": [2]}]',
+      known,
+    )).toEqual([
+      { fact: "The user works in Bandung.", scope: "STATIC", replaces: [known[1]!.id] },
+    ]);
+  });
+
+  it("matches a restatement through case and punctuation", () => {
+    expect(parseDistillation('[{"fact": "the user works in jakarta", "scope": "STATIC"}]', known))
+      .toEqual([]);
+  });
+
+  it("keeps only the first of two identical facts in one answer", () => {
+    expect(parseDistillation(
+      '[{"fact": "The user uses Kubernetes.", "scope": "STATIC"},'
+      + ' {"fact": "The user uses Kubernetes.", "scope": "EPISODIC"}]',
+      known,
+    )).toEqual([{ fact: "The user uses Kubernetes.", scope: "STATIC", replaces: [] }]);
+  });
+
   it("ignores a number naming a fact it was never shown", () => {
     // A hallucinated index must do nothing rather than retire an unrelated
     // memory that happened to sit at that position in some other list.

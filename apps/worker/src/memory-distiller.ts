@@ -70,6 +70,9 @@ const DISTILLATION_INSTRUCTION = [
   "Return each fact as an object:",
   "{\"fact\": \"...\", \"scope\": \"STATIC\", \"replaces\": [1]}",
   "",
+  "Never return a fact that is already listed under KNOWN FACTS. Those are",
+  "stored. Return only what this exchange adds or changes.",
+  "",
   "replaces lists the numbers of any KNOWN FACTS this one makes untrue. Use it",
   "when the person has changed their mind, moved, switched tools, or corrected",
   "something. Omit it or use [] when the new fact simply adds to what is known.",
@@ -209,6 +212,20 @@ function readReplaces(value: unknown, known: readonly KnownFact[]): string[] {
  * have followed the prohibitions, so anything unparseable yields no facts
  * rather than a salvage attempt.
  */
+/**
+ * Whether two facts say the same thing.
+ *
+ * Deliberately literal: case, punctuation, and spacing only. Catching
+ * paraphrase would need an embedding per candidate on the capture path, and a
+ * false positive there silently discards a real fact — a worse outcome than the
+ * duplicate it would have prevented.
+ */
+function sameFact(left: string, right: string): boolean {
+  const normalise = (value: string): string =>
+    value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  return normalise(left) === normalise(right);
+}
+
 export function parseDistillation(content: string, known: readonly KnownFact[] = []): DistilledFact[] {
   const fenced = content.match(/```(?:json)?\s*([\s\S]*?)```/);
   const body = (fenced?.[1] ?? content).trim();
@@ -232,6 +249,12 @@ export function parseDistillation(content: string, known: readonly KnownFact[] =
     // one it may also have attributed wrongly, and guessing at a rewrite would
     // store a sentence nobody said.
     if (writtenAsTheUser(fact)) continue;
+    // The pilot stored "prefers answers in Indonesian" three times: shown a fact
+    // as KNOWN, the model still re-emits it alongside whatever is genuinely new.
+    // Asking it not to in the instruction helps and does not hold, so the guard
+    // lives here. A restatement carries no information and costs a profile slot.
+    if (known.some((candidate) => sameFact(candidate.content, fact))) continue;
+    if (facts.some((seen) => sameFact(seen.fact, fact))) continue;
     facts.push({ fact: fact.slice(0, MAXIMUM_FACT_CHARACTERS), scope: read.scope, replaces: read.replaces });
     if (facts.length === MAXIMUM_FACTS) break;
   }

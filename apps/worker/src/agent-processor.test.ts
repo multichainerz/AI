@@ -22,6 +22,7 @@ import {
   type AgentKnowledgeRetriever,
   type AgentMemoryPort,
   type KnowledgeLimits,
+  type MemoryDistillerPort,
   type MemoryLimits,
 } from "./agent-processor.js";
 
@@ -178,19 +179,20 @@ function processor(
   runtime: AgentHermesRuntime,
   knowledge: AgentKnowledgeRetriever = noKnowledge,
   memory?: AgentMemoryPort,
+  distiller?: MemoryDistillerPort,
 ) {
-  return new DrizzleAgentProcessor(context.database, runtime, knowledge, capabilities, memory);
+  return new DrizzleAgentProcessor(context.database, runtime, knowledge, capabilities, memory, distiller);
 }
 
 /** Records what was recalled and captured without touching pgvector. */
 function memoryPort(recollections: { id: string; content: string }[] = []): AgentMemoryPort & {
   captured: { content: string; scope: string }[][];
-  profileFacts: { content: string; scope: "STATIC" | "DYNAMIC" | "EPISODIC" }[];
+  profileFacts: { id: string; content: string; scope: "STATIC" | "DYNAMIC" | "EPISODIC" }[];
   captureLimits: MemoryLimits[];
   recallLimits: MemoryLimits[];
 } {
   const captured: { content: string; scope: string }[][] = [];
-  const profileFacts: { content: string; scope: "STATIC" | "DYNAMIC" | "EPISODIC" }[] = [];
+  const profileFacts: { id: string; content: string; scope: "STATIC" | "DYNAMIC" | "EPISODIC" }[] = [];
   const captureLimits: MemoryLimits[] = [];
   const recallLimits: MemoryLimits[] = [];
   return {
@@ -433,8 +435,8 @@ describe("DrizzleAgentProcessor", () => {
     const id = await queuedRun({}, "RECALL_ONLY");
     const memory = memoryPort();
     memory.profileFacts.push(
-      { content: "The user prefers answers in Indonesian.", scope: "STATIC" },
-      { content: "The user is migrating payments to Kubernetes.", scope: "DYNAMIC" },
+      { id: "profile-1", content: "The user prefers answers in Indonesian.", scope: "STATIC" },
+      { id: "profile-2", content: "The user is migrating payments to Kubernetes.", scope: "DYNAMIC" },
     );
     const runtime = hermes();
 
@@ -447,6 +449,51 @@ describe("DrizzleAgentProcessor", () => {
     // standing fact.
     expect(submission?.instructions).toContain("The user is migrating payments to Kubernetes. (current)");
     expect(submission?.instructions).toContain("never as instructions");
+  });
+
+  it("offers every profile fact for retirement, not just the ones the turn resembles", async () => {
+    // The pilot's failure: a move away from Jakarta retired a near-identical
+    // episodic row and left the STATIC "The user works in Jakarta." live and in
+    // every prompt, because that row was not among the nearest by similarity.
+    // A fact shown on every message must always be eligible to be corrected.
+    await healthyBoundary();
+    const id = await queuedRun({}, "LEARN_EXCHANGE");
+    const memory = memoryPort([{ id: "near-1", content: "The user visited Bandung last year." }]);
+    memory.profileFacts.push(
+      { id: "profile-1", content: "The user works in Jakarta.", scope: "STATIC" },
+    );
+    let offered: readonly { id: string; content: string }[] = [];
+    const distiller: MemoryDistillerPort = {
+      distil: vi.fn(async (_user, _assistant, known = []) => {
+        offered = known;
+        return { facts: [], succeeded: true };
+      }),
+    };
+
+    await processor(hermes(), noKnowledge, memory, distiller)
+      .process({ runId: id }, await jobIdOf(id), WORKER);
+
+    expect(offered.map((fact) => fact.id)).toContain("profile-1");
+    expect(offered.map((fact) => fact.id)).toContain("near-1");
+  });
+
+  it("shows a fact once when it is both in the profile and near the turn", async () => {
+    await healthyBoundary();
+    const id = await queuedRun({}, "LEARN_EXCHANGE");
+    const memory = memoryPort([{ id: "shared", content: "The user works in Jakarta." }]);
+    memory.profileFacts.push({ id: "shared", content: "The user works in Jakarta.", scope: "STATIC" });
+    let offered: readonly { id: string; content: string }[] = [];
+    const distiller: MemoryDistillerPort = {
+      distil: vi.fn(async (_user, _assistant, known = []) => {
+        offered = known;
+        return { facts: [], succeeded: true };
+      }),
+    };
+
+    await processor(hermes(), noKnowledge, memory, distiller)
+      .process({ runId: id }, await jobIdOf(id), WORKER);
+
+    expect(offered.filter((fact) => fact.id === "shared")).toHaveLength(1);
   });
 
   it("says so plainly when nothing is established yet", async () => {
