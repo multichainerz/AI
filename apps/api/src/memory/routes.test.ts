@@ -7,7 +7,11 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.js";
 import { ADMIN_SESSION_COOKIE, type AdminSessionManager } from "../auth/admin-session.js";
-import { AgentMemoryNotFoundError, type MemoryManager } from "./memory-manager.js";
+import {
+  AgentMemoryNotFoundError,
+  ForgetMatchingUnavailableError,
+  type MemoryManager,
+} from "./memory-manager.js";
 
 const TOKEN = "a".repeat(43);
 const READER_TOKEN = "b".repeat(43);
@@ -85,6 +89,15 @@ function manager(): MemoryManager {
     records: vi.fn(async () => ({ items: [record] })),
     recordsForOwner: vi.fn(async () => ({ items: [record] })),
     forget: vi.fn(async () => undefined),
+    forgetMatching: vi.fn(async () => ({
+      dryRun: true,
+      forgetBatchId: null,
+      candidates: [],
+      matched: 0,
+      forgotten: 0,
+      truncated: false,
+      capped: false,
+    })),
     purge: vi.fn(async () => 3),
   };
 }
@@ -215,6 +228,63 @@ describe("memory record routes", () => {
       payload: { reason: "Retention exception approved." },
     });
     expect(response.statusCode).toBe(404);
+  });
+
+  it("previews a bulk forget, and rejects a request with no reason", async () => {
+    const memoryManager = manager();
+    memoryManager.forgetMatching = vi.fn(async () => ({
+      dryRun: true,
+      forgetBatchId: null,
+      candidates: [{
+        id: MEMORY_ID,
+        content: "The user leads the Titan migration.",
+        profileScope: "EPISODIC" as const,
+        matched: true,
+      }],
+      matched: 1,
+      forgotten: 0,
+      truncated: false,
+      capped: false,
+    }));
+    const { app } = await memoryApp(memoryManager);
+
+    const invalid = await app.inject({
+      method: "POST",
+      url: "/api/v1/admin/memory/records/forget-matching",
+      headers,
+      payload: { ownerSubject: "user:ada", target: "Project Titan" },
+    });
+    expect(invalid.statusCode).toBe(400);
+
+    const preview = await app.inject({
+      method: "POST",
+      url: "/api/v1/admin/memory/records/forget-matching",
+      headers,
+      payload: { ownerSubject: "user:ada", target: "Project Titan", reason: "They asked us to." },
+    });
+    expect(preview.statusCode).toBe(200);
+    expect(preview.json()).toMatchObject({ dryRun: true, matched: 1, forgotten: 0 });
+    // The default is the safe call, so an omitted dryRun previews.
+    expect(vi.mocked(memoryManager.forgetMatching).mock.calls[0]?.[1])
+      .toMatchObject({ dryRun: true, maximumForget: 25 });
+  });
+
+  it("answers an unreachable matcher with 503, not an empty match", async () => {
+    // A 200 saying nothing matched would be read as "the topic is not stored".
+    const memoryManager = manager();
+    memoryManager.forgetMatching = vi.fn(async () => {
+      throw new ForgetMatchingUnavailableError("No inference route is configured.");
+    });
+    const { app } = await memoryApp(memoryManager);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/admin/memory/records/forget-matching",
+      headers,
+      payload: { ownerSubject: "user:ada", target: "Project Titan", reason: "They asked us to." },
+    });
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toMatchObject({ error: "FORGET_MATCHING_UNAVAILABLE" });
   });
 
   it("locks the surface when memory services are not ready", async () => {

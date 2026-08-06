@@ -122,6 +122,45 @@ export const purgeAgentMemorySchema = z.object({
   reason: z.string().trim().min(3).max(500),
 }).strict();
 
+/**
+ * "Forget everything about Project Titan", bounded.
+ *
+ * The target is natural language because that is the shape the request arrives
+ * in; a person asks about a topic, not about row ids. Every field after it
+ * exists to keep a semantic bulk delete safe to offer: `dryRun` shows the
+ * decision before anything changes, and `maximumForget` stops a model that
+ * decided everything matches from emptying the store.
+ */
+export const forgetMatchingAgentMemorySchema = z.object({
+  ownerSubject: z.string().trim().min(1).max(200),
+  agentProfileId: z.uuid().optional(),
+  target: z.string().trim().min(2).max(300),
+  reason: z.string().trim().min(3).max(300),
+  /** Default true: the safe call is the one made by accident. */
+  dryRun: z.boolean().default(true),
+  maximumForget: z.number().int().min(1).max(200).default(25),
+}).strict();
+
+export const forgetMatchCandidateSchema = z.object({
+  id: z.uuid(),
+  content: z.string(),
+  profileScope: memoryProfileScopeSchema,
+  matched: z.boolean(),
+});
+
+export const forgetMatchingResultSchema = z.object({
+  dryRun: z.boolean(),
+  /** Null on a dry run: no batch exists until something is written. */
+  forgetBatchId: z.uuid().nullable(),
+  candidates: z.array(forgetMatchCandidateSchema),
+  matched: z.number().int().min(0),
+  forgotten: z.number().int().min(0),
+  /** True when more of the owner's memory existed than one decision could read. */
+  truncated: z.boolean(),
+  /** Set when the cap stopped the operation short of every match. */
+  capped: z.boolean(),
+});
+
 export type MemoryPolicyStatus = z.infer<typeof memoryPolicyStatusSchema>;
 export type MemoryPolicySettings = z.infer<typeof memoryPolicySettingsSchema>;
 export type MemoryPolicy = z.infer<typeof memoryPolicySchema>;
@@ -135,6 +174,9 @@ export type AgentMemoryRecordList = z.infer<typeof agentMemoryRecordListSchema>;
 export type AgentMemoryQuery = z.infer<typeof agentMemoryQuerySchema>;
 export type DeleteAgentMemory = z.infer<typeof deleteAgentMemorySchema>;
 export type PurgeAgentMemory = z.infer<typeof purgeAgentMemorySchema>;
+export type ForgetMatchingAgentMemory = z.infer<typeof forgetMatchingAgentMemorySchema>;
+export type ForgetMatchCandidate = z.infer<typeof forgetMatchCandidateSchema>;
+export type ForgetMatchingResult = z.infer<typeof forgetMatchingResultSchema>;
 
 /**
  * The effective mode for a run: a profile can be narrower than the policy but

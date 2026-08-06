@@ -5,6 +5,41 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.51.0 — 2026-08-06
+
+"Forget everything about Project Titan", previewed before it happens.
+
+Between deleting one memory at a time and purging a person entirely there was
+nothing, and a topic is what people actually ask about. Neither a `LIKE` nor a
+similarity floor answers it: the facts to remove may say "the Titan migration",
+"the Q3 rebuild", or name a colleague who only worked on it.
+
+- add `forgottenAt`, `forgetReason` and `forgetBatchId` to `AgentMemory`
+  (migration 0021), and fold "not forgotten" into the same predicate that
+  already governs expiry, so no query path can honour one and miss the other
+- decide with the model, not with a pattern: the owner's live facts are shown to
+  it against the topic, and it names which are genuinely about it
+- default `dryRun` to true. The preview is the whole safety argument, and the
+  safe call is the one made by accident
+- bound the blast radius with `maximumForget`, so a model that decided
+  everything matches cannot empty a store in one request
+- soft delete under one `forgetBatchId`, with the reason recorded, so what was
+  forgotten, by whom, and why outlives the rows
+- surface it on the memory view: name a person, name a topic, preview, confirm
+
+Two things are reported rather than hidden. `capped` says the limit stopped the
+operation short of every match, and `truncated` says the person had more stored
+memory than one decision could read — a partial scan must never be presentable
+as a complete one.
+
+The matcher speaks only HTTP to the inference route, so it carries no model
+weights into the API process — the same rule that keeps an embedder out of the
+document manager. That is affordable here because agent memory is small: each
+fact is at most 200 characters and policy bounds an owner to a few hundred.
+
+An unreachable model is a 503, not a 200 reporting no matches. An operator told
+nothing matched will conclude the topic is not stored, and act on that.
+
 ## ai-v1.50.1 — 2026-08-06
 
 Do not mine the whole archive, and do not store what the assistant just said.

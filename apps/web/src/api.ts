@@ -146,6 +146,8 @@ import {
   memoryPolicySchema,
   memoryPolicyListSchema,
   agentMemoryRecordListSchema,
+  forgetMatchingResultSchema,
+  type ForgetMatchingResult,
   hermesRuntimeCatalogueSchema,
   promptTemplateSchema,
   type PromptTemplate,
@@ -1140,6 +1142,21 @@ export async function forgetOwnAgentMemory(id: string): Promise<void> {
     method: "DELETE", headers: adminHeaders(), credentials: "same-origin",
   });
   await parsedResponse(response);
+}
+
+/**
+ * "Forget everything about X" — previewed by default.
+ *
+ * `dryRun` is the caller's decision because the preview and the commit are the
+ * same request; the server defaults it to true, so an omitted flag previews.
+ */
+export async function forgetMatchingAgentMemory(
+  input: { ownerSubject: string; target: string; reason: string; dryRun: boolean; maximumForget?: number },
+): Promise<ForgetMatchingResult> {
+  const response = await fetch("/api/v1/admin/memory/records/forget-matching", {
+    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return forgetMatchingResultSchema.parse(await parsedResponse(response));
 }
 
 export async function purgeAgentMemory(ownerSubject: string, reason: string): Promise<{ removed: number }> {

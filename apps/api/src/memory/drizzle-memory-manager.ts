@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type {
   AgentMemoryQuery,
   AgentMemoryRecord,
@@ -5,6 +6,8 @@ import type {
   ChangeMemoryPolicyState,
   CreateMemoryPolicy,
   MemoryPolicy,
+  ForgetMatchingAgentMemory,
+  ForgetMatchingResult,
   MemoryPolicyList,
   PurgeAgentMemory,
   UpdateMemoryPolicy,
@@ -16,11 +19,13 @@ import {
   memoryPolicy,
   type OrcaSynapseDatabase,
 } from "@orcasynapse/database";
-import { and, desc, eq, ne } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { advisoryLock, increment, isUniqueViolation } from "../database-support.js";
 import type { AdminPrincipal } from "../auth/admin-session.js";
+import type { ForgetMatcher } from "./forget-matcher.js";
 import {
   AgentMemoryNotFoundError,
+  ForgetMatchingUnavailableError,
   MemoryPolicyConflictError,
   MemoryPolicyNotFoundError,
   type MemoryManager,
@@ -62,7 +67,12 @@ function dto(policy: StoredPolicy): MemoryPolicy {
  * gets the lifecycle and the audit trail without the evaluation machinery.
  */
 export class DrizzleMemoryManager implements MemoryManager {
-  constructor(private readonly database: OrcaSynapseDatabase) {}
+  constructor(
+    private readonly database: OrcaSynapseDatabase,
+    // Absent on an installation with no inference route configured, in which
+    // case forget-matching reports that plainly rather than matching nothing.
+    private readonly matcher?: ForgetMatcher,
+  ) {}
 
   async list(): Promise<MemoryPolicyList> {
     const rows = await this.database.select().from(memoryPolicy).orderBy(desc(memoryPolicy.updatedAt));
@@ -269,6 +279,120 @@ export class DrizzleMemoryManager implements MemoryManager {
       // The reason and the owner, never the content that was deleted.
       metadata: { reason, ownerSubject: removed[0]!.ownerSubject, selfService: Boolean(principal.ownerSubject) },
     });
+  }
+
+  /**
+   * "Forget everything about X", previewed before it happens.
+   *
+   * Between deleting one row at a time and purging an owner entirely there was
+   * nothing, and a topic is what people actually ask about. The preview is what
+   * makes that safe to offer: the operator sees exactly which facts a model
+   * judged to be about the topic, and only then commits.
+   */
+  async forgetMatching(
+    principal: { id: string; ownerSubject?: string },
+    input: ForgetMatchingAgentMemory,
+  ): Promise<ForgetMatchingResult> {
+    if (!this.matcher) {
+      throw new ForgetMatchingUnavailableError(
+        "Forget-matching needs an inference route, and none is configured.",
+      );
+    }
+    // An enterprise principal may only reach their own memory; the owner in the
+    // request cannot widen that.
+    const ownerSubject = principal.ownerSubject ?? input.ownerSubject;
+
+    const live = await this.database
+      .select({
+        id: agentMemory.id,
+        content: agentMemory.content,
+        profileScope: agentMemory.profileScope,
+      })
+      .from(agentMemory)
+      .where(and(
+        eq(agentMemory.ownerSubject, ownerSubject),
+        input.agentProfileId ? eq(agentMemory.agentProfileId, input.agentProfileId) : undefined,
+        eq(agentMemory.isLatest, true),
+        isNull(agentMemory.forgottenAt),
+      ))
+      .orderBy(desc(agentMemory.createdAt));
+
+    const decision = await this.matcher.match(input.target, live);
+    if (!decision.succeeded) {
+      throw new ForgetMatchingUnavailableError(
+        "The inference route could not decide which memories match; nothing was changed.",
+      );
+    }
+
+    const matchedIds = new Set(decision.matchedIds);
+    const candidates = live
+      .filter((row) => matchedIds.has(row.id))
+      .map((row) => ({ ...row, matched: true }));
+    // Bounded as a matter of policy, not of taste: a model that decided
+    // everything matches must not be able to empty the store in one call.
+    const capped = candidates.length > input.maximumForget;
+    const toForget = candidates.slice(0, input.maximumForget);
+
+    if (input.dryRun || toForget.length === 0) {
+      return {
+        dryRun: input.dryRun,
+        forgetBatchId: null,
+        candidates: toForget,
+        matched: candidates.length,
+        forgotten: 0,
+        truncated: decision.truncated,
+        capped,
+      };
+    }
+
+    // Soft delete: the rows stay so "what was forgotten, by whom, and why" is
+    // still answerable, and one batch id ties the whole decision together.
+    const forgetBatchId = randomUUID();
+    const forgotten = await this.database
+      .update(agentMemory)
+      .set({
+        forgottenAt: new Date(),
+        forgetReason: input.reason.slice(0, 300),
+        forgetBatchId,
+      })
+      .where(and(
+        eq(agentMemory.ownerSubject, ownerSubject),
+        inArray(agentMemory.id, toForget.map((row) => row.id)),
+        isNull(agentMemory.forgottenAt),
+      ))
+      .returning({ id: agentMemory.id });
+
+    await this.database.insert(auditEvent).values({
+      actorType: "USER",
+      actorId: principal.id,
+      action: "memory.forgotten",
+      resourceType: "AgentMemory",
+      resourceId: forgetBatchId,
+      outcome: "SUCCESS",
+      // The target and the counts, never the content that was forgotten.
+      metadata: {
+        reason: input.reason,
+        target: input.target,
+        ownerSubject,
+        agentProfileId: input.agentProfileId ?? null,
+        forgetBatchId,
+        matched: candidates.length,
+        forgotten: forgotten.length,
+        truncated: decision.truncated,
+        capped,
+        selfService: Boolean(principal.ownerSubject),
+      },
+    });
+
+    return {
+      dryRun: false,
+      forgetBatchId,
+      candidates: toForget,
+      matched: candidates.length,
+      forgotten: forgotten.length,
+      truncated: decision.truncated,
+      capped,
+    };
   }
 
   async purge(principal: AdminPrincipal, input: PurgeAgentMemory): Promise<number> {

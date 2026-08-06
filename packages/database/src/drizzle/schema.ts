@@ -1284,13 +1284,21 @@ export const agentMemory = pgTable("AgentMemory", {
 	supersededReason: varchar({ length: 300 }),
 	sourceRunId: uuid(),
 	sourceConversationId: uuid(),
+	// Bulk forgetting is a soft delete: a person asking for a topic to be
+	// forgotten is answered by the fact ceasing to be recalled, and the trail of
+	// what was forgotten, by whom and why has to outlive the rows themselves.
+	// The batch id ties one operator decision to every row it touched.
+	forgottenAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
+	forgetReason: varchar({ length: 300 }),
+	forgetBatchId: uuid(),
 	retentionUntil: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
 	index("AgentMemory_content_fts_idx").using("gin", sql`to_tsvector('simple'::regconfig, content)`),
+	index("AgentMemory_forgetBatchId_idx").using("btree", table.forgetBatchId.asc().nullsLast()),
 	index("AgentMemory_embedding_idx").using("hnsw", table.embedding.asc().nullsLast().op("vector_cosine_ops")),
 	index("AgentMemory_owner_profile_idx").using("btree", table.ownerSubject.asc().nullsLast(), table.agentProfileId.asc().nullsLast()),
-	index("AgentMemory_latest_idx").using("btree", table.ownerSubject.asc().nullsLast(), table.agentProfileId.asc().nullsLast()).where(sql`"isLatest"`),
+	index("AgentMemory_latest_idx").using("btree", table.ownerSubject.asc().nullsLast(), table.agentProfileId.asc().nullsLast()).where(sql`"isLatest" AND "forgottenAt" IS NULL`),
 	index("AgentMemory_profile_idx").using("btree", table.ownerSubject.asc().nullsLast(), table.agentProfileId.asc().nullsLast(), table.profileScope.asc().nullsLast()),
 	index("AgentMemory_retentionUntil_idx").using("btree", table.retentionUntil.asc().nullsLast()),
 	foreignKey({

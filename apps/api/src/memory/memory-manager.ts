@@ -3,6 +3,8 @@ import type {
   AgentMemoryRecordList,
   ChangeMemoryPolicyState,
   CreateMemoryPolicy,
+  ForgetMatchingAgentMemory,
+  ForgetMatchingResult,
   MemoryPolicy,
   MemoryPolicyList,
   PurgeAgentMemory,
@@ -22,6 +24,11 @@ export interface MemoryManager {
   /** What one person's agents have stored about them. */
   recordsForOwner(ownerSubject: string, limit?: number): Promise<AgentMemoryRecordList>;
   forget(principal: { id: string; ownerSubject?: string }, memoryId: string, reason: string): Promise<void>;
+  /** Bulk forget by topic, previewed on a dry run. */
+  forgetMatching(
+    principal: { id: string; ownerSubject?: string },
+    input: ForgetMatchingAgentMemory,
+  ): Promise<ForgetMatchingResult>;
   purge(principal: AdminPrincipal, input: PurgeAgentMemory): Promise<number>;
 }
 
@@ -36,6 +43,20 @@ export class MemoryPolicyConflictError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "MemoryPolicyConflictError";
+  }
+}
+
+/**
+ * Raised when forget-matching cannot reach a model to decide with.
+ *
+ * Distinct from "nothing matched" on purpose: an operator who asked to forget a
+ * topic and is told nothing matched will assume the topic is not stored, and
+ * that would be a false assurance rather than a failed request.
+ */
+export class ForgetMatchingUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ForgetMatchingUnavailableError";
   }
 }
 
