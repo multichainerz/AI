@@ -5,6 +5,32 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.52.1 — 2026-08-06
+
+A standing preference is not a task instruction.
+
+The metric shipped in ai-v1.52.0 scored 5/6 on its first run against the pilot,
+with `profile 0/1` and a pointer at the always-injected block. The store showed
+the cause was upstream of injection: "Please always answer me in Indonesian from
+now on" had never been captured at all. Two rules in the extraction instruction
+contradicted each other — a language preference is listed as durable, and
+"instructions addressed to the assistant" are listed as never recorded. A 2.6B
+model applied the prohibition and dropped the single most useful thing the person
+had said.
+
+- separate a one-off instruction for the task at hand from a standing one, and
+  say plainly that "always answer me in Indonesian" is a preference about how
+  they want to be helped
+- show both readings as examples, since the same words are a task once and a
+  preference forever
+
+Also: the quality harness defaulted to `http://api:8080`. The API listens on
+4000 inside the compose network; 8080 is the web container's published port, so
+the default could never connect.
+
+This is the metric doing its job on the day it shipped — it named the mechanism,
+and the mechanism turned out not to be the one the failure looked like.
+
 ## ai-v1.52.0 — 2026-08-06
 
 A memory number that says which mechanism is failing.

@@ -272,6 +272,24 @@ describe("MemoryDistiller", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
+  it("tells the model a standing instruction is durable, not a task", async () => {
+    // The quality metric caught this: "always answer me in Indonesian" was
+    // dropped, because the prohibition on recording instructions swallowed the
+    // one preference most worth keeping. The two rules had to be separated.
+    const fetcher = answering("[]");
+    await new MemoryDistiller(resolver(), fetcher as never).distil(exchange("Anything"));
+    const instruction = JSON.parse(String(
+      (fetcher.mock.calls[0] as unknown as [string, RequestInit])[1].body,
+    )).messages[0].content;
+
+    expect(instruction).toContain("one-off instructions for the task at hand");
+    expect(instruction).toContain("A standing instruction is different and IS durable");
+    // And shown both ways round, since the distinction is what a small model
+    // gets wrong: the same words are a task once and a preference forever.
+    expect(instruction).toContain("USER: Summarise this document for me in Indonesian.");
+    expect(instruction).toContain("USER: Please always answer me in Indonesian from now on.");
+  });
+
   it("drops a fact the model copied out of the assistant's own answer", async () => {
     // The pilot's first session sweep read "list the conference rundown" and
     // stored five panel titles as DYNAMIC facts — always injected, about nobody.

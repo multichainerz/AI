@@ -15,8 +15,9 @@
  *
  *   docker compose exec worker node apps/worker/scripts/measure-memory-quality.mjs
  *
- * Reads ORCASYNAPSE_BASE_URL (default http://api:8080) and
- * ORCASYNAPSE_ADMIN_CREDENTIALS (a path to the local administrator credentials).
+ * Reads ORCASYNAPSE_BASE_URL (default http://api:4000, the API's port inside
+ * the compose network) and ORCASYNAPSE_ADMIN_CREDENTIALS (a path to the local
+ * administrator credentials).
  * Nothing read from either is logged.
  */
 import { randomUUID } from "node:crypto";
@@ -35,7 +36,7 @@ import {
   summarise,
 } from "../dist/memory-quality.js";
 
-const baseUrl = (process.env.ORCASYNAPSE_BASE_URL ?? "http://api:8080").replace(/\/+$/, "");
+const baseUrl = (process.env.ORCASYNAPSE_BASE_URL ?? "http://api:4000").replace(/\/+$/, "");
 const credentialsPath = process.env.ORCASYNAPSE_ADMIN_CREDENTIALS;
 if (!credentialsPath) {
   throw new Error("ORCASYNAPSE_ADMIN_CREDENTIALS must point to the local administrator credentials file.");
