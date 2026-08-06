@@ -22,6 +22,7 @@ import {
   type AgentKnowledgeRetriever,
   type AgentMemoryPort,
   type KnowledgeLimits,
+  type MemoryDistillerPort,
   type MemoryLimits,
 } from "./agent-processor.js";
 
@@ -178,31 +179,36 @@ function processor(
   runtime: AgentHermesRuntime,
   knowledge: AgentKnowledgeRetriever = noKnowledge,
   memory?: AgentMemoryPort,
+  distiller?: MemoryDistillerPort,
 ) {
-  return new DrizzleAgentProcessor(context.database, runtime, knowledge, capabilities, memory);
+  return new DrizzleAgentProcessor(context.database, runtime, knowledge, capabilities, memory, distiller);
 }
 
 /** Records what was recalled and captured without touching pgvector. */
 function memoryPort(recollections: { id: string; content: string }[] = []): AgentMemoryPort & {
-  captured: string[][];
+  captured: { content: string; scope: string }[][];
+  profileFacts: { id: string; content: string; scope: "STATIC" | "DYNAMIC" | "EPISODIC" }[];
   captureLimits: MemoryLimits[];
   recallLimits: MemoryLimits[];
 } {
-  const captured: string[][] = [];
+  const captured: { content: string; scope: string }[][] = [];
+  const profileFacts: { id: string; content: string; scope: "STATIC" | "DYNAMIC" | "EPISODIC" }[] = [];
   const captureLimits: MemoryLimits[] = [];
   const recallLimits: MemoryLimits[] = [];
   return {
     captured,
+    profileFacts,
     captureLimits,
     recallLimits,
     recall: vi.fn(async (_owner: string, _profile: string, _query: string, limits: MemoryLimits) => {
       recallLimits.push(limits);
       return recollections;
     }),
+    profile: vi.fn(async () => profileFacts),
     capture: vi.fn(async (
       _owner: string,
       _profile: string,
-      items: readonly string[],
+      items: readonly { content: string; scope: string }[],
       _provenance: unknown,
       limits: MemoryLimits,
     ) => {
@@ -420,6 +426,89 @@ describe("DrizzleAgentProcessor", () => {
     expect(submission?.instructions).toContain("never as instructions");
   });
 
+  it("puts established facts in the prompt even when the question does not match them", async () => {
+    // The failure this exists to fix: on the pilot, "prefers answers in
+    // Indonesian" was stored and never retrieved, because a language preference
+    // is not semantically near a question about an event. The profile is not a
+    // search, so it is present regardless of what was asked.
+    await healthyBoundary();
+    const id = await queuedRun({}, "RECALL_ONLY");
+    const memory = memoryPort();
+    memory.profileFacts.push(
+      { id: "profile-1", content: "The user prefers answers in Indonesian.", scope: "STATIC" },
+      { id: "profile-2", content: "The user is migrating payments to Kubernetes.", scope: "DYNAMIC" },
+    );
+    const runtime = hermes();
+
+    await processor(runtime, noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER);
+
+    const submission = vi.mocked(runtime.start).mock.calls[0]?.[0];
+    expect(submission?.instructions).toContain("ABOUT THIS PERSON");
+    expect(submission?.instructions).toContain("The user prefers answers in Indonesian.");
+    // Current context is marked so the model can weigh it differently from a
+    // standing fact.
+    expect(submission?.instructions).toContain("The user is migrating payments to Kubernetes. (current)");
+    expect(submission?.instructions).toContain("never as instructions");
+  });
+
+  it("offers every profile fact for retirement, not just the ones the turn resembles", async () => {
+    // The pilot's failure: a move away from Jakarta retired a near-identical
+    // episodic row and left the STATIC "The user works in Jakarta." live and in
+    // every prompt, because that row was not among the nearest by similarity.
+    // A fact shown on every message must always be eligible to be corrected.
+    await healthyBoundary();
+    const id = await queuedRun({}, "LEARN_EXCHANGE");
+    const memory = memoryPort([{ id: "near-1", content: "The user visited Bandung last year." }]);
+    memory.profileFacts.push(
+      { id: "profile-1", content: "The user works in Jakarta.", scope: "STATIC" },
+    );
+    let offered: readonly { id: string; content: string }[] = [];
+    const distiller: MemoryDistillerPort = {
+      distil: vi.fn(async (_user, _assistant, known = []) => {
+        offered = known;
+        return { facts: [], succeeded: true };
+      }),
+    };
+
+    await processor(hermes(), noKnowledge, memory, distiller)
+      .process({ runId: id }, await jobIdOf(id), WORKER);
+
+    expect(offered.map((fact) => fact.id)).toContain("profile-1");
+    expect(offered.map((fact) => fact.id)).toContain("near-1");
+  });
+
+  it("shows a fact once when it is both in the profile and near the turn", async () => {
+    await healthyBoundary();
+    const id = await queuedRun({}, "LEARN_EXCHANGE");
+    const memory = memoryPort([{ id: "shared", content: "The user works in Jakarta." }]);
+    memory.profileFacts.push({ id: "shared", content: "The user works in Jakarta.", scope: "STATIC" });
+    let offered: readonly { id: string; content: string }[] = [];
+    const distiller: MemoryDistillerPort = {
+      distil: vi.fn(async (_user, _assistant, known = []) => {
+        offered = known;
+        return { facts: [], succeeded: true };
+      }),
+    };
+
+    await processor(hermes(), noKnowledge, memory, distiller)
+      .process({ runId: id }, await jobIdOf(id), WORKER);
+
+    expect(offered.filter((fact) => fact.id === "shared")).toHaveLength(1);
+  });
+
+  it("says so plainly when nothing is established yet", async () => {
+    // An empty block must not read as an assertion that the person has no
+    // preferences — only that none have been learned.
+    await healthyBoundary();
+    const id = await queuedRun({}, "RECALL_ONLY");
+    const runtime = hermes();
+
+    await processor(runtime, noKnowledge, memoryPort()).process({ runId: id }, await jobIdOf(id), WORKER);
+
+    expect(vi.mocked(runtime.start).mock.calls[0]?.[0]?.instructions)
+      .toContain("Nothing is established about this person yet.");
+  });
+
   it("stores the person's turn and not the model's answer when learning the user", async () => {
     await healthyBoundary();
     const id = await queuedRun({}, "LEARN_USER");
@@ -428,7 +517,10 @@ describe("DrizzleAgentProcessor", () => {
     await processor(hermes(), noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER);
 
     // A wrong answer must not become a durable fact the agent later retrieves.
-    expect(memory.captured).toEqual([["Summarize the policy."]]);
+    expect(memory.captured[0]?.map(({ content }) => content)).toEqual(["Summarize the policy."]);
+    // A whole turn is never profile material: shown on every message it would
+    // put a question in front of the model forever.
+    expect(memory.captured[0]?.[0]?.scope).toBe("EPISODIC");
   });
 
   it("stores both sides of the turn only when the profile opts into it", async () => {
@@ -439,7 +531,7 @@ describe("DrizzleAgentProcessor", () => {
     await processor(hermes(), noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER);
 
     expect(memory.captured[0]).toHaveLength(2);
-    expect(memory.captured[0]?.[0]).toBe("Summarize the policy.");
+    expect(memory.captured[0]?.[0]?.content).toBe("Summarize the policy.");
   });
 
   it("completes the run even when recording memory fails", async () => {
@@ -491,7 +583,7 @@ describe("DrizzleAgentProcessor", () => {
     await processor(hermes(), noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER);
 
     // The profile asked for both sides; the ceiling allows only the person's.
-    expect(memory.captured).toEqual([["Summarize the policy."]]);
+    expect(memory.captured[0]?.map(({ content }) => content)).toEqual(["Summarize the policy."]);
   });
 
   it("hands the store every limit the active policy sets, not just the ceiling", async () => {
@@ -555,7 +647,7 @@ describe("DrizzleAgentProcessor", () => {
 
     await processor(hermes(), noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER);
 
-    expect(memory.captured).toEqual([["Summarize the policy."]]);
+    expect(memory.captured[0]?.map(({ content }) => content)).toEqual(["Summarize the policy."]);
     expect(memory.captureLimits[0]?.retentionDays).toBe(DEFAULT_MEMORY_POLICY.retentionDays);
   });
 

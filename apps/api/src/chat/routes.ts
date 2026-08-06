@@ -18,6 +18,11 @@ import {
 } from "@orcasynapse/contracts";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import {
+  AgentConflictError,
+  AgentNotFoundError,
+  AgentRuntimeDisabledError,
+} from "../agents/agent-manager.js";
+import {
   adminSessionToken,
   requireAdmin,
   type AdminSessionManager,
@@ -116,6 +121,22 @@ async function sendChatError(reply: FastifyReply, error: unknown): Promise<void>
   }
   if (error instanceof ChatPolicyViolationError) {
     await reply.code(422).send({ error: "GUARDRAIL_BLOCKED", message: error.message });
+    return;
+  }
+  // Sending a message submits an agent run, so the agent errors surface here
+  // too. Unmapped they became 500s: the pilot answered "the agent is busy" with
+  // an Internal Server Error and a stack trace, which reads as a broken control
+  // plane rather than a limit the operator configured.
+  if (error instanceof AgentNotFoundError) {
+    await reply.code(404).send({ error: "AGENT_NOT_FOUND", message: error.message });
+    return;
+  }
+  if (error instanceof AgentConflictError) {
+    await reply.code(409).send({ error: "AGENT_CONFLICT", message: error.message });
+    return;
+  }
+  if (error instanceof AgentRuntimeDisabledError) {
+    await reply.code(423).send({ error: "AGENT_RUNTIME_DISABLED", message: error.message });
     return;
   }
   throw error;

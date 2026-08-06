@@ -5,6 +5,43 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v0.9.0 — 2026-08-06
+
+Agent memory becomes what it claims to be: extracted facts, in the third person,
+with a profile and a version chain.
+
+- **Stop storing whole turns.** Of 21 stored "memories" on the pilot, every one
+  was a question, a command, a greeting, the model describing itself, or the
+  operator's own system prompt — and recall embeds a new question, so the
+  highest-scoring hits were the least useful rows in the store.
+  `MemoryDistiller` extracts durable facts about the person after the answer is
+  delivered, and a distiller that cannot be reached stores nothing rather than
+  quietly reinstating the behaviour it replaces.
+- **Keep extracted facts in the third person.** The pilot stored a first-person
+  sentence, which reads later as the assistant describing itself. A fact opening
+  with a first-person pronoun is dropped rather than rewritten, because a model
+  that mis-attributed the speaker may have got the attribution wrong too.
+- **A profile: the facts an agent is told regardless of the question.** Semantic
+  search cannot retrieve a fact that resembles no question, so each fact is
+  classified `STATIC`, `DYNAMIC` or `EPISODIC`, and an **ABOUT THIS PERSON** block
+  is injected with no similarity search — bounded twice and trimmed a whole fact
+  at a time, since half a fact is worse than one fewer.
+- **Version chains: a corrected fact stops being recalled without being lost.** A
+  similarity floor cannot decide this — "loves Adidas" and "prefers Puma" are not
+  near-duplicates, yet one plainly retires the other — so the model decides,
+  inside the distillation call already being made. Supersede and insert happen in
+  one transaction, so no reader ever sees both as current, and candidates are
+  shown numbered rather than by id.
+- Three follow-ups the pilot forced: the distiller had no room to think, so a
+  truncated answer read as "nothing learned"; supersession retired a near-
+  identical episodic row while leaving the always-injected one live; and the
+  chain columns were never populated at all.
+- **CI goes green after 76 consecutive red runs.** `verify` typechecked before
+  building, and cross-package types resolve through each package's emitted
+  `dist/index.d.ts` — so on a fresh checkout, which is every CI run, the
+  importing files' inferred types collapsed to `any`. It never reproduced on a
+  development machine, because a leftover `dist/` satisfies the import.
+
 ## v0.8.0 — 2026-08-05 – 2026-08-06
 
 Toolset admission, and a signed desired-state document the runtime actually

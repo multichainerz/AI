@@ -9,6 +9,7 @@ import { WorkerRuntime } from "./worker-runtime.js";
 import { DocumentIngestor } from "./document-ingestor.js";
 import { DrizzlePendingRunSource, DrizzleWorkerRegistry } from "./worker-registry.js";
 import { DrizzleAgentProcessor, WorkerAgentKnowledgeRetriever, WorkerAgentMemory } from "./agent-processor.js";
+import { MemoryDistiller } from "./memory-distiller.js";
 
 const databaseUrl = readBootstrapSecret("orcasynapse_database_url");
 const { database, close: closeDatabase } = createDrizzleClient(databaseUrl);
@@ -41,6 +42,7 @@ const runtime = new WorkerRuntime(
     ),
     new RunCapabilityIssuer(masterKey),
     new WorkerAgentMemory(new AgentMemoryStore(database, APPROVED_EMBEDDING_MODEL), embedder),
+    new MemoryDistiller(connectionResolver),
   ),
   1_000,
   5,

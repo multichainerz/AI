@@ -1,9 +1,27 @@
 import { and, cosineDistance, desc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import type { MemoryProfileScope } from "@orcasynapse/contracts";
 import { agentMemory, type OrcaSynapseDatabase } from "@orcasynapse/database";
+
+/**
+ * Where a new fact sits in the chain of corrections that produced it.
+ *
+ * Only set for a fact that retires another. A fact starting its own chain keeps
+ * the column defaults — version 1, no parent, and a null root meaning "this row
+ * is the origin" — so an origin never has to be updated to point at itself.
+ */
+interface MemoryLineage {
+  version: number;
+  parentMemoryId: string;
+  rootMemoryId: string;
+}
 
 export interface RememberedItem {
   content: string;
   embedding: number[];
+  /** How long the fact stays useful; decides whether it is always injected. */
+  scope?: MemoryProfileScope;
+  /** Ids of facts this one makes untrue; superseded in the same transaction. */
+  replaces?: readonly string[];
 }
 
 export interface MemoryProvenance {
@@ -51,12 +69,69 @@ export class AgentMemoryStore {
     provenance: MemoryProvenance = {},
   ): Promise<number> {
     if (items.length === 0) return 0;
-    await this.database.insert(agentMemory).values(
-      items.map((item) => ({
+    // One transaction: a reader must never see both the old fact and its
+    // replacement as current, nor lose the old one without the new one landing.
+    return this.database.transaction(async (transaction) => {
+      const lineage = new Map<number, MemoryLineage>();
+      for (const [index, item] of items.entries()) {
+        const replaces = (item.replaces ?? []).filter((id) => id.length > 0);
+        if (replaces.length === 0) continue;
+        // Read before writing: the new row's place in the chain is derived from
+        // what it retires, and after the update those rows are no longer latest.
+        const retired = await transaction
+          .select({ id: agentMemory.id, version: agentMemory.version, root: agentMemory.rootMemoryId })
+          .from(agentMemory)
+          .where(and(
+            eq(agentMemory.ownerSubject, ownerSubject),
+            eq(agentMemory.agentProfileId, agentProfileId),
+            inArray(agentMemory.id, [...replaces]),
+            eq(agentMemory.isLatest, true),
+          ))
+          .orderBy(desc(agentMemory.version));
+        const head = retired[0];
+        if (!head) continue;
+        await transaction
+          .update(agentMemory)
+          .set({
+            isLatest: false,
+            supersededAt: new Date(),
+            supersededReason: `Superseded by a later statement: ${item.content}`.slice(0, 300),
+          })
+          .where(and(
+            eq(agentMemory.ownerSubject, ownerSubject),
+            eq(agentMemory.agentProfileId, agentProfileId),
+            inArray(agentMemory.id, retired.map((row) => row.id)),
+          ));
+        // When one fact retires several, the longest-lived chain wins the link:
+        // its root is the origin a reader following parents would arrive at.
+        lineage.set(index, {
+          version: head.version + 1,
+          parentMemoryId: head.id,
+          rootMemoryId: head.root ?? head.id,
+        });
+      }
+      return this.insertFacts(transaction, ownerSubject, agentProfileId, items, provenance, lineage);
+    });
+  }
+
+  private async insertFacts(
+    executor: OrcaSynapseDatabase | Parameters<Parameters<OrcaSynapseDatabase["transaction"]>[0]>[0],
+    ownerSubject: string,
+    agentProfileId: string,
+    items: readonly RememberedItem[],
+    provenance: MemoryProvenance,
+    lineage: ReadonlyMap<number, MemoryLineage> = new Map(),
+  ): Promise<number> {
+    await executor.insert(agentMemory).values(
+      items.map((item, index) => ({
         ownerSubject,
         agentProfileId,
         content: item.content,
+        // Absent for a fact that starts its own chain: version 1, no parent, and
+        // a null root that means "this row is the origin".
+        ...lineage.get(index),
         characterCount: item.content.length,
+        profileScope: item.scope ?? "EPISODIC",
         embeddingModel: this.embeddingModel,
         embedding: item.embedding,
         sourceRunId: provenance.runId ?? null,
@@ -96,6 +171,9 @@ export class AgentMemoryStore {
           eq(agentMemory.ownerSubject, ownerSubject),
           eq(agentMemory.agentProfileId, agentProfileId),
           gt(similarity, options.minimumScore),
+          // A retired fact stays for audit but must never be recalled: the
+          // whole point of superseding is that the agent stops asserting it.
+          eq(agentMemory.isLatest, true),
           this.unexpired(),
         ),
       )
@@ -111,6 +189,36 @@ export class AgentMemoryStore {
   }
 
   /** Newest first, for an owner reviewing what an agent has learned. */
+  /**
+   * The facts that must be present regardless of what was asked.
+   *
+   * Deliberately not a similarity search. A language preference has nothing in
+   * common, vector-wise, with "what should I prepare for the event?", so recall
+   * would never surface it however the floor is tuned — and facts like that are
+   * exactly the ones meant to colour every answer. Ordering puts STATIC first
+   * and then the most recent, so a hard cap trims current detail rather than
+   * the standing facts.
+   */
+  async profile(
+    ownerSubject: string,
+    agentProfileId: string,
+    limit = 10,
+  ): Promise<Array<{ id: string; content: string; scope: MemoryProfileScope }>> {
+    const rows = await this.database
+      .select({ id: agentMemory.id, content: agentMemory.content, scope: agentMemory.profileScope })
+      .from(agentMemory)
+      .where(and(
+        eq(agentMemory.ownerSubject, ownerSubject),
+        eq(agentMemory.agentProfileId, agentProfileId),
+        inArray(agentMemory.profileScope, ["STATIC", "DYNAMIC"]),
+        eq(agentMemory.isLatest, true),
+        this.unexpired(),
+      ))
+      .orderBy(sql`CASE WHEN ${agentMemory.profileScope} = 'STATIC' THEN 0 ELSE 1 END`, desc(agentMemory.createdAt))
+      .limit(limit);
+    return rows;
+  }
+
   async list(ownerSubject: string, agentProfileId: string, limit = 100): Promise<MemoryHit[]> {
     const rows = await this.database
       .select({ id: agentMemory.id, content: agentMemory.content, createdAt: agentMemory.createdAt })

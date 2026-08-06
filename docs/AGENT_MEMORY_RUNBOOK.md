@@ -14,17 +14,35 @@ Set per agent, in **Agents → profile editor → Memory**.
 | --- | --- | --- | --- |
 | `DOCUMENTS_ONLY` *(default)* | documents only | nothing | The agent should answer from sources and forget the person entirely. |
 | `RECALL_ONLY` | documents + memory | nothing | Memory an operator seeded should be usable, but the agent must not add to it. |
-| `LEARN_USER` | documents + memory | what the person says | A personal assistant that accumulates someone's stable facts and preferences. |
-| `LEARN_EXCHANGE` | documents + memory | both sides of the turn | Richest recall, accepting that the model's own output becomes durable memory. |
+| `LEARN_USER` | documents + memory | facts from what the person says | A personal assistant that accumulates someone's stable facts and preferences. |
+| `LEARN_EXCHANGE` | documents + memory | facts from either side of the turn | Richest recall, accepting that something the model asserted can become a durable fact. |
 
 **`LEARN_USER` never stores model output.** That is the point of the split: an
 answer the model got wrong once would otherwise be retrieved by later runs and
 treated as an established fact about the person. `LEARN_EXCHANGE` opts into that
 trade deliberately.
 
-Model-distilled capture (a second inference call summarizing each exchange) is
-deliberately not implemented. It needs its own prompt, its own governance, and
-its own failure mode.
+## What a capture actually stores
+
+Since `v0.9.0`, capture stores **extracted facts, not the turn itself**, and
+the mode above decides only whether capture happens at all.
+
+Storing turns verbatim does not produce memory. On the pilot it produced 21 rows
+that were entirely questions (`what is your name?`), commands, greetings, the
+model describing itself (`I am LFM…`), and in one case the operator's own system
+prompt. Recall then embeds a new question and matches previous *questions*, so
+the highest-scoring hits were the least useful rows in the store. That is not a
+tuning problem — no `recallMinimumScore` rescues it, because the capture step is
+what is wrong.
+
+After the answer is delivered, one model call extracts durable facts about the
+person and returns an empty list when the turn taught nothing, which is the
+common case. Nothing is stored when it returns nothing, and **nothing is stored
+when the model cannot be reached** — falling back to raw turns would quietly
+reinstate the behaviour this replaced.
+
+Turn this off with `distillCapture: false` in the policy only if you want the
+old verbatim behaviour back and understand what it stores.
 
 ## The installation ceiling
 
@@ -125,8 +143,10 @@ changed and why, not what it said about someone.
 
 1. With no policy and a `DOCUMENTS_ONLY` profile, run a chat turn and confirm
    nothing appears under **Platform → Memory**.
-2. Set a profile to `LEARN_USER`, run a turn, and confirm the person's message
-   is stored and the model's answer is not.
+2. Set a profile to `LEARN_USER` and run a turn that states something durable
+   ("I lead the platform team, and I prefer answers in Indonesian"). Confirm a
+   *fact* is stored rather than the message, and that the model's answer is not.
+   Then run a turn that asks a question and confirm nothing is stored at all.
 3. Activate a policy with `maximumCaptureMode: RECALL_ONLY` and confirm that the
    same profile stops capturing while still recalling.
 4. Confirm an expired item stops being recalled, and disappears on the next

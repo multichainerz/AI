@@ -1,0 +1,1 @@
+ALTER TABLE "MemoryPolicy" ADD COLUMN "distillCapture" boolean DEFAULT true NOT NULL;

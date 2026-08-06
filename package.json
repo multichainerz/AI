@@ -1,6 +1,6 @@
 {
   "name": "orcasynapse",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "OrcaSynapse - on-premises AI operations and agentic control plane",
   "license": "BUSL-1.1",
   "private": true,
@@ -33,7 +33,7 @@
     "pretypecheck": "pnpm --filter @orcasynapse/contracts --filter @orcasynapse/database --filter @orcasynapse/security --filter @orcasynapse/runtime-clients build",
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",
-    "verify": "pnpm typecheck && pnpm test && pnpm build && pnpm db:validate",
+    "verify": "pnpm build && pnpm typecheck && pnpm test && pnpm db:validate",
     "security:audit": "pnpm audit --prod --audit-level high",
     "admin:provision": "node scripts/provision-local-admin.mjs",
     "db:generate": "pnpm --filter @orcasynapse/database db:generate",

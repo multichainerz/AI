@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import {
+  agentMemory,
   agentProfile,
   agentProfileVersion,
   createTestDatabase,
@@ -58,6 +59,118 @@ describe("AgentMemoryStore", () => {
 
     expect(hits).toHaveLength(1);
     expect(hits[0]?.content).toContain("metric units");
+  });
+
+  it("stops recalling a fact once a later one supersedes it", async () => {
+    // The case a similarity floor cannot catch: "loves Adidas" and "switching
+    // to Puma" are not near-duplicates, but the second retires the first.
+    const profileId = await profileFor("assistant");
+    await store().remember("user-a", profileId, [
+      { content: "The user loves Adidas sneakers.", embedding: vector(11), scope: "STATIC" },
+    ]);
+    const [existing] = await store().list("user-a", profileId);
+
+    await store().remember("user-a", profileId, [{
+      content: "The user prefers Puma sneakers.",
+      embedding: vector(12),
+      scope: "STATIC",
+      replaces: [existing!.id],
+    }]);
+
+    // Recall returns the current answer only, whichever vector is asked for.
+    const hits = await store().recall("user-a", profileId, "sneakers", vector(11), ALL);
+    expect(hits.map(({ content }) => content)).toEqual(["The user prefers Puma sneakers."]);
+    // And the profile follows, since it is the same current-facts predicate.
+    expect((await store().profile("user-a", profileId)).map(({ content }) => content))
+      .toEqual(["The user prefers Puma sneakers."]);
+  });
+
+  it("keeps the retired fact, with a reason, rather than deleting it", async () => {
+    // History is the point: "what did it used to believe, and when did that
+    // change" has to stay answerable after a correction.
+    const profileId = await profileFor("assistant");
+    await store().remember("user-a", profileId, [
+      { content: "The user works in Jakarta.", embedding: vector(13), scope: "STATIC" },
+    ]);
+    const [original] = await store().list("user-a", profileId);
+    await store().remember("user-a", profileId, [{
+      content: "The user works in Bandung.", embedding: vector(14), scope: "STATIC", replaces: [original!.id],
+    }]);
+
+    const rows = await context.database.select().from(agentMemory);
+    expect(rows).toHaveLength(2);
+    const retired = rows.find((row) => row.id === original!.id);
+    expect(retired?.isLatest).toBe(false);
+    expect(retired?.supersededAt).not.toBeNull();
+    expect(retired?.supersededReason).toContain("Bandung");
+  });
+
+  it("links each correction to the one it replaced, and to the chain's origin", async () => {
+    // The pilot shipped with these columns unpopulated: a fact was retired with
+    // a reason, but version stayed 1 and both links stayed null, so there was
+    // no chain to walk. Two corrections in sequence is what proves the root
+    // stays put while the parent moves.
+    const profileId = await profileFor("assistant");
+    await store().remember("user-a", profileId, [
+      { content: "The user works in Jakarta.", embedding: vector(21), scope: "STATIC" },
+    ]);
+    const [origin] = await store().list("user-a", profileId);
+    await store().remember("user-a", profileId, [{
+      content: "The user works in Bandung.", embedding: vector(22), scope: "STATIC", replaces: [origin!.id],
+    }]);
+    const [second] = await store().list("user-a", profileId);
+    await store().remember("user-a", profileId, [{
+      content: "The user works in Surabaya.", embedding: vector(23), scope: "STATIC", replaces: [second!.id],
+    }]);
+
+    const rows = await context.database.select().from(agentMemory);
+    const byContent = (needle: string) => rows.find((row) => row.content.includes(needle));
+    expect(byContent("Jakarta")).toMatchObject({ version: 1, parentMemoryId: null, rootMemoryId: null });
+    expect(byContent("Bandung")).toMatchObject({
+      version: 2, parentMemoryId: origin!.id, rootMemoryId: origin!.id,
+    });
+    expect(byContent("Surabaya")).toMatchObject({
+      version: 3, parentMemoryId: second!.id, rootMemoryId: origin!.id,
+    });
+    expect(rows.filter((row) => row.isLatest)).toHaveLength(1);
+  });
+
+  it("starts a fresh chain when the id it names is already retired", async () => {
+    // A stale id must not silently produce version 1 beside a live version 3.
+    const profileId = await profileFor("assistant");
+    await store().remember("user-a", profileId, [
+      { content: "The user works in Jakarta.", embedding: vector(24), scope: "STATIC" },
+    ]);
+    const [origin] = await store().list("user-a", profileId);
+    await store().remember("user-a", profileId, [{
+      content: "The user works in Bandung.", embedding: vector(25), scope: "STATIC", replaces: [origin!.id],
+    }]);
+    await store().remember("user-a", profileId, [{
+      content: "The user works in Medan.", embedding: vector(26), scope: "STATIC", replaces: [origin!.id],
+    }]);
+
+    const rows = await context.database.select().from(agentMemory);
+    expect(rows.find((row) => row.content.includes("Medan")))
+      .toMatchObject({ version: 1, parentMemoryId: null, rootMemoryId: null });
+    // And the already-retired row keeps its original reason.
+    expect(rows.find((row) => row.id === origin!.id)?.supersededReason).toContain("Bandung");
+  });
+
+  it("cannot retire another owner's fact by naming its id", async () => {
+    // Supersession is scoped by the same predicate as everything else, so a
+    // borrowed id from another owner does nothing.
+    const profileId = await profileFor("assistant");
+    await store().remember("user-b", profileId, [
+      { content: "Belongs to user B.", embedding: vector(15), scope: "STATIC" },
+    ]);
+    const [theirs] = await store().list("user-b", profileId);
+
+    await store().remember("user-a", profileId, [{
+      content: "The user prefers Puma.", embedding: vector(16), scope: "STATIC", replaces: [theirs!.id],
+    }]);
+
+    expect((await store().profile("user-b", profileId)).map(({ content }) => content))
+      .toEqual(["Belongs to user B."]);
   });
 
   it("never returns another owner's memory, whatever the query vector", async () => {

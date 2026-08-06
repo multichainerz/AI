@@ -42,6 +42,7 @@ function dto(policy: StoredPolicy): MemoryPolicy {
     recallMinimumScore: policy.recallMinimumScore,
     knowledgeRecallLimit: policy.knowledgeRecallLimit,
     knowledgeMinimumScore: policy.knowledgeMinimumScore,
+    distillCapture: policy.distillCapture,
     revision: policy.revision,
     firstActivatedAt: policy.firstActivatedAt?.toISOString() ?? null,
     createdBy: policy.createdBy,
@@ -225,6 +226,7 @@ export class DrizzleMemoryManager implements MemoryManager {
         agentProfileId: agentMemory.agentProfileId,
         agentProfileSlug: agentProfile.slug,
         content: agentMemory.content,
+        profileScope: agentMemory.profileScope,
         sourceRunId: agentMemory.sourceRunId,
         retentionUntil: agentMemory.retentionUntil,
         createdAt: agentMemory.createdAt,
@@ -301,6 +303,7 @@ function toRecord(row: {
   agentProfileId: string;
   agentProfileSlug: string;
   content: string;
+  profileScope: "STATIC" | "DYNAMIC" | "EPISODIC";
   sourceRunId: string | null;
   retentionUntil: Date | null;
   createdAt: Date;
@@ -311,6 +314,7 @@ function toRecord(row: {
     agentProfileId: row.agentProfileId,
     agentProfileSlug: row.agentProfileSlug,
     content: row.content,
+    profileScope: row.profileScope,
     sourceRunId: row.sourceRunId,
     retentionUntil: row.retentionUntil?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
