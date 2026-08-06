@@ -70,6 +70,41 @@ export class SessionMemoryDistiller {
    * One per tick, deliberately: distillation holds an inference connection for
    * up to two minutes, and the worker also embeds documents on the same host.
    */
+  /**
+   * Distils one named conversation, whatever else is waiting.
+   *
+   * `distilNext` takes the longest-waiting session, which is right for the
+   * worker and wrong for anything that needs a *particular* conversation
+   * stored before it can proceed. The quality harness learned this the hard
+   * way: draining the queue distilled unrelated sessions first, so a case asked
+   * its question 53 seconds before its own fact was written and scored a
+   * failure that had nothing to do with memory.
+   */
+  async distilOne(conversationId: string, workerId: string): Promise<DistilledSession | null> {
+    const [candidate] = await this.database
+      .select({
+        id: chatConversation.id,
+        ownerSubject: chatConversation.ownerSubject,
+        profileId: chatConversation.profileId,
+        distilledAt: chatConversation.memoryDistilledAt,
+      })
+      .from(chatConversation)
+      .where(eq(chatConversation.id, conversationId))
+      .limit(1);
+    if (!candidate?.profileId) return null;
+
+    await this.database
+      .update(chatConversation)
+      .set({ memoryDistilledAt: new Date() })
+      .where(eq(chatConversation.id, candidate.id));
+    try {
+      return await this.distilConversation({ ...candidate, profileId: candidate.profileId }, workerId);
+    } catch (cause) {
+      console.error("OrcaSynapse could not distil conversation", candidate.id, cause);
+      return { conversationId: candidate.id, facts: 0, superseded: 0 };
+    }
+  }
+
   async distilNext(workerId: string): Promise<DistilledSession | null> {
     const cutoff = new Date(Date.now() - this.idleMs);
     const [candidate] = await this.database

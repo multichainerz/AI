@@ -63,7 +63,11 @@ async function call(path, options = {}) {
   if (issued.length > 0) cookie = issued.map((value) => value.split(";")[0]).join("; ");
   const text = await response.text();
   const body = text.length > 0 ? JSON.parse(text) : {};
-  if (!response.ok) throw new Error(`${options.method ?? "GET"} ${path} → ${response.status} ${body.error ?? ""}`);
+  if (!response.ok) {
+    const failure = new Error(`${options.method ?? "GET"} ${path} -> ${response.status} ${body.error ?? ""}`);
+    failure.status = response.status;
+    throw failure;
+  }
   return body;
 }
 
@@ -83,8 +87,19 @@ async function ask(conversationId, content) {
       });
       break;
     } catch (error) {
-      if (!String(error.message).includes("409") || Date.now() > submitDeadline) throw error;
-      await sleep(5_000);
+      // Read the status off the error, not out of its message: the message
+      // carries a conversation UUID, and hex digits spell 409 and 429 often
+      // enough to make a regex over it quietly wrong.
+      if (Date.now() > submitDeadline) throw error;
+      if (error.status === 429) {
+        // The limiter counts user messages per minute, so wait past the
+        // window rather than retrying into the same refusal.
+        await sleep(20_000);
+      } else if (error.status === 409) {
+        await sleep(5_000);
+      } else {
+        throw error;
+      }
     }
   }
 
@@ -121,11 +136,15 @@ async function main() {
   );
   const workerId = randomUUID();
 
-  /** Drains the sweep, so a case's setup is stored before its question. */
-  const distilPending = async () => {
-    for (let pass = 0; pass < 20; pass += 1) {
+  /**
+   * Drains whatever is already waiting, so an unrelated backlog cannot answer a
+   * case's question. Reports the cap rather than stopping quietly at it.
+   */
+  const drain = async () => {
+    for (let pass = 0; pass < 200; pass += 1) {
       if (!await sweep.distilNext(workerId)) return;
     }
+    process.stdout.write("  (more than 200 sessions were waiting; the rest were left)\n");
   };
 
   const judge = async (question, answer, criterion) => {
@@ -163,14 +182,15 @@ async function main() {
   try {
     // Drain anything already waiting, so a case's own capture is the only one
     // its question could be answered from.
-    await distilPending();
+    await drain();
 
     for (const testCase of MEMORY_QUALITY_SUITE) {
       process.stdout.write(`  ${testCase.id.padEnd(16)} `);
       try {
         const setup = await conversationFor(`Memory quality: ${testCase.id}`);
         for (const turn of testCase.setup) await ask(setup, turn);
-        await distilPending();
+        // This conversation specifically, not the head of the queue.
+        await sweep.distilOne(setup, workerId);
 
         // A fresh conversation, so nothing but memory can supply the answer.
         const asking = await conversationFor(`Memory quality: ${testCase.id} (question)`);

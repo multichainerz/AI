@@ -151,6 +151,40 @@ describe("SessionMemoryDistiller", () => {
     expect(memory.captured[0]).toEqual([{ content: "The user lives in Bandung." }]);
   });
 
+  it("distils a named conversation ahead of everything else waiting", async () => {
+    // The quality harness needs one particular session stored before it can ask
+    // its question. Draining the queue distilled unrelated sessions first, so a
+    // case asked 53 seconds before its own fact was written and scored a
+    // failure that had nothing to do with memory.
+    await conversationWith([{ role: "USER", content: "I work in Jakarta." }], { idleMinutes: 300 });
+    const wanted = await conversationWith([{ role: "USER", content: "I prefer Indonesian." }]);
+    const distiller = distillerReturning([{ fact: "The user prefers Indonesian.", scope: "STATIC" }]);
+
+    const outcome = await new SessionMemoryDistiller(context.database, memoryPort(), distiller)
+      .distilOne(wanted, WORKER);
+
+    expect(outcome).toMatchObject({ conversationId: wanted, facts: 1 });
+    expect(distiller.turns[0]).toEqual([{ role: "user", content: "I prefer Indonesian." }]);
+  });
+
+  it("distils a named conversation even when it is not yet idle", async () => {
+    // The idle wait is right for the worker and wrong for a caller that just
+    // wrote the turns itself.
+    const wanted = await conversationWith(
+      [{ role: "USER", content: "I work in Jakarta." }],
+      { idleMinutes: 0 },
+    );
+    const distiller = distillerReturning([{ fact: "The user works in Jakarta.", scope: "STATIC" }]);
+
+    await expect(new SessionMemoryDistiller(context.database, memoryPort(), distiller)
+      .distilOne(wanted, WORKER)).resolves.toMatchObject({ facts: 1 });
+  });
+
+  it("returns nothing for a conversation id that does not exist", async () => {
+    await expect(new SessionMemoryDistiller(context.database, memoryPort(), distillerReturning([]))
+      .distilOne("3f2504e0-4f89-41d3-9a0c-0305e82c3301", WORKER)).resolves.toBeNull();
+  });
+
   it("leaves a conversation alone until it has been quiet long enough", async () => {
     await conversationWith([{ role: "USER", content: "I work in Jakarta." }], { idleMinutes: 1 });
     const distiller = distillerReturning([{ fact: "The user works in Jakarta.", scope: "STATIC" }]);

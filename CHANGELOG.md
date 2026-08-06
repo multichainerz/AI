@@ -5,6 +5,32 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.52.2 — 2026-08-06
+
+Make the quality harness measure memory rather than its own timing.
+
+Two runs on the pilot were spoiled by the harness, not by the code under test.
+It drained the session sweep to store a case's setup, but the sweep takes the
+*longest-waiting* conversation — right for the worker, wrong for a caller that
+needs one particular session stored. With a backlog it distilled unrelated
+sessions, gave up at a silent cap, and one case asked its question 53 seconds
+before its own fact was written. A second run lost four of six cases to the chat
+rate limiter, which the harness treated as a hard failure.
+
+- add `distilOne(conversationId)` to the session distiller: one named
+  conversation, whatever else is waiting and whether or not it has gone idle
+- have the harness distil the conversation it just wrote, rather than draining a
+  queue and hoping
+- retry a 429 by waiting past the limiter's one-minute window, and read the
+  status off the error rather than pattern-matching its message — the message
+  carries a conversation UUID, and hex digits spell 409 and 429 often enough for
+  that to be quietly wrong
+- say so when the initial drain hits its bound, instead of stopping quietly
+
+The run this replaces still scored `4/5` with `language` passing, which is what
+confirmed ai-v1.52.1 end to end. The point of these fixes is that the next number
+means something without needing that reconstruction.
+
 ## ai-v1.52.1 — 2026-08-06
 
 A standing preference is not a task instruction.
