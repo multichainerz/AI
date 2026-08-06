@@ -5,6 +5,53 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.54.0 — 2026-08-07
+
+Give the dashboard a design system, and pin a vulnerable PDF parser on the way.
+
+`styles.css` carried **754 distinct hand-picked colours across 989 uses** — the
+top hundred covered 31%, so there was no palette to speak of. There were also no
+shared components at all: twelve views inlined every button, tile, card and
+modal, producing nine hand-written locked screens, nine copies of the stat-tile
+row and five separate modal implementations, only one of which trapped focus.
+That is why it did not read as enterprise, and no amount of per-screen work
+fixes it.
+
+- add Tailwind 3 with tokens as CSS custom properties, so the stylesheet and the
+  utility classes share one palette while views migrate a release at a time
+- neutral near-black surfaces with violet as the only saturated colour. An
+  earlier pass tinted the neutrals too, which left the accent nothing to stand
+  against
+- add the primitive set in `apps/web/src/ui/`: Button, Panel, PanelHeading,
+  Metric, MicroLabel, StatusText, Alert, EmptyState, LockedScreen, Dialog,
+  Drawer, Field, Input, Textarea, Select
+- extract the focus trap from `connection-drawer.tsx` so all five overlays share
+  one correct implementation instead of four having none
+
+**No Radix, and not by preference.** `deploy/nginx/default.conf` sets
+`style-src 'self'` with no `'unsafe-inline'`. Radix's Popper primitives write
+positioning transforms into inline `style` attributes, and Dialog pulls
+`react-remove-scroll`, which injects a `<style>` element. Both are refused by the
+browser — and the dev server sends no CSP header, so they would have worked
+perfectly in `pnpm dev` and broken only in a built container. shadcn's Tailwind
+and `cva` layer is used; its overlays are not.
+
+The same constraint decides how a metric's bar is drawn: its width is data, an
+inline width is illegal, so it is a real `<progress>` carrying its value as an
+attribute. `ui.test.tsx` asserts the whole primitive set emits no `style`
+attribute, because nothing else catches that before a container build.
+
+Also in this release, found while checking the audit surface: **`pdfjs-dist` was
+inside the range of GHSA-hq66-cqwq-w95j** (arbitrary JavaScript execution on
+opening a malicious PDF), reachable through `officeparser`. Pinned above it via
+`pnpm.overrides`. Uploaded PDFs are parsed by `unpdf`, not the affected path, but
+it was a live high-severity advisory in a production dependency of a product
+whose job is ingesting customer documents — and it was failing `security:audit`,
+which CI blocks on.
+
+Preflight stays off until the last view migrates: Tailwind's reset would restyle
+the 2,000 lines still written against browser defaults.
+
 ## ai-v1.53.2 — 2026-08-07
 
 Read the answer the model actually sends, not the one it was asked for.
