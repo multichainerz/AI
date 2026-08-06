@@ -48,8 +48,27 @@ const DISTILLATION_INSTRUCTION = [
   "- facts about the world that are not about this person",
   "- anything you inferred rather than what the user stated",
   "",
-  "Write each fact as a standalone sentence about the user, in the third person.",
+  "",
+  "Write every fact about the user in the THIRD PERSON. Never write a fact as",
+  "\"I\", \"saya\", \"me\", or \"my\", even when the user spoke that way. A fact stored",
+  "in the first person reads later as if the assistant were describing itself.",
+  "",
+  "Write each fact in the language the user used, and keep it grammatical in that",
+  "language — do not mix languages inside one fact.",
   `Return at most ${MAXIMUM_FACTS} facts, each under ${MAXIMUM_FACT_CHARACTERS} characters.`,
+  "",
+  "Examples:",
+  "USER: Hey, I'm doing great!",
+  "[]",
+  "",
+  "USER: What is your name?",
+  "[]",
+  "",
+  "USER: I lead the platform team and I prefer answers in Indonesian.",
+  "[\"The user leads the platform team.\", \"The user prefers answers in Indonesian.\"]",
+  "",
+  "USER: Halo, saya bekerja di Jakarta dan saya suka nasi goreng.",
+  "[\"Pengguna bekerja di Jakarta.\", \"Pengguna menyukai nasi goreng.\"]",
 ].join("\n");
 
 export interface MemoryDistillation {
@@ -65,6 +84,24 @@ export interface MemoryDistillation {
  * have followed the prohibitions, so anything unparseable yields no facts
  * rather than a salvage attempt.
  */
+/**
+ * Pronouns that mean the model wrote a fact as the person rather than about them.
+ *
+ * The instruction forbids first person and a 2.6B model still produces it, so
+ * this is the enforcement rather than the request. Only the opening word is
+ * checked: "The user prefers I ask first" is fine, "Saya bekerja di Jakarta" is
+ * not — the latter reads later as the assistant describing itself.
+ */
+const FIRST_PERSON_OPENERS = new Set([
+  "i", "i'm", "im", "i've", "my", "me", "we", "we're", "our", "us",
+  "saya", "aku", "gue", "gua", "kami", "kita",
+]);
+
+function writtenAsTheUser(fact: string): boolean {
+  const [first = ""] = fact.toLowerCase().split(/[\s,.:;!?]+/);
+  return FIRST_PERSON_OPENERS.has(first);
+}
+
 export function parseDistillation(content: string): string[] {
   const fenced = content.match(/```(?:json)?\s*([\s\S]*?)```/);
   const body = (fenced?.[1] ?? content).trim();
@@ -83,6 +120,10 @@ export function parseDistillation(content: string): string[] {
     if (typeof entry !== "string") continue;
     const fact = entry.replace(/\s+/g, " ").trim();
     if (fact.length === 0) continue;
+    // Dropped rather than rewritten: a fact the model wrote as the person is
+    // one it may also have attributed wrongly, and guessing at a rewrite would
+    // store a sentence nobody said.
+    if (writtenAsTheUser(fact)) continue;
     facts.push(fact.slice(0, MAXIMUM_FACT_CHARACTERS));
     if (facts.length === MAXIMUM_FACTS) break;
   }

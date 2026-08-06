@@ -58,6 +58,25 @@ describe("parseDistillation", () => {
     expect(long?.length).toBe(200);
   });
 
+  it("drops facts the model wrote as the person rather than about them", () => {
+    // The pilot stored "Saya bekerja di Jakarta" — first person, which reads
+    // later as the assistant describing itself. The instruction forbids it and
+    // a 2.6B model produces it anyway, so the parser enforces rather than asks.
+    expect(parseDistillation('["Saya bekerja di Jakarta.", "The user works in Jakarta."]'))
+      .toEqual(["The user works in Jakarta."]);
+    expect(parseDistillation('["I lead the platform team.", "My timezone is WIB."]')).toEqual([]);
+    expect(parseDistillation('["Aku suka nasi goreng.", "Kami pakai Kubernetes."]')).toEqual([]);
+  });
+
+  it("keeps a first-person pronoun that is not the opening word", () => {
+    // "The user prefers I ask first" is a legitimate third-person fact; only a
+    // fact that *begins* as the person is rejected.
+    expect(parseDistillation('["The user prefers that I ask before running commands."]'))
+      .toEqual(["The user prefers that I ask before running commands."]);
+    expect(parseDistillation('["Pengguna bekerja di Jakarta."]'))
+      .toEqual(["Pengguna bekerja di Jakarta."]);
+  });
+
   it("collapses whitespace so one fact cannot arrive as a paragraph", () => {
     expect(parseDistillation('["The user   prefers\\n\\n  Indonesian."]'))
       .toEqual(["The user prefers Indonesian."]);

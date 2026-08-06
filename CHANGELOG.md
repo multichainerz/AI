@@ -5,6 +5,30 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.47.0 — 2026-08-06
+
+Keep extracted facts in the third person.
+
+The pilot stored `Saya bekerja di Jakarta` — first person, which reads later as
+the assistant describing itself rather than the person it is about. A 2.6B model
+mirrors the language and person of its input, so the prose instruction telling it
+to use the third person was simply ignored.
+
+- add worked examples to the distillation instruction, including a non-English
+  one, because examples steer a small model where rules do not.
+- **reject a fact whose opening word is a first-person pronoun**, in English or
+  Indonesian. The fact is dropped, not rewritten: a model that mis-attributed the
+  speaker may have got the attribution wrong too, and guessing at a rewrite would
+  store a sentence nobody said. Only the opening word counts — "The user prefers
+  that I ask first" is a legitimate fact.
+- ask for facts in the user's own language but grammatical within it, rather than
+  mixed, since BGE-M3 matches a question best in the language it was asked.
+
+Supermemory grounds extraction with the person's name ("User is Dhravya…") so
+facts read "Dhravya is doing great". That is deliberately not copied: our rows
+are already scoped by `ownerSubject` in SQL, so a name would duplicate identity
+into stored content that then rides along into prompts, exports, and logs.
+
 ## ai-v1.46.1 — 2026-08-06
 
 Fix a type error `ai-v1.46.0` shipped.
