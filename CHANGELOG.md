@@ -5,6 +5,34 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.67.0 — 2026-08-07
+
+The view ternary becomes a lookup, which was deferred on a condition that is now
+met.
+
+ai-v1.55.1 left this alone and said why: *"It is a readability change to 120
+lines of prop-passing across views that mostly have no render test, where a
+silently dropped prop would not be caught. It belongs with the release that
+gives those views their tests, not before."* Every one of those views has tests
+now — Home, Chat, Agents, Operations, Models, Prompts, Guardrails, Knowledge,
+Memory and the audit trail — so the condition holds and the change is safe to
+make.
+
+The twelve-branch nested ternary in `app.tsx` is one entry per view, keyed by
+the token the router already produces, with `satisfies Record<ActiveView, () =>
+ReactNode>`. That is the point rather than the tidiness: **the set is now
+closed.** The chain ended in a bare `else` that rendered Home, so a view added
+to `ActiveView` without a branch fell silently through to the wrong screen.
+
+Proven rather than asserted: removing one entry produces two compile errors —
+the index expression and the `satisfies` constraint both reject it.
+
+Verified in the browser, since this is the router: all twelve routes resolve to
+their own view, the active nav item follows, and Back still walks the history
+(`#home` → `#operations` → `#platform/setup`).
+
+920 tests green.
+
 ## ai-v1.66.0 — 2026-08-07
 
 The connection drawer and the runtime-nodes panel — the revamp is complete.

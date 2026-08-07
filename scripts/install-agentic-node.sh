@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="ai-v1.66.0"
+INSTALLER_VERSION="ai-v1.67.0"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 CONTAINER_NAME="orcasynapse-hermes"
 HEARTBEAT_SERVICE="orcasynapse-hermes-heartbeat"

@@ -711,125 +711,145 @@ function App() {
           <WorkspaceContextBar area={activeArea} activeView={activeView} onSelect={selectView} />
         )}
         <Suspense fallback={<section className="view-loading" aria-live="polite"><span className="setup-spinner" />Loading workspace...</section>}>
-        {activeView === "Chat" ? (
-          <ChatView
-            unlocked={chatUnlocked}
-            identityMode={unlocked && adminSession ? "ADMINISTRATOR_PREVIEW" : enterpriseSession ? "ENTERPRISE" : null}
-            displayName={unlocked && adminSession ? "System administrator" : enterpriseSession?.user.displayName ?? null}
-            administratorReadiness={unlocked ? {
-              ready: readiness.chatReady,
-              title: readiness.nextChatStep?.title ?? "Hermes is ready",
-              detail: readiness.nextChatStep?.detail ?? "The governed Hermes route is ready.",
-              target: readiness.nextChatStep?.target ?? "Agents",
-            } : null}
-            oidcConfigured={oidcStatus?.configured === true}
-            onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23chat")}
-            onConfigure={() => openConnectionSettings("OIDC")}
-            onOpenAgents={() => selectView("Agents")}
-            onOpenPlatform={() => selectView("Deployment")}
-            onSessionExpired={forgetAnySession}
-          />
-        ) : activeView === "Models" ? (
-          <ModelsView
-            session={adminSession}
-            connections={managedConnections}
-            onConfigureConnections={() => openConnectionSettings("INFERENCE")}
-            onOpenOperations={() => selectView("Operations")}
-            onSessionExpired={forgetAdminSession}
-          />
-        ) : activeView === "Memory" ? (
-          <MemoryView
-            session={adminSession}
-            onOpenSettings={() => openConnectionSettings()}
-            onSessionExpired={forgetAdminSession}
-          />
-        ) : activeView === "Prompts" ? (
-          <PromptsView
-            session={adminSession}
-            onOpenOperations={() => selectView("Operations")}
-            onOpenSettings={() => openConnectionSettings("INFERENCE")}
-            onSessionExpired={forgetAdminSession}
-          />
-        ) : activeView === "Agents" ? (
-          <AgentsView
-            unlocked={agentsUnlocked}
-            administrator={adminSession !== null}
-            activationReady={unlocked ? readiness.agenticInfrastructureReady && readiness.inferenceReady : null}
-            activationMessage={readiness.nextChatStep?.detail ?? null}
-            oidcConfigured={oidcStatus?.configured === true}
-            onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23agents%2Fprofiles")}
-            onConfigure={() => openConnectionSettings("HERMES")}
-            onOpenChat={() => {
-              void refreshWorkspaceState().catch(() => undefined);
-              selectView("Chat");
-            }}
-            onOpenReadiness={() => selectView("Deployment", "nodes")}
-            onSessionExpired={forgetAnySession}
-          />
-        ) : activeView === "Documents" ? (
-          <DocumentsView
-            unlocked={documentsUnlocked}
-            administrator={adminSession !== null}
-            oidcConfigured={oidcStatus?.configured === true}
-            onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23knowledge%2Fdocuments")}
-            onConfigure={() => openConnectionSettings("HERMES")}
-            onSessionExpired={forgetAnySession}
-          />
-        ) : activeView === "Integrations" ? (
-          <ToolingView
-            session={adminSession}
-            onConfigure={() => openConnectionSettings("MCP")}
-            onSessionExpired={forgetAdminSession}
-          />
-        ) : activeView === "Guardrails" ? (
-          <GuardrailsView
-            session={adminSession}
-            onConfigureInference={() => openConnectionSettings("INFERENCE")}
-            onOpenOperations={() => selectView("Operations")}
-            onSessionExpired={forgetAdminSession}
-          />
-        ) : activeView === "Deployment" ? (
-          <OnboardingView
-            connections={managedConnections}
-            agentRuntime={agentRuntime}
-            profiles={agentProfiles}
-            runtimeNodes={runtimeNodes}
-            unlocked={unlocked}
-            oidcConfigured={oidcStatus?.administratorSignIn === true}
-            initialTab={deploymentInitialTab}
-             onConfigure={(kind) => openConnectionSettings(kind)}
-             onOpenWorkspace={(workspace) => selectView(workspace)}
-             onRuntimeNodesChange={setRuntimeNodes}
-             onOpenOperations={() => selectView("Operations")}
-             onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23platform%2Fsetup")}
-            onSessionExpired={forgetAdminSession}
-          />
-        ) : activeView === "Audit" ? (
-          <AuditView
-            session={adminSession}
-            onSessionExpired={forgetAdminSession}
-          />
-        ) : activeView === "Operations" ? (
-          <OperationsView
-            session={adminSession}
-            onConfigure={() => openConnectionSettings()}
-            onSessionExpired={forgetAdminSession}
-          />
-        ) : (
-          <HomeView
-            apiAvailable={apiAvailable}
-            bootstrapState={bootstrapState}
-            unlocked={unlocked}
-            passwordChangePending={passwordChangePending}
-            healthyConnections={healthyConnections}
-            monitoring={connectionMonitoring}
-            chatMetrics={chatMetrics}
-            layers={platformLayers}
-            readiness={readinessChecks}
-            onSelect={selectView}
-            onUnlock={() => setDrawerOpen(true)}
-          />
-        )}
+        {/*
+          * One entry per view, keyed by the same token the router produces.
+          *
+          * This was a twelve-branch nested ternary. A lookup makes the set
+          * closed — a view without an entry is a compile error rather than a
+          * silent fall-through to Home, which is what the chain did.
+          */}
+        {({
+          Chat: () => (
+            <ChatView
+              unlocked={chatUnlocked}
+              identityMode={unlocked && adminSession ? "ADMINISTRATOR_PREVIEW" : enterpriseSession ? "ENTERPRISE" : null}
+              displayName={unlocked && adminSession ? "System administrator" : enterpriseSession?.user.displayName ?? null}
+              administratorReadiness={unlocked ? {
+                ready: readiness.chatReady,
+                title: readiness.nextChatStep?.title ?? "Hermes is ready",
+                detail: readiness.nextChatStep?.detail ?? "The governed Hermes route is ready.",
+                target: readiness.nextChatStep?.target ?? "Agents",
+              } : null}
+              oidcConfigured={oidcStatus?.configured === true}
+              onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23chat")}
+              onConfigure={() => openConnectionSettings("OIDC")}
+              onOpenAgents={() => selectView("Agents")}
+              onOpenPlatform={() => selectView("Deployment")}
+              onSessionExpired={forgetAnySession}
+            />
+          ),
+          Models: () => (
+            <ModelsView
+              session={adminSession}
+              connections={managedConnections}
+              onConfigureConnections={() => openConnectionSettings("INFERENCE")}
+              onOpenOperations={() => selectView("Operations")}
+              onSessionExpired={forgetAdminSession}
+            />
+          ),
+          Memory: () => (
+            <MemoryView
+              session={adminSession}
+              onOpenSettings={() => openConnectionSettings()}
+              onSessionExpired={forgetAdminSession}
+            />
+          ),
+          Prompts: () => (
+            <PromptsView
+              session={adminSession}
+              onOpenOperations={() => selectView("Operations")}
+              onOpenSettings={() => openConnectionSettings("INFERENCE")}
+              onSessionExpired={forgetAdminSession}
+            />
+          ),
+          Agents: () => (
+            <AgentsView
+              unlocked={agentsUnlocked}
+              administrator={adminSession !== null}
+              activationReady={unlocked ? readiness.agenticInfrastructureReady && readiness.inferenceReady : null}
+              activationMessage={readiness.nextChatStep?.detail ?? null}
+              oidcConfigured={oidcStatus?.configured === true}
+              onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23agents%2Fprofiles")}
+              onConfigure={() => openConnectionSettings("HERMES")}
+              onOpenChat={() => {
+                void refreshWorkspaceState().catch(() => undefined);
+                selectView("Chat");
+              }}
+              onOpenReadiness={() => selectView("Deployment", "nodes")}
+              onSessionExpired={forgetAnySession}
+            />
+          ),
+          Documents: () => (
+            <DocumentsView
+              unlocked={documentsUnlocked}
+              administrator={adminSession !== null}
+              oidcConfigured={oidcStatus?.configured === true}
+              onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23knowledge%2Fdocuments")}
+              onConfigure={() => openConnectionSettings("HERMES")}
+              onSessionExpired={forgetAnySession}
+            />
+          ),
+          Integrations: () => (
+            <ToolingView
+              session={adminSession}
+              onConfigure={() => openConnectionSettings("MCP")}
+              onSessionExpired={forgetAdminSession}
+            />
+          ),
+          Guardrails: () => (
+            <GuardrailsView
+              session={adminSession}
+              onConfigureInference={() => openConnectionSettings("INFERENCE")}
+              onOpenOperations={() => selectView("Operations")}
+              onSessionExpired={forgetAdminSession}
+            />
+          ),
+          Deployment: () => (
+            <OnboardingView
+              connections={managedConnections}
+              agentRuntime={agentRuntime}
+              profiles={agentProfiles}
+              runtimeNodes={runtimeNodes}
+              unlocked={unlocked}
+              oidcConfigured={oidcStatus?.administratorSignIn === true}
+              initialTab={deploymentInitialTab}
+              onConfigure={(kind) => openConnectionSettings(kind)}
+              onOpenWorkspace={(workspace) => selectView(workspace)}
+              onRuntimeNodesChange={setRuntimeNodes}
+              onOpenOperations={() => selectView("Operations")}
+              onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23platform%2Fsetup")}
+              onSessionExpired={forgetAdminSession}
+            />
+          ),
+          Audit: () => (
+            <AuditView
+              session={adminSession}
+              onSessionExpired={forgetAdminSession}
+            />
+          ),
+          Operations: () => (
+            <OperationsView
+              session={adminSession}
+              onConfigure={() => openConnectionSettings()}
+              onSessionExpired={forgetAdminSession}
+            />
+          ),
+          Overview: () => (
+            <HomeView
+              apiAvailable={apiAvailable}
+              bootstrapState={bootstrapState}
+              unlocked={unlocked}
+              passwordChangePending={passwordChangePending}
+              healthyConnections={healthyConnections}
+              monitoring={connectionMonitoring}
+              chatMetrics={chatMetrics}
+              layers={platformLayers}
+              readiness={readinessChecks}
+              onSelect={selectView}
+              onUnlock={() => setDrawerOpen(true)}
+            />
+          ),
+        } satisfies Record<ActiveView, () => ReactNode>)[activeView]()}
         </Suspense>
       </main>
 
