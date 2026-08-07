@@ -81,9 +81,13 @@ describe("forget by topic", () => {
 
     await user.click(screen.getByRole("button", { name: /preview what matches/i }));
 
+    // Scoped by walking up from the summary to the element that owns the list,
+    // rather than by class name: `.closest(".memory-forget-preview")!` threw a
+    // TypeError instead of failing cleanly once that class moved.
     const summary = await screen.findByText(/judged to be about/i);
-    const previewPanel = summary.closest(".memory-forget-preview")!;
-    expect(previewPanel.querySelectorAll("li")).toHaveLength(1);
+    const previewPanel = summary.parentElement!;
+    const items = previewPanel.querySelectorAll("li");
+    expect(items).toHaveLength(1);
     expect(previewPanel.textContent).toContain("The user leads the Titan migration.");
     expect(forgetMatchingAgentMemory).toHaveBeenCalledTimes(1);
     expect(forgetMatchingAgentMemory.mock.calls[0]?.[0]).toMatchObject({

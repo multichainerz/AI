@@ -12,6 +12,7 @@ import {
   updateGuardrailPolicy,
 } from "./api.js";
 import { adminAccess } from "./admin-access.js";
+import { LockedScreen } from "./ui/index.js";
 
 interface GuardrailsViewProps {
   session: AdministratorSession | null;
@@ -158,10 +159,14 @@ export function GuardrailsView({
   };
 
   if (!unlocked) {
-    return <div className="guardrails-workspace">
-      <header className="guardrails-header"><div><p className="page-kicker">Policy control</p><h1>Guardrails</h1><p>Evaluated request boundaries enforced by OrcaSynapse.</p></div></header>
-      <section className="guardrails-lock panel"><span className="guardrails-lock-mark">G</span><div><strong>Administrator session required</strong><p>Claim or sign in to OrcaSynapse to inspect policy versions and activation evidence.</p></div><button className="primary-button" type="button" onClick={onConfigureInference}>Open platform settings</button></section>
-    </div>;
+    return <LockedScreen
+      kicker="Policy control"
+      title="Guardrails"
+      mark="G"
+      reason="Claim or sign in to OrcaSynapse to inspect policy versions and activation evidence."
+      actionLabel="Open platform settings"
+      onAction={onConfigureInference}
+    />;
   }
 
   const active = policies.find(({ status }) => status === "ACTIVE");

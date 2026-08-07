@@ -5,6 +5,46 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v1.1.0 — 2026-08-07
+
+A design system for the dashboard: tokens, primitives, Home, Chat, and one
+locked screen instead of nine.
+
+- `styles.css` carried **754 distinct hand-picked colours across 989 uses**, and
+  there were no shared components at all — twelve views inlined every button,
+  tile, card and modal, producing nine hand-written locked screens and five modal
+  implementations of which one trapped focus.
+- Tailwind 3 arrives with the tokens as CSS custom properties, so the stylesheet
+  and the utility classes share one palette while views migrate a release at a
+  time, alongside the primitive set in `apps/web/src/ui/`.
+- **No Radix, and not by preference.** `style-src 'self'` refuses the inline
+  positioning styles its Popper primitives write and the `<style>` element
+  `react-remove-scroll` injects — and the dev server sends no CSP header, so both
+  would have worked perfectly in `pnpm dev` and broken only in a built container.
+  A metric's bar is a real `<progress>` for the same reason.
+- **The design system had been deleting its own classes since the day it
+  shipped.** tailwind-merge's colour matcher accepts any `text-` class, so every
+  custom size was read as a colour and dropped by the colour beside it: the whole
+  type scale was inert everywhere, with the class simply absent from the DOM and
+  nothing logged. The dependency was also on the line built for Tailwind 4
+  semantics, which was silently removing `focus-visible:outline` — no button in
+  the dashboard had a focus ring.
+- **Nine locked screens become one.** A person who lost their session saw nine
+  slightly different explanations of the same thing, across three marks, five
+  button labels and four layouts. Not every locked area wants an administrator,
+  so the primitive states what the area actually needs.
+- Chat's four dialogs were never dialogs — `role="dialog"` with no `aria-modal`,
+  focus trap, Escape, scroll lock or focus restore — and the conversation menu,
+  which holds Archive and Delete, had no way out at all. The transcript follows,
+  with a preview harness that writes its rendered markup to a file so 200 lines
+  of intricate CSS could be looked at rather than reasoned about.
+- Memory's lineage reaches the screen. `records()` had **no lifecycle predicate
+  at all**, so a corrected fact, a forgotten one and the current one were all
+  returned together and rendered identically — an operator auditing what an agent
+  knows was reading a mixture of current belief and everything it had ever been
+  told.
+- Back also works: navigation had written every route with `replaceState`.
+
 ## v1.0.0 — 2026-08-06 – 2026-08-07
 
 Conversation-level distillation, forget-by-topic, a memory metric that names the

@@ -34,6 +34,7 @@ import {
   upsertToolGrant,
 } from "./api.js";
 import { adminAccess } from "./admin-access.js";
+import { LockedScreen } from "./ui/index.js";
 
 interface ToolingViewProps {
   session: AdministratorSession | null;
@@ -173,7 +174,15 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
   };
 
   if (!unlocked) {
-    return <section className="chat-locked tooling-locked"><div className="chat-lock-mark">TG</div><p className="page-kicker">Governed access</p><h1>Tooling requires a scoped administrator</h1><p>Unlock the console to manage the read-only MCP gateway, exact-version grants, credentials, and tool health.</p><button className="primary-button" type="button" onClick={onConfigure}>Administrator setup</button></section>;
+    return <LockedScreen
+      kicker="Governed access"
+      title="Tooling"
+      mark="TG"
+      headline="Scoped administrator required"
+      reason="Unlock the console to manage the read-only MCP gateway, exact-version grants, credentials, and tool health."
+      actionLabel="Administrator setup"
+      onAction={onConfigure}
+    />;
   }
 
   return <section className="tooling-workspace">

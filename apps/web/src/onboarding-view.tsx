@@ -20,6 +20,7 @@ import {
 import { connectionReadiness } from "./connection-readiness.js";
 import { connectionFor, deriveWorkspaceReadiness } from "./platform-readiness.js";
 import { RuntimeNodesPanel } from "./runtime-nodes-panel.js";
+import { LockedScreen } from "./ui/index.js";
 
 interface OnboardingViewProps {
   unlocked: boolean;
@@ -213,16 +214,16 @@ export function OnboardingView({
   };
 
   if (!unlocked) {
-    return <section className="setup-locked">
-      <div className="setup-lock-symbol" aria-hidden="true">01</div>
-      <p className="page-kicker">Administrator access</p>
-      <h1>Sign in to this OrcaSynapse installation</h1>
-      <p>Use the local administrator account created by the installer. Keep the separate Installation Key offline for recovery only.</p>
-      <div className="setup-lock-actions">
-        {oidcConfigured && <button className="primary-button" type="button" onClick={onSignIn}>Sign in with enterprise identity</button>}
-        <button className={oidcConfigured ? "secondary-button" : "primary-button"} type="button" onClick={() => onConfigure()}>Sign in locally</button>
-      </div>
-    </section>;
+    return <LockedScreen
+      kicker="Administrator access"
+      title="Platform"
+      mark="01"
+      headline="Sign in to this OrcaSynapse installation"
+      reason="Use the local administrator account created by the installer. Keep the separate Installation Key offline for recovery only."
+      actionLabel={oidcConfigured ? "Sign in with enterprise identity" : "Sign in locally"}
+      onAction={oidcConfigured ? onSignIn : () => onConfigure()}
+      {...(oidcConfigured ? { secondaryLabel: "Sign in locally", onSecondary: () => onConfigure() } : {})}
+    />;
   }
 
   const inference = connectionFor(connections, "INFERENCE");

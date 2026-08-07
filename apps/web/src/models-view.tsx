@@ -14,6 +14,7 @@ import {
   updateModelDeployment,
 } from "./api.js";
 import { adminAccess } from "./admin-access.js";
+import { LockedScreen } from "./ui/index.js";
 
 interface ModelsViewProps {
   session: AdministratorSession | null;
@@ -185,14 +186,14 @@ export function ModelsView({
   };
 
   if (!unlocked) {
-    return <div className="models-workspace">
-      <header className="models-header"><div><p className="page-kicker">Inference control</p><h1>Models</h1><p>Central model routes, workload assignments, limits, and release evidence.</p></div></header>
-      <section className="models-lock panel">
-        <span className="models-lock-mark">M</span>
-        <div><strong>Administrator session required</strong><p>Claim or sign in to OrcaSynapse to view or change model routes. Serving credentials remain inside the encrypted credential store.</p></div>
-        <button className="primary-button" type="button" onClick={onConfigureConnections}>Open platform settings</button>
-      </section>
-    </div>;
+    return <LockedScreen
+      kicker="Inference control"
+      title="Models"
+      mark="M"
+      reason="Claim or sign in to OrcaSynapse to view or change model routes. Serving credentials remain inside the encrypted credential store."
+      actionLabel="Open platform settings"
+      onAction={onConfigureConnections}
+    />;
   }
 
   const activeCount = models.filter(({ status }) => status === "ACTIVE").length;

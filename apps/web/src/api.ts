@@ -1081,10 +1081,19 @@ export async function changeMemoryPolicyState(
   return memoryPolicySchema.parse(await parsedResponse(response));
 }
 
-export async function getAgentMemoryRecords(query: { ownerSubject?: string; limit?: number } = {}): Promise<AgentMemoryRecordList> {
+export async function getAgentMemoryRecords(
+  query: { ownerSubject?: string; limit?: number; includeHistory?: boolean } = {},
+): Promise<AgentMemoryRecordList> {
   const search = new URLSearchParams();
   if (query.ownerSubject) search.set("ownerSubject", query.ownerSubject);
   if (query.limit) search.set("limit", String(query.limit));
+  // One flag on this side: an operator asking to see history wants both the
+  // corrected and the forgotten, and splitting them would only produce a state
+  // where half the past is visible.
+  if (query.includeHistory) {
+    search.set("includeSuperseded", "true");
+    search.set("includeForgotten", "true");
+  }
   const suffix = search.toString();
   const response = await fetch(`/api/v1/admin/memory/records${suffix ? `?${suffix}` : ""}`, { credentials: "same-origin" });
   return agentMemoryRecordListSchema.parse(await parsedResponse(response));

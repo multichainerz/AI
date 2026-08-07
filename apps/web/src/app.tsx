@@ -46,6 +46,7 @@ import { ConnectionDrawer, type ConnectionDraft } from "./connection-drawer.js";
 import { connectionReadiness } from "./connection-readiness.js";
 import { HomeView, type HomeLayer, type HomeReadinessCheck } from "./home-view.js";
 import { connectionFor, deriveWorkspaceReadiness } from "./platform-readiness.js";
+import { MicroLabel, cn } from "./ui/index.js";
 import {
   pathForView,
   primaryNavigationGroups,
@@ -82,7 +83,30 @@ function Glyph({ name }: { name: string }) {
     settings: <><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H3v-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.6V3h4v.1a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></>,
   };
 
-  return <svg viewBox="0 0 24 24" aria-hidden="true">{glyphs[name]}</svg>;
+  /*
+   * The glyph carries its own presentation.
+   *
+   * It used to inherit size and stroke from `.nav-item svg`, so rebuilding the
+   * nav row on utility classes dropped the rule and every icon fell back to the
+   * SVG default: 300x150, filled black. Nothing caught it — a black shape on a
+   * dark panel has no text for the contrast sweep to measure, and the
+   * accessibility tree does not report size. Presentation attributes rather than
+   * an inline `style`, which `style-src 'self'` refuses.
+   */
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      className="h-[18px] w-[18px] shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.7}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      {glyphs[name]}
+    </svg>
+  );
 }
 
 function OrcaSynapseMark() {
@@ -312,7 +336,6 @@ function App() {
       name: "AI Inference",
       role: "Enterprise model serving",
       mark: "AI",
-      tone: "blue",
       state: unlocked ? connectionState(inferenceConnection) : { label: "Unlock to view", tone: "disabled" },
       components: [],
     },
@@ -321,7 +344,6 @@ function App() {
       name: "Agentic System",
       role: "Governed Hermes execution",
       mark: "AS",
-      tone: "violet",
       state: agenticState,
       components: unlocked ? [
         { name: "Hermes", label: hermesChatReady ? "Ready" : readiness.runtimeNodeReady ? "Needs Profile or policy" : connectionState(hermesConnection).label, tone: hermesChatReady ? "ready" : readiness.runtimeNodeReady ? "degraded" : connectionState(hermesConnection).tone },
@@ -332,7 +354,6 @@ function App() {
       name: "Enterprise Access",
       role: "OIDC, Microsoft Entra ID and RBAC · owner-scoped access",
       mark: "EA",
-      tone: "rose",
       state: unlocked
         ? oidcStatus?.configured
           ? { label: "Ready", tone: "ready" }
@@ -568,11 +589,18 @@ function App() {
   const selectView = (view: ActiveView, deploymentTab: "journey" | "nodes" | "readiness" = "journey") => {
     if (view === "Deployment") setDeploymentInitialTab(deploymentTab);
     setActiveView(view);
-    window.history.replaceState(
-      null,
-      "",
-      view === "Overview" ? `${window.location.pathname}#home` : pathForView(view),
-    );
+
+    const target = view === "Overview" ? `${window.location.pathname}#home` : pathForView(view);
+    // pushState, not replaceState: replacing left no history entry, so Back from
+    // anywhere in the dashboard exited the application entirely rather than
+    // returning to the previous screen. The existing hashchange listener picks
+    // the pop up and re-derives the view, so nothing else is needed.
+    //
+    // Guarded because selectView is also called for the view already showing —
+    // pushing there would stack duplicate entries and make Back appear stuck.
+    if (`${window.location.pathname}${window.location.hash}` !== target) {
+      window.history.pushState(null, "", target);
+    }
   };
 
   const loadRevisions = async (connectionId: string) => {
@@ -633,10 +661,21 @@ function App() {
         <nav aria-label="Primary navigation">
           {primaryNavigationGroups.map((group) => (
             <div className="nav-group" key={group.label}>
-              <p className="nav-label">{group.label}</p>
+              <MicroLabel className="mx-2.5 mb-2 block">{group.label}</MicroLabel>
               {group.items.map(({ area, icon, target, description }) => (
                 <button
-                  className={area === activeArea ? "nav-item active" : "nav-item"}
+                  /*
+                   * The active row is marked by an accent rule on its leading
+                   * edge and a lift in text weight - not a filled block. A solid
+                   * highlight competes with the content it is pointing at, which
+                   * on a screen this dense is the thing that should hold the eye.
+                   */
+                  className={cn(
+                    "flex w-full items-center gap-3 rounded border-l-2 px-2.5 py-2 text-left transition-colors",
+                    area === activeArea
+                      ? "border-l-accent bg-raised text-text"
+                      : "border-l-transparent text-muted hover:bg-raised hover:text-text",
+                  )}
                   key={area}
                   ref={area === activeArea ? activeNavigationItem : undefined}
                   aria-current={area === activeArea ? "page" : undefined}
@@ -645,7 +684,10 @@ function App() {
                   onClick={() => selectView(target)}
                 >
                   <Glyph name={icon} />
-                  <span><strong>{area}</strong><small>{description}</small></span>
+                  <span className="min-w-0">
+                    <strong className="block text-[12px] font-medium leading-tight">{area}</strong>
+                    <small className="mt-0.5 block truncate text-[9px] leading-tight text-faint">{description}</small>
+                  </span>
                 </button>
               ))}
             </div>

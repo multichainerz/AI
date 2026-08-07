@@ -29,8 +29,11 @@ describe("AuditView", () => {
     );
 
     expect(markup).toContain("does not carry the audit:read scope");
-    // No filter form is offered for a role that cannot query.
-    expect(markup).not.toContain("audit-filters");
+    // No filter form is offered for a role that cannot query. Asserted on a
+    // control the operator would use rather than on a class name, so this
+    // cannot quietly become a tautology when the styling changes.
+    expect(markup).not.toContain("Resource type");
+    expect(markup).not.toMatch(/<form/);
   });
 
   it("renders the query surface for a reader", () => {
@@ -39,7 +42,7 @@ describe("AuditView", () => {
     );
 
     expect(markup).toContain("Audit trail");
-    expect(markup).toContain("audit-filters");
+    expect(markup).toMatch(/<form/);
     // Every indexed dimension the API filters on is offered.
     for (const label of ["Action", "Actor type", "Resource type", "Resource ID", "Outcome"]) {
       expect(markup).toContain(label);

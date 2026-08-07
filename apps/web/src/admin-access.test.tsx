@@ -59,10 +59,16 @@ describe("platform governance views", () => {
     it(`${name} presents the same shell as every other governance screen`, () => {
       // One area, one shape: a titled workspace and a lock panel with the same
       // recovery action, so Platform does not read as four unrelated screens.
+      //
+      // Asserted on what the operator sees rather than on the class attribute.
+      // The previous form anchored the closing quote — /class="[a-z]+-workspace"/ —
+      // so a single added utility class failed it across all four views while
+      // the shell it describes was unchanged.
       const html = renderToStaticMarkup(render(pendingPasswordChange));
-      expect(html).toMatch(/class="[a-z]+-workspace"/);
-      expect(html).toMatch(/class="[a-z]+-lock panel"/);
+      expect(html).toContain("Administrator session required");
       expect(html).toContain("Open platform settings");
+      // A heading names the area, so the four screens are distinguishable.
+      expect(html).toMatch(new RegExp(`<h1[^>]*>${name}</h1>`));
     });
   }
 });

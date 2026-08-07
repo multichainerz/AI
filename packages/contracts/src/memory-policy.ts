@@ -100,6 +100,28 @@ export const agentMemoryRecordSchema = z.object({
   sourceRunId: z.uuid().nullable(),
   retentionUntil: z.iso.datetime().nullable(),
   createdAt: z.iso.datetime(),
+
+  /*
+   * Where this fact sits in the chain of corrections that produced it, and how
+   * it left the live set if it did.
+   *
+   * The columns have existed since v0.9.0 and were never exposed, so an
+   * operator reading the store could not tell a current fact from one the person
+   * had corrected weeks ago — the list returned both and looked identical. That
+   * defeats the point of superseding rather than deleting, which is that "what
+   * did it used to believe, and when did that change" stays answerable.
+   */
+  version: z.number().int().min(1),
+  parentMemoryId: z.uuid().nullable(),
+  rootMemoryId: z.uuid().nullable(),
+  isLatest: z.boolean(),
+  supersededAt: z.iso.datetime().nullable(),
+  supersededReason: z.string().nullable(),
+
+  /** Set together by one forget-matching batch; null on a live fact. */
+  forgottenAt: z.iso.datetime().nullable(),
+  forgetReason: z.string().nullable(),
+  forgetBatchId: z.uuid().nullable(),
 });
 
 export const agentMemoryRecordListSchema = z.object({
@@ -110,6 +132,19 @@ export const agentMemoryQuerySchema = z.object({
   ownerSubject: z.string().trim().min(1).max(200).optional(),
   agentProfileId: z.uuid().optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
+
+  /*
+   * History is opt-in, and the default is what the agent can actually see.
+   *
+   * Until now the query had no lifecycle predicate at all, so superseded and
+   * forgotten rows were returned beside live ones with nothing to distinguish
+   * them — an operator auditing what an agent knows was reading a mixture of
+   * current belief and everything it had ever been told. Defaulting both to
+   * false makes the list mean "what this agent would recall right now"; asking
+   * for history is a deliberate act.
+   */
+  includeSuperseded: z.coerce.boolean().default(false),
+  includeForgotten: z.coerce.boolean().default(false),
 }).strict();
 
 export const deleteAgentMemorySchema = z.object({

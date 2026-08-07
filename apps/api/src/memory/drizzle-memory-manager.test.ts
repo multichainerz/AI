@@ -350,3 +350,94 @@ describe("forget-matching", () => {
     expect(result.candidates[0]?.content).toBe("The user's Titan deadline is in March.");
   });
 });
+
+describe("what the record list means", () => {
+  /** Jakarta, corrected to Bandung, plus one unrelated fact forgotten later. */
+  async function seedLifecycle(ownerSubject = "user:pilot") {
+    const [profile] = await context.database
+      .insert(agentProfile)
+      .values({ slug: `agent-${randomUUID().slice(0, 8)}`, status: "ACTIVE", currentVersion: 1, activeVersion: 1 })
+      .returning({ id: agentProfile.id });
+    const write = async (content: string, extra: Record<string, unknown> = {}) => {
+      const [row] = await context.database
+        .insert(agentMemory)
+        .values({
+          ownerSubject,
+          agentProfileId: profile!.id,
+          content,
+          characterCount: content.length,
+          embeddingModel: "Xenova/bge-m3",
+          embedding: Array.from({ length: 1024 }, () => 0.01),
+          ...extra,
+        })
+        .returning({ id: agentMemory.id });
+      return row!.id;
+    };
+    const jakarta = await write("The user works in Jakarta.", {
+      isLatest: false,
+      supersededAt: new Date(),
+      supersededReason: "Superseded by a later statement: The user works in Bandung.",
+    });
+    await write("The user works in Bandung.", { version: 2, parentMemoryId: jakarta, rootMemoryId: jakarta });
+    await write("The user leads the Titan migration.", {
+      forgottenAt: new Date(),
+      forgetReason: "They asked us to forget the project.",
+      forgetBatchId: randomUUID(),
+    });
+    return { profileId: profile!.id, jakarta };
+  }
+
+  it("lists what the agent would actually recall, not everything ever stored", async () => {
+    // Before the lifecycle predicate existed this returned all three, so an
+    // operator auditing an agent read a correction, its replacement and a
+    // forgotten fact as if all were current.
+    await seedLifecycle();
+
+    const { items } = await manager().records({ limit: 50 } as never);
+
+    expect(items.map((row) => row.content)).toEqual(["The user works in Bandung."]);
+  });
+
+  it("carries the chain, so a correction can be traced to what it replaced", async () => {
+    const { jakarta } = await seedLifecycle();
+
+    const [current] = (await manager().records({ limit: 50 } as never)).items;
+
+    expect(current).toMatchObject({ version: 2, parentMemoryId: jakarta, rootMemoryId: jakarta, isLatest: true });
+  });
+
+  it("returns the retired fact and its reason when history is asked for", async () => {
+    await seedLifecycle();
+
+    const { items } = await manager().records({ limit: 50, includeSuperseded: true } as never);
+
+    const retired = items.find((row) => row.content.includes("Jakarta"));
+    expect(retired).toMatchObject({ isLatest: false, version: 1 });
+    expect(retired?.supersededReason).toContain("Bandung");
+    expect(retired?.supersededAt).not.toBeNull();
+  });
+
+  it("returns a forgotten fact only on request, with its batch and reason", async () => {
+    await seedLifecycle();
+
+    expect((await manager().records({ limit: 50 } as never)).items
+      .some((row) => row.content.includes("Titan"))).toBe(false);
+
+    const { items } = await manager().records({ limit: 50, includeForgotten: true } as never);
+    const forgotten = items.find((row) => row.content.includes("Titan"));
+    expect(forgotten?.forgetReason).toBe("They asked us to forget the project.");
+    expect(forgotten?.forgetBatchId).not.toBeNull();
+    expect(forgotten?.forgottenAt).not.toBeNull();
+  });
+
+  it("keeps a person's own view free of facts they had forgotten", async () => {
+    // recordsForOwner backs the end-user "what do you know about me" surface.
+    // Showing a forgotten fact there would answer a deletion request with the
+    // thing that was supposed to be deleted.
+    await seedLifecycle("user:ada");
+
+    const { items } = await manager().recordsForOwner("user:ada");
+
+    expect(items.map((row) => row.content)).toEqual(["The user works in Bandung."]);
+  });
+});
