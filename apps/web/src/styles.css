@@ -49,15 +49,42 @@
 }
 
 /*
- * Inter is named but not shipped.
+ * Inter and JetBrains Mono, self-hosted.
  *
- * On a machine without it installed the product renders in the next stack
- * entry, which is why it has always looked different on Windows. Bundling a
- * woff2 under `public/fonts/` and restoring an @font-face here is the fix, and
- * `font-src 'self'` means a bundled file is the only legal option - a CDN is
- * blocked. Left as a fallback stack rather than a rule pointing at a file that
- * does not exist, which would 404 on every page load.
+ * `font-src 'self'` forbids a CDN, so the only legal option is a file served
+ * from this origin. Both are the **latin variable** cuts only — one file each
+ * covering weight 100-900, 48 KB and 40 KB — taken from
+ * `@fontsource-variable/{inter,jetbrains-mono}@5.3.0` (SIL OFL-1.1). The
+ * packages stay in devDependencies as provenance: they are how these two files
+ * are regenerated, not how they are served.
+ *
+ * The whole subset set is deliberately not imported. Fontsource's stylesheet
+ * carries cyrillic, greek and vietnamese behind `unicode-range`, and while a
+ * browser would never fetch them, Vite emits every one into the image.
+ *
+ * Mono is load-bearing here rather than decorative: every micro-label, every
+ * figure and every identifier is set in it, and the tabular numerals are what
+ * stop a column of values shifting as it updates.
+ *
+ * `font-display: swap` — text renders immediately in the fallback and reflows
+ * when the file lands. On a control plane, readable-now beats invisible-then-
+ * perfect.
  */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/inter-latin-variable.woff2") format("woff2-variations");
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url("/fonts/jetbrains-mono-latin-variable.woff2") format("woff2-variations");
+}
 
 :root {
   /*
@@ -112,7 +139,9 @@
   --bad: rgb(var(--bad-rgb));
 
   --sans: Inter, ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
-  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Consolas, monospace;
+  /* The bundled file leads; the stack behind it only covers the moment before
+     it loads, or a build where it is missing. */
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Consolas, monospace;
 
 
   font-family: var(--sans);

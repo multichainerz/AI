@@ -5,6 +5,45 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.68.0 — 2026-08-07
+
+Ship the fonts. The product has never rendered in the typeface it names.
+
+`--sans` has said `Inter` since ai-v1.54.0 with no `@font-face` behind it, so
+every screen fell through to whatever the operating system supplied — Segoe UI
+on Windows. Both families are now self-hosted, because `font-src 'self'` makes
+a bundled file the only legal option.
+
+- **Inter** for text and **JetBrains Mono** for everything mono, both SIL
+  OFL-1.1, both the **latin variable** cut only: one file each covering weight
+  100–900, 48 KB and 40 KB. Sourced from
+  `@fontsource-variable/{inter,jetbrains-mono}@5.3.0`, which stay in
+  devDependencies as provenance — they are how the two files are regenerated,
+  not how they are served.
+- Fontsource's own stylesheet is deliberately not imported: it carries cyrillic,
+  greek and vietnamese behind `unicode-range`, and while a browser would never
+  fetch them, Vite emits every one into the image.
+- Mono is load-bearing rather than decorative here. Every micro-label, figure
+  and identifier is set in it, and its tabular numerals are what stop a column
+  of values shifting as it updates.
+- `font-display: swap`: on a control plane, readable-now beats
+  invisible-then-perfect, especially for someone mid-diagnosis.
+
+Verified in the browser rather than trusting `document.fonts.check`, which
+answers for the *named* face and not for what actually draws: both files were
+served from this origin, and canvas metrics for the same string differ from
+their fallbacks — Inter 189.59px vs Segoe UI 173.38px, JetBrains Mono 167.40px
+vs Consolas 153.40px. Contrast unchanged at 0 nodes below WCAG AA.
+
+`ui/fonts.test.ts` closes the gap that let this sit unnoticed for fourteen
+releases: a font is the one asset referenced by URL rather than by import, so
+nothing in the build fails when the file is missing — the page just quietly
+renders in something else. It now fails if a declared `@font-face` has no file,
+if a bundled family is not first in the stack that uses it, or if `swap` is
+dropped.
+
+923 tests green, web at 164.
+
 ## ai-v1.67.0 — 2026-08-07
 
 The view ternary becomes a lookup, which was deferred on a condition that is now
