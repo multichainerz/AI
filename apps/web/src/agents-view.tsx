@@ -15,7 +15,10 @@ import {
   updateAgentProfile,
   updateAgentRuntime,
 } from "./api.js";
-import { LockedScreen } from "./ui/index.js";
+import {
+  Alert, Button, Dialog, EmptyState, Field, Input, LockedScreen, Metric, MetricRow, MicroLabel,
+  PageHeader, Panel, PanelHeading, Select, StatusText, Textarea, cn, toneFor,
+} from "./ui/index.js";
 
 interface AgentsViewProps {
   unlocked: boolean;
@@ -305,101 +308,353 @@ export function AgentsView({ unlocked, administrator, activationReady, activatio
     && (administrator ? runtime?.enabled === true : true);
 
   return (
-    <section className="agents-workspace">
-      <header className="documents-header agents-header">
-        <div><p className="page-kicker">Hardened orchestration</p><h1>Hermes Profiles</h1><p>Immutable Profile Distributions, scoped knowledge, optional OrcaSynapse-governed MCP actions, safe activity events, and an operator kill switch.</p></div>
-        <div className="agent-header-actions"><button className="secondary-button" type="button" disabled={!chatAvailable} onClick={onOpenChat}>{chatAvailable ? "Open Chat" : "Chat not ready"}</button><button className="secondary-button" type="button" onClick={() => void load()}>Refresh</button>{administrator && <button className="primary-button" type="button" onClick={() => void openNewProfile()}>{activationReady === false ? "Create draft" : "Create agent"}</button>}</div>
-      </header>
+    <div className="grid gap-5">
+      <PageHeader
+        kicker="Hardened orchestration"
+        title="Hermes Profiles"
+        description="Immutable Profile Distributions, scoped knowledge, optional OrcaSynapse-governed MCP actions, safe activity events, and an operator kill switch."
+        actions={<>
+          <Button disabled={!chatAvailable} onClick={onOpenChat}>{chatAvailable ? "Open Chat" : "Chat not ready"}</Button>
+          <Button onClick={() => void load()}>Refresh</Button>
+          {administrator && <Button variant="primary" onClick={() => void openNewProfile()}>{activationReady === false ? "Create draft" : "Create agent"}</Button>}
+        </>}
+      />
 
-      {error && <div className="documents-alert" role="alert"><span>{error}</span><div className="documents-alert-actions">{readinessRequired && <button type="button" onClick={onOpenReadiness}>Open Hermes readiness</button>}<button type="button" onClick={() => { setError(null); setReadinessRequired(false); }}>Dismiss</button></div></div>}
-      {notice && <div className="documents-alert agent-success" role="status"><span>{notice}</span><div className="documents-alert-actions">{chatAvailable && <button type="button" onClick={onOpenChat}>Open Chat</button>}<button type="button" onClick={() => setNotice(null)}>Dismiss</button></div></div>}
-      {administrator && activationReady === false && <div className="workspace-guidance" role="status">
-        <div><strong>Profiles can be drafted now</strong><span>{activationMessage ?? "Connect AI Inference and finish VM2 enrollment before activating a Profile for Chat."}</span></div>
-        <button className="secondary-button" type="button" onClick={onOpenReadiness}>Review platform setup</button>
-      </div>}
+      {error && <Alert onDismiss={() => { setError(null); setReadinessRequired(false); }}>
+        {error}
+        {readinessRequired && (
+          <Button variant="ghost" size="sm" className="ml-3" onClick={onOpenReadiness}>Open Hermes readiness</Button>
+        )}
+      </Alert>}
+      {notice && <Alert tone="good" onDismiss={() => setNotice(null)}>
+        {notice}
+        {chatAvailable && <Button variant="ghost" size="sm" className="ml-3" onClick={onOpenChat}>Open Chat</Button>}
+      </Alert>}
+      {administrator && activationReady === false && <Panel className="flex items-center gap-4 border-l-2 border-l-warn" role="status">
+        <div className="min-w-0 flex-1">
+          <strong className="block text-[12px] font-semibold text-text">Profiles can be drafted now</strong>
+          <span className="mt-1 block text-body text-muted">
+            {activationMessage ?? "Connect AI Inference and finish VM2 enrollment before activating a Profile for Chat."}
+          </span>
+        </div>
+        <Button className="shrink-0" onClick={onOpenReadiness}>Review platform setup</Button>
+      </Panel>}
 
-      {administrator && <section className={`agent-boundary ${runtime?.enabled ? "enabled" : "disabled"}`}>
-        <div className="agent-boundary-mark">{runtime?.enabled ? "ON" : "OFF"}</div>
-        <div><span>Hermes execution</span><strong>{runtime?.enabled ? "Ready for Chat" : "Activates with the first verified Profile"}</strong><p>{runtime?.enabled ? runtime.reason : "Create or verify a Profile; OrcaSynapse will test Hermes and enable this boundary automatically."}</p></div>
-        <details className="agent-boundary-control">
-          <summary>Manual control</summary>
-          <form onSubmit={(event) => { event.preventDefault(); if (reason.trim().length >= 3) void action("runtime", () => updateAgentRuntime(!runtime?.enabled, reason.trim())); }}>
-            <label htmlFor="runtime-reason">Audit reason</label><input id="runtime-reason" value={reason} minLength={3} maxLength={500} onChange={(event) => setReason(event.target.value)} />
-            <button className={runtime?.enabled ? "danger-button" : "secondary-button"} disabled={busy !== null || reason.trim().length < 3} type="submit">{busy === "runtime" ? "Applying..." : runtime?.enabled ? "Disable execution" : "Enable manually"}</button>
-          </form>
-        </details>
-      </section>}
+      {administrator && <Panel className={cn(
+        "grid grid-cols-[auto_minmax(0,1fr)] items-start gap-4 border-l-2",
+        runtime?.enabled ? "border-l-good" : "border-l-border-strong",
+      )}>
+        {/* The kill switch. ON/OFF is stated as a word rather than a colour
+            alone, because this is the control an operator reaches for when
+            something is already going wrong. */}
+        <div className={cn(
+          "grid h-11 w-11 place-items-center rounded border font-mono text-[11px] font-bold",
+          runtime?.enabled ? "border-good/50 bg-good/10 text-good" : "border-border-strong bg-raised text-muted",
+        )}>
+          {runtime?.enabled ? "ON" : "OFF"}
+        </div>
+        <div className="min-w-0">
+          <MicroLabel className="block">Hermes execution</MicroLabel>
+          <strong className="mt-1.5 block text-[12px] font-semibold text-text">
+            {runtime?.enabled ? "Ready for Chat" : "Activates with the first verified Profile"}
+          </strong>
+          <p className="mb-0 mt-1 text-body text-muted">
+            {runtime?.enabled ? runtime.reason : "Create or verify a Profile; OrcaSynapse will test Hermes and enable this boundary automatically."}
+          </p>
+          <details className="mt-3">
+            <summary className="cursor-pointer font-mono text-micro uppercase text-faint">Manual control</summary>
+            <form
+              className="mt-2.5 flex flex-wrap items-end gap-2.5"
+              onSubmit={(event) => { event.preventDefault(); if (reason.trim().length >= 3) void action("runtime", () => updateAgentRuntime(!runtime?.enabled, reason.trim())); }}
+            >
+              <Field label="Audit reason" htmlFor="runtime-reason" className="min-w-[220px] flex-1">
+                <Input id="runtime-reason" value={reason} minLength={3} maxLength={500} onChange={(event) => setReason(event.target.value)} />
+              </Field>
+              <Button
+                variant={runtime?.enabled ? "danger" : "secondary"}
+                disabled={busy !== null || reason.trim().length < 3}
+                type="submit"
+              >
+                {busy === "runtime" ? "Applying..." : runtime?.enabled ? "Disable execution" : "Enable manually"}
+              </Button>
+            </form>
+          </details>
+        </div>
+      </Panel>}
 
-      <div className="agent-metrics" aria-label="Agent operations summary">
-        <article><span>Profiles</span><strong>{metrics?.profiles ?? profiles.length}</strong><small>{metrics?.activeProfiles ?? profiles.filter(({ status }) => status === "ACTIVE").length} active</small></article>
-        <article><span>Queued</span><strong>{metrics?.queuedRuns ?? runs.filter(({ status }) => status === "QUEUED").length}</strong><small>awaiting worker</small></article>
-        <article><span>Running</span><strong>{metrics?.runningRuns ?? runs.filter(({ status }) => runningStatuses.has(status)).length}</strong><small>live or stopping</small></article>
-        <article><span>Completed</span><strong>{metrics?.completedRuns ?? runs.filter(({ status }) => status === "COMPLETED").length}</strong><small>retained outcomes</small></article>
-      </div>
+      <MetricRow className="lg:grid-cols-4" aria-label="Agent operations summary">
+        <Metric
+          label="Profiles"
+          value={metrics?.profiles ?? profiles.length}
+          caption={`${metrics?.activeProfiles ?? profiles.filter(({ status }) => status === "ACTIVE").length} active`}
+        />
+        <Metric label="Queued" value={metrics?.queuedRuns ?? runs.filter(({ status }) => status === "QUEUED").length} caption="awaiting worker" />
+        <Metric
+          label="Running"
+          tone="accent"
+          value={metrics?.runningRuns ?? runs.filter(({ status }) => runningStatuses.has(status)).length}
+          caption="live or stopping"
+        />
+        <Metric label="Completed" value={metrics?.completedRuns ?? runs.filter(({ status }) => status === "COMPLETED").length} caption="retained outcomes" />
+      </MetricRow>
 
-      <div className="agents-layout profiles-only">
-        <section className="agent-profiles panel">
-          <div className="document-section-heading"><div><p className="section-kicker">Immutable configuration</p><h2>Profiles</h2></div><span>{profiles.length} profiles</span></div>
-          <div className="agent-profile-list">
-            {profiles.length === 0 && <div className="document-empty"><strong>Create your first agent</strong><span>OrcaSynapse will verify Hermes, activate the Profile, and enable Chat in one guided action.</span>{administrator && <button className="primary-button" type="button" onClick={() => void openNewProfile()}>Create starter agent</button>}</div>}
-            {profiles.map((profile) => <article key={profile.id} className={selectedProfileId === profile.id ? "selected" : undefined}>
-              <button className="agent-profile-select" type="button" onClick={() => setSelectedProfileId(profile.id)}>
-                <span className="agent-avatar">{profile.version.displayName.slice(0, 2).toUpperCase()}</span>
-                <div><strong>{profile.version.displayName}</strong><p>{profile.version.purpose}</p><small>{profile.slug} · current v{profile.version.version} · {profile.version.modelAlias} · distro {profile.version.distributionDigest.slice(0, 10)}{profile.activeVersion !== null && profile.activeVersion !== profile.version.version ? ` · live v${profile.activeVersion}` : ""}</small></div>
-                <span className={`document-status ${statusTone(profile.status)}`}>{profile.status.toLowerCase()}</span>
-              </button>
-              {administrator && <div className="agent-profile-actions"><button type="button" onClick={() => editProfile(profile)}>New version</button>{profile.status === "ACTIVE" ? <button type="button" disabled={busy !== null} onClick={() => void action(`suspend-${profile.id}`, () => setAgentProfileState(profile.id, "suspend"))}>Suspend</button> : <button className="primary-button" type="button" disabled={busy !== null} onClick={() => void activateForChat(profile)}>{busy === `activate-${profile.id}` ? "Verifying Hermes..." : "Verify & activate"}</button>}</div>}
-            </article>)}
+      <Panel>
+        <PanelHeading
+          kicker="Immutable configuration"
+          title="Profiles"
+          actions={<StatusText>{profiles.length} profiles</StatusText>}
+        />
+        <div className="grid gap-2">
+          {profiles.length === 0 && (
+            <EmptyState
+              title="Create your first agent"
+              action={administrator ? <Button variant="primary" onClick={() => void openNewProfile()}>Create starter agent</Button> : undefined}
+            >
+              OrcaSynapse will verify Hermes, activate the Profile, and enable Chat in one guided action.
+            </EmptyState>
+          )}
+          {profiles.map((profile) => <article
+            key={profile.id}
+            className={cn(
+              "grid gap-3 rounded border p-3",
+              selectedProfileId === profile.id ? "border-border-strong bg-raised" : "border-border bg-raised/40",
+            )}
+          >
+            <button
+              className="grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 text-left"
+              type="button"
+              onClick={() => setSelectedProfileId(profile.id)}
+            >
+              <span
+                aria-hidden="true"
+                className="grid h-9 w-9 place-items-center rounded border border-border-strong bg-surface font-mono text-[10px] font-bold text-accent"
+              >
+                {profile.version.displayName.slice(0, 2).toUpperCase()}
+              </span>
+              <div className="min-w-0">
+                <strong className="block truncate text-[12px] font-semibold text-text">{profile.version.displayName}</strong>
+                <p className="mb-0 mt-0.5 truncate text-caption text-muted">{profile.version.purpose}</p>
+                {/* The distribution digest is what VM2 admits, so it is on the
+                    row rather than behind a click. */}
+                <small className="mt-1 block truncate font-mono text-micro text-faint">
+                  {profile.slug} · current v{profile.version.version} · {profile.version.modelAlias} · distro {profile.version.distributionDigest.slice(0, 10)}
+                  {profile.activeVersion !== null && profile.activeVersion !== profile.version.version ? ` · live v${profile.activeVersion}` : ""}
+                </small>
+              </div>
+              <StatusText dot tone={toneFor(statusTone(profile.status))}>{profile.status.toLowerCase()}</StatusText>
+            </button>
+            {administrator && <div className="flex justify-end gap-1.5">
+              <Button size="sm" onClick={() => editProfile(profile)}>New version</Button>
+              {profile.status === "ACTIVE"
+                ? <Button variant="danger" size="sm" disabled={busy !== null} onClick={() => void action(`suspend-${profile.id}`, () => setAgentProfileState(profile.id, "suspend"))}>Suspend</Button>
+                : <Button variant="primary" size="sm" disabled={busy !== null} onClick={() => void activateForChat(profile)}>
+                    {busy === `activate-${profile.id}` ? "Verifying Hermes..." : "Verify & activate"}
+                  </Button>}
+            </div>}
+          </article>)}
+        </div>
+      </Panel>
+
+      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
+        <Panel>
+          <PanelHeading kicker="Execution ledger" title="Recent runs" actions={<StatusText>{runs.length} records</StatusText>} />
+          <div className="grid max-h-[520px] gap-1 overflow-y-auto">
+            {runs.length === 0 && (
+              <EmptyState title="No runs yet">Queued work will appear here with its complete lifecycle.</EmptyState>
+            )}
+            {runs.map((run) => <button
+              className={cn(
+                "grid w-full gap-1 rounded border p-2.5 text-left transition-colors",
+                selectedRun?.id === run.id ? "border-border-strong bg-raised" : "border-transparent hover:bg-raised",
+              )}
+              key={run.id}
+              type="button"
+              onClick={() => setSelectedRunId(run.id)}
+            >
+              <StatusText dot tone={toneFor(statusTone(run.status))}>{run.status.replaceAll("_", " ").toLowerCase()}</StatusText>
+              <strong className="truncate text-[12px] font-semibold text-text">{run.profileName}</strong>
+              <p className="mb-0 line-clamp-2 text-caption text-muted">{run.input}</p>
+              <small className="font-mono text-micro text-faint">v{run.profileVersion} · {friendlyTime(run.createdAt)}</small>
+            </button>)}
           </div>
-        </section>
+        </Panel>
 
-      </div>
-
-      <div className="agent-runs-layout">
-        <section className="agent-run-list panel">
-          <div className="document-section-heading"><div><p className="section-kicker">Execution ledger</p><h2>Recent runs</h2></div><span>{runs.length} records</span></div>
-          <div className="agent-runs-scroll">{runs.length === 0 && <div className="document-empty"><strong>No runs yet</strong><span>Queued work will appear here with its complete lifecycle.</span></div>}{runs.map((run) => <button className={selectedRun?.id === run.id ? "selected" : undefined} key={run.id} type="button" onClick={() => setSelectedRunId(run.id)}><span className={`document-status ${statusTone(run.status)}`}>{run.status.replaceAll("_", " ").toLowerCase()}</span><strong>{run.profileName}</strong><p>{run.input}</p><small>v{run.profileVersion} · {friendlyTime(run.createdAt)}</small></button>)}</div>
-        </section>
-        <section className="agent-run-detail panel">
-          {!selectedRun ? <div className="document-empty"><strong>Select a run</strong><span>Input, output, sources, and failure information remain in the OrcaSynapse execution ledger.</span></div> : <>
-            <div className="agent-run-detail-head"><div><p className="section-kicker">Run detail</p><h2>{selectedRun.profileName}</h2><span>{selectedRun.profileSlug} · version {selectedRun.profileVersion}</span></div><span className={`document-status ${statusTone(selectedRun.status)}`}>{selectedRun.status.replaceAll("_", " ").toLowerCase()}</span></div>
-            <dl className="agent-run-times"><div><dt>Queued</dt><dd>{friendlyTime(selectedRun.queuedAt)}</dd></div><div><dt>Started</dt><dd>{friendlyTime(selectedRun.startedAt)}</dd></div><div><dt>Completed</dt><dd>{friendlyTime(selectedRun.completedAt)}</dd></div></dl>
-            <div className="agent-distribution-pin"><span>Profile Distribution</span><code>{selectedRun.profileDistributionDigest ?? "Legacy run — no distribution digest"}</code></div>
-            <section className="agent-activity" aria-label="Safe Hermes activity timeline">
-              <div><span>Activity timeline</span><small>{runEvents.length} safe event{runEvents.length === 1 ? "" : "s"}</small></div>
-              {runEvents.length === 0 ? <p>No bounded Hermes activity events have been retained for this run.</p> : <ol>{runEvents.map((event) => <li key={event.id}>
-                <i className={event.type.includes("FAILED") ? "failed" : event.type.includes("COMPLETED") ? "ready" : "processing"} />
-                <div><strong>{eventTitle(event)}</strong><p>{eventDetail(event)}</p><small>{friendlyTime(event.occurredAt)}{event.durationMs !== null ? ` · ${Math.round(event.durationMs / 100) / 10}s` : ""}{event.inputTokens !== null || event.outputTokens !== null ? ` · ${(event.inputTokens ?? 0) + (event.outputTokens ?? 0)} tokens` : ""}</small></div>
-              </li>)}</ol>}
-              <footer>Token deltas, chain-of-thought, hidden prompts, credentials, tool arguments, and tool results are never retained here.</footer>
+        <Panel>
+          {!selectedRun
+            ? <EmptyState title="Select a run">Input, output, sources, and failure information remain in the OrcaSynapse execution ledger.</EmptyState>
+            : <>
+            <PanelHeading
+              kicker="Run detail"
+              title={selectedRun.profileName}
+              description={`${selectedRun.profileSlug} · version ${selectedRun.profileVersion}`}
+              actions={<StatusText dot tone={toneFor(statusTone(selectedRun.status))}>{selectedRun.status.replaceAll("_", " ").toLowerCase()}</StatusText>}
+            />
+            <dl className="m-0 grid grid-cols-3 gap-px rounded border border-border bg-border">
+              {[
+                { label: "Queued", value: friendlyTime(selectedRun.queuedAt) },
+                { label: "Started", value: friendlyTime(selectedRun.startedAt) },
+                { label: "Completed", value: friendlyTime(selectedRun.completedAt) },
+              ].map((fact) => (
+                <div className="min-w-0 bg-surface px-2.5 py-2" key={fact.label}>
+                  <dt className="truncate font-mono text-micro uppercase text-faint">{fact.label}</dt>
+                  <dd className="m-0 mt-1 truncate font-mono text-caption text-muted">{fact.value}</dd>
+                </div>
+              ))}
+            </dl>
+            <div className="mt-3 rounded border border-border bg-raised p-3">
+              <MicroLabel className="block">Profile Distribution</MicroLabel>
+              <code className="mt-1.5 block break-all font-mono text-micro text-muted">
+                {selectedRun.profileDistributionDigest ?? "Legacy run — no distribution digest"}
+              </code>
+            </div>
+            <section className="mt-3 overflow-hidden rounded border border-border" aria-label="Safe Hermes activity timeline">
+              <header className="flex items-center justify-between border-b border-border bg-raised px-3 py-2">
+                <MicroLabel>Activity timeline</MicroLabel>
+                <StatusText>{runEvents.length} safe event{runEvents.length === 1 ? "" : "s"}</StatusText>
+              </header>
+              {runEvents.length === 0
+                ? <p className="m-0 px-3 py-4 text-body text-faint">No bounded Hermes activity events have been retained for this run.</p>
+                : <ol className="m-0 grid list-none p-0">{runEvents.map((event) => <li
+                    className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-2.5 border-t border-border px-3 py-2.5 first:border-t-0"
+                    key={event.id}
+                  >
+                    <span
+                      aria-hidden="true"
+                      className={cn(
+                        "mt-1 h-1.5 w-1.5 shrink-0",
+                        event.type.includes("FAILED") ? "bg-bad" : event.type.includes("COMPLETED") ? "bg-good" : "bg-accent",
+                      )}
+                    />
+                    <div className="min-w-0">
+                      <strong className="block text-caption font-semibold text-text">{eventTitle(event)}</strong>
+                      <p className="mb-0 mt-0.5 text-caption leading-relaxed text-muted">{eventDetail(event)}</p>
+                      <small className="mt-1 block font-mono text-micro text-faint">
+                        {friendlyTime(event.occurredAt)}
+                        {event.durationMs !== null ? ` · ${Math.round(event.durationMs / 100) / 10}s` : ""}
+                        {event.inputTokens !== null || event.outputTokens !== null ? ` · ${(event.inputTokens ?? 0) + (event.outputTokens ?? 0)} tokens` : ""}
+                      </small>
+                    </div>
+                  </li>)}</ol>}
+              {/* The list is bounded on purpose, and says so: an operator
+                  reading it should not assume the omissions are absences. */}
+              <footer className="border-t border-border bg-bg px-3 py-2 text-micro leading-relaxed text-faint">
+                Token deltas, chain-of-thought, hidden prompts, credentials, tool arguments, and tool results are never
+                retained here.
+              </footer>
             </section>
-            <div className="agent-run-content"><span>Input</span><p>{selectedRun.input}</p></div>
-            {selectedRun.output && <div className="agent-run-content output"><span>Hermes output</span><p>{selectedRun.output}</p></div>}
-            {selectedRun.failureMessage && <div className="agent-run-failure"><strong>{selectedRun.failureCode}</strong><p>{selectedRun.failureMessage}</p></div>}
-            {selectedRun.sources.length > 0 && <div className="agent-run-sources"><span>Authorized private sources</span>{selectedRun.sources.map((source) => <details key={source.documentId}><summary>{source.fileName}<small>{Math.round(source.score * 100)}% match · {source.classification.toLowerCase()}</small></summary><p>{source.excerpt}</p></details>)}</div>}
-            {runningStatuses.has(selectedRun.status) && <button className="danger-button" disabled={busy !== null || selectedRun.status === "CANCEL_REQUESTED"} type="button" onClick={() => void action(`cancel-${selectedRun.id}`, () => cancelAgentRun(selectedRun.id, administrator))}>{selectedRun.status === "CANCEL_REQUESTED" ? "Cancellation requested" : "Cancel run"}</button>}
+            {[
+              { label: "Input", body: selectedRun.input, tone: "" },
+              ...(selectedRun.output ? [{ label: "Hermes output", body: selectedRun.output, tone: "border-l-2 border-l-accent" }] : []),
+            ].map((block) => (
+              <div className={cn("mt-3 rounded border border-border bg-raised p-3", block.tone)} key={block.label}>
+                <MicroLabel className="block">{block.label}</MicroLabel>
+                <p className="mb-0 mt-1.5 whitespace-pre-wrap break-words text-body leading-relaxed text-text">{block.body}</p>
+              </div>
+            ))}
+            {selectedRun.failureMessage && <div className="mt-3 rounded border border-bad/40 bg-bad/10 p-3">
+              <strong className="block font-mono text-micro uppercase text-bad">{selectedRun.failureCode}</strong>
+              <p className="mb-0 mt-1.5 text-body leading-relaxed text-muted">{selectedRun.failureMessage}</p>
+            </div>}
+            {selectedRun.sources.length > 0 && <div className="mt-3 grid gap-1.5 rounded border border-border bg-raised p-3">
+              <MicroLabel>Authorized private sources</MicroLabel>
+              {selectedRun.sources.map((source) => <details className="rounded border border-border bg-surface p-2.5" key={source.documentId}>
+                <summary className="flex cursor-pointer items-center justify-between gap-3 text-body text-text">
+                  {source.fileName}
+                  <small className="font-mono text-micro text-faint">
+                    {Math.round(source.score * 100)}% match · {source.classification.toLowerCase()}
+                  </small>
+                </summary>
+                <p className="mb-0 mt-2 text-caption leading-relaxed text-muted">{source.excerpt}</p>
+              </details>)}
+            </div>}
+            {runningStatuses.has(selectedRun.status) && <Button
+              variant="danger"
+              className="mt-3"
+              disabled={busy !== null || selectedRun.status === "CANCEL_REQUESTED"}
+              onClick={() => void action(`cancel-${selectedRun.id}`, () => cancelAgentRun(selectedRun.id, administrator))}
+            >
+              {selectedRun.status === "CANCEL_REQUESTED" ? "Cancellation requested" : "Cancel run"}
+            </Button>}
           </>}
-        </section>
+        </Panel>
       </div>
 
-      {editorOpen && administrator && <div className="agent-editor-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setEditorOpen(false); }}><form className="agent-editor" onSubmit={(event) => void saveProfile(event)}>
-        <header><div><p className="section-kicker">{editingId ? "Immutable revision" : "New bounded profile"}</p><h2>{editingId ? "Create a new profile version" : "Create agent profile"}</h2></div><button type="button" aria-label="Close profile editor" onClick={() => setEditorOpen(false)}>×</button></header>
-        <div className="agent-editor-grid"><label>Slug<input required disabled={editingId !== null} pattern="[a-z0-9]+(?:-[a-z0-9]+)*" value={profileDraft.slug} onChange={(event) => setProfileDraft({ ...profileDraft, slug: event.target.value })} /></label><label>Display name<input required minLength={2} maxLength={120} value={profileDraft.displayName} onChange={(event) => setProfileDraft({ ...profileDraft, displayName: event.target.value })} /></label></div>
-        <label>Purpose<textarea required minLength={3} maxLength={500} value={profileDraft.purpose} onChange={(event) => setProfileDraft({ ...profileDraft, purpose: event.target.value })} /></label>
-        <label>Personality and operating principles<textarea className="instructions" required minLength={10} maxLength={32_000} value={profileDraft.soulMd} onChange={(event) => setProfileDraft({ ...profileDraft, soulMd: event.target.value })} /></label>
-        <label>System instructions<textarea className="instructions" required minLength={10} maxLength={32_000} value={profileDraft.instructions} onChange={(event) => setProfileDraft({ ...profileDraft, instructions: event.target.value })} /></label>
-        <label>Approved Skills<textarea value={skillsDraft} placeholder={`One per line: name@version ${"a".repeat(64)}`} onChange={(event) => setSkillsDraft(event.target.value)} /><small>Only secret-free, reviewed Skill references are included in the distribution source. Runtime installation remains evidence-gated.</small></label>
-        <div className="agent-editor-grid"><label>Inference model<input required value={profileDraft.modelAlias} onChange={(event) => setProfileDraft({ ...profileDraft, modelAlias: event.target.value })} /><small>Filled from the healthy AI Inference connection.</small></label><label>Timeout (seconds)<input required type="number" min={30} max={3600} value={profileDraft.timeoutSeconds} onChange={(event) => setProfileDraft({ ...profileDraft, timeoutSeconds: Number(event.target.value) })} /></label><label>Concurrent runs<input required type="number" min={1} max={20} value={profileDraft.maxConcurrentRuns} onChange={(event) => setProfileDraft({ ...profileDraft, maxConcurrentRuns: Number(event.target.value) })} /></label></div>
-        <label className="agent-check"><input type="checkbox" checked={profileDraft.allowPrivateKnowledge} onChange={(event) => setProfileDraft({ ...profileDraft, allowPrivateKnowledge: event.target.checked })} /><span><strong>Allow private knowledge retrieval</strong><small>Searches only the requesting identity’s documents in the private knowledge index.</small></span></label>
-        <label>Memory<select value={profileDraft.memoryMode} onChange={(event) => setProfileDraft({ ...profileDraft, memoryMode: event.target.value as CreateAgentProfile["memoryMode"] })}>
-          <option value="DOCUMENTS_ONLY">Documents only — remembers nothing about the person</option>
-          <option value="RECALL_ONLY">Recall only — uses existing memory, never adds to it</option>
-          <option value="LEARN_USER">Learn the user — remembers what the person says</option>
-          <option value="LEARN_EXCHANGE">Learn the exchange — remembers both sides of the turn</option>
-        </select><small>{memoryModeNote(profileDraft.memoryMode)}</small></label>
-        <div className="agent-editor-boundary"><strong>{activationReady === false ? "Draft until infrastructure is ready" : "Automatic activation"}</strong><span>{activationReady === false ? "This Profile will be saved safely without attempting a runtime activation. Finish Platform setup, then verify and activate it from the Profile list." : "OrcaSynapse will verify Hermes, activate this immutable Profile, and enable Chat. Personality and Skills describe behavior, never authority."}</span></div>
-        <footer><button className="secondary-button" type="button" onClick={() => setEditorOpen(false)}>Cancel</button><button className="primary-button" disabled={busy !== null} type="submit">{busy === "profile-save" ? "Saving..." : editingId ? "Save new version" : activationReady === false ? "Save draft" : "Create & activate"}</button></footer>
-      </form></div>}
-    </section>
+      {/*
+        * The profile editor was a hand-rolled backdrop with no focus trap, no
+        * Escape and no scroll lock — the same gap the Chat overlays had before
+        * ai-v1.57.0. It is a long form that decides what an agent may do, so
+        * tabbing out of it mid-edit is the worst place for that to happen.
+        */}
+      <Dialog
+        open={editorOpen && administrator}
+        onClose={() => setEditorOpen(false)}
+        kicker={editingId ? "Immutable revision" : "New bounded profile"}
+        title={editingId ? "Create a new profile version" : "Create agent profile"}
+        className="max-w-[760px]"
+        footer={<>
+          <Button onClick={() => setEditorOpen(false)}>Cancel</Button>
+          <Button variant="primary" disabled={busy !== null} type="submit" form="agent-profile-editor">
+            {busy === "profile-save" ? "Saving..." : editingId ? "Save new version" : activationReady === false ? "Save draft" : "Create & activate"}
+          </Button>
+        </>}
+      >
+        <form className="grid gap-3" id="agent-profile-editor" onSubmit={(event) => void saveProfile(event)}>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Slug"><Input required disabled={editingId !== null} pattern="[a-z0-9]+(?:-[a-z0-9]+)*" value={profileDraft.slug} onChange={(event) => setProfileDraft({ ...profileDraft, slug: event.target.value })} /></Field>
+            <Field label="Display name"><Input required minLength={2} maxLength={120} value={profileDraft.displayName} onChange={(event) => setProfileDraft({ ...profileDraft, displayName: event.target.value })} /></Field>
+          </div>
+          <Field label="Purpose"><Textarea required minLength={3} maxLength={500} value={profileDraft.purpose} onChange={(event) => setProfileDraft({ ...profileDraft, purpose: event.target.value })} /></Field>
+          <Field label="Personality and operating principles">
+            <Textarea className="min-h-[160px]" required minLength={10} maxLength={32_000} value={profileDraft.soulMd} onChange={(event) => setProfileDraft({ ...profileDraft, soulMd: event.target.value })} />
+          </Field>
+          <Field label="System instructions">
+            <Textarea className="min-h-[160px]" required minLength={10} maxLength={32_000} value={profileDraft.instructions} onChange={(event) => setProfileDraft({ ...profileDraft, instructions: event.target.value })} />
+          </Field>
+          <Field
+            label="Approved Skills"
+            hint="Only secret-free, reviewed Skill references are included in the distribution source. Runtime installation remains evidence-gated."
+          >
+            <Textarea className="font-mono" value={skillsDraft} placeholder={`One per line: name@version ${"a".repeat(64)}`} onChange={(event) => setSkillsDraft(event.target.value)} />
+          </Field>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <Field label="Inference model" hint="Filled from the healthy AI Inference connection.">
+              <Input required value={profileDraft.modelAlias} onChange={(event) => setProfileDraft({ ...profileDraft, modelAlias: event.target.value })} />
+            </Field>
+            <Field label="Timeout (seconds)"><Input required type="number" min={30} max={3600} value={profileDraft.timeoutSeconds} onChange={(event) => setProfileDraft({ ...profileDraft, timeoutSeconds: Number(event.target.value) })} /></Field>
+            <Field label="Concurrent runs"><Input required type="number" min={1} max={20} value={profileDraft.maxConcurrentRuns} onChange={(event) => setProfileDraft({ ...profileDraft, maxConcurrentRuns: Number(event.target.value) })} /></Field>
+          </div>
+          <label className="grid cursor-pointer gap-1.5 rounded border border-border bg-raised p-3">
+            <span className="flex items-center gap-2.5">
+              <input type="checkbox" checked={profileDraft.allowPrivateKnowledge} onChange={(event) => setProfileDraft({ ...profileDraft, allowPrivateKnowledge: event.target.checked })} />
+              <strong className="text-body font-semibold text-text">Allow private knowledge retrieval</strong>
+            </span>
+            <small className="text-caption leading-relaxed text-muted">
+              Searches only the requesting identity’s documents in the private knowledge index.
+            </small>
+          </label>
+          <Field label="Memory" hint={memoryModeNote(profileDraft.memoryMode)}>
+            <Select value={profileDraft.memoryMode} onChange={(event) => setProfileDraft({ ...profileDraft, memoryMode: event.target.value as CreateAgentProfile["memoryMode"] })}>
+              <option value="DOCUMENTS_ONLY">Documents only — remembers nothing about the person</option>
+              <option value="RECALL_ONLY">Recall only — uses existing memory, never adds to it</option>
+              <option value="LEARN_USER">Learn the user — remembers what the person says</option>
+              <option value="LEARN_EXCHANGE">Learn the exchange — remembers both sides of the turn</option>
+            </Select>
+          </Field>
+          <div className={cn(
+            "rounded border border-l-2 border-border p-3",
+            activationReady === false ? "border-l-warn" : "border-l-accent",
+          )}>
+            <strong className="block text-[12px] font-semibold text-text">
+              {activationReady === false ? "Draft until infrastructure is ready" : "Automatic activation"}
+            </strong>
+            <span className="mt-1 block text-body leading-relaxed text-muted">
+              {activationReady === false
+                ? "This Profile will be saved safely without attempting a runtime activation. Finish Platform setup, then verify and activate it from the Profile list."
+                : "OrcaSynapse will verify Hermes, activate this immutable Profile, and enable Chat. Personality and Skills describe behavior, never authority."}
+            </span>
+          </div>
+        </form>
+      </Dialog>
+    </div>
   );
 }

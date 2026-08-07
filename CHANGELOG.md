@@ -5,6 +5,43 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.64.0 — 2026-08-07
+
+Agents — the screen that decides what an agent may do, and had no test of any
+kind.
+
+That is the headline. `agents-view.tsx` carries the immutable Profile editor,
+the distribution digest VM2 admits against, the execution ledger, and the
+operator kill switch, and nothing in the suite rendered it. It has seven cases
+now, and the migration was done against a preview rather than a diff.
+
+**The kill switch says ON or OFF in words.** An operator reaching for the
+execution boundary is already dealing with a problem and should not have to
+infer the state from a hue; the colour is confirmation, not the message.
+
+**The profile editor was a hand-rolled modal** — a backdrop div with no focus
+trap, no Escape and no scroll lock, the same gap Chat's overlays had before
+ai-v1.57.0. It is a long form deciding what an agent may do, which is the worst
+place to tab out of by accident. It goes through `Dialog` now, and a case holds
+that shut.
+
+Elsewhere: the distribution digest sits on the profile row rather than behind a
+click, because it identifies what the runtime will admit; the activity timeline
+keeps its footer saying what it deliberately omits, since a bounded list read as
+a complete one makes absent tool arguments look like calls that never happened;
+and a run's output is marked with an accent rule so it is distinguishable from
+its input at a glance.
+
+- 123 rules dropped and 6 selector lists trimmed. `.agent-editor` stays: Onboarding
+  and the runtime-nodes panel still borrow it.
+
+908 tests green, web at 155. Contrast on the populated screen: 0 of 73 nodes
+below WCAG AA, worst 5.27. The stylesheet is **1,448 lines carrying 399 distinct
+colours, down from 2,020 lines and 754 colours** when the revamp began — under
+four hundred for the first time.
+
+Three view bodies remain: Operations, Onboarding, Tooling.
+
 ## ai-v1.63.0 — 2026-08-07
 
 Knowledge and the audit trail.
