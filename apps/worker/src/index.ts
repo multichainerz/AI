@@ -11,6 +11,8 @@ import { DocumentIngestor } from "./document-ingestor.js";
 import { DrizzlePendingRunSource, DrizzleWorkerRegistry } from "./worker-registry.js";
 import { DrizzleAgentProcessor, WorkerAgentKnowledgeRetriever, WorkerAgentMemory } from "./agent-processor.js";
 import { MemoryDistiller } from "./memory-distiller.js";
+import { BenchmarkRunner } from "./benchmark-runner.js";
+import { LiveBenchmarkExecutor } from "./benchmark-executor.js";
 
 const databaseUrl = readBootstrapSecret("orcasynapse_database_url");
 const { database, close: closeDatabase } = createDrizzleClient(databaseUrl);
@@ -26,6 +28,12 @@ const agentMemory = new WorkerAgentMemory(
   embedder,
 );
 const distiller = new MemoryDistiller(connectionResolver);
+// Shared with the benchmark executor so a retrieval suite searches through
+// exactly the path a conversation searches through.
+const knowledgeRetriever = new WorkerAgentKnowledgeRetriever(
+  new DocumentVectorStore(database, APPROVED_EMBEDDING_MODEL),
+  embedder,
+);
 
 const runtime = new WorkerRuntime(
   new DrizzlePendingRunSource(database),
@@ -34,7 +42,7 @@ const runtime = new WorkerRuntime(
     id: workerId,
     name: hostname(),
     version: ORCASYNAPSE_VERSION,
-    workloads: ["hermes-runs", "knowledge-ingestion", "session-memory"],
+    workloads: ["hermes-runs", "knowledge-ingestion", "session-memory", "benchmarks"],
   },
   {
     info: (message) => console.info(message),
@@ -44,10 +52,7 @@ const runtime = new WorkerRuntime(
   new DrizzleAgentProcessor(
     database,
     new HermesClient(connectionResolver),
-    new WorkerAgentKnowledgeRetriever(
-      new DocumentVectorStore(database, APPROVED_EMBEDDING_MODEL),
-      embedder,
-    ),
+    knowledgeRetriever,
     new RunCapabilityIssuer(masterKey),
     agentMemory,
     distiller,
@@ -60,6 +65,11 @@ const runtime = new WorkerRuntime(
     embedder,
   ),
   new SessionMemoryDistiller(database, agentMemory, distiller),
+  60_000,
+  new BenchmarkRunner(
+    database,
+    new LiveBenchmarkExecutor(database, knowledgeRetriever, agentMemory),
+  ),
 );
 
 let shuttingDown = false;

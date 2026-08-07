@@ -5,6 +5,62 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.71.0 — 2026-08-07
+
+Benchmarks, R2b: the worker executes them.
+
+A queued run is now claimed, executed against the live stack, scored and
+recorded. The pipeline is end to end for the first time — everything except the
+dashboard section that starts one.
+
+**A chat case goes through the real agent path.** It queues an ordinary
+`AgentRun` and the processor in the same worker picks it up: the same queue, the
+same profile version, the same retrieval, boundary and capability checks a
+person's message goes through, and its turn behind whatever else is running.
+Nothing about it is a simulation, which is the only way the score says anything
+about what the installation will actually do. A retrieval case is scored on the
+passages themselves rather than on an answer written from them, because the
+question is whether the right document came back — something a generated answer
+can obscure in both directions.
+
+**A benchmark never writes to agent memory.** Recall is measured; capture is
+not. The runs it queues carry `memory:agent:read` when the profile allows it and
+never `memory:agent:write`, because a benchmark that captured facts would change
+the thing it measures — the second run of a suite would score differently
+because of the first. Each case also gets its own session and no history, or a
+suite silently measures whether case 7 primed case 8.
+
+**Every scoring rule is a string or a number comparison**, matched on substrings
+so a reworded answer still passes: an exact-match benchmark fails on every
+rewording and teaches an operator to ignore it. A case that could not be
+executed fails every assertion rather than none — otherwise `MUST_NOT_INCLUDE`
+passes on an empty answer and an unreachable model scores as a clean run. An
+unmeasured latency is not a fast one.
+
+**Results are written after each case, not at the end**, so a suite that dies at
+case thirty still shows what the first twenty-nine answered, and a crash costs
+the remaining cases rather than all of them. Cancellation is checked between
+cases too — a suite is minutes of inference and an operator who pressed stop
+should not have to wait it out.
+
+`0024_benchmark_lease` adds the lease the document ingestor already had, for the
+same reason: "still going" and "the process running it is gone" are otherwise
+indistinguishable, and the second has no way out but hand-written SQL. Claiming
+uses `FOR UPDATE SKIP LOCKED`, because two workers reading the same queued row
+would both execute the suite and the second result would overwrite the first.
+
+A run whose suite was edited while it waited is refused rather than executed:
+filing the new questions under the old revision number is the one thing the
+revision exists to prevent. A refused run resets its counts, so it never reads
+as a suite that scored zero.
+
+One more contract tightening: a `MAX_LATENCY_MS` bound must be a whole number of
+milliseconds. A non-numeric one can never hold, so the case it guards would fail
+every run for a reason no result explains — refused at authoring time, where the
+person who typed it is still looking.
+
+991 tests green, 30 new.
+
 ## ai-v1.70.0 — 2026-08-07
 
 Benchmarks, R2a: suites and runs actually persist.

@@ -1401,11 +1401,17 @@ export const benchmarkRun = pgTable("BenchmarkRun", {
 	failureMessage: varchar({ length: 1000 }),
 	evaluationRunId: uuid(),
 	requestedBy: uuid(),
+	// Held while a worker executes the run and heartbeated between cases, so a
+	// process that dies mid-suite leaves work that lapses rather than work that
+	// looks permanently in progress.
+	leaseOwner: varchar({ length: 160 }),
+	leaseExpiresAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
 	queuedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	startedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
 	completedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
 }, (table) => [
 	index("BenchmarkRun_suite_idx").using("btree", table.suiteId.asc().nullsLast(), table.queuedAt.desc().nullsFirst()),
+	index("BenchmarkRun_claim_idx").using("btree", table.status.asc().nullsLast(), table.leaseExpiresAt.asc().nullsLast()),
 	// The worker's claim query: oldest queued run first.
 	index("BenchmarkRun_pending_idx").using("btree", table.queuedAt.asc().nullsLast()).where(sql`status = 'QUEUED'`),
 	foreignKey({ columns: [table.suiteId], foreignColumns: [benchmarkSuite.id], name: "BenchmarkRun_suiteId_fkey" }).onDelete("cascade"),

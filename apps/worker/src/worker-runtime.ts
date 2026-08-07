@@ -18,6 +18,16 @@ export interface SessionDistillationHandler {
   distilNext(workerId: string): Promise<{ conversationId: string; facts: number } | null>;
 }
 
+export interface BenchmarkHandler {
+  runNext(workerId: string): Promise<{
+    runId: string;
+    suiteSlug: string;
+    status: string;
+    passedCases: number;
+    totalCases: number;
+  } | null>;
+}
+
 /**
  * PostgreSQL remains the durable source of truth for asynchronous work.
  *
@@ -32,8 +42,10 @@ export class WorkerRuntime {
   private sessionTimer?: NodeJS.Timeout;
   private readonly inFlight = new Map<string, Promise<void>>();
   private dispatching: Promise<void> | undefined;
+  private benchmarkTimer?: NodeJS.Timeout;
   private ingesting = false;
   private distilling = false;
+  private benchmarking = false;
   private started = false;
 
   constructor(
@@ -51,6 +63,10 @@ export class WorkerRuntime {
     // sensitive, and each pass reads a conversation that has been quiet for
     // minutes already.
     private readonly sessionIntervalMs = 60_000,
+    private readonly benchmarkHandler?: BenchmarkHandler,
+    // An operator who starts a run is watching for it, so this is the fastest
+    // of the slow ticks. It only ever finds work someone just asked for.
+    private readonly benchmarkIntervalMs = 5_000,
   ) {}
 
   async start(): Promise<void> {
@@ -66,6 +82,10 @@ export class WorkerRuntime {
       this.sessionTimer = setInterval(() => void this.dispatchSessions(), this.sessionIntervalMs);
       this.sessionTimer.unref();
     }
+    if (this.benchmarkHandler) {
+      this.benchmarkTimer = setInterval(() => void this.dispatchBenchmarks(), this.benchmarkIntervalMs);
+      this.benchmarkTimer.unref();
+    }
     this.logger.info(`PostgreSQL runtime '${this.identity.name}' is online.`);
   }
 
@@ -74,6 +94,7 @@ export class WorkerRuntime {
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     if (this.reconcileTimer) clearInterval(this.reconcileTimer);
     if (this.sessionTimer) clearInterval(this.sessionTimer);
+    if (this.benchmarkTimer) clearInterval(this.benchmarkTimer);
     // Clear the flag before draining so an in-flight tick cannot admit new work
     // behind the shutdown.
     this.started = false;
@@ -108,6 +129,30 @@ export class WorkerRuntime {
       this.logger.error("Session memory distillation failed.", error);
     } finally {
       this.distilling = false;
+    }
+  }
+
+  /**
+   * Executes one benchmark suite per tick.
+   *
+   * Serialised like the others, and for a sharper reason: a suite drives the
+   * same inference host the installation answers people on. Two at once would
+   * make a benchmark's own load part of what it measures.
+   */
+  private async dispatchBenchmarks(): Promise<void> {
+    if (!this.benchmarkHandler || this.benchmarking) return;
+    this.benchmarking = true;
+    try {
+      const outcome = await this.benchmarkHandler.runNext(this.identity.id);
+      if (outcome) {
+        this.logger.info(
+          `Benchmark '${outcome.suiteSlug}' finished as ${outcome.status}: ${outcome.passedCases}/${outcome.totalCases} cases passed.`,
+        );
+      }
+    } catch (error) {
+      this.logger.error("Benchmark execution failed.", error);
+    } finally {
+      this.benchmarking = false;
     }
   }
 

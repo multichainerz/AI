@@ -79,6 +79,18 @@ describe("benchmark suite", () => {
     expect(benchmarkSuiteSchema.safeParse({ ...suite, cases: [] }).success).toBe(false);
   });
 
+  it("refuses a latency bound that is not a number", () => {
+    // It could never hold, so the case it guards would fail every run for a
+    // reason no result explains.
+    const bad = (value: string) => ({
+      ...suite,
+      cases: [{ ...suite.cases[0]!, assertions: [{ kind: "MAX_LATENCY_MS" as const, value }] }],
+    });
+    expect(benchmarkSuiteSchema.safeParse(bad("soon")).success).toBe(false);
+    expect(benchmarkSuiteSchema.safeParse(bad("0")).success).toBe(false);
+    expect(benchmarkSuiteSchema.safeParse(bad("2500")).success).toBe(true);
+  });
+
   it("refuses two cases sharing one id, which would collapse into one result", () => {
     // The id names a row in the results table. Reused, one row stands for two
     // questions and a regression in the second is invisible.

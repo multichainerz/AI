@@ -50,6 +50,19 @@ export const benchmarkAssertionSchema = z.object({
   kind: benchmarkAssertionKindSchema,
   /** Substring, document file name, or a number rendered as text for MAX_LATENCY_MS. */
   value: z.string().trim().min(1).max(400),
+}).superRefine((assertion, context) => {
+  // A latency bound that is not a number can never hold, so the case it guards
+  // would fail every run for a reason no result explains. Refused at authoring
+  // time, where the person who typed it is still looking.
+  if (assertion.kind !== "MAX_LATENCY_MS") return;
+  const milliseconds = Number(assertion.value);
+  if (!Number.isInteger(milliseconds) || milliseconds <= 0) {
+    context.addIssue({
+      code: "custom",
+      path: ["value"],
+      message: "MAX_LATENCY_MS takes a whole number of milliseconds above zero.",
+    });
+  }
 });
 
 export const benchmarkCaseSchema = z.object({
