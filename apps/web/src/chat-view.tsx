@@ -1323,39 +1323,119 @@ export function ChatView({
             </div>
           ) : (
             active.messages.map((message) => (
-              <article className={`chat-message ${message.role.toLowerCase()}`} key={message.id}>
-                <div className="message-avatar">{message.role === "USER" ? "You" : "H"}</div>
-                <div className="message-body">
-                  <div className="message-heading">
-                    <div><strong>{message.role === "USER" ? "You" : active.profileName ?? "Hermes"}</strong><time dateTime={message.createdAt}>{formatMessageTime(message.createdAt)}</time></div>
-                    <div className="message-heading-tags">
-                      {message.role === "ASSISTANT" && <span className="model">{message.modelAlias ?? active.modelAlias}</span>}
-                      {message.status !== "COMPLETED" && <span className={`status ${message.status.toLowerCase()}`}>{message.status.toLowerCase()}</span>}
+              /*
+               * The person's turn is a bounded card and the agent's is not.
+               * That asymmetry is the only thing that lets the eye find where
+               * an exchange begins without reading any of the text, which on a
+               * long governed transcript is most of what makes it navigable.
+               */
+              <article
+                className={cn(
+                  "mx-auto grid max-w-[940px] grid-cols-[34px_minmax(0,1fr)] gap-3.5",
+                  message.role === "USER"
+                    ? "my-3.5 rounded border border-border bg-surface p-4"
+                    : "border-b border-border py-5 last-of-type:border-b-0",
+                )}
+                key={message.id}
+              >
+                <div
+                  aria-hidden="true"
+                  className={cn(
+                    "grid h-8 w-8 place-items-center rounded border font-mono text-micro font-bold",
+                    message.role === "USER"
+                      ? "border-border-strong bg-raised text-muted"
+                      : "border-accent/50 bg-accent/10 text-accent",
+                  )}
+                >
+                  {message.role === "USER" ? "You" : "H"}
+                </div>
+                <div className="min-w-0">
+                  <div className="flex min-h-[24px] items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-baseline gap-2">
+                      <strong className="text-[11px] font-semibold text-text">
+                        {message.role === "USER" ? "You" : (active.profileName ?? "Hermes")}
+                      </strong>
+                      <time className="font-mono text-micro text-faint" dateTime={message.createdAt}>
+                        {formatMessageTime(message.createdAt)}
+                      </time>
+                    </div>
+                    <div className="flex min-w-0 items-center justify-end gap-2">
+                      {message.role === "ASSISTANT" && (
+                        <span className="max-w-[220px] truncate font-mono text-micro text-faint">
+                          {message.modelAlias ?? active.modelAlias}
+                        </span>
+                      )}
+                      {message.status !== "COMPLETED" && (
+                        <StatusText
+                          tone={message.status === "FAILED" || message.status === "CANCELLED" ? "bad" : "warn"}
+                        >
+                          {message.status.toLowerCase()}
+                        </StatusText>
+                      )}
                     </div>
                   </div>
                   {message.role === "USER"
-                    ? <p>{message.content}</p>
+                    ? <p className="my-1.5 whitespace-pre-wrap break-words text-[12px] leading-[1.78] text-muted">{message.content}</p>
                     : <MarkdownMessage content={message.content || (message.status === "PENDING" ? "Thinking…" : "No content returned.")} />}
                   {message.role === "ASSISTANT" && message.status === "PENDING" && (
-                    <div className="message-stream-status" aria-label="Live generation status">
-                      <span><i aria-hidden="true" />{currentActivity ?? "Hermes is working"}</span>
-                      <small>{busy ? `${(streamElapsedMs / 1_000).toFixed(1)} s elapsed` : "Awaiting recovery"} · governed run details appear as Hermes reports them</small>
+                    <div
+                      className="my-2.5 flex items-center justify-between gap-3 rounded border border-border-strong bg-raised px-3 py-2"
+                      aria-label="Live generation status"
+                    >
+                      <StatusText dot tone="accent" className="whitespace-nowrap">
+                        {currentActivity ?? "Hermes is working"}
+                      </StatusText>
+                      <small className="truncate text-right text-micro text-faint">
+                        {busy ? `${(streamElapsedMs / 1_000).toFixed(1)} s elapsed` : "Awaiting recovery"} · governed run details appear as Hermes reports them
+                      </small>
                     </div>
                   )}
                   {message.role === "ASSISTANT" && message.runtimeEvents.length > 0 && (
-                    <section className="agent-activity" aria-label="Hermes agent activity">
-                      <header><strong>Agent activity</strong><span>{message.runtimeEvents.length} event{message.runtimeEvents.length === 1 ? "" : "s"}</span></header>
-                      <ol>{message.runtimeEvents.map((runtimeEvent) => {
+                    <section
+                      className="my-3 overflow-hidden rounded border border-border bg-surface"
+                      aria-label="Hermes agent activity"
+                    >
+                      <header className="flex items-center justify-between border-b border-border bg-raised px-3 py-2">
+                        <MicroLabel>Agent activity</MicroLabel>
+                        <span className="font-mono text-micro text-faint">
+                          {message.runtimeEvents.length} event{message.runtimeEvents.length === 1 ? "" : "s"}
+                        </span>
+                      </header>
+                      <ol className="m-0 grid list-none p-0">{message.runtimeEvents.map((runtimeEvent) => {
                         const kind = runtimeEvent.type.startsWith("TOOL_") ? "tool"
                           : runtimeEvent.type.startsWith("SUBAGENT_") ? "subagent"
                             : runtimeEvent.type === "APPROVAL_REQUIRED" ? "approval" : "lifecycle";
                         return (
-                          <li className={kind} key={runtimeEvent.id}>
-                            <span className="agent-activity-icon" aria-hidden="true">{kind === "tool" ? "TL" : kind === "subagent" ? "SA" : kind === "approval" ? "!" : "AI"}</span>
-                            <div>
-                              <div><strong>{runtimeEvent.toolName ?? (kind === "subagent" ? "Hermes subagent" : runtimeEventLabel(runtimeEvent.type))}</strong><span>{runtimeEvent.status ?? runtimeEventLabel(runtimeEvent.type)}</span></div>
-                              {(runtimeEvent.preview || runtimeEvent.summary) && <p>{runtimeEvent.preview ?? runtimeEvent.summary}</p>}
-                              <small>{[
+                          <li
+                            className="grid min-w-0 grid-cols-[26px_minmax(0,1fr)] gap-2.5 border-t border-border px-3 py-2.5 first:border-t-0"
+                            key={runtimeEvent.id}
+                          >
+                            <span
+                              aria-hidden="true"
+                              className={cn(
+                                "grid h-[25px] w-[25px] place-items-center rounded border font-mono text-micro font-bold",
+                                kind === "tool" ? "border-good/50 bg-good/10 text-good"
+                                  : kind === "approval" ? "border-warn/50 bg-warn/10 text-warn"
+                                    : "border-border-strong bg-raised text-muted",
+                              )}
+                            >
+                              {kind === "tool" ? "TL" : kind === "subagent" ? "SA" : kind === "approval" ? "!" : "AI"}
+                            </span>
+                            <div className="min-w-0">
+                              <div className="flex items-center justify-between gap-2.5">
+                                <strong className="min-w-0 truncate text-caption font-semibold text-text">
+                                  {runtimeEvent.toolName ?? (kind === "subagent" ? "Hermes subagent" : runtimeEventLabel(runtimeEvent.type))}
+                                </strong>
+                                <StatusText className="shrink-0">
+                                  {runtimeEvent.status ?? runtimeEventLabel(runtimeEvent.type)}
+                                </StatusText>
+                              </div>
+                              {(runtimeEvent.preview || runtimeEvent.summary) && (
+                                <p className="my-1 text-micro leading-relaxed text-muted">
+                                  {runtimeEvent.preview ?? runtimeEvent.summary}
+                                </p>
+                              )}
+                              <small className="block font-mono text-micro text-faint">{[
                                 formatRuntimeDuration(runtimeEvent.durationMs),
                                 runtimeEvent.inputTokens === null ? null : `${runtimeEvent.inputTokens.toLocaleString()} in`,
                                 runtimeEvent.outputTokens === null ? null : `${runtimeEvent.outputTokens.toLocaleString()} out`,
@@ -1369,72 +1449,161 @@ export function ChatView({
                     </section>
                   )}
                   {message.role === "ASSISTANT" && message.approvals.map((approval) => (
-                    <section className={`chat-approval ${approval.status.toLowerCase()}`} key={approval.id} aria-label="Hermes approval request">
-                      <div className="chat-approval-mark" aria-hidden="true">!</div>
-                      <div>
-                        <span>Human approval</span>
-                        <strong>{approval.summary ?? "Hermes needs permission to continue"}</strong>
-                        {approval.command && <code>{approval.command}</code>}
-                        <small>{approval.status === "PENDING" ? `Expires ${new Date(approval.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : `Decision: ${(approval.decision ?? approval.status).replaceAll("_", " ").toLowerCase()}`}</small>
+                    /*
+                     * The one block on the transcript that is warn-toned on
+                     * purpose: it is a decision the run is blocked on, not a
+                     * report of something already done.
+                     */
+                    <section
+                      className={cn(
+                        "my-3 grid grid-cols-[28px_minmax(0,1fr)_auto] items-center gap-3 rounded border p-3",
+                        approval.status === "PENDING" ? "border-warn/50 bg-warn/10"
+                          : approval.status === "APPROVED" ? "border-good/50 bg-good/10"
+                            : "border-bad/50 bg-bad/10",
+                      )}
+                      key={approval.id}
+                      aria-label="Hermes approval request"
+                    >
+                      <div
+                        aria-hidden="true"
+                        className="grid h-7 w-7 place-items-center rounded border border-warn/50 bg-warn/10 font-mono text-[12px] font-bold text-warn"
+                      >
+                        !
+                      </div>
+                      <div className="grid min-w-0 gap-1">
+                        <MicroLabel className="text-warn">Human approval</MicroLabel>
+                        <strong className="text-caption font-semibold text-text">
+                          {approval.summary ?? "Hermes needs permission to continue"}
+                        </strong>
+                        {approval.command && (
+                          <code className="truncate rounded border border-border-strong bg-bg px-2 py-1.5 font-mono text-micro text-muted">
+                            {approval.command}
+                          </code>
+                        )}
+                        <small className="text-micro text-faint">
+                          {approval.status === "PENDING"
+                            ? `Expires ${new Date(approval.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+                            : `Decision: ${(approval.decision ?? approval.status).replaceAll("_", " ").toLowerCase()}`}
+                        </small>
                       </div>
                       {approval.status === "PENDING" && (
-                        <div className="chat-approval-actions">
-                          <button type="button" disabled={approvalBusy === approval.id} onClick={() => void decideApproval(approval, "DENY")}>Deny</button>
-                          <button className="primary-button" type="button" disabled={approvalBusy === approval.id} onClick={() => void decideApproval(approval, "ALLOW_ONCE")}>Allow once</button>
+                        <div className="flex gap-1.5">
+                          <Button size="sm" disabled={approvalBusy === approval.id} onClick={() => void decideApproval(approval, "DENY")}>
+                            Deny
+                          </Button>
+                          <Button variant="primary" size="sm" disabled={approvalBusy === approval.id} onClick={() => void decideApproval(approval, "ALLOW_ONCE")}>
+                            Allow once
+                          </Button>
                         </div>
                       )}
                     </section>
                   ))}
                   {message.sources.length > 0 && (
-                    <div className="message-sources" aria-label="Enterprise knowledge sources">
-                      <strong>Sources</strong>
-                      <div>{message.sources.map((source) => (
-                        <article key={source.documentId}>
-                          <span>{source.fileName}</span>
-                          <small>{source.classification.toLowerCase()} · {Math.round(source.score * 100)}% match</small>
+                    <div className="my-2.5 grid gap-2 rounded border border-border bg-surface p-3" aria-label="Enterprise knowledge sources">
+                      <MicroLabel>Sources</MicroLabel>
+                      <div className="flex flex-wrap gap-1.5">{message.sources.map((source) => (
+                        <article className="grid min-w-[170px] gap-1 rounded border border-border bg-raised px-2.5 py-2" key={source.documentId}>
+                          <span className="truncate text-caption font-semibold text-text">{source.fileName}</span>
+                          <small className="font-mono text-micro uppercase text-faint">
+                            {source.classification.toLowerCase()} · {Math.round(source.score * 100)}% match
+                          </small>
                         </article>
                       ))}</div>
                     </div>
                   )}
                   {message.role === "ASSISTANT" && message.status === "COMPLETED" && (
                     <>
-                      <section className="message-telemetry" aria-label="Response performance">
-                        <header><div><strong>Response telemetry</strong><small>Reported by Hermes lifecycle events and measured by OrcaSynapse</small></div>{message.sources.length > 0 && <span>{message.sources.length} knowledge source{message.sources.length === 1 ? "" : "s"}</span>}</header>
-                        <dl>{chatMessageTelemetry(message).map((metric) => (
-                          <div className={metric.key === "throughput" ? "primary" : undefined} key={metric.key}>
-                            <dt>{metric.label}</dt><dd>{metric.value}</dd>
+                      <section className="mt-3.5 overflow-hidden rounded border border-border bg-surface" aria-label="Response performance">
+                        <header className="flex items-center justify-between gap-3.5 border-b border-border bg-raised px-3 py-2.5">
+                          <div>
+                            <MicroLabel className="block">Response telemetry</MicroLabel>
+                            <small className="mt-1 block text-micro text-faint">
+                              Reported by Hermes lifecycle events and measured by OrcaSynapse
+                            </small>
                           </div>
-                        ))}</dl>
+                          {message.sources.length > 0 && (
+                            <StatusText className="shrink-0">
+                              {message.sources.length} knowledge source{message.sources.length === 1 ? "" : "s"}
+                            </StatusText>
+                          )}
+                        </header>
+                        {/*
+                          * Hairlines come from the gap showing the container
+                          * behind, so no cell carries a border of its own and
+                          * none of them double against the panel edge — which
+                          * is what the four nth-child rules the old stylesheet
+                          * needed were working around.
+                          *
+                          * Tabular figures and a fixed grid: a column of numbers
+                          * that re-aligns as a run streams is unreadable.
+                          */}
+                        <dl className="m-0 grid grid-cols-2 gap-px bg-border sm:grid-cols-[1.25fr_repeat(3,minmax(72px,1fr))]">
+                          {chatMessageTelemetry(message).map((metric) => (
+                            <div
+                              className={cn(
+                                "min-w-0 px-3 py-2.5",
+                                metric.key === "throughput" ? "bg-raised" : "bg-surface",
+                              )}
+                              key={metric.key}
+                            >
+                              <dt className="truncate font-mono text-micro uppercase text-faint">{metric.label}</dt>
+                              <dd
+                                className={cn(
+                                  "m-0 mt-1 truncate font-mono text-caption font-semibold tabular-nums",
+                                  metric.key === "throughput" ? "text-[11px] text-accent" : "text-muted",
+                                )}
+                              >
+                                {metric.value}
+                              </dd>
+                            </div>
+                          ))}
+                        </dl>
                       </section>
-                      <div className="message-meta">
-                        <small>Effective speed is output tokens divided by end-to-end response latency.</small>
-                        <div className="message-response-actions" aria-label="Response actions">
-                          <button type="button" onClick={() => void navigator.clipboard?.writeText(message.content)}>Copy</button>
-                          <button type="button" disabled={working} onClick={() => void forkConversation(message.id)}>Fork here</button>
+                      <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+                        <small className="text-micro leading-relaxed text-faint">
+                          Effective speed is output tokens divided by end-to-end response latency.
+                        </small>
+                        <div className="flex items-center gap-1.5" aria-label="Response actions">
+                          <Button variant="ghost" size="sm" onClick={() => void navigator.clipboard?.writeText(message.content)}>
+                            Copy
+                          </Button>
+                          <Button variant="ghost" size="sm" disabled={working} onClick={() => void forkConversation(message.id)}>
+                            Fork here
+                          </Button>
                         </div>
-                        <div className="message-feedback" aria-label="Response feedback">
-                          <button
-                            type="button"
+                        <div className="flex items-center gap-1.5" aria-label="Response feedback">
+                          <Button
+                            size="sm"
                             aria-label="Mark response helpful"
                             aria-pressed={message.feedback?.rating === "HELPFUL"}
                             disabled={feedbackBusy === message.id}
+                            className={cn(message.feedback?.rating === "HELPFUL" ? "border-accent text-accent" : null)}
                             onClick={() => void recordFeedback(message.id, "HELPFUL")}
-                          >Helpful</button>
-                          <button
-                            type="button"
+                          >
+                            Helpful
+                          </Button>
+                          <Button
+                            size="sm"
                             aria-label="Mark response not helpful"
                             aria-pressed={message.feedback?.rating === "NOT_HELPFUL"}
                             disabled={feedbackBusy === message.id}
+                            className={cn(message.feedback?.rating === "NOT_HELPFUL" ? "border-accent text-accent" : null)}
                             onClick={() => void recordFeedback(message.id, "NOT_HELPFUL")}
-                          >Not helpful</button>
+                          >
+                            Not helpful
+                          </Button>
                         </div>
                       </div>
                     </>
                   )}
                   {(message.status === "FAILED" || message.status === "CANCELLED") && (
-                    <div className="message-failure-row">
-                      <small className="message-failure">{message.status === "CANCELLED" ? "Generation cancelled" : `Generation failed · ${message.errorCode ?? "UNKNOWN"}`}</small>
-                      <button type="button" disabled={working} onClick={() => retryMessage(message.id)}>Retry prompt</button>
+                    <div className="mt-2 flex items-center justify-between gap-2.5">
+                      <StatusText tone="bad">
+                        {message.status === "CANCELLED" ? "Generation cancelled" : `Generation failed · ${message.errorCode ?? "UNKNOWN"}`}
+                      </StatusText>
+                      <Button variant="ghost" size="sm" disabled={working} onClick={() => retryMessage(message.id)}>
+                        Retry prompt
+                      </Button>
                     </div>
                   )}
                 </div>

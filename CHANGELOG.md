@@ -5,6 +5,53 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.58.0 — 2026-08-07
+
+The message transcript, and a way to actually look at one.
+
+ai-v1.57.0 left the transcript on its own classes and said why: 200 lines of
+intricate CSS whose result cannot be seen without a signed-in session and real
+messages. That reason is now gone. `chat-transcript.test.tsx` mounts a
+conversation carrying every block the transcript can produce — markdown with a
+heading, list, blockquote, code fence and table; three agent-activity events; a
+pending approval; two knowledge sources; full response telemetry; and a failed
+turn — and with `TRANSCRIPT_PREVIEW_OUT` set it writes the rendered markup to a
+file. Paired with the built stylesheet that opens in a browser, which is how
+every decision below was checked rather than guessed.
+
+It earns its place in the suite either way: the transcript is what the product
+exists to render and it had no test at all. Seven cases now cover markdown
+becoming real elements rather than showing its own backticks, effective speed
+being *derived* (382 output tokens over 4.12 s → 92.7 tok/s — nothing reports
+that, OrcaSynapse computes it), an approval offering a decision only while it is
+open, each governed step naming what it cost, sources carrying their match
+score, and a failed turn drawing no telemetry panel for the numbers it never
+produced.
+
+Rebuilt on the design tokens: message rows and avatars, the heading and its
+tags, streaming status, agent activity, approvals, sources, the telemetry grid,
+and the response actions. The person's turn stays a bounded card and the agent's
+does not — that asymmetry is the only thing letting the eye find where an
+exchange begins without reading any of the text.
+
+- the telemetry grid draws its hairlines from a `gap-px` over a bordered
+  background, so no cell carries a border of its own and none double at the
+  panel edge — which is what four `nth-child` rules in the old stylesheet
+  existed to work around
+- `.message-markdown` stays a stylesheet rule, and that one is structural:
+  ReactMarkdown emits the headings, lists, tables and code blocks itself, so
+  there is no element for a class name to go on. Retoned onto the tokens so it
+  moves with the rest of the system.
+- the duplicate `.agent-activity` block is gone. Chat and Agents both defined
+  that class; every chat rule was being overridden by the later Agents block,
+  which is the sort of collision that resolves by file order until it doesn't.
+
+878 tests green, web at 124. Contrast measured on a fully populated transcript
+for the first time: **0 of 119 nodes below WCAG AA, worst 5.30, median 7.36.**
+
+The stylesheet is now **1,791 lines, down from 1,974** before the revamp began —
+and that is after four screens moved onto a system that did not exist then.
+
 ## ai-v1.57.0 — 2026-08-07
 
 Chat's shell on the primitives, and four dialogs that were never dialogs.
