@@ -5,6 +5,44 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.61.0 — 2026-08-07
+
+Prompts and Guardrails, and the end of the shared governance stylesheet.
+
+The two remaining screens that were structurally Models — a summary row, a
+runtime-assignment panel, an editor, and a catalogue of versioned cards each
+carrying an activate/suspend decision — now build from the same primitives.
+Both were verified populated before shipping, through the preview harness rather
+than by reasoning about a diff.
+
+Both screens govern something that sits directly in the chat path, and both have
+a third state that is easy to miss: not *active* or *draft* but **previously
+active and now suspended**, in which chat deliberately fails closed. That state
+now reads off the panel's left rule — green enforcing, red failing closed, grey
+never adopted — instead of only from a sentence. The suspend action inherits the
+tone of what it will do.
+
+- Prompts shows the system instruction verbatim in a scrollable block. It is the
+  artefact under governance, and a truncated one cannot be reviewed. The
+  checksum stays beside it, since that is what audit retains in place of the body.
+- Guardrails lists only the detectors actually switched on, and its ceilings are
+  tabular so two policies can be compared down the column.
+- seven cases across both, including that the active policy offers Suspend and
+  no Edit — an active record is immutable, and offering the edit would be a lie
+
+**The merged selector lists are gone.** Four governance screens shared one set
+of comma-joined rule bodies, and the convention was to add a new screen by
+appending its prefix to each list. With Models, Prompts and Guardrails migrated
+there was nothing left to share: 92 rules dropped and 11 lists trimmed. Only
+`.guardrail-grid` survives, and it belongs to Operations rather than Guardrails.
+
+894 tests green, web at 140. Contrast on both populated screens: 0 nodes below
+WCAG AA, worst 5.30 and 5.59. The stylesheet is **1,670 lines** carrying **472
+distinct colours, down from 754** when the revamp began.
+
+Five view bodies remain: Operations, Agents, Onboarding, Tooling, Documents,
+plus Memory's workspace and Audit.
+
 ## ai-v1.60.0 — 2026-08-07
 
 Models on the design system — and two ways the system was quietly producing

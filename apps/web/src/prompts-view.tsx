@@ -8,7 +8,10 @@ import {
   updatePromptTemplate,
 } from "./api.js";
 import { adminAccess } from "./admin-access.js";
-import { LockedScreen } from "./ui/index.js";
+import {
+  Alert, Button, EmptyState, Field, Input, LockedScreen, Metric, MetricRow, MicroLabel,
+  PageHeader, Panel, StatusText, Textarea, cn, toneFor,
+} from "./ui/index.js";
 
 interface PromptsViewProps {
   session: AdministratorSession | null;
@@ -154,50 +157,195 @@ export function PromptsView({ session, onOpenOperations, onOpenSettings, onSessi
   const active = prompts.find(({ status }) => status === "ACTIVE");
   const activatedBefore = prompts.some(({ firstActivatedAt }) => firstActivatedAt !== null);
 
-  return <div className="prompts-workspace">
-    <header className="prompts-header">
-      <div><p className="page-kicker">Release governance</p><h1>Prompts</h1><p>Author, evaluate, and release the exact system instruction used by OrcaSynapse chat.</p></div>
-      <div className="prompt-header-actions"><button type="button" onClick={onOpenOperations}>Evaluation evidence</button>{canManage && <button className="primary-button" type="button" onClick={startCreate}>New prompt</button>}</div>
-    </header>
+  return <div className="grid gap-5">
+    <PageHeader
+      kicker="Release governance"
+      title="Prompts"
+      description="Author, evaluate, and release the exact system instruction used by OrcaSynapse chat."
+      actions={<>
+        <Button onClick={onOpenOperations}>Evaluation evidence</Button>
+        {canManage && <Button variant="primary" onClick={startCreate}>New prompt</Button>}
+      </>}
+    />
 
-    <section className="prompt-metrics" aria-label="Prompt governance summary">
-      <article><span>Prompt records</span><strong>{prompts.length}</strong><small>Chat-system purpose</small></article>
-      <article><span>Active release</span><strong>{active ? "1" : "0"}</strong><small>{active ? `v${active.version}` : activatedBefore ? "Fail closed" : "Legacy mode"}</small></article>
-      <article><span>Evidence gate</span><strong>{active?.activationEvaluationId ? "Passed" : "Required"}</strong><small>CHAT + SAFETY</small></article>
-      <article><span>Instruction size</span><strong>{active ? active.content.length.toLocaleString("en-US") : "—"}</strong><small>Characters</small></article>
-    </section>
+    <MetricRow className="lg:grid-cols-4" aria-label="Prompt governance summary">
+      <Metric label="Prompt records" value={prompts.length} caption="Chat-system purpose" />
+      <Metric
+        label="Active release"
+        value={active ? "1" : "0"}
+        tone={active ? "good" : activatedBefore ? "bad" : "neutral"}
+        caption={active ? `v${active.version}` : activatedBefore ? "Fail closed" : "Legacy mode"}
+      />
+      <Metric
+        label="Evidence gate"
+        value={active?.activationEvaluationId ? "Passed" : "Required"}
+        tone={active?.activationEvaluationId ? "good" : "warn"}
+        caption="CHAT + SAFETY"
+      />
+      <Metric
+        label="Instruction size"
+        value={active ? active.content.length.toLocaleString("en-US") : "—"}
+        caption="Characters"
+      />
+    </MetricRow>
 
-    <section className={`prompt-runtime panel ${active ? "active" : activatedBefore ? "blocked" : "staged"}`}>
-      <div><span>Runtime assignment</span><strong>{active ? `${active.displayName} v${active.version} is bound to chat.` : activatedBefore ? "Prompt enforcement is paused and chat fails closed." : "Drafts do not change the built-in chat instruction."}</strong><p>OrcaSynapse resolves one active <code>CHAT_SYSTEM</code> prompt before model or guardrail routing. Audit events retain the version and SHA-256 checksum, never a duplicate of the prompt body.</p></div>
-      {active && <code>{active.contentChecksum.slice(0, 16)}…</code>}
-    </section>
-
-    {error && <div className="workspace-notice error" role="alert">{error}</div>}
-    {message && <div className="workspace-notice success">{message}</div>}
-
-    {showEditor && <form className="prompt-editor panel" onSubmit={(event) => void save(event)}>
-      <div className="section-toolbar"><div><h2>{editing ? `Edit ${editing.displayName}` : "New chat-system prompt"}</h2><p>Changing instruction content requires a new version and matching promoted evaluation.</p></div><button type="button" onClick={() => setShowEditor(false)}>Cancel</button></div>
-      <div className="prompt-editor-grid">
-        <label><span>Display name</span><input value={draft.displayName} minLength={2} maxLength={120} required onChange={(event) => setDraft({ ...draft, displayName: event.target.value })} /></label>
-        <label><span>Prompt slug</span><input value={draft.slug} disabled={Boolean(editing)} required onChange={(event) => setDraft({ ...draft, slug: event.target.value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") })} /></label>
-        <label><span>Version</span><input value={draft.version} maxLength={120} required onChange={(event) => setDraft({ ...draft, version: event.target.value })} /></label>
-        <label><span>Runtime purpose</span><input value="Chat system" disabled /></label>
-        <label className="wide"><span>Purpose and ownership</span><textarea value={draft.description} minLength={3} maxLength={500} rows={3} required onChange={(event) => setDraft({ ...draft, description: event.target.value })} /></label>
-        <label className="wide"><span>System instruction</span><textarea className="prompt-content-input" value={draft.content} minLength={20} maxLength={20000} rows={12} required spellCheck onChange={(event) => setDraft({ ...draft, content: event.target.value })} /><small>{draft.content.length.toLocaleString("en-US")} / 20,000 characters. Do not place credentials or secret values in prompts.</small></label>
+    {/* The left rule carries the state: a paused prompt means chat fails
+        closed, which is not something to discover by reading the sentence. */}
+    <Panel className={cn(
+      "flex items-center gap-4 border-l-2",
+      active ? "border-l-good" : activatedBefore ? "border-l-bad" : "border-l-border-strong",
+    )}>
+      <div className="min-w-0 flex-1">
+        <MicroLabel className="block">Runtime assignment</MicroLabel>
+        <strong className="mt-1.5 block text-[12px] font-semibold text-text">
+          {active
+            ? `${active.displayName} v${active.version} is bound to chat.`
+            : activatedBefore
+              ? "Prompt enforcement is paused and chat fails closed."
+              : "Drafts do not change the built-in chat instruction."}
+        </strong>
+        <p className="mb-0 mt-1 text-body text-muted">
+          OrcaSynapse resolves one active <code className="rounded border border-border bg-raised px-1 font-mono text-accent">CHAT_SYSTEM</code> prompt
+          before model or guardrail routing. Audit events retain the version and SHA-256 checksum, never a duplicate of
+          the prompt body.
+        </p>
       </div>
-      <button className="primary-button prompt-save" type="submit" disabled={busy || editing?.status === "ACTIVE"}>{busy ? "Saving…" : editing ? "Save prompt revision" : "Create draft prompt"}</button>
-    </form>}
+      {active && (
+        <code className="shrink-0 rounded border border-border bg-raised px-2 py-1 font-mono text-micro text-muted">
+          {active.contentChecksum.slice(0, 16)}…
+        </code>
+      )}
+    </Panel>
 
-    <section className="prompt-catalogue" aria-label="Configured prompt templates">
-      {prompts.length === 0 && <div className="prompt-empty panel"><strong>No governed prompts yet</strong><span>Chat keeps the built-in instruction until the first evaluated prompt is activated.</span>{canManage && <button type="button" onClick={startCreate}>Create the first prompt</button>}</div>}
-      {prompts.map((prompt) => <article className="prompt-card panel" key={prompt.id}>
-        <header><div><span className="prompt-purpose">Chat system</span><span className="prompt-version">v{prompt.version}</span></div><span className={`connection-status ${tone(prompt)}`}><i />{prompt.status.toLowerCase()}</span></header>
-        <div className="prompt-card-title"><span>P</span><div><h2>{prompt.displayName}</h2><p>{prompt.description}</p></div></div>
-        <pre>{prompt.content}</pre>
-        <dl><div><dt>Checksum</dt><dd><code>{prompt.contentChecksum.slice(0, 16)}…</code></dd></div><div><dt>Evaluation</dt><dd>{prompt.activationEvaluationId ? "Promoted" : "Required"}</dd></div><div><dt>Updated</dt><dd>{when(prompt.updatedAt)}</dd></div><div><dt>Activation history</dt><dd>{prompt.firstActivatedAt ? "Started" : "Never active"}</dd></div></dl>
-        <footer><span>Revision {prompt.revision}</span>{canManage && <div>{prompt.status !== "ACTIVE" && <button type="button" onClick={() => startEdit(prompt)}>Edit</button>}<button type="button" onClick={() => setDecision({ id: prompt.id, action: prompt.status === "ACTIVE" ? "suspend" : "activate", reason: "" })}>{prompt.status === "ACTIVE" ? "Suspend" : "Activate"}</button></div>}</footer>
-        {decision?.id === prompt.id && <form className="prompt-decision" onSubmit={(event) => void applyDecision(event)}><div><strong>{decision.action === "activate" ? "Release evaluated prompt" : "Suspend runtime prompt"}</strong><span>{decision.action === "activate" ? `Requires a promoted PROMPT evaluation for prompt:${prompt.slug}, version ${prompt.version}, including CHAT and SAFETY.` : "Suspension makes chat fail closed after prompt governance has been adopted."}</span></div><label><span>Operator reason</span><input value={decision.reason} minLength={3} maxLength={500} required onChange={(event) => setDecision({ ...decision, reason: event.target.value })} /></label><div><button type="button" onClick={() => setDecision(null)}>Cancel</button><button className="primary-button" type="submit" disabled={busy || decision.reason.trim().length < 3}>{busy ? "Applying…" : "Confirm"}</button></div></form>}
-      </article>)}
+    {error && <Alert onDismiss={() => setError(null)}>{error}</Alert>}
+    {message && <Alert tone="good" onDismiss={() => setMessage(null)}>{message}</Alert>}
+
+    {showEditor && <Panel>
+      <form onSubmit={(event) => void save(event)}>
+        <header className="mb-4 flex items-start justify-between gap-6">
+          <div className="min-w-0">
+            <h2 className="m-0 text-[15px] font-semibold tracking-[-0.01em] text-text">
+              {editing ? `Edit ${editing.displayName}` : "New chat-system prompt"}
+            </h2>
+            <p className="mb-0 mt-1.5 text-body text-muted">
+              Changing instruction content requires a new version and matching promoted evaluation.
+            </p>
+          </div>
+          <Button variant="ghost" size="sm" onClick={() => setShowEditor(false)}>Cancel</Button>
+        </header>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Display name"><Input value={draft.displayName} minLength={2} maxLength={120} required onChange={(event) => setDraft({ ...draft, displayName: event.target.value })} /></Field>
+          <Field label="Prompt slug"><Input value={draft.slug} disabled={Boolean(editing)} required onChange={(event) => setDraft({ ...draft, slug: event.target.value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") })} /></Field>
+          <Field label="Version"><Input value={draft.version} maxLength={120} required onChange={(event) => setDraft({ ...draft, version: event.target.value })} /></Field>
+          <Field label="Runtime purpose"><Input value="Chat system" disabled /></Field>
+          <Field label="Purpose and ownership" className="sm:col-span-2">
+            <Textarea value={draft.description} minLength={3} maxLength={500} rows={3} required onChange={(event) => setDraft({ ...draft, description: event.target.value })} />
+          </Field>
+          <Field
+            label="System instruction"
+            className="sm:col-span-2"
+            hint={`${draft.content.length.toLocaleString("en-US")} / 20,000 characters. Do not place credentials or secret values in prompts.`}
+          >
+            <Textarea className="min-h-[240px] font-mono" value={draft.content} minLength={20} maxLength={20000} rows={12} required spellCheck onChange={(event) => setDraft({ ...draft, content: event.target.value })} />
+          </Field>
+        </div>
+        <Button variant="primary" type="submit" className="mt-4" disabled={busy || editing?.status === "ACTIVE"}>
+          {busy ? "Saving…" : editing ? "Save prompt revision" : "Create draft prompt"}
+        </Button>
+      </form>
+    </Panel>}
+
+    <section className="grid items-start gap-3 lg:grid-cols-2" aria-label="Configured prompt templates">
+      {prompts.length === 0 && (
+        <EmptyState
+          className="lg:col-span-2"
+          title="No governed prompts yet"
+          action={canManage ? <Button onClick={startCreate}>Create the first prompt</Button> : undefined}
+        >
+          Chat keeps the built-in instruction until the first evaluated prompt is activated.
+        </EmptyState>
+      )}
+      {prompts.map((prompt) => <Panel className="grid min-w-0 gap-4" key={prompt.id}>
+        <header className="flex items-center gap-3">
+          <MicroLabel className="rounded border border-border bg-raised px-1.5 py-0.5">Chat system</MicroLabel>
+          <MicroLabel className="font-mono">v{prompt.version}</MicroLabel>
+          <StatusText dot tone={toneFor(tone(prompt))} className="ml-auto">{prompt.status.toLowerCase()}</StatusText>
+        </header>
+        <div className="flex items-center gap-3">
+          <span
+            aria-hidden="true"
+            className="grid h-9 w-9 shrink-0 place-items-center rounded border border-border-strong bg-raised font-mono text-[10px] font-bold text-accent"
+          >
+            P
+          </span>
+          <div className="min-w-0">
+            <h2 className="m-0 truncate text-[14px] font-semibold tracking-[-0.01em] text-text">{prompt.displayName}</h2>
+            <p className="mb-0 mt-0.5 truncate text-caption text-muted">{prompt.description}</p>
+          </div>
+        </div>
+        {/* The instruction verbatim and scrollable: it is the artefact under
+            governance, and a truncated one cannot be reviewed. */}
+        <pre className="m-0 max-h-[220px] overflow-auto whitespace-pre-wrap break-words rounded border border-border bg-bg p-3 font-mono text-caption leading-relaxed text-muted">
+          {prompt.content}
+        </pre>
+        <dl className="m-0 grid grid-cols-2 gap-px rounded border border-border bg-border">
+          {[
+            { label: "Checksum", value: `${prompt.contentChecksum.slice(0, 16)}…` },
+            { label: "Evaluation", value: prompt.activationEvaluationId ? "Promoted" : "Required" },
+            { label: "Updated", value: when(prompt.updatedAt) },
+            { label: "Activation history", value: prompt.firstActivatedAt ? "Started" : "Never active" },
+          ].map((fact) => (
+            <div className="min-w-0 bg-surface px-2.5 py-2" key={fact.label}>
+              <dt className="truncate font-mono text-micro uppercase text-faint">{fact.label}</dt>
+              <dd className="m-0 mt-1 truncate font-mono text-caption text-muted">{fact.value}</dd>
+            </div>
+          ))}
+        </dl>
+        <footer className="flex items-center justify-between gap-2.5">
+          <StatusText>Revision {prompt.revision}</StatusText>
+          {canManage && <div className="flex gap-1.5">
+            {prompt.status !== "ACTIVE" && <Button size="sm" onClick={() => startEdit(prompt)}>Edit</Button>}
+            <Button
+              size="sm"
+              variant={prompt.status === "ACTIVE" ? "danger" : "secondary"}
+              onClick={() => setDecision({ id: prompt.id, action: prompt.status === "ACTIVE" ? "suspend" : "activate", reason: "" })}
+            >
+              {prompt.status === "ACTIVE" ? "Suspend" : "Activate"}
+            </Button>
+          </div>}
+        </footer>
+        {decision?.id === prompt.id && <form
+          className={cn(
+            "grid gap-3 rounded border p-3",
+            decision.action === "suspend" ? "border-bad/40 bg-bad/10" : "border-border-strong bg-raised",
+          )}
+          onSubmit={(event) => void applyDecision(event)}
+        >
+          <div>
+            <strong className="block text-[12px] font-semibold text-text">
+              {decision.action === "activate" ? "Release evaluated prompt" : "Suspend runtime prompt"}
+            </strong>
+            <span className="mt-1 block text-body text-muted">
+              {decision.action === "activate"
+                ? `Requires a promoted PROMPT evaluation for prompt:${prompt.slug}, version ${prompt.version}, including CHAT and SAFETY.`
+                : "Suspension makes chat fail closed after prompt governance has been adopted."}
+            </span>
+          </div>
+          <Field label="Operator reason">
+            <Input value={decision.reason} minLength={3} maxLength={500} required onChange={(event) => setDecision({ ...decision, reason: event.target.value })} />
+          </Field>
+          <div className="flex justify-end gap-2">
+            <Button onClick={() => setDecision(null)}>Cancel</Button>
+            <Button
+              variant={decision.action === "suspend" ? "danger" : "primary"}
+              type="submit"
+              disabled={busy || decision.reason.trim().length < 3}
+            >
+              {busy ? "Applying…" : "Confirm"}
+            </Button>
+          </div>
+        </form>}
+      </Panel>)}
     </section>
   </div>;
 }
