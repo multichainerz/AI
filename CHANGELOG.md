@@ -5,6 +5,48 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.82.0 — 2026-08-07
+
+The VM1 installer is tested, which closes the last one.
+
+`scripts/test-orcasynapse-installer-smoke.sh` runs `install-orcasynapse.sh`
+end to end. Three tests touched that script already — recovery paths, secret
+permissions, version consistency — and none of them executed the install, so
+*"does a fresh control plane actually come up"* had never had an answer before a
+customer's VM produced one. It is the script run first, and it was the least
+covered.
+
+Fourteen assertions: all four services running, the dashboard served, the API
+answering **through the reverse proxy** rather than directly, migrations applied
+as far as the newest table, each secret present at its own expected mode
+(`postgres_password` at 0600 because the postgres image reads it as root, the
+three application secrets at 0640 for the unprivileged GID the containers run
+as), the secret directory root-only, and the completion marker written.
+
+It installs from an **isolated copy** of the tree rather than in place. That is
+how a release actually installs — an extracted tarball, not a checkout — and it
+keeps generated secrets out of the working tree entirely. The captured stdout
+holds the Installation Key and the temporary password, so it is mode 0600,
+never printed, and shredded on exit; a failing run reports the installer's own
+log instead, which by the UI logging contract can never contain a secret.
+
+**It replaces the `compose-build` job.** That one built the images against
+placeholder secrets and stopped. This runs what a customer runs, for the same
+dominant cost — the image build — and proves the result answers. Still advisory,
+matching the posture `compose-build` had; promoting it to required is a policy
+call, not a test one.
+
+Both smoke tests found only their own bugs on first run, which is the outcome
+worth having: a wrong platform endpoint here (`/api/v1/platform`, not
+`/api/v1/platform/meta`), and a preflight that demanded Compose v2 before the
+installer had had its chance to install it — skipping the very path that does.
+
+Every installer path in the repository now has an executing test: VM1 install,
+VM2 install, VM2 decommission, both recovery suites, and the container
+secret-permission boundary.
+
+1,034 tests green, plus both installer lifecycles.
+
 ## ai-v1.81.0 — 2026-08-07
 
 The decommissioner is tested, and CI stops relying on an undeclared Node.

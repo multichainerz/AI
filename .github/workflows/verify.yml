@@ -77,19 +77,17 @@ jobs:
       - name: Verify CSP closure of the built dashboard
         run: bash scripts/test-csp-closure.sh
 
-  compose-build:
+  install:
     runs-on: ubuntu-latest
-    # Non-blocking full-image proof: the static closure and consistency checks
-    # in `verify` already gate the known regression classes cheaply. Promote to
-    # required once consistently green.
+    # Supersedes the old compose-build job. That one built the images against
+    # placeholder secrets and stopped there; this runs the installer a customer
+    # actually runs -- real secrets, migrations, services, and a control plane
+    # that answers -- for the same dominant cost, the image build.
+    #
+    # Still advisory, matching the posture compose-build had. Promote to
+    # required once consistently green; that is a policy call, not a test one.
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      - name: Provide placeholder secret files for compose interpolation
-        run: |
-          mkdir -p .local/secrets
-          for name in postgres_password orcasynapse_database_url orcasynapse_master_key orcasynapse_installation_key; do
-            printf 'placeholder' > ".local/secrets/${name}"
-          done
-      - name: Build the compose stack images
-        run: docker compose build
+      - name: Install a fresh control plane end to end
+        run: sudo bash scripts/test-orcasynapse-installer-smoke.sh
