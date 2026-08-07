@@ -5,6 +5,36 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.77.0 — 2026-08-07
+
+VM2 declares the dependency its reconciler has always had.
+
+`hermes-desired-state.sh` — the script the installer writes to
+`/usr/local/lib/orcasynapse` and runs on a five-minute timer — reconciles the
+toolset allowlist with a `python3` block. The installer never installed python3
+and never checked for it. It installed `ca-certificates curl jq openssl
+docker.io` and verified fifteen commands, none of them the one its own generated
+script depends on.
+
+Ubuntu Server ships python3, which is exactly why this went unnoticed: it is not
+in Ubuntu's essential set, so a minimal image can lack it, and the failure mode
+is the quiet kind. The node enrolls, Hermes starts, the dashboard reports
+Healthy — and the runtime silently never applies a toolset an operator admitted,
+visible only in `journalctl`. ai-v1.76.0 made it louder by reconciling during
+installation, where the failure at least prints a warning. This makes it
+impossible instead.
+
+python3 is now installed and verified, and the required-command list covers
+everything the *generated* scripts run too — `base64`, `cmp`, `tr`, `paste` —
+not only what the installer itself calls. That second group is the one worth
+checking: it fails on a timer, hours after anyone is watching.
+
+The VM1 installer was audited for the same class and is clean; it uses nothing
+beyond coreutils and the three packages it installs.
+
+1,024 tests green; installer syntax, UI-region sync, release consistency, docker
+build closure and CSP closure all pass.
+
 ## ai-v1.76.0 — 2026-08-07
 
 The installer terminal experience, and a VM2 that arrives governed.

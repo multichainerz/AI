@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="ai-v1.76.0"
+INSTALLER_VERSION="ai-v1.77.0"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 CONTAINER_NAME="orcasynapse-hermes"
 HEARTBEAT_SERVICE="orcasynapse-hermes-heartbeat"
@@ -592,20 +592,30 @@ EOF
 
 install_host_dependencies() {
   require_ubuntu_host
+  # python3 belongs here even though Ubuntu Server ships it: it is not in
+  # Ubuntu's essential set, and the desired-state reconciler this installer
+  # writes to /usr/local/lib is the only thing that needs it. Without it a node
+  # enrolls, reports Healthy, and silently never applies a toolset the operator
+  # admitted -- a failure that only shows up in journalctl.
   if ! command -v docker >/dev/null 2>&1 || ! command -v openssl >/dev/null 2>&1 \
-    || ! command -v curl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+    || ! command -v curl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1 \
+    || ! command -v python3 >/dev/null 2>&1; then
     run_with_progress "Refresh operating-system packages" apt-get update \
       || fail "could not refresh Ubuntu package metadata"
     run_with_progress "Install runtime security dependencies" env DEBIAN_FRONTEND=noninteractive \
-      apt-get install -y ca-certificates curl jq openssl docker.io \
+      apt-get install -y ca-certificates curl jq openssl python3 docker.io \
       || fail "could not install Docker and runtime security dependencies"
   fi
   run_with_progress "Enable the Docker service" systemctl enable --now docker \
     || fail "could not enable the Docker service"
   docker info >/dev/null 2>&1 || fail "the Docker daemon is not reachable after startup"
 
+  # Everything this installer runs, and everything the heartbeat and
+  # desired-state scripts it writes will run later. The second group is the one
+  # that matters: those fail on a timer, hours after anyone is watching.
   local required_command
-  for required_command in install chown useradd journalctl sha256sum awk sed grep date hostname mktemp cat chmod mv; do
+  for required_command in install chown useradd journalctl sha256sum awk sed grep date hostname mktemp cat chmod mv \
+    python3 base64 cmp tr paste; do
     command -v "${required_command}" >/dev/null 2>&1 \
       || fail "the Ubuntu host is missing required command '${required_command}'"
   done
