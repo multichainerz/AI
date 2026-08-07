@@ -41,6 +41,7 @@ const run = {
     agentProfileSlug: "support-analyst",
     agentProfileVersion: 3,
     modelAlias: "qwen3.6-27b",
+    ownerSubject: "local-admin:operator",
   },
   totalCases: 1,
   passedCases: 1,
@@ -76,6 +77,18 @@ describe("benchmark suite", () => {
 
   it("refuses a suite with no cases at all", () => {
     expect(benchmarkSuiteSchema.safeParse({ ...suite, cases: [] }).success).toBe(false);
+  });
+
+  it("refuses two cases sharing one id, which would collapse into one result", () => {
+    // The id names a row in the results table. Reused, one row stands for two
+    // questions and a regression in the second is invisible.
+    const duplicated = {
+      ...suite,
+      cases: [suite.cases[0]!, { ...suite.cases[0]!, prompt: "A different question entirely." }],
+    };
+    expect(benchmarkSuiteSchema.safeParse(duplicated).success).toBe(false);
+    expect(createBenchmarkSuiteSchema.safeParse(duplicated).success).toBe(false);
+    expect(updateBenchmarkSuiteSchema.safeParse({ expectedRevision: 1, cases: duplicated.cases }).success).toBe(false);
   });
 
   it("keeps slug and kind out of the update shape", () => {

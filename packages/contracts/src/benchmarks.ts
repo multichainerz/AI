@@ -63,7 +63,28 @@ export const benchmarkCaseSchema = z.object({
   assertions: z.array(benchmarkAssertionSchema).min(1).max(20),
 });
 
-export const benchmarkSuiteSchema = z.object({
+/**
+ * Case ids identify a result, so two cases may not share one.
+ *
+ * Without this a suite can be authored where one row of the results table
+ * silently stands for two different questions, and a regression in the second
+ * is invisible because the first overwrote it.
+ */
+function requireDistinctCaseIds(cases: ReadonlyArray<{ id: string }>, context: z.RefinementCtx): void {
+  const seen = new Set<string>();
+  for (const [index, item] of cases.entries()) {
+    if (seen.has(item.id)) {
+      context.addIssue({
+        code: "custom",
+        path: ["cases", index, "id"],
+        message: `Case id '${item.id}' is used more than once in this suite.`,
+      });
+    }
+    seen.add(item.id);
+  }
+}
+
+const benchmarkSuiteFields = z.object({
   id: z.uuid(),
   slug: slugSchema,
   displayName: z.string().trim().min(2).max(160),
@@ -79,13 +100,20 @@ export const benchmarkSuiteSchema = z.object({
   updatedAt: z.iso.datetime(),
 });
 
-export const createBenchmarkSuiteSchema = benchmarkSuiteSchema
-  .pick({ slug: true, displayName: true, description: true, kind: true, cases: true, passThreshold: true });
+export const benchmarkSuiteSchema = benchmarkSuiteFields
+  .superRefine((suite, context) => requireDistinctCaseIds(suite.cases, context));
 
-export const updateBenchmarkSuiteSchema = createBenchmarkSuiteSchema
-  .omit({ slug: true, kind: true })
+export const createBenchmarkSuiteSchema = benchmarkSuiteFields
+  .pick({ slug: true, displayName: true, description: true, kind: true, cases: true, passThreshold: true })
+  .superRefine((suite, context) => requireDistinctCaseIds(suite.cases, context));
+
+export const updateBenchmarkSuiteSchema = benchmarkSuiteFields
+  .pick({ displayName: true, description: true, cases: true, passThreshold: true })
   .partial()
-  .extend({ expectedRevision: z.number().int().positive() });
+  .extend({ expectedRevision: z.number().int().positive() })
+  .superRefine((suite, context) => {
+    if (suite.cases) requireDistinctCaseIds(suite.cases, context);
+  });
 
 export const BENCHMARK_RUN_STATUSES = ["QUEUED", "RUNNING", "COMPLETED", "FAILED", "CANCELLED"] as const;
 export const benchmarkRunStatusSchema = z.enum(BENCHMARK_RUN_STATUSES);
@@ -102,7 +130,19 @@ export const benchmarkTargetSchema = z.object({
   agentProfileId: z.uuid().nullable(),
   agentProfileSlug: z.string().max(64).nullable(),
   agentProfileVersion: z.number().int().positive().nullable(),
-  modelAlias: z.string().max(120).nullable(),
+  /**
+   * The generative model for a chat run, the embedding model for a retrieval
+   * one. Both are the thing whose change explains a moved score.
+   */
+  modelAlias: z.string().max(200).nullable(),
+  /**
+   * Whose documents and whose memory were measured.
+   *
+   * Retrieval and recall are owner-scoped, so the same suite run by two
+   * operators searches two different corpora and is entitled to two different
+   * scores. Recording it is what stops that difference reading as a regression.
+   */
+  ownerSubject: z.string().min(1).max(200),
 });
 
 export const benchmarkCaseResultSchema = z.object({

@@ -5,6 +5,57 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.70.0 — 2026-08-07
+
+Benchmarks, R2a: suites and runs actually persist.
+
+R1 shipped the contract, the tables and the HTTP surface, but no implementation
+behind them — the routes answered `423` for want of a manager. This is that
+manager, so a suite can be authored and a run can be queued for the worker to
+find.
+
+**A revision moves only when what the suite executes moves.** The revision
+exists so a run can name the document it scored, so it bumps when the cases or
+the pass threshold change and deliberately does not bump when a suite is
+renamed or its description corrected. Those change nothing about a result, and
+bumping would invalidate a run already queued against the very same questions.
+
+**A suite whose result was relied on is not deleted.** Run rows cascade from
+the suite, which is right for one authored by mistake and badly wrong for one
+whose score a promotion cited. So deletion is refused while any run is attached
+to an evaluation, and refused while a run is still going — the row the worker
+is mid-way through writing. Everything else deletes, because that is what the
+operator asked for.
+
+**Every refusal to queue answers the same question: is there something to
+score?** No active agent, an agent that is not active, nothing indexed to
+retrieve from — each is a setup problem an operator fixes, and each is a `409`
+in front of them now rather than a completed run at 0% that enters the history
+as a regression the model never caused. Several agents active is also a refusal:
+naming which one a run measures is the operator's call, and a result whose
+subject was chosen by a coin toss cannot be compared with the next one.
+
+**A run records whose corpus it measured** (`0023_benchmark_owner`). Retrieval
+and recall are owner-scoped, so the same suite run by two operators searches two
+different sets of documents and is entitled to two different scores. Without the
+owner on the run, that difference reads as a regression. The same migration
+widens `modelAlias` to 200 to match `AgentProfileVersion.modelAlias`, the column
+it copies — at 120 a long alias would have failed the insert, and an alias that
+is always present is the whole point of denormalising it.
+
+A retrieval run records the **embedding** model rather than a chat model, since
+retrieval scores move when the vectors change.
+
+Two contract tightenings found while implementing: two cases may no longer share
+an id, because the id names a row in the results table and a reused one makes a
+regression in the second case invisible; and one run of a suite at a time,
+because a second against the same target is the same questions to the same model
+and only makes both slower.
+
+961 tests green, 20 new. The 19 manager cases run against a real PostgreSQL —
+the cascade, the unique index and the three check constraints live in the
+database, and a fake would prove none of them.
+
 ## ai-v1.69.0 — 2026-08-07
 
 Benchmarks, R1: contract, schema and API.

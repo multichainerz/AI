@@ -1388,7 +1388,11 @@ export const benchmarkRun = pgTable("BenchmarkRun", {
 	agentProfileId: uuid(),
 	agentProfileSlug: varchar({ length: 64 }),
 	agentProfileVersion: integer(),
-	modelAlias: varchar({ length: 120 }),
+	// As wide as AgentProfileVersion.modelAlias, the column it copies.
+	modelAlias: varchar({ length: 200 }),
+	// Retrieval and recall are owner-scoped, so a score is only comparable to
+	// another run over the same corpus.
+	ownerSubject: varchar({ length: 200 }).notNull(),
 	totalCases: integer().default(0).notNull(),
 	passedCases: integer().default(0).notNull(),
 	passRate: doublePrecision(),
