@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="ai-v1.79.0"
+INSTALLER_VERSION="ai-v1.80.0"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 CONTAINER_NAME="orcasynapse-hermes"
 HEARTBEAT_SERVICE="orcasynapse-hermes-heartbeat"
@@ -526,6 +526,11 @@ require_ubuntu_host() {
   . /etc/os-release
   [[ "${ID:-}" == "ubuntu" ]] || fail "VM2 must run Ubuntu; detected '${PRETTY_NAME:-unknown operating system}'"
   [[ -n "${VERSION_ID:-}" ]] || fail "the Ubuntu release version could not be identified"
+  # Ubuntu LTS is the April release of an even year. VERSION_ID was read and
+  # checked non-empty but never compared, so a 9-month interim release passed --
+  # a shorter support window than this product's own.
+  local ubuntu_major="${VERSION_ID%%.*}" ubuntu_minor="${VERSION_ID##*.}"
+  [[ "${ubuntu_minor}" == "04" && "${ubuntu_major}" =~ ^[0-9]+$ ]]     && (( ubuntu_major >= 22 )) && (( ubuntu_major % 2 == 0 ))     || fail "VM2 must run an Ubuntu LTS release of 22.04 or later; detected '${PRETTY_NAME:-Ubuntu ${VERSION_ID}}'"
   [[ -d /run/systemd/system ]] || fail "VM2 must be an Ubuntu systemd VM, not a minimal container userland"
   case "$(uname -m)" in
     x86_64|aarch64) ;;
@@ -975,7 +980,8 @@ admitted_toolset_summary() {
     printf 'none — every toolset disabled'
     return 0
   fi
-  paste -sd ', ' -- "${file}" 2>/dev/null || tr '\n' ' ' < "${file}"
+  paste -sd ',' -- "${file}" 2>/dev/null | sed 's/,/, /g' || tr '
+' ' ' < "${file}"
 }
 
 write_heartbeat_client() {

@@ -41,6 +41,12 @@ jobs:
         run: |
           bash scripts/test-public-installer-recovery.sh
           bash scripts/test-agentic-installer-recovery.sh
+      # The recovery tests source the installer and exercise functions in
+      # isolation; main() itself had never been run by anything, so a break in
+      # the install sequence reached a customer's VM first. The runner is a full
+      # Ubuntu VM with systemd and Docker, which is all this needs.
+      - name: Run the Agentic System installer end to end
+        run: sudo bash scripts/test-agentic-installer-smoke.sh
       - name: Verify Linux container secret access
         run: sudo bash scripts/test-installer-secret-permissions.sh
       - uses: pnpm/action-setup@v4

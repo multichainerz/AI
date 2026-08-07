@@ -5,6 +5,47 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.80.0 — 2026-08-07
+
+The VM2 installer runs in a test for the first time.
+
+`scripts/test-agentic-installer-smoke.sh` executes `main()` end to end. Every
+existing installer test *sources* the script and exercises functions in
+isolation — `sign_node_payload`, `validate_resume_state`, `write_file_from_stdin`
+— so the sequence that installs dependencies, generates an identity, launches
+the runtime, enrolls, writes the managed policy, installs the systemd timers and
+preseeds the toolset allowlist had **never been executed by anything**. A break
+in it reached a customer's VM first, every time.
+
+The stubs are shallow but the plumbing is real: a local registry so `docker pull`
+and the `@sha256:` resolution in `resolved_image_reference()` actually run, a
+real Ed25519 control-plane key so the desired-state signature is genuinely
+verified, a stub that fingerprints the submitted `publicKeyPem` exactly as
+`parseIdentity()` does, and a real container serving `/health` so the readiness
+waits are not skipped. It asserts ten outcomes, from "the container answers" to
+"the resume state was cleared".
+
+It runs in CI on `ubuntu-latest` and locally on any Ubuntu LTS with systemd.
+
+**It immediately paid for itself.** Running it confirmed by execution — rather
+than by reading — that ai-v1.76.0's preseed writes the allowlist during
+installation and disables the unadmitted toolsets, and that ai-v1.77.0's
+`python3` dependency is genuinely satisfied by the install. Both had shipped on
+reasoning alone.
+
+It also caught a cosmetic bug in the completion panel: `paste -sd ', '` takes a
+*list* of separators and uses one character per join, so the admitted toolsets
+rendered as `clarify,todo_write`. Fixed.
+
+**An LTS floor.** `require_ubuntu_host` read `VERSION_ID`, checked it was
+non-empty, and never compared it — so Ubuntu 25.10, supported for nine months,
+installed as readily as 24.04. VM2 now requires an LTS of 22.04 or later: the
+April release of an even year. Verified accepting 22.04/24.04/26.04 and
+rejecting 25.10/24.10/23.04/20.04.
+
+1,034 tests green, plus the smoke test. Every other gate passes: release
+consistency, docker build closure, CSP closure, UI sync, and `bash -n`.
+
 ## ai-v1.79.0 — 2026-08-07
 
 Two fixed costs removed from every chat message.
