@@ -5,6 +5,44 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.81.0 — 2026-08-07
+
+The decommissioner is tested, and CI stops relying on an undeclared Node.
+
+**The remover had no test either**, and it is the most dangerous script in the
+repository: it permanently destroys a runtime, purges the node's private
+identity, and erases the enrollment history. The smoke test now runs the whole
+lifecycle — install, verify, destroy, verify nothing survived — and asserts that
+the container, the private key, the pinned control-plane key and both systemd
+timers are actually gone.
+
+`script` supplies the pty its `DESTROY` prompt needs. That prompt deliberately
+reads `/dev/tty` rather than stdin, so a piped `curl | bash` cannot auto-confirm
+a destruction — the property that makes it awkward to test is exactly the one
+worth having a test for.
+
+**CI was running three shell gates on a Node it never asked for.**
+`test-release-consistency.sh`, `test-docker-build-closure.sh` and
+`test-agentic-installer-recovery.sh` all shell out to `node`, and all three ran
+*before* `actions/setup-node`. They passed only because the GitHub image happens
+to preinstall some version — an undeclared dependency, on a version the workflow
+does not control, that would break silently if the image changed. The Node and
+pnpm setup now runs before them. Caught by running the recovery test on a clean
+Ubuntu, where it failed immediately with `node: command not found`.
+
+**All four installer tests now pass on real Linux**, verified rather than
+assumed: public recovery, agentic recovery, the end-to-end smoke test, and the
+container secret-permission boundary. Every one of them had been unverified from
+this machine for the whole of this work.
+
+Checked and cleared while looking: neither installer requires Node on the host.
+The two `node` calls in the VM1 installer both run inside containers
+(`docker compose run … worker node` and `docker compose exec -T api node`), so
+there is no undeclared host dependency there of the kind ai-v1.77.0 fixed for
+python3.
+
+1,034 tests green, plus the full installer lifecycle.
+
 ## ai-v1.80.0 — 2026-08-07
 
 The VM2 installer runs in a test for the first time.

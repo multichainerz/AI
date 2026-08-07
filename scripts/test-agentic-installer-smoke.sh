@@ -189,6 +189,34 @@ grep -q 'disabled_toolsets' "${STATE_ROOT}/managed/config.yaml" 2>/dev/null \
   && pass "resume state cleared after success" || bad "resume state survived a successful install"
 
 printf '\n'
+printf '\n=== running the decommissioner ===\n'
+# The remover permanently destroys a runtime and had no test either. `script`
+# allocates the pty its DESTROY prompt reads from -- it deliberately reads
+# /dev/tty rather than stdin so a piped `curl | bash` cannot auto-confirm, which
+# is exactly the property that makes it awkward to test and worth testing.
+set +e
+printf 'DESTROY\n' | ORCASYNAPSE_HERMES_STATE_ROOT="${STATE_ROOT}" \
+  script -qec "bash ${ROOT}/scripts/remove-agentic-node.sh" /dev/null >"${WORK}/remove.log" 2>&1
+remover_status=$?
+set -e
+if [[ "${remover_status}" -eq 0 ]]; then
+  pass "remover completed"
+else
+  bad "remover exited ${remover_status}"
+  tail -n 20 "${WORK}/remove.log" >&2
+fi
+
+docker inspect "${CONTAINER_NAME}" >/dev/null 2>&1 \
+  && bad "the runtime container survived decommission" || pass "runtime container destroyed"
+[[ ! -e "${STATE_ROOT}/identity/node.key" ]] \
+  && pass "node private identity purged" || bad "the node private key survived decommission"
+[[ ! -e "${STATE_ROOT}/control-plane-key.pem" ]] \
+  && pass "pinned control-plane key purged" || bad "the pinned control-plane key survived"
+systemctl is-enabled orcasynapse-hermes-heartbeat.timer >/dev/null 2>&1 \
+  && bad "heartbeat timer survived decommission" || pass "heartbeat timer removed"
+systemctl is-enabled orcasynapse-hermes-desired-state.timer >/dev/null 2>&1 \
+  && bad "desired-state timer survived decommission" || pass "desired-state timer removed"
+
 if (( failures > 0 )); then
   printf 'Agentic System installer smoke test FAILED with %d problem(s).\n' "${failures}" >&2
   exit 1
