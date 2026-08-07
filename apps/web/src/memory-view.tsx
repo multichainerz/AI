@@ -18,7 +18,10 @@ import {
   updateMemoryPolicy,
 } from "./api.js";
 import { adminAccess } from "./admin-access.js";
-import { Button, LockedScreen, StatusText } from "./ui/index.js";
+import {
+  Alert, Button, EmptyState, Field, Input, LockedScreen, PageHeader, Panel, PanelHeading,
+  Select, StatusText, toneFor,
+} from "./ui/index.js";
 
 interface MemoryViewProps {
   session: AdministratorSession | null;
@@ -170,13 +173,12 @@ export function MemoryView({ session, onOpenSettings, onSessionExpired }: Memory
     } catch (cause) { fail(cause); } finally { setBusy(false); }
   };
 
-  const heading = <header className="memory-header">
-    <div>
-      <p className="page-kicker">Retention governance</p>
-      <h1>Memory</h1>
-      <p>What agents may remember about the people they serve, and everything they currently hold.</p>
-    </div>
-  </header>;
+  const heading = <PageHeader
+    className="mb-0"
+    kicker="Retention governance"
+    title="Memory"
+    description="What agents may remember about the people they serve, and everything they currently hold."
+  />;
 
   if (!unlocked) {
     return <LockedScreen
@@ -189,135 +191,196 @@ export function MemoryView({ session, onOpenSettings, onSessionExpired }: Memory
     />;
   }
 
-  return <section className="memory-workspace">
+  return <div className="grid gap-5">
     {heading}
 
-    {error && <div className="documents-alert" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
+    {error && <Alert onDismiss={() => setError(null)}>{error}</Alert>}
 
-    <section className="panel">
-      <div className="document-section-heading">
-        <div><p className="section-kicker">Installation ceiling</p><h2>Memory policy</h2></div>
-      </div>
-      <p className="memory-ceiling-note">
+    <Panel>
+      <PanelHeading kicker="Installation ceiling" title="Memory policy" />
+      <p className="mb-4 mt-0 text-body text-muted">
         {active
           ? ceilingSummary(active.maximumCaptureMode)
           : "No policy is active, so each agent's own profile governs what it stores."}
       </p>
 
-      <div className="memory-policy-list">
-        {policies.map((policy) => <article key={policy.id}>
-          <div>
-            <strong>{policy.displayName}</strong>
-            <span className={`document-status ${statusTone(policy.status)}`}>{policy.status.toLowerCase()}</span>
-            <small>{ceilingSummary(policy.maximumCaptureMode)}</small>
-            <small>
+      <div className="grid gap-2">
+        {policies.map((policy) => <article
+          className="flex items-start justify-between gap-4 rounded border border-border bg-raised p-3"
+          key={policy.id}
+        >
+          <div className="min-w-0">
+            <div className="flex items-center gap-3">
+              <strong className="text-[12px] font-semibold text-text">{policy.displayName}</strong>
+              <StatusText dot tone={toneFor(statusTone(policy.status))}>{policy.status.toLowerCase()}</StatusText>
+            </div>
+            <small className="mt-1.5 block text-body text-muted">{ceilingSummary(policy.maximumCaptureMode)}</small>
+            <small className="mt-1 block text-caption text-faint">
               Retention {policy.retentionDays === null ? "indefinite" : `${policy.retentionDays} days`} ·
               up to {policy.maximumItemsPerOwner} items per person · recall {policy.recallLimit} above {policy.recallMinimumScore}
             </small>
-            <small>Documents: up to {policy.knowledgeRecallLimit} excerpts above {policy.knowledgeMinimumScore}</small>
-            <small>Capture: {policy.distillCapture ? "extracted facts only" : "whole turns, unfiltered"}</small>
+            <small className="mt-0.5 block text-caption text-faint">
+              Documents: up to {policy.knowledgeRecallLimit} excerpts above {policy.knowledgeMinimumScore}
+            </small>
+            <small className="mt-0.5 block text-caption text-faint">
+              Capture: {policy.distillCapture ? "extracted facts only" : "whole turns, unfiltered"}
+            </small>
           </div>
-          {canManage && <div className="memory-policy-actions">
-            {policy.status !== "ACTIVE" && <button type="button" className="secondary-button" disabled={busy} onClick={() => { setEditingId(policy.id); setDraft({ ...policy }); }}>Edit</button>}
+          {canManage && <div className="flex shrink-0 gap-1.5">
+            {policy.status !== "ACTIVE" && (
+              <Button size="sm" disabled={busy} onClick={() => { setEditingId(policy.id); setDraft({ ...policy }); }}>Edit</Button>
+            )}
             {policy.status === "ACTIVE"
-              ? <button type="button" className="danger-button" disabled={busy || reason.trim().length < 3} onClick={() => void changeState(policy, "suspend")}>Suspend</button>
-              : <button type="button" className="primary-button" disabled={busy || reason.trim().length < 3} onClick={() => void changeState(policy, "activate")}>Activate</button>}
+              ? <Button variant="danger" size="sm" disabled={busy || reason.trim().length < 3} onClick={() => void changeState(policy, "suspend")}>Suspend</Button>
+              : <Button variant="primary" size="sm" disabled={busy || reason.trim().length < 3} onClick={() => void changeState(policy, "activate")}>Activate</Button>}
           </div>}
         </article>)}
-        {policies.length === 0 && <p className="document-empty"><strong>No memory policy yet</strong><span>Create one to bound every agent at once.</span></p>}
+        {policies.length === 0 && (
+          <EmptyState title="No memory policy yet">Create one to bound every agent at once.</EmptyState>
+        )}
       </div>
 
-      {canManage && <form className="memory-policy-form" onSubmit={savePolicy}>
-        <label>Slug<input required value={draft.slug} disabled={editingId !== null} onChange={(event) => setDraft({ ...draft, slug: event.target.value })} /></label>
-        <label>Name<input required value={draft.displayName} onChange={(event) => setDraft({ ...draft, displayName: event.target.value })} /></label>
-        <label>Description<input required value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })} /></label>
-        <label>Most an agent may store<select value={draft.maximumCaptureMode} onChange={(event) => setDraft({ ...draft, maximumCaptureMode: event.target.value as CreateMemoryPolicy["maximumCaptureMode"] })}>
-          <option value="DOCUMENTS_ONLY">Nothing about people</option>
-          <option value="RECALL_ONLY">Recall only, no new memory</option>
-          <option value="LEARN_USER">What the person says</option>
-          <option value="LEARN_EXCHANGE">Both sides of the turn</option>
-        </select><small>{ceilingSummary(draft.maximumCaptureMode)}</small></label>
-        <label>Retention (days)<input type="number" min={1} max={3650} value={draft.retentionDays ?? ""} placeholder="Indefinite" onChange={(event) => setDraft({ ...draft, retentionDays: event.target.value ? Number(event.target.value) : null })} /></label>
-        <label>Items per person<input type="number" min={10} max={10000} value={draft.maximumItemsPerOwner} onChange={(event) => setDraft({ ...draft, maximumItemsPerOwner: Number(event.target.value) })} /></label>
-        <label>Document excerpts per answer<input type="number" min={1} max={50} value={draft.knowledgeRecallLimit} onChange={(event) => setDraft({ ...draft, knowledgeRecallLimit: Number(event.target.value) })} /><small>How many passages a run may retrieve from your documents.</small></label>
-        <label>Document relevance floor<input type="number" min={0} max={1} step={0.05} value={draft.knowledgeMinimumScore} onChange={(event) => setDraft({ ...draft, knowledgeMinimumScore: Number(event.target.value) })} /><small>Below this similarity a passage is treated as noise. Lower it when questions are phrased unlike the source text; raise it if answers drift.</small></label>
-        <label className="memory-toggle"><input type="checkbox" checked={draft.distillCapture} onChange={(event) => setDraft({ ...draft, distillCapture: event.target.checked })} />Store extracted facts instead of whole turns<small>A turn is mostly questions, greetings and the assistant talking about itself, and storing it verbatim makes recall match old questions rather than useful facts. With this on, a second model call after the answer extracts durable facts about the person and stores only those — usually none.</small></label>
-        <footer>
-          {editingId && <button type="button" className="secondary-button" onClick={() => { setEditingId(null); setDraft(blankPolicy); }}>Cancel</button>}
-          <button type="submit" className="primary-button" disabled={busy}>{editingId ? "Save policy" : "Create policy"}</button>
+      {canManage && <form className="mt-5 grid gap-3 border-t border-border pt-5 sm:grid-cols-2" onSubmit={savePolicy}>
+        <Field label="Slug"><Input required value={draft.slug} disabled={editingId !== null} onChange={(event) => setDraft({ ...draft, slug: event.target.value })} /></Field>
+        <Field label="Name"><Input required value={draft.displayName} onChange={(event) => setDraft({ ...draft, displayName: event.target.value })} /></Field>
+        <Field label="Description" className="sm:col-span-2"><Input required value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })} /></Field>
+        <Field label="Most an agent may store" className="sm:col-span-2" hint={ceilingSummary(draft.maximumCaptureMode)}>
+          <Select value={draft.maximumCaptureMode} onChange={(event) => setDraft({ ...draft, maximumCaptureMode: event.target.value as CreateMemoryPolicy["maximumCaptureMode"] })}>
+            <option value="DOCUMENTS_ONLY">Nothing about people</option>
+            <option value="RECALL_ONLY">Recall only, no new memory</option>
+            <option value="LEARN_USER">What the person says</option>
+            <option value="LEARN_EXCHANGE">Both sides of the turn</option>
+          </Select>
+        </Field>
+        <Field label="Retention (days)"><Input type="number" min={1} max={3650} value={draft.retentionDays ?? ""} placeholder="Indefinite" onChange={(event) => setDraft({ ...draft, retentionDays: event.target.value ? Number(event.target.value) : null })} /></Field>
+        <Field label="Items per person"><Input type="number" min={10} max={10000} value={draft.maximumItemsPerOwner} onChange={(event) => setDraft({ ...draft, maximumItemsPerOwner: Number(event.target.value) })} /></Field>
+        <Field label="Document excerpts per answer" hint="How many passages a run may retrieve from your documents.">
+          <Input type="number" min={1} max={50} value={draft.knowledgeRecallLimit} onChange={(event) => setDraft({ ...draft, knowledgeRecallLimit: Number(event.target.value) })} />
+        </Field>
+        <Field label="Document relevance floor" hint="Below this similarity a passage is treated as noise. Lower it when questions are phrased unlike the source text; raise it if answers drift.">
+          <Input type="number" min={0} max={1} step={0.05} value={draft.knowledgeMinimumScore} onChange={(event) => setDraft({ ...draft, knowledgeMinimumScore: Number(event.target.value) })} />
+        </Field>
+        <label className="grid cursor-pointer gap-1.5 rounded border border-border bg-raised p-3 sm:col-span-2">
+          <span className="flex items-center gap-2.5 text-body text-text">
+            <input type="checkbox" checked={draft.distillCapture} onChange={(event) => setDraft({ ...draft, distillCapture: event.target.checked })} />
+            Store extracted facts instead of whole turns
+          </span>
+          <small className="text-caption leading-relaxed text-muted">
+            A turn is mostly questions, greetings and the assistant talking about itself, and storing it verbatim makes
+            recall match old questions rather than useful facts. With this on, a second model call after the answer
+            extracts durable facts about the person and stores only those — usually none.
+          </small>
+        </label>
+        <footer className="flex justify-end gap-2 sm:col-span-2">
+          {editingId && <Button onClick={() => { setEditingId(null); setDraft(blankPolicy); }}>Cancel</Button>}
+          <Button variant="primary" type="submit" disabled={busy}>{editingId ? "Save policy" : "Create policy"}</Button>
         </footer>
       </form>}
 
-      {canManage && <label className="memory-reason">Decision reason<input minLength={3} maxLength={500} value={reason} onChange={(event) => setReason(event.target.value)} /><small>Recorded in the audit trail with every activation, suspension, and deletion.</small></label>}
-    </section>
+      {canManage && (
+        <Field
+          className="mt-4 max-w-[520px]"
+          label="Decision reason"
+          hint="Recorded in the audit trail with every activation, suspension, and deletion."
+        >
+          <Input minLength={3} maxLength={500} value={reason} onChange={(event) => setReason(event.target.value)} />
+        </Field>
+      )}
+    </Panel>
 
-    <section className="panel">
-      <div className="document-section-heading">
-        <div><p className="section-kicker">Stored memory</p><h2>What agents currently hold</h2></div>
-        <div className="memory-filter">
-          <input placeholder="Filter by person" value={ownerFilter} onChange={(event) => setOwnerFilter(event.target.value)} />
-          {/*
-            * History is off by default so the list answers "what would this
-            * agent recall right now". Turning it on brings in corrections and
-            * forgotten facts, which is a different question and worth asking
-            * for deliberately.
-            */}
-          <label className="memory-history-toggle">
-            <input type="checkbox" checked={showHistory} onChange={(event) => setShowHistory(event.target.checked)} />
-            Show corrected and forgotten
-          </label>
-          {canManage && ownerFilter.trim() && <button type="button" className="danger-button" disabled={busy || reason.trim().length < 3} onClick={() => void purgeOwner()}>Forget everything for this person</button>}
+    <Panel>
+      <PanelHeading
+        kicker="Stored memory"
+        title="What agents currently hold"
+        actions={
+          <>
+            <Input
+              className="w-[180px]"
+              placeholder="Filter by person"
+              value={ownerFilter}
+              onChange={(event) => setOwnerFilter(event.target.value)}
+            />
+            {/*
+              * History is off by default so the list answers "what would this
+              * agent recall right now". Turning it on brings in corrections and
+              * forgotten facts, which is a different question and worth asking
+              * for deliberately.
+              */}
+            <label className="flex cursor-pointer items-center gap-2 whitespace-nowrap text-body text-muted">
+              <input type="checkbox" checked={showHistory} onChange={(event) => setShowHistory(event.target.checked)} />
+              Show corrected and forgotten
+            </label>
+            {canManage && ownerFilter.trim() && (
+              <Button variant="danger" size="sm" disabled={busy || reason.trim().length < 3} onClick={() => void purgeOwner()}>
+                Forget everything for this person
+              </Button>
+            )}
+          </>
+        }
+      />
+
+      {canManage && ownerFilter.trim() && <div className="mb-4 grid gap-3 rounded border border-border bg-raised p-3.5">
+        <div className="flex flex-wrap items-end gap-3">
+          <Field label="Forget by topic" className="min-w-[220px] flex-1">
+            <Input
+              placeholder="e.g. Project Titan"
+              value={forgetTarget}
+              onChange={(event) => { setForgetTarget(event.target.value); setPreview(null); }}
+            />
+          </Field>
+          <Button
+            disabled={busy || !forgetTarget.trim() || reason.trim().length < 3}
+            onClick={() => void previewForget()}
+          >
+            Preview what matches
+          </Button>
         </div>
-      </div>
+        <small className="text-caption text-muted">
+          Between deleting one fact and forgetting a person entirely. Nothing changes until you confirm.
+        </small>
 
-      {canManage && ownerFilter.trim() && <div className="memory-forget-topic">
-        <label>Forget by topic
-          <input
-            placeholder="e.g. Project Titan"
-            value={forgetTarget}
-            onChange={(event) => { setForgetTarget(event.target.value); setPreview(null); }}
-          />
-        </label>
-        <button
-          type="button"
-          disabled={busy || !forgetTarget.trim() || reason.trim().length < 3}
-          onClick={() => void previewForget()}
-        >Preview what matches</button>
-        <small>Between deleting one fact and forgetting a person entirely. Nothing changes until you confirm.</small>
-
-        {preview && <div className="memory-forget-preview">
+        {preview && <div className="grid gap-2.5 rounded border border-border bg-surface p-3">
           {preview.candidates.length === 0
-            ? <p><strong>Nothing matched.</strong> No stored fact was judged to be about “{forgetTarget.trim()}”.</p>
+            ? <p className="m-0 text-body text-muted"><strong className="text-text">Nothing matched.</strong> No stored fact was judged to be about “{forgetTarget.trim()}”.</p>
             : <>
-                <p><strong>{preview.matched} fact{preview.matched === 1 ? "" : "s"}</strong> judged to be about “{forgetTarget.trim()}”:</p>
-                <ul>{preview.candidates.map((candidate) => <li key={candidate.id}>{candidate.content}</li>)}</ul>
-                {preview.capped && <p className="memory-forget-warning">
+                <p className="m-0 text-body text-muted">
+                  <strong className="text-text">{preview.matched} fact{preview.matched === 1 ? "" : "s"}</strong> judged to be about “{forgetTarget.trim()}”:
+                </p>
+                <ul className="m-0 grid list-none gap-1 p-0">
+                  {preview.candidates.map((candidate) => (
+                    <li className="rounded border border-border bg-raised px-2.5 py-2 text-body text-text" key={candidate.id}>
+                      {candidate.content}
+                    </li>
+                  ))}
+                </ul>
+                {preview.capped && <StatusText tone="warn" className="normal-case">
                   More matched than the per-request limit allows; only the first {preview.candidates.length} would be forgotten.
-                </p>}
-                {preview.truncated && <p className="memory-forget-warning">
+                </StatusText>}
+                {preview.truncated && <StatusText tone="warn" className="normal-case">
                   This person has more stored memory than one pass can read, so the scan was partial.
-                </p>}
-                <button
-                  type="button"
-                  className="danger-button"
-                  disabled={busy}
-                  onClick={() => void commitForget()}
-                >Forget these {preview.candidates.length}</button>
+                </StatusText>}
+                <Button variant="danger" className="justify-self-end" disabled={busy} onClick={() => void commitForget()}>
+                  Forget these {preview.candidates.length}
+                </Button>
               </>}
         </div>}
       </div>}
 
       {records.length === 0
-        ? <div className="document-empty"><strong>Nothing stored</strong><span>No agent has recorded anything about anyone in this scope.</span></div>
-        : <><p className="chat-policy-note">
-            Facts marked <strong>always shown</strong> are placed in every prompt to that agent,
+        ? <EmptyState title="Nothing stored">No agent has recorded anything about anyone in this scope.</EmptyState>
+        : <><p className="mb-3 mt-0 rounded border border-border bg-raised px-3 py-2.5 text-body leading-relaxed text-muted">
+            Facts marked <strong className="text-good">always shown</strong> are placed in every prompt to that agent,
             whatever the question was — that is how a preference nobody would think to ask about
-            still reaches an answer. <strong>Current context</strong> is included the same way but
+            still reaches an answer. <strong className="text-warn">Current context</strong> is included the same way but
             describes something expected to change. Everything else is reached only by search.
           </p>
-          <div className="memory-record-list">{records.map((record) => <article key={record.id}>
-          <div>
-            <strong>{record.ownerSubject}</strong>
+          <div className="grid gap-2">{records.map((record) => <article
+            className="flex items-start justify-between gap-4 rounded border border-border bg-raised p-3"
+            key={record.id}
+          >
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <strong className="text-[12px] font-semibold text-text">{record.ownerSubject}</strong>
             <StatusText>{record.agentProfileSlug}</StatusText>
             {record.profileScope !== "EPISODIC" && (
               <StatusText tone={record.profileScope === "STATIC" ? "good" : "warn"}>
@@ -334,17 +397,18 @@ export function MemoryView({ session, onOpenSettings, onSessionExpired }: Memory
             {record.version > 1 && <StatusText tone="accent">v{record.version}</StatusText>}
             {!record.isLatest && <StatusText tone="neutral">superseded</StatusText>}
             {record.forgottenAt !== null && <StatusText tone="bad">forgotten</StatusText>}
-            <p>{record.content}</p>
+            </div>
+            <p className="mb-0 mt-2 text-body leading-relaxed text-text">{record.content}</p>
             {record.supersededReason && (
-              <small className="memory-record-lineage">Retired: {record.supersededReason}</small>
+              <small className="mt-1.5 block text-caption text-faint">Retired: {record.supersededReason}</small>
             )}
             {record.forgetReason && (
-              <small className="memory-record-lineage">
+              <small className="mt-1.5 block text-caption text-faint">
                 Forgotten: {record.forgetReason}
                 {record.forgetBatchId ? ` · batch ${record.forgetBatchId.slice(0, 8)}` : ""}
               </small>
             )}
-            <small>
+            <small className="mt-1.5 block font-mono text-micro text-faint">
               Recorded {new Date(record.createdAt).toLocaleString()}
               {record.retentionUntil ? ` · expires ${new Date(record.retentionUntil).toLocaleDateString()}` : " · no expiry"}
             </small>
@@ -355,6 +419,6 @@ export function MemoryView({ session, onOpenSettings, onSessionExpired }: Memory
             </Button>
           )}
         </article>)}</div></>}
-    </section>
-  </section>;
+    </Panel>
+  </div>;
 }

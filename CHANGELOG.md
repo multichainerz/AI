@@ -5,6 +5,49 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.62.0 — 2026-08-07
+
+Memory completes the Platform quartet — and nothing in the design system had a
+border.
+
+**The universal border reset.** `border-style` defaults to `none`, and CSS
+computes `border-width` to 0 whenever the style is none. Tailwind's `border`
+utility sets width only, so it painted nothing — on *every element*, not just
+the buttons ai-v1.60.0 patched. Preflight normally supplies the global rule that
+fixes this; preflight is off here so it cannot restyle the views still on the
+old stylesheet, and the consequence went unnoticed: every Panel, card, input,
+dialog and empty state in the set has been drawing no border since the
+primitives shipped. Screens read as flat washes of background rather than as
+structure.
+
+The fix is the one rule preflight provides and this project cannot do without —
+`border-style: solid; border-width: 0` on `*` — which adds no border by itself
+and, at specificity (0,0,0), loses to every existing rule. ai-v1.60.0 fixed this
+narrowly on `button` after finding it there; the general case was the same bug
+and should have been fixed then. `ui/tokens.test.ts` now holds both.
+
+Every migrated screen gained its structure at once. Verified against an
+unmigrated view too, since the reset is global: Platform and its context bar are
+unchanged.
+
+**Memory**, meanwhile, was the last of the four Platform governance screens and
+the only one still half-migrated — it had the primitives for its lineage badges
+since ai-v1.55.0 but a bespoke workspace around them. Policy list, the capture
+form, the reason field, the by-topic forget preview and the stored-record list
+now all build from the set. The two paragraphs that explain what *always shown*
+and *current context* mean are tinted to match the badges they describe, so the
+legend and the thing it explains are the same colour.
+
+- the lineage interaction test doubles as this screen's preview, the way
+  `chat-transcript.test.tsx` does for Chat
+- 17 more rules dropped; `.memory-*` is gone from the stylesheet entirely
+
+894 tests green, web at 141. Contrast on the populated screen: 0 nodes below
+WCAG AA, worst 5.27. The stylesheet is **1,674 lines carrying 461 distinct
+colours, down from 754**.
+
+Six view bodies remain: Operations, Agents, Onboarding, Tooling, Documents, Audit.
+
 ## ai-v1.61.0 — 2026-08-07
 
 Prompts and Guardrails, and the end of the shared governance stylesheet.

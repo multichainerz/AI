@@ -31,8 +31,22 @@ describe("colour tokens", () => {
   });
 });
 
-describe("the button reset", () => {
-  it("keeps a border style so a width utility can still apply", () => {
+describe("the border reset", () => {
+  it("gives every element a border style, or no `border` utility paints", () => {
+    /*
+     * `border-style` defaults to `none` and CSS then computes `border-width` to
+     * 0, so Tailwind's `border` (width only) draws nothing. Preflight normally
+     * supplies this rule; preflight is off here, and without it every Panel,
+     * card, input and dialog in the set was borderless.
+     */
+    const universal = /@layer base\s*\{[\s\S]*?\*,\s*::before,\s*::after\s*\{([^}]*)\}/.exec(styles)?.[1] ?? "";
+    expect(universal, "the universal border reset is missing").not.toBe("");
+    expect(universal).toMatch(/border-style:\s*solid/);
+    // Width must stay 0, or the reset would draw a border on everything.
+    expect(universal).toMatch(/border-width:\s*0/);
+  });
+
+  it("keeps a border style on the button reset too", () => {
     /*
      * `border: 0` also sets `border-style: none`, and CSS then computes
      * border-width to 0 no matter what a class declares. Preflight is off, so
@@ -40,7 +54,7 @@ describe("the button reset", () => {
      * OS default — but written as the bare shorthand it removed the border from
      * every Button variant in the set.
      */
-    const reset = /@layer base\s*\{[^}]*button\s*\{([^}]*)\}/.exec(styles)?.[1] ?? "";
+    const reset = /@layer base\s*\{[\s\S]*?\bbutton\s*\{([^}]*)\}/.exec(styles)?.[1] ?? "";
     expect(reset, "the base button reset is missing").not.toBe("");
     expect(reset).toMatch(/border:\s*0\s+solid/);
   });

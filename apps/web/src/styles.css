@@ -15,6 +15,27 @@
  * its own treatment; only unclassed buttons inherit this.
  */
 @layer base {
+  /*
+   * The one rule Tailwind's preflight provides that this project cannot do
+   * without.
+   *
+   * `border-style` defaults to `none`, and CSS computes `border-width` to 0
+   * whenever the style is none — so `border`, which sets width only, paints
+   * nothing at all. Preflight normally fixes this globally; preflight is off
+   * here so that it cannot restyle the views still on the old stylesheet, which
+   * left every `border` utility in the design system inert. Panels, cards,
+   * inputs and dialogs were all drawing no border.
+   *
+   * Width stays 0, so this adds no border anywhere by itself, and at
+   * specificity (0,0,0) it loses to every existing rule.
+   */
+  *,
+  ::before,
+  ::after {
+    border-style: solid;
+    border-width: 0;
+  }
+
   button {
     background: transparent;
     /*
@@ -892,24 +913,11 @@ button:disabled { opacity: .48; cursor: not-allowed; }
 .tooling-stage-note strong { font-size: 12px; }
 .tooling-stage-note p { margin: 4px 0 0; color: #8e7fb2; font-size: 10px; line-height: 1.55; }
 
-.memory-workspace { display: grid; gap: 16px; }
-.memory-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
-.memory-header > div:first-child { max-width: 780px; }
 .workspace-notice { padding: 11px 14px; border: 1px solid; border-radius: 8px; font-size: 10px; }
 .workspace-notice.error { color: #f0adb4; border-color: #b17984; background: #28191e; }
 .workspace-notice.success { color: #a9d7c3; border-color: #57957d; background: #13241d; }
 
 
-.memory-forget-topic { display: grid; gap: 8px; margin: 0 0 16px; padding: 14px 16px; border: 1px solid #3c3744; border-radius: 9px; background: #1b1821; }
-.memory-forget-topic label { display: grid; gap: 5px; color: #938a9f; font-size: 9px; font-weight: 750; letter-spacing: .06em; text-transform: uppercase; }
-.memory-forget-topic input { min-height: 34px; padding: 7px 10px; color: #d8d5dd; border: 1px solid #423c50; border-radius: 7px; background: #15131b; font-size: 11px; }
-.memory-forget-topic > button { justify-self: start; min-height: 32px; padding: 7px 12px; color: #c4bfca; border: 1px solid #423c50; border-radius: 7px; background: #211e29; cursor: pointer; font-size: 10px; font-weight: 650; }
-.memory-forget-topic > small { color: #8c849a; font-size: 9px; line-height: 1.55; }
-.memory-forget-preview { display: grid; gap: 8px; padding: 12px 14px; border: 1px solid #474058; border-radius: 8px; background: #1e1a26; }
-.memory-forget-preview p { margin: 0; color: #b6b0be; font-size: 10px; line-height: 1.6; }
-.memory-forget-preview ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; color: #d8d5dd; font-size: 10px; line-height: 1.55; }
-.memory-forget-preview .memory-forget-warning { color: #d9b675; }
-.memory-forget-preview button { justify-self: start; min-height: 32px; padding: 7px 12px; border-radius: 7px; cursor: pointer; font-size: 10px; font-weight: 650; }
 
 /* Shared workspace rhythm */
 :is(.documents-workspace, .agents-workspace, .tooling-workspace, .setup-workspace) { gap: 20px; }
@@ -1051,8 +1059,6 @@ button:disabled { opacity: .48; cursor: not-allowed; }
   .document-list > button .document-status { grid-column: 2; justify-self: start; }
   .document-actions, .document-actions > div { align-items: stretch; flex-direction: column; }
   .document-actions button { width: 100%; }
-  .memory-list > article { grid-template-columns: 36px minmax(0, 1fr) auto; }
-  .memory-list > article > button { grid-column: 2 / -1; width: 100%; }
   .agent-profile-select { grid-template-columns: auto minmax(0, 1fr); }
   .agent-profile-select .document-status { grid-column: 2; justify-self: start; }
   .agent-profile-actions { padding-left: 15px; }
@@ -1665,5 +1671,3 @@ strong, .metrics dd, .metric-value, output, time, td, th { font-variant-numeric:
 .metric-progress.is-bad::-moz-progress-bar { background: var(--bad); }
 
 /* A retired or forgotten fact states why, directly under what it said. */
-.memory-record-lineage { display: block; margin-top: 4px; color: var(--faint); font-size: 10px; line-height: 1.5; }
-.memory-history-toggle { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 10px; white-space: nowrap; }
