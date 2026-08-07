@@ -14,10 +14,12 @@ import {
   OrcaSynapseApiError,
   attachBenchmarkEvidence,
   cancelBenchmarkRun,
+  deleteBenchmarkSuite,
   getBenchmarkRuns,
   getBenchmarkSuites,
   startBenchmarkRun,
 } from "./api.js";
+import { BenchmarkSuiteEditor } from "./benchmark-suite-editor.js";
 import { adminAccess } from "./admin-access.js";
 import {
   Alert,
@@ -123,6 +125,9 @@ export function BenchmarksView({ session, onOpenOperations, onSessionExpired }: 
   const [suites, setSuites] = useState<BenchmarkSuite[]>([]);
   const [runs, setRuns] = useState<BenchmarkRun[]>([]);
   const [inspecting, setInspecting] = useState<BenchmarkRun | null>(null);
+  /** null when closed; `{ suite: null }` for a new one. */
+  const [editing, setEditing] = useState<{ suite: BenchmarkSuite | null } | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -187,6 +192,22 @@ export function BenchmarksView({ session, onOpenOperations, onSessionExpired }: 
     }
   };
 
+  const remove = async (suite: BenchmarkSuite) => {
+    setBusy(suite.id);
+    setError(null);
+    try {
+      await deleteBenchmarkSuite(suite.id);
+      setMessage(`'${suite.displayName}' deleted.`);
+      await load();
+    } catch (deleteError) {
+      if (deleteError instanceof OrcaSynapseApiError && deleteError.status === 401) onSessionExpired();
+      else setError(deleteError instanceof Error ? deleteError.message : "Unable to delete the suite.");
+    } finally {
+      setBusy(null);
+      setConfirmingDelete(null);
+    }
+  };
+
   const stop = async (run: BenchmarkRun) => {
     setBusy(run.id);
     setError(null);
@@ -224,7 +245,10 @@ export function BenchmarksView({ session, onOpenOperations, onSessionExpired }: 
       kicker="Operations"
       title="Benchmarks"
       description="Deterministic checks executed against this installation, and the evidence an evaluation is promoted on."
-      actions={<Button onClick={onOpenOperations}>Evaluation ledger</Button>}
+      actions={<>
+        <Button onClick={onOpenOperations}>Evaluation ledger</Button>
+        {canManage && <Button variant="primary" onClick={() => setEditing({ suite: null })}>New suite</Button>}
+      </>}
     />
 
     <MetricRow className="lg:grid-cols-4" aria-label="Benchmark summary">
@@ -257,9 +281,15 @@ export function BenchmarksView({ session, onOpenOperations, onSessionExpired }: 
 
     <section className="grid items-start gap-3 lg:grid-cols-2" aria-label="Benchmark suites">
       {suites.length === 0 && (
-        <EmptyState className="lg:col-span-2" title="No benchmark suites yet">
-          A suite is a set of questions with the answers they must contain. Author one through the benchmarks API to
-          start measuring whether this installation still answers well.
+        <EmptyState
+          className="lg:col-span-2"
+          title="No benchmark suites yet"
+          action={canManage
+            ? <Button onClick={() => setEditing({ suite: null })}>Author the first suite</Button>
+            : undefined}
+        >
+          A suite is a set of questions with the things their answers must contain. Running one is how you find out
+          whether this installation still answers as well as it did.
         </EmptyState>
       )}
       {suites.map((suite) => {
@@ -276,6 +306,14 @@ export function BenchmarksView({ session, onOpenOperations, onSessionExpired }: 
               </StatusText>
             )}
             <StatusText className="ml-auto">Revision {suite.revision}</StatusText>
+            {canManage && !running && <Button
+              size="sm"
+              variant="ghost"
+              aria-label={`Delete ${suite.displayName}`}
+              onClick={() => setConfirmingDelete(confirmingDelete === suite.id ? null : suite.id)}
+            >
+              Delete
+            </Button>}
           </header>
 
           <div className="min-w-0">
@@ -322,6 +360,9 @@ export function BenchmarksView({ session, onOpenOperations, onSessionExpired }: 
               {latest && latest.results.length > 0 && (
                 <Button size="sm" onClick={() => setInspecting(latest)}>Results</Button>
               )}
+              {canManage && !running && (
+                <Button size="sm" onClick={() => setEditing({ suite })}>Edit</Button>
+              )}
               {canManage && (running
                 ? <Button size="sm" variant="danger" disabled={busy === running.id} onClick={() => void stop(running)}>
                     {busy === running.id ? "Stopping..." : "Stop"}
@@ -331,9 +372,33 @@ export function BenchmarksView({ session, onOpenOperations, onSessionExpired }: 
                   </Button>)}
             </div>
           </footer>
+
+          {confirmingDelete === suite.id && <div className="grid gap-3 rounded border border-bad/40 bg-bad/10 p-3">
+            <div>
+              <strong className="block text-[12px] font-semibold text-text">Delete this suite?</strong>
+              {/* The server refuses when a result is cited by an evaluation or a
+                  run is still going, and says which — so this warns rather than
+                  guesses. */}
+              <span className="mt-1 block text-body text-muted">
+                Its run history goes with it. A result already recorded against an evaluation keeps the suite.
+              </span>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button size="sm" onClick={() => setConfirmingDelete(null)}>Keep</Button>
+              <Button size="sm" variant="danger" disabled={busy === suite.id} onClick={() => void remove(suite)}>
+                {busy === suite.id ? "Deleting..." : "Delete"}
+              </Button>
+            </div>
+          </div>}
         </Panel>;
       })}
     </section>
+
+    {editing && <BenchmarkSuiteEditor
+      suite={editing.suite}
+      onSaved={(note) => { setEditing(null); setMessage(note); void load(); }}
+      onClose={() => setEditing(null)}
+    />}
 
     {inspecting && <RunResults
       run={inspecting}

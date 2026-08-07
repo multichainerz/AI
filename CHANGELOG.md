@@ -5,6 +5,42 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.74.0 — 2026-08-07
+
+Benchmarks, R5: authoring a suite from the dashboard. The loop is closed.
+
+A suite can now be written, edited and deleted from the Benchmarks screen —
+which was the last thing the API could do and the screen could not. Author,
+run, read, file as evidence: the whole path is in the product.
+
+**A new suite starts with a case that already has a check.** A case with no
+assertions passes by doing nothing, so the empty state is never that shape.
+
+**Two cases cannot be saved sharing an id**, and the screen says why rather than
+waiting for the server to: the id names a row in the results, so a reused one
+hides a regression in the second case entirely. A latency check switches its
+field to a number input, because the contract refuses anything else and a text
+box invites the mistake.
+
+**Slug and kind are fixed once a suite exists.** Past runs are filed under the
+slug and pinned to what the kind measures; changing either would silently
+redefine what an old result meant. The editor states that on the field rather
+than just disabling it.
+
+Editing sends the revision the drawer was opened at, so two operators cannot
+overwrite each other. Deleting asks first and says what it takes with it — the
+server has the final word, and keeps any suite whose result an evaluation cites.
+
+1,021 tests green, 9 new. Contrast on the editor sweeps at 0 nodes below WCAG
+AA, worst 5.30, median 7.36.
+
+*Noted while testing:* the `Field` primitive renders its hint inside the
+`<label>`, so a hinted field's accessible name is "Slug Fixed: past runs are
+filed under it." rather than "Slug" — verbose for a screen reader and unmatchable
+by voice control. It belongs in `aria-describedby`. Left alone here because
+`Field` backs every form in the dashboard and that is not a benchmarks change;
+the tests match hinted fields by leading text until it is fixed.
+
 ## ai-v1.73.0 — 2026-08-07
 
 Benchmarks, R4: a completed run files itself into the evaluation ledger.

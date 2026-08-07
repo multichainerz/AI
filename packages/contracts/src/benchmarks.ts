@@ -247,6 +247,7 @@ export const benchmarkSuiteListSchema = z.object({ items: z.array(benchmarkSuite
 export const benchmarkRunListSchema = z.object({ items: z.array(benchmarkRunSchema) });
 
 export type BenchmarkKind = z.infer<typeof benchmarkKindSchema>;
+export type BenchmarkAssertionKind = z.infer<typeof benchmarkAssertionKindSchema>;
 export type BenchmarkAssertion = z.infer<typeof benchmarkAssertionSchema>;
 export type BenchmarkCase = z.infer<typeof benchmarkCaseSchema>;
 export type BenchmarkSuite = z.infer<typeof benchmarkSuiteSchema>;
