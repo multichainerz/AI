@@ -5,6 +5,46 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.66.0 — 2026-08-07
+
+The connection drawer and the runtime-nodes panel — the revamp is complete.
+
+The drawer had its own focus trap, and it was the *original*: `Drawer` was
+extracted from this exact implementation in ai-v1.54.0 and the copy here was
+never removed, which meant two places to fix when one of them was wrong. The
+shell is now the primitive, so the trap, Escape, scroll lock and focus restore
+have one implementation in the product rather than two.
+
+The four legacy button classes are restated as the Button variants they should
+always have matched. The drawer and the nodes panel still apply them by name,
+and a saturated purple `.primary-button` with white text sitting beside the
+design system's accent-with-dark-text was the last thing making a screen look
+like a different product.
+
+Verified in the running dashboard: the drawer opens with `aria-modal="true"`
+and body scroll locked, Escape closes it, and scroll lock releases.
+
+**Where the revamp ends.** The plan opened by measuring the problem: *2,020
+lines carrying 754 distinct hand-picked colours, no shared components at all,
+nine hand-written locked screens, five modal implementations of which one
+trapped focus.*
+
+- `apps/web/src/styles.css` is **700 lines carrying 166 distinct colours**
+- every screen builds from one primitive set; there is one locked screen, and
+  every overlay in the product goes through `Dialog` or `Drawer`
+- **161 web tests**, up from 86 — Home, Chat's transcript, Agents, Operations,
+  Models, Prompts, Guardrails, Knowledge and the audit trail each had none
+- preflight is on, the migration alias tokens are gone, and `ui/tokens.test.ts`
+  guards the three ways a token can silently produce nothing
+
+920 tests green.
+
+Not done, and needing your decision rather than more work: **Inter is still not
+shipped.** `--sans` names it, no `@font-face` exists, and the product renders in
+whatever the OS supplies — Segoe UI on Windows. `font-src 'self'` forbids a CDN,
+so the fix is a `.woff2` committed to the repository, and that is a call about
+what goes in the tree rather than a styling decision.
+
 ## ai-v1.65.0 — 2026-08-07
 
 The last three views, and preflight on.
