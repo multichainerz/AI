@@ -8,12 +8,17 @@ trap 'rm -rf -- "${TEST_ROOT}"' EXIT
 export ORCASYNAPSE_HERMES_STATE_ROOT="${TEST_ROOT}/hermes"
 # shellcheck source=install-agentic-node.sh
 source "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+# Sourcing installs the installer's own `trap cleanup EXIT`, which replaces the
+# one above. Take the trap back, and exit with this script's status rather than
+# whatever the installer's handler reports -- without this a failed assertion
+# below exits 0, which silently turns every check in this file into a no-op.
+trap 'recovery_status=$?; rm -rf -- "${TEST_ROOT}"; exit "${recovery_status}"' EXIT
 
 mkdir -p "${STATE_ROOT}/identity"
 openssl genpkey -algorithm ED25519 -out "${STATE_ROOT}/identity/node.key"
 openssl pkey -in "${STATE_ROOT}/identity/node.key" -pubout -out "${STATE_ROOT}/identity/node.pub"
 [[ "$(public_identity_fingerprint)" == "$(private_identity_fingerprint)" ]]
-signature_body='{"capabilities":["gateway-api","signed-heartbeat"],"hermesVersion":"nousresearch/hermes-agent:latest","observedAt":"2026-08-03T00:00:00Z","status":"ONLINE"}'
+signature_body='{"capabilities":["gateway-api","signed-heartbeat"],"hermesVersion":"c015663b215c0e14de4295346b0727db602cbb1d","observedAt":"2026-08-03T00:00:00Z","status":"ONLINE"}'
 signature_timestamp='2026-08-03T00:00:00Z'
 signature_nonce='c634de85-7087-426a-b4f5-f4c2857f55c2'
 signature_value="$(sign_node_payload "${signature_body}" "${signature_timestamp}" "${signature_nonce}")"
@@ -63,7 +68,7 @@ jq -n \
     nodeId:"9de260d7-bc51-4558-9d20-06916d393072",
     controlPlaneUrl:"https://orcasynapse.internal",
     hermesBaseUrl:"http://10.0.0.12:8642",
-    hermesImage:"nousresearch/hermes-agent:latest",
+    hermesCommit:"c015663b215c0e14de4295346b0727db602cbb1d",
     hostname:"hermes-01.internal",
     apiKey:$apiKey,
     identityFingerprint:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -88,8 +93,20 @@ grep -Fq 'download_with_progress()' "${REPOSITORY_ROOT}/scripts/install-agentic-
 # The UI block is generated from scripts/lib/installer-ui.sh; the marker must
 # survive refactors or the sync tool can no longer maintain this script.
 grep -Fq '>>> ORCASYNAPSE-INSTALLER-UI v1' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
-grep -Fq 'resolved_image_reference()' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
-grep -Fq 'the approved Hermes image has no immutable registry digest' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+# The pin is read back from the checkout rather than trusted, because the
+# requested SHA is not proof of the installed one.
+grep -Fq 'installed_hermes_commit()' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq 'instead of the approved' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+# The wizard skip is load-bearing: without it a `curl | bash` install hangs.
+grep -Fq -- '--skip-setup' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+# So is the force: upstream ignores --commit when the checkout is already newer,
+# so without this the control plane's approved revision loses to whatever the
+# host happens to have, and no downgrade to an earlier approved commit is
+# possible.
+grep -Fq -- '--force-commit' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+# Hermes is code, not a secret: installed under a relaxed umask or systemd
+# cannot execute it as the unprivileged service account.
+grep -Fq 'umask 022' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 if grep -Eq 'OPENAI_(BASE_URL|API_KEY)=\$\{model_(base_url|api_key)_json\}' \
   "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"; then
   printf 'Hermes .env values must be raw, not JSON-quoted\n' >&2
@@ -121,12 +138,16 @@ printf 'protected=true\n' | write_file_from_stdin 0640 "$(id -u)" "$(id -g)" "${
 [[ "$(<"${atomic_write_root}/runtime.env")" == "protected=true" ]]
 [[ "$(stat -c '%a' "${atomic_write_root}/runtime.env")" == "640" ]]
 
-if [[ "${EUID}" -eq 0 ]]; then
-  ownership_root="${TEST_ROOT}/numeric-ownership"
+# Runtime state belongs to the service account by name, not to the numeric
+# container identity the Docker runtime used. Skipped when the account is absent,
+# which is the normal state on a host that has never enrolled: the assertion is
+# about ownership, not about this test being allowed to create system users.
+if [[ "${EUID}" -eq 0 ]] && id -u "${HERMES_USER}" >/dev/null 2>&1; then
+  ownership_root="${TEST_ROOT}/service-account-ownership"
   install_hermes_directory 0750 "${ownership_root}"
   printf 'protected=true\n' | install_hermes_file_from_stdin 0600 "${ownership_root}/runtime.env"
-  [[ "$(stat -c '%u:%g:%a' "${ownership_root}")" == "${HERMES_UID}:${HERMES_GID}:750" ]]
-  [[ "$(stat -c '%u:%g:%a' "${ownership_root}/runtime.env")" == "${HERMES_UID}:${HERMES_GID}:600" ]]
+  [[ "$(stat -c '%U:%G:%a' "${ownership_root}")" == "${HERMES_USER}:${HERMES_USER}:750" ]]
+  [[ "$(stat -c '%U:%G:%a' "${ownership_root}/runtime.env")" == "${HERMES_USER}:${HERMES_USER}:600" ]]
 fi
 
 piped_output="$(

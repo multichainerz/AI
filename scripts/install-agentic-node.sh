@@ -3,18 +3,25 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="v1.4.0"
+INSTALLER_VERSION="v1.5.0"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
-CONTAINER_NAME="orcasynapse-hermes"
+RUNTIME_SERVICE="orcasynapse-hermes"
 HEARTBEAT_SERVICE="orcasynapse-hermes-heartbeat"
 DESIRED_STATE_SERVICE="orcasynapse-hermes-desired-state"
-HERMES_UID="10000"
-HERMES_GID="10000"
+# Hermes runs as an unprivileged service account rather than a container
+# identity. The name is the unit name so `systemctl`, `journalctl` and `ps` all
+# agree about what is running.
+HERMES_USER="orcasynapse-hermes"
+# Where the Hermes installer puts a root install, and the managed policy layer
+# that outranks anything the service account can write.
+HERMES_INSTALL_DIR="/usr/local/lib/hermes-agent"
+HERMES_BINARY="/usr/local/bin/hermes"
+HERMES_MANAGED_DIR="/etc/hermes"
+HERMES_INSTALL_URL="${ORCASYNAPSE_HERMES_INSTALL_URL:-https://hermes-agent.nousresearch.com/install.sh}"
 ENROLLMENT_STATE="${STATE_ROOT}/enrollment-state.json"
 TEMPORARY_FILES=()
 RESOLVED_BUNDLE=""
 INSTALLATION_COMPLETED=0
-HERMES_BOOTSTRAP_MANAGED_DIR="${STATE_ROOT}/data/.orcasynapse-bootstrap-managed"
 
 # >>> ORCASYNAPSE-INSTALLER-UI v1 - generated from scripts/lib/installer-ui.sh; edit the library, then run: bash scripts/sync-installer-ui.sh >>>
 # shellcheck shell=bash
@@ -503,7 +510,6 @@ ui_register_temp_file() {
 cleanup() {
   local status=$?
   (( UI_INTERACTIVE )) && printf '\033[?25h'
-  remove_hermes_bootstrap_policy
   local file
   for file in "${TEMPORARY_FILES[@]:-}"; do
     [[ -z "${file}" || ! -e "${file}" ]] || rm -f -- "${file}"
@@ -526,6 +532,11 @@ require_ubuntu_host() {
   . /etc/os-release
   [[ "${ID:-}" == "ubuntu" ]] || fail "VM2 must run Ubuntu; detected '${PRETTY_NAME:-unknown operating system}'"
   [[ -n "${VERSION_ID:-}" ]] || fail "the Ubuntu release version could not be identified"
+  # Ubuntu LTS is the April release of an even year. VERSION_ID was read and
+  # checked non-empty but never compared, so a 9-month interim release passed --
+  # a shorter support window than this product's own.
+  local ubuntu_major="${VERSION_ID%%.*}" ubuntu_minor="${VERSION_ID##*.}"
+  [[ "${ubuntu_minor}" == "04" && "${ubuntu_major}" =~ ^[0-9]+$ ]]     && (( ubuntu_major >= 22 )) && (( ubuntu_major % 2 == 0 ))     || fail "VM2 must run an Ubuntu LTS release of 22.04 or later; detected '${PRETTY_NAME:-Ubuntu ${VERSION_ID}}'"
   [[ -d /run/systemd/system ]] || fail "VM2 must be an Ubuntu systemd VM, not a minimal container userland"
   case "$(uname -m)" in
     x86_64|aarch64) ;;
@@ -536,7 +547,17 @@ require_ubuntu_host() {
 install_hermes_directory() {
   local mode="$1" destination="$2"
   install -d -m "${mode}" "${destination}"
-  chown "${HERMES_UID}:${HERMES_GID}" "${destination}"
+  chown "${HERMES_USER}:${HERMES_USER}" "${destination}"
+}
+
+# A system account with no login shell and no home of its own: it exists to own
+# ${STATE_ROOT} and to be the User= of one unit, nothing else.
+create_service_account() {
+  if id -u "${HERMES_USER}" >/dev/null 2>&1; then
+    info "Reusing the existing ${HERMES_USER} service account."
+    return 0
+  fi
+  useradd --system --no-create-home --shell /usr/sbin/nologin "${HERMES_USER}"     || fail "could not create the ${HERMES_USER} service account"
 }
 
 write_file_from_stdin() {
@@ -555,19 +576,14 @@ write_file_from_stdin() {
 
 install_hermes_file_from_stdin() {
   local mode="$1" destination="$2"
-  write_file_from_stdin "${mode}" "${HERMES_UID}" "${HERMES_GID}" "${destination}"
-}
-
-remove_hermes_bootstrap_policy() {
-  rm -f -- "${HERMES_BOOTSTRAP_MANAGED_DIR}/config.yaml"
-  rmdir -- "${HERMES_BOOTSTRAP_MANAGED_DIR}" 2>/dev/null || true
+  write_file_from_stdin "${mode}" "${HERMES_USER}" "${HERMES_USER}" "${destination}"
 }
 
 write_hermes_managed_policy() {
   local model_alias_json="$1" model_base_url_json="$2"
-  install -d -m 0755 "${STATE_ROOT}/managed"
-  chown root:root "${STATE_ROOT}/managed"
-  write_file_from_stdin 0644 root root "${STATE_ROOT}/managed/config.yaml" <<EOF
+  install -d -m 0755 "${HERMES_MANAGED_DIR}"
+  chown root:root "${HERMES_MANAGED_DIR}"
+  write_file_from_stdin 0644 root root "${HERMES_MANAGED_DIR}/config.yaml" <<EOF
 model:
   provider: custom
   default: ${model_alias_json}
@@ -590,25 +606,107 @@ tool_loop_guardrails:
 EOF
 }
 
+# Installs Hermes from its own installer, pinned to a commit.
+#
+# Root install, so it lands in the FHS layout at /usr/local/lib/hermes-agent
+# with the launcher at /usr/local/bin/hermes.
+install_hermes_runtime() {
+  local commit="$1"
+  # Relaxed umask, in a subshell so it never leaks into the secret handling.
+  #
+  # This script runs under `umask 077` so anything it writes is root-only --
+  # right for keys and enrollment state, wrong for a program. The upstream
+  # installer inherits that umask and finishes with `chmod +x`, which only adds
+  # the bits the umask permits, so the launcher landed at 0700 root and systemd
+  # failed the unit with 203/EXEC: the unprivileged service account could not
+  # execute its own runtime. Hermes is code under /usr/local, not a secret.
+  #
+  # `--force-commit` is required, not defensive. Upstream deliberately ignores
+  # `--commit` when the existing checkout is already newer -- it logs "Ignoring
+  # --commit ...: the checkout is already newer" and carries on -- so without
+  # the override a host that already has a newer Hermes silently keeps it, and
+  # the commit the control plane approved is not the commit that runs. On this
+  # node OrcaSynapse decides the revision, including downgrades to an older
+  # approved one, and the readback below is what proves it took.
+  (
+    umask 022
+    curl -fsSL "${HERMES_INSTALL_URL}"       | bash -s -- --skip-browser --skip-setup --non-interactive       --commit "${commit}" --force-commit
+  )
+}
+
+# The unit that replaces `docker run`, flag for flag and then some.
+#
+# Every container hardening option has a systemd equivalent here; the last three
+# have no Docker counterpart we were using at all. The runtime is confined to
+# its own state directory and can read the managed policy but never write it,
+# which is what the read-only bind mount used to buy.
+write_hermes_runtime_unit() {
+  write_file_from_stdin 0644 root root "/etc/systemd/system/${RUNTIME_SERVICE}.service" <<EOF
+[Unit]
+Description=OrcaSynapse-managed Hermes agent runtime
+Documentation=https://github.com/multichainerz/AI
+After=network-online.target
+Wants=network-online.target
+# Proof of ownership for the decommissioner, which refuses to destroy a runtime
+# it cannot identify as ours.
+X-OrcaSynapse-Managed=true
+
+[Service]
+Type=simple
+User=${HERMES_USER}
+Group=${HERMES_USER}
+ExecStart=${HERMES_BINARY} gateway run
+Restart=always
+RestartSec=5s
+
+Environment=HERMES_HOME=${STATE_ROOT}/data
+Environment=HERMES_MANAGED_DIR=${HERMES_MANAGED_DIR}
+Environment=API_SERVER_ENABLED=true
+Environment=API_SERVER_HOST=0.0.0.0
+Environment=API_SERVER_PORT=8642
+# The gateway key is deliberately NOT an Environment= line: a unit file is 0644
+# by convention, and that would publish the credential that authenticates every
+# governed call to port 8642 to any local reader. It lives in the 0600 env file
+# below, which systemd reads as root before dropping to ${HERMES_USER}.
+#
+# No leading '-': if that file is missing the unit must fail rather than start a
+# gateway on 0.0.0.0:8642 with no key set.
+EnvironmentFile=${STATE_ROOT}/data/.env
+
+MemoryMax=${HERMES_MEMORY_LIMIT:-4G}
+CPUQuota=${HERMES_CPU_QUOTA:-200%}
+TasksMax=512
+
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_SETGID CAP_SETUID
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=true
+ReadWritePaths=${STATE_ROOT}/data
+ReadOnlyPaths=${HERMES_MANAGED_DIR}
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  systemctl daemon-reload
+}
+
 install_host_dependencies() {
   require_ubuntu_host
-  # python3 belongs here even though Ubuntu Server ships it: it is not in
-  # Ubuntu's essential set, and the desired-state reconciler this installer
-  # writes to /usr/local/lib is the only thing that needs it. Without it a node
-  # enrolls, reports Healthy, and silently never applies a toolset the operator
-  # admitted -- a failure that only shows up in journalctl.
-  if ! command -v docker >/dev/null 2>&1 || ! command -v openssl >/dev/null 2>&1 \
-    || ! command -v curl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1 \
-    || ! command -v python3 >/dev/null 2>&1; then
-    run_with_progress "Refresh operating-system packages" apt-get update \
-      || fail "could not refresh Ubuntu package metadata"
-    run_with_progress "Install runtime security dependencies" env DEBIAN_FRONTEND=noninteractive \
-      apt-get install -y ca-certificates curl jq openssl python3 docker.io \
-      || fail "could not install Docker and runtime security dependencies"
+  # git, curl and xz-utils are what the Hermes installer requires of the host;
+  # it brings its own Python, Node and uv. python3 and jq are ours: the
+  # desired-state reconciler this script writes reconciles the toolset allowlist
+  # with a python3 block, and without it a node enrolls, reports Healthy, and
+  # silently never applies a toolset the operator admitted.
+  if ! command -v git >/dev/null 2>&1 || ! command -v openssl >/dev/null 2>&1     || ! command -v curl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1     || ! command -v xz >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
+    run_with_progress "Refresh operating-system packages" apt-get update       || fail "could not refresh Ubuntu package metadata"
+    run_with_progress "Install runtime security dependencies" env DEBIAN_FRONTEND=noninteractive       apt-get install -y ca-certificates curl git jq openssl python3 xz-utils       || fail "could not install the runtime security dependencies"
   fi
-  run_with_progress "Enable the Docker service" systemctl enable --now docker \
-    || fail "could not enable the Docker service"
-  docker info >/dev/null 2>&1 || fail "the Docker daemon is not reachable after startup"
 
   # Everything this installer runs, and everything the heartbeat and
   # desired-state scripts it writes will run later. The second group is the one
@@ -632,7 +730,7 @@ validate_bundle() {
     (.token | type == "string" and length >= 32) and
     (.controlPlaneUrl | test("^https?://")) and
     (.hermesBaseUrl | test("^https?://")) and
-    (.hermesImage | type == "string" and length >= 3) and
+    (.hermesCommit | test("^[0-9a-f]{40}$")) and
     (.expiresAt | type == "string")
   ' "${bundle}" >/dev/null || fail "the enrollment bundle is incomplete"
 
@@ -650,7 +748,7 @@ validate_resume_state() {
     (.nodeId | type == "string" and length > 0) and
     (.controlPlaneUrl | test("^https?://")) and
     (.hermesBaseUrl | test("^https?://")) and
-    (.hermesImage | type == "string" and length > 0) and
+    (.hermesCommit | test("^[0-9a-f]{40}$")) and
     (.hostname | type == "string" and length > 0) and
     (.apiKey | type == "string" and length >= 32) and
     ((.identityFingerprint == null) or (.identityFingerprint | test("^[a-f0-9]{64}$"))) and
@@ -732,7 +830,7 @@ private_identity_fingerprint() {
 }
 
 verify_enrolled_identity() {
-  local node_id="$1" control_plane_url="$2" hermes_image="$3" node_fingerprint="$4"
+  local node_id="$1" control_plane_url="$2" hermes_commit="$3" node_fingerprint="$4"
   local observed_at node_status payload nonce signature response_file http_status response_error
   node_status="DEGRADED"
   if curl --fail --silent --max-time 5 http://127.0.0.1:8642/health >/dev/null; then
@@ -742,7 +840,7 @@ verify_enrolled_identity() {
   payload="$(jq -cS -n \
     --arg observedAt "${observed_at}" \
     --arg status "${node_status}" \
-    --arg version "${hermes_image}" \
+    --arg version "${hermes_commit}" \
     '{observedAt:$observedAt,status:$status,hermesVersion:$version,capabilities:["gateway-api","signed-heartbeat"]}')"
   nonce="$(cat /proc/sys/kernel/random/uuid)"
   signature="$(sign_node_payload "${payload}" "${observed_at}" "${nonce}")"
@@ -769,13 +867,13 @@ verify_enrolled_identity() {
 }
 
 wait_for_hermes() {
-  local remove_on_failure="${1:-0}"
+  local stop_on_failure="${1:-0}"
   local deadline=$((SECONDS + 180))
   until curl --fail --silent --max-time 5 http://127.0.0.1:8642/health >/dev/null 2>&1; do
     if (( SECONDS >= deadline )); then
-      docker logs --tail 100 "${CONTAINER_NAME}" >&2 || true
-      if [[ "${remove_on_failure}" == "1" ]]; then
-        docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+      journalctl -u "${RUNTIME_SERVICE}" -n 100 --no-pager >&2 || true
+      if [[ "${stop_on_failure}" == "1" ]]; then
+        systemctl stop "${RUNTIME_SERVICE}" >/dev/null 2>&1 || true
       fi
       return 1
     fi
@@ -783,16 +881,15 @@ wait_for_hermes() {
   done
 }
 
-resolved_image_reference() {
-  local image="$1" digest=""
-  if [[ "${image}" == *@sha256:* ]]; then
-    printf '%s' "${image}"
-    return 0
-  fi
-  digest="$(docker image inspect --format '{{index .RepoDigests 0}}' "${image}" 2>/dev/null || true)"
-  [[ "${digest}" == *@sha256:* ]] || return 1
-  printf '%s' "${digest}"
+# The commit actually checked out, read back rather than assumed.
+#
+# `--commit` is silently ignored when it would roll an existing install
+# backwards, so the requested SHA is not proof of the installed one -- and the
+# pin is the entire artifact-identity story.
+installed_hermes_commit() {
+  git -C "${HERMES_INSTALL_DIR}" rev-parse HEAD 2>/dev/null
 }
+
 
 write_desired_state_client() {
   install -d -m 0755 /usr/local/lib/orcasynapse
@@ -808,8 +905,8 @@ set -Eeuo pipefail
 
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 CONTROL_PLANE_KEY="${STATE_ROOT}/control-plane-key.pem"
-MANAGED_CONFIG="${STATE_ROOT}/managed/config.yaml"
-CONTAINER_NAME="${ORCASYNAPSE_HERMES_CONTAINER:-orcasynapse-hermes}"
+MANAGED_CONFIG="${ORCASYNAPSE_HERMES_MANAGED_DIR:-/etc/hermes}/config.yaml"
+RUNTIME_SERVICE="${ORCASYNAPSE_HERMES_SERVICE:-orcasynapse-hermes}"
 
 # A node enrolled before the control plane could sign has nothing to verify
 # against. Applying an unverified document would be worse than applying none.
@@ -923,13 +1020,13 @@ fi
 
 install -m 0644 -o root -g root "${WORK}/config.yaml" "${MANAGED_CONFIG}"
 echo "orcasynapse: applied toolset allowlist ($(jq -r '.admittedToolsets | length' "${WORK}/document.json") admitted); restarting Hermes" >&2
-docker restart "${CONTAINER_NAME}" >/dev/null
+systemctl restart "${RUNTIME_SERVICE}" >/dev/null
 DESIREDSTATE
 
   write_file_from_stdin 0644 root root "/etc/systemd/system/${DESIRED_STATE_SERVICE}.service" <<EOF
 [Unit]
 Description=Apply the OrcaSynapse toolset allowlist to the Hermes runtime
-After=network-online.target docker.service
+After=network-online.target orcasynapse-hermes.service
 Wants=network-online.target
 
 [Service]
@@ -975,7 +1072,8 @@ admitted_toolset_summary() {
     printf 'none — every toolset disabled'
     return 0
   fi
-  paste -sd ', ' -- "${file}" 2>/dev/null || tr '\n' ' ' < "${file}"
+  paste -sd ',' -- "${file}" 2>/dev/null | sed 's/,/, /g' || tr '
+' ' ' < "${file}"
 }
 
 write_heartbeat_client() {
@@ -988,7 +1086,7 @@ STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 CONTROL_PLANE_URL="$(<"${STATE_ROOT}/control-plane-url")"
 NODE_ID="$(<"${STATE_ROOT}/node-id")"
 PRIVATE_KEY="${STATE_ROOT}/identity/node.key"
-IMAGE_REFERENCE="$(<"${STATE_ROOT}/image-reference")"
+COMMIT_PIN="$(<"${STATE_ROOT}/commit-pin")"
 
 sign_request() {
   local timestamp="$1" nonce="$2" body="$3"
@@ -1020,7 +1118,7 @@ observed_at="$(date --utc '+%Y-%m-%dT%H:%M:%SZ')"
 payload="$(jq -cS -n \
   --arg observedAt "${observed_at}" \
   --arg status "${hermes_status}" \
-  --arg version "${IMAGE_REFERENCE}" \
+  --arg version "${COMMIT_PIN}" \
   '{observedAt:$observedAt,status:$status,hermesVersion:$version,capabilities:["gateway-api","signed-heartbeat"]}')"
 timestamp="${observed_at}"
 nonce="$(cat /proc/sys/kernel/random/uuid)"
@@ -1038,7 +1136,7 @@ HEARTBEAT
   write_file_from_stdin 0644 root root "/etc/systemd/system/${HEARTBEAT_SERVICE}.service" <<EOF
 [Unit]
 Description=OrcaSynapse Hermes runtime node heartbeat
-After=network-online.target docker.service
+After=network-online.target orcasynapse-hermes.service
 Wants=network-online.target
 
 [Service]
@@ -1075,11 +1173,11 @@ main() {
   step 1 7 "Validate the isolated host"
   require_root
   install_host_dependencies
-  success "Ubuntu, systemd, Docker, OpenSSL, curl, and jq are ready."
+  success "Ubuntu, systemd, git, OpenSSL, curl, jq, and python3 are ready."
 
   step 2 7 "Resolve or resume the protected enrollment"
   local bundle="" resuming=0
-  local node_id token control_plane_url hermes_base_url hermes_image hostname_value public_key api_key
+  local node_id token control_plane_url hermes_base_url hermes_commit hostname_value public_key api_key
   local node_fingerprint private_fingerprint retained_fingerprint enrolled_fingerprint
   if [[ -s "${ENROLLMENT_STATE}" ]]; then
     validate_resume_state "${ENROLLMENT_STATE}" || fail "the protected enrollment recovery state is invalid"
@@ -1087,7 +1185,7 @@ main() {
     node_id="$(jq -r '.nodeId' "${ENROLLMENT_STATE}")"
     control_plane_url="$(jq -r '.controlPlaneUrl' "${ENROLLMENT_STATE}" | sed 's:/*$::')"
     hermes_base_url="$(jq -r '.hermesBaseUrl' "${ENROLLMENT_STATE}" | sed 's:/*$::')"
-    hermes_image="$(jq -r '.hermesImage' "${ENROLLMENT_STATE}")"
+    hermes_commit="$(jq -r '.hermesCommit' "${ENROLLMENT_STATE}")"
     hostname_value="$(jq -r '.hostname' "${ENROLLMENT_STATE}")"
     api_key="$(jq -r '.apiKey' "${ENROLLMENT_STATE}")"
     if [[ "$#" -eq 2 && "$1" == "--connect" ]]; then
@@ -1115,18 +1213,29 @@ main() {
     token="$(jq -r '.token' "${bundle}")"
     control_plane_url="$(jq -r '.controlPlaneUrl' "${bundle}" | sed 's:/*$::')"
     hermes_base_url="$(jq -r '.hermesBaseUrl' "${bundle}" | sed 's:/*$::')"
-    hermes_image="$(jq -r '.hermesImage' "${bundle}")"
+    hermes_commit="$(jq -r '.hermesCommit' "${bundle}")"
     hostname_value="$(hostname --fqdn 2>/dev/null || hostname)"
-    docker inspect "${CONTAINER_NAME}" >/dev/null 2>&1 && fail "a container named '${CONTAINER_NAME}' already exists without resumable enrollment state"
+    systemctl list-unit-files "${RUNTIME_SERVICE}.service" >/dev/null 2>&1 \
+      && fail "a '${RUNTIME_SERVICE}' service already exists without resumable enrollment state"
     success "Enrollment bundle is valid, unexpired, and bound to OrcaSynapse."
   fi
 
   step 3 7 "Create the node identity"
-  install -d -m 0700 "${STATE_ROOT}" "${STATE_ROOT}/identity"
-  # Hermes managed scope is a root-owned, read-only policy layer. The
-  # container receives it at /etc/hermes so users cannot override the exact
-  # OrcaSynapse-pinned model route and baseline guardrails through /opt/data.
-  install -d -m 0755 "${STATE_ROOT}/managed"
+  # 0711 on the root, 0700 on the identity.
+  #
+  # The runtime must traverse ${STATE_ROOT} to reach the data directory it owns.
+  # Under Docker nothing did -- the container bind-mounted data/ straight to
+  # /opt/data and never walked the parent -- so 0700 was free. Natively it locks
+  # the service out of its own state. 0711 grants traversal without listing, so
+  # the account still cannot enumerate what else lives here, and identity/ stays
+  # root-only: the private key is readable by nobody but root either way.
+  install -d -m 0711 "${STATE_ROOT}"
+  install -d -m 0700 "${STATE_ROOT}/identity"
+  create_service_account
+  # The managed scope is a root-owned policy layer at ${HERMES_MANAGED_DIR}.
+  # Hermes reads it through HERMES_MANAGED_DIR and it outranks anything the
+  # service account can write, so the pinned model route and the baseline
+  # guardrails cannot be overridden from the runtime's own state directory.
   install_hermes_directory 0750 "${STATE_ROOT}/data"
   if (( resuming )); then
     [[ -s "${STATE_ROOT}/identity/node.key" && -s "${STATE_ROOT}/identity/node.pub" ]] \
@@ -1161,51 +1270,42 @@ API_SERVER_PORT=8642
 API_SERVER_KEY=${api_key}
 EOF
 
-  step 4 7 "Start the hardened Hermes runtime"
-  if docker inspect "${CONTAINER_NAME}" >/dev/null 2>&1; then
-    (( resuming )) || fail "a container named '${CONTAINER_NAME}' already exists"
-    docker start "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+  step 4 7 "Install and start the hardened Hermes runtime"
+  write_hermes_runtime_unit
+  if (( resuming )) && systemctl is-enabled "${RUNTIME_SERVICE}" >/dev/null 2>&1; then
+    systemctl start "${RUNTIME_SERVICE}" >/dev/null 2>&1 || true
     run_with_progress "Verify retained Hermes runtime" wait_for_hermes 0 \
       || fail "the retained Hermes runtime is not healthy"
-    hermes_image="$(resolved_image_reference "$(docker inspect --format '{{.Image}}' "${CONTAINER_NAME}")")" \
-      || fail "the retained Hermes runtime image has no immutable registry digest"
+    hermes_commit="$(installed_hermes_commit)" \
+      || fail "the retained Hermes installation has no readable commit pin"
   else
-    run_with_progress "Pull approved Hermes image" docker pull "${hermes_image}" \
-      || fail "could not pull the approved Hermes image '${hermes_image}'"
-    hermes_image="$(resolved_image_reference "${hermes_image}")" \
-      || fail "the approved Hermes image has no immutable registry digest"
-    success "Resolved the Hermes runtime to immutable artifact ${hermes_image}."
-    run_with_progress "Launch hardened Hermes container" docker run -d \
-    --name "${CONTAINER_NAME}" \
-    --label io.orcasynapse.managed=true \
-    --label io.orcasynapse.component=agentic-runtime \
-    --restart unless-stopped \
-    --memory "${HERMES_MEMORY_LIMIT:-4g}" \
-    --cpus "${HERMES_CPU_LIMIT:-2}" \
-    --pids-limit 512 \
-    --cap-drop ALL \
-    --cap-add CHOWN \
-    --cap-add DAC_OVERRIDE \
-    --cap-add SETGID \
-    --cap-add SETUID \
-    --security-opt no-new-privileges:true \
-    --add-host host.docker.internal:host-gateway \
-    -e "HERMES_UID=${HERMES_UID}" \
-    -e "HERMES_GID=${HERMES_GID}" \
-    -e HERMES_MANAGED_DIR=/etc/hermes \
-    -e API_SERVER_ENABLED=true \
-    -e API_SERVER_HOST=0.0.0.0 \
-    -e API_SERVER_PORT=8642 \
-    -e "API_SERVER_KEY=${api_key}" \
-    -v "${STATE_ROOT}/data:/opt/data" \
-    -v "${STATE_ROOT}/managed:/etc/hermes:ro" \
-    -p 8642:8642 \
-      "${hermes_image}" gateway run \
-      || fail "the hardened Hermes container could not start"
+    [[ -e "${HERMES_INSTALL_DIR}" ]] && ! (( resuming )) \
+      && fail "Hermes is already installed at ${HERMES_INSTALL_DIR}; decommission this host before re-enrolling"
+    # --skip-setup is not optional: without it the upstream installer ends in an
+    # interactive provider wizard that blocks forever under `curl | bash`. It is
+    # also correct on the merits -- OrcaSynapse supplies the entire
+    # configuration through the managed layer, and Hermes must not choose a
+    # provider of its own. --skip-browser drops Chromium, which a headless
+    # API-server node has no use for.
+    run_with_progress "Install the approved Hermes runtime" install_hermes_runtime "${hermes_commit}" \
+      || fail "could not install the approved Hermes runtime at commit ${hermes_commit}"
 
+    local resolved_commit
+    resolved_commit="$(installed_hermes_commit)" \
+      || fail "the Hermes installation has no readable commit pin"
+    # `--commit` is silently ignored when it would roll an existing install
+    # backwards, so the requested SHA is not proof of the installed one. The pin
+    # is the whole artifact-identity story; an unverified one is worth nothing.
+    [[ "${resolved_commit}" == "${hermes_commit}" ]] \
+      || fail "Hermes installed commit ${resolved_commit} instead of the approved ${hermes_commit}"
+    success "Resolved the Hermes runtime to immutable artifact ${resolved_commit}."
+
+    run_with_progress "Start the hardened Hermes service" systemctl enable --now "${RUNTIME_SERVICE}" \
+      || fail "the hardened Hermes service could not start"
     run_with_progress "Verify Hermes runtime health" wait_for_hermes 1 \
       || fail "Hermes did not become healthy within three minutes"
   fi
+
 
   step 5 7 "Enroll with the OrcaSynapse control plane"
   local model_base_url_json model_alias_json model_api_key_json
@@ -1232,7 +1332,7 @@ EOF
     --arg publicKeyPem "${public_key}" \
     --arg controlPlaneUrl "${control_plane_url}" \
     --arg apiKey "${api_key}" \
-    --arg hermesVersion "${hermes_image}" \
+    --arg hermesVersion "${hermes_commit}" \
     --arg installerVersion "${INSTALLER_VERSION}" \
     '{nodeId:$nodeId,token:$token,hostname:$hostname,publicKeyPem:$publicKeyPem,controlPlaneUrl:$controlPlaneUrl,apiKey:$apiKey,hermesVersion:$hermesVersion,installerVersion:$installerVersion,capabilities:["gateway-api","signed-heartbeat"]}' \
     > "${request_file}"
@@ -1240,7 +1340,7 @@ EOF
     -H 'Content-Type: application/json' --data-binary "@${request_file}" \
     "${control_plane_url}/api/v1/runtime-nodes/enroll")"
     if [[ "${http_status}" != "200" ]]; then
-      docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+      systemctl disable --now "${RUNTIME_SERVICE}" >/dev/null 2>&1 || true
       fail "OrcaSynapse rejected enrollment (HTTP ${http_status}): $(jq -r '.message // "unknown error"' "${response_file}" 2>/dev/null)"
     fi
 
@@ -1266,19 +1366,19 @@ EOF
       || fail "OrcaSynapse enrolled identity '${enrolled_fingerprint:-missing}' instead of the VM2 identity '${node_fingerprint}'"
     jq -n \
       --arg nodeId "${node_id}" --arg controlPlaneUrl "${control_plane_url}" \
-      --arg hermesBaseUrl "${hermes_base_url}" --arg hermesImage "${hermes_image}" \
+      --arg hermesBaseUrl "${hermes_base_url}" --arg hermesCommit "${hermes_commit}" \
       --arg hostname "${hostname_value}" --arg apiKey "${api_key}" \
       --arg identityFingerprint "${node_fingerprint}" \
       --arg controlPlanePublicKeyPem "${control_plane_key}" \
       --arg desiredStatePath "${desired_state_path}" \
       --argjson modelBootstrap "$(jq -c '.modelBootstrap' "${response_file}")" \
-      '{format:"orcasynapse-hermes-resume/v1",nodeId:$nodeId,controlPlaneUrl:$controlPlaneUrl,hermesBaseUrl:$hermesBaseUrl,hermesImage:$hermesImage,hostname:$hostname,apiKey:$apiKey,identityFingerprint:$identityFingerprint,controlPlanePublicKeyPem:$controlPlanePublicKeyPem,desiredStatePath:$desiredStatePath,modelBootstrap:$modelBootstrap}' \
+      '{format:"orcasynapse-hermes-resume/v1",nodeId:$nodeId,controlPlaneUrl:$controlPlaneUrl,hermesBaseUrl:$hermesBaseUrl,hermesCommit:$hermesCommit,hostname:$hostname,apiKey:$apiKey,identityFingerprint:$identityFingerprint,controlPlanePublicKeyPem:$controlPlanePublicKeyPem,desiredStatePath:$desiredStatePath,modelBootstrap:$modelBootstrap}' \
       > "${resume_file}"
     install -m 0600 -o root -g root "${resume_file}" "${ENROLLMENT_STATE}"
     success "Node enrolled; protected recovery state was saved before continuing."
   fi
 
-  verify_enrolled_identity "${node_id}" "${control_plane_url}" "${hermes_image}" "${node_fingerprint}"
+  verify_enrolled_identity "${node_id}" "${control_plane_url}" "${hermes_commit}" "${node_fingerprint}"
   success "VM1 accepted the signed VM2 trust handshake."
 
   step 6 7 "Apply the managed runtime policy"
@@ -1292,7 +1392,7 @@ API_SERVER_KEY=${api_key}
 OPENAI_BASE_URL=${model_base_url}
 OPENAI_API_KEY=${model_api_key}
 EOF
-  run_with_progress "Apply the managed runtime policy" docker restart "${CONTAINER_NAME}" \
+  run_with_progress "Apply the managed runtime policy" systemctl restart "${RUNTIME_SERVICE}" \
     || fail "Hermes could not restart with its managed policy"
   run_with_progress "Verify governed runtime recovery" wait_for_hermes 0 \
     || fail "Hermes did not recover after applying the OrcaSynapse-managed inference route"
@@ -1301,12 +1401,12 @@ EOF
   printf '%s' "${node_id}" > "${STATE_ROOT}/node-id"
   printf '%s' "${control_plane_url}" > "${STATE_ROOT}/control-plane-url"
   printf '%s' "${hermes_base_url}" > "${STATE_ROOT}/hermes-base-url"
-  printf '%s' "${hermes_image}" > "${STATE_ROOT}/image-reference"
+  printf '%s' "${hermes_commit}" > "${STATE_ROOT}/commit-pin"
   if [[ -n "${control_plane_key}" ]]; then
     printf '%s' "${control_plane_key}" > "${STATE_ROOT}/control-plane-key.pem"
     chmod 0644 "${STATE_ROOT}/control-plane-key.pem"
   fi
-  chmod 0600 "${STATE_ROOT}/node-id" "${STATE_ROOT}/control-plane-url" "${STATE_ROOT}/hermes-base-url" "${STATE_ROOT}/image-reference"
+  chmod 0600 "${STATE_ROOT}/node-id" "${STATE_ROOT}/control-plane-url" "${STATE_ROOT}/hermes-base-url" "${STATE_ROOT}/commit-pin"
 
   write_heartbeat_client
   write_desired_state_client
@@ -1332,7 +1432,7 @@ EOF
 
   ui_complete "AGENTIC SYSTEM IS READY"
   ui_panel_kv "Hermes API" "${hermes_base_url}"
-  ui_panel_kv "Runtime image" "${hermes_image}"
+  ui_panel_kv "Runtime commit" "${hermes_commit}"
   ui_panel_kv "Model route" "${model_alias} via the OrcaSynapse gateway"
   # What the runtime may actually do, stated at the end of the install rather
   # than left for the operator to infer from the dashboard.

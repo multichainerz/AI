@@ -5,6 +5,46 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v1.5.0 — 2026-08-07 – 2026-08-08
+
+Installer smoke tests, and VM2 running Hermes under systemd with the container
+gone.
+
+- **The VM2 installer runs in a test for the first time.** Every existing
+  installer test *sourced* the script and exercised functions in isolation, so
+  the sequence that installs dependencies, generates an identity, enrolls, writes
+  the managed policy and preseeds the toolset allowlist had never been executed
+  by anything. The decommissioner and the VM1 installer get the same treatment:
+  every installer path in the repository now has an executing test.
+- The recovery test **could not fail**. Sourcing the installer installed its own
+  `trap cleanup EXIT` over the test's, so every assertion in the file after line
+  10 had been decorative. It takes the trap back, and five mutations confirm each
+  class of assertion is fatal.
+- **VM2 runs Hermes as a systemd service.** The strong argument for the container
+  was artifact identity, and a git commit is a cryptographic digest of the tree
+  that — unlike a tag — cannot be moved to different code after review. So
+  `hermesImage` becomes `hermesCommit` across the contract, the schema and the
+  dashboard, and the Production gate requires 40 hex characters. Migration `0025`
+  drops and re-adds rather than renaming, because every existing value names a
+  runtime this release no longer installs. **Any currently enrolled VM2 must be
+  revoked, decommissioned and re-enrolled.**
+- The unit gives more than the container did, under an unprivileged service
+  account. `SystemCallFilter=` is deliberately absent: a seccomp allowlist that
+  is wrong fails the service at exec rather than degrading, and it is a follow-up
+  with a test rather than a line added on faith.
+- **The gateway key never enters the unit file**, which is 0644 by convention. It
+  comes from a 0600 environment file whose `EnvironmentFile=` carries no leading
+  `-`, so a missing file fails the unit rather than opening an unauthenticated
+  gateway.
+- Accepted costs, stated plainly: VM2's install-time egress widens, upstream's
+  hash-verified lockfile tier fails at the pinned commit and falls back to a live
+  resolve, and an air-gapped VM2 install is no longer supported on this path.
+- **An LTS floor.** `require_ubuntu_host` read `VERSION_ID`, checked it was
+  non-empty and never compared it. Separately, CI had been running three shell
+  gates on a Node it never asked for.
+
+1,034 tests, plus both installer lifecycles.
+
 ## v1.4.0 — 2026-08-07
 
 A CSP gate that runs in CI, the installer terminal experience rebuilt, and the

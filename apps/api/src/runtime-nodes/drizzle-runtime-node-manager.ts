@@ -160,10 +160,15 @@ function connectionEnvironment(target: "DEVELOPMENT" | "PILOT" | "PRODUCTION") {
 
 function productionArtifactViolation(
   target: "DEVELOPMENT" | "PILOT" | "PRODUCTION" | undefined,
-  artifacts: { hermesImage: string | null; controlPlaneUrl: string | null },
+  artifacts: { hermesCommit: string | null; controlPlaneUrl: string | null },
 ): string | null {
   if (target !== "PRODUCTION") return null;
-  if (!artifacts.hermesImage?.includes("@sha256:")) return "Production enrollment requires a digest-pinned Hermes image.";
+  // A 40-character commit SHA, not a container digest: VM2 installs Hermes
+  // natively and pins with `--commit`. The guarantee is unchanged -- an
+  // artifact identity that cannot be moved after the fact.
+  if (!/^[0-9a-f]{40}$/.test(artifacts.hermesCommit ?? "")) {
+    return "Production enrollment requires a commit-pinned Hermes runtime.";
+  }
   if (!artifacts.controlPlaneUrl?.startsWith("https://")) return "Production enrollment requires an HTTPS OrcaSynapse origin.";
   return null;
 }
@@ -341,7 +346,7 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
           nodeId: pending.id,
           tokenHash,
           controlPlaneUrl: input.controlPlaneUrl.replace(/\/$/, ""),
-          hermesImage: input.hermesImage,
+          hermesCommit: input.hermesCommit,
           expiresAt,
           createdBy: principal.id,
         });
@@ -365,7 +370,7 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
           token,
           controlPlaneUrl: input.controlPlaneUrl.replace(/\/$/, ""),
           hermesBaseUrl: input.baseUrl.replace(/\/$/, ""),
-          hermesImage: input.hermesImage,
+          hermesCommit: input.hermesCommit,
           expiresAt: expiresAt.toISOString(),
         },
       };
@@ -413,7 +418,7 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
         .where(and(eq(hermesNodeEnrollment.id, enrollment.id), eq(hermesNodeEnrollment.status, "ISSUED")));
       throw new RuntimeNodeEnrollmentError("The enrollment claim has expired.", "EXPIRED");
     }
-    if (!enrollment.controlPlaneUrl || !enrollment.hermesImage) {
+    if (!enrollment.controlPlaneUrl || !enrollment.hermesCommit) {
       throw new RuntimeNodeEnrollmentError(
         "This invitation predates direct VM2 bootstrap; use its downloaded enrollment JSON or issue a new invitation.",
         "INVALID",
@@ -426,7 +431,7 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
       token,
       controlPlaneUrl: enrollment.controlPlaneUrl,
       hermesBaseUrl: enrollment.node.baseUrl,
-      hermesImage: enrollment.hermesImage,
+      hermesCommit: enrollment.hermesCommit,
       expiresAt: enrollment.expiresAt.toISOString(),
     };
   }

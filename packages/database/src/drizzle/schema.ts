@@ -991,7 +991,9 @@ export const hermesNodeEnrollment = pgTable("HermesNodeEnrollment", {
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
 	controlPlaneUrl: text(),
-	hermesImage: text(),
+	// A 40-character git commit SHA. VM2 installs Hermes natively and pins
+	// with `--commit`; see 0025_hermes_commit_pin.
+	hermesCommit: text(),
 }, (table) => [
 	index("HermesNodeEnrollment_nodeId_status_idx").using("btree", table.nodeId.asc().nullsLast(), table.status.asc().nullsLast()),
 	index("HermesNodeEnrollment_status_expiresAt_idx").using("btree", table.status.asc().nullsLast(), table.expiresAt.asc().nullsLast()),

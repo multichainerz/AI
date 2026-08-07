@@ -3,11 +3,15 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="v1.4.0"
+INSTALLER_VERSION="v1.5.0"
 # Honor the same state-root overrides the installer accepts, so a non-default
 # layout installed with ORCASYNAPSE_*_STATE_ROOT can be removed the same way.
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
-CONTAINER_NAME="orcasynapse-hermes"
+RUNTIME_SERVICE="orcasynapse-hermes"
+HERMES_INSTALL_DIR="/usr/local/lib/hermes-agent"
+HERMES_BINARY="/usr/local/bin/hermes"
+HERMES_USER="orcasynapse-hermes"
+HERMES_MANAGED_DIR="/etc/hermes"
 HEARTBEAT_SERVICE="orcasynapse-hermes-heartbeat"
 HEARTBEAT_CLIENT="/usr/local/lib/orcasynapse/hermes-heartbeat.sh"
 DESIRED_STATE_SERVICE="orcasynapse-hermes-desired-state"
@@ -519,21 +523,24 @@ managed_install_exists() {
     || -e "/etc/systemd/system/${DESIRED_STATE_SERVICE}.timer" \
     || -e "${HEARTBEAT_CLIENT}" \
     || -e "${DESIRED_STATE_CLIENT}" ]] && return 0
-  command -v docker >/dev/null 2>&1 && docker inspect "${CONTAINER_NAME}" >/dev/null 2>&1
+  [[ -e "/etc/systemd/system/${RUNTIME_SERVICE}.service" || -e "${HERMES_INSTALL_DIR}" ]]
 }
 
-validate_container_ownership() {
-  command -v docker >/dev/null 2>&1 || return 0
-  docker info >/dev/null 2>&1 \
-    || fail "the Docker daemon is unavailable; start it so the managed Hermes container can be verified and removed"
-  docker inspect "${CONTAINER_NAME}" >/dev/null 2>&1 || return 0
-  local managed_label mounts
-  managed_label="$(docker inspect --format '{{index .Config.Labels "io.orcasynapse.managed"}}' "${CONTAINER_NAME}" 2>/dev/null || true)"
-  mounts="$(docker inspect --format '{{range .Mounts}}{{println .Source "|" .Destination}}{{end}}' "${CONTAINER_NAME}" 2>/dev/null || true)"
-  if [[ "${managed_label}" == "true" ]] || grep -Fq "${STATE_ROOT} | /opt/data" <<<"${mounts}"; then
+# Proves this is our runtime before anything irreversible happens.
+#
+# The container path checked an `io.orcasynapse.managed=true` label and the
+# /opt/data mount. The unit carries the same two facts: the marker the installer
+# writes into [Unit], and a ReadWritePaths= naming this state root. Either one
+# is sufficient and both are things only our installer writes, so a Hermes
+# someone set up by hand -- with no unit, or a unit of their own -- is never
+# mistaken for ours and destroyed.
+validate_service_ownership() {
+  local unit="/etc/systemd/system/${RUNTIME_SERVICE}.service"
+  [[ -e "${unit}" ]] || return 0
+  if grep -Fq "X-OrcaSynapse-Managed=true" "${unit}"     || grep -Fq "ReadWritePaths=${STATE_ROOT}" "${unit}"; then
     return 0
   fi
-  fail "a container named '${CONTAINER_NAME}' exists but is not identifiable as OrcaSynapse-managed; refusing to remove it"
+  fail "a '${RUNTIME_SERVICE}' service exists but is not identifiable as OrcaSynapse-managed; refusing to remove it"
 }
 
 confirm_destruction() {
@@ -542,13 +549,15 @@ confirm_destruction() {
   ${UI_RED}${UI_BOLD}PERMANENT HOST-SIDE DESTRUCTION${UI_RESET}
   This removes only OrcaSynapse-managed Agentic System resources:
 
-    - Hermes container and its locally cached image when unused elsewhere
+    - Hermes runtime service, and the program under /usr/local it installed
     - Node identity, enrollment state, managed policy, and runtime data
     - Signed-heartbeat service and timer
     - Toolset desired-state reconciler service and timer
+    - The ${HERMES_USER} service account
 
-  Docker itself, Ubuntu packages, unrelated containers, and external backups
-  are preserved. Storage snapshots must be retired under your own policy.
+  Ubuntu packages, unrelated services, the Python and Node runtimes Hermes
+  installed for itself, and external backups are preserved. Storage snapshots
+  must be retired under your own policy.
 EOF
   [[ -r /dev/tty ]] || fail "an interactive terminal is required for destructive confirmation"
   local confirmation
@@ -558,6 +567,9 @@ EOF
 }
 
 stop_managed_services() {
+  # The runtime first: the timers only report on and reconcile it, so stopping
+  # them first would leave the reconciler free to restart what we just stopped.
+  systemctl disable --now "${RUNTIME_SERVICE}.service" >/dev/null 2>&1 || true
   systemctl disable --now "${HEARTBEAT_SERVICE}.timer" >/dev/null 2>&1 || true
   systemctl stop "${HEARTBEAT_SERVICE}.service" >/dev/null 2>&1 || true
   systemctl disable --now "${DESIRED_STATE_SERVICE}.timer" >/dev/null 2>&1 || true
@@ -566,28 +578,32 @@ stop_managed_services() {
 }
 
 remove_hermes_runtime() {
-  local image_reference=""
-  # Read the recorded reference first: the image layers should be removed even
-  # when the container was already deleted by hand.
-  if [[ -s "${STATE_ROOT}/image-reference" ]]; then
-    image_reference="$(<"${STATE_ROOT}/image-reference")"
-  fi
-  if command -v docker >/dev/null 2>&1 && docker inspect "${CONTAINER_NAME}" >/dev/null 2>&1; then
-    if [[ -z "${image_reference}" ]]; then
-      image_reference="$(docker inspect --format '{{.Image}}' "${CONTAINER_NAME}" 2>/dev/null || true)"
-    fi
-    docker rm -f "${CONTAINER_NAME}" >/dev/null
-    success "Hermes container removed."
+  if [[ -e "/etc/systemd/system/${RUNTIME_SERVICE}.service" ]]; then
+    rm -f -- "/etc/systemd/system/${RUNTIME_SERVICE}.service"
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    success "Hermes runtime service removed."
   else
-    success "No managed Hermes container remains."
+    success "No managed Hermes runtime service remains."
   fi
 
-  if [[ -n "${image_reference}" ]] && command -v docker >/dev/null 2>&1; then
-    if docker image rm "${image_reference}" >/dev/null 2>&1; then
-      success "Unused Hermes image layers removed."
-    else
-      warning "The Hermes image is still used by another container and was preserved."
-    fi
+  # The program itself, which the container path deleted as image layers.
+  # Scoped to the two paths the installer creates and nothing else: an operator
+  # who installed Hermes for themselves before enrolling keeps their own copy
+  # only if it is not at the managed location, which the installer refuses to
+  # overwrite in the first place.
+  local removed=0
+  if [[ -d "${HERMES_INSTALL_DIR}" ]]; then
+    rm -rf -- "${HERMES_INSTALL_DIR}"
+    removed=1
+  fi
+  local launcher
+  for launcher in "${HERMES_BINARY}" "${HERMES_BINARY}-agent" "${HERMES_BINARY}-acp"; do
+    [[ -e "${launcher}" ]] && { rm -f -- "${launcher}"; removed=1; }
+  done
+  if (( removed )); then
+    success "Hermes runtime files removed."
+  else
+    success "No managed Hermes runtime files remain."
   fi
 }
 
@@ -607,7 +623,15 @@ remove_managed_state() {
   [[ ! -e "${STATE_ROOT}" ]] \
     || fail "the managed state root could not be removed; check for a mounted filesystem and rerun"
   rmdir /usr/local/lib/orcasynapse >/dev/null 2>&1 || true
-  success "Identity keys, runtime state, managed policy, and units removed."
+  rm -rf -- "${HERMES_MANAGED_DIR}"
+
+  # The account owned nothing but the state root that just went, so it is an
+  # orphan now. Left behind, a re-enrollment would silently reuse a UID whose
+  # history nobody can account for.
+  if id -u "${HERMES_USER}" >/dev/null 2>&1; then
+    userdel "${HERMES_USER}" >/dev/null 2>&1       || warning "The ${HERMES_USER} service account could not be removed; delete it by hand."
+  fi
+  success "Identity keys, runtime state, managed policy, units, and the service account removed."
 }
 
 main() {
@@ -616,7 +640,7 @@ main() {
 
   step 1 4 "Inventory the managed installation"
   require_safe_host
-  validate_container_ownership
+  validate_service_ownership
   if ! managed_install_exists; then
     success "No OrcaSynapse-managed Agentic System installation was found."
     printf '\n%b  NOTHING TO REMOVE%b\n' "${UI_GREEN}${UI_BOLD}" "${UI_RESET}"

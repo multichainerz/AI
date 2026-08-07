@@ -30,6 +30,13 @@ jobs:
           --health-retries 12
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
       - name: Validate installer scripts
         run: bash -n install.sh scripts/*.sh scripts/lib/*.sh
       - name: Static release and deployment consistency
@@ -41,15 +48,14 @@ jobs:
         run: |
           bash scripts/test-public-installer-recovery.sh
           bash scripts/test-agentic-installer-recovery.sh
+      # The recovery tests source the installer and exercise functions in
+      # isolation; main() itself had never been run by anything, so a break in
+      # the install sequence reached a customer's VM first. The runner is a full
+      # Ubuntu VM with systemd and Docker, which is all this needs.
+      - name: Run the Agentic System installer end to end
+        run: sudo bash scripts/test-agentic-installer-smoke.sh
       - name: Verify Linux container secret access
         run: sudo bash scripts/test-installer-secret-permissions.sh
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10.14.0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: pnpm
       - run: pnpm install --frozen-lockfile
       # Declared in package.json since the first release but never wired here,
       # so four high-severity advisories in shipped dependencies went unnoticed
@@ -71,19 +77,17 @@ jobs:
       - name: Verify CSP closure of the built dashboard
         run: bash scripts/test-csp-closure.sh
 
-  compose-build:
+  install:
     runs-on: ubuntu-latest
-    # Non-blocking full-image proof: the static closure and consistency checks
-    # in `verify` already gate the known regression classes cheaply. Promote to
-    # required once consistently green.
+    # Supersedes the old compose-build job. That one built the images against
+    # placeholder secrets and stopped there; this runs the installer a customer
+    # actually runs -- real secrets, migrations, services, and a control plane
+    # that answers -- for the same dominant cost, the image build.
+    #
+    # Still advisory, matching the posture compose-build had. Promote to
+    # required once consistently green; that is a policy call, not a test one.
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      - name: Provide placeholder secret files for compose interpolation
-        run: |
-          mkdir -p .local/secrets
-          for name in postgres_password orcasynapse_database_url orcasynapse_master_key orcasynapse_installation_key; do
-            printf 'placeholder' > ".local/secrets/${name}"
-          done
-      - name: Build the compose stack images
-        run: docker compose build
+      - name: Install a fresh control plane end to end
+        run: sudo bash scripts/test-orcasynapse-installer-smoke.sh
