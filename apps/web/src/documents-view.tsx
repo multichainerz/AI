@@ -15,7 +15,10 @@ import {
   getDocuments,
   uploadDocument,
 } from "./api.js";
-import { LockedScreen } from "./ui/index.js";
+import {
+  Alert, Button, EmptyState, Field, Input, LockedScreen, Metric, MetricRow,
+  PageHeader, Panel, PanelHeading, Select, StatusText, Textarea, cn, toneFor,
+} from "./ui/index.js";
 
 interface DocumentsViewProps {
   unlocked: boolean;
@@ -173,74 +176,170 @@ export function DocumentsView(props: DocumentsViewProps) {
     />;
   }
 
-  return <section className="documents-workspace knowledge-workspace">
-    <header className="documents-header">
-      <div>
-        <p className="page-kicker">Enterprise knowledge</p>
-        <h1>Knowledge</h1>
-        <p>Extracted knowledge lives in OrcaSynapse's private vector index while authoritative files remain in enterprise storage.</p>
-      </div>
-      <button className="primary-button" type="button" onClick={() => setUploadOpen((value) => !value)}>{uploadOpen ? "Close" : "Add source"}</button>
-    </header>
+  return <div className="grid gap-5">
+    <PageHeader
+      kicker="Enterprise knowledge"
+      title="Knowledge"
+      description="Extracted knowledge lives in OrcaSynapse's private vector index while authoritative files remain in enterprise storage."
+      actions={
+        <Button variant="primary" onClick={() => setUploadOpen((value) => !value)}>
+          {uploadOpen ? "Close" : "Add source"}
+        </Button>
+      }
+    />
 
-    {error && <div className="documents-alert" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
+    {error && <Alert onDismiss={() => setError(null)}>{error}</Alert>}
 
-    {uploadOpen && <form className="document-upload panel knowledge-upload" onSubmit={submitUpload}>
-      <div className="knowledge-upload-intro">
-        <p className="section-kicker">Private knowledge ingestion</p>
-        <h2>Add a knowledge source</h2>
-        <p>OrcaSynapse checks identity and policy, extracts the text in flight, and embeds it into the local knowledge index. Only chunks and metadata are kept — never the file.</p>
-      </div>
-      <label className="document-file-field">
-        <span>{file ? file.name : "Choose a source file"}</span>
-        <small>{SUPPORTED_FORMAT_LABEL} · up to 50 MB</small>
-        <input ref={fileInput} type="file" required accept={DOCUMENT_UPLOAD_ACCEPT} onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
-      </label>
-      <div className="knowledge-capability-note">
-        <strong>Local extraction compatibility</strong>
-        <span>Text is extracted on the control plane, then BGE-M3 embeds it locally for retrieval. There is no OCR: scanned or image-only PDFs carry no extractable text and will fail indexing. Image files are not accepted.</span>
-      </div>
-      <label>Classification<select value={classification} onChange={(event) => setClassification(event.target.value as DocumentClassification)}><option value="INTERNAL">Internal</option><option value="CONFIDENTIAL">Confidential</option><option value="RESTRICTED">Restricted</option></select></label>
-      <label>Metadata retention<input type="number" min={1} max={3650} value={retentionDays} onChange={(event) => setRetentionDays(Number(event.target.value))} /></label>
-      <button className="primary-button" type="submit" disabled={!file || !validRetention || busy}>{busy ? "Indexing…" : "Add to knowledge"}</button>
-    </form>}
+    {uploadOpen && <Panel>
+      <form className="grid gap-3" onSubmit={submitUpload}>
+        <PanelHeading
+          kicker="Private knowledge ingestion"
+          title="Add a knowledge source"
+          description="OrcaSynapse checks identity and policy, extracts the text in flight, and embeds it into the local knowledge index. Only chunks and metadata are kept — never the file."
+        />
+        <label className="grid cursor-pointer gap-1 rounded border border-dashed border-border-strong bg-raised px-4 py-5 text-center">
+          <span className="text-[12px] font-semibold text-text">{file ? file.name : "Choose a source file"}</span>
+          <small className="text-caption text-muted">{SUPPORTED_FORMAT_LABEL} · up to 50 MB</small>
+          <input className="sr-only" ref={fileInput} type="file" required accept={DOCUMENT_UPLOAD_ACCEPT} onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
+        </label>
+        {/* Stated up front rather than as a failure later: a scanned PDF is the
+            most common thing someone tries and the least obvious thing to fail. */}
+        <div className="rounded border border-warn/40 bg-warn/10 p-3">
+          <strong className="block text-[11px] font-semibold text-warn">Local extraction compatibility</strong>
+          <span className="mt-1 block text-body leading-relaxed text-muted">
+            Text is extracted on the control plane, then BGE-M3 embeds it locally for retrieval. There is no OCR:
+            scanned or image-only PDFs carry no extractable text and will fail indexing. Image files are not accepted.
+          </span>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Classification">
+            <Select value={classification} onChange={(event) => setClassification(event.target.value as DocumentClassification)}>
+              <option value="INTERNAL">Internal</option>
+              <option value="CONFIDENTIAL">Confidential</option>
+              <option value="RESTRICTED">Restricted</option>
+            </Select>
+          </Field>
+          <Field label="Metadata retention (days)">
+            <Input type="number" min={1} max={3650} value={retentionDays} onChange={(event) => setRetentionDays(Number(event.target.value))} />
+          </Field>
+        </div>
+        <Button variant="primary" type="submit" className="justify-self-end" disabled={!file || !validRetention || busy}>
+          {busy ? "Indexing…" : "Add to knowledge"}
+        </Button>
+      </form>
+    </Panel>}
 
-    <div className="document-metrics" aria-label="Knowledge summary">
-      <article><span>Sources</span><strong>{metrics?.total ?? documents.length}</strong></article>
-      <article><span>Indexing</span><strong>{metrics?.processing ?? documents.filter(({ status }) => processingStatuses.has(status)).length}</strong></article>
-      <article><span>Ready</span><strong>{metrics?.ready ?? documents.filter(({ status }) => status === "READY").length}</strong></article>
-      <article><span>Source bytes retained</span><strong>0 B</strong></article>
-    </div>
+    <MetricRow className="lg:grid-cols-4" aria-label="Knowledge summary">
+      <Metric label="Sources" value={metrics?.total ?? documents.length} />
+      <Metric
+        label="Indexing"
+        value={metrics?.processing ?? documents.filter(({ status }) => processingStatuses.has(status)).length}
+      />
+      <Metric
+        label="Ready"
+        tone="good"
+        value={metrics?.ready ?? documents.filter(({ status }) => status === "READY").length}
+      />
+      {/* Zero is the claim, not a placeholder: the original file never lands. */}
+      <Metric label="Source bytes retained" value="0 B" caption="Chunks and metadata only" />
+    </MetricRow>
 
-    <div className="documents-layout">
-      <section className="document-list panel" aria-label="Knowledge source list">
-        <div className="document-section-heading"><div><p className="section-kicker">Knowledge index</p><h2>Sources</h2></div><button type="button" onClick={() => void refresh()} disabled={busy}>Refresh</button></div>
-        {documents.length === 0 && !busy && <div className="document-empty"><strong>No knowledge sources</strong><span>Add a file or keep using Chat without private knowledge.</span></div>}
-        {documents.map((document) => <button key={document.id} type="button" className={active?.id === document.id ? "selected" : ""} onClick={() => void select(document.id)}>
-          <span className="document-type">{extLabel(document.fileName)}</span>
-          <span className="document-list-copy"><strong>{document.fileName}</strong><small>{formatBytes(document.sizeBytes)} · {document.classification.toLowerCase()}</small></span>
-          <span className={`document-status ${statusTone(document.status)}`}>{formatStatus(document.status)}</span>
-        </button>)}
-      </section>
+    <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.85fr)]">
+      <Panel aria-label="Knowledge source list">
+        <PanelHeading
+          kicker="Knowledge index"
+          title="Sources"
+          actions={<Button size="sm" onClick={() => void refresh()} disabled={busy}>Refresh</Button>}
+        />
+        {documents.length === 0 && !busy && (
+          <EmptyState title="No knowledge sources">Add a file or keep using Chat without private knowledge.</EmptyState>
+        )}
+        <div className="grid gap-1">
+          {documents.map((document) => <button
+            key={document.id}
+            type="button"
+            aria-current={active?.id === document.id ? "true" : undefined}
+            className={cn(
+              "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded border p-2.5 text-left transition-colors",
+              active?.id === document.id ? "border-border-strong bg-raised" : "border-transparent hover:bg-raised",
+            )}
+            onClick={() => void select(document.id)}
+          >
+            <span className="grid h-8 w-11 place-items-center rounded border border-border bg-surface font-mono text-micro font-bold text-muted">
+              {extLabel(document.fileName)}
+            </span>
+            <span className="min-w-0">
+              <strong className="block truncate text-[12px] font-semibold text-text">{document.fileName}</strong>
+              <small className="mt-0.5 block truncate text-caption text-faint">
+                {formatBytes(document.sizeBytes)} · {document.classification.toLowerCase()}
+              </small>
+            </span>
+            <StatusText dot tone={toneFor(statusTone(document.status))}>{formatStatus(document.status)}</StatusText>
+          </button>)}
+        </div>
+      </Panel>
 
-      <section className="document-detail panel">
-        {!active ? <div className="document-empty"><strong>Select a source</strong><span>Index status, provenance, and retention will appear here.</span></div> : <>
-          <div className="document-detail-title"><div><p className="section-kicker">Knowledge record</p><h2>{active.fileName}</h2></div><span className={`document-status ${statusTone(active.status)}`}>{formatStatus(active.status)}</span></div>
-          <dl className="document-facts"><div><dt>Classification</dt><dd>{active.classification.toLowerCase()}</dd></div><div><dt>Type</dt><dd>{extLabel(active.fileName)}</dd></div><div><dt>Size</dt><dd>{formatBytes(active.sizeBytes)}</dd></div><div><dt>Metadata until</dt><dd>{new Date(active.retentionUntil).toLocaleDateString()}</dd></div></dl>
+      <Panel>
+        {!active
+          ? <EmptyState title="Select a source">Index status, provenance, and retention will appear here.</EmptyState>
+          : <>
+          <PanelHeading
+            kicker="Knowledge record"
+            title={active.fileName}
+            actions={<StatusText dot tone={toneFor(statusTone(active.status))}>{formatStatus(active.status)}</StatusText>}
+          />
+          <dl className="m-0 grid grid-cols-2 gap-px rounded border border-border bg-border">
+            {[
+              { label: "Classification", value: active.classification.toLowerCase() },
+              { label: "Type", value: extLabel(active.fileName) },
+              { label: "Size", value: formatBytes(active.sizeBytes) },
+              { label: "Metadata until", value: new Date(active.retentionUntil).toLocaleDateString() },
+            ].map((fact) => (
+              <div className="min-w-0 bg-surface px-2.5 py-2" key={fact.label}>
+                <dt className="truncate font-mono text-micro uppercase text-faint">{fact.label}</dt>
+                <dd className="m-0 mt-1 truncate font-mono text-caption text-muted">{fact.value}</dd>
+              </div>
+            ))}
+          </dl>
 
-          {processingStatuses.has(active.status) && <div className="document-progress"><span /><div><strong>OrcaSynapse is indexing this source</strong><small>Extraction, chunking, and embedding run locally; no copy leaves the control plane.</small></div></div>}
-          {(active.status === "FAILED" || active.status === "REJECTED") && <div className="document-failure"><strong>{active.failureCode ?? "INDEXING_FAILED"}</strong><span>{active.failureMessage ?? "OrcaSynapse could not extract indexable text from this source. Re-upload after correcting the file."}</span></div>}
+          {processingStatuses.has(active.status) && (
+            <div className="mt-3 rounded border border-border-strong bg-raised p-3">
+              <StatusText dot tone="accent">OrcaSynapse is indexing this source</StatusText>
+              <small className="mt-1.5 block text-caption text-muted">
+                Extraction, chunking, and embedding run locally; no copy leaves the control plane.
+              </small>
+            </div>
+          )}
+          {(active.status === "FAILED" || active.status === "REJECTED") && (
+            <div className="mt-3 rounded border border-bad/40 bg-bad/10 p-3">
+              <strong className="block font-mono text-micro uppercase text-bad">{active.failureCode ?? "INDEXING_FAILED"}</strong>
+              <span className="mt-1.5 block text-body leading-relaxed text-muted">
+                {active.failureMessage ?? "OrcaSynapse could not extract indexable text from this source. Re-upload after correcting the file."}
+              </span>
+            </div>
+          )}
 
-          <div className="document-staging ready"><strong>No source bytes retained by OrcaSynapse</strong><span>PostgreSQL contains ownership, classification, checksum, projected status, retention, and audit metadata only.</span></div>
+          <div className="mt-3 rounded border border-good/40 bg-good/10 p-3">
+            <strong className="block text-[11px] font-semibold text-good">No source bytes retained by OrcaSynapse</strong>
+            <span className="mt-1 block text-body leading-relaxed text-muted">
+              PostgreSQL contains ownership, classification, checksum, projected status, retention, and audit metadata only.
+            </span>
+          </div>
 
-          {["READY", "FAILED", "REJECTED"].includes(active.status) && <div className="document-actions">
-            {props.administrator && new Date(active.retentionUntil) > new Date() && <label>Retention override reason<textarea value={deletionReason} onChange={(event) => setDeletionReason(event.target.value)} maxLength={1000} rows={2} placeholder="Record why this source must be deleted early" /></label>}
-            <button className="danger-button" type="button" disabled={busy} onClick={() => void remove()}>Delete knowledge record</button>
+          {["READY", "FAILED", "REJECTED"].includes(active.status) && <div className="mt-3 grid gap-2">
+            {props.administrator && new Date(active.retentionUntil) > new Date() && (
+              <Field label="Retention override reason">
+                <Textarea value={deletionReason} onChange={(event) => setDeletionReason(event.target.value)} maxLength={1000} rows={2} placeholder="Record why this source must be deleted early" />
+              </Field>
+            )}
+            <Button variant="danger" className="justify-self-end" disabled={busy} onClick={() => void remove()}>
+              Delete knowledge record
+            </Button>
           </div>}
         </>}
-      </section>
+      </Panel>
     </div>
-  </section>;
+  </div>;
 }
 
 function extLabel(fileName: string): string {

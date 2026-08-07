@@ -5,6 +5,43 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.63.0 — 2026-08-07
+
+Knowledge and the audit trail.
+
+Both screens make a claim about what is *not* kept, and both have a failure
+state that must not read like a healthy one — which is most of what the rebuild
+is about.
+
+**Knowledge** states its zero rather than leaving a blank. "Source bytes
+retained: 0 B" is the product's promise about the original file, and an empty
+cell would read as missing data instead of as the claim it is. The
+no-OCR warning moved to where someone is about to hand over a scanned PDF —
+inside the upload panel — rather than arriving as a failure message afterwards,
+since a scanned PDF is the most common thing to try and the least obvious thing
+to fail. A source that failed extraction shows its failure code and reason
+against a red rule; one that indexed shows green.
+
+**Audit** puts the forwarding state on the panel's left rule: red failing, amber
+behind, grey never configured, green delivering. A trail silently lagging the
+SIEM is the single thing that panel exists to surface, and it had been rendering
+the same as a healthy one. The event table now scrolls inside its own container
+rather than widening the page — five columns, two of them identifiers — and an
+expanded row lays its metadata out as a monospace block that can be read.
+
+- seven cases across both, including that the trail keeps saying it is
+  append-only and that a failed action tones differently from a successful one
+- 103 rules dropped and 9 selector lists trimmed. Six classes stay: `document-status`,
+  `document-empty`, `document-section-heading`, `documents-alert`, `documents-header`
+  and `form-error` are still borrowed by Agents, Tooling, Onboarding, the
+  connection drawer and the runtime-nodes panel.
+
+901 tests green, web at 148. Contrast on both populated screens: 0 nodes below
+WCAG AA, worst 5.30. The stylesheet is **1,571 lines carrying 437 distinct
+colours, down from 754** — the first time it has been under sixteen hundred.
+
+Four view bodies remain: Operations, Agents, Onboarding, Tooling.
+
 ## ai-v1.62.0 — 2026-08-07
 
 Memory completes the Platform quartet — and nothing in the design system had a
