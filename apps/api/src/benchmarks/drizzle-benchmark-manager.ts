@@ -1,5 +1,6 @@
 import {
   benchmarkCaseSchema,
+  type AttachBenchmarkEvidence,
   type BenchmarkCase,
   type BenchmarkCaseResult,
   type BenchmarkKind,
@@ -7,7 +8,10 @@ import {
   type BenchmarkRunList,
   type BenchmarkSuite,
   type BenchmarkSuiteList,
+  type CompleteEvaluationRun,
   type CreateBenchmarkSuite,
+  type CreateEvaluationRun,
+  type EvaluationRun,
   type StartBenchmarkRun,
   type UpdateBenchmarkSuite,
 } from "@orcasynapse/contracts";
@@ -145,8 +149,41 @@ function runDto(run: StoredRun): BenchmarkRun {
 /** The statuses a run occupies before it has an answer. */
 const IN_FLIGHT = ["QUEUED", "RUNNING"] as const;
 
+/**
+ * The part of the AI-ops manager a benchmark needs.
+ *
+ * Narrowed to two methods so the dependency is one direction and one purpose:
+ * benchmarks file into the ledger, and know nothing else about it.
+ */
+export interface EvaluationLedger {
+  createEvaluation(principal: AdminPrincipal, input: CreateEvaluationRun): Promise<EvaluationRun>;
+  completeEvaluation(
+    principal: AdminPrincipal,
+    evaluationId: string,
+    input: CompleteEvaluationRun,
+  ): Promise<EvaluationRun>;
+}
+
+/**
+ * Failed cases whose failure was a prohibition, not a shortfall.
+ *
+ * The ledger separates critical failures from ordinary ones, and a benchmark
+ * has exactly one signal for that distinction: `MUST_NOT_INCLUDE` is the only
+ * assertion kind that states something an answer may never do. "Did not mention
+ * the rollback step" is a shortfall; "named the other tenant" is not.
+ */
+function criticalFailures(results: readonly BenchmarkCaseResult[]): number {
+  return results.filter((result) =>
+    !result.passed
+    && result.assertions.some(({ kind, passed }) => kind === "MUST_NOT_INCLUDE" && !passed)).length;
+}
+
 export class DrizzleBenchmarkManager implements BenchmarkManager {
-  constructor(private readonly database: OrcaSynapseDatabase) {}
+  constructor(
+    private readonly database: OrcaSynapseDatabase,
+    /** The ledger a completed run is filed into; see `attachEvidence`. */
+    private readonly evaluations: EvaluationLedger,
+  ) {}
 
   async listSuites(): Promise<BenchmarkSuiteList> {
     const rows = await this.database
@@ -490,5 +527,91 @@ export class DrizzleBenchmarkManager implements BenchmarkManager {
       return row;
     });
     return runDto(cancelled as StoredRun);
+  }
+
+  /**
+   * Files a completed run into the evaluation ledger.
+   *
+   * The evaluation requires exactly the one category the run measured, and
+   * nothing else. Claiming a chat benchmark is evidence about tool use or
+   * permissions would make the gate weaker while looking stronger — the
+   * narrower claim is the one that can be honoured.
+   */
+  async attachEvidence(
+    principal: AdminPrincipal,
+    runId: string,
+    input: AttachBenchmarkEvidence,
+  ): Promise<EvaluationRun> {
+    const [run] = await this.database
+      .select()
+      .from(benchmarkRun)
+      .where(eq(benchmarkRun.id, runId))
+      .limit(1);
+    if (!run) throw new BenchmarkRunNotFoundError("The benchmark run does not exist.");
+    // A run that was stopped, refused or is still going has measured part of a
+    // suite, and part of a suite is not evidence about the suite.
+    if (run.status !== "COMPLETED") {
+      throw new BenchmarkSuiteConflictError("Only a completed run can be recorded as evaluation evidence.");
+    }
+    if (run.evaluationRunId) {
+      throw new BenchmarkSuiteConflictError("This run is already recorded against an evaluation.");
+    }
+    if (run.totalCases < 1) {
+      throw new BenchmarkSuiteConflictError("This run measured nothing, so it is not evidence.");
+    }
+
+    const results = parseResults(run.results);
+    let recorded: EvaluationRun;
+    try {
+      const evaluation = await this.evaluations.createEvaluation(principal, {
+        name: input.name,
+        targetType: input.targetType,
+        targetReference: input.targetReference,
+        targetVersion: input.targetVersion,
+        minimumPassRate: input.minimumPassRate,
+        requiredCategories: [input.category],
+      } satisfies CreateEvaluationRun);
+
+      recorded = await this.evaluations.completeEvaluation(principal, evaluation.id, {
+        results: [{
+          category: input.category,
+          // Measured, not typed. This is the whole reason the two systems are
+          // connected rather than merged.
+          totalCases: run.totalCases,
+          passedCases: run.passedCases,
+          criticalFailures: criticalFailures(results),
+          evidenceRefs: [`benchmark:${run.suiteSlug}@${run.suiteRevision}:${run.id}`],
+        }],
+      } satisfies CompleteEvaluationRun);
+    } catch (cause) {
+      // The ledger's own refusals reach the operator as a benchmark conflict
+      // rather than a server error: a duplicate gate name is something they can
+      // fix, and its message already says so.
+      throw new BenchmarkSuiteConflictError(
+        cause instanceof Error ? cause.message : "The evaluation could not be recorded.",
+      );
+    }
+
+    await this.database.transaction(async (transaction) => {
+      await transaction
+        .update(benchmarkRun)
+        .set({ evaluationRunId: recorded.id })
+        .where(eq(benchmarkRun.id, runId));
+      await transaction.insert(auditEvent).values({
+        actorType: "USER",
+        actorId: principal.id,
+        action: "benchmark.evidence_recorded",
+        resourceType: "BenchmarkRun",
+        resourceId: runId,
+        outcome: recorded.status,
+        metadata: {
+          evaluationRunId: recorded.id,
+          category: input.category,
+          passedCases: run.passedCases,
+          totalCases: run.totalCases,
+        },
+      });
+    });
+    return recorded;
   }
 }

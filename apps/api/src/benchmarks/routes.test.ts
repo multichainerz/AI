@@ -1,4 +1,10 @@
-import { ADMIN_SCOPES, type AdministratorSession, type BenchmarkRun, type BenchmarkSuite } from "@orcasynapse/contracts";
+import {
+  ADMIN_SCOPES,
+  type AdministratorSession,
+  type BenchmarkRun,
+  type BenchmarkSuite,
+  type EvaluationRun,
+} from "@orcasynapse/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.js";
 import { ADMIN_SESSION_COOKIE, type AdminSessionManager } from "../auth/admin-session.js";
@@ -98,8 +104,37 @@ function manager(): BenchmarkManager {
     listRuns: vi.fn(async () => ({ items: [queued] })),
     getRun: vi.fn(async () => queued),
     cancelRun: vi.fn(async () => ({ ...queued, status: "CANCELLED" as const })),
+    attachEvidence: vi.fn(async () => evaluation),
   };
 }
+
+const evaluation: EvaluationRun = {
+  id: "5c1e0b6a-2f3d-4a7b-8c9d-0e1f2a3b4c5d",
+  name: "chat-baseline — revision 1",
+  targetType: "AGENT",
+  targetReference: "support-analyst",
+  targetVersion: "v3",
+  status: "PASSED",
+  minimumPassRate: 0.9,
+  requiredCategories: ["CHAT"],
+  results: [{
+    category: "CHAT",
+    totalCases: 10,
+    passedCases: 10,
+    criticalFailures: 0,
+    passRate: 1,
+    status: "PASSED",
+    evidenceRefs: ["benchmark:chat-baseline@1:7c9e6679-7425-40de-944b-e07fc1f90ae7"],
+  }],
+  totalCases: 10,
+  passedCases: 10,
+  criticalFailures: 0,
+  passRate: 1,
+  createdAt: "2026-08-07T10:00:00.000Z",
+  completedAt: "2026-08-07T10:00:00.000Z",
+  promotedAt: null,
+  promotionReason: null,
+};
 
 const apps: Awaited<ReturnType<typeof createApp>>[] = [];
 afterEach(async () => Promise.all(apps.splice(0).map((app) => app.close())));
@@ -240,6 +275,37 @@ describe("benchmark run routes", () => {
     const { app } = await benchmarkApp();
     const response = await app.inject({ method: "POST", url: `/api/v1/admin/benchmarks/runs/${RUN_ID}/cancel`, headers });
     expect(response.json()).toMatchObject({ status: "CANCELLED" });
+  });
+
+  it("records a completed run in the evaluation ledger", async () => {
+    const { app } = await benchmarkApp();
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/v1/admin/benchmarks/runs/${RUN_ID}/evaluation`,
+      headers,
+      payload: {
+        name: "chat-baseline — revision 1",
+        category: "CHAT",
+        targetType: "AGENT",
+        targetReference: "support-analyst",
+        targetVersion: "v3",
+        minimumPassRate: 0.9,
+      },
+    });
+    expect(response.statusCode).toBe(201);
+    expect(response.json()).toMatchObject({ status: "PASSED", requiredCategories: ["CHAT"] });
+  });
+
+  it("lets an auditor read the evidence but never enter it as a gate", async () => {
+    const { app, benchmarkManager } = await benchmarkApp();
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/v1/admin/benchmarks/runs/${RUN_ID}/evaluation`,
+      headers: readerHeaders,
+      payload: { name: "Gate", category: "CHAT", targetType: "AGENT", targetReference: "a", targetVersion: "1", minimumPassRate: 0.9 },
+    });
+    expect(response.statusCode).toBe(403);
+    expect(benchmarkManager.attachEvidence).not.toHaveBeenCalled();
   });
 
   it("locks the surface when benchmark services are not ready", async () => {

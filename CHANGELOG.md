@@ -5,6 +5,50 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.73.0 — 2026-08-07
+
+Benchmarks, R4: a completed run files itself into the evaluation ledger.
+
+This is what the two systems were kept separate for. `EvaluationRun` gates
+promotion on how many cases passed — a number an operator has, until now, typed
+in from a run they did somewhere else. A benchmark measures that number. Now it
+carries it across, and the figure a release is approved on is not one anybody
+could have mistyped in its favour.
+
+**Only what is being decided is typed.** The form asks which release this gates,
+which required category the run answers for, and what bar it must clear. The
+case counts are read off the run and `attachBenchmarkEvidenceSchema` is
+`.strict()` with no field for them, so there is no path by which they could be
+supplied by hand.
+
+**The gate claims exactly what the run measured, and nothing else.** The
+evaluation requires one category — the one this benchmark exercised. Filing a
+chat benchmark as evidence about tool use or permissions would make a gate look
+stronger while being weaker, and a narrow claim is the one that can be honoured.
+
+**A broken prohibition is a critical failure.** The ledger separates critical
+failures from ordinary ones, and a benchmark has exactly one signal for that
+distinction: `MUST_NOT_INCLUDE` is the only assertion kind that states something
+an answer may never do. "Did not mention the rollback step" is a shortfall;
+"named the other tenant" is not — and one of those fails the gate whatever the
+pass rate says.
+
+Only a **completed** run can be filed, and only once. A run that was stopped,
+refused or is still going has measured part of a suite, and part of a suite is
+not evidence about the suite.
+
+Also fixed while testing the permission split: the **Results** button was inside
+the manage guard, so an auditor could not open a result at all. Reading the
+evidence is what `evaluations:read` is for — an auditor who cannot see a result
+cannot audit the decision made on it. Only starting, stopping and filing are
+gated now.
+
+1,012 tests green, 13 new. Contrast on the evidence form sweeps at 0 nodes below
+WCAG AA, worst 4.95, median 7.25, form fields included.
+
+**Still to come:** authoring a suite from the dashboard. The API and the client
+call both exist; the screen currently points an operator at the API for it.
+
 ## ai-v1.72.0 — 2026-08-07
 
 Benchmarks, R3: the dashboard screen. The feature is complete.

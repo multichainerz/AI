@@ -10,6 +10,7 @@
 import {
   ADMIN_SCOPES,
   type AdministratorSession,
+  type AttachBenchmarkEvidence,
   type BenchmarkRun,
   type BenchmarkSuite,
 } from "@orcasynapse/contracts";
@@ -138,6 +139,11 @@ const running: BenchmarkRun = {
 
 const startBenchmarkRun = vi.fn(async () => running);
 const cancelBenchmarkRun = vi.fn(async () => ({ ...running, status: "CANCELLED" as const }));
+const attachBenchmarkEvidence = vi.fn(async (_id: string, _input: AttachBenchmarkEvidence) => ({
+  id: "5c1e0b6a-2f3d-4a7b-8c9d-0e1f2a3b4c5d",
+  name: "chat-baseline — revision 2",
+  status: "FAILED",
+}));
 
 vi.mock("./api.js", async () => {
   const actual = await vi.importActual<typeof import("./api.js")>("./api.js");
@@ -147,6 +153,8 @@ vi.mock("./api.js", async () => {
     getBenchmarkRuns: vi.fn(async () => ({ items: [running, completed] })),
     startBenchmarkRun: (...args: unknown[]) => startBenchmarkRun(...args as []),
     cancelBenchmarkRun: (...args: unknown[]) => cancelBenchmarkRun(...args as []),
+    attachBenchmarkEvidence: (...args: unknown[]) =>
+      attachBenchmarkEvidence(...args as [string, AttachBenchmarkEvidence]),
   };
 });
 
@@ -249,5 +257,60 @@ describe("run results", () => {
   it("renders no inline style, which the CSP would refuse in the built container", async () => {
     await view();
     expect(document.body.innerHTML).not.toMatch(/\sstyle="/);
+  });
+});
+
+describe("recording evidence", () => {
+  async function openEvidenceForm() {
+    await view();
+    fireEvent.click(screen.getAllByRole("button", { name: "Results" })[0]!);
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Record as evidence" }));
+    return dialog;
+  }
+
+  it("carries the measured counts across and asks only for the decision", async () => {
+    // The numbers are the thing nobody should ever type again.
+    const dialog = await openEvidenceForm();
+    if (process.env.VIEW_PREVIEW_DIALOG_OUT) {
+      writeFileSync(process.env.VIEW_PREVIEW_DIALOG_OUT, document.body.innerHTML, "utf8");
+    }
+    expect(within(dialog).getByText(/1 of 2 cases are carried across unchanged/)).toBeTruthy();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Record" }));
+    await waitFor(() => expect(attachBenchmarkEvidence).toHaveBeenCalledWith(
+      completed.id,
+      expect.objectContaining({ category: "CHAT", targetType: "AGENT", targetReference: "support-analyst" }),
+    ));
+    // No case counts in the payload: the server reads them off the run.
+    expect(attachBenchmarkEvidence.mock.calls[0]![1]).not.toHaveProperty("passedCases");
+  });
+
+  it("defaults the bar to the suite's own threshold", async () => {
+    const dialog = await openEvidenceForm();
+    expect(within(dialog).getByLabelText("Minimum pass rate")).toHaveProperty("value", "0.9");
+  });
+
+  it("offers a run already filed no way to file it twice", async () => {
+    const cited = { ...completed, evaluationRunId: "5c1e0b6a-2f3d-4a7b-8c9d-0e1f2a3b4c5d" };
+    const api = await import("./api.js");
+    vi.mocked(api.getBenchmarkRuns).mockResolvedValueOnce({ items: [running, cited] });
+
+    await view();
+    fireEvent.click(screen.getAllByRole("button", { name: "Results" })[0]!);
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Recorded in the evaluation ledger.")).toBeTruthy();
+    expect(within(dialog).queryByRole("button", { name: "Record as evidence" })).toBeNull();
+  });
+
+  it("lets an auditor read a result but not file it as a gate", async () => {
+    // Reading the evidence is what `evaluations:read` is for — an auditor who
+    // cannot see a result cannot audit the decision made on it.
+    await view(auditor);
+    fireEvent.click(screen.getAllByRole("button", { name: "Results" })[0]!);
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("qwen3.6-27b")).toBeTruthy();
+    expect(within(dialog).queryByRole("button", { name: "Record as evidence" })).toBeNull();
   });
 });

@@ -122,6 +122,7 @@ import {
   type CreateBenchmarkSuite,
   type UpdateBenchmarkSuite,
   type StartBenchmarkRun,
+  type AttachBenchmarkEvidence,
   productionReadinessSchema,
   productionReadinessControlSchema,
   productionReadinessApprovalSchema,
@@ -994,6 +995,16 @@ export async function cancelBenchmarkRun(id: string): Promise<BenchmarkRun> {
     method: "POST", headers: adminHeaders(), credentials: "same-origin",
   });
   return benchmarkRunSchema.parse(await parsedResponse(response));
+}
+
+export async function attachBenchmarkEvidence(
+  id: string,
+  input: AttachBenchmarkEvidence,
+): Promise<EvaluationRun> {
+  const response = await fetch(`/api/v1/admin/benchmarks/runs/${encodeURIComponent(id)}/evaluation`, {
+    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return evaluationRunSchema.parse(await parsedResponse(response));
 }
 
 export async function getProductionReadiness(): Promise<ProductionReadiness> {

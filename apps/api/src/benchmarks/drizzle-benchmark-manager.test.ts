@@ -12,6 +12,7 @@ import {
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { AdminPrincipal } from "../auth/admin-session.js";
+import { DrizzleAiOpsManager, type AiOpsDependencies } from "../ai-ops/drizzle-ai-ops-manager.js";
 import {
   BenchmarkRunNotFoundError,
   BenchmarkSuiteConflictError,
@@ -27,7 +28,12 @@ beforeAll(async () => { context = await createTestDatabase(); }, 120_000);
 afterAll(async () => { await context?.drop(); });
 beforeEach(async () => {
   await context.reset();
-  manager = new DrizzleBenchmarkManager(context.database);
+  // The real ledger, not a fake: the point of attaching evidence is that the
+  // evaluation it produces is one the ledger would accept, and only the ledger
+  // knows that.
+  manager = new DrizzleBenchmarkManager(context.database, new DrizzleAiOpsManager(context.database, {
+    connections: { list: async () => [] },
+  } as unknown as AiOpsDependencies));
 });
 
 const principal = { id: randomUUID(), subject: "local-admin:operator" } as AdminPrincipal;
@@ -285,6 +291,132 @@ describe("reading and stopping runs", () => {
   it("reports an unknown run as missing rather than empty", async () => {
     await expect(manager.getRun(randomUUID())).rejects.toBeInstanceOf(BenchmarkRunNotFoundError);
     await expect(manager.cancelRun(principal, randomUUID())).rejects.toBeInstanceOf(BenchmarkRunNotFoundError);
+  });
+
+  it("files a completed run into the ledger with the numbers it measured", async () => {
+    await activeAgent();
+    const suite = await manager.createSuite(principal, suiteInput());
+    const run = await manager.startRun(principal, { suiteId: suite.id });
+    await context.database
+      .update(benchmarkRun)
+      .set({
+        status: "COMPLETED",
+        completedAt: new Date(),
+        totalCases: 10,
+        passedCases: 9,
+        passRate: 0.9,
+        results: [],
+      })
+      .where(eq(benchmarkRun.id, run.id));
+
+    const evaluation = await manager.attachEvidence(principal, run.id, {
+      name: "Chat baseline gate",
+      category: "CHAT",
+      targetType: "AGENT",
+      targetReference: "support",
+      targetVersion: "v1",
+      minimumPassRate: 0.9,
+    });
+
+    // Measured, not typed. That is the whole reason the two systems connect.
+    expect(evaluation).toMatchObject({ status: "PASSED", totalCases: 10, passedCases: 9 });
+    expect(evaluation.results[0]?.evidenceRefs[0]).toContain(run.id);
+    // The gate claims only what the run measured.
+    expect(evaluation.requiredCategories).toEqual(["CHAT"]);
+
+    const [stored] = await context.database.select().from(benchmarkRun).where(eq(benchmarkRun.id, run.id));
+    expect(stored?.evaluationRunId).toBe(evaluation.id);
+  });
+
+  it("counts a broken prohibition as a critical failure", async () => {
+    // MUST_NOT_INCLUDE is the only assertion that says an answer may never do
+    // something. "Named the other tenant" is not a shortfall.
+    await activeAgent();
+    const suite = await manager.createSuite(principal, suiteInput());
+    const run = await manager.startRun(principal, { suiteId: suite.id });
+    await context.database
+      .update(benchmarkRun)
+      .set({
+        status: "COMPLETED",
+        completedAt: new Date(),
+        totalCases: 2,
+        passedCases: 1,
+        passRate: 0.5,
+        results: [
+          { caseId: "ok", intent: "fine", passed: true, assertions: [], latencyMs: 1, outputTokens: null, outputExcerpt: null, failureReason: null },
+          {
+            caseId: "leak",
+            intent: "must not name another tenant",
+            passed: false,
+            assertions: [{ kind: "MUST_NOT_INCLUDE", value: "Contoso", passed: false }],
+            latencyMs: 1,
+            outputTokens: null,
+            outputExcerpt: null,
+            failureReason: null,
+          },
+        ],
+      })
+      .where(eq(benchmarkRun.id, run.id));
+
+    const evaluation = await manager.attachEvidence(principal, run.id, {
+      name: "Leak gate",
+      category: "SAFETY",
+      targetType: "AGENT",
+      targetReference: "support",
+      targetVersion: "v1",
+      minimumPassRate: 0.5,
+    });
+    expect(evaluation.criticalFailures).toBe(1);
+    // A critical failure fails the gate whatever the pass rate says.
+    expect(evaluation.status).toBe("FAILED");
+  });
+
+  it("refuses to file a run that is not finished, and refuses to file one twice", async () => {
+    await activeAgent();
+    const suite = await manager.createSuite(principal, suiteInput());
+    const run = await manager.startRun(principal, { suiteId: suite.id });
+    const evidence = {
+      name: "Gate",
+      category: "CHAT",
+      targetType: "AGENT",
+      targetReference: "support",
+      targetVersion: "v1",
+      minimumPassRate: 0.9,
+    } as const;
+
+    // Part of a suite is not evidence about the suite.
+    await expect(manager.attachEvidence(principal, run.id, evidence))
+      .rejects.toBeInstanceOf(BenchmarkSuiteConflictError);
+
+    await context.database
+      .update(benchmarkRun)
+      .set({ status: "COMPLETED", completedAt: new Date(), totalCases: 1, passedCases: 1, passRate: 1, results: [] })
+      .where(eq(benchmarkRun.id, run.id));
+    await manager.attachEvidence(principal, run.id, evidence);
+    await expect(manager.attachEvidence(principal, run.id, { ...evidence, name: "Gate again" }))
+      .rejects.toBeInstanceOf(BenchmarkSuiteConflictError);
+  });
+
+  it("keeps a suite whose result an evaluation cites, once it actually cites one", async () => {
+    await activeAgent();
+    const suite = await manager.createSuite(principal, suiteInput());
+    const run = await manager.startRun(principal, { suiteId: suite.id });
+    await context.database
+      .update(benchmarkRun)
+      .set({ status: "COMPLETED", completedAt: new Date(), totalCases: 1, passedCases: 1, passRate: 1, results: [] })
+      .where(eq(benchmarkRun.id, run.id));
+    await manager.attachEvidence(principal, run.id, {
+      name: "Promotion gate",
+      category: "CHAT",
+      targetType: "AGENT",
+      targetReference: "support",
+      targetVersion: "v1",
+      minimumPassRate: 0.9,
+    });
+
+    // The cascade would take the evidence a promotion decision was made on.
+    await expect(manager.deleteSuite(principal, suite.id))
+      .rejects.toBeInstanceOf(BenchmarkSuiteConflictError);
   });
 
   it("lists newest first and narrows to one suite", async () => {

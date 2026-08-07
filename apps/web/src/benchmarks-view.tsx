@@ -1,13 +1,18 @@
-import type {
-  AdministratorSession,
-  BenchmarkCaseResult,
-  BenchmarkKind,
-  BenchmarkRun,
-  BenchmarkSuite,
+import {
+  EVALUATION_CATEGORIES,
+  type AdministratorSession,
+  type AttachBenchmarkEvidence,
+  type BenchmarkCaseResult,
+  type BenchmarkKind,
+  type BenchmarkRun,
+  type BenchmarkSuite,
+  type EvaluationCategory,
+  type EvaluationTargetType,
 } from "@orcasynapse/contracts";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   OrcaSynapseApiError,
+  attachBenchmarkEvidence,
   cancelBenchmarkRun,
   getBenchmarkRuns,
   getBenchmarkSuites,
@@ -19,12 +24,15 @@ import {
   Button,
   Dialog,
   EmptyState,
+  Field,
+  Input,
   LockedScreen,
   Metric,
   MetricRow,
   MicroLabel,
   PageHeader,
   Panel,
+  Select,
   StatusText,
   cn,
 } from "./ui/index.js";
@@ -307,28 +315,45 @@ export function BenchmarksView({ session, onOpenOperations, onSessionExpired }: 
 
           <footer className="flex items-center justify-between gap-2.5">
             <StatusText>{latest ? `Last run ${when(latest.queuedAt)}` : "Never run"}</StatusText>
-            {canManage && <div className="flex gap-1.5">
+            <div className="flex gap-1.5">
+              {/* Outside the manage guard: reading the evidence is what
+                  `evaluations:read` is for, and an auditor who cannot see a
+                  result cannot audit the decision made on it. */}
               {latest && latest.results.length > 0 && (
                 <Button size="sm" onClick={() => setInspecting(latest)}>Results</Button>
               )}
-              {running
+              {canManage && (running
                 ? <Button size="sm" variant="danger" disabled={busy === running.id} onClick={() => void stop(running)}>
                     {busy === running.id ? "Stopping..." : "Stop"}
                   </Button>
                 : <Button size="sm" variant="primary" disabled={busy === suite.id} onClick={() => void start(suite)}>
                     {busy === suite.id ? "Starting..." : "Run"}
-                  </Button>}
-            </div>}
+                  </Button>)}
+            </div>
           </footer>
         </Panel>;
       })}
     </section>
 
-    {inspecting && <RunResults run={inspecting} onClose={() => setInspecting(null)} />}
+    {inspecting && <RunResults
+      run={inspecting}
+      canManage={canManage}
+      suite={suites.find(({ id }) => id === inspecting.suiteId) ?? null}
+      onRecorded={(note) => { setInspecting(null); setMessage(note); void load(); }}
+      onClose={() => setInspecting(null)}
+    />}
   </div>;
 }
 
-function RunResults({ run, onClose }: { run: BenchmarkRun; onClose: () => void }) {
+interface RunResultsProps {
+  run: BenchmarkRun;
+  suite: BenchmarkSuite | null;
+  canManage: boolean;
+  onRecorded: (note: string) => void;
+  onClose: () => void;
+}
+
+function RunResults({ run, suite, canManage, onRecorded, onClose }: RunResultsProps) {
   return <Dialog
     open
     kicker="Benchmark run"
@@ -364,11 +389,163 @@ function RunResults({ run, onClose }: { run: BenchmarkRun; onClose: () => void }
 
       {run.failureMessage && <Alert tone="warn">{run.failureMessage}</Alert>}
 
+      {run.status === "COMPLETED" && canManage && (
+        <EvidenceForm run={run} suite={suite} onRecorded={onRecorded} />
+      )}
+
       <ul className="m-0 grid list-none gap-2 p-0">
         {run.results.map((result) => <CaseResult key={result.caseId} result={result} />)}
       </ul>
     </div>
   </Dialog>;
+}
+
+/** The evaluation category each kind most obviously speaks to. */
+const categoryForKind: Record<BenchmarkKind, EvaluationCategory> = {
+  CHAT_QUALITY: "CHAT",
+  RETRIEVAL: "RETRIEVAL",
+  // Memory shows up as wrong answers, so chat is where its evidence lands —
+  // stated as a default the operator can override, not as a fact.
+  MEMORY: "CHAT",
+};
+
+function humanCategory(category: EvaluationCategory): string {
+  return category.toLowerCase().replaceAll("_", " ");
+}
+
+/**
+ * Records this run in the evaluation ledger.
+ *
+ * The split is deliberate: the operator types what they are deciding — which
+ * release this gates, which category it answers for, what bar it must clear —
+ * and never types the numbers. Those come from the run, so the figure a
+ * promotion rests on is not one anybody could have mistyped in its favour.
+ */
+function EvidenceForm({
+  run,
+  suite,
+  onRecorded,
+}: {
+  run: BenchmarkRun;
+  suite: BenchmarkSuite | null;
+  onRecorded: (note: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [draft, setDraft] = useState<AttachBenchmarkEvidence>({
+    name: `${run.suiteSlug} — revision ${run.suiteRevision}`,
+    category: categoryForKind[run.kind],
+    targetType: run.target.agentProfileSlug ? "AGENT" : "MODEL",
+    targetReference: run.target.agentProfileSlug ?? run.target.modelAlias ?? "",
+    targetVersion: run.target.agentProfileVersion
+      ? `v${run.target.agentProfileVersion}`
+      : run.target.modelAlias ?? "",
+    minimumPassRate: Math.max(0.5, suite?.passThreshold ?? 0.95),
+  });
+
+  if (run.evaluationRunId) {
+    return <StatusText tone="good" dot>Recorded in the evaluation ledger.</StatusText>;
+  }
+  if (!open) {
+    return <div className="flex items-center justify-between gap-3 rounded border border-border bg-raised px-3 py-2.5">
+      <span className="text-body text-muted">
+        {run.passedCases}/{run.totalCases} cases can be filed as the evidence for an evaluation.
+      </span>
+      <Button size="sm" onClick={() => setOpen(true)}>Record as evidence</Button>
+    </div>;
+  }
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const evaluation = await attachBenchmarkEvidence(run.id, draft);
+      onRecorded(`Evaluation '${evaluation.name}' recorded as ${evaluation.status.toLowerCase()}.`);
+    } catch (attachError) {
+      setError(attachError instanceof Error ? attachError.message : "Unable to record the evidence.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return <form
+    className="grid gap-3 rounded border border-border-strong bg-raised p-3"
+    onSubmit={(event) => void submit(event)}
+  >
+    <div>
+      <strong className="block text-[12px] font-semibold text-text">Record as evaluation evidence</strong>
+      <span className="mt-1 block text-body text-muted">
+        {run.passedCases} of {run.totalCases} cases are carried across unchanged. Only what you are deciding is typed.
+      </span>
+    </div>
+    {error && <Alert onDismiss={() => setError(null)}>{error}</Alert>}
+    <div className="grid gap-3 sm:grid-cols-2">
+      <Field label="Evaluation name">
+        <Input
+          value={draft.name}
+          minLength={3}
+          maxLength={160}
+          required
+          onChange={(event) => setDraft({ ...draft, name: event.target.value })}
+        />
+      </Field>
+      <Field label="Evidence for">
+        <Select
+          value={draft.category}
+          onChange={(event) => setDraft({ ...draft, category: event.target.value as EvaluationCategory })}
+        >
+          {EVALUATION_CATEGORIES.map((category) => (
+            <option key={category} value={category}>{humanCategory(category)}</option>
+          ))}
+        </Select>
+      </Field>
+      <Field label="Target">
+        <Select
+          value={draft.targetType}
+          onChange={(event) => setDraft({ ...draft, targetType: event.target.value as EvaluationTargetType })}
+        >
+          {(["AGENT", "MODEL", "PROMPT", "POLICY"] as const).map((target) => (
+            <option key={target} value={target}>{target.toLowerCase()}</option>
+          ))}
+        </Select>
+      </Field>
+      <Field label="Reference">
+        <Input
+          value={draft.targetReference}
+          required
+          maxLength={240}
+          onChange={(event) => setDraft({ ...draft, targetReference: event.target.value })}
+        />
+      </Field>
+      <Field label="Version">
+        <Input
+          value={draft.targetVersion}
+          required
+          maxLength={120}
+          onChange={(event) => setDraft({ ...draft, targetVersion: event.target.value })}
+        />
+      </Field>
+      <Field label="Minimum pass rate">
+        <Input
+          type="number"
+          min={0.5}
+          max={1}
+          step={0.01}
+          value={draft.minimumPassRate}
+          required
+          onChange={(event) => setDraft({ ...draft, minimumPassRate: Number(event.target.value) })}
+        />
+      </Field>
+    </div>
+    <div className="flex justify-end gap-2">
+      <Button onClick={() => setOpen(false)}>Cancel</Button>
+      <Button variant="primary" type="submit" disabled={busy || draft.targetReference.trim().length === 0}>
+        {busy ? "Recording..." : "Record"}
+      </Button>
+    </div>
+  </form>;
 }
 
 function CaseResult({ result }: { result: BenchmarkCaseResult }) {

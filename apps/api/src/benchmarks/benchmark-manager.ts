@@ -1,9 +1,11 @@
 import type {
+  AttachBenchmarkEvidence,
   BenchmarkRun,
   BenchmarkRunList,
   BenchmarkSuite,
   BenchmarkSuiteList,
   CreateBenchmarkSuite,
+  EvaluationRun,
   StartBenchmarkRun,
   UpdateBenchmarkSuite,
 } from "@orcasynapse/contracts";
@@ -39,4 +41,18 @@ export interface BenchmarkManager {
   listRuns(suiteId?: string, limit?: number): Promise<BenchmarkRunList>;
   getRun(id: string): Promise<BenchmarkRun>;
   cancelRun(principal: AdminPrincipal, id: string): Promise<BenchmarkRun>;
+
+  /**
+   * Records a finished run in the evaluation ledger as its evidence.
+   *
+   * This is what the two systems were kept separate for. The ledger gates
+   * promotion on numbers that, until now, an operator typed in from a run they
+   * did somewhere else. These numbers are measured, so the figure a release is
+   * approved on is not one anyone could have mistyped in its favour.
+   */
+  attachEvidence(
+    principal: AdminPrincipal,
+    runId: string,
+    input: AttachBenchmarkEvidence,
+  ): Promise<EvaluationRun>;
 }

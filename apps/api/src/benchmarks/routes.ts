@@ -1,6 +1,8 @@
 import {
+  attachBenchmarkEvidenceSchema,
   benchmarkRunListSchema,
   benchmarkRunSchema,
+  evaluationRunSchema,
   benchmarkSuiteListSchema,
   benchmarkSuiteSchema,
   createBenchmarkSuiteSchema,
@@ -135,6 +137,28 @@ export async function registerBenchmarkRoutes(
     try {
       const run = await dependencies.manager!.startRun(principal, input.data);
       return reply.code(202).send(benchmarkRunSchema.parse(run));
+    } catch (error) {
+      return sendError(error, reply);
+    }
+  });
+
+  /*
+   * Files a completed run into the evaluation ledger.
+   *
+   * The same scope as starting one: recording evidence a release will be
+   * promoted on is evaluation work, and an auditor who may read a result is
+   * deliberately not able to enter it as a gate.
+   */
+  app.post<{ Params: { id: string } }>("/runs/:id/evaluation", async (request, reply) => {
+    const principal = await requireAdmin(request, reply, dependencies.sessionManager, "evaluations:manage");
+    if (!principal) return;
+    const input = attachBenchmarkEvidenceSchema.safeParse(request.body);
+    if (!input.success) {
+      return reply.code(400).send({ error: "INVALID_BENCHMARK_EVIDENCE", message: input.error.issues[0]?.message });
+    }
+    try {
+      const evaluation = await dependencies.manager!.attachEvidence(principal, request.params.id, input.data);
+      return reply.code(201).send(evaluationRunSchema.parse(evaluation));
     } catch (error) {
       return sendError(error, reply);
     }

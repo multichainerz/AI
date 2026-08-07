@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  attachBenchmarkEvidenceSchema,
   benchmarkRunSchema,
   benchmarkSuiteSchema,
   createBenchmarkSuiteSchema,
@@ -158,5 +159,32 @@ describe("benchmark run", () => {
       results: [], startedAt: null, completedAt: null,
     };
     expect(benchmarkRunSchema.safeParse(queued).success).toBe(true);
+  });
+});
+
+describe("recording a run as evaluation evidence", () => {
+  const evidence = {
+    name: "Chat baseline gate",
+    category: "CHAT" as const,
+    targetType: "AGENT" as const,
+    targetReference: "support-analyst",
+    targetVersion: "v3",
+    minimumPassRate: 0.9,
+  };
+
+  it("takes what the operator is deciding", () => {
+    expect(attachBenchmarkEvidenceSchema.parse(evidence).category).toBe("CHAT");
+  });
+
+  it("has no way to state a case count", () => {
+    // The counts come off the run. If they could be supplied here, the number a
+    // promotion rests on would be one someone could type in its favour, which
+    // is the whole reason benchmarks exist rather than a form.
+    expect(attachBenchmarkEvidenceSchema.safeParse({ ...evidence, passedCases: 100, totalCases: 100 }).success)
+      .toBe(false);
+  });
+
+  it("refuses a bar below the ledger's floor", () => {
+    expect(attachBenchmarkEvidenceSchema.safeParse({ ...evidence, minimumPassRate: 0.2 }).success).toBe(false);
   });
 });

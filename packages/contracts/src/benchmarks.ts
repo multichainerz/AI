@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { evaluationCategorySchema, evaluationTargetTypeSchema } from "./ai-ops.js";
 
 /**
  * Benchmarks: the checks an operator can run against this installation to find
@@ -218,6 +219,30 @@ export const startBenchmarkRunSchema = z.object({
   agentProfileId: z.uuid().nullable().optional(),
 });
 
+/**
+ * Turns a finished run into a ledger entry.
+ *
+ * The split is the point of the whole feature: what a person decides stays
+ * typed — which release this gates, which category it satisfies, what bar it
+ * must clear — and what a machine measured is never typed again. The case
+ * counts come from the run, so the number an evaluation is promoted on is one
+ * nobody could have mistyped in its favour.
+ */
+export const attachBenchmarkEvidenceSchema = z.object({
+  name: z.string().trim().min(3).max(160),
+  /**
+   * Which required category this run is evidence for. Chosen rather than
+   * derived: a memory suite is evidence about chat answers on one installation
+   * and about retrieval on another, and guessing would file it under a claim
+   * its author never made.
+   */
+  category: evaluationCategorySchema,
+  targetType: evaluationTargetTypeSchema,
+  targetReference: z.string().trim().min(1).max(240),
+  targetVersion: z.string().trim().min(1).max(120),
+  minimumPassRate: z.number().min(0.5).max(1),
+}).strict();
+
 export const benchmarkSuiteListSchema = z.object({ items: z.array(benchmarkSuiteSchema) });
 export const benchmarkRunListSchema = z.object({ items: z.array(benchmarkRunSchema) });
 
@@ -232,5 +257,6 @@ export type BenchmarkTarget = z.infer<typeof benchmarkTargetSchema>;
 export type BenchmarkCaseResult = z.infer<typeof benchmarkCaseResultSchema>;
 export type BenchmarkRun = z.infer<typeof benchmarkRunSchema>;
 export type StartBenchmarkRun = z.infer<typeof startBenchmarkRunSchema>;
+export type AttachBenchmarkEvidence = z.infer<typeof attachBenchmarkEvidenceSchema>;
 export type BenchmarkSuiteList = z.infer<typeof benchmarkSuiteListSchema>;
 export type BenchmarkRunList = z.infer<typeof benchmarkRunListSchema>;

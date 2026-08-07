@@ -190,7 +190,7 @@ export function createRuntimeServices(): RuntimeServices {
       agentManager,
       toolingManager,
       aiOpsManager,
-      benchmarkManager: new DrizzleBenchmarkManager(database),
+      benchmarkManager: new DrizzleBenchmarkManager(database, aiOpsManager),
       onboardingManager,
       runtimeNodeManager,
       inferenceGateway,
