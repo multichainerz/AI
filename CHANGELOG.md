@@ -5,6 +5,47 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.75.0 — 2026-08-07
+
+Deployment readiness: a CSP gate that runs in CI, and documentation that is true again.
+
+**`scripts/test-csp-closure.sh` closes the gap the plan flagged as unfixable in
+development.** The container serves `style-src 'self'` with no `'unsafe-inline'`;
+the dev server sends no CSP header at all. So a violation works perfectly in
+`pnpm dev` and fails only in the built image, on the pilot, in front of whoever
+is looking at it. That is how Radix was ruled out, and until now nothing kept
+the decision enforced after everyone who made it had moved on.
+
+The gate reads `apps/web/dist` and fails on four things: a bundle that builds a
+`<style>` element or edits a sheet at runtime; an inline `style` attribute in the
+served HTML; an off-origin asset URL, which `font-src` / `img-src 'self'` refuse;
+and a stylesheet naming a font file that is not in the image. **Each class was
+verified to fail the check by deliberately introducing it**, because a guard
+nobody has watched fail is not a guard. Wired into CI after the build.
+
+The fourth check earns its place on its own: a missing font breaks no build and
+throws no error — the page silently renders in something else, which is how
+`@font-face` went fourteen releases naming Inter and shipping nothing.
+
+**`docs/CURRENT_STATE_HANDOFF.md` was materially wrong.** It claimed baseline
+ai-v1.44.0, 720 tests, and `main` synchronized with `origin/main` — the last of
+which mattered, because nineteen releases had accumulated locally while
+`install.sh` builds from a GitHub tarball of `main`. An unpushed release is
+invisible to every install, so the doc now says to check
+`git log --oneline origin/main..main` before trusting a deployment to be
+testing your work, and spells out how a deployment obtains its code at all.
+
+**New: `docs/BENCHMARK_RUNBOOK.md`**, covering what each kind measures and what
+makes it refuse to start, how to write checks that fail for the right reason,
+what a run pins and what survives a restart, and how a completed run becomes the
+evidence a promotion is gated on. Indexed from the README beside the other
+runbooks, with a benchmarks section added to `docs/ARCHITECTURE.md`.
+
+1,024 tests green. Every gate CI runs that can run on Windows passes: `verify`,
+`verify:postgres`, `security:audit`, installer syntax, and the four static
+guards. The three installer shell tests remain Linux-only and are unverified
+locally — noted in the handoff rather than left to be discovered.
+
 ## ai-v1.74.0 — 2026-08-07
 
 Benchmarks, R5: authoring a suite from the dashboard. The loop is closed.
@@ -31,7 +72,7 @@ Editing sends the revision the drawer was opened at, so two operators cannot
 overwrite each other. Deleting asks first and says what it takes with it — the
 server has the final word, and keeps any suite whose result an evaluation cites.
 
-1,021 tests green, 9 new. Contrast on the editor sweeps at 0 nodes below WCAG
+1,024 tests green, 9 new. Contrast on the editor sweeps at 0 nodes below WCAG
 AA, worst 5.30, median 7.36.
 
 *Noted while testing:* the `Field` primitive renders its hint inside the
@@ -79,7 +120,7 @@ evidence is what `evaluations:read` is for — an auditor who cannot see a resul
 cannot audit the decision made on it. Only starting, stopping and filing are
 gated now.
 
-1,012 tests green, 13 new. Contrast on the evidence form sweeps at 0 nodes below
+1,015 tests green, 16 new. Contrast on the evidence form sweeps at 0 nodes below
 WCAG AA, worst 4.95, median 7.25, form fields included.
 
 **Still to come:** authoring a suite from the dashboard. The API and the client

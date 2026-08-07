@@ -65,6 +65,14 @@ There is no OCR: scanned or image-only PDFs carry no extractable text layer and 
 - **Document knowledge** (enterprise sources) lives in PostgreSQL/pgvector on VM1, scoped per owner by SQL predicate — it never transits VM2.
 - Hermes `MEMORY.md` and `USER.md` remain small native runtime files because the upstream external-memory provider is additive.
 
+## Benchmarks and the evaluation ledger
+
+Two systems that look alike and are not. `EvaluationRun` is a **record**: an operator states how many cases passed, and promotion is gated on that evidence. `BenchmarkRun` **executes** — it drives the live stack and produces those numbers. So benchmarks feed the ledger rather than duplicating it, which is why `evaluationRunId` sits on the benchmark run and why both reuse the `evaluations:read` / `evaluations:manage` scopes: running one *is* evaluation work, so no role needed a new grant.
+
+A chat case queues an ordinary `AgentRun` and the worker's own processor picks it up, so a benchmark exercises the same queue, profile version, retrieval, boundary and capability checks as a person's message. Nothing about it is simulated. A run reads agent memory and never writes to it — capture would change the system being measured, and the second run of a suite would then score differently because of the first.
+
+Every check is a string or latency comparison whose verdict is stored beside the case; nothing is judged by a model, because scoring that cannot be audited cannot argue a release is safe. Executed against the live stack, a run in flight has no pass rate, and its target — agent, version, model alias, owner subject — is denormalised onto the row so a historical result keeps reading true after the profile it used is edited or deleted. See [BENCHMARK_RUNBOOK.md](BENCHMARK_RUNBOOK.md).
+
 ## Audit trail and SIEM forwarding
 
 Every governed action writes an append-only `AuditEvent`. The trail is readable in the dashboard (**Operations > Audit trail**, `audit:read` scope, keyset-paged) and can be forwarded to a customer SIEM configured as a service connection: a timer-driven forwarder POSTs JSON batches with a keyset cursor, at-least-once delivery (a failed batch never advances the cursor), and duplicate-safe event IDs. Forwarding health (`HEALTHY` / `BEHIND` / `FAILING` / `NOT_CONFIGURED`) is reported in the audit view and observed by AI Ops, which opens an incident when the destination rejects batches. See [AUDIT_TRAIL_RUNBOOK.md](AUDIT_TRAIL_RUNBOOK.md).

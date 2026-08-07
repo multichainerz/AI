@@ -65,6 +65,11 @@ jobs:
       - run: pnpm verify:postgres
         env:
           ORCASYNAPSE_INTEGRATION_DATABASE_URL: postgresql://orcasynapse_test:orcasynapse_test@127.0.0.1:5432/orcasynapse_test
+      # After the build, because it reads apps/web/dist. The container serves
+      # style-src 'self' and the dev server sends no CSP header at all, so this
+      # class of break is invisible until it reaches the pilot.
+      - name: Verify CSP closure of the built dashboard
+        run: bash scripts/test-csp-closure.sh
 
   compose-build:
     runs-on: ubuntu-latest

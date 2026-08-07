@@ -120,6 +120,7 @@ The test database must run a **pgvector** image — the migrator creates the `ve
 | [Agentic System enrollment](docs/AGENTIC_SYSTEM_ENROLLMENT_RUNBOOK.md) | VM2 enrollment, allowlist, decommission |
 | [Audit trail and SIEM forwarding](docs/AUDIT_TRAIL_RUNBOOK.md) | Reading the trail, forwarding, health states |
 | [Agent memory](docs/AGENT_MEMORY_RUNBOOK.md) | What agents store, the installation ceiling, retention, deletion |
+| [Benchmarks](docs/BENCHMARK_RUNBOOK.md) | Writing a suite, running it, filing the result as evaluation evidence |
 | [Product requirements](docs/ORCASYNAPSE_PRD.md) · [Delivery plan](docs/ORCASYNAPSE_PHASED_PLAN.md) | Scope, roles, acceptance tiers |
 | [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [License](LICENSE) | Project meta |
 
