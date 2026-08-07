@@ -300,6 +300,9 @@ button:disabled { opacity: .48; cursor: not-allowed; }
 .ops-form fieldset { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; padding: 12px; margin: 0; border: 1px solid var(--border); border-radius: 4px; }
 .ops-form fieldset legend { padding: 0 6px; }
 .ops-form blockquote { margin: 0; }
+/* Field hints. Without this they inherit the panel's body size and read
+   as loud as the label they are explaining. */
+.ops-form label > small { color: var(--muted); font-size: 10px; line-height: 1.55; }
 
 /* The evaluation score strip: four figures that must line up as a column. */
 

@@ -13,6 +13,7 @@ import {
   mutateHermesRuntimeNode,
   removeHermesRuntimeNode,
 } from "./api.js";
+import { Button, Dialog, Drawer, EmptyState } from "./ui/index.js";
 
 interface RuntimeNodesPanelProps {
   targetEnvironment: OnboardingTargetEnvironment;
@@ -201,7 +202,7 @@ export function RuntimeNodesPanel({
         <div><strong>One runtime at a time</strong><span>{nodes.length === 0 ? "An installation holds exactly one Hermes execution boundary. Enrolling a second is refused." : "This installation already holds its Hermes execution boundary. Revoke and remove this node before enrolling a replacement."}</span></div>
       </div>
       {error && <div className="documents-alert" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
-      {nodes.length === 0 && !inferenceReady ? <div className="setup-empty"><strong>AI Inference must be ready first</strong><p>Connect and activate one served model. OrcaSynapse will then prepare the VM2 installer with the approved route.</p><button className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded border border-accent bg-accent px-3.5 text-body font-medium text-[#0a0a0b] transition-colors hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-40" type="button" onClick={onConfigureInference}>Configure AI Inference</button></div> : nodes.length === 0 ? <div className="setup-empty"><strong>Install the Agentic System on VM2</strong><p>Generate one secure command, run it on the isolated VM, and paste the one-time claim when prompted. Hermes is installed, registered, and bound to the approved inference route.</p><button className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded border border-accent bg-accent px-3.5 text-body font-medium text-[#0a0a0b] transition-colors hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-40" type="button" onClick={() => setEditorOpen(true)}>Generate VM2 installer</button></div> : <div className="runtime-node-list">{nodes.map((node) => <article key={node.id}>
+      {nodes.length === 0 && !inferenceReady ? <EmptyState title="AI Inference must be ready first" action={<Button onClick={onConfigureInference}>Configure AI Inference</Button>}>Connect and activate one served model. OrcaSynapse will then prepare the VM2 installer with the approved route.</EmptyState> : nodes.length === 0 ? <EmptyState title="Install the Agentic System on VM2" action={<Button variant="primary" onClick={() => setEditorOpen(true)}>Generate VM2 installer</Button>}>Generate one secure command, run it on the isolated VM, and paste the one-time claim when prompted. Hermes is installed, registered, and bound to the approved inference route.</EmptyState> : <div className="runtime-node-list">{nodes.map((node) => <article key={node.id}>
         <div className={`runtime-node-state ${nodeTone(node.status)}`}><span /></div>
         <div className="runtime-node-copy"><div><strong>{node.displayName}</strong><span className={`document-status ${nodeTone(node.status)}`}>{humanize(node.status)}</span></div><p>{node.baseUrl}</p><small>{node.hostname ?? node.expectedHostname ?? "Awaiting hostname"} · {node.hermesVersion ?? "Version pending"}</small></div>
         <dl><div><dt>Last heartbeat</dt><dd>{node.lastSeenAt ? new Date(node.lastSeenAt).toLocaleString() : "Never"}</dd></div><div><dt>OrcaSynapse → Hermes</dt><dd>{node.serviceConnectionStatus ? humanize(node.serviceConnectionStatus) : "Pending"}</dd></div><div><dt>Identity</dt><dd>{node.identityFingerprint ? `${node.identityFingerprint.slice(0, 12)}…` : "Not enrolled"}</dd></div></dl>
@@ -220,43 +221,70 @@ export function RuntimeNodesPanel({
       <div className="runtime-network-note"><strong>The installer does not manage your firewall.</strong><p>Apply customer network policy before Production activation. Do not expose port 8642 to user or internet networks.</p></div>
     </aside>
 
-    {editorOpen && inferenceReady && <div className="agent-editor-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setEditorOpen(false); }}><section className="setup-evidence-editor runtime-node-editor">
-      <header><div><p className="font-mono text-micro uppercase text-faint">Agentic System</p><h2>{invitation ? "Run this on VM2" : "Generate the VM2 installer"}</h2></div><button type="button" aria-label="Close" onClick={() => setEditorOpen(false)}>×</button></header>
-      {!invitation ? <form onSubmit={(event) => void issueInvitation(event)}>
+    {editorOpen && inferenceReady && <Drawer
+      open
+      kicker="Agentic System"
+      title={invitation ? "Run this on VM2" : "Generate the VM2 installer"}
+      onClose={() => setEditorOpen(false)}
+      footer={invitation
+        ? <div className="flex justify-end gap-2">
+            <Button onClick={() => setInvitation(null)}>Issue another</Button>
+            <Button variant="primary" onClick={() => { setEditorOpen(false); void load(); }}>Done</Button>
+          </div>
+        : <div className="flex justify-end gap-2">
+            <Button onClick={() => setEditorOpen(false)}>Cancel</Button>
+            <Button variant="primary" form="vm2-installer-form" type="submit" disabled={busy !== null || productionArtifactBlocked}>
+              {busy === "invite" ? "Preparing installer…" : productionArtifactBlocked ? "Review production options" : "Generate install command"}
+            </Button>
+          </div>}
+    >
+      {!invitation ? <form id="vm2-installer-form" className="ops-form grid gap-4" onSubmit={(event) => void issueInvitation(event)}>
         <p className="runtime-form-intro">OrcaSynapse will pre-seed Hermes with the active AI Inference route. No inference key, SSH password, or private node key is exposed to the browser.</p>
         <div className="runtime-install-preview"><span>1</span><div><strong>Tell OrcaSynapse how to reach VM2</strong><small>Use the private address accessible from the dashboard host.</small></div><span>2</span><div><strong>Run one generated command</strong><small>The installer handles Hermes, credentials, and registration.</small></div></div>
-        <label>VM2 private address<input required type="url" value={form.baseUrl} onChange={(event) => setForm({ ...form, baseUrl: event.target.value })} /><small>Normally <code>http://VM2-IP:8642</code>. Port 8642 must be reachable only from OrcaSynapse.</small></label>
+        <label><span>VM2 private address</span><input required type="url" value={form.baseUrl} onChange={(event) => setForm({ ...form, baseUrl: event.target.value })} /><small>Normally <code>http://VM2-IP:8642</code>. Port 8642 must be reachable only from OrcaSynapse.</small></label>
         <details className="runtime-deployment-details">
           <summary><span><strong>Advanced deployment options</strong><small>Identity, release pins, and network overrides</small></span><b>+</b></summary>
           <div>
-            <label>Node name<input required minLength={2} maxLength={120} value={form.displayName} onChange={(event) => setForm({ ...form, displayName: event.target.value })} /></label>
-            <label>Node slug<input required pattern="[a-z0-9]+(?:-[a-z0-9]+)*" minLength={2} maxLength={64} value={form.slug} onChange={(event) => setForm({ ...form, slug: event.target.value })} /></label>
-            <label>Expected VM hostname <em>Optional</em><input maxLength={253} value={form.expectedHostname ?? ""} placeholder="hermes-01.internal" onChange={(event) => setForm({ ...form, expectedHostname: event.target.value })} /><small>When set, enrollment fails if VM2 reports a different hostname.</small></label>
-            <label>OrcaSynapse address visible to VM2<input required type="url" value={form.controlPlaneUrl} onChange={(event) => setForm({ ...form, controlPlaneUrl: event.target.value })} /></label>
-            <label>Hermes image<input required maxLength={500} value={form.hermesImage} onChange={(event) => setForm({ ...form, hermesImage: event.target.value })} /><small>Pin with <code>@sha256:…</code> after acceptance testing.</small></label>
+            <label><span>Node name</span><input required minLength={2} maxLength={120} value={form.displayName} onChange={(event) => setForm({ ...form, displayName: event.target.value })} /></label>
+            <label><span>Node slug</span><input required pattern="[a-z0-9]+(?:-[a-z0-9]+)*" minLength={2} maxLength={64} value={form.slug} onChange={(event) => setForm({ ...form, slug: event.target.value })} /></label>
+            <label><span>Expected VM hostname (optional)</span><input maxLength={253} value={form.expectedHostname ?? ""} placeholder="hermes-01.internal" onChange={(event) => setForm({ ...form, expectedHostname: event.target.value })} /><small>When set, enrollment fails if VM2 reports a different hostname.</small></label>
+            <label><span>OrcaSynapse address visible to VM2</span><input required type="url" value={form.controlPlaneUrl} onChange={(event) => setForm({ ...form, controlPlaneUrl: event.target.value })} /></label>
+            <label><span>Hermes image</span><input required maxLength={500} value={form.hermesImage} onChange={(event) => setForm({ ...form, hermesImage: event.target.value })} /><small>Pin with <code>@sha256:…</code> after acceptance testing.</small></label>
           </div>
         </details>
         {targetEnvironment === "PRODUCTION" && (unpinned || insecureControlPlane) && <div className="runtime-invite-warning"><strong>Production hardening required</strong><ul>{unpinned && <li>The Hermes image is tagged, not digest-pinned.</li>}{insecureControlPlane && <li>The OrcaSynapse enrollment route uses HTTP rather than HTTPS.</li>}</ul></div>}
         {targetEnvironment !== "PRODUCTION" && (unpinned || insecureControlPlane) && <div className="runtime-development-note">Development release defaults are selected. Exact production pins remain available under Advanced deployment options.</div>}
-        <footer><button className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded border border-border-strong bg-raised px-3.5 text-body font-medium text-text transition-colors hover:border-faint disabled:cursor-not-allowed disabled:opacity-40" type="button" onClick={() => setEditorOpen(false)}>Cancel</button><button className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded border border-accent bg-accent px-3.5 text-body font-medium text-[#0a0a0b] transition-colors hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-40" disabled={busy !== null || productionArtifactBlocked} type="submit">{busy === "invite" ? "Preparing installer…" : productionArtifactBlocked ? "Review production options" : "Generate install command"}</button></footer>
       </form> : <div className="runtime-install-steps">
         <div className="runtime-success-mark">✓</div><p>The enrollment claim expires <strong>{new Date(invitation.bundle.expiresAt).toLocaleString()}</strong> and can be used only once.</p>
         <ol><li><span>1</span><div><strong>Run one command on VM2</strong><small>OrcaSynapse serves the installer directly; it connects back only to this control-plane origin.</small><code>{agenticNodeInstallCommand(invitation.bundle.controlPlaneUrl)}</code></div></li><li><span>2</span><div><strong>Paste the claim when prompted</strong><small>The installer reads it from the terminal with hidden input and sends it in a redacted POST body—not in the URL or shell history.</small><code>{invitation.bundle.token}</code><button className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded border border-border-strong bg-raised px-3.5 text-body font-medium text-text transition-colors hover:border-faint disabled:cursor-not-allowed disabled:opacity-40" type="button" onClick={() => void navigator.clipboard.writeText(invitation.bundle.token)}>Copy claim</button></div></li><li><span>3</span><div><strong>Watch the node come online</strong><small>OrcaSynapse installs Hermes, applies the approved route and policy, then starts signed health reporting.</small><button className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded border border-border-strong bg-raised px-3.5 text-body font-medium text-text transition-colors hover:border-faint disabled:cursor-not-allowed disabled:opacity-40" type="button" onClick={downloadBundle}>Download JSON fallback</button></div></li></ol>
         <div className="runtime-network-note"><strong>What happens next</strong><p>VM2 generates its own private identity, installs Hermes, exchanges the claim once, and appears Online here. OrcaSynapse never receives the private signing key or a reusable VM credential.</p></div>
-        <footer><button className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded border border-border-strong bg-raised px-3.5 text-body font-medium text-text transition-colors hover:border-faint disabled:cursor-not-allowed disabled:opacity-40" type="button" onClick={() => setInvitation(null)}>Issue another</button><button className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded border border-accent bg-accent px-3.5 text-body font-medium text-[#0a0a0b] transition-colors hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-40" type="button" onClick={() => { setEditorOpen(false); void load(); }}>Done</button></footer>
       </div>}
-    </section></div>}
+    </Drawer>}
 
-    {removalNode && <div className="agent-editor-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && busy === null) setRemovalNode(null); }}><section className="setup-evidence-editor runtime-node-editor runtime-removal-editor" role="dialog" aria-modal="true" aria-labelledby="runtime-removal-title">
-      <header><div><p className="font-mono text-micro uppercase text-faint">Permanent decommission</p><h2 id="runtime-removal-title">Remove {removalNode.displayName}</h2></div><button type="button" aria-label="Close" disabled={busy !== null} onClick={() => setRemovalNode(null)}>×</button></header>
+    {removalNode && <Dialog
+      open
+      kicker="Permanent decommission"
+      title={`Remove ${removalNode.displayName}`}
+      onClose={() => { if (busy === null) setRemovalNode(null); }}
+      className="ops-form"
+      footer={<div className="flex justify-end gap-2">
+        <Button disabled={busy !== null} onClick={() => setRemovalNode(null)}>Cancel</Button>
+        <Button
+          variant="danger"
+          disabled={busy !== null || removalConfirmation !== removalNode.slug || (Boolean(removalNode.enrolledAt) && !hostDestructionConfirmed)}
+          onClick={() => void remove()}
+        >
+          {busy === `REMOVE-${removalNode.id}` ? "Removing…" : "Remove permanently"}
+        </Button>
+      </div>}
+    >
       <div className="runtime-removal-warning"><strong>This cannot be undone</strong><p>Revocation stopped future trust. Decommissioning now destroys the VM2 runtime and then erases its control-plane identity, enrollment history, nonces, and generated Hermes connection. The audit record remains.</p></div>
       {removalNode.enrolledAt ? <ol className="runtime-removal-steps">
         <li><span>1</span><div><strong>Run the purge on the enrolled VM2</strong><small>The script shows its exact scope and requires typing <code>DESTROY</code>. It does not uninstall Docker or touch unrelated containers.</small><code>{agenticNodeRemovalCommand(typeof window === "undefined" ? "https://orcasynapse.internal" : window.location.origin)}</code><button className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded border border-border-strong bg-raised px-3.5 text-body font-medium text-text transition-colors hover:border-faint disabled:cursor-not-allowed disabled:opacity-40" type="button" onClick={() => void navigator.clipboard.writeText(agenticNodeRemovalCommand(window.location.origin))}>Copy command</button></div></li>
         <li><span>2</span><div><strong>Confirm the host-side result</strong><small>OrcaSynapse deliberately has no standing SSH or Docker access, so this confirmation is your administrative attestation.</small><label className="runtime-removal-attestation"><input type="checkbox" checked={hostDestructionConfirmed} onChange={(event) => setHostDestructionConfirmed(event.target.checked)} /><span>The remover reported “Agentic System removed from this VM,” or the VM was destroyed.</span></label></div></li>
       </ol> : <div className="runtime-development-note">This record never completed enrollment, so there is no managed VM2 installation to purge.</div>}
-      <label>Type <code>{removalNode.slug}</code> to remove it permanently<input autoComplete="off" spellCheck={false} value={removalConfirmation} onChange={(event) => setRemovalConfirmation(event.target.value)} /></label>
+      <label><span>Type {removalNode.slug} to remove it permanently</span><input autoComplete="off" spellCheck={false} value={removalConfirmation} onChange={(event) => setRemovalConfirmation(event.target.value)} /></label>
       {error && <div className="documents-alert" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
-      <footer><button className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded border border-border-strong bg-raised px-3.5 text-body font-medium text-text transition-colors hover:border-faint disabled:cursor-not-allowed disabled:opacity-40" type="button" disabled={busy !== null} onClick={() => setRemovalNode(null)}>Cancel</button><button className="danger-button" type="button" disabled={busy !== null || removalConfirmation !== removalNode.slug || (Boolean(removalNode.enrolledAt) && !hostDestructionConfirmed)} onClick={() => void remove()}>{busy === `REMOVE-${removalNode.id}` ? "Removing…" : "Remove permanently"}</button></footer>
-    </section></div>}
+    </Dialog>}
   </div>;
 }

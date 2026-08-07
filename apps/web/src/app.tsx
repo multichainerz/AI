@@ -278,6 +278,32 @@ function App() {
     if (metrics) setChatMetrics(metrics);
   }, []);
 
+  /*
+   * Keeps the session alive while the password must be changed.
+   *
+   * Every other authenticated screen touches the session constantly through the
+   * reconciler below, which slides the server's idle window. This one is gated
+   * out of it — `unlocked` is false until the password changes — so the single
+   * screen that asks the operator to open a password manager, generate a
+   * passphrase and type it three times was also the only screen whose session
+   * quietly expired underneath them. Submitting then failed as
+   * "the password could not be changed with the supplied credentials", which
+   * reads as a wrong password and sends them round the same loop again.
+   *
+   * `GET /admin/session` is deliberately the call: it needs no scope, so it
+   * works in exactly this state, and re-reading the principal means an expiry
+   * that does happen surfaces here rather than at submit.
+   */
+  useEffect(() => {
+    if (!passwordChangePending) return;
+    const timer = window.setInterval(() => {
+      void getAdministratorSession()
+        .then((session) => setAdminSession(session))
+        .catch(() => undefined);
+    }, 4 * 60_000);
+    return () => window.clearInterval(timer);
+  }, [passwordChangePending]);
+
   useEffect(() => {
     if (!unlocked) {
       setAgentRuntime(null);

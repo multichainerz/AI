@@ -49,7 +49,9 @@ class MemorySessionManager implements AdminSessionManager {
       : null;
   }
 
-  async changeLocalPassword() {
+  // Declared nullable to match the interface: a test overrides it with a
+  // refusal, which is the only way to reach the wrong-password branch.
+  async changeLocalPassword(): Promise<IssuedAdminSession | null> {
     return { token: SESSION_TOKEN, principal };
   }
 
@@ -145,6 +147,44 @@ describe("administrator session routes", () => {
     expect(changed.headers["set-cookie"]).toContain(`${ADMIN_SESSION_COOKIE}=${SESSION_TOKEN}`);
     expect(recovered.statusCode).toBe(200);
     expect(recovered.headers["set-cookie"]).toContain(`${ADMIN_SESSION_COOKIE}=${SESSION_TOKEN}`);
+  });
+
+  it("says the session expired rather than blaming the password", async () => {
+    // The first screen a new installation shows. An operator copying a
+    // generated password out of a vault, told "the current password is
+    // incorrect" when the session merely timed out, retypes the same correct
+    // password and concludes the product is broken.
+    const { app } = await sessionApp();
+    const response = await app.inject({
+      method: "PUT",
+      url: "/api/v1/admin/session/password",
+      headers: { cookie: `${ADMIN_SESSION_COOKIE}=${"x".repeat(43)}` },
+      payload: { currentPassword: "temporary-password", newPassword: "replacement-password" },
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toMatchObject({ error: "SESSION_EXPIRED" });
+    expect(response.json().message).toMatch(/sign in again/i);
+    expect(response.headers["set-cookie"]).toBeUndefined();
+  });
+
+  it("still refuses a wrong current password on a live session", async () => {
+    const sessionManager = new MemorySessionManager();
+    sessionManager.changeLocalPassword = vi.fn(async () => null);
+    const app = await createApp({ logger: false, runtime: { bootstrapState: "READY", sessionManager } });
+    apps.push(app);
+
+    const response = await app.inject({
+      method: "PUT",
+      url: "/api/v1/admin/session/password",
+      headers: { cookie: `${ADMIN_SESSION_COOKIE}=${SESSION_TOKEN}` },
+      payload: { currentPassword: "not-the-temporary-password", newPassword: "replacement-password" },
+    });
+
+    expect(response.statusCode).toBe(401);
+    // A live session that fails is the password, and now says so.
+    expect(response.json()).toMatchObject({ error: "UNAUTHORIZED" });
+    expect(response.json().message).toMatch(/current password is incorrect/i);
   });
 
   it("returns and revokes the current administrator session", async () => {

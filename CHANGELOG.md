@@ -5,6 +5,55 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.78.0 — 2026-08-07
+
+Two bugs in the first ten minutes of a new installation.
+
+**The change-password screen signed the operator out while they were on it.**
+`passwordChangeRequired` makes `unlocked` false, and the 15-second reconciler
+that keeps every other screen's session alive is gated on `unlocked`. So the one
+screen that asks an operator to open a password vault, generate a passphrase and
+type it three times was the only screen that never touched its session — while
+the server's 15-minute idle window ran. Submitting then failed, and the message
+was *"the password could not be changed with the supplied credentials"*, which
+reads as a wrong password. Signing in again with the same correct temporary
+password restarted the same fifteen minutes, which is why it kept happening.
+
+A keepalive now re-reads `GET /admin/session` every four minutes while the
+password change is pending. That endpoint needs no scope, so it works in exactly
+this state, and re-reading the principal means an expiry that does happen
+surfaces on the screen rather than at submit.
+
+The route also tells the two refusals apart now. An expired session answers
+`SESSION_EXPIRED` — *"sign in again to set a new password"* — and a live session
+that fails answers *"the current password is incorrect"*, which is the only case
+where that sentence is true. Checking the session first also slides its idle
+window, so a submit arriving inside the window can no longer be refused for
+staleness.
+
+**The VM2 installer generator rendered as unstyled HTML.**
+`runtime-nodes-panel.tsx` was the one file the design-system migration missed —
+verified: every other view imports the primitives, this one imported none. Its
+layout lived in `.setup-evidence-editor` and `.setup-empty`, both deleted when
+`styles.css` was cut from 2,020 lines to 700, and nothing caught it because the
+file had no test of any kind. That single missing class explains every symptom:
+no max-width, so the panel spanned the viewport; no header flex, so the close
+control dropped onto its own line; no label grid, so *"VM2 private address"*
+collided with its own input; no padding, so the hint ran off the edge.
+
+Both modals are rebuilt on `Drawer` and `Dialog`, which supply the width,
+padding and header layout the deleted rule used to — plus the focus trap,
+Escape handling and scroll lock the hand-rolled backdrop never had. The two
+empty states become `EmptyState`; one of them is the first thing a fresh
+installation shows. Labels now carry the `<span>` that `.ops-form` styles, and
+field hints get a size of their own instead of inheriting the panel's.
+
+The panel gains its first tests — seven — including one asserting the dialog
+closes on Escape, which it could not do before.
+
+1,028 tests green. Every gate passes: release consistency, docker build closure,
+CSP closure, installer UI sync, and `bash -n` across the installer family.
+
 ## ai-v1.77.0 — 2026-08-07
 
 VM2 declares the dependency its reconciler has always had.
