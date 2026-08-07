@@ -22,11 +22,11 @@ vi.mock("./api.js", async () => {
 
 const { RuntimeNodesPanel } = await import("./runtime-nodes-panel.js");
 
-async function panel(inferenceReady = true) {
+async function panel(inferenceReady = true, targetEnvironment: "DEVELOPMENT" | "PRODUCTION" = "DEVELOPMENT") {
   render(
     <main>
       <RuntimeNodesPanel
-        targetEnvironment="DEVELOPMENT"
+        targetEnvironment={targetEnvironment}
         inferenceReady={inferenceReady}
         onConfigureInference={vi.fn()}
         onSessionExpired={vi.fn()}
@@ -98,5 +98,39 @@ describe("the installer generator", () => {
   it("renders no inline style, which the CSP would refuse in the built container", async () => {
     await open();
     expect(document.body.innerHTML).not.toMatch(/\sstyle="/);
+  });
+});
+
+describe("the production artifact pin", () => {
+  // The runtime is pinned to a git commit rather than an image digest, and the
+  // 40-hex test is dashboard-only logic: the API refuses an unpinned PRODUCTION
+  // enrollment too, but by then the operator has already left this form.
+  async function openProduction() {
+    await panel(true, "PRODUCTION");
+    fireEvent.click(screen.getByRole("button", { name: "Generate VM2 installer" }));
+    return screen.findByRole("dialog");
+  }
+
+  it("accepts the default commit without flagging the artifact", async () => {
+    const dialog = await openProduction();
+    // jsdom serves the page over http, so the HTTPS bullet is present either
+    // way. Only the commit bullet is under test.
+    expect(within(dialog).queryByText(/not pinned to a 40-character commit/)).toBeNull();
+    expect(within(dialog).getByLabelText(/Hermes commit/)).toHaveProperty("value", "c015663b215c0e14de4295346b0727db602cbb1d");
+  });
+
+  it("flags a branch name, a short SHA, and the image reference it replaced", async () => {
+    const dialog = await openProduction();
+    const commit = within(dialog).getByLabelText(/Hermes commit/);
+    for (const rejected of ["main", "c015663b215c", "nousresearch/hermes-agent:latest"]) {
+      fireEvent.change(commit, { target: { value: rejected } });
+      expect(
+        within(dialog).queryByText(/not pinned to a 40-character commit/),
+        `expected ${rejected} to be flagged as unpinned`,
+      ).toBeTruthy();
+    }
+    fireEvent.change(commit, { target: { value: "C015663B215C0E14DE4295346B0727DB602CBB1D" } });
+    // Uppercase is the same commit; the field lowercases rather than refusing.
+    expect(within(dialog).queryByText(/not pinned to a 40-character commit/)).toBeNull();
   });
 });

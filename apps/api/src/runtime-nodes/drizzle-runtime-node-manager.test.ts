@@ -83,7 +83,7 @@ function invitationInput(overrides: Record<string, unknown> = {}) {
     displayName: "Hermes VM2",
     baseUrl: "https://hermes.internal",
     controlPlaneUrl: CONTROL_PLANE,
-    hermesImage: "ghcr.io/example/hermes:1.0.0",
+    hermesCommit: "c015663b215c0e14de4295346b0727db602cbb1d",
     expiresInMinutes: 60,
     ...overrides,
   } as never;
@@ -199,10 +199,13 @@ describe("DrizzleHermesRuntimeNodeManager invitations", () => {
       .values({ id: "global", targetEnvironment: "PRODUCTION" })
       .onConflictDoUpdate({ target: platformArchitectureDecision.id, set: { targetEnvironment: "PRODUCTION" } });
 
-    await expect(manager().createInvitation(principal, invitationInput()))
-      .rejects.toThrow(/digest-pinned Hermes image/);
     await expect(manager().createInvitation(principal, invitationInput({
-      hermesImage: "ghcr.io/example/hermes@sha256:" + "a".repeat(64),
+      // Abbreviated: looks pinned, is not, and the contract's own validator
+      // would refuse it -- this proves the gate refuses it too, so a caller
+      // bypassing the schema cannot enrol an unpinned production node.
+      hermesCommit: "c015663b215c0e14de4295346b0727db602cbb1d".slice(0, 12),
+    }))).rejects.toThrow(/commit-pinned Hermes runtime/);
+    await expect(manager().createInvitation(principal, invitationInput({
       controlPlaneUrl: "http://orcasynapse.example",
     }))).rejects.toThrow(/HTTPS OrcaSynapse origin/);
   });

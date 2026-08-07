@@ -8,46 +8,53 @@ import {
 
 describe("Hermes runtime-node contracts", () => {
   it("accepts a bounded one-time invitation definition", () => {
-    const invitation = createHermesNodeInvitationSchema.safeParse({
+    const base = {
       slug: "hermes-runtime-01",
       displayName: "Hermes Runtime 01",
       baseUrl: "http://10.0.0.12:8642",
       controlPlaneUrl: "https://orcasynapse.internal",
-      hermesImage: `nousresearch/hermes-agent@sha256:${"a".repeat(64)}`,
       expiresInMinutes: 30,
-    });
-    expect(invitation.success).toBe(true);
+    };
     expect(createHermesNodeInvitationSchema.safeParse({
-      slug: "hermes-runtime-mirror",
-      displayName: "Hermes Runtime Mirror",
-      baseUrl: "http://10.0.0.13:8642",
-      controlPlaneUrl: "https://orcasynapse.internal",
-      hermesImage: `registry.internal:5000/nous/hermes:accepted@sha256:${"b".repeat(64)}`,
-      expiresInMinutes: 30,
+      ...base,
+      hermesCommit: "c015663b215c0e14de4295346b0727db602cbb1d",
     }).success).toBe(true);
+
+    // Uppercase is the same commit, so it is normalized rather than refused --
+    // GitHub renders SHAs either way and an operator will paste both.
+    expect(createHermesNodeInvitationSchema.parse({
+      ...base,
+      hermesCommit: "c015663b215c0e14de4295346b0727db602cbb1d".toUpperCase(),
+    }).hermesCommit).toBe("c015663b215c0e14de4295346b0727db602cbb1d");
+
+    // An abbreviated SHA is the mistake worth catching: it looks pinned, it
+    // works on the machine that typed it, and it can become ambiguous later.
     expect(createHermesNodeInvitationSchema.safeParse({
-      slug: "Hermes Runtime",
-      displayName: "Hermes Runtime 01",
-      baseUrl: "ssh://10.0.0.12",
-      controlPlaneUrl: "https://orcasynapse.internal",
-      hermesImage: "nousresearch/hermes-agent",
+      ...base,
+      hermesCommit: "c015663b215c0e14de4295346b0727db602cbb1d".slice(0, 12),
+    }).success).toBe(false);
+    // A branch is not a pin at all.
+    expect(createHermesNodeInvitationSchema.safeParse({ ...base, hermesCommit: "main" }).success).toBe(false);
+    // The image reference this replaced must not slip through.
+    expect(createHermesNodeInvitationSchema.safeParse({
+      ...base,
+      hermesCommit: "nousresearch/hermes-agent:latest",
+    }).success).toBe(false);
+
+    expect(createHermesNodeInvitationSchema.safeParse({
+      ...base, slug: "Hermes Runtime", baseUrl: "ssh://10.0.0.12", hermesCommit: "c015663b215c0e14de4295346b0727db602cbb1d",
     }).success).toBe(false);
     expect(createHermesNodeInvitationSchema.safeParse({
-      slug: "hermes-runtime-01",
-      displayName: "Hermes Runtime 01",
+      ...base,
       baseUrl: "http://10.0.0.12:8642/admin",
       controlPlaneUrl: "https://orcasynapse.internal/setup?token=unsafe",
-      hermesImage: "nousresearch/hermes-agent",
+      hermesCommit: "c015663b215c0e14de4295346b0727db602cbb1d",
     }).success).toBe(false);
-    const safeDefault = createHermesNodeInvitationSchema.parse({
-      slug: "hermes-runtime-default",
-      displayName: "Hermes Runtime Default",
-      baseUrl: "http://10.0.0.14:8642",
-      controlPlaneUrl: "https://orcasynapse.internal",
-      hermesImage: "nousresearch/hermes-agent:latest",
-      expiresInMinutes: 30,
-    });
-    expect(safeDefault.hermesImage).toBe("nousresearch/hermes-agent:latest");
+
+    // Defaulted rather than required: an operator who does not care still gets
+    // a pinned runtime, which is the whole point.
+    const defaulted = createHermesNodeInvitationSchema.parse({ ...base });
+    expect(defaulted.hermesCommit).toMatch(/^[0-9a-f]{40}$/);
   });
 
   it("keeps enrollment identity and runtime API credentials explicit", () => {
@@ -58,7 +65,7 @@ describe("Hermes runtime-node contracts", () => {
       publicKeyPem: `-----BEGIN PUBLIC KEY-----\n${"A".repeat(80)}\n-----END PUBLIC KEY-----`,
       controlPlaneUrl: "https://orcasynapse.internal",
       apiKey: "k".repeat(64),
-      hermesVersion: "nousresearch/hermes-agent:latest",
+      hermesVersion: "c015663b215c0e14de4295346b0727db602cbb1d",
       installerVersion: "ai-v1.7.0",
       capabilities: ["gateway-api", "signed-heartbeat"],
     };
@@ -66,38 +73,6 @@ describe("Hermes runtime-node contracts", () => {
     expect(enrollHermesNodeSchema.safeParse({ ...input, apiKey: "short" }).success).toBe(false);
   });
 
-  it("accepts digest-pinned image references from private registry mirrors", () => {
-    // A mirrored, digest-pinned reference legitimately exceeds the old
-    // 120-character cap; the column and contract both allow 256 now.
-    const pinned = `registry.internal.example:5000/mirrors/ai/nousresearch/hermes-agent:2026-08-01@sha256:${"a".repeat(64)}`;
-    expect(pinned.length).toBeGreaterThan(120);
-    const input = {
-      nodeId: "9de260d7-bc51-4558-9d20-06916d393072",
-      token: "t".repeat(43),
-      hostname: "hermes-01.internal",
-      publicKeyPem: `-----BEGIN PUBLIC KEY-----\n${"A".repeat(80)}\n-----END PUBLIC KEY-----`,
-      controlPlaneUrl: "https://orcasynapse.internal",
-      apiKey: "k".repeat(64),
-      hermesVersion: pinned,
-      installerVersion: "ai-v1.27.0",
-      capabilities: ["gateway-api", "signed-heartbeat"],
-    };
-    expect(enrollHermesNodeSchema.safeParse(input).success).toBe(true);
-    expect(hermesNodeHeartbeatSchema.safeParse({
-      observedAt: "2026-08-05T00:00:00.000Z",
-      status: "ONLINE",
-      hermesVersion: pinned,
-      capabilities: [],
-    }).success).toBe(true);
-    // The widened cap is still a cap.
-    expect(enrollHermesNodeSchema.safeParse({ ...input, hermesVersion: "r".repeat(257) }).success).toBe(false);
-    expect(hermesNodeHeartbeatSchema.safeParse({
-      observedAt: "2026-08-05T00:00:00.000Z",
-      status: "ONLINE",
-      hermesVersion: "r".repeat(257),
-      capabilities: [],
-    }).success).toBe(false);
-  });
 
   it("rejects unbounded heartbeat and lifecycle input", () => {
     expect(hermesNodeHeartbeatSchema.safeParse({

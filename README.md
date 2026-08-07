@@ -68,7 +68,7 @@ Production environments can pin an approved commit and archive checksum. See the
 4. **Create the first agent** from **Hermes Profiles**. In Development, **Create & activate** verifies VM2, activates the immutable profile, enables execution, and makes Chat ready in one action.
 5. **Add Enterprise Access** when you're ready, by connecting OIDC or Microsoft Entra ID and mapping groups to roles.
 
-VM2 generates its own identity, consumes the claim once, receives a scoped inference route, applies the managed guardrail baseline, and starts signed health reporting. An interrupted install resumes from protected local state without another claim. OrcaSynapse never needs the VM's SSH password or Docker socket.
+VM2 generates its own identity, consumes the claim once, receives a scoped inference route, applies the managed guardrail baseline, and starts signed health reporting. Hermes runs as an ordinary systemd service pinned to an approved commit, so `systemctl` and `journalctl` work the way your operators already expect. An interrupted install resumes from protected local state without another claim. OrcaSynapse never needs the VM's SSH password or a remote execution channel.
 
 ## What you get
 
@@ -90,7 +90,7 @@ VM2 generates its own identity, consumes the claim once, receives a scoped infer
 
 - **OrcaSynapse** owns identity, authorization, policy, encrypted configuration, audit, and inference access.
 - **PostgreSQL** owns control-plane state plus extracted knowledge chunks and their embeddings — never original files, never model weights.
-- **Hermes** runs isolated, with only approved model, memory, and tool capabilities. It never reaches PostgreSQL, Docker, or the open network.
+- **Hermes** runs isolated, with only approved model, memory, and tool capabilities. It runs as an unprivileged service account under a hardened systemd unit — no new privileges, a read-only system tree, a capability bounding set, a restricted set of address families, and write access limited to its own data directory. It never reaches PostgreSQL, host service control, or the open network.
 - **VM2** runs the agent runtime and nothing else. It holds no durable store: knowledge and agent memory are served and governed entirely by OrcaSynapse, and never transit VM2.
 - **Inference credentials** stay on VM1. Agent nodes get a bounded, node-scoped gateway credential.
 

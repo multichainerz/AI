@@ -69,7 +69,7 @@ function manager(): HermesRuntimeNodeManager {
         token: "t".repeat(43),
         controlPlaneUrl: input.controlPlaneUrl,
         hermesBaseUrl: input.baseUrl,
-        hermesImage: input.hermesImage,
+        hermesCommit: input.hermesCommit,
         expiresAt: "2026-07-30T00:30:00.000Z",
       },
     })),
@@ -80,7 +80,7 @@ function manager(): HermesRuntimeNodeManager {
       token,
       controlPlaneUrl: "https://orcasynapse.internal",
       hermesBaseUrl: node.baseUrl,
-      hermesImage: "nousresearch/hermes-agent:latest",
+      hermesCommit: "c015663b215c0e14de4295346b0727db602cbb1d",
       expiresAt: "2026-07-30T00:30:00.000Z",
     })),
     enroll: vi.fn(async () => ({
@@ -142,9 +142,21 @@ describe("Hermes runtime-node routes", () => {
     expect(remover.headers["content-disposition"]).toBe("inline; filename=remove-agentic-node.sh");
     expect(remover.body).toContain("VM2 SECURE DECOMMISSION");
     expect(remover.body).toContain("Type %bDESTROY%b to continue");
-    expect(remover.body).toContain("validate_container_ownership");
+    // The purge is irreversible, so the remover proves the unit it is about to
+    // destroy is ours before touching it.
+    expect(remover.body).toContain("validate_service_ownership");
     expect(remover.body).toContain('rm -rf --one-file-system -- "${STATE_ROOT}"');
     expect(remover.body).not.toMatch(/docker system prune|apt(?:-get)? remove|rm -rf \/(?:\s|$)/);
+    // What the route serves must be the systemd installer, not a stale Docker
+    // one: the served script is the only copy an operator ever runs. Comments
+    // are stripped first so the assertion binds to what executes, leaving prose
+    // free to explain what the unit replaced.
+    expect(ready.body).toContain("orcasynapse-hermes.service");
+    const executedInstaller = ready.body
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("#"))
+      .join("\n");
+    expect(executedInstaller).not.toMatch(/\bdocker\b/);
 
     for (const state of [
       { ready: false, dashboardReady: false, inferenceReady: true, invitationReady: true },
@@ -200,7 +212,7 @@ describe("Hermes runtime-node routes", () => {
         displayName: "Hermes Runtime 01",
         baseUrl: "http://10.0.0.12:8642",
         controlPlaneUrl: "https://orcasynapse.internal",
-        hermesImage: "nousresearch/hermes-agent:latest",
+        hermesCommit: "c015663b215c0e14de4295346b0727db602cbb1d",
         expiresInMinutes: 30,
       },
     });
@@ -208,7 +220,7 @@ describe("Hermes runtime-node routes", () => {
     expect(invitation.json()).toMatchObject({ bundle: { format: "orcasynapse-hermes-enrollment/v1", token: "t".repeat(43) } });
     expect(runtimeNodeManager.createInvitation).toHaveBeenCalledWith(
       expect.objectContaining({ id: ADMIN_ID }),
-      expect.objectContaining({ slug: node.slug, hermesImage: "nousresearch/hermes-agent:latest" }),
+      expect.objectContaining({ slug: node.slug, hermesCommit: "c015663b215c0e14de4295346b0727db602cbb1d" }),
     );
 
     const bootstrap = await app.inject({

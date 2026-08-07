@@ -48,7 +48,7 @@ Hermes runs in an isolated environment and can reach only:
 - the OrcaSynapse-governed MCP gateway when an approved profile grants it (implemented, but unreachable against current Hermes builds — see ARCHITECTURE);
 - explicitly allowlisted runtime destinations.
 
-OrcaSynapse does not give Hermes PostgreSQL credentials, Docker control, host filesystem access, enterprise-storage administration, or unrestricted outbound access.
+OrcaSynapse does not give Hermes PostgreSQL credentials, host service control, host filesystem access, enterprise-storage administration, or unrestricted outbound access.
 
 ### Memory
 
@@ -84,15 +84,15 @@ The public GitHub bootstrap resolves an immutable OrcaSynapse commit and starts 
 The dashboard creates a short-lived one-use enrollment claim. The customer downloads one script from their own OrcaSynapse origin and executes it on a clean Ubuntu systemd VM. The script resolves the non-secret installation profile from OrcaSynapse, then:
 
 1. creates an Ed25519 runtime identity;
-2. starts a constrained official Hermes container;
+2. installs Hermes at the approved commit and starts it as a constrained systemd service;
 3. enrolls it with OrcaSynapse;
 4. receives an OrcaSynapse inference-gateway route, alias, and node key;
 5. applies the OrcaSynapse-managed policy and guardrail baseline;
 6. enables signed heartbeats.
 
-The node persists a root-only recovery journal immediately after enrollment so all subsequent provisioning steps can be resumed without issuing another claim. Production invitations require a digest-pinned Hermes image and an HTTPS OrcaSynapse origin.
+The node persists a root-only recovery journal immediately after enrollment so all subsequent provisioning steps can be resumed without issuing another claim. Production invitations require a commit-pinned Hermes runtime and an HTTPS OrcaSynapse origin.
 
-OrcaSynapse retains no SSH password/key and no remote Docker socket. Upgrades use a separately signed/pinned release workflow rather than standing remote administration.
+OrcaSynapse retains no SSH password/key and no remote execution channel. Upgrades use a separately pinned release workflow rather than standing remote administration: a new invitation names a new Hermes commit and the node re-enrolls.
 
 ## Security requirements
 

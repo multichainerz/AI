@@ -176,6 +176,13 @@
       "when": 1786098902172,
       "tag": "0024_benchmark_lease",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1786180000000,
+      "tag": "0025_hermes_commit_pin",
+      "breakpoints": true
     }
   ]
 }

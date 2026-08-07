@@ -7,12 +7,14 @@
 # the systemd timers and preseeds the toolset allowlist -- had never been
 # executed by anything, so a break in it reached a customer's VM first.
 #
-# The stubs are deliberately shallow but the plumbing is real: a local registry
-# so `docker pull` and digest resolution actually run, a real Ed25519
-# control-plane key so the desired-state signature is genuinely verified, and a
-# real container serving /health so the readiness waits are not skipped.
+# The stubs are deliberately shallow but the plumbing is real: Hermes is
+# genuinely installed at the pinned commit and the pin is read back from the
+# checkout, a real Ed25519 control-plane key so the desired-state signature is
+# actually verified, and a real service answering /health so the readiness waits
+# are not skipped.
 #
-# Needs Ubuntu with systemd, Docker and root. WSL2 with `systemd=true` counts.
+# Needs Ubuntu LTS with systemd and root, plus egress to GitHub and PyPI for the
+# Hermes install. WSL2 with `systemd=true` counts.
 set -Eeuo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
@@ -21,11 +23,9 @@ WORK="$(mktemp -d /tmp/orcasynapse-smoke.XXXXXX)"
 # there is invisible inside the service namespace and systemd fails the mount
 # setup with 226/NAMESPACE. Production uses /var/lib, so the test does too.
 STATE_ROOT="/var/lib/orcasynapse-smoke"
-REGISTRY_NAME="orcasynapse-smoke-registry"
 STUB_NAME="orcasynapse-smoke-controlplane"
-CONTAINER_NAME="orcasynapse-hermes"
+RUNTIME_SERVICE="orcasynapse-hermes"
 CONTROL_PLANE_PORT=8099
-REGISTRY_PORT=5599
 NODE_ID="6cf6ce1b-a8c6-49d7-b6aa-019d35888acb"
 failures=0
 
@@ -37,7 +37,9 @@ cleanup() {
   systemctl disable --now orcasynapse-hermes-desired-state.timer >/dev/null 2>&1 || true
   rm -f /etc/systemd/system/orcasynapse-hermes-*.service /etc/systemd/system/orcasynapse-hermes-*.timer
   systemctl daemon-reload >/dev/null 2>&1 || true
-  docker rm -f "${CONTAINER_NAME}" "${REGISTRY_NAME}" >/dev/null 2>&1 || true
+  systemctl disable --now "${RUNTIME_SERVICE}" >/dev/null 2>&1 || true
+  rm -f "/etc/systemd/system/${RUNTIME_SERVICE}.service"
+  systemctl daemon-reload >/dev/null 2>&1 || true
   [[ -n "${STUB_PID:-}" ]] && kill "${STUB_PID}" 2>/dev/null || true
   rm -rf -- "${WORK}" "${STATE_ROOT}" /usr/local/lib/orcasynapse
 }
@@ -45,35 +47,16 @@ trap cleanup EXIT
 
 [[ "${EUID}" -eq 0 ]] || { echo "run as root: sudo bash scripts/test-agentic-installer-smoke.sh" >&2; exit 2; }
 [[ -d /run/systemd/system ]] || { echo "this test needs a systemd host" >&2; exit 2; }
-docker info >/dev/null 2>&1 || { echo "this test needs a reachable Docker daemon" >&2; exit 2; }
+command -v systemctl >/dev/null 2>&1 || { echo "this test needs systemd" >&2; exit 2; }
 
-printf '\n=== building the stub runtime ===\n'
-# A real image in a real registry, so `docker pull` and the @sha256 resolution
-# in resolved_image_reference() are exercised rather than stepped over.
-docker rm -f "${REGISTRY_NAME}" >/dev/null 2>&1 || true
-docker run -d --name "${REGISTRY_NAME}" -p "${REGISTRY_PORT}:5000" registry:2 >/dev/null
-cat > "${WORK}/hermes-stub.py" <<'STUB'
-import json, http.server
-class H(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        body = json.dumps({"data": [{"name": "clarify"}, {"name": "todo_write"}, {"name": "bfl"}]}) \
-            if self.path.startswith("/v1/toolsets") else json.dumps({"status": "ok"})
-        self.send_response(200)
-        self.send_header("content-type", "application/json")
-        self.end_headers()
-        self.wfile.write(body.encode())
-    def log_message(self, *_): pass
-http.server.HTTPServer(("0.0.0.0", 8642), H).serve_forever()
-STUB
-cat > "${WORK}/Dockerfile" <<'DOCKERFILE'
-FROM python:3.12-alpine
-COPY hermes-stub.py /hermes-stub.py
-ENTRYPOINT ["python3", "/hermes-stub.py"]
-DOCKERFILE
-docker build -q -t "127.0.0.1:${REGISTRY_PORT}/hermes-stub:latest" "${WORK}" >/dev/null
-docker push -q "127.0.0.1:${REGISTRY_PORT}/hermes-stub:latest" >/dev/null
-STUB_IMAGE="127.0.0.1:${REGISTRY_PORT}/hermes-stub:latest"
-pass "stub runtime published to the local registry"
+printf '
+=== pinning the runtime ===
+'
+# No registry and no stub image: the runtime is a commit, and the installer
+# resolves it by checking the tree out and reading HEAD back. Nothing to fake,
+# which is a stronger test than the image path ever was.
+HERMES_COMMIT="${ORCASYNAPSE_SMOKE_COMMIT:-c015663b215c0e14de4295346b0727db602cbb1d}"
+pass "pinned to ${HERMES_COMMIT:0:12}"
 
 printf '\n=== starting the stub control plane ===\n'
 openssl genpkey -algorithm ED25519 -out "${WORK}/cp.key" 2>/dev/null
@@ -145,8 +128,8 @@ pass "stub control plane answering on ${CONTROL_PLANE_PORT}"
 
 printf '\n=== running the installer ===\n'
 
-jq -n --arg nodeId "${NODE_ID}" --arg image "${STUB_IMAGE}" --arg cp "http://127.0.0.1:${CONTROL_PLANE_PORT}" \
-  '{format:"orcasynapse-hermes-enrollment/v1",nodeId:$nodeId,nodeSlug:"smoke",token:"a-one-time-claim-that-is-long-enough-to-pass",controlPlaneUrl:$cp,hermesBaseUrl:"http://127.0.0.1:8642",hermesImage:$image,expiresAt:"2030-01-01T00:00:00Z"}' \
+jq -n --arg nodeId "${NODE_ID}" --arg commit "${HERMES_COMMIT}" --arg cp "http://127.0.0.1:${CONTROL_PLANE_PORT}" \
+  '{format:"orcasynapse-hermes-enrollment/v1",nodeId:$nodeId,nodeSlug:"smoke",token:"a-one-time-claim-that-is-long-enough-to-pass",controlPlaneUrl:$cp,hermesBaseUrl:"http://127.0.0.1:8642",hermesCommit:$commit,expiresAt:"2030-01-01T00:00:00Z"}' \
   > "${WORK}/bundle.json"
 
 set +e
@@ -157,14 +140,31 @@ set -e
 [[ "${installer_status}" -eq 0 ]] && pass "installer main() completed" || bad "installer main() exited ${installer_status}"
 
 printf '\n=== asserting the installed state ===\n'
-docker inspect "${CONTAINER_NAME}" >/dev/null 2>&1 \
-  && pass "runtime container exists" || bad "runtime container is missing"
+systemctl is-active "${RUNTIME_SERVICE}" >/dev/null 2>&1 \
+  && pass "runtime service is active" || bad "runtime service is not active"
+[[ "$(git -C /usr/local/lib/hermes-agent rev-parse HEAD 2>/dev/null)" == "${HERMES_COMMIT}" ]] \
+  && pass "installed commit matches the pin" || bad "installed commit does not match the pin"
 curl --fail --silent --max-time 5 http://127.0.0.1:8642/health >/dev/null \
   && pass "runtime answers /health" || bad "runtime does not answer /health"
-grep -q 'smoke-model' "${STATE_ROOT}/managed/config.yaml" 2>/dev/null \
+grep -q 'smoke-model' /etc/hermes/config.yaml 2>/dev/null \
   && pass "managed policy pins the enrolled model route" || bad "managed policy is missing the model route"
-grep -q 'allow_lazy_installs: false' "${STATE_ROOT}/managed/config.yaml" 2>/dev/null \
+grep -q 'allow_lazy_installs: false' /etc/hermes/config.yaml 2>/dev/null \
   && pass "managed policy keeps the hardened baseline" || bad "managed policy lost its baseline"
+# A unit file is world-readable by convention, so the gateway key must not be in
+# it. It authenticates every governed call to 8642; publishing it to any local
+# reader would undo the point of running the runtime as an unprivileged account.
+runtime_unit="/etc/systemd/system/${RUNTIME_SERVICE}.service"
+gateway_key="$(sed -n 's/^API_SERVER_KEY=//p' "${STATE_ROOT}/data/.env" 2>/dev/null || true)"
+if [[ -z "${gateway_key}" ]]; then
+  bad "no gateway key was written to the protected env file"
+elif grep -Fq "${gateway_key}" "${runtime_unit}" 2>/dev/null; then
+  bad "the gateway key is exposed in the world-readable unit file"
+else
+  pass "gateway key kept out of the unit file"
+fi
+[[ "$(stat -c '%a' "${STATE_ROOT}/data/.env" 2>/dev/null)" == "600" ]] \
+  && pass "gateway key file is owner-only" || bad "gateway key file is not mode 0600"
+
 systemctl is-enabled orcasynapse-hermes-heartbeat.timer >/dev/null 2>&1 \
   && pass "heartbeat timer enabled" || bad "heartbeat timer not enabled"
 systemctl is-enabled orcasynapse-hermes-desired-state.timer >/dev/null 2>&1 \
@@ -181,7 +181,7 @@ if [[ -s "${STATE_ROOT}/admitted-toolsets" ]]; then
 else
   bad "admitted-toolsets was not written during installation"
 fi
-grep -q 'disabled_toolsets' "${STATE_ROOT}/managed/config.yaml" 2>/dev/null \
+grep -q 'disabled_toolsets' /etc/hermes/config.yaml 2>/dev/null \
   && pass "unadmitted toolsets explicitly disabled" || bad "unadmitted toolsets were not disabled"
 [[ -s "${STATE_ROOT}/control-plane-key.pem" ]] \
   && pass "control-plane signing key pinned" || bad "control-plane key was not pinned"
@@ -206,8 +206,8 @@ else
   tail -n 20 "${WORK}/remove.log" >&2
 fi
 
-docker inspect "${CONTAINER_NAME}" >/dev/null 2>&1 \
-  && bad "the runtime container survived decommission" || pass "runtime container destroyed"
+systemctl is-active "${RUNTIME_SERVICE}" >/dev/null 2>&1 \
+  && bad "the runtime service survived decommission" || pass "runtime service stopped"
 [[ ! -e "${STATE_ROOT}/identity/node.key" ]] \
   && pass "node private identity purged" || bad "the node private key survived decommission"
 [[ ! -e "${STATE_ROOT}/control-plane-key.pem" ]] \

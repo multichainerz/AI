@@ -5,6 +5,111 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.83.0 — 2026-08-08
+
+VM2 runs Hermes as a systemd service. The container is gone.
+
+The complaint that started this was tooling: `systemctl` and `journalctl` could
+not see the runtime, there was a daemon in the way, and nothing could be
+inspected or patched without rebuilding an image. Every hardening flag the
+`docker run` carried has a systemd equivalent that is equal or stronger, so the
+security argument for the container was never the strong one.
+
+**The strong one was artifact identity**, and that is what had to be answered
+before any of this was worth writing. `productionArtifactViolation` refused a
+Production enrollment unless the image carried an `@sha256:` digest. Hermes
+ships its own installer that takes `--commit SHA`, and a git commit is a
+cryptographic digest of the tree — the same guarantee in a different form, and
+unlike a tag it cannot be moved to different code after review. So
+`hermesImage` becomes `hermesCommit` across the contract, the manager, the
+schema and the dashboard, and the Production gate now requires 40 hex
+characters.
+
+Migration `0025` **drops and re-adds** rather than renaming. Every existing
+value is an OCI reference for a runtime this release no longer installs, so
+carrying one forward under a name whose contract says *commit SHA* would put a
+lie in the column the production gate reads. An invitation issued before this
+release resolves to the existing "predates direct VM2 bootstrap" refusal, which
+asks the operator to issue a new one. **Any currently enrolled VM2 must be
+revoked, decommissioned with the remover, and re-enrolled.**
+
+Nothing was taken on faith. A spike ran first, because the whole governance
+layer rests on `HERMES_MANAGED_DIR` — an undocumented Hermes feature that let
+the installer pin the model route and the toolset allowlist beyond an
+operator's reach. It was known to work in the container and unproven outside
+one; had it failed natively there would have been no toolset admission and no
+pinned model route, and podman quadlets would have been the answer instead. It
+holds: the managed layer outranks user config for both governance keys, the
+commit pin reads back exactly, and the gateway answers `/health` with no
+container involved.
+
+The unit gives more than the container did — `RestrictAddressFamilies=`,
+`ProtectSystem=strict`, `ProtectHome=`, `ProtectKernelTunables=`,
+`ProtectControlGroups=`, `RestrictSUIDSGID=`, `NoNewPrivileges`, a capability
+bounding set, and write access confined to the runtime's own data directory, all
+under an unprivileged `orcasynapse-hermes` service account. `SystemCallFilter=`
+is **not** set: it belongs here, but a seccomp allowlist that is wrong fails the
+service at exec rather than degrading, and it has not been proven against this
+runtime yet. It is a follow-up with a test, not a line to add on faith. The
+remover keeps the property that mattered most about the old label check: before
+anything irreversible it proves the unit is ours, by `X-OrcaSynapse-Managed=true`
+or a `ReadWritePaths=` naming the OrcaSynapse state root, and refuses to touch a
+Hermes someone else installed.
+
+Three things only a real install could have taught, all found by running one:
+
+- **`--skip-setup` is mandatory.** Without it the installer ends in an
+  interactive provider wizard that blocks forever under `curl | bash`.
+- **The installer must run under `umask 022`.** This script runs `umask 077`,
+  which is right for keys and wrong for a program: upstream's `chmod +x` only
+  adds the bits the umask permits, so the launcher landed 0700 root and systemd
+  failed the unit `203/EXEC` — the service account could not execute its own
+  runtime.
+- **The state root is 0711, not 0700.** The service account has to traverse it
+  to reach `data/`. Under Docker nothing traversed it, because the bind mount
+  started below it.
+
+**The gateway key never enters the unit file.** The first draft set it with
+`Environment=API_SERVER_KEY=`, and a unit file is 0644 by convention — that
+would have published the credential authenticating every governed call to
+port 8642 to any local reader, which is precisely what running the runtime as an
+unprivileged account is meant to prevent. It comes from the 0600 env file
+instead, which systemd reads as root before dropping privileges, and the
+`EnvironmentFile=` carries no leading `-`: if that file is missing the unit must
+fail rather than open a gateway on `0.0.0.0:8642` with no key set. The smoke
+test now greps the unit for the live key and fails if it appears.
+
+**`--force-commit` is passed deliberately.** Upstream ignores `--commit` when the
+existing checkout is already newer — it logs and carries on — so without the
+override a host that already had a newer Hermes silently keeps it and the commit
+the control plane approved is not the commit that runs. On this node OrcaSynapse
+decides the revision, including a downgrade to an earlier approved one. The pin
+is then read back out of the finished checkout, because the value requested is
+not proof of the value installed.
+
+`scripts/test-agentic-installer-recovery.sh` **could not fail**. Sourcing the
+installer installed the installer's own `trap cleanup EXIT`, replacing the
+test's — so the temp tree leaked and a failed assertion never reached the exit
+status. Every check in that file after line 10 had been decorative. It takes the
+trap back now, and five mutations confirm each class of assertion is fatal.
+
+The accepted costs, stated plainly: VM2's **install-time** egress widens to the
+Ubuntu archive, GitHub, PyPI, npm and `astral.sh` because a native install
+resolves its own dependency chain, and those transitive downloads are not
+checksum-pinned by us. Steady-state egress is unchanged.
+
+One of those costs turned out sharper than expected, and the first real install
+is what showed it: upstream's hash-verified `uv.lock` tier **fails at the pinned
+commit** — "the lockfile needs to be updated, but `--locked` was provided" — and
+falls back to a live PyPI resolve it labels `installed via fallback tier`. So the
+commit pin is an exact statement about the Hermes tree and not about the
+dependency set around it; two nodes enrolled a month apart run identical Hermes
+code and possibly different library versions. The runbook says this outright
+rather than letting "pinned artifact" imply more than it delivers. **An air-gapped VM2
+install is no longer supported on this path** — the old image could be mirrored
+into an internal registry, and a native install cannot be. The runbook,
+architecture, bootstrap, PRD, README and handoff all say so.
+
 ## ai-v1.82.0 — 2026-08-07
 
 The VM1 installer is tested, which closes the last one.

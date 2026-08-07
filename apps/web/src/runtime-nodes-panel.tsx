@@ -62,7 +62,7 @@ function defaultForm(): CreateHermesNodeInvitation {
     displayName: "Hermes Runtime 01",
     baseUrl: "http://10.0.0.12:8642",
     controlPlaneUrl: typeof window === "undefined" ? "https://orcasynapse.internal" : window.location.origin,
-    hermesImage: "nousresearch/hermes-agent:latest",
+    hermesCommit: "c015663b215c0e14de4295346b0727db602cbb1d",
     expiresInMinutes: 30,
   };
 }
@@ -83,7 +83,7 @@ export function RuntimeNodesPanel({
   const [hostDestructionConfirmed, setHostDestructionConfirmed] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const unpinned = !form.hermesImage.includes("@sha256:");
+  const unpinned = !/^[0-9a-f]{40}$/.test(form.hermesCommit);
   const insecureControlPlane = !form.controlPlaneUrl.startsWith("https://");
   const productionArtifactBlocked = targetEnvironment === "PRODUCTION"
     && (unpinned || insecureControlPlane);
@@ -249,10 +249,10 @@ export function RuntimeNodesPanel({
             <label><span>Node slug</span><input required pattern="[a-z0-9]+(?:-[a-z0-9]+)*" minLength={2} maxLength={64} value={form.slug} onChange={(event) => setForm({ ...form, slug: event.target.value })} /></label>
             <label><span>Expected VM hostname (optional)</span><input maxLength={253} value={form.expectedHostname ?? ""} placeholder="hermes-01.internal" onChange={(event) => setForm({ ...form, expectedHostname: event.target.value })} /><small>When set, enrollment fails if VM2 reports a different hostname.</small></label>
             <label><span>OrcaSynapse address visible to VM2</span><input required type="url" value={form.controlPlaneUrl} onChange={(event) => setForm({ ...form, controlPlaneUrl: event.target.value })} /></label>
-            <label><span>Hermes image</span><input required maxLength={500} value={form.hermesImage} onChange={(event) => setForm({ ...form, hermesImage: event.target.value })} /><small>Pin with <code>@sha256:…</code> after acceptance testing.</small></label>
+            <label><span>Hermes commit</span><input required minLength={40} maxLength={40} pattern="[0-9a-fA-F]{40}" value={form.hermesCommit} onChange={(event) => setForm({ ...form, hermesCommit: event.target.value.trim().toLowerCase() })} /><small>The 40-character commit VM2 installs. A commit cannot be moved, so this is the runtime pin.</small></label>
           </div>
         </details>
-        {targetEnvironment === "PRODUCTION" && (unpinned || insecureControlPlane) && <div className="runtime-invite-warning"><strong>Production hardening required</strong><ul>{unpinned && <li>The Hermes image is tagged, not digest-pinned.</li>}{insecureControlPlane && <li>The OrcaSynapse enrollment route uses HTTP rather than HTTPS.</li>}</ul></div>}
+        {targetEnvironment === "PRODUCTION" && (unpinned || insecureControlPlane) && <div className="runtime-invite-warning"><strong>Production hardening required</strong><ul>{unpinned && <li>The Hermes runtime is not pinned to a 40-character commit.</li>}{insecureControlPlane && <li>The OrcaSynapse enrollment route uses HTTP rather than HTTPS.</li>}</ul></div>}
         {targetEnvironment !== "PRODUCTION" && (unpinned || insecureControlPlane) && <div className="runtime-development-note">Development release defaults are selected. Exact production pins remain available under Advanced deployment options.</div>}
       </form> : <div className="runtime-install-steps">
         <div className="runtime-success-mark">✓</div><p>The enrollment claim expires <strong>{new Date(invitation.bundle.expiresAt).toLocaleString()}</strong> and can be used only once.</p>

@@ -26,10 +26,27 @@ const runtimeOriginSchema = serviceEndpointSchema.regex(
   /^https?:\/\/[^/?#]+\/?$/i,
   "Runtime service addresses must be origins without a path, query, or fragment.",
 );
-const imageReferenceSchema = z.string().trim().min(3).max(500).regex(
-  /^(?:[a-zA-Z0-9.-]+(?::\d+)?\/)?(?:[a-zA-Z0-9._-]+\/)*[a-zA-Z0-9._-]+(?::[a-zA-Z0-9._-]+(?:@sha256:[a-f0-9]{64})?|@sha256:[a-f0-9]{64})$/,
-  "Use a tagged or digest-pinned container image reference.",
+/**
+ * The Hermes runtime is pinned to a git commit, not a container image.
+ *
+ * VM2 installs Hermes natively through its own installer, which takes
+ * `--commit`. A commit SHA is a cryptographic digest of the tree, so this is
+ * exactly as strong an artifact identity as the `@sha256:` image digest it
+ * replaces — and unlike a tag it cannot be moved, so there is no unpinned form
+ * to accept and then refuse at the production gate.
+ */
+const hermesCommitSchema = z.string().trim().toLowerCase().regex(
+  /^[0-9a-f]{40}$/,
+  "Pin the Hermes runtime to a full 40-character git commit SHA.",
 );
+
+/**
+ * The commit a new invitation offers unless an operator names another.
+ *
+ * A real, installable commit rather than a moving reference: the whole point of
+ * the pin is that two nodes enrolled a month apart run identical code.
+ */
+const DEFAULT_HERMES_COMMIT = "c015663b215c0e14de4295346b0727db602cbb1d";
 export const hermesRuntimeNodeSchema = z.object({
   id: z.uuid(),
   slug: nodeSlugSchema,
@@ -62,7 +79,7 @@ export const createHermesNodeInvitationSchema = z.object({
   baseUrl: runtimeOriginSchema,
   expectedHostname: z.string().trim().min(1).max(253).optional(),
   controlPlaneUrl: runtimeOriginSchema,
-  hermesImage: imageReferenceSchema.default("nousresearch/hermes-agent:latest"),
+  hermesCommit: hermesCommitSchema.default(DEFAULT_HERMES_COMMIT),
   expiresInMinutes: z.number().int().min(10).max(1_440).default(30),
 }).strict();
 
@@ -73,7 +90,7 @@ export const hermesNodeEnrollmentBundleSchema = z.object({
   token: z.string().min(32).max(512),
   controlPlaneUrl: runtimeOriginSchema,
   hermesBaseUrl: runtimeOriginSchema,
-  hermesImage: imageReferenceSchema,
+  hermesCommit: hermesCommitSchema,
   expiresAt: z.iso.datetime(),
 }).strict();
 
@@ -93,8 +110,10 @@ export const enrollHermesNodeSchema = z.object({
   publicKeyPem: z.string().min(80).max(4_096),
   controlPlaneUrl: runtimeOriginSchema,
   apiKey: z.string().min(32).max(1_024),
-  // 256, not 120: a digest-pinned reference through a private registry mirror
-  // (host:port/team/image@sha256:...) legitimately exceeds 120 characters.
+  // The commit the node resolved after installing, read back with
+  // `git rev-parse HEAD`. Left a free string rather than the commit schema:
+  // a node that could not resolve one reports "unknown", and refusing that
+  // would lose the heartbeat rather than the information.
   hermesVersion: z.string().trim().min(1).max(256).default("unknown"),
   installerVersion: z.string().trim().min(1).max(256),
   capabilities: z.array(z.string().trim().min(1).max(120)).max(100).default([]),
