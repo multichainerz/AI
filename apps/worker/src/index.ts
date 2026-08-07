@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 import { ORCASYNAPSE_VERSION } from "@orcasynapse/contracts";
-import { createDrizzleClient, readBootstrapSecret } from "@orcasynapse/database";
+import { createDrizzleClient, listenForAgentRunWake, readBootstrapSecret } from "@orcasynapse/database";
 import { decodeMasterKey, EnvelopeEncryption, RunCapabilityIssuer } from "@orcasynapse/security";
 import { AgentMemoryStore, APPROVED_EMBEDDING_MODEL, DocumentVectorStore, LocalBgeM3Embedder } from "@orcasynapse/knowledge";
 import { DrizzleRuntimeConnectionResolver, HermesClient } from "@orcasynapse/runtime-clients";
@@ -72,10 +72,36 @@ const runtime = new WorkerRuntime(
   ),
 );
 
+/*
+ * Wakes the dispatcher the moment the API commits a run.
+ *
+ * The reconcile timer is unchanged and still guarantees pickup; this only
+ * removes the wait. A message on an idle installation used to sit for up to a
+ * full second before any work began, which was pure latency on every single
+ * chat turn.
+ *
+ * Failure here is deliberately not fatal. If PostgreSQL will not hold a second
+ * connection, or the listener drops and cannot reconnect, the worker keeps
+ * running exactly as it did before -- a second slower, never broken.
+ */
+const wake = await listenForAgentRunWake(
+  databaseUrl,
+  () => void runtime.dispatchNow(),
+  (error) => console.error("OrcaSynapse worker wake channel error.", error),
+).catch((error: unknown) => {
+  console.error("OrcaSynapse worker could not open the wake channel; falling back to the reconcile timer.", error);
+  return null;
+});
+
 let shuttingDown = false;
 const shutdown = async () => {
   if (shuttingDown) return;
   shuttingDown = true;
+  try {
+    await wake?.stop();
+  } catch (error) {
+    console.error("OrcaSynapse worker wake channel did not close cleanly.", error);
+  }
   try {
     await runtime.stop();
   } catch (error) {
@@ -96,6 +122,14 @@ process.once("SIGINT", () => void shutdown());
 
 try {
   await runtime.start();
+  // Loads the embedding weights now rather than inside the first chat message.
+  // The pipeline resolves lazily, so before this the first person to type
+  // anything after a restart waited for ~2 GB of weights to load before their
+  // question even reached Hermes.
+  void embedder.embed(["orcasynapse embedder warmup"]).then(
+    () => console.info("OrcaSynapse worker embedding model is warm."),
+    (error: unknown) => console.error("OrcaSynapse worker could not warm the embedding model.", error),
+  );
 } catch (error) {
   console.error("OrcaSynapse worker failed to start.", error);
   await closeDatabase().catch((closeError) =>

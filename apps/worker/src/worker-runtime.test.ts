@@ -139,6 +139,38 @@ describe("WorkerRuntime", () => {
     expect(runs.claimable).toHaveBeenCalledTimes(1);
   });
 
+  it("dispatches immediately when woken, without waiting for the tick", async () => {
+    const handler = { process: vi.fn(async () => ({ completed: true })) };
+    const available: PendingRun[] = [];
+    const runs = source(available);
+    // A long tick, so anything that runs here can only have come from the wake.
+    const runtime = new WorkerRuntime(runs, registry(), identity, logger(), 60_000, handler, 600_000);
+
+    await runtime.start();
+    expect(handler.process).not.toHaveBeenCalled();
+
+    available.push({ id: "woken", jobId: "job-1" });
+    await runtime.dispatchNow();
+
+    expect(handler.process).toHaveBeenCalledWith({ runId: "woken" }, "job-1", identity.id);
+    await runtime.stop();
+  });
+
+  it("ignores a wake that arrives after shutdown", async () => {
+    const handler = { process: vi.fn(async () => ({ completed: true })) };
+    const runtime = new WorkerRuntime(
+      source([{ id: "late", jobId: "job-1" }]), registry(), identity, logger(), 60_000, handler, 600_000,
+    );
+
+    await runtime.start();
+    handler.process.mockClear();
+    await runtime.stop();
+    await runtime.dispatchNow();
+
+    // A notification in flight during shutdown must not admit new work.
+    expect(handler.process).not.toHaveBeenCalled();
+  });
+
   it("runs one benchmark at a time", async () => {
     // A suite drives the same inference host the installation answers people
     // on. Two at once would make a benchmark's own load part of what it

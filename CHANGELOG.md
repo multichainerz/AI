@@ -5,6 +5,48 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v1.4.0 — 2026-08-07
+
+A CSP gate that runs in CI, the installer terminal experience rebuilt, and the
+defects only a first install exposes.
+
+- **`scripts/test-csp-closure.sh`.** The container serves `style-src 'self'` with
+  no `'unsafe-inline'` while the dev server sends no CSP header at all, so a
+  violation works perfectly in `pnpm dev` and fails only in the built image. The
+  gate reads the built bundle and fails on a runtime-built stylesheet, an inline
+  `style` attribute, an off-origin asset URL, or a stylesheet naming a font that
+  is not in the image. Each class was verified to fail the check by deliberately
+  introducing it.
+- **The installer TUI is rebuilt** — a braille spinner, status glyphs, step dots,
+  slim meters and panels that align on a column — degrading in three independent
+  steps, because an installer runs over serial consoles and inside cloud-init as
+  often as in a modern terminal.
+- **VM2 now arrives governed instead of converging later.** The installer wrote
+  the desired-state reconcile timer and never ran it, so a freshly enrolled node
+  sat on the tool-free baseline until the first tick, with no way for the
+  operator watching to tell "not yet" from "not working".
+- **VM2 declares the dependency its reconciler has always had.** The generated
+  reconcile script uses a `python3` block that the installer never installed and
+  never checked for; the required-command list now covers what the *generated*
+  scripts run, not only what the installer itself calls.
+- **The change-password screen signed the operator out while they were on it.**
+  The 15-second session reconciler is gated on `unlocked`, which a forced
+  password change makes false — so the one screen that asks someone to open a
+  password vault was the only screen that never touched its session. A keepalive
+  runs while the change is pending, and the route now tells an expired session
+  apart from a wrong password.
+- **The VM2 installer generator rendered as unstyled HTML**, the one file the
+  design-system migration missed; both modals are rebuilt on `Drawer` and
+  `Dialog`, which supply the focus trap and Escape handling the hand-rolled
+  backdrop never had.
+- **Two fixed costs removed from every chat message**: the worker is woken by a
+  `NOTIFY` emitted inside the inserting transaction rather than by a one-second
+  tick, and the embedding model is warmed at startup rather than inside the first
+  message after a restart.
+- `docs/CURRENT_STATE_HANDOFF.md` was materially wrong about the baseline, the
+  test count, and whether `main` was pushed — the last of which matters, because
+  an unpushed release is invisible to every install.
+
 ## v1.3.0 — 2026-08-07
 
 Benchmarks, R1 through R5: the loop from authoring a suite to filing its result

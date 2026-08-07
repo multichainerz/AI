@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="v1.3.0"
+INSTALLER_VERSION="v1.4.0"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 CONTAINER_NAME="orcasynapse-hermes"
 HEARTBEAT_SERVICE="orcasynapse-hermes-heartbeat"
@@ -29,6 +29,7 @@ HERMES_BOOTSTRAP_MANAGED_DIR="${STATE_ROOT}/data/.orcasynapse-bootstrap-managed"
 # Per-script variation happens only through these hooks, never by editing the
 # embedded region:
 #   UI_ACCENT            role accent color (defaults to blue)
+#   UI_ACCENT_SOFT       dimmer shade of the same hue, for rules and gradients
 #   UI_BANNER_TAGLINE    the line under the wordmark
 #   UI_BANNER_META       optional dim version/source line under the divider
 #   UI_BANNER_ACTIVITY   optional animated readiness label (empty = no dots)
@@ -39,11 +40,26 @@ HERMES_BOOTSTRAP_MANAGED_DIR="${STATE_ROOT}/data/.orcasynapse-bootstrap-managed"
 # Logging contract: secret values (passwords, keys, tokens, claims) must never
 # pass through ui_* helpers. Panels that show secrets are printed with raw
 # printf by their scripts and are never written to UI_LOG_FILE.
+#
+# Rendering degrades in three independent steps, because an installer runs over
+# serial consoles, in CI logs, and inside cloud-init as often as in a modern
+# terminal: colour is dropped without a TTY or under NO_COLOR, box-drawing is
+# replaced by ASCII when the locale is not UTF-8, and every animation collapses
+# to one static line when there is nothing to animate on.
 
 if [[ -t 1 && "${TERM:-dumb}" != "dumb" ]]; then
   UI_INTERACTIVE=1
 else
   UI_INTERACTIVE=0
+fi
+
+# Box drawing is a separate question from colour. A UTF-8 terminal with colour
+# disabled still renders rules correctly; a latin-1 console shows mojibake for
+# every one of them, which looks far worse than the ASCII it replaced.
+if [[ "${LC_ALL:-}${LC_CTYPE:-}${LANG:-}" == *[Uu][Tt][Ff]* ]]; then
+  UI_UNICODE=1
+else
+  UI_UNICODE=0
 fi
 
 if (( UI_INTERACTIVE )) && [[ -z "${NO_COLOR:-}" ]]; then
@@ -54,6 +70,13 @@ if (( UI_INTERACTIVE )) && [[ -z "${NO_COLOR:-}" ]]; then
   UI_GREEN=$'\033[38;5;78m'
   UI_AMBER=$'\033[38;5;214m'
   UI_RED=$'\033[38;5;203m'
+  UI_MUTED=$'\033[38;5;244m'
+  UI_FAINT=$'\033[38;5;240m'
+  UI_BLUE_SOFT=$'\033[38;5;68m'
+  UI_CYAN_SOFT=$'\033[38;5;72m'
+  UI_GREEN_SOFT=$'\033[38;5;71m'
+  UI_AMBER_SOFT=$'\033[38;5;172m'
+  UI_RED_SOFT=$'\033[38;5;167m'
   UI_RESET=$'\033[0m'
 else
   UI_BOLD=""
@@ -63,14 +86,64 @@ else
   UI_GREEN=""
   UI_AMBER=""
   UI_RED=""
+  UI_MUTED=""
+  UI_FAINT=""
+  UI_BLUE_SOFT=""
+  UI_CYAN_SOFT=""
+  UI_GREEN_SOFT=""
+  UI_AMBER_SOFT=""
+  UI_RED_SOFT=""
   UI_RESET=""
 fi
 
 : "${UI_ACCENT:=${UI_BLUE}}"
+: "${UI_ACCENT_SOFT:=${UI_BLUE_SOFT}}"
 : "${UI_BANNER_TAGLINE:=ORCASYNAPSE}"
 : "${UI_BANNER_META:=}"
 : "${UI_BANNER_ACTIVITY:=}"
 : "${UI_LOG_FILE:=}"
+
+# Glyphs, chosen once so no call site decides for itself. The ASCII column is
+# not a lesser experience -- it is the same layout with different ink.
+if (( UI_UNICODE )); then
+  UI_G_RULE="─"; UI_G_RULE_HEAVY="━"
+  UI_G_TL="╭"; UI_G_TR="╮"; UI_G_BL="╰"; UI_G_BR="╯"; UI_G_V="│"
+  UI_G_OK="✓"; UI_G_FAIL="✗"; UI_G_WARN="▲"; UI_G_INFO="›"
+  UI_G_BAR_ON="━"; UI_G_BAR_OFF="─"
+  UI_G_DOT_ON="●"; UI_G_DOT_OFF="○"
+  UI_G_MARK="◆"
+  UI_SPINNER_FRAMES=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
+else
+  UI_G_RULE="-"; UI_G_RULE_HEAVY="="
+  UI_G_TL="+"; UI_G_TR="+"; UI_G_BL="+"; UI_G_BR="+"; UI_G_V="|"
+  UI_G_OK="OK"; UI_G_FAIL="XX"; UI_G_WARN="!!"; UI_G_INFO="->"
+  UI_G_BAR_ON="#"; UI_G_BAR_OFF="."
+  UI_G_DOT_ON="*"; UI_G_DOT_OFF="."
+  UI_G_MARK="*"
+  UI_SPINNER_FRAMES=("|" "/" "-" "\\")
+fi
+
+# Panels track the terminal, clamped: below 64 the two-column rows collide, and
+# above 96 a full-width rule reads as a horizon rather than a container.
+ui_width() {
+  local columns="${COLUMNS:-0}"
+  if (( columns <= 0 )) && command -v tput >/dev/null 2>&1; then
+    columns="$(tput cols 2>/dev/null || printf '0')"
+  fi
+  (( columns > 0 )) || columns=80
+  (( columns > 96 )) && columns=96
+  (( columns < 64 )) && columns=64
+  printf '%d' "$((columns - 4))"
+}
+
+ui_repeat() {
+  local glyph="$1" count="$2" out=""
+  (( count > 0 )) || { printf ''; return 0; }
+  # Built one character at a time: printf padding counts bytes, and a
+  # multi-byte glyph would be truncated mid-sequence.
+  while (( count-- > 0 )); do out+="${glyph}"; done
+  printf '%s' "${out}"
+}
 
 ui_log() {
   [[ -n "${UI_LOG_FILE}" ]] || return 0
@@ -93,81 +166,131 @@ ui_register_temp_file() {
   :
 }
 
+ui_rule() {
+  local color="${1:-${UI_FAINT}}" width
+  width="$(ui_width)"
+  printf '  %b%s%b\n' "${color}" "$(ui_repeat "${UI_G_RULE}" "${width}")" "${UI_RESET}"
+}
+
 banner() {
-  printf '%b' "${UI_ACCENT}${UI_BOLD}"
-  cat <<'EOF'
-
-     ____                _____
-    / __ \___________ _ / ___/__  ______  ____ _____  ________
-   / / / / ___/ ___/  '/\__ \/ / / / __ \/ __ `/ __ \/ ___/ _ \
-  / /_/ / /  / /__/ /| |__/ / /_/ / / / / /_/ / /_/ (__  )  __/
-  \____/_/   \___/_/ |_/____/\__, /_/ /_/\__,_/ .___/____/\___/
-                             /____/            /_/
-
-EOF
-  printf '%b\n' "${UI_RESET}${UI_DIM}  ${UI_BANNER_TAGLINE}${UI_RESET}"
-  printf '%b\n' "${UI_DIM}  ----------------------------------------------------------------------${UI_RESET}"
+  local width shade
+  width="$(ui_width)"
+  printf '\n'
+  # The wordmark is drawn in four shades of the role accent rather than one
+  # flat colour. It is the same figlet the product has always used; the ramp is
+  # what stops it reading as a 1990s shell script.
+  local -a wordmark=(
+'     ____                _____'
+'    / __ \___________ _ / ___/__  ______  ____ _____  ________'
+'   / / / / ___/ ___/  '"'"'/\__ \/ / / / __ \/ __ `/ __ \/ ___/ _ \'
+'  / /_/ / /  / /__/ /| |__/ / /_/ / / / / /_/ / /_/ (__  )  __/'
+'  \____/_/   \___/_/ |_/____/\__, /_/ /_/\__,_/ .___/____/\___/'
+'                             /____/            /_/'
+  )
+  local index=0
+  for line in "${wordmark[@]}"; do
+    case "${index}" in
+      0|1) shade="${UI_ACCENT}${UI_BOLD}" ;;
+      2|3) shade="${UI_ACCENT}" ;;
+      *)   shade="${UI_ACCENT_SOFT}" ;;
+    esac
+    printf '%b%s%b\n' "${shade}" "${line}" "${UI_RESET}"
+    index=$((index + 1))
+  done
+  printf '\n'
+  printf '  %b%s%b  %b%s%b\n' \
+    "${UI_ACCENT}" "${UI_G_MARK}" "${UI_RESET}" \
+    "${UI_BOLD}" "${UI_BANNER_TAGLINE}" "${UI_RESET}"
+  ui_rule "${UI_FAINT}"
   if [[ -n "${UI_BANNER_META}" ]]; then
-    printf '%b\n' "${UI_DIM}  ${UI_BANNER_META}${UI_RESET}"
+    printf '  %b%s%b\n' "${UI_MUTED}" "${UI_BANNER_META}" "${UI_RESET}"
   fi
   if (( UI_INTERACTIVE )) && [[ -n "${UI_BANNER_ACTIVITY}" ]]; then
-    printf '  %s' "${UI_BANNER_ACTIVITY}"
+    printf '  %b%s%b' "${UI_MUTED}" "${UI_BANNER_ACTIVITY}" "${UI_RESET}"
     for _ in 1 2 3; do
-      printf '%b.%b' "${UI_CYAN}" "${UI_RESET}"
+      printf '%b.%b' "${UI_ACCENT}" "${UI_RESET}"
       ui_pause 0.12
     done
-    printf ' %bREADY%b\n' "${UI_GREEN}${UI_BOLD}" "${UI_RESET}"
+    printf '  %b%s READY%b\n' "${UI_GREEN}${UI_BOLD}" "${UI_G_OK}" "${UI_RESET}"
   fi
+  printf '\n'
+}
+
+# A slim meter rather than a bracketed bar: the filled span is the accent, the
+# remainder a faint rule of the same length, so the row reads as one line with
+# a lit portion instead of a box that happens to contain hashes.
+ui_meter() {
+  local current="$1" total="$2" width="${3:-32}" filled
+  (( total > 0 )) || total=1
+  filled=$((current * width / total))
+  (( filled > width )) && filled="${width}"
+  printf '%b%s%b%b%s%b' \
+    "${UI_ACCENT}" "$(ui_repeat "${UI_G_BAR_ON}" "${filled}")" "${UI_RESET}" \
+    "${UI_FAINT}" "$(ui_repeat "${UI_G_BAR_OFF}" "$((width - filled))")" "${UI_RESET}"
 }
 
 step() {
-  local current="$1" total="$2" label="$3" width=28 filled empty progress remainder
-  filled=$((current * width / total))
-  empty=$((width - filled))
-  printf -v progress '%*s' "${filled}" ''
-  printf -v remainder '%*s' "${empty}" ''
-  progress="${progress// /#}"
-  remainder="${remainder// /.}"
-  printf '\n%b  STEP %02d OF %02d%b  %b%s%b\n' \
-    "${UI_CYAN}${UI_BOLD}" "${current}" "${total}" "${UI_RESET}" "${UI_BOLD}" "${label}" "${UI_RESET}"
-  printf '  %b[%s%s]%b %3d%%\n' "${UI_ACCENT}" "${progress}" "${remainder}" "${UI_RESET}" "$((current * 100 / total))"
+  local current="$1" total="$2" label="$3" index dot
+  printf '\n'
+  # Step dots make position legible without reading the numbers, which is what
+  # an operator actually wants from across a room during a long install.
+  printf '  '
+  for (( index = 1; index <= total; index++ )); do
+    if (( index < current )); then
+      dot="${UI_ACCENT_SOFT}${UI_G_DOT_ON}"
+    elif (( index == current )); then
+      dot="${UI_ACCENT}${UI_BOLD}${UI_G_DOT_ON}"
+    else
+      dot="${UI_FAINT}${UI_G_DOT_OFF}"
+    fi
+    # `if` rather than `(( … )) && printf`: a false arithmetic test is a failing
+    # command, and as the last statement in the body it would trip the caller's
+    # `set -e` on the final dot of every step.
+    printf '%b%b' "${dot}" "${UI_RESET}"
+    if (( index < total )); then printf ' '; fi
+  done
+  printf '\n'
+  printf '  %b%02d%b %b%s%b %b%s%b\n' \
+    "${UI_ACCENT}${UI_BOLD}" "${current}" "${UI_RESET}" \
+    "${UI_FAINT}" "${UI_G_RULE}" "${UI_RESET}" \
+    "${UI_BOLD}" "${label}" "${UI_RESET}"
+  printf '  %s %b%3d%%%b\n' \
+    "$(ui_meter "${current}" "${total}" 30)" \
+    "${UI_MUTED}" "$((current * 100 / total))" "${UI_RESET}"
   ui_log "STEP ${current}/${total} ${label}"
 }
 
 info() {
-  printf '      %b>%b %s\n' "${UI_ACCENT}" "${UI_RESET}" "$1"
+  printf '     %b%s%b %b%s%b\n' "${UI_ACCENT}" "${UI_G_INFO}" "${UI_RESET}" "${UI_MUTED}" "$1" "${UI_RESET}"
   ui_log "info ${1}"
 }
 
 success() {
-  printf '  %b[ OK ]%b %s\n' "${UI_GREEN}${UI_BOLD}" "${UI_RESET}" "$1"
+  printf '     %b%s%b %s\n' "${UI_GREEN}${UI_BOLD}" "${UI_G_OK}" "${UI_RESET}" "$1"
   ui_log "ok   ${1}"
 }
 
 warning() {
-  printf '  %b[WARN]%b %s\n' "${UI_AMBER}${UI_BOLD}" "${UI_RESET}" "$1" >&2
+  printf '     %b%s%b %s\n' "${UI_AMBER}${UI_BOLD}" "${UI_G_WARN}" "${UI_RESET}" "$1" >&2
   ui_log "warn ${1}"
 }
 
 fail() {
-  printf '\n%bERROR%b %s\n' "${UI_RED}${UI_BOLD}" "${UI_RESET}" "$1" >&2
+  local width
+  width="$(ui_width)"
+  printf '\n  %b%s%b\n' "${UI_RED}" "$(ui_repeat "${UI_G_RULE}" "${width}")" "${UI_RESET}" >&2
+  printf '  %b%s FAILED%b  %s\n' "${UI_RED}${UI_BOLD}" "${UI_G_FAIL}" "${UI_RESET}" "$1" >&2
+  printf '  %b%s%b\n\n' "${UI_RED}" "$(ui_repeat "${UI_G_RULE}" "${width}")" "${UI_RESET}" >&2
   ui_log "ERROR ${1}"
   exit 1
 }
 
 render_activity_progress() {
-  local label="$1" elapsed="$2" tick="$3" width=24 segment=6 span position
-  local leading trailing active bar
-  span=$((2 * (width - segment)))
-  position=$((tick % span))
-  (( position > width - segment )) && position=$((span - position))
-  printf -v leading '%*s' "${position}" ''
-  printf -v trailing '%*s' "$((width - segment - position))" ''
-  printf -v active '%*s' "${segment}" ''
-  active="${active// /=}"
-  bar="${leading}${active}${trailing}"
-  printf '\r\033[2K  %b[RUN]%b [%s] %-36.36s %4ss' \
-    "${UI_CYAN}${UI_BOLD}" "${UI_RESET}" "${bar}" "${label}" "${elapsed}"
+  local label="$1" elapsed="$2" tick="$3" frame count
+  count="${#UI_SPINNER_FRAMES[@]}"
+  frame="${UI_SPINNER_FRAMES[$((tick % count))]}"
+  printf '\r\033[2K     %b%s%b %-44.44s %b%3ss%b' \
+    "${UI_ACCENT}" "${frame}" "${UI_RESET}" "${label}" "${UI_FAINT}" "${elapsed}" "${UI_RESET}"
 }
 
 run_with_progress() {
@@ -183,7 +306,7 @@ run_with_progress() {
     if (( direct_status == 0 )); then
       success "${label}"
     else
-      printf '  %b[FAIL]%b %s\n' "${UI_RED}${UI_BOLD}" "${UI_RESET}" "${label}" >&2
+      printf '     %b%s%b %s\n' "${UI_RED}${UI_BOLD}" "${UI_G_FAIL}" "${UI_RESET}" "${label}" >&2
       ui_log "FAIL ${label}"
     fi
     return "${direct_status}"
@@ -206,11 +329,18 @@ run_with_progress() {
   printf '\r\033[2K\033[?25h'
   if (( status == 0 )); then
     rm -f -- "${log_file}"
-    success "${label}"
+    elapsed=$((SECONDS - started))
+    if (( elapsed >= 2 )); then
+      printf '     %b%s%b %s %b(%ss)%b\n' \
+        "${UI_GREEN}${UI_BOLD}" "${UI_G_OK}" "${UI_RESET}" "${label}" "${UI_FAINT}" "${elapsed}" "${UI_RESET}"
+      ui_log "ok   ${label} (${elapsed}s)"
+    else
+      success "${label}"
+    fi
     return 0
   fi
 
-  printf '  %b[FAIL]%b %s\n' "${UI_RED}${UI_BOLD}" "${UI_RESET}" "${label}" >&2
+  printf '     %b%s%b %s\n' "${UI_RED}${UI_BOLD}" "${UI_G_FAIL}" "${UI_RESET}" "${label}" >&2
   tail -n 120 "${log_file}" >&2 || true
   if [[ -n "${UI_LOG_FILE}" ]]; then
     {
@@ -237,20 +367,19 @@ format_transfer_bytes() {
 }
 
 render_download_progress() {
-  local label="$1" current="$2" total="$3" elapsed="$4" width=24 percent=0 filled empty progress remainder speed
+  local label="$1" current="$2" total="$3" elapsed="$4" percent=0 speed
   (( total > 0 )) && percent=$((current * 100 / total))
+  # Held at 99 until the transfer actually ends: a bar that sits at 100% while
+  # bytes are still moving teaches an operator to distrust every bar after it.
   if (( current < total && percent > 99 )); then percent=99; fi
   (( percent > 100 )) && percent=100
-  filled=$((percent * width / 100))
-  empty=$((width - filled))
-  printf -v progress '%*s' "${filled}" ''
-  printf -v remainder '%*s' "${empty}" ''
-  progress="${progress// /=}"
-  remainder="${remainder// / }"
   (( elapsed > 0 )) && speed=$((current / elapsed)) || speed=0
-  printf '\r\033[2K  %b[DL]%b [%s%s] %3d%%  %-17.17s / %-9.9s  %8s/s  %-24.24s' \
-    "${UI_CYAN}${UI_BOLD}" "${UI_RESET}" "${progress}" "${remainder}" "${percent}" \
-    "$(format_transfer_bytes "${current}")" "$(format_transfer_bytes "${total}")" "$(format_transfer_bytes "${speed}")" "${label}"
+  printf '\r\033[2K     %s %b%3d%%%b  %b%s / %s%b  %b%s/s%b  %-22.22s' \
+    "$(ui_meter "${percent}" 100 24)" \
+    "${UI_BOLD}" "${percent}" "${UI_RESET}" \
+    "${UI_MUTED}" "$(format_transfer_bytes "${current}")" "$(format_transfer_bytes "${total}")" "${UI_RESET}" \
+    "${UI_FAINT}" "$(format_transfer_bytes "${speed}")" "${UI_RESET}" \
+    "${label}"
 }
 
 download_with_progress() {
@@ -290,7 +419,7 @@ download_with_progress() {
     printf '\r\033[2K\033[?25h'
   fi
   if (( status != 0 )); then
-    printf '  %b[FAIL]%b %s\n' "${UI_RED}${UI_BOLD}" "${UI_RESET}" "${label}" >&2
+    printf '     %b%s%b %s\n' "${UI_RED}${UI_BOLD}" "${UI_G_FAIL}" "${UI_RESET}" "${label}" >&2
     tail -n 40 "${log_file}" >&2 || true
     ui_log "FAIL ${label}"
     rm -f -- "${log_file}"
@@ -300,32 +429,52 @@ download_with_progress() {
   success "${label} ($(format_transfer_bytes "${current}") transferred)."
 }
 
+# Panels. The signature is unchanged from the bracketed-ASCII generation so
+# every call site keeps working; only the ink is different. `edge` is still
+# accepted and still selects a heavier rule, which is how a completion panel
+# distinguishes itself from an informational one.
 ui_panel_rule() {
-  local color="$1" edge="${2:-=}" line
-  printf -v line '%*s' 70 ''
-  printf '%b+%s+%b\n' "${color}${UI_BOLD}" "${line// /${edge}}" "${UI_RESET}"
+  local color="$1" edge="${2:-=}" glyph="${UI_G_RULE}" width
+  [[ "${edge}" == "=" ]] && glyph="${UI_G_RULE_HEAVY}"
+  width="$(ui_width)"
+  printf '  %b%s%b\n' "${color}" "$(ui_repeat "${glyph}" "${width}")" "${UI_RESET}"
 }
 
 ui_panel_begin() {
   local color="$1" title="$2" edge="${3:-=}"
   printf '\n'
-  ui_panel_rule "${color}" "${edge}"
-  printf '%b|  %-68s|%b\n' "${color}${UI_BOLD}" "${title}" "${UI_RESET}"
+  printf '  %b%s%b  %b%s%b\n' "${color}${UI_BOLD}" "${UI_G_MARK}" "${UI_RESET}" "${UI_BOLD}" "${title}" "${UI_RESET}"
   ui_panel_rule "${color}" "${edge}"
 }
 
 ui_panel_kv() {
-  printf '|  %-20s %-47s|\n' "$1" "$2"
+  printf '  %b%-22s%b %s\n' "${UI_MUTED}" "$1" "${UI_RESET}" "$2"
 }
 
 ui_panel_line() {
-  printf '|  %-68s|\n' "$1"
+  printf '  %s\n' "$1"
 }
 
 ui_panel_end() {
   local color="$1" edge="${2:-=}"
   ui_panel_rule "${color}" "${edge}"
   printf '\n'
+}
+
+# The closing note of a successful run. Distinct from a panel because it is the
+# one thing an operator is looking for when they come back to the terminal.
+ui_complete() {
+  local title="$1" width
+  width="$(ui_width)"
+  printf '\n  %b%s%b\n' "${UI_GREEN}" "$(ui_repeat "${UI_G_RULE_HEAVY}" "${width}")" "${UI_RESET}"
+  printf '  %b%s  %s%b\n' "${UI_GREEN}${UI_BOLD}" "${UI_G_OK}" "${title}" "${UI_RESET}"
+  printf '  %b%s%b\n' "${UI_GREEN}" "$(ui_repeat "${UI_G_RULE_HEAVY}" "${width}")" "${UI_RESET}"
+  ui_log "complete ${title}"
+}
+
+ui_next() {
+  printf '\n  %b%s NEXT%b  %s\n\n' "${UI_ACCENT}${UI_BOLD}" "${UI_G_MARK}" "${UI_RESET}" "$1"
+  ui_log "next ${1}"
 }
 
 # Resolves the release version from the extracted tree when available. Scripts
@@ -341,6 +490,7 @@ installer_release_version() {
 # <<< ORCASYNAPSE-INSTALLER-UI <<<
 
 UI_ACCENT="${UI_CYAN}"
+UI_ACCENT_SOFT="${UI_CYAN_SOFT}"
 UI_BANNER_TAGLINE="AGENTIC SYSTEM  /  VM2 SECURE ENROLLMENT"
 UI_BANNER_ACTIVITY="Establishing node enrollment context"
 UI_BANNER_META="Installer ${INSTALLER_VERSION}"
@@ -442,20 +592,30 @@ EOF
 
 install_host_dependencies() {
   require_ubuntu_host
+  # python3 belongs here even though Ubuntu Server ships it: it is not in
+  # Ubuntu's essential set, and the desired-state reconciler this installer
+  # writes to /usr/local/lib is the only thing that needs it. Without it a node
+  # enrolls, reports Healthy, and silently never applies a toolset the operator
+  # admitted -- a failure that only shows up in journalctl.
   if ! command -v docker >/dev/null 2>&1 || ! command -v openssl >/dev/null 2>&1 \
-    || ! command -v curl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+    || ! command -v curl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1 \
+    || ! command -v python3 >/dev/null 2>&1; then
     run_with_progress "Refresh operating-system packages" apt-get update \
       || fail "could not refresh Ubuntu package metadata"
     run_with_progress "Install runtime security dependencies" env DEBIAN_FRONTEND=noninteractive \
-      apt-get install -y ca-certificates curl jq openssl docker.io \
+      apt-get install -y ca-certificates curl jq openssl python3 docker.io \
       || fail "could not install Docker and runtime security dependencies"
   fi
   run_with_progress "Enable the Docker service" systemctl enable --now docker \
     || fail "could not enable the Docker service"
   docker info >/dev/null 2>&1 || fail "the Docker daemon is not reachable after startup"
 
+  # Everything this installer runs, and everything the heartbeat and
+  # desired-state scripts it writes will run later. The second group is the one
+  # that matters: those fail on a timer, hours after anyone is watching.
   local required_command
-  for required_command in install chown useradd journalctl sha256sum awk sed grep date hostname mktemp cat chmod mv; do
+  for required_command in install chown useradd journalctl sha256sum awk sed grep date hostname mktemp cat chmod mv \
+    python3 base64 cmp tr paste; do
     command -v "${required_command}" >/dev/null 2>&1 \
       || fail "the Ubuntu host is missing required command '${required_command}'"
   done
@@ -702,6 +862,13 @@ document_node="$(jq -r '.nodeId // empty' "${WORK}/document.json")"
 [[ "$(jq -r '.format // empty' "${WORK}/document.json")" == "orcasynapse-runtime-desired-state/v1" ]] \
   || { echo "orcasynapse: unrecognized desired-state format; nothing applied" >&2; exit 1; }
 
+# Recorded after verification and before anything is applied, so the installer
+# and an operator reading the host can both see what the control plane last
+# admitted -- including the empty set, which is a real instruction.
+jq -r '.admittedToolsets[]?' "${WORK}/document.json" > "${STATE_ROOT}/admitted-toolsets.tmp"
+install -m 0644 -o root -g root "${STATE_ROOT}/admitted-toolsets.tmp" "${STATE_ROOT}/admitted-toolsets"
+rm -f -- "${STATE_ROOT}/admitted-toolsets.tmp"
+
 # Admitted names drive two settings, because one is not enough.
 #
 # `platform_toolsets` allowlists this platform, and `no_mcp` suppresses MCP
@@ -785,6 +952,30 @@ EOF
 
   systemctl daemon-reload
   systemctl enable --now "${DESIRED_STATE_SERVICE}.timer" >/dev/null
+}
+
+# Applies the admitted toolsets now instead of waiting for the timer.
+#
+# Without this a freshly enrolled node runs the tool-free baseline until the
+# first tick — up to five minutes during which the runtime does not match what
+# the dashboard says it admitted, and the operator watching the install has no
+# way to tell the difference between "not yet" and "not working".
+preseed_desired_state() {
+  [[ -s "${STATE_ROOT}/control-plane-key.pem" ]] || return 0
+  /usr/local/lib/orcasynapse/hermes-desired-state.sh
+}
+
+# The names the control plane last admitted, for the completion panel. Absent
+# means the control plane never answered; empty means it answered "none", and
+# those are different facts.
+admitted_toolset_summary() {
+  local file="${STATE_ROOT}/admitted-toolsets"
+  [[ -r "${file}" ]] || { printf 'not yet reported by OrcaSynapse'; return 0; }
+  if [[ ! -s "${file}" ]]; then
+    printf 'none — every toolset disabled'
+    return 0
+  fi
+  paste -sd ', ' -- "${file}" 2>/dev/null || tr '\n' ' ' < "${file}"
 }
 
 write_heartbeat_client() {
@@ -1124,21 +1315,35 @@ EOF
   systemctl start "${HEARTBEAT_SERVICE}.service"
 
   success "Signed heartbeat monitoring is active."
+
+  # Reconcile once now rather than leaving the node on the tool-free baseline
+  # until the timer's first tick. A failure here is not fatal: the timer will
+  # try again in five minutes, and the control plane refuses runs against a
+  # runtime whose toolsets it has not confirmed, so the node is never wrongly
+  # permissive in the meantime.
+  if run_with_progress "Apply the admitted toolset allowlist" preseed_desired_state; then
+    run_with_progress "Verify runtime health after applying the allowlist" wait_for_hermes 0 \
+      || warning "Hermes is still settling; the reconcile timer will retry within five minutes."
+  else
+    warning "Could not reach OrcaSynapse for the toolset allowlist; the reconcile timer retries every five minutes."
+  fi
   rm -f -- "${ENROLLMENT_STATE}"
   INSTALLATION_COMPLETED=1
 
-  printf '\n%b+======================================================================+%b\n' "${UI_GREEN}${UI_BOLD}" "${UI_RESET}"
-  printf '%b|  %-68s|%b\n' "${UI_GREEN}${UI_BOLD}" "AGENTIC SYSTEM IS READY" "${UI_RESET}"
-  printf '%b+======================================================================+%b\n' "${UI_GREEN}${UI_BOLD}" "${UI_RESET}"
-  printf '|  %-20s %-47s|\n' 'Hermes API' "${hermes_base_url}"
-  printf '|  %-68s|\n' 'Node identity fingerprint'
-  printf '|  %-68s|\n' "${node_fingerprint}"
-  printf '%b+======================================================================+%b\n\n' "${UI_GREEN}${UI_BOLD}" "${UI_RESET}"
+  ui_complete "AGENTIC SYSTEM IS READY"
+  ui_panel_kv "Hermes API" "${hermes_base_url}"
+  ui_panel_kv "Runtime image" "${hermes_image}"
+  ui_panel_kv "Model route" "${model_alias} via the OrcaSynapse gateway"
+  # What the runtime may actually do, stated at the end of the install rather
+  # than left for the operator to infer from the dashboard.
+  ui_panel_kv "Admitted toolsets" "$(admitted_toolset_summary)"
+  ui_panel_kv "Node fingerprint" "${node_fingerprint}"
+  printf '\n'
   info "The one-time enrollment claim has been consumed."
   info "OrcaSynapse now monitors this node without SSH or a Docker socket."
+  info "Toolset changes made in the dashboard reach this node within five minutes."
   warning "Before production, allow OrcaSynapse to reach TCP/8642 and restrict VM2 egress to OrcaSynapse HTTPS plus approved inference and MCP destinations."
-  printf '\n%b  NEXT%b  Return to OrcaSynapse and confirm this node reports Healthy.\n' \
-    "${UI_CYAN}${UI_BOLD}" "${UI_RESET}"
+  ui_next "Return to OrcaSynapse and confirm this node reports Healthy."
 }
 
 if [[ "${BASH_SOURCE[0]:-$0}" == "$0" ]]; then

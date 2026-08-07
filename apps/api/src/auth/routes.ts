@@ -88,6 +88,23 @@ export async function registerAdminSessionRoutes(
         message: "A valid current password and a different new password are required.",
       });
     }
+    /*
+     * An expired session and a wrong current password are both refusals, and
+     * telling them apart matters here more than anywhere else in the product.
+     * This is the first screen a new installation shows, the operator is
+     * copying a generated password out of a vault, and being told the password
+     * is wrong when the session simply timed out sends them round the loop
+     * again with the same correct password.
+     *
+     * Checking the session first also slides its idle window, so a submit that
+     * arrives inside the window can never be refused for staleness.
+     */
+    if (!(await dependencies.sessionManager.authenticate(adminSessionToken(request)))) {
+      return reply.code(401).send({
+        error: "SESSION_EXPIRED",
+        message: "This administrator session expired. Sign in again to set a new password.",
+      });
+    }
     const issued = await dependencies.sessionManager.changeLocalPassword(
       adminSessionToken(request),
       parsed.data.currentPassword,
@@ -97,7 +114,7 @@ export async function registerAdminSessionRoutes(
     if (!issued) {
       return reply.code(401).send({
         error: "UNAUTHORIZED",
-        message: "The password could not be changed with the supplied credentials.",
+        message: "The current password is incorrect.",
       });
     }
     return reply

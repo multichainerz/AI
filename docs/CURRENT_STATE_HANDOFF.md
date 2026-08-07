@@ -1,6 +1,6 @@
 # OrcaSynapse Current-State Handoff
 
-Last verified: 2026-08-05 (Asia/Jakarta)
+Last verified: 2026-08-07 (Asia/Jakarta)
 
 This document is the sanitized transfer context for continuing OrcaSynapse work in another session. Read it before changing code. It records the repository state, decisions already made, verified behavior, and the pending work. It intentionally contains no passwords, installation keys, API keys, enrollment claims, or private-key material.
 
@@ -8,9 +8,16 @@ This document is the sanitized transfer context for continuing OrcaSynapse work 
 
 - Repository: <https://github.com/multichainerz/AI>
 - Local workspace: `C:\Users\Veros\Documents\GitHub\MPM`
-- Branch: `main`, synchronized with `origin/main`.
-- Baseline release: **v0.8.0** (this file ships in that release commit; `git log -1` gives the hash). Releases are tagged starting at `v0.4.0`.
-- Baseline verification: `pnpm verify` passes — 720 tests, typecheck, production build, and `drizzle-kit check` all green. `pnpm verify:postgres` passes against a pgvector server, and the three static guards (`sync-installer-ui.sh --check`, `test-release-consistency.sh`, `test-docker-build-closure.sh`) pass.
+- Branch: `main`.
+- Baseline release: **v1.4.0** (this file ships in that release commit; `git log -1` gives the hash). Releases are tagged starting at `v0.4.0`.
+- Baseline verification: `pnpm verify` passes — 1,021 tests, typecheck, production build, and `drizzle-kit check` all green. `pnpm verify:postgres` passes against a pgvector server; `pnpm security:audit` reports no known vulnerabilities; and the four static guards (`sync-installer-ui.sh --check`, `test-release-consistency.sh`, `test-docker-build-closure.sh`, `test-csp-closure.sh`) pass.
+
+**Check what is actually on the remote before assuming a deployment tests your
+work.** `install.sh` defaults to `ORCASYNAPSE_REF=main` and builds the images
+from a GitHub tarball of that ref, so an unpushed release is invisible to every
+install. `git log --oneline origin/main..main` should be empty; nineteen
+releases once accumulated locally while the pilot could only ever have fetched
+`v1.1.0`.
 
 Do not copy credentials from terminals, VM environment files, Docker secrets, PostgreSQL, or service logs into issues, commits, or future handoff documents.
 
@@ -92,6 +99,15 @@ One commit per release on `main`: subject `vX.Y.Z`, body = summary sentence plus
 - **Audit**: append-only trail readable at `GET /api/v1/admin/audit/events` (`audit:read`, keyset paging) with a dashboard view under Operations; SIEM forwarding with at-least-once delivery and health (`NOT_CONFIGURED`/`HEALTHY`/`BEHIND`/`FAILING`) observed by AI Ops incidents. See `docs/AUDIT_TRAIL_RUNBOOK.md`.
 - **Onboarding**: completable from the dashboard — architecture decision, component attestation, step updates, activation control with named blockers.
 - **Operations**: topology, incidents, workflow metrics, release evidence, timer-driven stale-executor reaping, audit-forwarding component.
+- **Agent memory**: pgvector recall scoped to (owner, profile), version chains with model-judged supersession, an always-injected profile of static and dynamic facts, session-end distillation, forget batches with `dryRun`, and a quality metric. See `docs/AGENT_MEMORY_RUNBOOK.md`.
+- **Benchmarks**: deterministic suites executed against the live stack — `CHAT_QUALITY` through a real agent run, `RETRIEVAL` through the document vector plane, `MEMORY` through recall. Nothing is judged by a model. A completed run files itself into the evaluation ledger as the evidence a promotion is gated on. See `docs/BENCHMARK_RUNBOOK.md`.
+- **Runtime desired state**: VM2 consumes the signed document
+  (`GET /api/v1/runtime-nodes/:nodeId/desired-state`, v0.8.0/1.42.0),
+  verifies the signature against its pinned control-plane key, and applies the
+  admitted toolset allowlist. Since v1.4.0 the installer reconciles once
+  before it finishes, so a node is governed on arrival rather than after the
+  first five-minute tick, and reports what was admitted in its completion panel.
+- **Design system**: Tailwind 3 with `cva`, no Radix — the container's `style-src 'self'` forbids the inline styles and injected `<style>` elements its overlays need. Primitives live in `apps/web/src/ui/`; Inter and JetBrains Mono are self-hosted under `apps/web/public/fonts/`.
 - **Enterprise access**: local administrator + Installation-Key break-glass recovery (rotatable via `scripts/rotate-installation-key.sh`), optional OIDC/Microsoft Entra ID.
 
 Client-side only (do not describe as API capabilities): conversation search, export, and retry — `GET /conversations` accepts no query parameter.
@@ -123,11 +139,9 @@ and owner scope is a SQL predicate that needs exactly that. Tools exposed this
 way could only be ones safe for *any* user of a given profile. Settle which
 tools those are — or obtain per-run credentials from Hermes — before building.
 
-**Other open items:** VM2 does not yet consume the signed desired-state document
-(`GET /api/v1/runtime-nodes/:nodeId/desired-state`, shipped v0.8.0), so
-toolset admission is enforced at the boundary but not pushed to the runtime; a
-node enrolled before v0.8.0 has no pinned control-plane key and must be
-re-enrolled to receive one. Agent memory is retrieval over stored turns rather
+**Other open items:** a node enrolled before v0.8.0 has no pinned
+control-plane key and must be re-enrolled to receive one — without it the node
+applies no desired state rather than trusting an unsigned document. Agent memory is retrieval over stored turns rather
 than a memory layer — Hermes ships a `MemoryProvider` ABC (`on_session_end`
 fact extraction, `prefetch`, tool-shaped recall) that is the principled fix.
 Interaction-test coverage exists only for chat; other views are render-level.
@@ -151,16 +165,35 @@ A development workstation may also run PostgreSQL for the test suite. On WSL the
 localhost port relay goes stale when idle — restart the cluster immediately
 before a database-backed suite if connections are refused.
 
+**How a deployment gets its code.** `install.sh` reads
+`ORCASYNAPSE_GITHUB_REPOSITORY` (default `multichainerz/AI`) and
+`ORCASYNAPSE_REF` (default `main`), resolves the ref to a commit through the
+GitHub API, downloads that commit's tarball, and `compose.yaml` builds every
+image from it. There is no registry and no published artifact, so what is on
+`main` *is* what deploys. Migrations need no manual step: compose runs a
+dedicated `migrate` service, and both `api` and `worker` wait on
+`service_completed_successfully`.
+
 ## Useful verification commands
 
 ```powershell
 git status -sb
 pnpm verify                    # ORCASYNAPSE_TEST_DATABASE_URL must point at a pgvector server
 pnpm verify:postgres           # ORCASYNAPSE_INTEGRATION_DATABASE_URL, full-migration proof
+pnpm security:audit           # blocking in CI: a high in a production dependency
 bash scripts/sync-installer-ui.sh --check
 bash scripts/test-release-consistency.sh
 bash scripts/test-docker-build-closure.sh
+bash scripts/test-csp-closure.sh   # reads apps/web/dist; builds it if absent
+git log --oneline origin/main..main   # must be empty before a deployment test
 ```
+
+On Windows the three installer shell tests (`test-public-installer-recovery.sh`,
+`test-agentic-installer-recovery.sh`, `test-installer-secret-permissions.sh`) do
+not run: Git Bash hands a POSIX temp path to Windows `curl.exe`, which cannot
+open it, and the secret test needs Linux `sudo`. CI runs all three on
+`ubuntu-latest`. `bash -n install.sh scripts/*.sh scripts/lib/*.sh` does work
+locally and catches syntax breakage.
 
 Local test database convention: `docker run -d --name orca-base -p 15432:5432 -e POSTGRES_USER=orca -e POSTGRES_PASSWORD=orca -e POSTGRES_DB=postgres pgvector/pgvector:pg17`, then `ORCASYNAPSE_TEST_DATABASE_URL=postgresql://orca:orca@127.0.0.1:15432/postgres`.
 

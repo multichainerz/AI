@@ -33,8 +33,9 @@ import {
   serviceConnection,
   toolRuntimeControl,
   type OrcaSynapseDatabase,
+  agentRunWakeStatement,
 } from "@orcasynapse/database";
-import { and, asc, count, desc, eq, inArray, isNotNull, ne } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNotNull, ne, sql } from "drizzle-orm";
 import { createHash, randomUUID } from "node:crypto";
 import { advisoryLock, isUniqueViolation } from "../database-support.js";
 import {
@@ -627,6 +628,11 @@ export class DrizzleAgentManager implements AgentManager {
         })
         .returning();
       if (!created) throw new AgentConflictError("The agent run could not be queued.");
+      // Wakes the worker the instant this commits, instead of leaving the
+      // message to wait out the reconcile tick. PostgreSQL defers NOTIFY until
+      // commit, so the worker can never be woken for a run it cannot yet see.
+      // The tick still runs: this only removes the wait, never the guarantee.
+      await transaction.execute(sql.raw(agentRunWakeStatement()));
       await transaction.insert(auditEvent).values({
         actorType: "USER", actorId: principal.id, action: "agent.run_queued",
         resourceType: "AgentRun", resourceId: created.id, outcome: "SUCCESS",

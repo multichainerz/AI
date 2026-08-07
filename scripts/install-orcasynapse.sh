@@ -350,18 +350,19 @@ main() {
   host_ip="${host_ip:-127.0.0.1}"
   installation_key="$(<"$(secret_file orcasynapse_installation_key)")"
 
-  ui_panel_begin "${UI_GREEN}" "ORCASYNAPSE IS READY"
+  ui_complete "ORCASYNAPSE IS READY"
   ui_panel_kv 'Dashboard' "http://${host_ip}:${ORCASYNAPSE_HTTP_PORT}/"
   ui_panel_kv 'Release' "${release_version}${source_commit:+ (${source_commit:0:12})}"
-  ui_panel_line 'Offline recovery Installation Key'
-  ui_panel_line "${installation_key}"
-  ui_panel_end "${UI_GREEN}"
+  # Printed, never logged: ui_panel_line does not write to UI_LOG_FILE, which
+  # is the only reason the key may appear through a UI helper at all.
+  ui_panel_line ''
+  ui_panel_kv 'Offline recovery key' "${installation_key}"
+  printf '\n'
   warning "Store the Installation Key in your organization password vault before closing this terminal."
   info "It is for offline local-account recovery, does not expire, and is not the routine dashboard login."
   info "Export and verify the encrypted recovery kit before production activation."
   write_completion_marker "${release_version}" "${source_commit:-unknown}"
-  printf '\n%b  NEXT%b  Open the dashboard, change the temporary password, then connect AI Inference.\n' \
-    "${UI_CYAN}${UI_BOLD}" "${UI_RESET}"
+  ui_next "Open the dashboard, change the temporary password, then connect AI Inference."
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
