@@ -32,18 +32,17 @@ describe("colour tokens", () => {
 });
 
 describe("the border reset", () => {
-  it("gives every element a border style, or no `border` utility paints", () => {
+  it("keeps preflight on, because it is what makes `border` paint at all", () => {
     /*
      * `border-style` defaults to `none` and CSS then computes `border-width` to
-     * 0, so Tailwind's `border` (width only) draws nothing. Preflight normally
-     * supplies this rule; preflight is off here, and without it every Panel,
-     * card, input and dialog in the set was borderless.
+     * 0, so Tailwind's `border` (width only) draws nothing without the global
+     * `border-style: solid` that preflight supplies. Turning preflight off
+     * again — which was correct while views were still on the old stylesheet —
+     * would silently un-border every Panel, card, input and dialog in the set.
      */
-    const universal = /@layer base\s*\{[\s\S]*?\*,\s*::before,\s*::after\s*\{([^}]*)\}/.exec(styles)?.[1] ?? "";
-    expect(universal, "the universal border reset is missing").not.toBe("");
-    expect(universal).toMatch(/border-style:\s*solid/);
-    // Width must stay 0, or the reset would draw a border on everything.
-    expect(universal).toMatch(/border-width:\s*0/);
+    // Absent means enabled; the config only ever names it to switch it off.
+    const corePlugins = (config as { corePlugins?: Record<string, boolean> }).corePlugins;
+    expect(corePlugins?.preflight, "preflight must not be disabled").not.toBe(false);
   });
 
   it("keeps a border style on the button reset too", () => {

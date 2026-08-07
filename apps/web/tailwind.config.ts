@@ -15,17 +15,17 @@ import type { Config } from "tailwindcss";
  */
 export default {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
-  corePlugins: {
-    /*
-     * Preflight is off for the migration.
-     *
-     * Tailwind's reset unstyles headings, lists and form controls, and the
-     * 2,000 lines in `styles.css` were written against browser defaults. Turning
-     * it on now would restyle every view that has not been rebuilt yet. It goes
-     * on in the release that migrates the last view.
-     */
-    preflight: false,
-  },
+  /*
+   * Preflight is on as of ai-v1.65.0.
+   *
+   * It was off for the whole migration so Tailwind's reset could not restyle
+   * the views still on the old stylesheet. Every view is now built from the
+   * primitive set, so the reset is what the design system wants: consistent
+   * box sizing, no inherited heading sizes, and — the one that mattered —
+   * `border-style: solid` on every element, which the hand-written rule in
+   * `styles.css` was standing in for.
+   */
+
   theme: {
     extend: {
       /*

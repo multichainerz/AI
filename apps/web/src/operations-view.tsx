@@ -25,7 +25,10 @@ import {
   updateProductionReadinessControl,
 } from "./api.js";
 import { adminAccess } from "./admin-access.js";
-import { LockedScreen } from "./ui/index.js";
+import {
+  Alert, Button, EmptyState, Field, Input, LockedScreen, Metric, MetricRow, MicroLabel,
+  PageHeader, Panel, PanelHeading, Select, StatusText, Textarea, cn, toneFor,
+} from "./ui/index.js";
 
 interface OperationsViewProps {
   session: AdministratorSession | null;
@@ -295,182 +298,307 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
   const metrics = overview?.metrics;
   return (
     <>
-      <header className="topbar aiops-topbar">
-        <div className="page-heading">
-          <p className="page-kicker">AI operations</p>
-          <h1>Operational control room</h1>
-          <p>Trace service degradation to affected AI workflows and gate releases on retained evaluation evidence.</p>
-        </div>
-        <div className="topbar-actions">
-          <span className={`status-chip ${overview?.status === "HEALTHY" ? "online" : "offline"}`}><i />{overview ? humanLabel(overview.status) : "Loading"}</span>
-          <button className="secondary-button" type="button" onClick={() => void refresh()} disabled={busy}>{busy ? "Refreshing..." : "Refresh"}</button>
-        </div>
-      </header>
+      <PageHeader
+        kicker="AI operations"
+        title="Operational control room"
+        description="Trace service degradation to affected AI workflows and gate releases on retained evaluation evidence."
+        actions={<>
+          <StatusText dot tone={overview?.status === "HEALTHY" ? "good" : "warn"} className="h-9 items-center border border-border bg-surface px-3">
+            {overview ? humanLabel(overview.status) : "Loading"}
+          </StatusText>
+          <Button onClick={() => void refresh()} disabled={busy}>{busy ? "Refreshing..." : "Refresh"}</Button>
+        </>}
+      />
 
-      <div className="operations-feedback" aria-live="polite">
-        {error && <div className="operations-alert error">{error}</div>}
-        {message && <div className="operations-alert success">{message}</div>}
+      <div aria-live="polite">
+        {error && <Alert className="mb-4">{error}</Alert>}
+        {message && <Alert tone="good" className="mb-4">{message}</Alert>}
       </div>
 
-      <nav className="aiops-tabs" aria-label="AI operations views">
-        <button className={tab === "control" ? "active" : ""} type="button" onClick={() => setTab("control")}>Control room</button>
-        <button className={tab === "incidents" ? "active" : ""} type="button" onClick={() => setTab("incidents")}>Incidents <span>{overview?.incidents.open ?? 0}</span></button>
-        <button className={tab === "evaluations" ? "active" : ""} type="button" onClick={() => setTab("evaluations")} disabled={!canReadEvaluations}>Release gates</button>
-        <button className={tab === "readiness" ? "active" : ""} type="button" onClick={() => setTab("readiness")} disabled={!canReadReadiness}>Pilot readiness <span>{readiness?.summary.blockedControls ?? 0}</span></button>
+      {/* The counts ride on the tab, so a blocked control or an open incident
+          is visible from whichever tab you are on. */}
+      <nav className="mb-5 flex flex-wrap gap-1 rounded border border-border bg-surface p-1" aria-label="AI operations views">
+        {([
+          { key: "control", label: "Control room", count: null, enabled: true },
+          { key: "incidents", label: "Incidents", count: overview?.incidents.open ?? 0, enabled: true },
+          { key: "evaluations", label: "Release gates", count: null, enabled: canReadEvaluations },
+          { key: "readiness", label: "Pilot readiness", count: readiness?.summary.blockedControls ?? 0, enabled: canReadReadiness },
+        ] as const).map((entry) => (
+          <button
+            className={cn(
+              "flex items-center gap-2 rounded px-3 py-1.5 text-body transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+              tab === entry.key ? "bg-raised text-text" : "text-muted hover:text-text",
+            )}
+            key={entry.key}
+            type="button"
+            aria-current={tab === entry.key ? "page" : undefined}
+            disabled={!entry.enabled}
+            onClick={() => setTab(entry.key)}
+          >
+            {entry.label}
+            {entry.count !== null && entry.count > 0 && (
+              <span className="rounded border border-warn/50 bg-warn/10 px-1.5 font-mono text-micro text-warn">{entry.count}</span>
+            )}
+          </button>
+        ))}
       </nav>
 
-      {tab === "control" && <>
-        <section className="metrics aiops-metrics" aria-label="AI operations summary">
-          <article><span>Services needing attention</span><strong>{overview?.components.filter(({ status }) => status !== "HEALTHY").length ?? "--"}</strong><small>{overview?.components.length ?? 0} observed components</small></article>
-          <article><span>Open incidents</span><strong className={overview?.incidents.critical ? "text-bad" : undefined}>{overview?.incidents.open ?? "--"}</strong><small>{overview?.incidents.critical ?? 0} critical</small></article>
-          <article><span>Hermes runs pending</span><strong>{numberFormatter.format(pendingWork)}</strong><small>{failedWork} retained agent-run failures</small></article>
-          <article><span>Release evidence</span><strong>{overview?.evaluations.passed ?? "--"}</strong><small>{overview?.evaluations.drafts ?? 0} draft / {overview?.evaluations.promoted ?? 0} promoted</small></article>
-        </section>
+      {tab === "control" && <div className="grid gap-5">
+        <MetricRow className="lg:grid-cols-4" aria-label="AI operations summary">
+          <Metric
+            label="Services needing attention"
+            value={overview?.components.filter(({ status }) => status !== "HEALTHY").length ?? "--"}
+            caption={`${overview?.components.length ?? 0} observed components`}
+          />
+          <Metric
+            label="Open incidents"
+            tone={overview?.incidents.critical ? "bad" : "neutral"}
+            value={overview?.incidents.open ?? "--"}
+            caption={`${overview?.incidents.critical ?? 0} critical`}
+          />
+          <Metric label="Hermes runs pending" value={numberFormatter.format(pendingWork)} caption={`${failedWork} retained agent-run failures`} />
+          <Metric
+            label="Release evidence"
+            value={overview?.evaluations.passed ?? "--"}
+            caption={`${overview?.evaluations.drafts ?? 0} draft / ${overview?.evaluations.promoted ?? 0} promoted`}
+          />
+        </MetricRow>
 
-        <div className="aiops-primary-grid">
-          <section className="panel component-panel">
-            <div className="panel-heading"><div><p className="section-kicker">Infrastructure</p><h2>Service topology</h2><p>Live state is distinguished from dashboard configuration and last-verified connection tests.</p></div><span className="snapshot-time">Snapshot {relativeTime(overview?.generatedAt ?? null)}</span></div>
-            <div className="component-grid">
+        <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(300px,0.8fr)]">
+          <Panel>
+            <PanelHeading
+              kicker="Infrastructure"
+              title="Service topology"
+              description="Live state is distinguished from dashboard configuration and last-verified connection tests."
+              actions={<StatusText>Snapshot {relativeTime(overview?.generatedAt ?? null)}</StatusText>}
+            />
+            <div className="grid gap-2 sm:grid-cols-2">
               {sortedComponents.map((component) => (
-                <article className={`component-card ${component.status.toLowerCase()}`} key={component.id}>
-                  <div><span className="component-indicator" /><strong>{component.label}</strong><small>{humanLabel(component.status)}</small></div>
-                  <p>{component.summary}</p>
-                  <footer><span>{component.source === "LAST_VERIFIED" ? `Verified ${relativeTime(component.observedAt)}` : humanLabel(component.source)}</span><span>{component.affectedWorkflows.length ? component.affectedWorkflows.map(humanLabel).join(" / ") : "Platform support"}</span></footer>
+                <article className="grid gap-2 rounded border border-border bg-raised p-3" key={component.id}>
+                  <div className="flex items-center gap-2.5">
+                    <StatusText dot tone={toneFor(component.status.toLowerCase())} />
+                    <strong className="min-w-0 truncate text-[12px] font-semibold text-text">{component.label}</strong>
+                    <StatusText className="ml-auto shrink-0">{humanLabel(component.status)}</StatusText>
+                  </div>
+                  <p className="mb-0 text-caption leading-relaxed text-muted">{component.summary}</p>
+                  <footer className="flex flex-wrap justify-between gap-2 font-mono text-micro text-faint">
+                    <span>{component.source === "LAST_VERIFIED" ? `Verified ${relativeTime(component.observedAt)}` : humanLabel(component.source)}</span>
+                    <span>{component.affectedWorkflows.length ? component.affectedWorkflows.map(humanLabel).join(" / ") : "Platform support"}</span>
+                  </footer>
                 </article>
               ))}
-              {!overview && <p className="empty-state">Loading component state...</p>}
+              {!overview && <p className="m-0 text-body text-faint">Loading component state...</p>}
             </div>
-          </section>
+          </Panel>
 
-          <aside className="panel incident-rail">
-            <div className="panel-heading"><div><p className="section-kicker">Active response</p><h2>Incident queue</h2><p>Automated degradation and operator-raised context.</p></div><button className="text-button" type="button" onClick={() => setTab("incidents")}>View all</button></div>
-            <div className="incident-compact-list">
-              {(overview?.incidents.items ?? []).slice(0, 5).map((item) => <article key={item.id}>
-                <span className={`severity-dot ${item.severity.toLowerCase()}`} />
-                <div><strong>{item.title}</strong><small>{humanLabel(item.status)} / {relativeTime(item.lastObservedAt)}</small></div>
+          <Panel>
+            <PanelHeading
+              kicker="Active response"
+              title="Incident queue"
+              actions={<Button variant="ghost" size="sm" onClick={() => setTab("incidents")}>View all</Button>}
+            />
+            <div className="grid gap-1.5">
+              {(overview?.incidents.items ?? []).slice(0, 5).map((item) => <article
+                className="flex items-start gap-2.5 rounded border border-border bg-raised p-2.5"
+                key={item.id}
+              >
+                <span
+                  aria-hidden="true"
+                  className={cn("mt-1 h-1.5 w-1.5 shrink-0", item.severity === "CRITICAL" ? "bg-bad" : "bg-warn")}
+                />
+                <div className="min-w-0">
+                  <strong className="block text-caption font-semibold text-text">{item.title}</strong>
+                  <small className="mt-0.5 block font-mono text-micro text-faint">
+                    {humanLabel(item.status)} / {relativeTime(item.lastObservedAt)}
+                  </small>
+                </div>
               </article>)}
-              {overview?.incidents.items.length === 0 && <p className="empty-state">No active incidents.</p>}
+              {overview?.incidents.items.length === 0 && (
+                <EmptyState title="No active incidents">Automated degradation and operator-raised context appear here.</EmptyState>
+              )}
             </div>
-          </aside>
+          </Panel>
         </div>
 
-        <section className="panel guardrail-panel">
-          <div className="panel-heading"><div><p className="section-kicker">Layered policy</p><h2>Guardrail posture</h2><p>Application controls are reported separately from target-environment evidence.</p></div></div>
-          <div className="guardrail-grid">{overview?.guardrails.map((control) => <article key={control.layer}>
-            <header><span>{humanLabel(control.layer)}</span><strong className={control.status.toLowerCase()}>{humanLabel(control.status)}</strong></header>
-            <h3>{control.label}</h3><p>{control.summary}</p><small>{control.evidence}</small>
+        <Panel>
+          <PanelHeading
+            kicker="Layered policy"
+            title="Guardrail posture"
+            description="Application controls are reported separately from target-environment evidence."
+          />
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{overview?.guardrails.map((control) => <article
+            className="grid gap-1.5 rounded border border-border bg-raised p-3"
+            key={control.layer}
+          >
+            <header className="flex items-center justify-between gap-3">
+              <MicroLabel>{humanLabel(control.layer)}</MicroLabel>
+              <StatusText dot tone={toneFor(control.status.toLowerCase())}>{humanLabel(control.status)}</StatusText>
+            </header>
+            <h3 className="m-0 text-[12px] font-semibold text-text">{control.label}</h3>
+            <p className="mb-0 text-caption leading-relaxed text-muted">{control.summary}</p>
+            <small className="font-mono text-micro text-faint">{control.evidence}</small>
           </article>)}</div>
-        </section>
+        </Panel>
 
-        <section className="panel workload-panel">
-          <div className="panel-heading"><div><p className="section-kicker">Workflows</p><h2>24-hour and retained workload signals</h2><p>Counts retain their domain meaning; all-time values are not presented as live error rates.</p></div></div>
-          <div className="workload-grid">
-            <article><span>Chat responses / 24h</span><strong>{metrics?.chat?.responses ?? "--"}</strong><small>{percentage(metrics?.chat?.failureRate ?? null)} failed / {metrics?.chat?.averageLatencyMs ?? "--"} ms average</small></article>
-            <article><span>Knowledge indexing</span><strong>{metrics?.documents?.processing ?? "--"}</strong><small>{metrics?.documents?.ready ?? 0} ready / {metrics?.documents?.failed ?? 0} need attention</small></article>
-            <article><span>Hermes runs</span><strong>{metrics?.agents?.runningRuns ?? "--"}</strong><small>{metrics?.agents?.queuedRuns ?? 0} queued / {metrics?.agents?.failedRuns ?? 0} retained failures</small></article>
-            <article><span>Governed tools</span><strong>{metrics?.tools?.executingCalls ?? "--"}</strong><small>{metrics?.tools?.pendingApprovals ?? 0} pending review / {metrics?.tools?.deniedCalls ?? 0} denied</small></article>
-            <article><span>Source bytes retained</span><strong>{metrics?.documents ? bytes(metrics.documents.retainedSourceBytes) : "--"}</strong><small>Knowledge is kept as extracted chunks and embeddings, never originals</small></article>
+        <Panel>
+          <PanelHeading
+            kicker="Workflows"
+            title="24-hour and retained workload signals"
+            description="Counts retain their domain meaning; all-time values are not presented as live error rates."
+          />
+          <MetricRow className="border-b-0 pb-0 lg:grid-cols-5">
+            <Metric label="Chat responses / 24h" value={metrics?.chat?.responses ?? "--"} caption={`${percentage(metrics?.chat?.failureRate ?? null)} failed / ${metrics?.chat?.averageLatencyMs ?? "--"} ms average`} />
+            <Metric label="Knowledge indexing" value={metrics?.documents?.processing ?? "--"} caption={`${metrics?.documents?.ready ?? 0} ready / ${metrics?.documents?.failed ?? 0} need attention`} />
+            <Metric label="Hermes runs" value={metrics?.agents?.runningRuns ?? "--"} caption={`${metrics?.agents?.queuedRuns ?? 0} queued / ${metrics?.agents?.failedRuns ?? 0} retained failures`} />
+            <Metric label="Governed tools" value={metrics?.tools?.executingCalls ?? "--"} caption={`${metrics?.tools?.pendingApprovals ?? 0} pending review / ${metrics?.tools?.deniedCalls ?? 0} denied`} />
+            <Metric label="Source bytes retained" value={metrics?.documents ? bytes(metrics.documents.retainedSourceBytes) : "--"} caption="Chunks and embeddings, never originals" />
+          </MetricRow>
+        </Panel>
+
+        <Panel>
+          <PanelHeading
+            kicker="PostgreSQL coordination"
+            title="Durable runtime state"
+            description={overview?.runtime ? `Captured ${relativeTime(overview.runtime.capturedAt)} from domain state` : "Runtime state is unavailable."}
+            actions={<Button size="sm" onClick={() => void refresh()} disabled={busy}>Refresh state</Button>}
+          />
+          <div className="overflow-x-auto rounded border border-border">
+            <table className="w-full min-w-[560px] border-collapse text-body">
+              <thead>
+                <tr className="border-b border-border bg-raised">
+                  {["Workload", "Pending", "Active", "Failed", "Retained"].map((head) => (
+                    <th className="px-3 py-2 text-left font-mono text-micro font-medium uppercase text-faint" scope="col" key={head}>{head}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>{workloads.map((workload) => <tr className="border-b border-border last:border-b-0" key={workload.name}>
+                <th className="px-3 py-2 text-left font-normal" scope="row">
+                  <strong className="block text-caption font-semibold text-text">{workload.displayName}</strong>
+                  <span className="block font-mono text-micro text-faint">{workload.name}</span>
+                </th>
+                <td className="px-3 py-2 font-mono text-caption tabular-nums text-muted">{workload.pendingCount}</td>
+                <td className="px-3 py-2 font-mono text-caption tabular-nums text-muted">{workload.activeCount}</td>
+                <td className={cn("px-3 py-2 font-mono text-caption tabular-nums", workload.failedCount ? "text-bad" : "text-muted")}>{workload.failedCount}</td>
+                <td className="px-3 py-2 font-mono text-caption tabular-nums text-muted">{workload.totalCount}</td>
+              </tr>)}</tbody>
+            </table>
           </div>
-        </section>
-
-        <section className="panel queue-panel">
-          <div className="panel-heading"><div><p className="section-kicker">PostgreSQL coordination</p><h2>Durable runtime state</h2><p>{overview?.runtime ? `Captured ${relativeTime(overview.runtime.capturedAt)} from domain state` : "Runtime state is unavailable."}</p></div><button className="text-button" type="button" onClick={() => void refresh()} disabled={busy}>Refresh state</button></div>
-          <div className="queue-table-wrap"><table className="queue-table"><thead><tr><th scope="col">Workload</th><th scope="col">Pending</th><th scope="col">Active</th><th scope="col">Failed</th><th scope="col">Retained</th></tr></thead><tbody>{workloads.map((workload) => <tr key={workload.name}>
-            <th scope="row"><strong>{workload.displayName}</strong><span>{workload.name}</span></th>
-            <td data-label="Pending">{workload.pendingCount}</td><td data-label="Active">{workload.activeCount}</td><td data-label="Failed" className={workload.failedCount ? "cell-bad" : ""}>{workload.failedCount}</td><td data-label="Retained">{workload.totalCount}</td>
-          </tr>)}</tbody></table></div>
-          <div className="queue-footer">
-            <div className="worker-list">{executors.map((executor) => <article key={executor.id}><span className={`worker-dot ${executor.status.toLowerCase()}`} /><div><strong>{executor.name}</strong><small>{executor.workloads.length} workloads / version {executor.version}</small></div><div className="worker-state"><strong>{humanLabel(executor.status)}</strong><span>{relativeTime(executor.lastSeenAt)}</span></div></article>)}{executors.length === 0 && <p className="empty-state">No runtime executor heartbeat has been recorded.</p>}</div>
+          <div className="mt-3 grid gap-1.5">
+            {executors.map((executor) => <article
+              className="flex flex-wrap items-center justify-between gap-3 rounded border border-border bg-raised p-2.5"
+              key={executor.id}
+            >
+              <div className="flex min-w-0 items-center gap-2.5">
+                <StatusText dot tone={toneFor(executor.status.toLowerCase())} />
+                <div className="min-w-0">
+                  <strong className="block truncate text-caption font-semibold text-text">{executor.name}</strong>
+                  <small className="block font-mono text-micro text-faint">
+                    {executor.workloads.length} workloads / version {executor.version}
+                  </small>
+                </div>
+              </div>
+              <div className="text-right">
+                <StatusText tone={toneFor(executor.status.toLowerCase())}>{humanLabel(executor.status)}</StatusText>
+                <span className="mt-0.5 block font-mono text-micro text-faint">{relativeTime(executor.lastSeenAt)}</span>
+              </div>
+            </article>)}
+            {executors.length === 0 && (
+              <EmptyState title="No executor heartbeat">No runtime executor heartbeat has been recorded.</EmptyState>
+            )}
           </div>
-        </section>
-      </>}
+        </Panel>
+      </div>}
 
-      {tab === "incidents" && <section className="aiops-section">
-        <div className="section-toolbar"><div><h2>Operational incidents</h2><p>Automatic observations and manual context share one durable response ledger.</p></div>{canOperate && <button className="secondary-button" type="button" onClick={() => setShowIncidentForm((shown) => !shown)}>{showIncidentForm ? "Cancel" : "Create incident"}</button>}</div>
-        {showIncidentForm && <form className="panel aiops-form" onSubmit={(event) => void createIncident(event)}>
+      {tab === "incidents" && <section className="grid gap-4">
+        <div className="flex flex-wrap items-start justify-between gap-6"><div><h2>Operational incidents</h2><p>Automatic observations and manual context share one durable response ledger.</p></div>{canOperate && <button className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded border border-border-strong bg-raised px-3.5 text-body font-medium text-text transition-colors hover:border-faint disabled:cursor-not-allowed disabled:opacity-40" type="button" onClick={() => setShowIncidentForm((shown) => !shown)}>{showIncidentForm ? "Cancel" : "Create incident"}</button>}</div>
+        {showIncidentForm && <form className="ops-form grid gap-3 rounded border border-border bg-surface p-5 sm:grid-cols-2" onSubmit={(event) => void createIncident(event)}>
           <label><span>Title</span><input name="title" minLength={3} maxLength={160} required /></label>
           <label><span>Severity</span><select name="severity"><option value="WARNING">Warning</option><option value="CRITICAL">Critical</option></select></label>
           <label><span>Component</span><input name="component" minLength={1} maxLength={80} placeholder="e.g. hermes-vm2" required /></label>
           <label><span>Owner</span><input name="owner" maxLength={160} placeholder="Optional team or operator" /></label>
-          <label className="wide"><span>Summary</span><textarea name="summary" minLength={3} maxLength={1000} rows={3} required /></label>
-          <div className="wide form-actions"><button className="primary-button" type="submit" disabled={busy}>Create incident</button></div>
+          <label className="sm:col-span-2"><span>Summary</span><textarea name="summary" minLength={3} maxLength={1000} rows={3} required /></label>
+          <div className="flex justify-end sm:col-span-2"><button className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded border border-accent bg-accent px-3.5 text-body font-medium text-[#0a0a0b] transition-colors hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-40" type="submit" disabled={busy}>Create incident</button></div>
         </form>}
-        <div className="incident-list">{incidents.map((item) => <article className={`panel incident-card ${item.status.toLowerCase()}`} key={item.id}>
-          <header><span className={`incident-severity ${item.severity.toLowerCase()}`}>{humanLabel(item.severity)}</span><span>{item.automated ? "Automatic observation" : "Operator raised"}</span><time>{relativeTime(item.detectedAt)}</time></header>
+        <div className="grid gap-3">{incidents.map((item) => <article className={cn("grid gap-3 rounded border border-l-2 border-border bg-surface p-4",
+            item.status === "RESOLVED" ? "border-l-good" : item.severity === "CRITICAL" ? "border-l-bad" : "border-l-warn")} key={item.id}>
+          <header><span className={cn("rounded border px-1.5 py-0.5 font-mono text-micro uppercase",
+            item.severity === "CRITICAL" ? "border-bad/50 bg-bad/10 text-bad" : "border-warn/50 bg-warn/10 text-warn")}>{humanLabel(item.severity)}</span><span>{item.automated ? "Automatic observation" : "Operator raised"}</span><time>{relativeTime(item.detectedAt)}</time></header>
           <div><h3>{item.title}</h3><p>{item.summary}</p></div>
           <dl><div><dt>Status</dt><dd>{humanLabel(item.status)}</dd></div><div><dt>Component</dt><dd>{item.component}</dd></div><div><dt>Owner</dt><dd>{item.owner ?? "Unassigned"}</dd></div><div><dt>Last observed</dt><dd>{relativeTime(item.lastObservedAt)}</dd></div></dl>
           {item.resolutionNote && <blockquote>{item.resolutionNote}</blockquote>}
-          {canOperate && item.status !== "RESOLVED" && <div className="incident-actions"><button type="button" onClick={() => { setIncidentAction({ id: item.id, action: "acknowledge" }); setDecisionNote(""); }} disabled={item.status !== "OPEN"}>Acknowledge</button><button type="button" onClick={() => { setIncidentAction({ id: item.id, action: "resolve" }); setDecisionNote(""); }}>Resolve</button></div>}
-          {incidentAction?.id === item.id && <form className="incident-decision" onSubmit={(event) => void decideIncident(event)}><label><span>Operator note</span><textarea value={decisionNote} onChange={(event) => setDecisionNote(event.target.value)} minLength={3} maxLength={1000} rows={2} required /></label><div><button type="button" onClick={() => setIncidentAction(null)}>Cancel</button><button className="secondary-button" type="submit" disabled={busy}>Record {incidentAction.action}</button></div></form>}
-        </article>)}{incidents.length === 0 && <p className="empty-state">No operational incidents have been recorded.</p>}</div>
+          {canOperate && item.status !== "RESOLVED" && <div className="flex justify-end gap-2"><button type="button" onClick={() => { setIncidentAction({ id: item.id, action: "acknowledge" }); setDecisionNote(""); }} disabled={item.status !== "OPEN"}>Acknowledge</button><button type="button" onClick={() => { setIncidentAction({ id: item.id, action: "resolve" }); setDecisionNote(""); }}>Resolve</button></div>}
+          {incidentAction?.id === item.id && <form className="ops-form grid gap-3 rounded border border-border-strong bg-raised p-3" onSubmit={(event) => void decideIncident(event)}><label><span>Operator note</span><textarea value={decisionNote} onChange={(event) => setDecisionNote(event.target.value)} minLength={3} maxLength={1000} rows={2} required /></label><div><button type="button" onClick={() => setIncidentAction(null)}>Cancel</button><button className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded border border-border-strong bg-raised px-3.5 text-body font-medium text-text transition-colors hover:border-faint disabled:cursor-not-allowed disabled:opacity-40" type="submit" disabled={busy}>Record {incidentAction.action}</button></div></form>}
+        </article>)}{incidents.length === 0 && <p className="m-0 rounded border border-dashed border-border px-4 py-7 text-body text-muted">No operational incidents have been recorded.</p>}</div>
       </section>}
 
-      {tab === "evaluations" && <section className="aiops-section">
-        <div className="section-toolbar"><div><h2>Release evidence</h2><p>Evidence is immutable after completion. Promotion is a separate, permissioned decision.</p></div>{canManageEvaluations && <button className="secondary-button" type="button" onClick={() => setShowEvaluationForm((shown) => !shown)}>{showEvaluationForm ? "Cancel" : "New candidate"}</button>}</div>
-        {showEvaluationForm && <form className="panel aiops-form evaluation-create" onSubmit={(event) => void createEvaluation(event)}>
+      {tab === "evaluations" && <section className="grid gap-4">
+        <div className="flex flex-wrap items-start justify-between gap-6"><div><h2>Release evidence</h2><p>Evidence is immutable after completion. Promotion is a separate, permissioned decision.</p></div>{canManageEvaluations && <button className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded border border-border-strong bg-raised px-3.5 text-body font-medium text-text transition-colors hover:border-faint disabled:cursor-not-allowed disabled:opacity-40" type="button" onClick={() => setShowEvaluationForm((shown) => !shown)}>{showEvaluationForm ? "Cancel" : "New candidate"}</button>}</div>
+        {showEvaluationForm && <form className="ops-form grid gap-3 rounded border border-border bg-surface p-5 sm:grid-cols-2" onSubmit={(event) => void createEvaluation(event)}>
           <label><span>Candidate name</span><input name="name" minLength={3} maxLength={160} required /></label>
           <label><span>Target type</span><select name="targetType"><option>MODEL</option><option>PROMPT</option><option>POLICY</option><option>AGENT</option></select></label>
           <label><span>Target reference</span><input name="targetReference" placeholder="laguna-s / hermes-policy" maxLength={240} required /></label>
           <label><span>Version</span><input name="targetVersion" placeholder="Immutable version or digest" maxLength={120} required /></label>
           <label><span>Minimum pass rate</span><input name="minimumPassRate" type="number" min={50} max={100} step={0.1} defaultValue={95} required /></label>
-          <div className="evaluation-categories"><span>Required evidence</span><p>{EVALUATION_CATEGORIES.map(humanLabel).join(" / ")}</p></div>
-          <div className="wide form-actions"><button className="primary-button" type="submit" disabled={busy}>Create candidate</button></div>
+          <div className="ops-form grid gap-1 rounded border border-border bg-raised p-3 sm:col-span-2"><span>Required evidence</span><p>{EVALUATION_CATEGORIES.map(humanLabel).join(" / ")}</p></div>
+          <div className="flex justify-end sm:col-span-2"><button className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded border border-accent bg-accent px-3.5 text-body font-medium text-[#0a0a0b] transition-colors hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-40" type="submit" disabled={busy}>Create candidate</button></div>
         </form>}
-        <div className="evaluation-list">{evaluations.map((run) => <article className="panel evaluation-card" key={run.id}>
+        <div className="grid gap-3">{evaluations.map((run) => <article className="panel evaluation-card" key={run.id}>
           <header><div><span>{humanLabel(run.targetType)}</span><h3>{run.name}</h3></div><strong className={run.status.toLowerCase()}>{humanLabel(run.status)}</strong></header>
-          <p className="evaluation-target">{run.targetReference}<span>/ {run.targetVersion}</span></p>
-          <div className="evaluation-score"><div><strong>{percentage(run.passRate)}</strong><span>observed pass rate</span></div><div><strong>{run.passedCases}/{run.totalCases}</strong><span>cases passed</span></div><div><strong>{run.criticalFailures}</strong><span>critical failures</span></div><div><strong>{percentage(run.minimumPassRate)}</strong><span>required minimum</span></div></div>
-          <div className="evaluation-tags">{run.requiredCategories.map((category) => <span key={category}>{humanLabel(category)}</span>)}</div>
-          {run.promotionReason && <blockquote className="promotion-reason"><strong>Promotion rationale</strong><span>{run.promotionReason}</span></blockquote>}
+          <p className="m-0 font-mono text-caption text-muted">{run.targetReference}<span>/ {run.targetVersion}</span></p>
+          <div className="grid grid-cols-2 gap-px rounded border border-border bg-border sm:grid-cols-4"><div><strong>{percentage(run.passRate)}</strong><span>observed pass rate</span></div><div><strong>{run.passedCases}/{run.totalCases}</strong><span>cases passed</span></div><div><strong>{run.criticalFailures}</strong><span>critical failures</span></div><div><strong>{percentage(run.minimumPassRate)}</strong><span>required minimum</span></div></div>
+          <div className="flex flex-wrap gap-1.5">{run.requiredCategories.map((category) => <span key={category}>{humanLabel(category)}</span>)}</div>
+          {run.promotionReason && <blockquote className="m-0 rounded border border-l-2 border-border border-l-accent p-3"><strong>Promotion rationale</strong><span>{run.promotionReason}</span></blockquote>}
           <footer><span>Created {relativeTime(run.createdAt)}{run.promotedAt ? ` / promoted ${relativeTime(run.promotedAt)}` : ""}</span><div>{run.status === "DRAFT" && canManageEvaluations && <button type="button" onClick={() => openEvidence(run)}>Record evidence</button>}{run.status === "PASSED" && canPromoteEvaluations && <button type="button" onClick={() => { setConfirmPromotionId(run.id); setPromotionReason(""); }}>Promote</button>}</div></footer>
-          {confirmPromotionId === run.id && <form className="promotion-confirm" onSubmit={(event) => void promote(event, run.id)}><label><span>Promotion rationale</span><textarea value={promotionReason} onChange={(event) => setPromotionReason(event.target.value)} minLength={3} maxLength={1000} rows={2} placeholder="Why this exact evidence is approved for release" required /></label><div><button type="button" onClick={() => { setConfirmPromotionId(null); setPromotionReason(""); }}>Cancel</button><button className="secondary-button" type="submit" disabled={busy}>Confirm promotion</button></div></form>}
-          {evidenceRunId === run.id && <form className="evidence-form" onSubmit={(event) => void recordEvidence(event)}><div className="evidence-heading"><div><strong>Record immutable results</strong><span>Every required category needs an evidence artifact reference.</span></div><button type="button" onClick={() => setEvidenceRunId(null)}>Close</button></div>{run.requiredCategories.map((category) => {
+          {confirmPromotionId === run.id && <form className="ops-form grid gap-3 rounded border border-border-strong bg-raised p-3" onSubmit={(event) => void promote(event, run.id)}><label><span>Promotion rationale</span><textarea value={promotionReason} onChange={(event) => setPromotionReason(event.target.value)} minLength={3} maxLength={1000} rows={2} placeholder="Why this exact evidence is approved for release" required /></label><div><button type="button" onClick={() => { setConfirmPromotionId(null); setPromotionReason(""); }}>Cancel</button><button className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded border border-border-strong bg-raised px-3.5 text-body font-medium text-text transition-colors hover:border-faint disabled:cursor-not-allowed disabled:opacity-40" type="submit" disabled={busy}>Confirm promotion</button></div></form>}
+          {evidenceRunId === run.id && <form className="ops-form grid gap-3 rounded border border-border-strong bg-raised p-3" onSubmit={(event) => void recordEvidence(event)}><div className="flex items-start justify-between gap-4"><div><strong>Record immutable results</strong><span>Every required category needs an evidence artifact reference.</span></div><button type="button" onClick={() => setEvidenceRunId(null)}>Close</button></div>{run.requiredCategories.map((category) => {
             const draft = evidenceDraft[category];
             const update = (field: "totalCases" | "passedCases" | "criticalFailures" | "evidenceRef", value: string) => setEvidenceDraft((current) => ({ ...current, [category]: { totalCases: "", passedCases: "", criticalFailures: "0", evidenceRef: "", ...current[category], [field]: value } }));
-            return <fieldset key={category}><legend>{humanLabel(category)}</legend><label><span>Total</span><input type="number" min={1} value={draft?.totalCases ?? ""} onChange={(event) => update("totalCases", event.target.value)} required /></label><label><span>Passed</span><input type="number" min={0} value={draft?.passedCases ?? ""} onChange={(event) => update("passedCases", event.target.value)} required /></label><label><span>Critical</span><input type="number" min={0} value={draft?.criticalFailures ?? "0"} onChange={(event) => update("criticalFailures", event.target.value)} required /></label><label className="evidence-ref"><span>Evidence reference</span><input value={draft?.evidenceRef ?? ""} onChange={(event) => update("evidenceRef", event.target.value)} placeholder="Report ID or immutable URI" required /></label></fieldset>;
-          })}<div className="form-actions"><button className="primary-button" type="submit" disabled={busy}>Complete evaluation</button></div></form>}
-        </article>)}{evaluations.length === 0 && <p className="empty-state">No evaluation candidates have been created.</p>}</div>
+            return <fieldset key={category}><legend>{humanLabel(category)}</legend><label><span>Total</span><input type="number" min={1} value={draft?.totalCases ?? ""} onChange={(event) => update("totalCases", event.target.value)} required /></label><label><span>Passed</span><input type="number" min={0} value={draft?.passedCases ?? ""} onChange={(event) => update("passedCases", event.target.value)} required /></label><label><span>Critical</span><input type="number" min={0} value={draft?.criticalFailures ?? "0"} onChange={(event) => update("criticalFailures", event.target.value)} required /></label><label className="sm:col-span-3"><span>Evidence reference</span><input value={draft?.evidenceRef ?? ""} onChange={(event) => update("evidenceRef", event.target.value)} placeholder="Report ID or immutable URI" required /></label></fieldset>;
+          })}<div className="flex justify-end sm:col-span-2"><button className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded border border-accent bg-accent px-3.5 text-body font-medium text-[#0a0a0b] transition-colors hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-40" type="submit" disabled={busy}>Complete evaluation</button></div></form>}
+        </article>)}{evaluations.length === 0 && <p className="m-0 rounded border border-dashed border-border px-4 py-7 text-body text-muted">No evaluation candidates have been created.</p>}</div>
       </section>}
 
-      {tab === "readiness" && <section className="aiops-section readiness-section">
-        <div className="section-toolbar"><div><h2>Production pilot readiness</h2><p>Evidence-backed controls and externally issued OrcaSynapse decisions. OrcaSynapse records approvals; it does not grant them.</p></div>{canApproveReadiness && <button className="secondary-button" type="button" onClick={() => setShowApprovalForm((shown) => !shown)}>{showApprovalForm ? "Cancel" : "Record sign-off"}</button>}</div>
-        <section className={`panel readiness-hero ${readiness?.status.toLowerCase() ?? "not_ready"}`}>
-          <div><p className="section-kicker">Derived gate</p><h3>{readiness ? humanLabel(readiness.status) : "Loading"}</h3><p>Ready requires every control to be verified or formally waived and the latest Security, Infrastructure, Product, and Business decisions to be approved.</p></div>
+      {tab === "readiness" && <section className="grid gap-4">
+        <div className="flex flex-wrap items-start justify-between gap-6"><div><h2>Production pilot readiness</h2><p>Evidence-backed controls and externally issued OrcaSynapse decisions. OrcaSynapse records approvals; it does not grant them.</p></div>{canApproveReadiness && <button className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded border border-border-strong bg-raised px-3.5 text-body font-medium text-text transition-colors hover:border-faint disabled:cursor-not-allowed disabled:opacity-40" type="button" onClick={() => setShowApprovalForm((shown) => !shown)}>{showApprovalForm ? "Cancel" : "Record sign-off"}</button>}</div>
+        <section className={cn("grid gap-3 rounded border border-l-2 border-border bg-surface p-5",
+          readiness?.status === "READY" ? "border-l-good" : "border-l-warn")}>
+          <div><p className="font-mono text-micro uppercase text-faint">Derived gate</p><h3>{readiness ? humanLabel(readiness.status) : "Loading"}</h3><p>Ready requires every control to be verified or formally waived and the latest Security, Infrastructure, Product, and Business decisions to be approved.</p></div>
           <dl><div><dt>Controls accepted</dt><dd>{readiness ? readiness.summary.verifiedControls + readiness.summary.waivedControls : "--"}<span> / {readiness?.summary.totalControls ?? 0}</span></dd></div><div><dt>External approvals</dt><dd>{readiness?.summary.approvedRoles ?? "--"}<span> / {readiness?.summary.requiredApprovals ?? 4}</span></dd></div><div><dt>Blocked controls</dt><dd>{readiness?.summary.blockedControls ?? "--"}</dd></div></dl>
         </section>
 
-        {showApprovalForm && <form className="panel aiops-form readiness-approval-form" onSubmit={(event) => void submitReadinessApproval(event)}>
-          <div className="readiness-form-note wide"><strong>External decision record</strong><span>The authority is the OrcaSynapse body that made the decision. Your signed-in OrcaSynapse identity is retained separately as the recorder. {readinessControlsAccepted ? "All controls are accepted for an approval snapshot." : "Approval remains disabled until every control is verified or waived; rejection can still be recorded."}</span></div>
+        {showApprovalForm && <form className="ops-form grid gap-3 rounded border border-border bg-surface p-5 sm:grid-cols-2" onSubmit={(event) => void submitReadinessApproval(event)}>
+          <div className="sm:col-span-2 text-body text-muted"><strong>External decision record</strong><span>The authority is the OrcaSynapse body that made the decision. Your signed-in OrcaSynapse identity is retained separately as the recorder. {readinessControlsAccepted ? "All controls are accepted for an approval snapshot." : "Approval remains disabled until every control is verified or waived; rejection can still be recorded."}</span></div>
           <label><span>Approval role</span><select name="role"><option>SECURITY</option><option>INFRASTRUCTURE</option><option>PRODUCT</option><option>BUSINESS</option></select></label>
           <label><span>Decision</span><select name="decision" defaultValue={readinessControlsAccepted ? "APPROVED" : "REJECTED"}><option value="APPROVED" disabled={!readinessControlsAccepted}>APPROVED</option><option value="REJECTED">REJECTED</option></select></label>
           <label><span>Approving authority</span><input name="authority" minLength={1} maxLength={160} placeholder="OrcaSynapse Security Review Board" required /></label>
           <label><span>Approval evidence</span><input name="evidenceRef" minLength={1} maxLength={500} placeholder="Approval ID or immutable artifact reference" required /></label>
-          <label className="wide"><span>Decision rationale</span><textarea name="reason" minLength={3} maxLength={1000} rows={3} required /></label>
-          <div className="wide form-actions"><button className="primary-button" type="submit" disabled={busy}>Append authority decision</button></div>
+          <label className="sm:col-span-2"><span>Decision rationale</span><textarea name="reason" minLength={3} maxLength={1000} rows={3} required /></label>
+          <div className="flex justify-end sm:col-span-2"><button className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded border border-accent bg-accent px-3.5 text-body font-medium text-[#0a0a0b] transition-colors hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-40" type="submit" disabled={busy}>Append authority decision</button></div>
         </form>}
 
-        <div className="readiness-layout">
-          <div className="readiness-controls">{readiness?.controls.map((control) => <article className={`panel readiness-control ${control.status.toLowerCase()}`} key={control.key}>
+        <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(280px,0.7fr)]">
+          <div className="grid gap-2">{readiness?.controls.map((control) => <article className={cn("grid gap-2 rounded border border-l-2 border-border bg-surface p-3.5",
+            { good: "border-l-good", warn: "border-l-warn", bad: "border-l-bad", accent: "border-l-accent", neutral: "border-l-border-strong" }[toneFor(control.status.toLowerCase())])} key={control.key}>
             <header><span>{humanLabel(control.domain)}</span><strong>{humanLabel(control.status)}</strong></header>
-            <div className="readiness-control-copy"><h3>{control.title}</h3><p>{control.description}</p></div>
+            <div className="min-w-0"><h3>{control.title}</h3><p>{control.description}</p></div>
             <dl><div><dt>Owner</dt><dd>{control.owner ?? "Unassigned"}</dd></div><div><dt>Evidence</dt><dd>{control.evidenceRefs.length} reference{control.evidenceRefs.length === 1 ? "" : "s"}</dd></div><div><dt>Updated</dt><dd>{relativeTime(control.updatedAt)}</dd></div></dl>
             {control.note && <blockquote>{control.note}</blockquote>}
-            {canManageReadiness && <button className="text-button readiness-edit" type="button" onClick={() => setReadinessControlKey((current) => current === control.key ? null : control.key)}>{readinessControlKey === control.key ? "Close" : "Update evidence"}</button>}
-            {readinessControlKey === control.key && <form className="readiness-control-form" onSubmit={(event) => void updateReadiness(event, control)}>
+            {canManageReadiness && <button className="inline-flex h-7 items-center justify-center whitespace-nowrap rounded border border-transparent px-2.5 text-[10px] font-medium text-muted transition-colors hover:bg-raised hover:text-text disabled:cursor-not-allowed disabled:opacity-40" type="button" onClick={() => setReadinessControlKey((current) => current === control.key ? null : control.key)}>{readinessControlKey === control.key ? "Close" : "Update evidence"}</button>}
+            {readinessControlKey === control.key && <form className="ops-form mt-2 grid gap-3 rounded border border-border-strong bg-surface p-3" onSubmit={(event) => void updateReadiness(event, control)}>
               <label><span>Status</span><select name="status" defaultValue={control.status}><option>NOT_STARTED</option><option>IN_PROGRESS</option><option>BLOCKED</option><option>VERIFIED</option><option>WAIVED</option></select></label>
               <label><span>Owner</span><input name="owner" defaultValue={control.owner ?? ""} maxLength={160} placeholder="Required after work starts" /></label>
-              <label className="wide"><span>Evidence references, one per line</span><textarea name="evidenceRefs" defaultValue={control.evidenceRefs.join("\n")} rows={3} maxLength={10020} placeholder="Immutable report, ticket, backup, or approval reference" /></label>
-              <label className="wide"><span>Decision note</span><textarea name="note" defaultValue={control.note ?? ""} rows={2} minLength={3} maxLength={1000} placeholder="Required for blocked, verified, or waived status" /></label>
-              <div className="wide form-actions"><button className="secondary-button" type="submit" disabled={busy}>Save control</button></div>
+              <label className="sm:col-span-2"><span>Evidence references, one per line</span><textarea name="evidenceRefs" defaultValue={control.evidenceRefs.join("\n")} rows={3} maxLength={10020} placeholder="Immutable report, ticket, backup, or approval reference" /></label>
+              <label className="sm:col-span-2"><span>Decision note</span><textarea name="note" defaultValue={control.note ?? ""} rows={2} minLength={3} maxLength={1000} placeholder="Required for blocked, verified, or waived status" /></label>
+              <div className="flex justify-end sm:col-span-2"><button className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded border border-border-strong bg-raised px-3.5 text-body font-medium text-text transition-colors hover:border-faint disabled:cursor-not-allowed disabled:opacity-40" type="submit" disabled={busy}>Save control</button></div>
             </form>}
-          </article>)}{readiness?.controls.length === 0 && <p className="empty-state">The production-readiness checklist has not been migrated.</p>}</div>
+          </article>)}{readiness?.controls.length === 0 && <p className="m-0 rounded border border-dashed border-border px-4 py-7 text-body text-muted">The production-readiness checklist has not been migrated.</p>}</div>
 
-          <aside className="readiness-side">
-            <section className="panel readiness-approvals"><div className="panel-heading"><div><p className="section-kicker">Latest authority decisions</p><h2>Formal sign-offs</h2></div></div><div>{(["SECURITY", "INFRASTRUCTURE", "PRODUCT", "BUSINESS"] as const).map((role) => {
+          <aside className="grid gap-4">
+            <section className="panel readiness-approvals"><div className="panel-heading"><div><p className="font-mono text-micro uppercase text-faint">Latest authority decisions</p><h2>Formal sign-offs</h2></div></div><div>{(["SECURITY", "INFRASTRUCTURE", "PRODUCT", "BUSINESS"] as const).map((role) => {
               const approval = readiness?.approvals.find((item) => item.role === role);
               return <article key={role}><header><strong>{humanLabel(role)}</strong><span className={!approval ? "missing" : approval.isCurrent ? approval.decision.toLowerCase() : "stale"}>{approval ? `${humanLabel(approval.decision)}${approval.isCurrent ? "" : " / stale"}` : "Not recorded"}</span></header>{approval ? <><p>{approval.authority}</p><small>Recorded by {approval.recordedBy} / {relativeTime(approval.recordedAt)}</small><code>{approval.evidenceRef}</code></> : <p>No external authority decision is retained.</p>}</article>;
             })}</div></section>
-            <section className="panel readiness-blockers"><div className="panel-heading"><div><p className="section-kicker">Open gate conditions</p><h2>Readiness blockers</h2></div><strong>{readiness?.blockers.length ?? 0}</strong></div><ol>{readiness?.blockers.map((blocker) => <li key={blocker}>{blocker}</li>)}</ol>{readiness?.blockers.length === 0 && <p className="empty-state">No derived blockers remain.</p>}</section>
+            <section className="panel readiness-blockers"><div className="panel-heading"><div><p className="font-mono text-micro uppercase text-faint">Open gate conditions</p><h2>Readiness blockers</h2></div><strong>{readiness?.blockers.length ?? 0}</strong></div><ol>{readiness?.blockers.map((blocker) => <li key={blocker}>{blocker}</li>)}</ol>{readiness?.blockers.length === 0 && <p className="m-0 rounded border border-dashed border-border px-4 py-7 text-body text-muted">No derived blockers remain.</p>}</section>
           </aside>
         </div>
       </section>}

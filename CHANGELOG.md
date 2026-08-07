@@ -5,6 +5,57 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.65.0 — 2026-08-07
+
+The last three views, and preflight on.
+
+Tooling, Onboarding and Operations move onto the design system, which leaves
+every screen in the product built from the same primitives.
+
+**Tooling** is the governed MCP plane, so the states that matter are the ones
+that refuse things. The gateway says ON or OFF in words — OFF means every call
+is denied fail-closed, not that a feature is idle. Drift is the alarm: a toolset
+the runtime enabled but nobody admitted turns its row red, because every run is
+being refused until the two agree. A one-time credential is warn-toned rather
+than celebratory, since navigating away loses it. Approval requests keep their
+arguments verbatim, because a summary of them would be the operator approving
+something else. And the honest boundary — Hermes is zero-tool by default —
+stays where someone configuring grants will read it.
+
+**Onboarding**'s two remaining hand-rolled modals become real dialogs. One of
+them takes a recovery passphrase that is never retained anywhere, so losing
+focus out of it mid-entry is not a recoverable mistake. Its activation panel
+lists blockers by name: "3 blockers remain" is a dead end, the names are a list
+of next actions.
+
+**Operations** had no test either, and now has six across its four tabs. The
+degraded component sorts first because it is the one to act on; a last-verified
+reading is distinguished from a live one, since a cached connection test
+presented as live state is how someone trusts a service that stopped answering
+an hour ago; and the open-incident and blocked-control counts ride on the tabs
+so they are visible from whichever tab you are on.
+
+**Preflight is on.** It was off for the whole migration so Tailwind's reset
+could not restyle views still on the old stylesheet. With every view migrated,
+the reset is what the system wants — and it supersedes the hand-written
+universal `border-style: solid` from ai-v1.62.0, which was standing in for it.
+`ui/tokens.test.ts` now fails if preflight is ever switched back off, because
+doing so would silently un-border every Panel, card, input and dialog again.
+Markdown list markers are restored explicitly, since preflight strips them and
+a checklist without them is prose.
+
+**The alias tokens are gone.** `--surface-raised`, `--border-soft`,
+`--text-muted` and the rest existed so 2,000 lines of old CSS and the new
+primitives could share one palette during the migration. Nothing references them
+now, so they collapse onto the real names.
+
+914 tests green, web at 161. Contrast on the populated control room: 0 of 87
+nodes below WCAG AA, worst 5.30.
+
+**The stylesheet is 743 lines carrying 203 distinct colours** — from **2,020
+lines and 754 colours** when the revamp began. Two components remain outside the
+set: the connection drawer and the runtime-nodes panel.
+
 ## ai-v1.64.0 — 2026-08-07
 
 Agents — the screen that decides what an agent may do, and had no test of any
