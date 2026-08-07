@@ -25,6 +25,7 @@ import {
   updateProductionReadinessControl,
 } from "./api.js";
 import { adminAccess } from "./admin-access.js";
+import { LockedScreen } from "./ui/index.js";
 
 interface OperationsViewProps {
   session: AdministratorSession | null;
@@ -280,14 +281,14 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
 
   if (!unlocked) {
     return (
-      <>
-        <header className="topbar"><div className="page-heading"><p className="page-kicker">AI operations</p><h1>Operational control room</h1><p>One view for service health, workflows, guardrails, incidents, and release evidence.</p></div></header>
-        <section className="operations-lock panel">
-          <div className="lock-mark" aria-hidden="true">M</div>
-          <div><h2>Administrator access required</h2><p>Unlock the control plane to inspect protected operational telemetry and recovery controls.</p></div>
-          <button className="primary-button" type="button" onClick={onConfigure}>Unlock operations</button>
-        </section>
-      </>
+      <LockedScreen
+        kicker="AI operations"
+        title="Operations"
+        mark="OP"
+        reason="Unlock the control plane to inspect protected operational telemetry and recovery controls."
+        actionLabel="Open platform settings"
+        onAction={onConfigure}
+      />
     );
   }
 

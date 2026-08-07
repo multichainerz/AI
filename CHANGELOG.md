@@ -5,6 +5,42 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.59.0 — 2026-08-07
+
+Nine locked screens become one.
+
+The plan called this the biggest consolidation in the primitive set, and it was
+still outstanding: `LockedScreen` existed but only Chat used it. Every other
+governed area wrote its own, so a person who lost their session saw nine
+slightly different explanations of the same thing — three different marks,
+five different button labels ("Open platform settings", "Administrator setup",
+"Unlock operations", "Manage Agentic System", "Sign in locally"), one screen
+saying "Administrator **access** required" where eight said "session", and four
+different layouts. Agents, Knowledge, Guardrails, Memory, Models, Operations,
+Prompts, Tooling and Setup now all go through the primitive.
+
+Two things the consolidation had to learn rather than flatten:
+
+- **Not every locked area wants an administrator.** Chat, Knowledge and Agents
+  also serve enterprise identities. Telling an employee an administrator session
+  is required sends them to a person instead of to the sign-in they are entitled
+  to use, so `headline` states what the area actually needs.
+- **Some have two ways in.** `secondaryLabel`/`onSecondary` carries the
+  enterprise-vs-administrator choice properly, and Chat drops the hand-rolled
+  button it was using underneath the panel to fake one. A label with no handler
+  draws nothing, because a button that does nothing is worse than no button.
+
+Every screen now names its area in an `h1`, which is what makes the four
+Platform governance screens distinguishable — `admin-access.test.tsx` has
+asserted exactly that for four of them all along, and the other five inherit it
+for free.
+
+- delete 36 stylesheet rules across 20 dead class names, plus an orphaned
+  comment left behind by ai-v1.57.0 describing a rule that no longer exists
+
+878 tests green, web at 126. Contrast unchanged: 0 nodes below WCAG AA, worst
+5.30. The stylesheet is **1,753 lines, down from 1,974** before the revamp.
+
 ## ai-v1.58.0 — 2026-08-07
 
 The message transcript, and a way to actually look at one.

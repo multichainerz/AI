@@ -18,7 +18,7 @@ import {
   updateMemoryPolicy,
 } from "./api.js";
 import { adminAccess } from "./admin-access.js";
-import { Button, StatusText } from "./ui/index.js";
+import { Button, LockedScreen, StatusText } from "./ui/index.js";
 
 interface MemoryViewProps {
   session: AdministratorSession | null;
@@ -179,17 +179,14 @@ export function MemoryView({ session, onOpenSettings, onSessionExpired }: Memory
   </header>;
 
   if (!unlocked) {
-    return <div className="memory-workspace">
-      {heading}
-      <section className="memory-lock panel">
-        <span className="memory-lock-mark">M</span>
-        <div>
-          <strong>Administrator session required</strong>
-          <p>Unlock OrcaSynapse to review the retention ceiling and everything agents currently remember.</p>
-        </div>
-        <button className="primary-button" type="button" onClick={onOpenSettings}>Open platform settings</button>
-      </section>
-    </div>;
+    return <LockedScreen
+      kicker="Retention governance"
+      title="Memory"
+      mark="M"
+      reason="Unlock OrcaSynapse to review the retention ceiling and everything agents currently remember."
+      actionLabel="Open platform settings"
+      onAction={onOpenSettings}
+    />;
   }
 
   return <section className="memory-workspace">

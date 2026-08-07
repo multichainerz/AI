@@ -15,6 +15,7 @@ import {
   getDocuments,
   uploadDocument,
 } from "./api.js";
+import { LockedScreen } from "./ui/index.js";
 
 interface DocumentsViewProps {
   unlocked: boolean;
@@ -158,18 +159,18 @@ export function DocumentsView(props: DocumentsViewProps) {
   };
 
   if (!props.unlocked) {
-    return <section className="documents-locked panel">
-      <div className="document-lock-mark" aria-hidden="true">KN</div>
-      <div>
-        <p className="page-kicker">Enterprise knowledge</p>
-        <h1>{props.oidcConfigured ? "Sign in to use Knowledge" : "Enterprise access is not configured"}</h1>
-        <p>OrcaSynapse extracts and embeds each authorized source into its private knowledge index. Original files are never retained.</p>
-      </div>
-      <div className="document-lock-actions">
-        {props.oidcConfigured && <button className="primary-button" type="button" onClick={props.onSignIn}>Sign in with OrcaSynapse</button>}
-        <button className="text-button" type="button" onClick={props.onConfigure}>Manage Agentic System</button>
-      </div>
-    </section>;
+    return <LockedScreen
+      kicker="Enterprise knowledge"
+      title="Knowledge"
+      mark="KN"
+      headline={props.oidcConfigured ? "Sign in to use Knowledge" : "Enterprise access is not configured"}
+      reason="OrcaSynapse extracts and embeds each authorized source into its private knowledge index. Original files are never retained."
+      actionLabel={props.oidcConfigured ? "Sign in with OrcaSynapse" : "Manage Agentic System"}
+      onAction={props.oidcConfigured ? props.onSignIn : props.onConfigure}
+      {...(props.oidcConfigured
+        ? { secondaryLabel: "Manage Agentic System", onSecondary: props.onConfigure }
+        : {})}
+    />;
   }
 
   return <section className="documents-workspace knowledge-workspace">

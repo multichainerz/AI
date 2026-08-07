@@ -15,6 +15,7 @@ import {
   updateAgentProfile,
   updateAgentRuntime,
 } from "./api.js";
+import { LockedScreen } from "./ui/index.js";
 
 interface AgentsViewProps {
   unlocked: boolean;
@@ -287,16 +288,16 @@ export function AgentsView({ unlocked, administrator, activationReady, activatio
 
   if (!unlocked) {
     return (
-      <section className="chat-locked agents-locked">
-        <div className="chat-lock-mark">HA</div>
-        <p className="page-kicker">Governed execution</p>
-        <h1>Hermes agents require an authenticated workspace</h1>
-        <p>Sign in to run active profiles. Administrators can also configure immutable versions, inspect every run, and control the global execution boundary.</p>
-        <div className="chat-lock-actions">
-          {oidcConfigured && <button className="primary-button" type="button" onClick={onSignIn}>Enterprise sign in</button>}
-          <button className="secondary-button" type="button" onClick={onConfigure}>Administrator setup</button>
-        </div>
-      </section>
+      <LockedScreen
+        kicker="Governed execution"
+        title="Agents"
+        mark="HA"
+        headline="Authenticated workspace required"
+        reason="Sign in to run active profiles. Administrators can also configure immutable versions, inspect every run, and control the global execution boundary."
+        actionLabel={oidcConfigured ? "Enterprise sign in" : "Administrator setup"}
+        onAction={oidcConfigured ? onSignIn : onConfigure}
+        {...(oidcConfigured ? { secondaryLabel: "Administrator setup", onSecondary: onConfigure } : {})}
+      />
     );
   }
 

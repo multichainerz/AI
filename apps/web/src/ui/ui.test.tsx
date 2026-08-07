@@ -81,6 +81,46 @@ describe("LockedScreen", () => {
     expect(html).toContain("Administrator session required");
     expect(html).toContain("Open platform settings");
   });
+
+  it("says what it actually needs, which is not always an administrator", () => {
+    // Chat, Knowledge and Agents also serve enterprise identities. Telling an
+    // employee an administrator session is required sends them to a person
+    // instead of to the sign-in they are entitled to use.
+    const html = markup(
+      <LockedScreen
+        title="Knowledge"
+        mark="KN"
+        kicker="Enterprise knowledge"
+        headline="Sign in to use Knowledge"
+        actionLabel="Sign in with OrcaSynapse"
+        onAction={vi.fn()}
+      />,
+    );
+    expect(html).toContain("Sign in to use Knowledge");
+    expect(html).not.toContain("Administrator session required");
+    expect(html).toContain("Enterprise knowledge");
+  });
+
+  it("shows the second route only when there is one", () => {
+    const both = markup(
+      <LockedScreen
+        title="Agents"
+        mark="HA"
+        actionLabel="Enterprise sign in"
+        onAction={vi.fn()}
+        secondaryLabel="Administrator setup"
+        onSecondary={vi.fn()}
+      />,
+    );
+    expect(both).toContain("Enterprise sign in");
+    expect(both).toContain("Administrator setup");
+
+    // A label with no handler is a button that does nothing, so it is not drawn.
+    const orphan = markup(
+      <LockedScreen title="Agents" mark="HA" actionLabel="Administrator setup" onAction={vi.fn()} secondaryLabel="Enterprise sign in" />,
+    );
+    expect(orphan).not.toContain("Enterprise sign in");
+  });
 });
 
 describe("Alert", () => {

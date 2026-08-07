@@ -113,6 +113,14 @@ export function LockedScreen(props: {
   reason?: ReactNode;
   actionLabel: string;
   onAction: () => void;
+  /**
+   * Not every locked area wants an administrator. Chat, Knowledge and Agents
+   * also serve enterprise identities, so they state what they actually need
+   * and offer the enterprise route as a second action.
+   */
+  headline?: string;
+  secondaryLabel?: string;
+  onSecondary?: () => void;
   /** Chat is the one locked area an employee reaches, so it is not "Administration". */
   kicker?: string;
 }) {
@@ -136,14 +144,23 @@ export function LockedScreen(props: {
           {props.mark}
         </span>
         <div className="min-w-0">
-          <strong className="block text-[13px] font-semibold text-text">Administrator session required</strong>
+          <strong className="block text-[13px] font-semibold text-text">
+            {props.headline ?? "Administrator session required"}
+          </strong>
           <p className="mb-0 mt-1 text-body text-muted">
             {props.reason ?? "Unlock OrcaSynapse to review and change this area."}
           </p>
         </div>
-        <Button variant="primary" className="col-span-2 sm:col-span-1" onClick={props.onAction}>
-          {props.actionLabel}
-        </Button>
+        <div className="col-span-2 flex flex-col gap-2 sm:col-span-1 sm:flex-row sm:items-center">
+          <Button variant="primary" onClick={props.onAction}>
+            {props.actionLabel}
+          </Button>
+          {props.secondaryLabel && props.onSecondary ? (
+            <Button variant="ghost" onClick={props.onSecondary}>
+              {props.secondaryLabel}
+            </Button>
+          ) : null}
+        </div>
       </Panel>
     </div>
   );

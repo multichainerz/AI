@@ -824,11 +824,12 @@ export function ChatView({
        * screen is not the workspace, and inherited zero left it flush against
        * the sidebar.
        */
-      <div className="grid gap-4 px-[clamp(24px,4vw,64px)] pb-16 pt-9">
+      <div className="px-[clamp(24px,4vw,64px)] pb-16 pt-9">
         <LockedScreen
           title="Chat"
           kicker="Workspace"
           mark="AI"
+          headline={oidcConfigured ? "Sign in to OrcaSynapse" : "Enterprise access is not configured"}
           reason={
             oidcConfigured
               ? "Use your approved OrcaSynapse identity. OrcaSynapse checks the configured group allowlist before creating a local session."
@@ -836,14 +837,8 @@ export function ChatView({
           }
           actionLabel={oidcConfigured ? "Sign in with OrcaSynapse" : "Administrator setup"}
           onAction={oidcConfigured ? onSignIn : onConfigure}
+          {...(oidcConfigured ? { secondaryLabel: "Administrator setup", onSecondary: onConfigure } : {})}
         />
-        {oidcConfigured ? (
-          <div className="flex justify-center">
-            <Button variant="ghost" size="sm" onClick={onConfigure}>
-              Administrator setup
-            </Button>
-          </div>
-        ) : null}
       </div>
     );
   }

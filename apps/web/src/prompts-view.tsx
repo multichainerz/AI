@@ -8,6 +8,7 @@ import {
   updatePromptTemplate,
 } from "./api.js";
 import { adminAccess } from "./admin-access.js";
+import { LockedScreen } from "./ui/index.js";
 
 interface PromptsViewProps {
   session: AdministratorSession | null;
@@ -140,10 +141,14 @@ export function PromptsView({ session, onOpenOperations, onOpenSettings, onSessi
   };
 
   if (!unlocked) {
-    return <div className="prompts-workspace">
-      <header className="prompts-header"><div><p className="page-kicker">Release governance</p><h1>Prompts</h1><p>Versioned runtime instructions backed by promoted evaluation evidence.</p></div></header>
-      <section className="prompts-lock panel"><span className="prompts-lock-mark">P</span><div><strong>Administrator session required</strong><p>Unlock OrcaSynapse to review prompt content, checksums, and release evidence.</p></div><button className="primary-button" type="button" onClick={onOpenSettings}>Open platform settings</button></section>
-    </div>;
+    return <LockedScreen
+      kicker="Release governance"
+      title="Prompts"
+      mark="P"
+      reason="Unlock OrcaSynapse to review prompt content, checksums, and release evidence."
+      actionLabel="Open platform settings"
+      onAction={onOpenSettings}
+    />;
   }
 
   const active = prompts.find(({ status }) => status === "ACTIVE");
