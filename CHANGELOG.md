@@ -5,6 +5,59 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.76.0 — 2026-08-07
+
+The installer terminal experience, and a VM2 that arrives governed.
+
+**The TUI is rebuilt.** Bracketed ASCII (`[ OK ]`, `[####....]`, `+====+`) is
+replaced by a considered terminal design: a braille spinner, `✓ ▲ ✗ ›` status
+glyphs, step dots that show position at a glance, slim meters whose lit portion
+is the accent and whose remainder is a faint rule of the same length, thin
+full-width rules, and panels that align on a column instead of drawing a box.
+The wordmark is unchanged but now renders in four shades of the role accent —
+the same figlet, no longer reading as a 1990s shell script.
+
+**It degrades in three independent steps, because an installer runs over serial
+consoles and inside cloud-init as often as in a modern terminal.** Colour drops
+without a TTY or under `NO_COLOR`; box drawing falls back to ASCII when the
+locale is not UTF-8, since a latin-1 console renders mojibake for every rule and
+that looks far worse than the dashes it replaced; animation collapses to one
+static line when there is nothing to animate on. Each mode aligns within itself
+— one column per glyph in UTF-8, two in ASCII — because nobody ever sees both.
+Panels track the terminal width, clamped to 64–96: narrower and the two-column
+rows collide, wider and a full rule reads as a horizon rather than a container.
+
+**VM2 now arrives governed instead of converging later.** The installer wrote
+the desired-state reconcile timer but never ran it, so a freshly enrolled node
+sat on the tool-free baseline until the first tick — up to five minutes in which
+the runtime did not match what the dashboard said it admitted, and the operator
+watching had no way to distinguish "not yet" from "not working". It reconciles
+once before finishing, waits for the runtime to settle, and names the admitted
+toolsets in its completion panel. A failure there is not fatal: the timer
+retries, and the control plane refuses runs against a runtime whose toolsets it
+has not confirmed, so the node is never wrongly permissive in the meantime.
+
+The reconciler now records what it applied to `admitted-toolsets` on the host,
+so "OrcaSynapse never answered" and "OrcaSynapse answered none" are legible as
+the different facts they are — an empty allowlist is a real instruction.
+
+Both completion panels are rebuilt on the new primitives, and VM2's now states
+the runtime image, the model route and the admitted toolsets rather than only an
+API address and a fingerprint. The Installation Key still prints through
+`ui_panel_line`, which writes to no log — the only reason a secret may pass
+through a UI helper at all.
+
+Also fixed: `step()` ended each row with `(( index < total )) && printf ' '`,
+and a false arithmetic test is a failing command — as the last statement in the
+loop body it would have tripped the caller's `set -e` on the final dot of every
+step. It is an `if` now.
+
+Corrects the handoff document, which still said VM2 does not consume the signed
+desired-state document. It has since ai-v1.42.0.
+
+1,024 tests green, and every installer gate passes: UI-region sync, release
+consistency, docker build closure, CSP closure, and `bash -n` across the family.
+
 ## ai-v1.75.0 — 2026-08-07
 
 Deployment readiness: a CSP gate that runs in CI, and documentation that is true again.

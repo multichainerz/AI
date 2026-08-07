@@ -101,6 +101,12 @@ One commit per release on `main`: subject `ai-vX.Y.Z`, body = summary sentence p
 - **Operations**: topology, incidents, workflow metrics, release evidence, timer-driven stale-executor reaping, audit-forwarding component.
 - **Agent memory**: pgvector recall scoped to (owner, profile), version chains with model-judged supersession, an always-injected profile of static and dynamic facts, session-end distillation, forget batches with `dryRun`, and a quality metric. See `docs/AGENT_MEMORY_RUNBOOK.md`.
 - **Benchmarks**: deterministic suites executed against the live stack — `CHAT_QUALITY` through a real agent run, `RETRIEVAL` through the document vector plane, `MEMORY` through recall. Nothing is judged by a model. A completed run files itself into the evaluation ledger as the evidence a promotion is gated on. See `docs/BENCHMARK_RUNBOOK.md`.
+- **Runtime desired state**: VM2 consumes the signed document
+  (`GET /api/v1/runtime-nodes/:nodeId/desired-state`, ai-v1.41.0/1.42.0),
+  verifies the signature against its pinned control-plane key, and applies the
+  admitted toolset allowlist. Since ai-v1.76.0 the installer reconciles once
+  before it finishes, so a node is governed on arrival rather than after the
+  first five-minute tick, and reports what was admitted in its completion panel.
 - **Design system**: Tailwind 3 with `cva`, no Radix — the container's `style-src 'self'` forbids the inline styles and injected `<style>` elements its overlays need. Primitives live in `apps/web/src/ui/`; Inter and JetBrains Mono are self-hosted under `apps/web/public/fonts/`.
 - **Enterprise access**: local administrator + Installation-Key break-glass recovery (rotatable via `scripts/rotate-installation-key.sh`), optional OIDC/Microsoft Entra ID.
 
@@ -133,11 +139,9 @@ and owner scope is a SQL predicate that needs exactly that. Tools exposed this
 way could only be ones safe for *any* user of a given profile. Settle which
 tools those are — or obtain per-run credentials from Hermes — before building.
 
-**Other open items:** VM2 does not yet consume the signed desired-state document
-(`GET /api/v1/runtime-nodes/:nodeId/desired-state`, shipped ai-v1.41.0), so
-toolset admission is enforced at the boundary but not pushed to the runtime; a
-node enrolled before ai-v1.41.0 has no pinned control-plane key and must be
-re-enrolled to receive one. Agent memory is retrieval over stored turns rather
+**Other open items:** a node enrolled before ai-v1.41.0 has no pinned
+control-plane key and must be re-enrolled to receive one — without it the node
+applies no desired state rather than trusting an unsigned document. Agent memory is retrieval over stored turns rather
 than a memory layer — Hermes ships a `MemoryProvider` ABC (`on_session_end`
 fact extraction, `prefetch`, tool-shaped recall) that is the principled fix.
 Interaction-test coverage exists only for chat; other views are render-level.
