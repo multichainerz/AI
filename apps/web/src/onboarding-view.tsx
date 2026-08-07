@@ -20,7 +20,10 @@ import {
 import { connectionReadiness } from "./connection-readiness.js";
 import { connectionFor, deriveWorkspaceReadiness } from "./platform-readiness.js";
 import { RuntimeNodesPanel } from "./runtime-nodes-panel.js";
-import { LockedScreen } from "./ui/index.js";
+import {
+  Alert, Button, Dialog, Field, Input, LockedScreen, MicroLabel,
+  PageHeader, Panel, Select, StatusText, cn, toneFor,
+} from "./ui/index.js";
 
 interface OnboardingViewProps {
   unlocked: boolean;
@@ -239,16 +242,14 @@ export function OnboardingView({
   const readyCoreLayers = Number(inferenceReady) + Number(agenticReady);
 
   if (panel === "nodes") {
-    return <section className="setup-workspace platform-setup">
-      <header className="platform-setup-header">
-        <div>
-          <p className="page-kicker">Platform · Agentic System</p>
-          <h1>Enroll the isolated agent runtime</h1>
-          <p>The VM2 installer provisions Hermes, managed policy, and signed monitoring as one controlled layer.</p>
-        </div>
-        <button className="secondary-button" type="button" onClick={() => setPanel("overview")}>Back to setup</button>
-      </header>
-      {error && <div className="documents-alert" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
+    return <div className="grid gap-5">
+      <PageHeader
+        kicker="Platform · Agentic System"
+        title="Enroll the isolated agent runtime"
+        description="The VM2 installer provisions Hermes, managed policy, and signed monitoring as one controlled layer."
+        actions={<Button onClick={() => setPanel("overview")}>Back to setup</Button>}
+      />
+      {error && <Alert onDismiss={() => setError(null)}>{error}</Alert>}
       <RuntimeNodesPanel
         targetEnvironment={snapshot?.architecture.targetEnvironment ?? "DEVELOPMENT"}
         inferenceReady={inferenceReady}
@@ -256,7 +257,7 @@ export function OnboardingView({
         onNodesChange={onRuntimeNodesChange}
         onSessionExpired={onSessionExpired}
       />
-    </section>;
+    </div>;
   }
 
   const stages = [
@@ -298,91 +299,116 @@ export function OnboardingView({
     },
   ];
 
-  return <section className="setup-workspace platform-setup">
-    <header className="platform-setup-header">
-      <div>
-        <p className="page-kicker">Platform setup</p>
-        <h1>Three layers. One usable AI workspace.</h1>
-        <p>Connect inference, enroll the agent runtime, and add enterprise identity when the deployment is ready for employees.</p>
-      </div>
-      <div className="platform-setup-progress" aria-label={`${readyCoreLayers} of 2 required layers ready`}>
-        <strong>{readyCoreLayers}/2</strong>
-        <span>required layers ready</span>
-      </div>
-    </header>
-
-    {error && <div className="documents-alert" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
-
-    <section className="platform-stage-list" aria-label="Platform setup stages">
-      {stages.map((stage) => <article className={`platform-stage ${stage.readiness.tone}`} key={stage.number}>
-        <div className="platform-stage-number" aria-hidden="true">{stage.number}</div>
-        <div className="platform-stage-copy">
-          <div className="platform-stage-title"><h2>{stage.title}</h2>{stage.optional && <span>Optional</span>}</div>
-          <p>{stage.description}</p>
-          <small>{stage.detail}</small>
+  return <div className="grid gap-5">
+    <PageHeader
+      kicker="Platform setup"
+      title="Three layers. One usable AI workspace."
+      description="Connect inference, enroll the agent runtime, and add enterprise identity when the deployment is ready for employees."
+      actions={
+        <div className="text-right" aria-label={`${readyCoreLayers} of 2 required layers ready`}>
+          <strong className={cn("block text-figure font-semibold tabular-nums", readyCoreLayers === 2 ? "text-good" : "text-warn")}>
+            {readyCoreLayers}/2
+          </strong>
+          <MicroLabel className="block">required layers ready</MicroLabel>
         </div>
-        <div className="platform-stage-action">
-          <span className={`readiness-badge ${stage.readiness.tone}`}>{stage.readiness.label}</span>
-          <button className="secondary-button" type="button" onClick={stage.action}>{stage.actionLabel}</button>
+      }
+    />
+
+    {error && <Alert onDismiss={() => setError(null)}>{error}</Alert>}
+
+    <section className="grid gap-2" aria-label="Platform setup stages">
+      {stages.map((stage) => <Panel
+        className={cn(
+          "grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-4 border-l-2",
+          // One mapping for every readiness vocabulary in the product.
+          { good: "border-l-good", bad: "border-l-bad", warn: "border-l-warn", accent: "border-l-accent", neutral: "border-l-border-strong" }[toneFor(stage.readiness.tone)],
+        )}
+        key={stage.number}
+      >
+        <div
+          aria-hidden="true"
+          className="grid h-9 w-9 place-items-center rounded border border-border-strong bg-raised font-mono text-caption font-bold text-accent"
+        >
+          {stage.number}
         </div>
-      </article>)}
+        <div className="min-w-0">
+          <div className="flex items-center gap-3">
+            <h2 className="m-0 text-[14px] font-semibold tracking-[-0.01em] text-text">{stage.title}</h2>
+            {stage.optional && <MicroLabel className="rounded border border-border bg-raised px-1.5 py-0.5">Optional</MicroLabel>}
+          </div>
+          <p className="mb-0 mt-1 text-body text-muted">{stage.description}</p>
+          <small className="mt-1 block text-caption text-faint">{stage.detail}</small>
+        </div>
+        <div className="flex shrink-0 items-center gap-3">
+          <StatusText dot tone={toneFor(stage.readiness.tone)}>{stage.readiness.label}</StatusText>
+          <Button onClick={stage.action}>{stage.actionLabel}</Button>
+        </div>
+      </Panel>)}
     </section>
 
-    <section className="platform-launch-grid" aria-label="Available workspaces">
-      <article>
-        <p className="section-kicker">Employee workspace</p>
-        <h2>Governed Chat</h2>
-        <p>Talk to an active Hermes Profile with policy, memory, tool activity, and runtime evidence around every response.</p>
-        <button className="primary-button" type="button" disabled={!readiness.chatReady} onClick={() => onOpenWorkspace("Chat")}>
+    <section className="grid gap-4 lg:grid-cols-2" aria-label="Available workspaces">
+      <Panel>
+        <MicroLabel className="block">Employee workspace</MicroLabel>
+        <h2 className="m-0 mt-1.5 text-[15px] font-semibold tracking-[-0.01em] text-text">Governed Chat</h2>
+        <p className="mb-4 mt-1.5 text-body leading-relaxed text-muted">
+          Talk to an active Hermes Profile with policy, memory, tool activity, and runtime evidence around every response.
+        </p>
+        <Button variant="primary" disabled={!readiness.chatReady} onClick={() => onOpenWorkspace("Chat")}>
           {readiness.chatReady ? "Open Chat" : readiness.nextChatStep?.title ?? "Finish setup first"}
-        </button>
-      </article>
-      <article>
-        <p className="section-kicker">Enterprise knowledge</p>
-        <h2>Knowledge</h2>
-        <p>Extract and index approved source files into the control plane's own knowledge index without retaining a copy of the file.</p>
-        <button className="primary-button" type="button" onClick={() => onOpenWorkspace("Documents")}>Open Knowledge</button>
-      </article>
+        </Button>
+      </Panel>
+      <Panel>
+        <MicroLabel className="block">Enterprise knowledge</MicroLabel>
+        <h2 className="m-0 mt-1.5 text-[15px] font-semibold tracking-[-0.01em] text-text">Knowledge</h2>
+        <p className="mb-4 mt-1.5 text-body leading-relaxed text-muted">
+          Extract and index approved source files into the control plane's own knowledge index without retaining a copy
+          of the file.
+        </p>
+        <Button variant="primary" onClick={() => onOpenWorkspace("Documents")}>Open Knowledge</Button>
+      </Panel>
     </section>
 
-    <section className="setup-activation">
-      <article>
-        <div>
-          <p className="section-kicker">Architecture decision</p>
-          <h2>Topology and target environment</h2>
-          <p>
-            {snapshot?.architecture.reason
-              ? `${snapshot.architecture.topologyMode.toLowerCase().replaceAll("_", " ")} topology recorded for ${snapshot.architecture.targetEnvironment.toLowerCase()}.`
-              : "Record a topology and rationale. Validation cannot pass the system stage until this decision exists."}
-          </p>
-        </div>
-        <button className="secondary-button" type="button" onClick={() => setArchitectureOpen(true)} disabled={!snapshot}>
+    <section className="grid gap-4 lg:grid-cols-2">
+      <Panel className="flex flex-col">
+        <MicroLabel className="block">Architecture decision</MicroLabel>
+        <h2 className="m-0 mt-1.5 text-[15px] font-semibold tracking-[-0.01em] text-text">Topology and target environment</h2>
+        <p className="mb-4 mt-1.5 flex-1 text-body leading-relaxed text-muted">
+          {snapshot?.architecture.reason
+            ? `${snapshot.architecture.topologyMode.toLowerCase().replaceAll("_", " ")} topology recorded for ${snapshot.architecture.targetEnvironment.toLowerCase()}.`
+            : "Record a topology and rationale. Validation cannot pass the system stage until this decision exists."}
+        </p>
+        <Button className="self-start" onClick={() => setArchitectureOpen(true)} disabled={!snapshot}>
           {snapshot?.architecture.reason ? "Change decision" : "Record decision"}
-        </button>
-      </article>
+        </Button>
+      </Panel>
 
-      <article>
-        <div>
-          <p className="section-kicker">Activation</p>
-          <h2>{snapshot?.journey.status === "COMPLETED" ? `Activated for ${snapshot.journey.activatedEnvironment?.toLowerCase()}` : "Record environment activation"}</h2>
-          <p>
-            {snapshot?.journey.status === "COMPLETED"
-              ? "This installation is activated. Re-running validation reopens the journey."
-              : snapshot?.gate.ready
-                ? "Every required contract and stage has passed. Record why this installation is being activated."
-                : `${snapshot?.gate.blockers.length ?? 0} blocker${snapshot?.gate.blockers.length === 1 ? "" : "s"} remain.`}
-          </p>
-          {snapshot && !snapshot.gate.ready && snapshot.gate.blockers.length > 0 && (
-            <ul className="setup-blockers">
-              {snapshot.gate.blockers.slice(0, 5).map((blocker) => <li key={blocker}>{blocker}</li>)}
-            </ul>
-          )}
-        </div>
+      <Panel>
+        <MicroLabel className="block">Activation</MicroLabel>
+        <h2 className="m-0 mt-1.5 text-[15px] font-semibold tracking-[-0.01em] text-text">
+          {snapshot?.journey.status === "COMPLETED" ? `Activated for ${snapshot.journey.activatedEnvironment?.toLowerCase()}` : "Record environment activation"}
+        </h2>
+        <p className="mb-0 mt-1.5 text-body leading-relaxed text-muted">
+          {snapshot?.journey.status === "COMPLETED"
+            ? "This installation is activated. Re-running validation reopens the journey."
+            : snapshot?.gate.ready
+              ? "Every required contract and stage has passed. Record why this installation is being activated."
+              : `${snapshot?.gate.blockers.length ?? 0} blocker${snapshot?.gate.blockers.length === 1 ? "" : "s"} remain.`}
+        </p>
+        {/* The blockers by name. "3 blockers remain" without them is a dead
+            end; with them it is a list of next actions. */}
+        {snapshot && !snapshot.gate.ready && snapshot.gate.blockers.length > 0 && (
+          <ul className="m-0 mt-3 grid list-none gap-1 p-0">
+            {snapshot.gate.blockers.slice(0, 5).map((blocker) => (
+              <li className="rounded border border-warn/40 bg-warn/10 px-2.5 py-1.5 text-body text-muted" key={blocker}>
+                {blocker}
+              </li>
+            ))}
+          </ul>
+        )}
         {snapshot?.journey.status !== "COMPLETED" && (
-          <form onSubmit={(event) => { event.preventDefault(); void activate(); }}>
-            <label>
-              Activation rationale
-              <input
+          <form className="mt-4 flex flex-wrap items-end gap-2.5" onSubmit={(event) => { event.preventDefault(); void activate(); }}>
+            <Field label="Activation rationale" className="min-w-[220px] flex-1">
+              <Input
                 value={activationReason}
                 minLength={3}
                 maxLength={1000}
@@ -390,82 +416,116 @@ export function OnboardingView({
                 disabled={!snapshot?.gate.ready}
                 onChange={(event) => setActivationReason(event.target.value)}
               />
-            </label>
-            <button
-              className="primary-button"
+            </Field>
+            <Button
+              variant="primary"
               type="submit"
               disabled={busy !== null || !snapshot?.gate.ready || activationReason.trim().length < 3}
             >
               {busy === "activate" ? "Recording…" : "Activate installation"}
-            </button>
+            </Button>
           </form>
         )}
-      </article>
+      </Panel>
     </section>
 
-    <footer className="platform-setup-footer">
-      <div>
-        <strong>Production controls stay out of the setup path.</strong>
-        <span>Readiness evidence, incidents, evaluations, and recovery drills live in Operations.</span>
+    <Panel className="flex flex-wrap items-center justify-between gap-4">
+      <div className="min-w-0">
+        <strong className="block text-[12px] font-semibold text-text">Production controls stay out of the setup path.</strong>
+        <span className="mt-1 block text-body text-muted">
+          Readiness evidence, incidents, evaluations, and recovery drills live in Operations.
+        </span>
       </div>
-      <button className="text-button" type="button" onClick={onOpenOperations}>Open Operations</button>
-      <button className="text-button" type="button" onClick={() => setRecoveryOpen(true)}>Installation recovery</button>
-    </footer>
+      <div className="flex shrink-0 gap-2">
+        <Button variant="ghost" onClick={onOpenOperations}>Open Operations</Button>
+        <Button variant="ghost" onClick={() => setRecoveryOpen(true)}>Installation recovery</Button>
+      </div>
+    </Panel>
 
-    {architectureOpen && <div className="agent-editor-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setArchitectureOpen(false); }}>
-      <section className="setup-evidence-editor" role="dialog" aria-modal="true" aria-labelledby="architecture-title">
-        <header>
-          <div><p className="section-kicker">Architecture decision</p><h2 id="architecture-title">Topology and target environment</h2></div>
-          <button type="button" aria-label="Close architecture decision" onClick={() => setArchitectureOpen(false)}>×</button>
-        </header>
-        <p>Changing the topology or target environment invalidates recorded contract evidence, because that evidence was proven against the previous architecture.</p>
-        <form onSubmit={(event) => void saveArchitecture(event)}>
-          <label>Topology
-            <select value={topologyMode} onChange={(event) => setTopologyMode(event.target.value as DeploymentTopologyMode)}>
-              <option value="COMPACT">Compact — one host</option>
-              <option value="CONTROL_PLANE">Control plane only</option>
-              <option value="SEGMENTED_PRODUCTION">Segmented production</option>
-            </select>
-          </label>
-          <label>Target environment
-            <select value={targetEnvironment} onChange={(event) => setTargetEnvironment(event.target.value as OnboardingTargetEnvironment)}>
-              <option value="DEVELOPMENT">Development</option>
-              <option value="PILOT">Pilot</option>
-              <option value="PRODUCTION">Production</option>
-            </select>
-          </label>
-          <label>Rationale
-            <input value={architectureReason} minLength={3} maxLength={1000} placeholder="Hermes isolated from the control plane for pilot" onChange={(event) => setArchitectureReason(event.target.value)} />
-          </label>
-          {targetEnvironment === "PRODUCTION" && <small className="field-error">Production additionally requires a verified recovery kit, enterprise identity, and promoted evaluation evidence.</small>}
-          <button className="primary-button" type="submit" disabled={busy !== null || architectureReason.trim().length < 3}>
-            {busy === "architecture" ? "Saving…" : "Save decision"}
-          </button>
-        </form>
-      </section>
-    </div>}
+    {/*
+      * Two more hand-rolled backdrops become real dialogs. The recovery one
+      * takes a passphrase that is never retained anywhere, so losing focus out
+      * of it mid-entry is not a recoverable mistake.
+      */}
+    <Dialog
+      open={architectureOpen}
+      onClose={() => setArchitectureOpen(false)}
+      kicker="Architecture decision"
+      title="Topology and target environment"
+      description="Changing the topology or target environment invalidates recorded contract evidence, because that evidence was proven against the previous architecture."
+      footer={
+        <Button variant="primary" type="submit" form="architecture-form" disabled={busy !== null || architectureReason.trim().length < 3}>
+          {busy === "architecture" ? "Saving…" : "Save decision"}
+        </Button>
+      }
+    >
+      <form className="grid gap-3" id="architecture-form" onSubmit={(event) => void saveArchitecture(event)}>
+        <Field label="Topology">
+          <Select value={topologyMode} onChange={(event) => setTopologyMode(event.target.value as DeploymentTopologyMode)}>
+            <option value="COMPACT">Compact — one host</option>
+            <option value="CONTROL_PLANE">Control plane only</option>
+            <option value="SEGMENTED_PRODUCTION">Segmented production</option>
+          </Select>
+        </Field>
+        <Field label="Target environment">
+          <Select value={targetEnvironment} onChange={(event) => setTargetEnvironment(event.target.value as OnboardingTargetEnvironment)}>
+            <option value="DEVELOPMENT">Development</option>
+            <option value="PILOT">Pilot</option>
+            <option value="PRODUCTION">Production</option>
+          </Select>
+        </Field>
+        <Field label="Rationale">
+          <Input value={architectureReason} minLength={3} maxLength={1000} placeholder="Hermes isolated from the control plane for pilot" onChange={(event) => setArchitectureReason(event.target.value)} />
+        </Field>
+        {targetEnvironment === "PRODUCTION" && (
+          <StatusText tone="warn" className="normal-case">
+            Production additionally requires a verified recovery kit, enterprise identity, and promoted evaluation evidence.
+          </StatusText>
+        )}
+      </form>
+    </Dialog>
 
-    {recoveryOpen && <div className="agent-editor-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setRecoveryOpen(false); }}>
-      <section className="setup-evidence-editor setup-recovery-editor" role="dialog" aria-modal="true" aria-labelledby="recovery-title">
-        <header>
-          <div><p className="section-kicker">Offline recovery</p><h2 id="recovery-title">Protect connector encryption</h2></div>
-          <button type="button" aria-label="Close recovery" onClick={() => setRecoveryOpen(false)}>×</button>
-        </header>
-        <p>Export an encrypted recovery kit and store it outside the OrcaSynapse host. The passphrase and kit are never retained by the dashboard.</p>
-        {!snapshot ? <div className="setup-loading"><span className="setup-spinner" />Loading recovery state…</div> : <>
-          <form onSubmit={(event) => void exportRecovery(event)}>
-            <label>Recovery owner<input value={recoveryOwner} minLength={2} maxLength={160} placeholder="Infrastructure recovery team" onChange={(event) => setRecoveryOwner(event.target.value)} /></label>
-            <label>Recovery passphrase<input type="password" autoComplete="new-password" value={recoveryPassphrase} minLength={16} maxLength={1024} onChange={(event) => setRecoveryPassphrase(event.target.value)} /></label>
-            <label>Confirm passphrase<input type="password" autoComplete="new-password" value={recoveryConfirm} minLength={16} maxLength={1024} onChange={(event) => setRecoveryConfirm(event.target.value)} /></label>
-            {recoveryConfirm && recoveryPassphrase !== recoveryConfirm && <small className="field-error">Passphrases do not match.</small>}
-            <button className="primary-button" disabled={busy !== null || recoveryOwner.trim().length < 2 || recoveryPassphrase.length < 16 || recoveryPassphrase !== recoveryConfirm} type="submit">{busy === "recovery-export" ? "Encrypting…" : "Export recovery kit"}</button>
+    <Dialog
+      open={recoveryOpen}
+      onClose={() => setRecoveryOpen(false)}
+      kicker="Offline recovery"
+      title="Protect connector encryption"
+      description="Export an encrypted recovery kit and store it outside the OrcaSynapse host. The passphrase and kit are never retained by the dashboard."
+    >
+      {!snapshot
+        ? <p className="m-0 text-body text-faint">Loading recovery state…</p>
+        : <div className="grid gap-4">
+          <form className="grid gap-3" onSubmit={(event) => void exportRecovery(event)}>
+            <Field label="Recovery owner">
+              <Input value={recoveryOwner} minLength={2} maxLength={160} placeholder="Infrastructure recovery team" onChange={(event) => setRecoveryOwner(event.target.value)} />
+            </Field>
+            <Field label="Recovery passphrase">
+              <Input type="password" autoComplete="new-password" value={recoveryPassphrase} minLength={16} maxLength={1024} onChange={(event) => setRecoveryPassphrase(event.target.value)} />
+            </Field>
+            <Field label="Confirm passphrase">
+              <Input type="password" autoComplete="new-password" value={recoveryConfirm} minLength={16} maxLength={1024} onChange={(event) => setRecoveryConfirm(event.target.value)} />
+            </Field>
+            {recoveryConfirm && recoveryPassphrase !== recoveryConfirm && (
+              <StatusText tone="bad" className="normal-case">Passphrases do not match.</StatusText>
+            )}
+            <Button variant="primary" className="justify-self-end" disabled={busy !== null || recoveryOwner.trim().length < 2 || recoveryPassphrase.length < 16 || recoveryPassphrase !== recoveryConfirm} type="submit">
+              {busy === "recovery-export" ? "Encrypting…" : "Export recovery kit"}
+            </Button>
           </form>
-          <div className="setup-recovery-divider"><span>Verify retained copy</span></div>
-          <label className="setup-file-field"><span>{recoveryFileName || "Select the saved recovery kit"}</span><input type="file" accept="application/json,.json" onChange={(event) => void selectRecoveryFile(event)} /></label>
-          <label>Recovery passphrase<input type="password" autoComplete="off" value={recoveryPassphrase} minLength={16} maxLength={1024} onChange={(event) => setRecoveryPassphrase(event.target.value)} /></label>
-          <button className="secondary-button" disabled={busy !== null || !recoveryKit || recoveryPassphrase.length < 16} type="button" onClick={() => void verifyRecovery()}>{busy === "recovery-verify" ? "Verifying…" : "Verify recovery kit"}</button>
-        </>}
-      </section>
-    </div>}
-  </section>;
+          <div className="flex items-center gap-3 border-t border-border pt-4">
+            <MicroLabel>Verify retained copy</MicroLabel>
+          </div>
+          <label className="grid cursor-pointer gap-1 rounded border border-dashed border-border-strong bg-raised px-4 py-4 text-center">
+            <span className="text-body text-text">{recoveryFileName || "Select the saved recovery kit"}</span>
+            <input className="sr-only" type="file" accept="application/json,.json" onChange={(event) => void selectRecoveryFile(event)} />
+          </label>
+          <Field label="Recovery passphrase">
+            <Input type="password" autoComplete="off" value={recoveryPassphrase} minLength={16} maxLength={1024} onChange={(event) => setRecoveryPassphrase(event.target.value)} />
+          </Field>
+          <Button className="justify-self-end" disabled={busy !== null || !recoveryKit || recoveryPassphrase.length < 16} onClick={() => void verifyRecovery()}>
+            {busy === "recovery-verify" ? "Verifying…" : "Verify recovery kit"}
+          </Button>
+        </div>}
+    </Dialog>
+  </div>;
 }

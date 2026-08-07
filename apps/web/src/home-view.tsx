@@ -1,5 +1,5 @@
 import type { ChatMetrics, ConnectionMonitoringControl } from "@orcasynapse/contracts";
-import { Button, Metric, MetricRow, MicroLabel, PageHeader, Panel, PanelHeading, StatusText, cn } from "./ui/index.js";
+import { Button, Metric, MetricRow, MicroLabel, PageHeader, Panel, PanelHeading, StatusText, cn, toneFor } from "./ui/index.js";
 import type { ActiveView } from "./workspace-navigation.js";
 
 /**
@@ -39,20 +39,6 @@ interface HomeViewProps {
   readiness: HomeReadinessCheck[];
   onSelect: (view: ActiveView, deploymentTab?: "journey" | "nodes" | "readiness") => void;
   onUnlock: () => void;
-}
-
-type Tone = "neutral" | "good" | "warn" | "bad" | "accent";
-
-/**
- * Connection vocabulary is wider than the palette on purpose: six readiness
- * tones, plus the two this screen adds for a locked session, collapse to four
- * colours. Anything unrecognised reads as neutral rather than inventing a fifth.
- */
-function toneFor(value: string): Tone {
-  if (value === "ready" || value === "healthy") return "good";
-  if (value === "degraded" || value === "validation" || value === "not_tested") return "warn";
-  if (value === "blocked" || value === "unreachable") return "bad";
-  return "neutral";
 }
 
 function cadence(seconds: number): string {

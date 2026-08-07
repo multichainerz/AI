@@ -12,7 +12,10 @@ import {
   updateGuardrailPolicy,
 } from "./api.js";
 import { adminAccess } from "./admin-access.js";
-import { LockedScreen } from "./ui/index.js";
+import {
+  Alert, Button, EmptyState, Field, Input, LockedScreen, Metric, MetricRow, MicroLabel,
+  PageHeader, Panel, StatusText, Textarea, cn, toneFor,
+} from "./ui/index.js";
 
 interface GuardrailsViewProps {
   session: AdministratorSession | null;
@@ -175,52 +178,190 @@ export function GuardrailsView({
     ? Number(active.blockControlCharacters) + Number(active.blockCredentialPatterns)
     : 0;
 
-  return <div className="guardrails-workspace">
-    <header className="guardrails-header">
-      <div><p className="page-kicker">Policy control</p><h1>Guardrails</h1><p>Release evaluated limits and deterministic safety checks enforced inside OrcaSynapse.</p></div>
-      <div className="guardrail-header-actions"><button type="button" onClick={onOpenOperations}>Evaluation evidence</button>{canManage && <button className="primary-button" type="button" onClick={startCreate}>New policy</button>}</div>
-    </header>
+  return <div className="grid gap-5">
+    <PageHeader
+      kicker="Policy control"
+      title="Guardrails"
+      description="Release evaluated limits and deterministic safety checks enforced inside OrcaSynapse."
+      actions={<>
+        <Button onClick={onOpenOperations}>Evaluation evidence</Button>
+        {canManage && <Button variant="primary" onClick={startCreate}>New policy</Button>}
+      </>}
+    />
 
-    <section className="guardrail-metrics" aria-label="Guardrail policy summary">
-      <article><span>Policy records</span><strong>{policies.length}</strong><small>Version controlled</small></article>
-      <article><span>Active boundary</span><strong>{active ? "1" : "0"}</strong><small>{active ? active.displayName : activatedBefore ? "Fail closed" : "Legacy mode"}</small></article>
-      <article><span>Active checks</span><strong>{enabledControls}</strong><small>OrcaSynapse-native detectors</small></article>
-      <article><span>Input ceiling</span><strong>{active ? new Intl.NumberFormat("en", { notation: "compact" }).format(active.maxInputCharacters) : "—"}</strong><small>Characters per message</small></article>
-    </section>
+    <MetricRow className="lg:grid-cols-4" aria-label="Guardrail policy summary">
+      <Metric label="Policy records" value={policies.length} caption="Version controlled" />
+      <Metric
+        label="Active boundary"
+        value={active ? "1" : "0"}
+        tone={active ? "good" : activatedBefore ? "bad" : "neutral"}
+        caption={active ? active.displayName : activatedBefore ? "Fail closed" : "Legacy mode"}
+      />
+      <Metric label="Active checks" value={enabledControls} caption="OrcaSynapse-native detectors" />
+      <Metric
+        label="Input ceiling"
+        value={active ? new Intl.NumberFormat("en", { notation: "compact" }).format(active.maxInputCharacters) : "—"}
+        caption="Characters per message"
+      />
+    </MetricRow>
 
-    <section className={`guardrail-boundary panel ${active ? "active" : activatedBefore ? "blocked" : "staged"}`}>
-      <div><span>Runtime boundary</span><strong>{active ? `${active.displayName} v${active.version} is enforcing chat.` : activatedBefore ? "Chat policy enforcement is paused and fails closed." : "Drafts do not change current chat behavior."}</strong><p>OrcaSynapse applies request size, response size, control-character, and credential-pattern checks before traffic reaches the approved inference route.</p></div>
-      <button type="button" onClick={onConfigureInference}>Manage AI Inference</button>
-    </section>
-
-    {error && <div className="workspace-notice error" role="alert">{error}</div>}
-    {message && <div className="workspace-notice success">{message}</div>}
-
-    {showEditor && <form className="guardrail-editor panel" onSubmit={(event) => void save(event)}>
-      <div className="section-toolbar"><div><h2>{editing ? `Edit ${editing.displayName}` : "New chat policy"}</h2><p>These controls run locally in OrcaSynapse and are versioned with evaluation evidence.</p></div><button type="button" onClick={() => setShowEditor(false)}>Cancel</button></div>
-      <div className="guardrail-editor-grid">
-        <label><span>Display name</span><input value={draft.displayName} minLength={2} maxLength={120} required onChange={(event) => setDraft({ ...draft, displayName: event.target.value })} /></label>
-        <label><span>Policy slug</span><input value={draft.slug} disabled={Boolean(editing)} required onChange={(event) => setDraft({ ...draft, slug: event.target.value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") })} /></label>
-        <label><span>Immutable version</span><input value={draft.version} maxLength={120} required onChange={(event) => setDraft({ ...draft, version: event.target.value })} /></label>
-        <label><span>Maximum input characters</span><input type="number" min={256} max={32000} value={draft.maxInputCharacters} required onChange={(event) => setDraft({ ...draft, maxInputCharacters: Number(event.target.value) })} /></label>
-        <label><span>Maximum output characters</span><input type="number" min={1024} max={1000000} value={draft.maxOutputCharacters} required onChange={(event) => setDraft({ ...draft, maxOutputCharacters: Number(event.target.value) })} /></label>
-        <label className="wide"><span>Purpose and coverage</span><textarea value={draft.description} minLength={3} maxLength={500} rows={3} required onChange={(event) => setDraft({ ...draft, description: event.target.value })} /></label>
-        <label className="guardrail-check"><input type="checkbox" checked={draft.blockControlCharacters} onChange={(event) => setDraft({ ...draft, blockControlCharacters: event.target.checked })} /><span>Block unsafe control characters</span></label>
-        <label className="guardrail-check"><input type="checkbox" checked={draft.blockCredentialPatterns} onChange={(event) => setDraft({ ...draft, blockCredentialPatterns: event.target.checked })} /><span>Block recognizable credential patterns</span></label>
+    <Panel className={cn(
+      "flex items-center gap-4 border-l-2",
+      active ? "border-l-good" : activatedBefore ? "border-l-bad" : "border-l-border-strong",
+    )}>
+      <div className="min-w-0 flex-1">
+        <MicroLabel className="block">Runtime boundary</MicroLabel>
+        <strong className="mt-1.5 block text-[12px] font-semibold text-text">
+          {active
+            ? `${active.displayName} v${active.version} is enforcing chat.`
+            : activatedBefore
+              ? "Chat policy enforcement is paused and fails closed."
+              : "Drafts do not change current chat behavior."}
+        </strong>
+        <p className="mb-0 mt-1 text-body text-muted">
+          OrcaSynapse applies request size, response size, control-character, and credential-pattern checks before
+          traffic reaches the approved inference route.
+        </p>
       </div>
-      <button className="primary-button guardrail-save" type="submit" disabled={busy || editing?.status === "ACTIVE"}>{busy ? "Saving…" : editing ? "Save policy revision" : "Create draft policy"}</button>
-    </form>}
+      <Button className="shrink-0" onClick={onConfigureInference}>Manage AI Inference</Button>
+    </Panel>
 
-    <section className="guardrail-catalogue" aria-label="Configured guardrail policies">
-      {policies.length === 0 && <div className="guardrail-empty panel"><strong>No policy records yet</strong><span>Chat continues using its existing schema, identity, and rate boundaries until the first evaluated policy is activated.</span>{canManage && <button type="button" onClick={startCreate}>Create the first policy</button>}</div>}
-      {policies.map((policy) => <article className="guardrail-card panel" key={policy.id}>
-        <header><span className="guardrail-version">v{policy.version}</span><span className={`connection-status ${tone(policy)}`}><i />{policy.status.toLowerCase()}</span></header>
-        <div className="guardrail-card-title"><span>{policy.displayName.slice(0, 2).toUpperCase()}</span><div><h2>{policy.displayName}</h2><p>{policy.description}</p></div></div>
-        <div className="guardrail-tags"><code>OrcaSynapse native</code>{policy.blockControlCharacters && <code>control chars</code>}{policy.blockCredentialPatterns && <code>credentials</code>}</div>
-        <dl><div><dt>Input ceiling</dt><dd>{policy.maxInputCharacters.toLocaleString("en-US")} chars</dd></div><div><dt>Output ceiling</dt><dd>{policy.maxOutputCharacters.toLocaleString("en-US")} chars</dd></div><div><dt>Safety evidence</dt><dd>{policy.activationEvaluationId ? "Promoted" : "Required"}</dd></div><div><dt>Last updated</dt><dd>{when(policy.updatedAt)}</dd></div></dl>
-        <footer><span>Revision {policy.revision}</span>{canManage && <div>{policy.status !== "ACTIVE" && <button type="button" onClick={() => startEdit(policy)}>Edit</button>}<button type="button" onClick={() => setDecision({ id: policy.id, action: policy.status === "ACTIVE" ? "suspend" : "activate", reason: "" })}>{policy.status === "ACTIVE" ? "Suspend" : "Activate"}</button></div>}</footer>
-        {decision?.id === policy.id && <form className="guardrail-decision" onSubmit={(event) => void applyDecision(event)}><div><strong>{decision.action === "activate" ? "Activate evaluated policy" : "Suspend active policy"}</strong><span>{decision.action === "activate" ? `Requires a promoted POLICY evaluation for policy:${policy.slug}, version ${policy.version}, including SAFETY.` : "Because this policy has previously enforced chat, suspension deliberately makes chat fail closed."}</span></div><label><span>Operator reason</span><input value={decision.reason} minLength={3} maxLength={500} required onChange={(event) => setDecision({ ...decision, reason: event.target.value })} /></label><div><button type="button" onClick={() => setDecision(null)}>Cancel</button><button className="primary-button" type="submit" disabled={busy || decision.reason.trim().length < 3}>{busy ? "Applying…" : "Confirm"}</button></div></form>}
-      </article>)}
+    {error && <Alert onDismiss={() => setError(null)}>{error}</Alert>}
+    {message && <Alert tone="good" onDismiss={() => setMessage(null)}>{message}</Alert>}
+
+    {showEditor && <Panel>
+      <form onSubmit={(event) => void save(event)}>
+        <header className="mb-4 flex items-start justify-between gap-6">
+          <div className="min-w-0">
+            <h2 className="m-0 text-[15px] font-semibold tracking-[-0.01em] text-text">
+              {editing ? `Edit ${editing.displayName}` : "New chat policy"}
+            </h2>
+            <p className="mb-0 mt-1.5 text-body text-muted">
+              These controls run locally in OrcaSynapse and are versioned with evaluation evidence.
+            </p>
+          </div>
+          <Button variant="ghost" size="sm" onClick={() => setShowEditor(false)}>Cancel</Button>
+        </header>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Display name"><Input value={draft.displayName} minLength={2} maxLength={120} required onChange={(event) => setDraft({ ...draft, displayName: event.target.value })} /></Field>
+          <Field label="Policy slug"><Input value={draft.slug} disabled={Boolean(editing)} required onChange={(event) => setDraft({ ...draft, slug: event.target.value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") })} /></Field>
+          <Field label="Immutable version"><Input value={draft.version} maxLength={120} required onChange={(event) => setDraft({ ...draft, version: event.target.value })} /></Field>
+          <Field label="Maximum input characters"><Input type="number" min={256} max={32000} value={draft.maxInputCharacters} required onChange={(event) => setDraft({ ...draft, maxInputCharacters: Number(event.target.value) })} /></Field>
+          <Field label="Maximum output characters"><Input type="number" min={1024} max={1000000} value={draft.maxOutputCharacters} required onChange={(event) => setDraft({ ...draft, maxOutputCharacters: Number(event.target.value) })} /></Field>
+          <Field label="Purpose and coverage" className="sm:col-span-2">
+            <Textarea value={draft.description} minLength={3} maxLength={500} rows={3} required onChange={(event) => setDraft({ ...draft, description: event.target.value })} />
+          </Field>
+          <label className="flex cursor-pointer items-center gap-2.5 rounded border border-border bg-raised p-2.5">
+            <input type="checkbox" checked={draft.blockControlCharacters} onChange={(event) => setDraft({ ...draft, blockControlCharacters: event.target.checked })} />
+            <span className="text-body text-text">Block unsafe control characters</span>
+          </label>
+          <label className="flex cursor-pointer items-center gap-2.5 rounded border border-border bg-raised p-2.5">
+            <input type="checkbox" checked={draft.blockCredentialPatterns} onChange={(event) => setDraft({ ...draft, blockCredentialPatterns: event.target.checked })} />
+            <span className="text-body text-text">Block recognizable credential patterns</span>
+          </label>
+        </div>
+        <Button variant="primary" type="submit" className="mt-4" disabled={busy || editing?.status === "ACTIVE"}>
+          {busy ? "Saving…" : editing ? "Save policy revision" : "Create draft policy"}
+        </Button>
+      </form>
+    </Panel>}
+
+    <section className="grid items-start gap-3 lg:grid-cols-2" aria-label="Configured guardrail policies">
+      {policies.length === 0 && (
+        <EmptyState
+          className="lg:col-span-2"
+          title="No policy records yet"
+          action={canManage ? <Button onClick={startCreate}>Create the first policy</Button> : undefined}
+        >
+          Chat continues using its existing schema, identity, and rate boundaries until the first evaluated policy is
+          activated.
+        </EmptyState>
+      )}
+      {policies.map((policy) => <Panel className="grid min-w-0 gap-4" key={policy.id}>
+        <header className="flex items-center gap-3">
+          <MicroLabel className="font-mono">v{policy.version}</MicroLabel>
+          <StatusText dot tone={toneFor(tone(policy))} className="ml-auto">{policy.status.toLowerCase()}</StatusText>
+        </header>
+        <div className="flex items-center gap-3">
+          <span
+            aria-hidden="true"
+            className="grid h-9 w-9 shrink-0 place-items-center rounded border border-border-strong bg-raised font-mono text-[10px] font-bold text-accent"
+          >
+            {policy.displayName.slice(0, 2).toUpperCase()}
+          </span>
+          <div className="min-w-0">
+            <h2 className="m-0 truncate text-[14px] font-semibold tracking-[-0.01em] text-text">{policy.displayName}</h2>
+            <p className="mb-0 mt-0.5 truncate text-caption text-muted">{policy.description}</p>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {["OrcaSynapse native",
+            ...(policy.blockControlCharacters ? ["control chars"] : []),
+            ...(policy.blockCredentialPatterns ? ["credentials"] : []),
+          ].map((label) => (
+            <code className="rounded border border-border bg-raised px-2 py-1 font-mono text-micro text-muted" key={label}>
+              {label}
+            </code>
+          ))}
+        </div>
+        <dl className="m-0 grid grid-cols-2 gap-px rounded border border-border bg-border">
+          {[
+            { label: "Input ceiling", value: `${policy.maxInputCharacters.toLocaleString("en-US")} chars` },
+            { label: "Output ceiling", value: `${policy.maxOutputCharacters.toLocaleString("en-US")} chars` },
+            { label: "Safety evidence", value: policy.activationEvaluationId ? "Promoted" : "Required" },
+            { label: "Last updated", value: when(policy.updatedAt) },
+          ].map((fact) => (
+            <div className="min-w-0 bg-surface px-2.5 py-2" key={fact.label}>
+              <dt className="truncate font-mono text-micro uppercase text-faint">{fact.label}</dt>
+              <dd className="m-0 mt-1 truncate font-mono text-caption tabular-nums text-muted">{fact.value}</dd>
+            </div>
+          ))}
+        </dl>
+        <footer className="flex items-center justify-between gap-2.5">
+          <StatusText>Revision {policy.revision}</StatusText>
+          {canManage && <div className="flex gap-1.5">
+            {policy.status !== "ACTIVE" && <Button size="sm" onClick={() => startEdit(policy)}>Edit</Button>}
+            <Button
+              size="sm"
+              variant={policy.status === "ACTIVE" ? "danger" : "secondary"}
+              onClick={() => setDecision({ id: policy.id, action: policy.status === "ACTIVE" ? "suspend" : "activate", reason: "" })}
+            >
+              {policy.status === "ACTIVE" ? "Suspend" : "Activate"}
+            </Button>
+          </div>}
+        </footer>
+        {decision?.id === policy.id && <form
+          className={cn(
+            "grid gap-3 rounded border p-3",
+            decision.action === "suspend" ? "border-bad/40 bg-bad/10" : "border-border-strong bg-raised",
+          )}
+          onSubmit={(event) => void applyDecision(event)}
+        >
+          <div>
+            <strong className="block text-[12px] font-semibold text-text">
+              {decision.action === "activate" ? "Activate evaluated policy" : "Suspend active policy"}
+            </strong>
+            <span className="mt-1 block text-body text-muted">
+              {decision.action === "activate"
+                ? `Requires a promoted POLICY evaluation for policy:${policy.slug}, version ${policy.version}, including SAFETY.`
+                : "Because this policy has previously enforced chat, suspension deliberately makes chat fail closed."}
+            </span>
+          </div>
+          <Field label="Operator reason">
+            <Input value={decision.reason} minLength={3} maxLength={500} required onChange={(event) => setDecision({ ...decision, reason: event.target.value })} />
+          </Field>
+          <div className="flex justify-end gap-2">
+            <Button onClick={() => setDecision(null)}>Cancel</Button>
+            <Button
+              variant={decision.action === "suspend" ? "danger" : "primary"}
+              type="submit"
+              disabled={busy || decision.reason.trim().length < 3}
+            >
+              {busy ? "Applying…" : "Confirm"}
+            </Button>
+          </div>
+        </form>}
+      </Panel>)}
     </section>
   </div>;
 }

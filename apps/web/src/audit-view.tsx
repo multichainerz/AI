@@ -2,6 +2,9 @@ import type { AdministratorSession, AuditEvent, AuditEventQuery, AuditForwarding
 import { useEffect, useState, type FormEvent } from "react";
 import { OrcaSynapseApiError, getAuditEvents, getAuditForwarding } from "./api.js";
 import { adminAccess } from "./admin-access.js";
+import {
+  Alert, Button, EmptyState, Field, Input, Panel, PanelHeading, Select, StatusText, cn, toneFor,
+} from "./ui/index.js";
 
 interface AuditViewProps {
   session: AdministratorSession | null;
@@ -88,66 +91,74 @@ export function AuditView({ session, onSessionExpired }: AuditViewProps) {
 
   if (!canRead) {
     return (
-      <section className="panel">
-        <div className="panel-heading">
-          <div>
-            <p className="section-kicker">Operations</p>
-            <h2>Audit trail</h2>
-            <p>Your administrator role does not carry the audit:read scope.</p>
-          </div>
-        </div>
-      </section>
+      <Panel>
+        <PanelHeading
+          kicker="Operations"
+          title="Audit trail"
+          description="Your administrator role does not carry the audit:read scope."
+        />
+      </Panel>
     );
   }
 
   return (
-    <section className="panel">
-      <div className="panel-heading">
-        <div>
-          <p className="section-kicker">Operations</p>
-          <h2>Audit trail</h2>
-          <p>
-            Every governed action OrcaSynapse records, newest first. The trail is append-only:
-            nothing in the product can edit or delete an entry.
-          </p>
-        </div>
-        <button className="text-button" type="button" onClick={() => void load(applied, false)} disabled={busy}>
-          Refresh
-        </button>
-      </div>
+    <Panel>
+      <PanelHeading
+        kicker="Operations"
+        title="Audit trail"
+        description="Every governed action OrcaSynapse records, newest first. The trail is append-only: nothing in the product can edit or delete an entry."
+        actions={<Button size="sm" onClick={() => void load(applied, false)} disabled={busy}>Refresh</Button>}
+      />
 
       {forwarding && (
-        <div className={`audit-forwarding ${forwarding.status.toLowerCase()}`}>
-          <div>
-            <strong>
+        /* The left rule is the state. An audit trail that is silently behind
+           or failing to reach the SIEM is the one thing this panel exists to
+           surface, and it must not read the same as a healthy one. */
+        <div className={cn(
+          "mb-4 flex flex-wrap items-start justify-between gap-4 rounded border border-l-2 border-border p-3.5",
+          forwarding.status === "FAILING" ? "border-l-bad"
+            : forwarding.status === "BEHIND" ? "border-l-warn"
+              : forwarding.status === "NOT_CONFIGURED" ? "border-l-border-strong" : "border-l-good",
+        )}>
+          <div className="min-w-0">
+            <strong className="block text-[12px] font-semibold text-text">
               {forwarding.status === "NOT_CONFIGURED" ? "Retained locally"
                 : forwarding.status === "FAILING" ? "Forwarding is failing"
                   : forwarding.status === "BEHIND" ? "Forwarding is behind"
                     : "Forwarding to SIEM"}
             </strong>
-            <span>{forwarding.summary}</span>
-            {forwarding.lastError && <code>{forwarding.lastError}</code>}
+            <span className="mt-1 block text-body text-muted">{forwarding.summary}</span>
+            {forwarding.lastError && (
+              <code className="mt-1.5 block rounded border border-bad/40 bg-bad/10 px-2 py-1 font-mono text-micro text-bad">
+                {forwarding.lastError}
+              </code>
+            )}
           </div>
-          <dl>
-            <div><dt>Undelivered</dt><dd>{forwarding.pendingCount.toLocaleString()}</dd></div>
-            <div><dt>Delivered</dt><dd>{forwarding.deliveredCount.toLocaleString()}</dd></div>
-            <div><dt>Last accepted</dt><dd>{forwarding.lastForwardedAt ? relativeTime(forwarding.lastForwardedAt) : "never"}</dd></div>
+          <dl className="m-0 flex shrink-0 gap-5">
+            {[
+              { label: "Undelivered", value: forwarding.pendingCount.toLocaleString() },
+              { label: "Delivered", value: forwarding.deliveredCount.toLocaleString() },
+              { label: "Last accepted", value: forwarding.lastForwardedAt ? relativeTime(forwarding.lastForwardedAt) : "never" },
+            ].map((fact) => (
+              <div key={fact.label}>
+                <dt className="font-mono text-micro uppercase text-faint">{fact.label}</dt>
+                <dd className="m-0 mt-1 font-mono text-caption tabular-nums text-muted">{fact.value}</dd>
+              </div>
+            ))}
           </dl>
         </div>
       )}
 
-      <form className="audit-filters" onSubmit={search}>
-        <label>
-          <span>Action</span>
-          <input
+      <form className="mb-4 grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-3" onSubmit={search}>
+        <Field label="Action">
+          <Input
             value={filters.action ?? ""}
             placeholder="administrator.session_created"
             onChange={(event) => setFilters({ ...filters, action: event.target.value || undefined })}
           />
-        </label>
-        <label>
-          <span>Actor type</span>
-          <select
+        </Field>
+        <Field label="Actor type">
+          <Select
             value={filters.actorType ?? ""}
             onChange={(event) => setFilters({ ...filters, actorType: (event.target.value || undefined) as Filters["actorType"] })}
           >
@@ -155,26 +166,23 @@ export function AuditView({ session, onSessionExpired }: AuditViewProps) {
             <option value="USER">User</option>
             <option value="SERVICE">Service</option>
             <option value="SYSTEM">System</option>
-          </select>
-        </label>
-        <label>
-          <span>Resource type</span>
-          <input
+          </Select>
+        </Field>
+        <Field label="Resource type">
+          <Input
             value={filters.resourceType ?? ""}
             placeholder="ServiceConnection"
             onChange={(event) => setFilters({ ...filters, resourceType: event.target.value || undefined })}
           />
-        </label>
-        <label>
-          <span>Resource ID</span>
-          <input
+        </Field>
+        <Field label="Resource ID">
+          <Input
             value={filters.resourceId ?? ""}
             onChange={(event) => setFilters({ ...filters, resourceId: event.target.value || undefined })}
           />
-        </label>
-        <label>
-          <span>Outcome</span>
-          <select
+        </Field>
+        <Field label="Outcome">
+          <Select
             value={filters.outcome ?? ""}
             onChange={(event) => setFilters({ ...filters, outcome: event.target.value || undefined })}
           >
@@ -182,54 +190,71 @@ export function AuditView({ session, onSessionExpired }: AuditViewProps) {
             <option value="SUCCESS">Success</option>
             <option value="FAILURE">Failure</option>
             <option value="FAILED">Failed</option>
-          </select>
-        </label>
-        <div className="audit-filter-actions">
-          <button type="submit" disabled={busy}>Search</button>
-          <button className="text-button" type="button" onClick={clear} disabled={busy || activeFilterCount === 0}>
-            Clear
-          </button>
+          </Select>
+        </Field>
+        <div className="flex gap-2">
+          <Button variant="primary" type="submit" disabled={busy}>Search</Button>
+          <Button variant="ghost" onClick={clear} disabled={busy || activeFilterCount === 0}>Clear</Button>
         </div>
       </form>
 
-      {error && <p className="form-error" role="alert">{error}</p>}
+      {error && <Alert className="mb-4">{error}</Alert>}
 
-      <div className="audit-table">
-        <div className="audit-head">
-          <span>When</span><span>Action</span><span>Actor</span><span>Resource</span><span>Outcome</span>
+      {/* A table that scrolls inside itself rather than widening the page: an
+          audit row carries five columns and two of them are identifiers. */}
+      <div className="overflow-x-auto rounded border border-border">
+        <div className="grid min-w-[720px] grid-cols-[110px_minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1.2fr)_90px] gap-3 border-b border-border bg-raised px-3 py-2">
+          {["When", "Action", "Actor", "Resource", "Outcome"].map((head) => (
+            <span className="font-mono text-micro uppercase text-faint" key={head}>{head}</span>
+          ))}
         </div>
         {events.length === 0 && !busy ? (
-          <div className="document-empty">
-            <strong>{activeFilterCount > 0 ? "No matching events" : "No audit events recorded"}</strong>
-            <span>
-              {activeFilterCount > 0
-                ? "Filters are exact matches, not prefixes. Clear them to see the whole trail."
-                : "Governed actions are recorded here as soon as they happen."}
-            </span>
-          </div>
+          <EmptyState className="m-3 border-0" title={activeFilterCount > 0 ? "No matching events" : "No audit events recorded"}>
+            {activeFilterCount > 0
+              ? "Filters are exact matches, not prefixes. Clear them to see the whole trail."
+              : "Governed actions are recorded here as soon as they happen."}
+          </EmptyState>
         ) : (
           events.map((event) => (
             <article
               key={event.id}
-              className={expanded === event.id ? "expanded" : undefined}
+              className={cn(
+                "grid min-w-[720px] cursor-pointer grid-cols-[110px_minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1.2fr)_90px] items-center gap-3 border-b border-border px-3 py-2 text-body last:border-b-0",
+                expanded === event.id ? "bg-raised" : "hover:bg-raised",
+              )}
               onClick={() => setExpanded(expanded === event.id ? null : event.id)}
             >
-              <span title={event.occurredAt}>{relativeTime(event.occurredAt)}</span>
-              <strong>{event.action}</strong>
-              <span>{event.actorType.toLowerCase()}{event.actorId ? ` · ${event.actorId.slice(0, 8)}` : ""}</span>
-              <span>{event.resourceType}{event.resourceId ? ` · ${event.resourceId.slice(0, 8)}` : ""}</span>
-              <span className={`document-status ${outcomeTone(event.outcome)}`}>{event.outcome.toLowerCase()}</span>
+              <span className="truncate font-mono text-micro text-faint" title={event.occurredAt}>
+                {relativeTime(event.occurredAt)}
+              </span>
+              <strong className="truncate font-mono text-caption font-medium text-text">{event.action}</strong>
+              <span className="truncate font-mono text-caption text-muted">
+                {event.actorType.toLowerCase()}{event.actorId ? ` · ${event.actorId.slice(0, 8)}` : ""}
+              </span>
+              <span className="truncate font-mono text-caption text-muted">
+                {event.resourceType}{event.resourceId ? ` · ${event.resourceId.slice(0, 8)}` : ""}
+              </span>
+              <StatusText dot tone={toneFor(outcomeTone(event.outcome))}>{event.outcome.toLowerCase()}</StatusText>
               {expanded === event.id && (
-                <div className="audit-detail">
-                  <dl>
-                    <div><dt>Recorded</dt><dd>{event.occurredAt}</dd></div>
-                    <div><dt>Event</dt><dd>{event.id}</dd></div>
-                    {event.actorId && <div><dt>Actor</dt><dd>{event.actorId}</dd></div>}
-                    {event.resourceId && <div><dt>Resource</dt><dd>{event.resourceId}</dd></div>}
-                    {event.correlationId && <div><dt>Correlation</dt><dd>{event.correlationId}</dd></div>}
-                    {event.sourceIp && <div><dt>Source IP</dt><dd>{event.sourceIp}</dd></div>}
+                <div className="col-span-5 grid gap-3 border-t border-border pt-3">
+                  <dl className="m-0 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                    {[
+                      { label: "Recorded", value: event.occurredAt },
+                      { label: "Event", value: event.id },
+                      ...(event.actorId ? [{ label: "Actor", value: event.actorId }] : []),
+                      ...(event.resourceId ? [{ label: "Resource", value: event.resourceId }] : []),
+                      ...(event.correlationId ? [{ label: "Correlation", value: event.correlationId }] : []),
+                      ...(event.sourceIp ? [{ label: "Source IP", value: event.sourceIp }] : []),
+                    ].map((fact) => (
+                      <div className="min-w-0" key={fact.label}>
+                        <dt className="font-mono text-micro uppercase text-faint">{fact.label}</dt>
+                        <dd className="m-0 mt-1 break-all font-mono text-caption text-muted">{fact.value}</dd>
+                      </div>
+                    ))}
                   </dl>
-                  <pre>{JSON.stringify(event.metadata, null, 2)}</pre>
+                  <pre className="m-0 max-h-[240px] overflow-auto rounded border border-border bg-bg p-3 font-mono text-micro leading-relaxed text-muted">
+                    {JSON.stringify(event.metadata, null, 2)}
+                  </pre>
                 </div>
               )}
             </article>
@@ -238,15 +263,10 @@ export function AuditView({ session, onSessionExpired }: AuditViewProps) {
       </div>
 
       {cursor && (
-        <button
-          className="text-button"
-          type="button"
-          onClick={() => void load(applied, cursor)}
-          disabled={busy}
-        >
+        <Button className="mt-3" onClick={() => void load(applied, cursor)} disabled={busy}>
           {busy ? "Loading…" : "Load older events"}
-        </button>
+        </Button>
       )}
-    </section>
+    </Panel>
   );
 }

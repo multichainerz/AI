@@ -14,7 +14,23 @@ import {
   updateModelDeployment,
 } from "./api.js";
 import { adminAccess } from "./admin-access.js";
-import { LockedScreen } from "./ui/index.js";
+import {
+  Alert,
+  Button,
+  EmptyState,
+  Field,
+  Input,
+  LockedScreen,
+  Metric,
+  MetricRow,
+  MicroLabel,
+  PageHeader,
+  Panel,
+  Select,
+  StatusText,
+  cn,
+  toneFor,
+} from "./ui/index.js";
 
 interface ModelsViewProps {
   session: AdministratorSession | null;
@@ -200,61 +216,170 @@ export function ModelsView({
   const defaultCount = models.filter(({ isDefault }) => isDefault).length;
   const workloadCount = new Set(models.map(({ workload }) => workload)).size;
 
-  return <div className="models-workspace">
-    <header className="models-header">
-      <div><p className="page-kicker">AI Inference control</p><h1>Models</h1><p>Approve Chat and Hermes aliases on healthy model-serving connections.</p></div>
-      <div className="model-header-actions">
-        <button type="button" onClick={onOpenOperations}>Evaluation evidence</button>
-        {canManage && <button className="primary-button" type="button" onClick={startCreate}>New model route</button>}
+  return <div className="grid gap-5">
+    <PageHeader
+      kicker="AI Inference control"
+      title="Models"
+      description="Approve Chat and Hermes aliases on healthy model-serving connections."
+      actions={<>
+        <Button onClick={onOpenOperations}>Evaluation evidence</Button>
+        {canManage && <Button variant="primary" onClick={startCreate}>New model route</Button>}
+      </>}
+    />
+
+    <MetricRow className="lg:grid-cols-4" aria-label="Model catalogue summary">
+      <Metric label="Catalogue routes" value={models.length} caption="Versioned records" />
+      <Metric label="Active routes" value={activeCount} tone={activeCount > 0 ? "good" : "neutral"} caption="Evaluation gated" />
+      <Metric label="Defaults" value={defaultCount} caption="Per workload" />
+      <Metric label="Workloads" value={workloadCount} caption="Chat and agent" />
+    </MetricRow>
+
+    <Panel className="flex items-center gap-4 border-l-2 border-l-accent">
+      <div className="min-w-0 flex-1">
+        <MicroLabel className="block">Control boundary</MicroLabel>
+        <strong className="mt-1.5 block text-[12px] font-semibold text-text">
+          OrcaSynapse approves routes; AI Inference remains the serving plane.
+        </strong>
+        <p className="mb-0 mt-1 text-body text-muted">
+          Activation never modifies upstream configuration. The alias must already exist at the selected endpoint and the
+          exact model version must have promoted evaluation evidence.
+        </p>
       </div>
-    </header>
+      <Button className="shrink-0" onClick={onConfigureConnections}>Manage serving connections</Button>
+    </Panel>
 
-    <section className="model-metrics" aria-label="Model catalogue summary">
-      <article><span>Catalogue routes</span><strong>{models.length}</strong><small>Versioned records</small></article>
-      <article><span>Active routes</span><strong>{activeCount}</strong><small>Evaluation gated</small></article>
-      <article><span>Defaults</span><strong>{defaultCount}</strong><small>Per workload</small></article>
-      <article><span>Workloads</span><strong>{workloadCount}</strong><small>Chat and agent</small></article>
-    </section>
+    {error && <Alert onDismiss={() => setError(null)}>{error}</Alert>}
+    {message && <Alert tone="good" onDismiss={() => setMessage(null)}>{message}</Alert>}
 
-    <section className="model-boundary panel">
-      <div><span>Control boundary</span><strong>OrcaSynapse approves routes; AI Inference remains the serving plane.</strong><p>Activation never modifies upstream configuration. The alias must already exist at the selected endpoint and the exact model version must have promoted evaluation evidence.</p></div>
-      <button type="button" onClick={onConfigureConnections}>Manage serving connections</button>
-    </section>
+    {showEditor && <Panel>
+      <form onSubmit={(event) => void save(event)}>
+        <header className="mb-4 flex items-start justify-between gap-6">
+          <div className="min-w-0">
+            <h2 className="m-0 text-[15px] font-semibold tracking-[-0.01em] text-text">
+              {editing ? `Edit ${editing.displayName}` : "New model route"}
+            </h2>
+            <p className="mb-0 mt-1.5 text-body text-muted">
+              {editing
+                ? "Active routes must be suspended before editing."
+                : "New routes remain draft until exact evaluation evidence is promoted."}
+            </p>
+          </div>
+          <Button variant="ghost" size="sm" onClick={() => setShowEditor(false)}>Cancel</Button>
+        </header>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <Field label="Display name"><Input value={draft.displayName} minLength={2} maxLength={120} required onChange={(event) => setDraft({ ...draft, displayName: event.target.value })} /></Field>
+          <Field label="Slug"><Input value={draft.slug} required disabled={Boolean(editing)} onChange={(event) => setDraft({ ...draft, slug: event.target.value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") })} /></Field>
+          <Field label="Workload"><Select value={draft.workload} disabled={Boolean(editing)} onChange={(event) => setDraft({ ...draft, workload: event.target.value as ModelWorkload })}><option value="CHAT">Chat</option><option value="AGENT">Hermes agent</option></Select></Field>
+          <Field label="Serving connection"><Select value={draft.connectionId} required onChange={(event) => setDraft({ ...draft, connectionId: event.target.value })}><option value="">Select a connection</option>{eligibleConnections.map((connection) => <option key={connection.id} value={connection.id}>{connection.displayName} - {connection.kind}</option>)}</Select></Field>
+          <Field label="Model alias"><Input value={draft.modelAlias} required onChange={(event) => setDraft({ ...draft, modelAlias: event.target.value })} /></Field>
+          <Field label="Immutable version"><Input value={draft.version} required onChange={(event) => setDraft({ ...draft, version: event.target.value })} /></Field>
+          <Field label="Context window"><Input type="number" min={1024} max={4194304} value={draft.contextWindowTokens} required onChange={(event) => setDraft({ ...draft, contextWindowTokens: Number(event.target.value) })} /></Field>
+          <Field label="Maximum output"><Input type="number" min={64} max={131072} value={draft.maxOutputTokens} required onChange={(event) => setDraft({ ...draft, maxOutputTokens: Number(event.target.value) })} /></Field>
+          <Field label="Concurrency limit"><Input type="number" min={1} max={1024} value={draft.maxConcurrentRequests} required onChange={(event) => setDraft({ ...draft, maxConcurrentRequests: Number(event.target.value) })} /></Field>
+          <Field label="License / approval"><Input value={draft.license ?? ""} placeholder="Optional approved license reference" onChange={(event) => setDraft({ ...draft, license: event.target.value.trim() || null })} /></Field>
+        </div>
+        <Button variant="primary" type="submit" className="mt-4" disabled={busy || editing?.status === "ACTIVE" || eligibleConnections.length === 0}>
+          {busy ? "Saving..." : editing ? "Save new revision" : "Create draft route"}
+        </Button>
+      </form>
+    </Panel>}
 
-    {error && <div className="workspace-notice error" role="alert">{error}</div>}
-    {message && <div className="workspace-notice success">{message}</div>}
-
-    {showEditor && <form className="model-editor panel" onSubmit={(event) => void save(event)}>
-      <div className="section-toolbar"><div><h2>{editing ? `Edit ${editing.displayName}` : "New model route"}</h2><p>{editing ? "Active routes must be suspended before editing." : "New routes remain draft until exact evaluation evidence is promoted."}</p></div><button type="button" onClick={() => setShowEditor(false)}>Cancel</button></div>
-      <div className="model-editor-grid">
-        <label><span>Display name</span><input value={draft.displayName} minLength={2} maxLength={120} required onChange={(event) => setDraft({ ...draft, displayName: event.target.value })} /></label>
-        <label><span>Slug</span><input value={draft.slug} required disabled={Boolean(editing)} onChange={(event) => setDraft({ ...draft, slug: event.target.value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") })} /></label>
-        <label><span>Workload</span><select value={draft.workload} disabled={Boolean(editing)} onChange={(event) => setDraft({ ...draft, workload: event.target.value as ModelWorkload })}><option value="CHAT">Chat</option><option value="AGENT">Hermes agent</option></select></label>
-        <label><span>Serving connection</span><select value={draft.connectionId} required onChange={(event) => setDraft({ ...draft, connectionId: event.target.value })}><option value="">Select a connection</option>{eligibleConnections.map((connection) => <option key={connection.id} value={connection.id}>{connection.displayName} - {connection.kind}</option>)}</select></label>
-        <label><span>Model alias</span><input value={draft.modelAlias} required onChange={(event) => setDraft({ ...draft, modelAlias: event.target.value })} /></label>
-        <label><span>Immutable version</span><input value={draft.version} required onChange={(event) => setDraft({ ...draft, version: event.target.value })} /></label>
-        <label><span>Context window</span><input type="number" min={1024} max={4194304} value={draft.contextWindowTokens} required onChange={(event) => setDraft({ ...draft, contextWindowTokens: Number(event.target.value) })} /></label>
-        <label><span>Maximum output</span><input type="number" min={64} max={131072} value={draft.maxOutputTokens} required onChange={(event) => setDraft({ ...draft, maxOutputTokens: Number(event.target.value) })} /></label>
-        <label><span>Concurrency limit</span><input type="number" min={1} max={1024} value={draft.maxConcurrentRequests} required onChange={(event) => setDraft({ ...draft, maxConcurrentRequests: Number(event.target.value) })} /></label>
-        <label><span>License / approval</span><input value={draft.license ?? ""} placeholder="Optional approved license reference" onChange={(event) => setDraft({ ...draft, license: event.target.value.trim() || null })} /></label>
-      </div>
-      <button className="primary-button model-save" type="submit" disabled={busy || editing?.status === "ACTIVE" || eligibleConnections.length === 0}>{busy ? "Saving..." : editing ? "Save new revision" : "Create draft route"}</button>
-    </form>}
-
-    <section className="model-catalogue" aria-label="Configured model routes">
-      {models.length === 0 && <div className="model-empty panel"><strong>No model routes yet</strong><span>Legacy connection aliases remain active until the first catalogue route is created.</span>{canManage && <button type="button" onClick={startCreate}>Create the first route</button>}</div>}
-      {models.map((model) => <article className="model-card panel" key={model.id}>
-        <header><span className={`model-workload ${model.workload.toLowerCase()}`}>{model.workload}</span><span className={`connection-status ${modelTone(model)}`}><i />{model.status.toLowerCase()}</span>{model.isDefault && <span className="model-default">Default</span>}</header>
-        <div className="model-title"><div className="model-symbol">{model.displayName.slice(0, 2).toUpperCase()}</div><div><h2>{model.displayName}</h2><p>{model.modelAlias}</p></div></div>
-        <dl><div><dt>Version</dt><dd>{model.version}</dd></div><div><dt>Connection</dt><dd>{model.connection.displayName}</dd></div><div><dt>Context</dt><dd>{compactNumber(model.contextWindowTokens)}</dd></div><div><dt>Output</dt><dd>{compactNumber(model.maxOutputTokens)}</dd></div><div><dt>Concurrency</dt><dd>{model.maxConcurrentRequests}</dd></div><div><dt>Evidence</dt><dd>{model.activationEvaluationId ? "Promoted" : "Required"}</dd></div></dl>
-        <footer><span>Revision {model.revision}</span>{canManage && <div>{model.status !== "ACTIVE" && <button type="button" onClick={() => startEdit(model)}>Edit</button>}<button type="button" onClick={() => setDecision({ id: model.id, action: model.status === "ACTIVE" ? "suspend" : "activate", reason: "", makeDefault: model.workload === "CHAT" })}>{model.status === "ACTIVE" ? "Suspend" : "Activate"}</button></div>}</footer>
-        {decision?.id === model.id && <form className="model-decision" onSubmit={(event) => void applyDecision(event)}>
-          <div><strong>{decision.action === "activate" ? "Activate evaluated route" : "Suspend route"}</strong><span>{decision.action === "activate" ? `Requires promoted target model:${model.slug} version ${model.version}.` : "Existing conversations or profiles may stop accepting new work."}</span></div>
-          {decision.action === "activate" && <label className="model-default-toggle"><input type="checkbox" checked={decision.makeDefault} onChange={(event) => setDecision({ ...decision, makeDefault: event.target.checked })} /><span>Make default for {model.workload.toLowerCase()}</span></label>}
-          <label><span>Operator reason</span><input minLength={3} maxLength={500} required value={decision.reason} onChange={(event) => setDecision({ ...decision, reason: event.target.value })} /></label>
-          <div className="model-decision-actions"><button type="button" onClick={() => setDecision(null)}>Cancel</button><button className="primary-button" type="submit" disabled={busy || decision.reason.trim().length < 3}>{busy ? "Applying..." : "Confirm"}</button></div>
+    <section className="grid items-start gap-3 lg:grid-cols-2" aria-label="Configured model routes">
+      {models.length === 0 && (
+        <EmptyState
+          className="lg:col-span-2"
+          title="No model routes yet"
+          action={canManage ? <Button onClick={startCreate}>Create the first route</Button> : undefined}
+        >
+          Legacy connection aliases remain active until the first catalogue route is created.
+        </EmptyState>
+      )}
+      {models.map((model) => <Panel className="grid min-w-0 gap-4" key={model.id}>
+        <header className="flex items-center gap-3">
+          <MicroLabel className="rounded border border-border bg-raised px-1.5 py-0.5">{model.workload}</MicroLabel>
+          <StatusText dot tone={toneFor(modelTone(model))}>{model.status.toLowerCase()}</StatusText>
+          {/* "Which route answers by default" is not derivable from anything
+              else on the card, so it is stated rather than implied. */}
+          {model.isDefault && <StatusText tone="accent" className="ml-auto">Default</StatusText>}
+        </header>
+        <div className="flex items-center gap-3">
+          <span
+            aria-hidden="true"
+            className="grid h-9 w-9 shrink-0 place-items-center rounded border border-border-strong bg-raised font-mono text-[10px] font-bold text-accent"
+          >
+            {model.displayName.slice(0, 2).toUpperCase()}
+          </span>
+          <div className="min-w-0">
+            <h2 className="m-0 truncate text-[14px] font-semibold tracking-[-0.01em] text-text">{model.displayName}</h2>
+            <p className="mb-0 mt-0.5 truncate font-mono text-caption text-muted">{model.modelAlias}</p>
+          </div>
+        </div>
+        {/* Hairlines from the gap, so no cell needs a border and none double
+            against the panel edge. */}
+        <dl className="m-0 grid grid-cols-2 gap-px rounded border border-border bg-border sm:grid-cols-3">
+          {[
+            { label: "Version", value: model.version },
+            { label: "Connection", value: model.connection.displayName },
+            { label: "Context", value: compactNumber(model.contextWindowTokens) },
+            { label: "Output", value: compactNumber(model.maxOutputTokens) },
+            { label: "Concurrency", value: model.maxConcurrentRequests },
+            { label: "Evidence", value: model.activationEvaluationId ? "Promoted" : "Required" },
+          ].map((fact) => (
+            <div className="min-w-0 bg-surface px-2.5 py-2" key={fact.label}>
+              <dt className="truncate font-mono text-micro uppercase text-faint">{fact.label}</dt>
+              <dd className="m-0 mt-1 truncate font-mono text-caption tabular-nums text-muted">{fact.value}</dd>
+            </div>
+          ))}
+        </dl>
+        <footer className="flex items-center justify-between gap-2.5">
+          <StatusText>Revision {model.revision}</StatusText>
+          {canManage && <div className="flex gap-1.5">
+            {model.status !== "ACTIVE" && <Button size="sm" onClick={() => startEdit(model)}>Edit</Button>}
+            <Button
+              size="sm"
+              variant={model.status === "ACTIVE" ? "danger" : "secondary"}
+              onClick={() => setDecision({ id: model.id, action: model.status === "ACTIVE" ? "suspend" : "activate", reason: "", makeDefault: model.workload === "CHAT" })}
+            >
+              {model.status === "ACTIVE" ? "Suspend" : "Activate"}
+            </Button>
+          </div>}
+        </footer>
+        {decision?.id === model.id && <form
+          className={cn(
+            "grid gap-3 rounded border p-3",
+            decision.action === "suspend" ? "border-bad/40 bg-bad/10" : "border-border-strong bg-raised",
+          )}
+          onSubmit={(event) => void applyDecision(event)}
+        >
+          <div>
+            <strong className="block text-[12px] font-semibold text-text">
+              {decision.action === "activate" ? "Activate evaluated route" : "Suspend route"}
+            </strong>
+            <span className="mt-1 block text-body text-muted">
+              {decision.action === "activate"
+                ? `Requires promoted target model:${model.slug} version ${model.version}.`
+                : "Existing conversations or profiles may stop accepting new work."}
+            </span>
+          </div>
+          {decision.action === "activate" && <label className="flex cursor-pointer items-center gap-2.5 rounded border border-border bg-surface p-2.5">
+            <input type="checkbox" checked={decision.makeDefault} onChange={(event) => setDecision({ ...decision, makeDefault: event.target.checked })} />
+            <span className="text-body text-text">Make default for {model.workload.toLowerCase()}</span>
+          </label>}
+          <Field label="Operator reason">
+            <Input minLength={3} maxLength={500} required value={decision.reason} onChange={(event) => setDecision({ ...decision, reason: event.target.value })} />
+          </Field>
+          <div className="flex justify-end gap-2">
+            <Button onClick={() => setDecision(null)}>Cancel</Button>
+            <Button
+              variant={decision.action === "suspend" ? "danger" : "primary"}
+              type="submit"
+              disabled={busy || decision.reason.trim().length < 3}
+            >
+              {busy ? "Applying..." : "Confirm"}
+            </Button>
+          </div>
         </form>}
-      </article>)}
+      </Panel>)}
     </section>
   </div>;
 }

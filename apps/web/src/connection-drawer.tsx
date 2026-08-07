@@ -11,8 +11,9 @@ import type {
   ServiceConnectionSummary,
   ServiceKind,
 } from "@orcasynapse/contracts";
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { connectionDefinitions, inferenceEndpointPresets } from "./connection-definitions.js";
+import { Button, Drawer } from "./ui/index.js";
 
 export interface ConnectionDraft extends CreateServiceConnection {
   existingId?: string;
@@ -77,8 +78,6 @@ function configurationDefaults(
 }
 
 export function ConnectionDrawer(props: ConnectionDrawerProps) {
-  const closeButton = useRef<HTMLButtonElement>(null);
-  const dialogPanel = useRef<HTMLElement>(null);
   const [accessMode, setAccessMode] = useState<"LOGIN" | "RECOVERY">("LOGIN");
   const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("");
@@ -127,39 +126,11 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
     setMonitoringReason(props.monitoring?.reason ?? "Enable scheduled credential-aware checks.");
   }, [props.monitoring]);
 
-  useEffect(() => {
-    if (!props.open) return;
-    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const previousOverflow = document.body.style.overflow;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") props.onClose();
-      if (event.key === "Tab" && dialogPanel.current) {
-        const focusable = Array.from(
-          dialogPanel.current.querySelectorAll<HTMLElement>(
-            'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
-          ),
-        );
-        const first = focusable[0];
-        const last = focusable.at(-1);
-        if (!first || !last) return;
-        if (event.shiftKey && document.activeElement === first) {
-          event.preventDefault();
-          last.focus();
-        } else if (!event.shiftKey && document.activeElement === last) {
-          event.preventDefault();
-          first.focus();
-        }
-      }
-    };
-    document.body.style.overflow = "hidden";
-    document.addEventListener("keydown", handleKeyDown);
-    window.requestAnimationFrame(() => closeButton.current?.focus());
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      document.removeEventListener("keydown", handleKeyDown);
-      previousFocus?.focus();
-    };
-  }, [props.open]);
+  /*
+   * The focus trap that used to live here is gone: `Drawer` was extracted from
+   * this exact implementation in v1.1.0, and keeping a second copy meant
+   * two places to fix when one of them was wrong.
+   */
 
   useEffect(() => {
     setDisplayName(existing?.displayName ?? `${definition.name} Primary`);
@@ -250,18 +221,19 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
   };
 
   return (
-    <div className="drawer-backdrop" role="presentation" onMouseDown={(event) => {
-      if (event.currentTarget === event.target) props.onClose();
-    }}>
-      <aside ref={dialogPanel} className="connection-drawer" role="dialog" aria-modal="true" aria-labelledby="connection-drawer-title">
-        <header>
-          <div><p className="page-kicker">Platform setup</p><h2 id="connection-drawer-title">Connect your AI stack</h2></div>
-          <div className="drawer-header-actions">
-            {props.session && <button type="button" onClick={() => void props.onSignOut()}>Sign out</button>}
-            {!props.session?.passwordChangeRequired && <button ref={closeButton} className="drawer-close" type="button" onClick={props.onClose} aria-label="Close settings">×</button>}
+    <Drawer
+      open={props.open}
+      onClose={props.onClose}
+      kicker="Platform setup"
+      title="Connect your AI stack"
+      className="max-w-[640px]"
+    >
+      <div className="grid gap-4">
+        {props.session && (
+          <div className="flex justify-end">
+            <Button variant="ghost" size="sm" onClick={() => void props.onSignOut()}>Sign out</Button>
           </div>
-        </header>
-
+        )}
         {!props.session ? (
           <form className="unlock-form" onSubmit={submitAccess}>
             <div className="lock-mark" aria-hidden="true">M</div>
@@ -283,7 +255,7 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
             <button className="primary-button drawer-submit" type="submit" disabled={props.busy || props.bootstrapState !== "READY"}>
               {props.busy ? "Verifying…" : accessMode === "LOGIN" ? "Sign in" : "Continue recovery"}
             </button>
-            <button className="text-button" type="button" onClick={() => setAccessMode(accessMode === "LOGIN" ? "RECOVERY" : "LOGIN")}>
+            <button className="inline-flex h-7 items-center justify-center whitespace-nowrap rounded border border-transparent px-2.5 text-[10px] font-medium text-muted transition-colors hover:bg-raised hover:text-text disabled:cursor-not-allowed disabled:opacity-40" type="button" onClick={() => setAccessMode(accessMode === "LOGIN" ? "RECOVERY" : "LOGIN")}>
               {accessMode === "LOGIN" ? "Use offline recovery key" : "Return to local sign in"}
             </button>
           </form>
@@ -331,7 +303,7 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
                 <input minLength={3} maxLength={500} value={monitoringReason} onChange={(event) => setMonitoringReason(event.target.value)} />
               </label>
               <button
-                className="primary-button"
+                className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded border border-accent bg-accent px-3.5 text-body font-medium text-[#0a0a0b] transition-colors hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-40"
                 type="button"
                 disabled={props.busy || monitoringReason.trim().length < 3}
                 onClick={() => void props.onUpdateMonitoring({
@@ -397,7 +369,7 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
             {selectedKind !== "INFERENCE" && <div className="form-grid">
               <label>Display name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} required minLength={2}/></label>
               <label>Slug<input value={slug} onChange={(event) => setSlug(slugFor(event.target.value))} required disabled={Boolean(existing)}/></label>
-              <label className="wide">{definition.endpointLabel ?? "Endpoint URL"}<input type="url" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder={selectedKind === "OIDC" ? "https://identity.orcasynapse.internal" : "https://service.orcasynapse.internal"}/></label>
+              <label className="sm:col-span-2">{definition.endpointLabel ?? "Endpoint URL"}<input type="url" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder={selectedKind === "OIDC" ? "https://identity.orcasynapse.internal" : "https://service.orcasynapse.internal"}/></label>
               <label>Environment<select value={environment} onChange={(event) => setEnvironment(event.target.value as Environment)}><option value="DEVELOPMENT">Development</option><option value="STAGING">Staging</option><option value="PRODUCTION">Production</option></select></label>
               <label className="switch-label"><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)}/><span>Enable after saving</span></label>
             </div>}
@@ -668,7 +640,7 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
             {props.error && <p className="form-error">{props.error}</p>}
             <div className="drawer-actions">
               <button type="button" onClick={props.onClose}>Cancel</button>
-              <button className="primary-button" type="submit" disabled={props.busy}>{props.busy
+              <button className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded border border-accent bg-accent px-3.5 text-body font-medium text-[#0a0a0b] transition-colors hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-40" type="submit" disabled={props.busy}>{props.busy
                 ? selectedKind === "INFERENCE" && enabled ? "Saving and verifying…" : "Saving…"
                 : selectedKind === "INFERENCE" && inferenceDiscovery?.status === "READY"
                   ? "Activate AI Inference"
@@ -676,7 +648,7 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
             </div>
           </form>
         )}
-      </aside>
-    </div>
+      </div>
+    </Drawer>
   );
 }

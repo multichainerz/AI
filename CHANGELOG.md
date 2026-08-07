@@ -5,6 +5,39 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v1.2.0 — 2026-08-07
+
+The design system reaches every remaining view, preflight comes on, and the
+fonts finally ship.
+
+- Models, Prompts, Guardrails, Memory, Knowledge, the audit trail, Agents,
+  Operations, Onboarding and Tooling all move onto the primitive set, each
+  verified against a rendered preview rather than a diff, and each gaining its
+  first tests in the process.
+- **Two ways the system was quietly producing nothing.** The base reset wrote
+  `border: 0`, which also sets `border-style: none`, and CSS then computes
+  `border-width` to 0 whatever a later rule declares — so Tailwind's width-only
+  `border` utility painted nothing on *every element*. And every opacity modifier
+  on a theme colour emitted no rule at all, because Tailwind cannot decompose a
+  hex held in a custom property: twenty-five tinted backgrounds and borders were
+  missing that way, the class sitting in the markup with no declaration behind
+  it. The palette is channel-first now.
+- **Preflight is on**, which supersedes the hand-written universal
+  `border-style: solid` that had been standing in for it, and the token test
+  fails if it is ever switched back off.
+- **Ship the fonts.** `--sans` had named Inter for fourteen releases with no
+  `@font-face` behind it, so every screen fell through to whatever the operating
+  system supplied. Inter and JetBrains Mono are now self-hosted latin variable
+  cuts, because `font-src 'self'` makes a bundled file the only legal option, and
+  `ui/fonts.test.ts` fails if a declared face has no file.
+- The twelve-branch view ternary becomes a lookup keyed by the token the router
+  already produces, with `satisfies Record<ActiveView, …>` closing the set — the
+  chain had ended in a bare `else` that rendered Home, so a new view fell
+  silently through to the wrong screen.
+- The connection drawer stops carrying its own copy of the focus trap that
+  `Drawer` was extracted from. The stylesheet ends the arc at **700 lines
+  carrying 166 distinct colours**, from 2,020 lines and 754.
+
 ## v1.1.0 — 2026-08-07
 
 A design system for the dashboard: tokens, primitives, Home, Chat, and one

@@ -89,6 +89,10 @@ describe("memory lineage", () => {
     render(<MemoryView {...props} />);
 
     await screen.findByText("The user works in Bandung.");
+    // Doubles as the preview for this screen: see chat-transcript.test.tsx.
+    if (process.env.VIEW_PREVIEW_OUT) {
+      (await import("node:fs")).writeFileSync(process.env.VIEW_PREVIEW_OUT, document.body.innerHTML, "utf8");
+    }
     expect(screen.queryByText("The user works in Jakarta.")).toBeNull();
     expect(getAgentMemoryRecords.mock.calls[0]?.[0]).toMatchObject({ includeHistory: false });
   });
