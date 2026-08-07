@@ -57,6 +57,7 @@ import {
 } from "./workspace-navigation.js";
 
 const OperationsView = lazy(() => import("./operations-view.js").then((module) => ({ default: module.OperationsView })));
+const BenchmarksView = lazy(() => import("./benchmarks-view.js").then((module) => ({ default: module.BenchmarksView })));
 const ChatView = lazy(() => import("./chat-view.js").then((module) => ({ default: module.ChatView })));
 const DocumentsView = lazy(() => import("./documents-view.js").then((module) => ({ default: module.DocumentsView })));
 const AgentsView = lazy(() => import("./agents-view.js").then((module) => ({ default: module.AgentsView })));
@@ -831,6 +832,13 @@ function App() {
             <OperationsView
               session={adminSession}
               onConfigure={() => openConnectionSettings()}
+              onSessionExpired={forgetAdminSession}
+            />
+          ),
+          Benchmarks: () => (
+            <BenchmarksView
+              session={adminSession}
+              onOpenOperations={() => selectView("Operations")}
               onSessionExpired={forgetAdminSession}
             />
           ),

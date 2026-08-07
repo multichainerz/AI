@@ -5,6 +5,44 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.72.0 — 2026-08-07
+
+Benchmarks, R3: the dashboard screen. The feature is complete.
+
+A **Benchmarks** section under Operations, filed there deliberately — a
+benchmark run is the evidence an evaluation is promoted on, so it belongs beside
+the ledger it feeds rather than in its own corner of the product.
+
+**The screen states what a run means, not what its status enum says.** A
+completed suite that scored 0.5 against a 0.9 threshold reads *below threshold*,
+not *completed*: the second is true and tells an operator nothing, and a neutral
+word beside a red dot is exactly the misreading this screen exists to prevent.
+The summary counts regressions for the same reason. Every card names what its
+suite exercises, because the three planes fail for different reasons and "chat
+quality" and "retrieval" are not interchangeable news.
+
+**A run in flight shows how far it got and no score.** Cases scored out of
+total, live — the runner publishes after each case, so there is something honest
+to show — and the pass rate stays blank until it finishes.
+
+The screen polls only while something is running, and stops the moment nothing
+is. A benchmark page left open on a quiet installation should not keep a query
+running against the same database the agents use.
+
+The results overlay names **what the run was pointed at**: model, agent and
+version, and whose corpus. Each case carries the intent it was written for, so a
+failure explains itself instead of leaving someone to reconstruct why the case
+exists — and each assertion shows its own verdict, which is what makes a
+deterministic score auditable rather than merely reproducible.
+
+An auditor sees all of it and can start none of it: reading the evidence and
+commissioning it are different permissions, which is why the API reused
+`evaluations:read` and `evaluations:manage` rather than inventing a scope.
+
+1,002 tests green, 11 new. Contrast on the new screen sweeps at **0 nodes below
+WCAG AA, worst 4.95, median 6.52** — better than the 4.78/6.13 baseline. No
+inline styles, so the container's `style-src 'self'` will not refuse it.
+
 ## ai-v1.71.0 — 2026-08-07
 
 Benchmarks, R2b: the worker executes them.

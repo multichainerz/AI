@@ -15,4 +15,11 @@ describe("workspace navigation", () => {
     expect(productAreaForView("Integrations")).toBe("Agents");
     expect(productAreaForView("Models")).toBe("Platform");
   });
+
+  it("files benchmarks beside the ledger they produce evidence for", () => {
+    expect(productAreaForView("Benchmarks")).toBe("Operations");
+    expect(pathForView("Benchmarks")).toBe("#operations/benchmarks");
+    expect(viewFromHash("#operations/benchmarks")).toBe("Benchmarks");
+    expect(viewFromHash("#benchmarks")).toBe("Benchmarks");
+  });
 });
