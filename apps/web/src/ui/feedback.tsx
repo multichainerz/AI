@@ -12,6 +12,24 @@ import { MicroLabel, Panel } from "./surface.js";
  * different explanations of the same thing.
  */
 
+export type Tone = "neutral" | "good" | "warn" | "bad" | "accent";
+
+/**
+ * The connection vocabulary is wider than the palette on purpose: six readiness
+ * tones, plus the ones individual screens add for a locked session or an
+ * untested route, collapse to four colours. Anything unrecognised reads as
+ * neutral rather than inventing a fifth.
+ *
+ * Shared because every view that shows a service, a route or a policy has to
+ * make the same mapping, and three private copies would drift.
+ */
+export function toneFor(value: string): Tone {
+  if (value === "ready" || value === "healthy" || value === "active") return "good";
+  if (value === "degraded" || value === "validation" || value === "not_tested" || value === "draft") return "warn";
+  if (value === "blocked" || value === "unreachable" || value === "failed") return "bad";
+  return "neutral";
+}
+
 const status = cva("inline-flex items-center font-mono text-micro uppercase", {
   variants: {
     tone: {

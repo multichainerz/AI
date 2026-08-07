@@ -5,6 +5,52 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.60.0 — 2026-08-07
+
+Models on the design system — and two ways the system was quietly producing
+nothing.
+
+Models is the first of the eight secondary views to move, and the first one
+built with a preview to look at rather than a diff to reason about:
+`models-view.test.tsx` renders a populated catalogue and, with
+`VIEW_PREVIEW_OUT` set, writes it to a file the way `chat-transcript.test.tsx`
+does. That is how both of the following were found — by reading computed styles
+on a real screen, not by reading code.
+
+**No button in the dashboard had a border.** The `@layer base` reset added in
+ai-v1.55.1 wrote `border: 0`, and the shorthand also sets `border-style: none`.
+CSS then computes `border-width` to 0 no matter what a later rule declares — so
+Tailwind's `border` utility, which sets width only, did nothing. In the DOM the
+class was present and the computed width was `0px`. Now `border: 0 solid
+transparent`, which keeps the reset and lets a width utility apply.
+
+**Every opacity modifier on a theme colour emitted no rule at all.** Tailwind
+can only apply `/10` or `/40` to a colour it can decompose, and
+`accent: "var(--accent)"` holding a hex gives it nothing to split. Twenty-five
+tinted backgrounds and borders were missing that way — the danger Button, every
+`Alert` tone, the Chat approval block, message avatars, agent-activity icons —
+each with the class sitting in the markup and no declaration behind it. The
+palette is now channel-first (`--bad-rgb: 224 118 127`) with the hex derived
+from it, so `styles.css` and Tailwind share one source of truth and the
+`rgb(... / <alpha-value>)` template works.
+
+- `ui/tokens.test.ts` fails if a colour is added in the short form, or if the
+  button reset loses its border style
+- `toneFor` moves into the primitive set; two views had begun keeping private
+  copies of the same six-tone-to-four-colour mapping
+
+Models itself: `PageHeader`, a real `MetricRow`, the boundary note as a Panel
+with an accent rule, the editor on `Field`/`Input`/`Select`, and route cards
+whose fact grid draws hairlines from a `gap-px` rather than per-cell borders.
+The activate/suspend decision inherits the tone of what it will do.
+
+- 29 stylesheet rules dropped and 39 shared selector lists trimmed, leaving the
+  three governance screens that still need them untouched
+
+885 tests green, web at 133. Contrast on the populated catalogue: 0 of 61 nodes
+below WCAG AA, worst 5.30. Distinct hand-picked colours in the stylesheet:
+**533, down from 754** when the revamp began.
+
 ## ai-v1.59.0 — 2026-08-07
 
 Nine locked screens become one.

@@ -28,20 +28,29 @@ export default {
   },
   theme: {
     extend: {
+      /*
+       * Every colour is the `rgb(<channels> / <alpha-value>)` template, and that
+       * form is required rather than stylistic: given a plain `var(--bad)`
+       * holding a hex, Tailwind has nothing to split and emits **no rule at all**
+       * for `bg-bad/10`. Twenty-five tinted backgrounds and borders were missing
+       * that way — the class present in the DOM, the declaration absent from the
+       * stylesheet. `ui/tokens.test.ts` fails if a colour is added in the short
+       * form.
+       */
       colors: {
-        bg: "var(--bg)",
-        surface: "var(--surface)",
-        raised: "var(--raised)",
-        border: "var(--border)",
-        "border-strong": "var(--border-strong)",
-        text: "var(--text)",
-        muted: "var(--muted)",
-        faint: "var(--faint)",
-        accent: "var(--accent)",
-        "accent-strong": "var(--accent-strong)",
-        good: "var(--good)",
-        warn: "var(--warn)",
-        bad: "var(--bad)",
+        bg: "rgb(var(--bg-rgb) / <alpha-value>)",
+        surface: "rgb(var(--surface-rgb) / <alpha-value>)",
+        raised: "rgb(var(--raised-rgb) / <alpha-value>)",
+        border: "rgb(var(--border-rgb) / <alpha-value>)",
+        "border-strong": "rgb(var(--border-strong-rgb) / <alpha-value>)",
+        text: "rgb(var(--text-rgb) / <alpha-value>)",
+        muted: "rgb(var(--muted-rgb) / <alpha-value>)",
+        faint: "rgb(var(--faint-rgb) / <alpha-value>)",
+        accent: "rgb(var(--accent-rgb) / <alpha-value>)",
+        "accent-strong": "rgb(var(--accent-strong-rgb) / <alpha-value>)",
+        good: "rgb(var(--good-rgb) / <alpha-value>)",
+        warn: "rgb(var(--warn-rgb) / <alpha-value>)",
+        bad: "rgb(var(--bad-rgb) / <alpha-value>)",
       },
       fontFamily: {
         sans: "var(--sans)",
