@@ -5,6 +5,62 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.69.0 — 2026-08-07
+
+Benchmarks, R1: contract, schema and API.
+
+The thing that has been missing is a way to ask *"does this installation still
+answer well"* from the dashboard rather than by hand. This is the foundation
+for it — a suite of deterministic checks that can be executed against the live
+stack, on a schedule an operator controls.
+
+**It does not duplicate the evaluation ledger, it feeds it.** The existing
+`EvaluationRun` in `ai-ops.ts` is a *record*: an operator types in how many
+cases passed somewhere else, and promotion gates a release on that evidence.
+This one *executes* and produces those numbers. A completed run is therefore
+the natural evidence for an evaluation, which is why `evaluationRunId` sits on
+the run rather than the two systems being merged. For the same reason a
+benchmark reuses `evaluations:read` / `evaluations:manage`: running one **is**
+evaluation work, so no role needs a new grant.
+
+**Three kinds, because the planes fail independently.** `CHAT_QUALITY`,
+`RETRIEVAL` and `MEMORY` break for different reasons — retrieval degrades when
+an embedding model or relevance floor changes, chat when a prompt, profile or
+model route changes, memory when distillation or supersession misbehaves. One
+"is the AI good" number would hide which.
+
+**Nothing is judged by a model.** Every assertion is a plain string or latency
+comparison, and each one's verdict is stored beside the case. A benchmark whose
+scoring cannot be audited cannot be used to argue a release is safe.
+`MUST_NOT_INCLUDE` earns its place here: *"must not leak the other tenant's
+project name"* is exactly the regression a pass rate alone never surfaces.
+
+Decisions worth naming, each enforced in the database rather than in code:
+
+- **a run in flight has no pass rate.** A partial score rendered beside
+  finished runs reads as a final one, and an operator would compare it to the
+  threshold. Constraint, contract refinement and test.
+- **the target is denormalised onto the run.** The same suite scoring 0.94 then
+  0.71 says nothing until you know the model alias changed underneath, and a
+  foreign key would let a profile edit silently rewrite what a past result meant.
+- **a run with nothing to measure is refused, not queued.** With no active
+  Profile, queuing anyway produces a 0% result that enters the history as a
+  regression the model never caused — so the API answers 409, not 202.
+- **starting a run answers 202.** Forty cases against a governed agent is
+  minutes of inference; holding the connection open would tie the outcome to a
+  browser tab staying open.
+- results carry prompts and answer excerpts, so both run endpoints send
+  `cache-control: no-store`
+
+Migration `0022_benchmarks` adds `BenchmarkSuite` and `BenchmarkRun`, verified
+against a real PostgreSQL rather than only `drizzle-kit check`.
+
+941 tests green: 12 contract cases and 11 route cases new.
+
+**Still to come:** the worker that claims a queued run and executes it, and the
+dashboard section that starts one and reads the results. This release is the
+contract and the surface they will both build on.
+
 ## ai-v1.68.0 — 2026-08-07
 
 Ship the fonts. The product has never rendered in the typeface it names.
