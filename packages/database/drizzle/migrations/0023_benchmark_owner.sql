@@ -1,0 +1,22 @@
+--
+-- Records whose documents and whose memory a run measured.
+--
+-- Retrieval and recall are owner-scoped, so the same suite run by two operators
+-- searches two different corpora. Without this column a score that moved
+-- because the corpus changed is indistinguishable from one that moved because
+-- the model did.
+--
+-- Added NOT NULL without a backfill deliberately: 0022 created this table one
+-- release ago and no code path has ever inserted into it -- the routes answered
+-- 423 for want of a manager -- so no row can exist. If one somehow does, this
+-- migration failing is the outcome worth having, because the alternative is
+-- inventing an owner for a result and calling it evidence.
+--
+ALTER TABLE "BenchmarkRun" ADD COLUMN "ownerSubject" varchar(200) NOT NULL;--> statement-breakpoint
+--
+-- AgentProfileVersion.modelAlias is varchar(200), so 0022's 120 was narrower
+-- than the value it copies. Queueing a run against an agent with a long alias
+-- would have failed on insert -- and the point of denormalising the alias is
+-- that it is always there to explain a moved score.
+--
+ALTER TABLE "BenchmarkRun" ALTER COLUMN "modelAlias" TYPE varchar(200);

@@ -18,3 +18,4 @@ export * from "./platform.js";
 export * from "./tooling.js";
 export * from "./version.js";
 export * from "./audit.js";
+export * from "./benchmarks.js";

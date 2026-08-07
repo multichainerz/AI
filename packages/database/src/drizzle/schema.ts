@@ -1342,3 +1342,81 @@ export const memoryPolicy = pgTable("MemoryPolicy", {
 	check("MemoryPolicy_bounds_check", sql`("maximumItemsPerOwner" >= 10) AND ("recallLimit" >= 1) AND ("recallMinimumScore" >= 0) AND ("recallMinimumScore" <= 1) AND ("knowledgeRecallLimit" >= 1) AND ("knowledgeMinimumScore" >= 0) AND ("knowledgeMinimumScore" <= 1) AND ("retentionDays" IS NULL OR "retentionDays" >= 1) AND (revision > 0)`),
 	check("MemoryPolicy_activation_check", sql`(status <> 'ACTIVE') OR ("firstActivatedAt" IS NOT NULL)`),
 ]);
+
+export const benchmarkKind = pgEnum("BenchmarkKind", ['CHAT_QUALITY', 'RETRIEVAL', 'MEMORY'])
+export const benchmarkRunStatus = pgEnum("BenchmarkRunStatus", ['QUEUED', 'RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED'])
+
+/**
+ * A suite of deterministic checks against this installation.
+ *
+ * Cases live in JSONB rather than their own table on purpose: they are authored
+ * and read as one document, never queried across suites, and a run pins the
+ * revision it executed so an edit cannot rewrite what a past result meant.
+ */
+export const benchmarkSuite = pgTable("BenchmarkSuite", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	slug: varchar({ length: 64 }).notNull(),
+	displayName: varchar({ length: 160 }).notNull(),
+	description: varchar({ length: 1000 }).notNull(),
+	kind: benchmarkKind().notNull(),
+	cases: jsonb().notNull(),
+	passThreshold: doublePrecision().default(0.9).notNull(),
+	revision: integer().default(1).notNull(),
+	createdBy: uuid(),
+	updatedBy: uuid(),
+	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
+}, (table) => [
+	uniqueIndex("BenchmarkSuite_slug_key").using("btree", table.slug.asc().nullsLast()),
+	check("BenchmarkSuite_bounds_check", sql`("passThreshold" >= 0) AND ("passThreshold" <= 1) AND (revision > 0) AND (jsonb_array_length(cases) > 0)`),
+]);
+
+/**
+ * One execution, with what it was pointed at denormalised onto it.
+ *
+ * The target columns are copies rather than references so a historical run
+ * keeps reading true after the profile it used is edited or deleted — a score
+ * whose subject has silently changed is worse than no score.
+ */
+export const benchmarkRun = pgTable("BenchmarkRun", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	suiteId: uuid().notNull(),
+	suiteSlug: varchar({ length: 64 }).notNull(),
+	suiteRevision: integer().notNull(),
+	kind: benchmarkKind().notNull(),
+	status: benchmarkRunStatus().default('QUEUED').notNull(),
+	agentProfileId: uuid(),
+	agentProfileSlug: varchar({ length: 64 }),
+	agentProfileVersion: integer(),
+	// As wide as AgentProfileVersion.modelAlias, the column it copies.
+	modelAlias: varchar({ length: 200 }),
+	// Retrieval and recall are owner-scoped, so a score is only comparable to
+	// another run over the same corpus.
+	ownerSubject: varchar({ length: 200 }).notNull(),
+	totalCases: integer().default(0).notNull(),
+	passedCases: integer().default(0).notNull(),
+	passRate: doublePrecision(),
+	medianLatencyMs: integer(),
+	results: jsonb().default(sql`'[]'::jsonb`).notNull(),
+	failureMessage: varchar({ length: 1000 }),
+	evaluationRunId: uuid(),
+	requestedBy: uuid(),
+	// Held while a worker executes the run and heartbeated between cases, so a
+	// process that dies mid-suite leaves work that lapses rather than work that
+	// looks permanently in progress.
+	leaseOwner: varchar({ length: 160 }),
+	leaseExpiresAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
+	queuedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	startedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
+	completedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
+}, (table) => [
+	index("BenchmarkRun_suite_idx").using("btree", table.suiteId.asc().nullsLast(), table.queuedAt.desc().nullsFirst()),
+	index("BenchmarkRun_claim_idx").using("btree", table.status.asc().nullsLast(), table.leaseExpiresAt.asc().nullsLast()),
+	// The worker's claim query: oldest queued run first.
+	index("BenchmarkRun_pending_idx").using("btree", table.queuedAt.asc().nullsLast()).where(sql`status = 'QUEUED'`),
+	foreignKey({ columns: [table.suiteId], foreignColumns: [benchmarkSuite.id], name: "BenchmarkRun_suiteId_fkey" }).onDelete("cascade"),
+	check("BenchmarkRun_counts_check", sql`("passedCases" >= 0) AND ("passedCases" <= "totalCases") AND ("passRate" IS NULL OR ("passRate" >= 0 AND "passRate" <= 1))`),
+	// A score before the run finishes would be read as a final one.
+	check("BenchmarkRun_progress_check", sql`(status NOT IN ('QUEUED', 'RUNNING')) OR ("passRate" IS NULL)`),
+	check("BenchmarkRun_completion_check", sql`(status <> 'COMPLETED') OR ("completedAt" IS NOT NULL)`),
+]);

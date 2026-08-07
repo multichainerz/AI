@@ -46,6 +46,8 @@ import type { PromptManager } from "./prompts/prompt-manager.js";
 import { DrizzleMemoryManager } from "./memory/drizzle-memory-manager.js";
 import { ForgetMatcher } from "./memory/forget-matcher.js";
 import type { MemoryManager } from "./memory/memory-manager.js";
+import type { BenchmarkManager } from "./benchmarks/benchmark-manager.js";
+import { DrizzleBenchmarkManager } from "./benchmarks/drizzle-benchmark-manager.js";
 import { DrizzlePromptManager } from "./prompts/drizzle-prompt-manager.js";
 import type { OnboardingManager } from "./onboarding/onboarding-manager.js";
 import { DrizzleOnboardingManager } from "./onboarding/drizzle-onboarding-manager.js";
@@ -70,6 +72,7 @@ export interface RuntimeServices {
   guardrailManager?: GuardrailManager;
   promptManager?: PromptManager;
   memoryManager?: MemoryManager;
+  benchmarkManager?: BenchmarkManager;
   auditManager?: AuditManager;
   siemForwarder?: SiemForwarder;
   agentManager?: AgentManager;
@@ -187,6 +190,7 @@ export function createRuntimeServices(): RuntimeServices {
       agentManager,
       toolingManager,
       aiOpsManager,
+      benchmarkManager: new DrizzleBenchmarkManager(database, aiOpsManager),
       onboardingManager,
       runtimeNodeManager,
       inferenceGateway,

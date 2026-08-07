@@ -12,6 +12,7 @@ export type ActiveView =
   | "Integrations"
   | "Guardrails"
   | "Operations"
+  | "Benchmarks"
   | "Audit";
 
 export type ProductArea = "Home" | "Chat" | "Knowledge" | "Agents" | "Platform" | "Operations";
@@ -57,6 +58,7 @@ const sectionNavigation: Partial<Record<ProductArea, ReadonlyArray<SectionNaviga
   ],
   Operations: [
     { label: "Health & evidence", view: "Operations" },
+    { label: "Benchmarks", view: "Benchmarks" },
     { label: "Audit trail", view: "Audit" },
   ],
   Platform: [
@@ -80,6 +82,7 @@ const areaByView: Record<ActiveView, ProductArea> = {
   Memory: "Platform",
   Guardrails: "Platform",
   Operations: "Operations",
+  Benchmarks: "Operations",
   Audit: "Operations",
 };
 
@@ -95,6 +98,7 @@ const pathByView: Record<ActiveView, string> = {
   Memory: "#platform/memory",
   Guardrails: "#platform/guardrails",
   Operations: "#operations",
+  Benchmarks: "#operations/benchmarks",
   Audit: "#operations/audit",
 };
 
@@ -141,6 +145,9 @@ export function viewFromHash(hash: string): ActiveView {
     case "#platform/guardrails":
     case "#guardrails":
       return "Guardrails";
+    case "#operations/benchmarks":
+    case "#benchmarks":
+      return "Benchmarks";
     case "#operations":
       return "Operations";
     default:

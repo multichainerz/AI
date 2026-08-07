@@ -293,6 +293,7 @@ export type OperationalIncidentList = z.infer<typeof operationalIncidentListSche
 export type CreateOperationalIncident = z.infer<typeof createOperationalIncidentSchema>;
 export type IncidentDecision = z.infer<typeof incidentDecisionSchema>;
 export type EvaluationCategory = z.infer<typeof evaluationCategorySchema>;
+export type EvaluationTargetType = z.infer<typeof evaluationTargetTypeSchema>;
 export type CreateEvaluationRun = z.infer<typeof createEvaluationRunSchema>;
 export type CompleteEvaluationRun = z.infer<typeof completeEvaluationRunSchema>;
 export type PromoteEvaluationRun = z.infer<typeof promoteEvaluationRunSchema>;

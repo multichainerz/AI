@@ -5,6 +5,39 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v1.3.0 — 2026-08-07
+
+Benchmarks, R1 through R5: the loop from authoring a suite to filing its result
+as the evidence a promotion is gated on.
+
+- **It does not duplicate the evaluation ledger, it feeds it.** `EvaluationRun`
+  is a record an operator types in from a run they did somewhere else; a
+  benchmark executes and produces those numbers, so the figure a release is
+  approved on is not one anybody could have mistyped in its favour.
+- **Three kinds, because the planes fail independently**: `CHAT_QUALITY`,
+  `RETRIEVAL` and `MEMORY` break for different reasons, and one "is the AI good"
+  number would hide which.
+- **Nothing is judged by a model.** Every assertion is a plain string or latency
+  comparison and each verdict is stored beside its case, which is what makes a
+  deterministic score auditable rather than merely reproducible.
+  `MUST_NOT_INCLUDE` is the only kind that states something an answer may never
+  do, so breaking one is a critical failure whatever the pass rate says.
+- **A chat case goes through the real agent path** — the same queue, profile
+  version, retrieval and boundary checks a person's message goes through — and a
+  benchmark **never writes to agent memory**, or the second run of a suite would
+  score differently because of the first.
+- Results are written after each case, so a suite that dies at case thirty still
+  shows what the first twenty-nine answered; cancellation is checked between
+  cases. `0023` and `0024` add the run's owner and the lease the document
+  ingestor already had.
+- **The screen states what a run means, not what its status enum says**: a
+  completed suite that scored 0.5 against a 0.9 threshold reads *below
+  threshold*. It polls only while something is running, and an auditor can read
+  every result and start none of them.
+- A suite can be authored, edited and deleted from the dashboard. Slug and kind
+  are fixed once it exists, because past runs are filed under the slug and pinned
+  to what the kind measures.
+
 ## v1.2.0 — 2026-08-07
 
 The design system reaches every remaining view, preflight comes on, and the

@@ -111,6 +111,18 @@ import {
   operationalIncidentSchema,
   evaluationRunListSchema,
   evaluationRunSchema,
+  benchmarkSuiteListSchema,
+  benchmarkSuiteSchema,
+  benchmarkRunListSchema,
+  benchmarkRunSchema,
+  type BenchmarkSuite,
+  type BenchmarkSuiteList,
+  type BenchmarkRun,
+  type BenchmarkRunList,
+  type CreateBenchmarkSuite,
+  type UpdateBenchmarkSuite,
+  type StartBenchmarkRun,
+  type AttachBenchmarkEvidence,
   productionReadinessSchema,
   productionReadinessControlSchema,
   productionReadinessApprovalSchema,
@@ -935,6 +947,62 @@ export async function promoteEvaluationRun(id: string, reason: string): Promise<
   const response = await fetch(`/api/v1/admin/operations/evaluations/${encodeURIComponent(id)}/promote`, {
     method: "POST", headers: adminHeaders(), credentials: "same-origin",
     body: JSON.stringify({ reason }),
+  });
+  return evaluationRunSchema.parse(await parsedResponse(response));
+}
+
+export async function getBenchmarkSuites(): Promise<BenchmarkSuiteList> {
+  const response = await fetch("/api/v1/admin/benchmarks/suites", { credentials: "same-origin" });
+  return benchmarkSuiteListSchema.parse(await parsedResponse(response));
+}
+
+export async function createBenchmarkSuite(input: CreateBenchmarkSuite): Promise<BenchmarkSuite> {
+  const response = await fetch("/api/v1/admin/benchmarks/suites", {
+    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return benchmarkSuiteSchema.parse(await parsedResponse(response));
+}
+
+export async function updateBenchmarkSuite(id: string, input: UpdateBenchmarkSuite): Promise<BenchmarkSuite> {
+  const response = await fetch(`/api/v1/admin/benchmarks/suites/${encodeURIComponent(id)}`, {
+    method: "PATCH", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return benchmarkSuiteSchema.parse(await parsedResponse(response));
+}
+
+export async function deleteBenchmarkSuite(id: string): Promise<void> {
+  const response = await fetch(`/api/v1/admin/benchmarks/suites/${encodeURIComponent(id)}`, {
+    method: "DELETE", headers: adminHeaders(), credentials: "same-origin",
+  });
+  await parsedResponse(response);
+}
+
+export async function getBenchmarkRuns(suiteId?: string): Promise<BenchmarkRunList> {
+  const query = suiteId ? `?suiteId=${encodeURIComponent(suiteId)}` : "";
+  const response = await fetch(`/api/v1/admin/benchmarks/runs${query}`, { credentials: "same-origin" });
+  return benchmarkRunListSchema.parse(await parsedResponse(response));
+}
+
+export async function startBenchmarkRun(input: StartBenchmarkRun): Promise<BenchmarkRun> {
+  const response = await fetch("/api/v1/admin/benchmarks/runs", {
+    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return benchmarkRunSchema.parse(await parsedResponse(response));
+}
+
+export async function cancelBenchmarkRun(id: string): Promise<BenchmarkRun> {
+  const response = await fetch(`/api/v1/admin/benchmarks/runs/${encodeURIComponent(id)}/cancel`, {
+    method: "POST", headers: adminHeaders(), credentials: "same-origin",
+  });
+  return benchmarkRunSchema.parse(await parsedResponse(response));
+}
+
+export async function attachBenchmarkEvidence(
+  id: string,
+  input: AttachBenchmarkEvidence,
+): Promise<EvaluationRun> {
+  const response = await fetch(`/api/v1/admin/benchmarks/runs/${encodeURIComponent(id)}/evaluation`, {
+    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
   });
   return evaluationRunSchema.parse(await parsedResponse(response));
 }
