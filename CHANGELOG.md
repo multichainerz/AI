@@ -5,6 +5,52 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.79.0 — 2026-08-07
+
+Two fixed costs removed from every chat message.
+
+Chatting through the dashboard felt slow while the same model answered quickly
+in LM Studio. The model was never the problem — a 2.6B answering in 1–5s was
+sitting behind a queue tick, two CPU embeddings, two network hops and a polling
+reader. This release takes out the two that are pure waste.
+
+**The worker no longer waits for its own timer.** A run was found by a
+one-second reconcile tick, so every message on a completely idle installation
+paid up to a full second before any work began. The API now emits `NOTIFY` in
+the same transaction that inserts the run, and the worker holds a dedicated
+connection listening for it.
+
+Emitted *inside* the transaction deliberately: PostgreSQL defers NOTIFY until
+commit, so the worker can never be woken for a run it cannot yet see — which a
+nudge sent after committing would not guarantee. There is a test for exactly
+that, using a rollback.
+
+The timer is untouched and remains the guarantee. `pg` pools multiplex, so the
+listener takes a connection of its own; if PostgreSQL will not give it one, or
+it drops and cannot reconnect, the worker keeps running precisely as before — a
+second slower, never broken. A lost notification costs a second, never a run.
+
+**The embedding model is loaded at startup rather than inside the first
+message.** `LocalBgeM3Embedder` resolves its pipeline lazily and nothing touched
+it until a question needed one, so the first person to type anything after a
+worker restart waited for ~2 GB of weights to load before their message reached
+Hermes at all. The worker now warms it as soon as it starts, off the critical
+path.
+
+**What this does not fix, and where the remaining time goes.** A dashboard
+message still crosses seven processes against LM Studio's one. The two largest
+remaining costs are structural: the browser does not receive a stream — the API
+polls `AgentRunEvent` every 350 ms and forwards what it finds, so tokens arrive
+in clumps regardless of generation speed — and every delta is four SQL
+statements in a transaction. Both are worth changing; neither is a change to
+make without measuring first, since the delta write is what makes an
+interrupted run resumable.
+
+1,034 tests green, 6 new. The wake channel's four run against a real PostgreSQL,
+because every property that matters is the server's: that NOTIFY is held until
+commit, that a pooled connection would lose the subscription, and that a stopped
+listener stays stopped.
+
 ## ai-v1.78.0 — 2026-08-07
 
 Two bugs in the first ten minutes of a new installation.

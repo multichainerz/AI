@@ -103,6 +103,23 @@ export class WorkerRuntime {
     await this.registry.markStopped(this.identity.id);
   }
 
+  /**
+   * Dispatches immediately, for the wake channel.
+   *
+   * Separate from `reconcile` because a notification means one specific thing —
+   * a run was just queued — and there is no reason to also sweep the ingestion
+   * queue for it. `dispatchAgents` already collapses concurrent callers, so a
+   * burst of notifications costs one pass.
+   */
+  async dispatchNow(): Promise<void> {
+    if (!this.started) return;
+    try {
+      await this.dispatchAgents();
+    } catch (error) {
+      this.logger.error("Woken dispatch failed.", error);
+    }
+  }
+
   private async reconcile(): Promise<void> {
     await this.dispatchAgents();
     await this.dispatchIngestion();
