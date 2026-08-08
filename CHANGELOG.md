@@ -5,7 +5,28 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
-## ai-v1.88.0 — 2026-08-08
+## ai-v1.89.0 — 2026-08-09
+
+Chat takes the design's three-column shape: the conversation rail leads with
+the one action it exists for (a full-width accent "New conversation"), rows
+take the radius-10 treatment with the active conversation named by a short
+accent mark on its leading edge and a time · preview meta line; the thread
+header sets its title in the display face beside the live dot; and a new
+xl-only context rail states what the conversation can see — its pinned
+knowledge, or the honest sentence about unpinned retrieval — beside the
+transcript rather than behind a button. Read-only by design: the knowledge
+dialog remains the one place scope changes.
+
+The transcript's asymmetry sharpened to the design's: the person's turn is a
+right-aligned soft-violet bubble with the flattened corner pointing back at
+them, the agent's turn is an open row under the Sivali mark in its accent-soft
+circle. The empty state sets its greeting in the display face under the mark,
+with suggestion cards that carry a title and a subtitle.
+
+Two collisions the suite caught: the context rail's manage button answered
+the same `/knowledge/i` query as the thread header's (renamed "Manage
+scope"), and its unpinned sentence duplicated the dialog's own scope summary
+verbatim (reworded — the rail paraphrases, the dialog remains canonical).
 
 Screen alignment: the design's stat banner and ask surface arrive on the main
 screens. One new primitive carries most of it — `HeroBanner`, the banner every
