@@ -92,6 +92,23 @@ describe("parseDistillation", () => {
       .toEqual(["The user works in Jakarta."]);
   });
 
+  it("reads the answer out of prose that itself contains brackets", () => {
+    // Spanning the first "[" to the last "]" is not a JSON array whenever the
+    // model writes a bracket anywhere before its answer — echoing "KNOWN FACTS
+    // [1] and [2]" is enough, and so is a stack that emits its thinking into
+    // `content`. The span then fails to parse and the whole session is lost
+    // while the caller reports a clean read.
+    expect(factsOf(
+      "KNOWN FACTS [1] and [2] already cover the rest.\n"
+      + '[{"fact": "The user works in Jakarta.", "scope": "STATIC"}]',
+    )).toEqual(["The user works in Jakarta."]);
+    expect(factsOf('<think>Is [1] still true? I think so.</think>\n["The user works in Jakarta."]'))
+      .toEqual(["The user works in Jakarta."]);
+    // And [] stays the answer it is: the preamble's brackets must not be read
+    // as the facts, which is what taking the widest or the first span would do.
+    expect(parseDistillation("KNOWN FACTS [1] and [2] already cover this.\n[]")).toEqual([]);
+  });
+
   it("treats an empty array as the answer it is", () => {
     expect(parseDistillation("[]")).toEqual([]);
   });
@@ -389,6 +406,32 @@ describe("MemoryDistiller", () => {
     // so it must still be a failure — storing nothing rather than guessing.
     const fetcher = answering("", "length");
     await expect(new MemoryDistiller(resolver(), fetcher as never).distil(exchange("I moved to Bandung.")))
+      .resolves.toEqual({ facts: [], succeeded: false });
+  });
+
+  it("reports failure when the model was cut off part-way through its answer", async () => {
+    // The truncation check only looked at an empty answer. A model that got far
+    // enough to open the array and then hit the ceiling returns usable-looking
+    // content with no closing bracket, which parses to nothing — and the
+    // session distiller reads that as "taught nothing", keeps the conversation
+    // stamped as read, and never offers those turns again.
+    const fetcher = answering('[{"fact": "The user leads the platform team.", "scope": "STATIC"', "length");
+    await expect(new MemoryDistiller(resolver(), fetcher as never)
+      .distil(exchange("I lead the platform team here.")))
+      .resolves.toEqual({ facts: [], succeeded: false });
+  });
+
+  it("reports failure for a truncated answer even when a prefix of it parses", async () => {
+    // Worse than losing everything: the model listed three facts, was cut off
+    // in the third, and a lenient reading would store two and mark the session
+    // read. Half an extraction is not an extraction.
+    const fetcher = answering(
+      '[{"fact": "The user leads the platform team.", "scope": "STATIC"},'
+      + ' {"fact": "The user works in Jakarta.", "scope": "STATIC"}, {"fact": "The user pre',
+      "length",
+    );
+    await expect(new MemoryDistiller(resolver(), fetcher as never)
+      .distil(exchange("I lead the platform team in Jakarta.")))
       .resolves.toEqual({ facts: [], succeeded: false });
   });
 

@@ -1,10 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
+import type { ChatStreamEvent } from "@orcasynapse/contracts";
 import { eq } from "drizzle-orm";
 import {
   agentProfile,
   agentProfileVersion,
   agentRun,
   agentRunApproval,
+  agentRunEvent,
   auditEvent,
   chatConversation,
   chatFeedback,
@@ -21,7 +24,6 @@ import type { AgentManager } from "../agents/agent-manager.js";
 import { boundedConversationHistory, DrizzleChatManager } from "./drizzle-chat-manager.js";
 import {
   ChatConfigurationError,
-  ChatConversationConflictError,
   ChatConversationNotFoundError,
   ChatMessageNotFoundError,
   ChatPolicyViolationError,
@@ -32,7 +34,7 @@ import {
 let context: TestDatabase;
 
 beforeAll(async () => { context = await createTestDatabase(); }, 120_000);
-afterAll(async () => { await context?.drop(); });
+afterAll(async () => { await context?.drop(); }, 120_000);
 beforeEach(async () => { await context.reset(); });
 
 const principal = {
@@ -362,6 +364,47 @@ describe("DrizzleChatManager forking, deletion and feedback", () => {
       .rejects.toBeInstanceOf(ChatMessageNotFoundError);
   });
 
+  it("keeps a fork usable when a skipped turn sits below the fork point", async () => {
+    const profileId = await seedActiveProfile();
+    const created = await manager().create(principal, { profileId } as never);
+    // Six ordinals at generation three: the assistant turn at 2 failed and the
+    // one at 6 is still running. The fork therefore copies 1, 3, 4 and 5 - four
+    // rows whose highest ordinal is five, not four.
+    await context.database
+      .update(chatConversation).set({ generation: 3 }).where(eq(chatConversation.id, created.id));
+    await context.database.insert(chatMessage).values([
+      { conversationId: created.id, ordinal: 1, role: "USER", status: "COMPLETED", content: "Q1", completedAt: new Date() },
+      { conversationId: created.id, ordinal: 2, role: "ASSISTANT", status: "FAILED", content: "", errorCode: "HERMES_RUN_ABANDONED", completedAt: new Date() },
+      { conversationId: created.id, ordinal: 3, role: "USER", status: "COMPLETED", content: "Q2", completedAt: new Date() },
+      { conversationId: created.id, ordinal: 4, role: "ASSISTANT", status: "COMPLETED", content: "A2", completedAt: new Date() },
+      { conversationId: created.id, ordinal: 5, role: "USER", status: "COMPLETED", content: "Q3", completedAt: new Date() },
+      { conversationId: created.id, ordinal: 6, role: "ASSISTANT", status: "PENDING", content: "" },
+    ]);
+
+    const fork = await manager().fork(principal, created.id, {} as never);
+
+    // Unwrapped on purpose: before the fix this raises the ChatMessage
+    // conversationId/ordinal unique violation, which is the failure to see.
+    await manager().submitMessage(principal, fork.id, "Q4");
+
+    const ordinals = (await context.database.select().from(chatMessage))
+      .filter(({ conversationId }) => conversationId === fork.id)
+      .map(({ ordinal }) => ordinal)
+      .sort((left, right) => left - right);
+    expect(ordinals).toEqual([1, 3, 4, 5, 7, 8]);
+    // The copied ordinals keep their source numbering, so the fork's generation
+    // has to be read off the highest of them rather than off the row count.
+    const [forked] = await context.database
+      .select({ generation: chatConversation.generation })
+      .from(chatConversation).where(eq(chatConversation.id, fork.id));
+    expect(forked?.generation).toBe(4);
+    // Still submittable a second time, so the generation really did advance.
+    await context.database
+      .update(chatMessage).set({ status: "COMPLETED", content: "A4" })
+      .where(eq(chatMessage.status, "PENDING"));
+    await expect(manager().submitMessage(principal, fork.id, "Q5")).resolves.toBeDefined();
+  });
+
   it("refuses to delete a conversation with a live run", async () => {
     const profileId = await seedActiveProfile();
     const created = await manager().create(principal, { profileId } as never);
@@ -540,5 +583,45 @@ describe("DrizzleChatManager pinned knowledge", () => {
     await context.database.delete(document).where(eq(document.id, documentId));
 
     expect((await manager().get(principal, conversationId)).knowledgeDocuments).toEqual([]);
+  });
+});
+
+describe("DrizzleChatManager event subscription", () => {
+  it("waits for the consumer to take one event before producing the next", async () => {
+    // Saved events were pushed at the consumer as fast as the database returned
+    // them, and a full page sent the loop straight back for another one. The
+    // SSE bridge had no way to slow this down, so a subscriber that stopped
+    // reading — a resumed run replaying from cursor 0 into a suspended tab —
+    // had the whole replay accumulate in this process instead.
+    const profileId = await seedActiveProfile();
+    const created = await manager().create(principal, { profileId } as never);
+    const submission = await manager().submitMessage(principal, created.id, "Replay this");
+    await context.database.insert(agentRunEvent).values(
+      Array.from({ length: 20 }, (_value, index) => ({
+        runId: submission.assistantMessage.agentRunId!,
+        type: "MESSAGE_DELTA",
+        delta: `token-${index}`,
+      })),
+    );
+
+    const received: ChatStreamEvent[] = [];
+    let release = () => undefined as void;
+    const consumed = new Promise<void>((resolve) => { release = resolve; });
+    const controller = new AbortController();
+    const subscription = manager()
+      .subscribe(principal, created.id, submission.assistantMessage.id, null, (event) => {
+        received.push(event);
+        return consumed;
+      }, controller.signal)
+      .catch(() => undefined);
+    await delay(300);
+
+    const producedWhileBlocked = received.length;
+    controller.abort();
+    release();
+    await subscription;
+
+    // Just the opening `started` frame: everything after it waits its turn.
+    expect(producedWhileBlocked).toBe(1);
   });
 });

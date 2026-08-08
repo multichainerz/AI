@@ -1,7 +1,21 @@
 import type { DrizzleRuntimeConnectionResolver, RuntimeConnection } from "./connection-resolver.js";
 
 const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
-const MAX_SSE_EVENT_BYTES = 64 * 1024;
+/**
+ * Ceiling for a *single* SSE event, in characters.
+ *
+ * Characters, not bytes, because that is the unit every other bound in this
+ * file uses: `safeDelta` keeps 64,000 characters and `safeEventText` keeps
+ * 1,000. A byte-denominated guard rejected roughly 22k CJK characters — well
+ * inside what `safeDelta` would have kept — for being three bytes each.
+ *
+ * The value has to clear the largest event this client will actually accept:
+ * a 64,000-character delta, JSON-escaped, which a server that escapes
+ * non-ASCII can inflate sixfold. It is a bound on how much unparsed text may
+ * accumulate before this client gives up on resynchronising, not a policy on
+ * what Hermes may send.
+ */
+const MAX_SSE_EVENT_CHARACTERS = 512 * 1024;
 
 export type HermesSafeRunEventType =
   | "RUN_STARTED"
@@ -607,19 +621,38 @@ export class HermesClient {
       pendingDeltaEvent = null;
       lastDeltaFlushAt = Date.now();
     };
+    // Set while the tail of an event this client already gave up on is still
+    // arriving, so its remainder is dropped rather than parsed as a new event.
+    let resynchronising = false;
     try {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
-        if (new TextEncoder().encode(buffer).byteLength > MAX_SSE_EVENT_BYTES) {
-          throw new Error("Hermes emitted an oversized run event.");
-        }
         while (true) {
           const boundary = /\r?\n\r?\n/.exec(buffer);
-          if (!boundary || boundary.index === undefined) break;
+          if (!boundary || boundary.index === undefined) {
+            // No terminator yet. Bound what one unfinished event may accumulate
+            // so a server that never terminates a frame cannot grow this
+            // without limit — then wait for the next boundary and carry on.
+            if (buffer.length > MAX_SSE_EVENT_CHARACTERS) {
+              resynchronising = true;
+              buffer = "";
+            }
+            break;
+          }
           const block = buffer.slice(0, boundary.index);
           buffer = buffer.slice(boundary.index + boundary[0].length);
+          // An event too large to use is malformed input like an unparseable
+          // body or an unrecognised type, and is skipped the same way. Ending
+          // the stream over one of them costs the caller every *later* event
+          // too, which downstream shows up as a run that freezes mid-answer
+          // and then jumps to its final result once polling catches up.
+          if (resynchronising) {
+            resynchronising = false;
+            continue;
+          }
+          if (block.length > MAX_SSE_EVENT_CHARACTERS) continue;
           let eventName = "message";
           let sourceEventId: string | null = null;
           const dataLines: string[] = [];
@@ -651,6 +684,17 @@ export class HermesClient {
       }
       await flushDelta();
     } finally {
+      // A delta that was coalesced but never flushed is output the caller has
+      // already been billed for. Every exit path has to hand it over — an
+      // aborted signal and a transport error included — or the tail of the
+      // answer is simply lost.
+      try {
+        await flushDelta();
+      } catch {
+        // The failure that brought us here is the one worth reporting.
+      }
+      // Without this the upstream keeps producing into a stream nobody reads.
+      await reader.cancel().catch(() => undefined);
       reader.releaseLock();
     }
   }

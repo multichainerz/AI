@@ -39,6 +39,14 @@ export const DEFAULT_SEARCH_OPTIONS: VectorSearchOptions = { limit: 6, minimumSc
  * handed to an external service, so it cannot be widened by anything the
  * browser or the agent supplies.
  */
+/**
+ * A pool handle or a transaction handle — anything that can run the delete.
+ *
+ * Typed as the delete surface only, so passing a transaction cannot silently
+ * widen what this module is allowed to do with it.
+ */
+export type DocumentChunkExecutor = Pick<OrcaSynapseDatabase, "delete">;
+
 export class DocumentVectorStore {
   constructor(
     private readonly database: OrcaSynapseDatabase,
@@ -68,8 +76,17 @@ export class DocumentVectorStore {
     });
   }
 
-  async deleteDocumentChunks(documentId: string): Promise<void> {
-    await this.database.delete(documentChunk).where(eq(documentChunk.documentId, documentId));
+  /**
+   * Removes a document's chunks, optionally on a caller-supplied handle.
+   *
+   * `on` exists so a caller already inside a transaction can pass its handle.
+   * Without it this reached for the pool while the caller held a dedicated
+   * client, so ten concurrent deletes each held one connection and waited for an
+   * eleventh that could never be granted — `connectionTimeoutMillis` is unset,
+   * so waiters never time out and the entire pool wedges, not just deletes.
+   */
+  async deleteDocumentChunks(documentId: string, on: DocumentChunkExecutor = this.database): Promise<void> {
+    await on.delete(documentChunk).where(eq(documentChunk.documentId, documentId));
   }
 
   async countChunks(documentId: string): Promise<number> {

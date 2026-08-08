@@ -49,6 +49,22 @@ describe("parseMatches", () => {
       .toEqual([candidates[0]!.id, candidates[2]!.id]);
   });
 
+  it("reads the answer out of prose that itself contains brackets", () => {
+    // Spanning the first "[" to the last "]" is not a JSON array whenever the
+    // model writes a bracket anywhere before its answer — restating the list it
+    // was shown is enough, and so is a stack that emits its thinking into
+    // `content`. The span then fails to parse, and a forget request that should
+    // have matched two facts reports that none did.
+    expect(parseMatches("Facts [1] and [3] name the migration.\n[1, 3]", candidates))
+      .toEqual([candidates[0]!.id, candidates[2]!.id]);
+    expect(parseMatches("<think>Is [2] about it? No.</think>\n[1]", candidates))
+      .toEqual([candidates[0]!.id]);
+    // And [] stays the answer it is: reading the preamble's brackets as the
+    // decision would forget facts the model never chose.
+    expect(parseMatches("Facts [1] and [3] mention Titan but neither is about it.\n[]", candidates))
+      .toEqual([]);
+  });
+
   it("ignores a number naming a fact it was never shown", () => {
     // A hallucinated index must forget nothing, rather than whatever happens to
     // sit at that position.
@@ -59,9 +75,12 @@ describe("parseMatches", () => {
     expect(parseMatches("[]", candidates)).toEqual([]);
   });
 
-  it("yields nothing when the model answered in prose", () => {
-    expect(parseMatches("None of these facts are about Project Titan.", candidates)).toEqual([]);
-    expect(parseMatches("", candidates)).toEqual([]);
+  it("separates an unreadable answer from a decision that nothing matched", () => {
+    // Null, not []: an answer holding no array is an answer nobody can act on,
+    // and reporting it as an empty match tells an operator the topic is not
+    // stored — the one outcome this path must never produce.
+    expect(parseMatches("None of these facts are about Project Titan.", candidates)).toBeNull();
+    expect(parseMatches("", candidates)).toBeNull();
   });
 
   it("does not repeat an id the model listed twice", () => {
@@ -99,6 +118,15 @@ describe("ForgetMatcher", () => {
 
   it("reports failure when a reasoning model spent its budget before answering", async () => {
     const fetcher = answering("", "length");
+    await expect(new ForgetMatcher(resolver(), fetcher as never).match("Titan", candidates))
+      .resolves.toMatchObject({ matchedIds: [], succeeded: false });
+  });
+
+  it("reports failure when the answer held no array to read", async () => {
+    // Same reason the empty answer is a failure: 503 sends the operator back to
+    // try again, where "0 matched" would send them away believing the topic is
+    // not stored.
+    const fetcher = answering("None of these facts are about Project Titan.");
     await expect(new ForgetMatcher(resolver(), fetcher as never).match("Titan", candidates))
       .resolves.toMatchObject({ matchedIds: [], succeeded: false });
   });

@@ -60,13 +60,65 @@ function statusTone(status: MemoryPolicy["status"]): string {
   return "neutral";
 }
 
+/**
+ * The settings a policy actually governs, named rather than spread.
+ *
+ * A stored policy carries nine columns the server owns — id, slug, status,
+ * revision, and the audit stamps — and `updateMemoryPolicySchema` is `.strict()`,
+ * so a PATCH carrying any of them is rejected outright. Editing used to seed the
+ * draft with `{ ...policy }` and send it back whole, which meant every policy
+ * edit failed with a 400 and put raw Zod text in the error banner.
+ *
+ * Spreading and deleting would not have prevented it: `{ ...policy }` type-checks
+ * as a `CreateMemoryPolicy` because a spread carries no excess-property check, so
+ * TypeScript had nothing to object to. Listing the fields is what makes the
+ * payload honest, and it is the same list on the way in and on the way out.
+ */
+function policySettings(source: Omit<CreateMemoryPolicy, "slug">): Omit<CreateMemoryPolicy, "slug"> {
+  return {
+    displayName: source.displayName,
+    description: source.description,
+    maximumCaptureMode: source.maximumCaptureMode,
+    retentionDays: source.retentionDays,
+    maximumItemsPerOwner: source.maximumItemsPerOwner,
+    recallLimit: source.recallLimit,
+    recallMinimumScore: source.recallMinimumScore,
+    knowledgeRecallLimit: source.knowledgeRecallLimit,
+    knowledgeMinimumScore: source.knowledgeMinimumScore,
+    distillCapture: source.distillCapture,
+  };
+}
+
+/**
+ * A forget preview welded to the request that produced it.
+ *
+ * `commitForget` used to re-read the person and the topic out of the inputs at
+ * the moment of confirming, while only the topic field withdrew a stale preview.
+ * So previewing against one person, correcting the filter to another, then
+ * confirming forgot the second person's memory — irreversibly, under a
+ * confirmation on screen that described the first, with nothing that could have
+ * warned the operator. Carrying the scope alongside the result makes a commit
+ * that disagrees with its preview unrepresentable rather than merely unlikely.
+ */
+interface ForgetPreview {
+  ownerSubject: string;
+  target: string;
+  result: ForgetMatchingResult;
+}
+
 export function MemoryView({ session, onOpenSettings, onSessionExpired }: MemoryViewProps) {
   const [policies, setPolicies] = useState<MemoryPolicy[]>([]);
   const [records, setRecords] = useState<AgentMemoryRecord[]>([]);
+  /**
+   * What the operator is typing, and what they have committed to. Only the
+   * second is a scope: it keys the fetch, it aims both destructive controls,
+   * and it is what the record list below is a list of. See `applyOwner`.
+   */
+  const [ownerDraft, setOwnerDraft] = useState("");
   const [ownerFilter, setOwnerFilter] = useState("");
   const [forgetTarget, setForgetTarget] = useState("");
   const [showHistory, setShowHistory] = useState(false);
-  const [preview, setPreview] = useState<ForgetMatchingResult | null>(null);
+  const [preview, setPreview] = useState<ForgetPreview | null>(null);
   const [draft, setDraft] = useState<CreateMemoryPolicy>(blankPolicy);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [reason, setReason] = useState("Memory retention reviewed and approved.");
@@ -86,7 +138,7 @@ export function MemoryView({ session, onOpenSettings, onSessionExpired }: Memory
     const [policyList, recordList] = await Promise.all([
       getMemoryPolicies(),
       getAgentMemoryRecords({
-        ...(ownerFilter.trim() ? { ownerSubject: ownerFilter.trim() } : {}),
+        ...(ownerFilter ? { ownerSubject: ownerFilter } : {}),
         limit: 100,
         includeHistory: showHistory,
       }),
@@ -102,6 +154,34 @@ export function MemoryView({ session, onOpenSettings, onSessionExpired }: Memory
     return () => { live = false; };
   }, [unlocked, load, fail]);
 
+  /**
+   * Committing the filter, which is the only thing that re-scopes this screen.
+   *
+   * `load` used to key off the box as it was typed, and it is a dependency of
+   * the effect above, so every keystroke re-ran it: an eight-character name
+   * meant eight `getAgentMemoryRecords` calls and eight `getMemoryPolicies`
+   * calls, seven of each asking the control plane about people who do not
+   * exist. Each answer that came back re-rendered this controlled input, so on
+   * a link where a response lands between two keystrokes the field was being
+   * rewritten while it was being typed into — which is where the interleaved
+   * owner names this screen's tests kept producing under load came from.
+   *
+   * The split also settles something the old shape answered badly. "Forget
+   * everything for this person" is irreversible and asks for no confirmation,
+   * and it was aimed by whatever half-typed text sat in the box at the instant
+   * it was clicked — a person the record list beneath it had not been queried
+   * for yet. Both now read the committed value, so the button cannot name
+   * someone whose records are not the ones on screen. The audit trail's filters
+   * are committed the same way, for the same reason.
+   */
+  const applyOwner = (event: FormEvent) => {
+    event.preventDefault();
+    // A preview describes the person whose records are on screen. Re-scoping
+    // strands it above someone else's list, still offering to forget.
+    setPreview(null);
+    setOwnerFilter(ownerDraft.trim());
+  };
+
   const savePolicy = async (event: FormEvent) => {
     event.preventDefault();
     if (busy || !canManage) return;
@@ -109,7 +189,9 @@ export function MemoryView({ session, onOpenSettings, onSessionExpired }: Memory
     try {
       if (editingId) {
         const current = policies.find(({ id }) => id === editingId);
-        if (current) await updateMemoryPolicy(editingId, { ...draft, expectedRevision: current.revision });
+        // Only the settings: the slug and every server-owned column are refused
+        // by the update contract, and sending them fails the whole edit.
+        if (current) await updateMemoryPolicy(editingId, { ...policySettings(draft), expectedRevision: current.revision });
       } else {
         await createMemoryPolicy(draft);
       }
@@ -143,21 +225,25 @@ export function MemoryView({ session, onOpenSettings, onSessionExpired }: Memory
    * preview is not something worth offering.
    */
   const previewForget = async () => {
-    if (busy || !canManage || !ownerFilter.trim() || !forgetTarget.trim() || reason.trim().length < 3) return;
+    const target = forgetTarget.trim();
+    if (busy || !canManage || !ownerFilter || !target || reason.trim().length < 3) return;
     setBusy(true); setError(null); setPreview(null);
     try {
-      setPreview(await forgetMatchingAgentMemory({
-        ownerSubject: ownerFilter.trim(), target: forgetTarget.trim(), reason: reason.trim(), dryRun: true,
-      }));
+      const result = await forgetMatchingAgentMemory({
+        ownerSubject: ownerFilter, target, reason: reason.trim(), dryRun: true,
+      });
+      setPreview({ ownerSubject: ownerFilter, target, result });
     } catch (cause) { fail(cause); } finally { setBusy(false); }
   };
 
   const commitForget = async () => {
-    if (busy || !canManage || !preview || preview.candidates.length === 0) return;
+    if (busy || !canManage || !preview || preview.result.candidates.length === 0) return;
     setBusy(true); setError(null);
     try {
+      // The scope the preview was taken for, never a re-read of the inputs: the
+      // operator agreed to this list, for this person, about this topic.
       await forgetMatchingAgentMemory({
-        ownerSubject: ownerFilter.trim(), target: forgetTarget.trim(), reason: reason.trim(), dryRun: false,
+        ownerSubject: preview.ownerSubject, target: preview.target, reason: reason.trim(), dryRun: false,
       });
       setPreview(null); setForgetTarget("");
       await load();
@@ -165,10 +251,10 @@ export function MemoryView({ session, onOpenSettings, onSessionExpired }: Memory
   };
 
   const purgeOwner = async () => {
-    if (busy || !canManage || !ownerFilter.trim() || reason.trim().length < 3) return;
+    if (busy || !canManage || !ownerFilter || reason.trim().length < 3) return;
     setBusy(true); setError(null);
     try {
-      await purgeAgentMemory(ownerFilter.trim(), reason.trim());
+      await purgeAgentMemory(ownerFilter, reason.trim());
       await load();
     } catch (cause) { fail(cause); } finally { setBusy(false); }
   };
@@ -228,7 +314,10 @@ export function MemoryView({ session, onOpenSettings, onSessionExpired }: Memory
           </div>
           {canManage && <div className="flex shrink-0 gap-1.5">
             {policy.status !== "ACTIVE" && (
-              <Button size="sm" disabled={busy} onClick={() => { setEditingId(policy.id); setDraft({ ...policy }); }}>Edit</Button>
+              <Button size="sm" disabled={busy} onClick={() => {
+                setEditingId(policy.id);
+                setDraft({ ...policySettings(policy), slug: policy.slug });
+              }}>Edit</Button>
             )}
             {policy.status === "ACTIVE"
               ? <Button variant="danger" size="sm" disabled={busy || reason.trim().length < 3} onClick={() => void changeState(policy, "suspend")}>Suspend</Button>
@@ -294,12 +383,23 @@ export function MemoryView({ session, onOpenSettings, onSessionExpired }: Memory
         title="What agents currently hold"
         actions={
           <>
-            <Input
-              className="w-[180px]"
-              placeholder="Filter by person"
-              value={ownerFilter}
-              onChange={(event) => setOwnerFilter(event.target.value)}
-            />
+            {/*
+              * A draft the operator commits, not a live fetch key — see
+              * `applyOwner` for what bound directly cost. Submitting is what
+              * re-scopes the panel, so Enter works as well as the button, and
+              * withdrawing a stale forget preview belongs there rather than
+              * here: a confirmation is only orphaned once the records beneath
+              * it belong to somebody else.
+              */}
+            <form className="flex items-center gap-2" onSubmit={applyOwner}>
+              <Input
+                className="w-[180px]"
+                placeholder="Filter by person"
+                value={ownerDraft}
+                onChange={(event) => setOwnerDraft(event.target.value)}
+              />
+              <Button type="submit" size="sm" disabled={busy}>Filter</Button>
+            </form>
             {/*
               * History is off by default so the list answers "what would this
               * agent recall right now". Turning it on brings in corrections and
@@ -310,16 +410,32 @@ export function MemoryView({ session, onOpenSettings, onSessionExpired }: Memory
               <input type="checkbox" checked={showHistory} onChange={(event) => setShowHistory(event.target.checked)} />
               Show corrected and forgotten
             </label>
-            {canManage && ownerFilter.trim() && (
-              <Button variant="danger" size="sm" disabled={busy || reason.trim().length < 3} onClick={() => void purgeOwner()}>
-                Forget everything for this person
+            {/*
+              * Named, and refused while the box has moved on. Committing the
+              * filter fixed half of this — the purge stopped being aimed by
+              * half-typed text — and left the mirror image: commit Ada, retype
+              * the box to Brix without pressing Filter, and the screen reads
+              * Brix while a button labelled "this person" still purges Ada. It
+              * asks for no confirmation and the reason is already filled, so it
+              * is one click on someone the operator is not looking at. Naming
+              * the subject means the button can no longer be misread; refusing
+              * it mid-edit means it cannot be misclicked either.
+              */}
+            {canManage && ownerFilter && (
+              <Button
+                variant="danger"
+                size="sm"
+                disabled={busy || reason.trim().length < 3 || ownerDraft.trim() !== ownerFilter}
+                onClick={() => void purgeOwner()}
+              >
+                Forget everything for {ownerFilter}
               </Button>
             )}
           </>
         }
       />
 
-      {canManage && ownerFilter.trim() && <div className="mb-4 grid gap-3 rounded border border-border bg-raised p-3.5">
+      {canManage && ownerFilter && <div className="mb-4 grid gap-3 rounded border border-border bg-raised p-3.5">
         <div className="flex flex-wrap items-end gap-3">
           <Field label="Forget by topic" className="min-w-[220px] flex-1">
             <Input
@@ -339,28 +455,32 @@ export function MemoryView({ session, onOpenSettings, onSessionExpired }: Memory
           Between deleting one fact and forgetting a person entirely. Nothing changes until you confirm.
         </small>
 
+        {/*
+          * Rendered from the preview's own scope rather than the live inputs, so
+          * the sentence an operator reads is the request that would be sent.
+          */}
         {preview && <div className="grid gap-2.5 rounded border border-border bg-surface p-3">
-          {preview.candidates.length === 0
-            ? <p className="m-0 text-body text-muted"><strong className="text-text">Nothing matched.</strong> No stored fact was judged to be about “{forgetTarget.trim()}”.</p>
+          {preview.result.candidates.length === 0
+            ? <p className="m-0 text-body text-muted"><strong className="text-text">Nothing matched.</strong> No stored fact was judged to be about “{preview.target}”.</p>
             : <>
                 <p className="m-0 text-body text-muted">
-                  <strong className="text-text">{preview.matched} fact{preview.matched === 1 ? "" : "s"}</strong> judged to be about “{forgetTarget.trim()}”:
+                  <strong className="text-text">{preview.result.matched} fact{preview.result.matched === 1 ? "" : "s"}</strong> judged to be about “{preview.target}”:
                 </p>
                 <ul className="m-0 grid list-none gap-1 p-0">
-                  {preview.candidates.map((candidate) => (
+                  {preview.result.candidates.map((candidate) => (
                     <li className="rounded border border-border bg-raised px-2.5 py-2 text-body text-text" key={candidate.id}>
                       {candidate.content}
                     </li>
                   ))}
                 </ul>
-                {preview.capped && <StatusText tone="warn" className="normal-case">
-                  More matched than the per-request limit allows; only the first {preview.candidates.length} would be forgotten.
+                {preview.result.capped && <StatusText tone="warn" className="normal-case">
+                  More matched than the per-request limit allows; only the first {preview.result.candidates.length} would be forgotten.
                 </StatusText>}
-                {preview.truncated && <StatusText tone="warn" className="normal-case">
+                {preview.result.truncated && <StatusText tone="warn" className="normal-case">
                   This person has more stored memory than one pass can read, so the scan was partial.
                 </StatusText>}
                 <Button variant="danger" className="justify-self-end" disabled={busy} onClick={() => void commitForget()}>
-                  Forget these {preview.candidates.length}
+                  Forget these {preview.result.candidates.length}
                 </Button>
               </>}
         </div>}

@@ -28,7 +28,18 @@ function secureRequest(request: FastifyRequest): boolean {
 }
 
 function safeReturnTo(value: unknown): string {
-  return typeof value === "string" && value.length <= 500 && /^\/(?!\/)[^\r\n]*$/.test(value)
+  // The second character must be neither `/` nor `\`. Blocking only `//` is not
+  // enough: browsers treat `/\host` as scheme-relative for special schemes, so
+  // `/\evil.example` resolved to `https://evil.example/` — an off-site redirect
+  // handed to the user at the moment they complete a genuine corporate SSO,
+  // which is the most convincing possible setup for a credential-replay page.
+  //
+  // Every C0 control and DEL is refused rather than CR and LF alone. URL
+  // parsing strips tab as well as CR and LF before resolving, while Node only
+  // refuses CR and LF in a header value, so `/<tab>/evil.example` passed this
+  // check, survived as a Location header, and resolved to the same off-site
+  // target.
+  return typeof value === "string" && value.length <= 500 && /^\/(?![/\\])[^\u0000-\u001f\u007f]*$/.test(value)
     ? value
     : "/";
 }

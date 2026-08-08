@@ -32,6 +32,10 @@ function streaming(chunks: string[], status = 200) {
 const frame = (delta: object) =>
   `data: ${JSON.stringify({ choices: [{ index: 0, ...delta }] })}\n\n`;
 
+/** The same frame with CRLF separators, which SSE permits and proxies produce. */
+const crlfFrame = (delta: object) =>
+  `data: ${JSON.stringify({ choices: [{ index: 0, ...delta }] })}\r\n\r\n`;
+
 function request(fetcher: typeof fetch) {
   return {
     connection,
@@ -59,6 +63,23 @@ describe("streamChatCompletion", () => {
       finishReason: "stop",
       succeeded: true,
     });
+  });
+
+  it("reassembles an answer whose frames are separated by CRLF", async () => {
+    // SSE permits CRLF separators and normalizing proxies produce them.
+    // Splitting on "\n\n" alone never closes a frame, so the buffer grew for the
+    // whole request and only the FIRST data: line was recovered at done — and
+    // it was still reported as succeeded, so the distiller silently wrote memory
+    // derived from a fragment of the model's answer. The sibling parser in this
+    // same package already splits on /\r?\n\r?\n/.
+    const result = await streamChatCompletion(request(streaming([
+      crlfFrame({ delta: { content: "hello " } }),
+      crlfFrame({ delta: { content: "world" } }),
+      crlfFrame({ delta: {}, finish_reason: "stop" }),
+      "data: [DONE]\r\n\r\n",
+    ]) as never));
+
+    expect(result).toEqual({ content: "hello world", finishReason: "stop", succeeded: true });
   });
 
   it("reassembles frames split across chunk boundaries", async () => {

@@ -181,12 +181,70 @@ if [[ -s "${STATE_ROOT}/admitted-toolsets" ]]; then
 else
   bad "admitted-toolsets was not written during installation"
 fi
+if ! grep -q 'disabled_toolsets' /etc/hermes/config.yaml 2>/dev/null; then
+  # The block is derived from the runtime's own /v1/toolsets catalogue, and an
+  # empty catalogue silently yields no block at all. Report what the fetch
+  # actually returns instead of leaving the cause to inference — this assertion
+  # regressed once and was misdiagnosed twice from the log alone.
+  diag_key="$(sed -n 's/^API_SERVER_KEY=//p' "${STATE_ROOT}/data/.env" 2>/dev/null || true)"
+  diag_status="$(curl -s -o /tmp/diag-toolsets.json -w '%{http_code}' -m 10 \
+    -H "Authorization: Bearer ${diag_key}" http://127.0.0.1:8642/v1/toolsets || echo curl-failed)"
+  printf '  --- diagnostic: no disabled_toolsets block ---\n'
+  printf '  api key resolved: %s chars\n' "${#diag_key}"
+  printf '  GET /v1/toolsets -> %s\n' "${diag_status}"
+  printf '  body: %s\n' "$(head -c 300 /tmp/diag-toolsets.json 2>/dev/null)"
+  printf '  managed config now reads:\n'
+  sed -n '/platform_toolsets/,$p' /etc/hermes/config.yaml 2>/dev/null | head -8 | sed 's/^/    /'
+fi
 grep -q 'disabled_toolsets' /etc/hermes/config.yaml 2>/dev/null \
   && pass "unadmitted toolsets explicitly disabled" || bad "unadmitted toolsets were not disabled"
 [[ -s "${STATE_ROOT}/control-plane-key.pem" ]] \
   && pass "control-plane signing key pinned" || bad "control-plane key was not pinned"
 [[ ! -e "${STATE_ROOT}/enrollment-state.json" ]] \
   && pass "resume state cleared after success" || bad "resume state survived a successful install"
+[[ -s "${STATE_ROOT}/runtime-owned" ]]   && pass "installer recorded that it owns the runtime" || bad "runtime-owned marker was not written"
+
+printf '\n=== resuming from a protected enrollment receipt ===\n'
+# The recovery journal's whole purpose is that an install interrupted after
+# enrolment can be re-run. That path had never been executed: both smoke runs
+# installed fresh, and the recovery test only exercised validate_resume_state.
+# It was broken -- `control_plane_key` was assigned only in the fresh-enrolment
+# branch and read unconditionally, so `set -u` aborted every resume with a raw
+# bash error, leaving a node installed, enrolled, and permanently offline.
+#
+# Reconstructed from what the node kept, which is what a real interrupted host
+# would still hold. Cheap to run: resume reuses the installed runtime.
+jq -n \
+  --arg nodeId "${NODE_ID}" \
+  --arg cp "http://127.0.0.1:${CONTROL_PLANE_PORT}" \
+  --arg commit "${HERMES_COMMIT}" \
+  --arg fingerprint "$(openssl pkey -in "${STATE_ROOT}/identity/node.key" -pubout -outform DER 2>/dev/null | openssl dgst -sha256 -hex | awk '{print $NF}')" \
+  --arg key "$(cat "${STATE_ROOT}/control-plane-key.pem")" \
+  --arg apiKey "$(sed -n 's/^API_SERVER_KEY=//p' "${STATE_ROOT}/data/.env")" \
+  '{format:"orcasynapse-hermes-resume/v1",nodeId:$nodeId,controlPlaneUrl:$cp,
+    hermesBaseUrl:"http://127.0.0.1:8642",hermesCommit:$commit,hostname:"smoke.internal",
+    apiKey:$apiKey,identityFingerprint:$fingerprint,controlPlanePublicKeyPem:$key,
+    desiredStatePath:("/api/v1/runtime-nodes/" + $nodeId + "/desired-state"),
+    modelBootstrap:{baseUrl:($cp + "/internal/v1"),modelAlias:"smoke-model",apiKey:$apiKey}}' \
+  > "${STATE_ROOT}/enrollment-state.json"
+chmod 0600 "${STATE_ROOT}/enrollment-state.json"
+rm -f -- "${STATE_ROOT}/control-plane-key.pem"
+
+set +e
+ORCASYNAPSE_HERMES_STATE_ROOT="${STATE_ROOT}" \
+  bash "${ROOT}/scripts/install-agentic-node.sh" --connect "http://127.0.0.1:${CONTROL_PLANE_PORT}" </dev/null
+resume_status=$?
+set -e
+[[ "${resume_status}" -eq 0 ]] \
+  && pass "installer resumed from the recovery journal" || bad "resume exited ${resume_status}"
+# The receipt carried the signing key; a resume that does not restore it leaves
+# the node unable to verify any desired-state document, forever.
+[[ -s "${STATE_ROOT}/control-plane-key.pem" ]] \
+  && pass "resume restored the pinned control-plane key" || bad "resume did not restore the control-plane key"
+systemctl is-active "${RUNTIME_SERVICE}" >/dev/null 2>&1 \
+  && pass "runtime still healthy after resume" || bad "runtime is not active after resume"
+[[ ! -e "${STATE_ROOT}/enrollment-state.json" ]] \
+  && pass "resume cleared the journal on success" || bad "resume left the journal behind"
 
 printf '\n'
 printf '\n=== running the decommissioner ===\n'
@@ -216,6 +274,8 @@ systemctl is-enabled orcasynapse-hermes-heartbeat.timer >/dev/null 2>&1 \
   && bad "heartbeat timer survived decommission" || pass "heartbeat timer removed"
 systemctl is-enabled orcasynapse-hermes-desired-state.timer >/dev/null 2>&1 \
   && bad "desired-state timer survived decommission" || pass "desired-state timer removed"
+[[ ! -e /usr/local/lib/hermes-agent ]]   && pass "hermes program removed" || bad "hermes program survived removal"
+[[ ! -e /usr/local/bin/hermes ]]   && pass "hermes launcher removed" || bad "hermes launcher survived removal"
 
 if (( failures > 0 )); then
   printf 'Agentic System installer smoke test FAILED with %d problem(s).\n' "${failures}" >&2

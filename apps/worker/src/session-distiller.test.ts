@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql as sqlOperator } from "drizzle-orm";
 import {
   agentProfile,
   agentProfileVersion,
@@ -24,7 +24,7 @@ let context: TestDatabase;
 const WORKER = randomUUID();
 
 beforeAll(async () => { context = await createTestDatabase(); }, 120_000);
-afterAll(async () => { await context?.drop(); });
+afterAll(async () => { await context?.drop(); }, 120_000);
 beforeEach(async () => { await context.reset(); });
 
 async function profileFor(
@@ -70,20 +70,28 @@ async function conversationWith(
     })
     .returning({ id: chatConversation.id });
 
-  for (const [index, turn] of turns.entries()) {
-    await context.database.insert(chatMessage).values({
-      conversationId: conversation!.id,
-      ordinal: index,
-      role: turn.role,
-      status: "COMPLETED",
-      content: turn.content,
-      // Explicit ages where a case needs one turn to predate a distillation;
-      // otherwise spread backwards from the last message, so order is fixed.
-      createdAt: turn.minutesAgo === undefined
-        ? new Date(lastMessageAt.getTime() - (turns.length - index) * 1_000)
-        : new Date(Date.now() - turn.minutesAgo * 60_000),
-    });
-  }
+  // A USER turn and the ASSISTANT turn answering it are one generation, written
+  // by one statement inside one transaction, so both rows take the same
+  // CURRENT_TIMESTAMP. Giving every turn its own second manufactured a
+  // distinctness the real table never has, and that is what let an ordering
+  // with no tiebreak look correct here while production saw arbitrary order.
+  let generation = 0;
+  const generations = turns.map((turn, index) => (
+    index > 0 && turn.role === "USER" ? (generation += 1) : generation
+  ));
+  if (turns.length === 0) return conversation!.id;
+  await context.database.insert(chatMessage).values(turns.map((turn, index) => ({
+    conversationId: conversation!.id,
+    ordinal: index,
+    role: turn.role,
+    status: "COMPLETED" as const,
+    content: turn.content,
+    // Explicit ages where a case needs one turn to predate a distillation;
+    // otherwise one second per generation, counted back from the last message.
+    createdAt: turn.minutesAgo === undefined
+      ? new Date(lastMessageAt.getTime() - (generation + 1 - generations[index]!) * 1_000)
+      : new Date(Date.now() - turn.minutesAgo * 60_000),
+  })));
   return conversation!.id;
 }
 
@@ -149,6 +157,46 @@ describe("SessionMemoryDistiller", () => {
       { role: "user", content: "The move is done, I live there now." },
     ]);
     expect(memory.captured[0]).toEqual([{ content: "The user lives in Bandung." }]);
+  });
+
+  it("shows the model each question before the answer it produced", async () => {
+    // A USER turn and the ASSISTANT turn answering it are written by one
+    // statement inside one transaction, so both rows carry the same
+    // CURRENT_TIMESTAMP. Ordering by createdAt alone leaves the pair in
+    // whatever order the plan happened to produce, and a session read
+    // backwards teaches the model that the assistant asked the questions.
+    const spoken = [
+      { role: "USER" as const, content: "I lead the platform team." },
+      { role: "ASSISTANT" as const, content: "Noted, I will remember that." },
+      { role: "USER" as const, content: "We are migrating payments to Kubernetes." },
+      { role: "ASSISTANT" as const, content: "That is a sizeable migration." },
+      { role: "USER" as const, content: "The migration finished last week." },
+      { role: "ASSISTANT" as const, content: "Congratulations on shipping it." },
+      { role: "USER" as const, content: "Answer me in Indonesian from now on." },
+      { role: "ASSISTANT" as const, content: "Baik, saya akan menjawab dalam Bahasa Indonesia." },
+    ];
+    const id = await conversationWith(spoken);
+    // Each assistant row is UPDATEd when its run completes, which writes a new
+    // heap tuple at the end of the table. That is the scan order a tie falls
+    // back on, so the physical layout the sweep reads is the real one.
+    await context.database
+      .update(chatMessage)
+      .set({ completedAt: new Date(), finishReason: "stop" })
+      .where(and(eq(chatMessage.conversationId, id), eq(chatMessage.role, "ASSISTANT")));
+    // With statistics gathered — which autovacuum does on any installation that
+    // has run for a minute — the planner drops the index scan for a sort, and
+    // the sort has nothing to separate the tied rows. A test database that was
+    // never analysed keeps the index scan, whose incidental heap order looks
+    // correct; that accident is what hid this.
+    await context.database.execute(sqlOperator`analyze "ChatMessage"`);
+    const distiller = distillerReturning([]);
+
+    await new SessionMemoryDistiller(context.database, memoryPort(), distiller).distilNext(WORKER);
+
+    expect(distiller.turns[0]).toEqual(spoken.map(({ role, content }) => ({
+      role: role === "USER" ? "user" : "assistant",
+      content,
+    })));
   });
 
   it("distils a named conversation ahead of everything else waiting", async () => {

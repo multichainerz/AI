@@ -35,7 +35,7 @@ import {
   type OrcaSynapseDatabase,
   agentRunWakeStatement,
 } from "@orcasynapse/database";
-import { and, asc, count, desc, eq, inArray, isNotNull, ne, sql } from "drizzle-orm";
+import { and, count, desc, eq, inArray, isNotNull, ne, sql } from "drizzle-orm";
 import { createHash, randomUUID } from "node:crypto";
 import { advisoryLock, isUniqueViolation } from "../database-support.js";
 import {
@@ -508,13 +508,22 @@ export class DrizzleAgentManager implements AgentManager {
         : and(eq(agentRun.id, runId), eq(agentRun.ownerSubject, principal.subject)))
       .limit(1);
     if (!run) throw new AgentNotFoundError();
+    // Ordered by cursor, and taken from the newest end.
+    //
+    // occurredAt is millisecond-resolution and id is a random UUID v4, so a
+    // burst written inside one millisecond came back in UUID order: a tool
+    // result could precede its own call and reassembled delta text scrambled.
+    // cursor is the append-order bigserial the chat stream already reads, and
+    // it has its own (runId, cursor) index. Descending then reversed, because
+    // an ascending cap returned the OLDEST 500 and a longer run showed nothing
+    // that happened after them.
     const events = await this.database
       .select()
       .from(agentRunEvent)
       .where(eq(agentRunEvent.runId, runId))
-      .orderBy(asc(agentRunEvent.occurredAt), asc(agentRunEvent.id))
+      .orderBy(desc(agentRunEvent.cursor))
       .limit(500);
-    return { items: events.map((event) => runEventDto(event as StoredRunEvent)) };
+    return { items: events.reverse().map((event) => runEventDto(event as StoredRunEvent)) };
   }
 
   async submitRun(

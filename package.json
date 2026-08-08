@@ -1,6 +1,6 @@
 {
   "name": "orcasynapse",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "OrcaSynapse - on-premises AI operations and agentic control plane",
   "license": "BUSL-1.1",
   "private": true,
@@ -31,7 +31,7 @@
     "build": "pnpm -r --if-present build",
     "dev": "concurrently --kill-others --names api,web \"pnpm --filter @orcasynapse/api dev\" \"pnpm --filter @orcasynapse/web dev\"",
     "dev:worker": "pnpm --filter @orcasynapse/worker dev",
-    "pretypecheck": "pnpm --filter @orcasynapse/contracts --filter @orcasynapse/database --filter @orcasynapse/security --filter @orcasynapse/runtime-clients build",
+    "pretypecheck": "pnpm --filter @orcasynapse/contracts --filter @orcasynapse/database --filter @orcasynapse/security --filter @orcasynapse/runtime-clients --filter @orcasynapse/knowledge build",
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",
     "verify": "pnpm build && pnpm typecheck && pnpm test && pnpm db:validate",

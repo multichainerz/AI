@@ -42,6 +42,8 @@ printf 'name: orcasynapse\n' > "${ORCASYNAPSE_INSTALL_DIR}/compose.yaml"
 printf '#!/usr/bin/env bash\n' > "${ORCASYNAPSE_INSTALL_DIR}/scripts/install-orcasynapse.sh"
 printf '%s' "${old_commit}" > "${ORCASYNAPSE_INSTALL_DIR}/.orcasynapse-source-commit"
 printf 'preserve-me\n' > "${ORCASYNAPSE_INSTALL_DIR}/.local/secrets/recovery-material"
+install -d -m 0700 "${ORCASYNAPSE_INSTALL_DIR}/.local/state"
+printf 'https\n' > "${ORCASYNAPSE_INSTALL_DIR}/.local/state/public-scheme"
 printf 'old-source\n' > "${ORCASYNAPSE_INSTALL_DIR}/obsolete-marker"
 
 export ORCASYNAPSE_EXISTING_INSTALL_ACTION=upgrade
@@ -50,6 +52,11 @@ install_source_tree "${new_commit}" "${source_dir}"
 
 [[ "$(<"${ORCASYNAPSE_INSTALL_DIR}/.orcasynapse-source-commit")" == "${new_commit}" ]]
 [[ "$(<"${ORCASYNAPSE_INSTALL_DIR}/.local/secrets/recovery-material")" == "preserve-me" ]]
+# The operator's public-scheme declaration lives under .local/state, not with
+# the secrets. An upgrade that carried the secrets but dropped the state would
+# return a TLS deployment to the http default on its next run, without saying
+# so -- the same silent downgrade the declaration exists to prevent.
+[[ "$(<"${ORCASYNAPSE_INSTALL_DIR}/.local/state/public-scheme")" == "https" ]]
 [[ -f "${ORCASYNAPSE_INSTALL_DIR}/release-marker" ]]
 [[ ! -e "${ORCASYNAPSE_INSTALL_DIR}/obsolete-marker" ]]
 

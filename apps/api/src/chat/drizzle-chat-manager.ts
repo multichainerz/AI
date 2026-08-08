@@ -32,7 +32,6 @@ import {
   type OrcaSynapseDatabase,
 } from "@orcasynapse/database";
 import { and, asc, count, desc, eq, gt, gte, inArray, isNotNull, isNull, ne, sql, type SQL } from "drizzle-orm";
-import { increment } from "../database-support.js";
 import type { AgentManager, AgentPrincipal } from "../agents/agent-manager.js";
 import { inspectInputText } from "../guardrails/runtime-policy.js";
 import {
@@ -737,7 +736,10 @@ export class DrizzleChatManager implements ChatManager {
     conversationId: string,
     messageId: string,
     afterCursor: string | null,
-    emit: (event: ChatStreamEvent) => void,
+    // Awaited, so a consumer that cannot take the next frame yet — an SSE
+    // response whose socket is holding what was already written — stops this
+    // loop instead of letting a replay accumulate in the process.
+    emit: (event: ChatStreamEvent) => void | Promise<void>,
     signal: AbortSignal,
   ): Promise<void> {
     const [linked] = await this.database
@@ -756,7 +758,7 @@ export class DrizzleChatManager implements ChatManager {
     const runId = linked.agentRunId;
     let cursor = afterCursor && /^\d+$/.test(afterCursor) ? BigInt(afterCursor) : 0n;
     let previousStatus: string | null = null;
-    emit({ type: "started", conversationId, messageId, runId, cursor: cursor === 0n ? null : cursor.toString() });
+    await emit({ type: "started", conversationId, messageId, runId, cursor: cursor === 0n ? null : cursor.toString() });
 
     while (!signal.aborted) {
       const events = await this.database
@@ -775,10 +777,10 @@ export class DrizzleChatManager implements ChatManager {
         cursor = event.cursor;
         const eventCursor = cursor.toString();
         if (event.type === "MESSAGE_DELTA" && event.delta) {
-          emit({ type: "delta", conversationId, messageId, cursor: eventCursor, delta: event.delta });
+          await emit({ type: "delta", conversationId, messageId, cursor: eventCursor, delta: event.delta });
           continue;
         }
-        emit({
+        await emit({
           type: "activity",
           conversationId,
           messageId,
@@ -802,7 +804,7 @@ export class DrizzleChatManager implements ChatManager {
         });
         const approval = event.approvalId ? approvalById.get(event.approvalId) : null;
         if (approval) {
-          emit({
+          await emit({
             type: "approval",
             conversationId,
             messageId,
@@ -827,7 +829,7 @@ export class DrizzleChatManager implements ChatManager {
       if (!run) throw new ChatConversationConflictError("The Hermes run is no longer available.");
       if (run.status !== previousStatus) {
         previousStatus = run.status;
-        emit({
+        await emit({
           type: "state",
           conversationId,
           messageId,
@@ -842,11 +844,11 @@ export class DrizzleChatManager implements ChatManager {
         const dto = messageDto(message);
         const terminalCursor = run.lastEventCursor?.toString() ?? (cursor === 0n ? null : cursor.toString());
         if (run.status === "COMPLETED") {
-          emit({ type: "completed", conversationId, messageId, cursor: terminalCursor, message: dto });
+          await emit({ type: "completed", conversationId, messageId, cursor: terminalCursor, message: dto });
         } else if (run.status === "CANCELLED") {
-          emit({ type: "cancelled", conversationId, messageId, cursor: terminalCursor });
+          await emit({ type: "cancelled", conversationId, messageId, cursor: terminalCursor });
         } else {
-          emit({
+          await emit({
             type: "failed",
             conversationId,
             messageId,
@@ -946,6 +948,21 @@ export class DrizzleChatManager implements ChatManager {
       : source.messages.at(-1);
     if (input.throughMessageId && !through) throw new ChatMessageNotFoundError();
     const messages = through ? source.messages.filter(({ ordinal }) => ordinal <= through.ordinal) : [];
+    // Ordinals are copied verbatim, so the generation has to be derived from the
+    // highest of them rather than from the row count. A turn skipped *below* the
+    // fork point - a failed or still-running assistant reply - leaves the copied
+    // set sparse, and a count-derived generation would then place the next
+    // submission's `generation * 2 - 1` back onto an ordinal that was already
+    // copied, violating ChatMessage_conversationId_ordinal_key. That rolls the
+    // submission back, so the generation never advances and the fork stays
+    // permanently unusable. (A gap *above* the fork point is harmless: those rows
+    // are never copied.) Renumbering densely on copy would close the gap too, but
+    // it repoints every ordinal away from the source's, so a `throughMessageId`
+    // read can no longer be lined up against the conversation it was forked from,
+    // and it breaks the odd-USER/even-ASSISTANT pairing that `generation * 2`
+    // encodes. Keeping the numbering and moving the generation is the cheaper
+    // trade. `messages` is ordered by ordinal, so the last row carries the max.
+    const highestOrdinal = messages.at(-1)?.ordinal ?? 0;
     const created = await this.database.transaction(async (transaction) => {
       const [conversation] = await transaction
         .insert(chatConversation)
@@ -955,7 +972,7 @@ export class DrizzleChatManager implements ChatManager {
           modelAlias: source.modelAlias,
           profileId: source.profileId,
           profileName: source.profileName,
-          generation: Math.ceil(messages.length / 2),
+          generation: Math.ceil(highestOrdinal / 2),
           lastMessageAt: messages.at(-1)?.createdAt ?? null,
         })
         .returning();

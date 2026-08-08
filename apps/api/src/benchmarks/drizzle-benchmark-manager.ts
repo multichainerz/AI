@@ -345,6 +345,12 @@ export class DrizzleBenchmarkManager implements BenchmarkManager {
       // One run of a suite at a time. A second against the same target is the
       // same questions to the same model, and on a host that answers one at a
       // time it only makes both slower.
+      //
+      // Serialised on the suite, as `updateSuite` already is. Counting and then
+      // inserting is not enough on its own: under READ COMMITTED two concurrent
+      // requests both see zero in-flight runs, both insert, and both commit --
+      // producing exactly the doubled load this check exists to prevent.
+      await transaction.execute(advisoryLock(`benchmark-suite:${input.suiteId}`));
       const [active] = await transaction
         .select({ total: count() })
         .from(benchmarkRun)

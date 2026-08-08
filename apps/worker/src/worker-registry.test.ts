@@ -14,7 +14,7 @@ import { DrizzlePendingRunSource, DrizzleWorkerRegistry } from "./worker-registr
 let context: TestDatabase;
 
 beforeAll(async () => { context = await createTestDatabase(); }, 120_000);
-afterAll(async () => { await context?.drop(); });
+afterAll(async () => { await context?.drop(); }, 120_000);
 beforeEach(async () => { await context.reset(); });
 
 const identity = { id: randomUUID(), name: "runtime.local", version: "1.0.0", workloads: ["hermes-runs"] };

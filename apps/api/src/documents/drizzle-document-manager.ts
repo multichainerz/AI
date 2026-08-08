@@ -18,6 +18,7 @@ import {
   extractionFormatFor,
   type DocumentVectorStore,
 } from "@orcasynapse/knowledge";
+import { advisoryLock } from "../database-support.js";
 import {
   DocumentConflictError,
   DocumentNotFoundError,
@@ -181,19 +182,6 @@ export class DrizzleDocumentManager implements DocumentManager {
     const sizeBytes = bytes.byteLength;
     if (bytes.byteLength === 0) throw new DocumentValidationError("Document is empty.");
 
-    const [duplicate] = await this.database
-      .select({ id: document.id })
-      .from(document)
-      .where(
-        and(
-          eq(document.ownerSubject, principal.subject),
-          eq(document.sha256, sha256),
-          ne(document.status, "DELETED"),
-        ),
-      )
-      .limit(1);
-    if (duplicate) throw new DocumentConflictError("The same document is already present in your workspace.");
-
     const now = new Date();
     const retentionUntil = new Date(now.getTime() + metadata.retentionDays * 24 * 60 * 60 * 1_000);
 
@@ -201,14 +189,20 @@ export class DrizzleDocumentManager implements DocumentManager {
     // malformed file is rejected while the caller is still on the request.
     // Embedding does not: it loads ~2 GB of weights and outlives any sane proxy
     // timeout, so the extracted text is queued and the worker owns it from here.
+    //
+    // It runs before the duplicate check rather than after it, so that the
+    // check and the insert can be one uninterrupted step. Extraction used to
+    // sit between them, which made the duplicate race window the whole
+    // extraction time.
     let extracted: Awaited<ReturnType<typeof extractDocumentText>>;
     try {
       extracted = await extractDocumentText({ mediaType, bytes });
     } catch (error) {
       const { code, message } = this.failure(error);
-      const [failed] = await this.database
-        .insert(document)
-        .values({
+      const failed = await this.storeOnlyCopy(
+        principal.subject,
+        sha256,
+        {
           id,
           ownerSubject: principal.subject,
           fileName,
@@ -220,27 +214,27 @@ export class DrizzleDocumentManager implements DocumentManager {
           failureCode: code,
           failureMessage: message.slice(0, 500),
           retentionUntil,
-        })
-        .returning();
-      await this.database.insert(auditEvent).values({
-        actorType: "USER",
-        actorId: principal.id,
-        action: "document.indexing_failed",
-        resourceType: "Document",
-        resourceId: id,
-        outcome: "FAILURE",
-        metadata: { fileName, mediaType, failureCode: code, retainedSourceBytes: 0 },
-      });
+        },
+        {
+          actorType: "USER",
+          actorId: principal.id,
+          action: "document.indexing_failed",
+          resourceType: "Document",
+          resourceId: id,
+          outcome: "FAILURE",
+          metadata: { fileName, mediaType, failureCode: code, retainedSourceBytes: 0 },
+        },
+      );
       if (error instanceof DocumentValidationError) throw error;
-      if (!failed) throw new DocumentStorageError("The document record could not be created.");
       return summaryDto(failed);
     }
 
     // QUEUED, carrying the extracted text as the queue payload. The source
     // bytes are discarded with this function's scope; nothing retains them.
-    const [created] = await this.database
-      .insert(document)
-      .values({
+    const created = await this.storeOnlyCopy(
+      principal.subject,
+      sha256,
+      {
         id,
         ownerSubject: principal.subject,
         fileName,
@@ -251,29 +245,69 @@ export class DrizzleDocumentManager implements DocumentManager {
         status: "QUEUED",
         pendingText: extracted.text,
         retentionUntil,
-      })
-      .returning();
-    if (!created) throw new DocumentStorageError("The document record could not be created.");
-
-    await this.database.insert(auditEvent).values({
-      actorType: "USER",
-      actorId: principal.id,
-      action: "document.queued_for_indexing",
-      resourceType: "Document",
-      resourceId: id,
-      outcome: "SUCCESS",
-      metadata: {
-        fileName,
-        mediaType,
-        sizeBytes,
-        classification: metadata.classification,
-        characters: extracted.text.length,
-        pages: extracted.pages,
-        truncated: extracted.truncated,
-        retainedSourceBytes: 0,
       },
-    });
+      {
+        actorType: "USER",
+        actorId: principal.id,
+        action: "document.queued_for_indexing",
+        resourceType: "Document",
+        resourceId: id,
+        outcome: "SUCCESS",
+        metadata: {
+          fileName,
+          mediaType,
+          sizeBytes,
+          classification: metadata.classification,
+          characters: extracted.text.length,
+          pages: extracted.pages,
+          truncated: extracted.truncated,
+          retainedSourceBytes: 0,
+        },
+      },
+    );
     return summaryDto(created);
+  }
+
+  /**
+   * Stores the row only if this owner holds no live copy of the same checksum.
+   *
+   * "Already present in your workspace" was a plain read followed by an insert,
+   * which PostgreSQL is free to let two uploads pass at once: both read nothing,
+   * both stored a row, and retrieval then returned every passage of that file
+   * twice. The advisory lock makes the read and the insert one step for this
+   * owner and checksum, and is held only for those two statements — the
+   * extraction the window used to span is already over by the time it is taken.
+   *
+   * A partial unique index on (ownerSubject, sha256) WHERE status <> 'DELETED'
+   * would enforce this without any lock at all, but it lives in the database
+   * package's schema and migrations rather than here.
+   */
+  private async storeOnlyCopy(
+    ownerSubject: string,
+    sha256: string,
+    values: typeof document.$inferInsert,
+    event: typeof auditEvent.$inferInsert,
+  ): Promise<StoredDocument> {
+    return this.database.transaction(async (transaction) => {
+      await transaction.execute(advisoryLock(`orcasynapse-document-upload:${ownerSubject}:${sha256}`));
+      const [duplicate] = await transaction
+        .select({ id: document.id })
+        .from(document)
+        .where(
+          and(
+            eq(document.ownerSubject, ownerSubject),
+            eq(document.sha256, sha256),
+            ne(document.status, "DELETED"),
+          ),
+        )
+        .limit(1);
+      if (duplicate) throw new DocumentConflictError("The same document is already present in your workspace.");
+
+      const [stored] = await transaction.insert(document).values(values).returning();
+      if (!stored) throw new DocumentStorageError("The document record could not be created.");
+      await transaction.insert(auditEvent).values(event);
+      return stored;
+    });
   }
 
   private failure(error: unknown): { code: string; message: string } {
@@ -319,7 +353,13 @@ export class DrizzleDocumentManager implements DocumentManager {
     await this.database.transaction(async (transaction) => {
       // Chunks cascade from the document row, but they are removed explicitly so
       // retrieval stops immediately even though the metadata row is retained.
-      await this.vectors.deleteDocumentChunks(documentId);
+      //
+      // On the transaction's own handle. Reaching for the pool here checked out
+      // a second connection while this transaction held one, so ten concurrent
+      // deletes deadlocked the pool permanently — and because it committed
+      // separately, a rollback of this transaction also left a READY document
+      // with no chunks.
+      await this.vectors.deleteDocumentChunks(documentId, transaction);
       await transaction
         .update(document)
         .set({ status: "DELETED", deletedAt: new Date(), failureCode: null, failureMessage: null })

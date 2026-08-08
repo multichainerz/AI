@@ -11,6 +11,7 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     services:
       postgres:
         # pgvector, not stock postgres: the migrator creates the vector
@@ -44,10 +45,54 @@ jobs:
           bash scripts/sync-installer-ui.sh --check
           bash scripts/test-docker-build-closure.sh
           bash scripts/test-release-consistency.sh
+      # A Linux runner clones with core.autocrlf=false, so a script that would
+      # check out CRLF on a Windows workstation still looks fine here. Assert
+      # the attribute that prevents it rather than the bytes: Dockerfile.api
+      # bakes the two agentic-node scripts into the API image and the API hands
+      # them to operators who pipe them into `sudo bash`, where a CRLF shebang
+      # fails execve outright with "'bash\r': No such file or directory".
+      - name: Shell scripts are declared LF
+        run: |
+          for script in $(git ls-files '*.sh'); do
+            git check-attr eol -- "${script}" | grep -qx "${script}: eol: lf" \
+              || { echo "${script} is not declared eol=lf in .gitattributes" >&2; exit 1; }
+          done
+      # Guards the ceilings that keep the worker's ~2 GB of model weights from
+      # handing the host OOM killer a choice, the bind address that makes a host
+      # firewall rule on the dashboard port effective, and -- since a `cpus:`
+      # ceiling that a runner happens to satisfy is a ceiling a customer's
+      # smaller VM does not -- that CPU is never expressed as a host-size
+      # assumption. Lives in a script rather than inline so the rule can be run
+      # and changed with proof, instead of only on a pull request.
+      - name: Deployment limits and exposure
+        run: |
+          node scripts/test-deployment-limits.mjs
+          # The same guard again with an operator-style override exported.
+          # compose.yaml invites exactly this tuning and `docker compose config`
+          # resolves it, so a guard that reads the caller's environment reports
+          # on that operator's host rather than on the repository: it invented
+          # failures for developers with a variable set, and it would equally
+          # have hidden a bad shipped default behind a good local override. The
+          # two runs must agree.
+          ORCASYNAPSE_WORKER_CPU_SHARES=2048 node scripts/test-deployment-limits.mjs
       - name: Verify installer recovery paths
         run: |
           bash scripts/test-public-installer-recovery.sh
           bash scripts/test-agentic-installer-recovery.sh
+      # Sources install-orcasynapse.sh and runs its real preflight with the host
+      # CPU count faked in both directions. The alternative to a preflight is an
+      # operator learning the floor from a half-created stack, which is exactly
+      # what the compose CPU ceilings used to produce.
+      - name: Verify the installer's host-sizing preflight
+        run: bash scripts/test-installer-host-sizing.sh
+      # Runs both scripts' main() through a real sudo with docker stubbed, which
+      # is the only way to see the boundary that made the public-scheme
+      # declaration unreachable: sudoers is env_reset, so the variable an
+      # operator exported never arrived and a TLS deployment installed itself on
+      # http. Also proves the break-glass rotation cannot return a recorded
+      # https installation to http.
+      - name: Verify the public-scheme declaration survives sudo
+        run: bash scripts/test-installer-public-scheme.sh
       # The recovery tests source the installer and exercise functions in
       # isolation; main() itself had never been run by anything, so a break in
       # the install sequence reached a customer's VM first. The runner is a full
@@ -57,6 +102,13 @@ jobs:
       - name: Verify Linux container secret access
         run: sudo bash scripts/test-installer-secret-permissions.sh
       - run: pnpm install --frozen-lockfile
+      # Runs before the suite rather than after, because the failure it prevents
+      # is a flake: a database-backed test in a package that never declared the
+      # timeout profile passes on an idle machine and times out at 5000ms under
+      # the concurrency of `pnpm -r test`. Needs node_modules, so it cannot sit
+      # with the other static checks above.
+      - name: Database suites declare a timeout budget
+        run: node scripts/test-database-test-budgets.mjs
       # Declared in package.json since the first release but never wired here,
       # so four high-severity advisories in shipped dependencies went unnoticed
       # until v0.6.0. Blocking: a high in a production dependency is a
@@ -84,9 +136,28 @@ jobs:
     # actually runs -- real secrets, migrations, services, and a control plane
     # that answers -- for the same dominant cost, the image build.
     #
-    # Still advisory, matching the posture compose-build had. Promote to
-    # required once consistently green; that is a policy call, not a test one.
-    continue-on-error: true
+    # Blocking, and it is the only job that is. `verify` proves nothing about
+    # the deployment: test-docker-build-closure.sh greps the Dockerfiles for
+    # COPY lines without invoking a builder, so a Dockerfile that cannot build,
+    # a compose.yaml that cannot come up, or an install-orcasynapse.sh that
+    # fails halfway all merged green. The inverse was stranger still -- the VM2
+    # installer smoke test above already blocked, while this one, the script a
+    # customer runs first, did not.
+    #
+    # It costs no wall clock to require: this job has no `needs`, so it runs
+    # beside `verify` rather than after it, and the image build it is dominated
+    # by is shorter than that job's install-build-test sequence. The timeout is
+    # what keeps a required job from parking a pull request for the six-hour
+    # default if the installer's readiness wait never returns.
+    #
+    # Requiring it only became safe once compose.yaml stopped sizing services in
+    # whole CPUs. A standard runner is four vCPU on a public repository and two
+    # on a private one, and the `worker` ceiling was four: green here with no
+    # margin at all, blocking every pull request the moment this repository
+    # turns private or the fleet is resized, while already failing outright on
+    # the two vCPU customer VMs it was meant to protect. Weights have no such
+    # boundary, so runner width no longer decides whether a change can merge.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - name: Install a fresh control plane end to end

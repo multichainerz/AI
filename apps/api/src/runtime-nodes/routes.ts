@@ -68,6 +68,23 @@ async function sendError(error: unknown, reply: FastifyReply): Promise<FastifyRe
   throw error;
 }
 
+/**
+ * Node identifiers reach a `uuid` column, so a malformed one is refused here.
+ *
+ * Bodies are schema-validated but path parameters were not, and PostgreSQL
+ * answers a bad cast with 22P02 rather than "not found". That surfaced through
+ * `sendError`'s rethrow as a **500 on unauthenticated routes**, where every
+ * other bad-credential path fails closed with a 401 — an error-log amplifier
+ * anyone could reach without a valid signature.
+ */
+const NODE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function rejectMalformedNodeId(nodeId: string, reply: FastifyReply): boolean {
+  if (NODE_ID_PATTERN.test(nodeId)) return false;
+  void reply.code(401).send({ error: "INVALID_NODE_SIGNATURE", message: "This runtime node is not recognized." });
+  return true;
+}
+
 export async function registerRuntimeNodeInstallerRoutes(
   app: FastifyInstance,
   options: RuntimeNodeRouteOptions,
@@ -139,6 +156,7 @@ export async function registerRuntimeNodeRoutes(app: FastifyInstance, options: R
   app.post<{ Params: { nodeId: string } }>("/:nodeId/heartbeat", async (request, reply) => {
     const manager = managerOrLocked(options, reply);
     if (!manager) return reply;
+    if (rejectMalformedNodeId(request.params.nodeId, reply)) return reply;
     const input = hermesNodeHeartbeatSchema.safeParse(request.body);
     if (!input.success) {
       return reply.code(400).send({ error: "INVALID_HEARTBEAT", message: input.error.issues[0]?.message });
@@ -157,6 +175,7 @@ export async function registerRuntimeNodeRoutes(app: FastifyInstance, options: R
   app.get<{ Params: { nodeId: string } }>("/:nodeId/desired-state", async (request, reply) => {
     const manager = managerOrLocked(options, reply);
     if (!manager) return reply;
+    if (rejectMalformedNodeId(request.params.nodeId, reply)) return reply;
     try {
       return runtimeDesiredStateSchema.parse(
         await manager.desiredState(request.params.nodeId, signatureHeaders(request)),

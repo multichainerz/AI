@@ -9,7 +9,7 @@ import {
   type ProductionReadinessControl,
   type ProductionReadinessControlStatus,
 } from "@orcasynapse/contracts";
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   OrcaSynapseApiError,
   completeEvaluationRun,
@@ -26,8 +26,8 @@ import {
 } from "./api.js";
 import { adminAccess } from "./admin-access.js";
 import {
-  Alert, Button, EmptyState, Field, Input, LockedScreen, Metric, MetricRow, MicroLabel,
-  PageHeader, Panel, PanelHeading, Select, StatusText, Textarea, cn, toneFor,
+  Alert, Button, EmptyState, LockedScreen, Metric, MetricRow, MicroLabel,
+  PageHeader, Panel, PanelHeading, StatusText, cn, toneFor,
 } from "./ui/index.js";
 
 interface OperationsViewProps {
@@ -114,10 +114,22 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
   const canManageReadiness = scopes.includes("readiness:manage");
   const canApproveReadiness = scopes.includes("readiness:approve");
 
-  const handleError = useCallback((cause: unknown, fallback: string) => {
-    if (cause instanceof OrcaSynapseApiError && cause.status === 401) onSessionExpired();
-    setError(cause instanceof Error ? cause.message : fallback);
+  // Held in a ref so `handleError` keeps one identity for the life of the view.
+  //
+  // App re-renders on its own poll and passes a fresh `onSessionExpired` arrow
+  // every few seconds. Depending on that identity propagated through
+  // handleError -> refresh -> the load effect, so Operations refetched all four
+  // endpoints on a loop: each cycle set `busy`, which disables every submit
+  // button, and cleared the error an operator was still reading.
+  const latestOnSessionExpired = useRef(onSessionExpired);
+  useEffect(() => {
+    latestOnSessionExpired.current = onSessionExpired;
   }, [onSessionExpired]);
+
+  const handleError = useCallback((cause: unknown, fallback: string) => {
+    if (cause instanceof OrcaSynapseApiError && cause.status === 401) latestOnSessionExpired.current();
+    setError(cause instanceof Error ? cause.message : fallback);
+  }, []);
 
   const refresh = useCallback(async () => {
     if (!unlocked) return;

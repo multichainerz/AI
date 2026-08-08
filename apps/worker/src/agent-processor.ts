@@ -1227,7 +1227,13 @@ export class DrizzleAgentProcessor {
       const extraction = await this.distiller.distil(
         [
           { role: "user" as const, content: run.input },
-          ...(output ? [{ role: "assistant" as const, content: output }] : []),
+          // Gated on the mode, exactly as the undistilled branch below is.
+          // Without this, LEARN_USER handed the model's own answer to the
+          // distiller and stored facts drawn from it — and since policy
+          // defaults `distillCapture` to true, that was the normal path, not
+          // an edge case. An answer the model got wrong once became a durable
+          // memory under the setting that promises it will not.
+          ...(output && mode === "LEARN_EXCHANGE" ? [{ role: "assistant" as const, content: output }] : []),
         ],
         [...known].map(([id, content]) => ({ id, content })),
       );

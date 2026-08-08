@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { and, cosineDistance, desc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import type { MemoryProfileScope } from "@orcasynapse/contracts";
 import { agentMemory, type OrcaSynapseDatabase } from "@orcasynapse/database";
@@ -13,6 +14,30 @@ interface MemoryLineage {
   version: number;
   parentMemoryId: string;
   rootMemoryId: string;
+}
+
+/**
+ * What the supersession pass decided about one row before it is written.
+ *
+ * The id is minted here rather than left to the column default because a later
+ * fact in the same batch may have to name an earlier one as its parent, and a
+ * row this transaction has not inserted yet cannot be read back to find its id.
+ */
+interface MemoryPlacement {
+  id: string;
+  lineage?: MemoryLineage;
+  /** Set when a later fact in the same batch already corrected this one. */
+  supersededReason?: string;
+}
+
+/** The live end of a chain a correction attaches to. */
+interface MemoryHead {
+  id: string;
+  version: number;
+  /** Null on a row that started its own chain: it is its own origin. */
+  root: string | null;
+  /** Set when the head is a row this batch has not inserted yet. */
+  batchIndex: number | null;
 }
 
 export interface RememberedItem {
@@ -72,45 +97,68 @@ export class AgentMemoryStore {
     // One transaction: a reader must never see both the old fact and its
     // replacement as current, nor lose the old one without the new one landing.
     return this.database.transaction(async (transaction) => {
-      const lineage = new Map<number, MemoryLineage>();
+      const placements: MemoryPlacement[] = items.map(() => ({ id: randomUUID() }));
+      // Which pending row now heads each chain this batch has already taken
+      // over, keyed by the id that was named to reach it.
+      const takenOver = new Map<string, number>();
+
       for (const [index, item] of items.entries()) {
         const replaces = (item.replaces ?? []).filter((id) => id.length > 0);
         if (replaces.length === 0) continue;
-        // Read before writing: the new row's place in the chain is derived from
-        // what it retires, and after the update those rows are no longer latest.
+        const reason = `Superseded by a later statement: ${item.content}`.slice(0, 300);
+        // Retiring and reading are one statement, guarded on the rows still
+        // being latest, so the write asserts the precondition the lineage is
+        // derived from. Split in two, a capture that raced another one for the
+        // same fact would retire it a second time, overwrite the winner's
+        // reason, and claim the version and parent the winner already took —
+        // forking the chain into two rows holding the same place.
         const retired = await transaction
-          .select({ id: agentMemory.id, version: agentMemory.version, root: agentMemory.rootMemoryId })
-          .from(agentMemory)
+          .update(agentMemory)
+          .set({ isLatest: false, supersededAt: new Date(), supersededReason: reason })
           .where(and(
             eq(agentMemory.ownerSubject, ownerSubject),
             eq(agentMemory.agentProfileId, agentProfileId),
             inArray(agentMemory.id, [...replaces]),
             eq(agentMemory.isLatest, true),
           ))
-          .orderBy(desc(agentMemory.version));
-        const head = retired[0];
-        if (!head) continue;
-        await transaction
-          .update(agentMemory)
-          .set({
-            isLatest: false,
-            supersededAt: new Date(),
-            supersededReason: `Superseded by a later statement: ${item.content}`.slice(0, 300),
-          })
-          .where(and(
-            eq(agentMemory.ownerSubject, ownerSubject),
-            eq(agentMemory.agentProfileId, agentProfileId),
-            inArray(agentMemory.id, retired.map((row) => row.id)),
-          ));
+          .returning({ id: agentMemory.id, version: agentMemory.version, root: agentMemory.rootMemoryId });
+
+        // A fact an earlier item in this batch retired is no longer latest, so
+        // the statement above cannot see it and the chain it now heads has to
+        // come from `takenOver`. Nothing dedups the ids in `replaces` across
+        // facts, and without this a second fact naming the same id starts its
+        // own chain — leaving two current answers contradicting each other in
+        // every prompt.
+        const candidates: MemoryHead[] = [
+          ...retired.map((row) => ({ id: row.id, version: row.version, root: row.root, batchIndex: null })),
+          ...[...new Set(replaces.map((id) => takenOver.get(id)))]
+            .filter((at) => at !== undefined)
+            .map((at) => ({
+              id: placements[at]!.id,
+              version: placements[at]!.lineage?.version ?? 1,
+              root: placements[at]!.lineage?.rootMemoryId ?? null,
+              batchIndex: at,
+            })),
+        ];
         // When one fact retires several, the longest-lived chain wins the link:
         // its root is the origin a reader following parents would arrive at.
-        lineage.set(index, {
+        const [head] = candidates.sort((left, right) => right.version - left.version);
+        if (!head) continue;
+
+        if (head.batchIndex !== null) {
+          // The displaced row has not been written yet, so it is marked here
+          // rather than updated, and every id that reached it now reaches this.
+          placements[head.batchIndex]!.supersededReason = reason;
+          for (const [id, at] of takenOver) if (at === head.batchIndex) takenOver.set(id, index);
+        }
+        for (const row of retired) takenOver.set(row.id, index);
+        placements[index]!.lineage = {
           version: head.version + 1,
           parentMemoryId: head.id,
           rootMemoryId: head.root ?? head.id,
-        });
+        };
       }
-      return this.insertFacts(transaction, ownerSubject, agentProfileId, items, provenance, lineage);
+      return this.insertFacts(transaction, ownerSubject, agentProfileId, items, provenance, placements);
     });
   }
 
@@ -120,16 +168,24 @@ export class AgentMemoryStore {
     agentProfileId: string,
     items: readonly RememberedItem[],
     provenance: MemoryProvenance,
-    lineage: ReadonlyMap<number, MemoryLineage> = new Map(),
+    placements: readonly MemoryPlacement[],
   ): Promise<number> {
     await executor.insert(agentMemory).values(
       items.map((item, index) => ({
+        id: placements[index]!.id,
         ownerSubject,
         agentProfileId,
         content: item.content,
         // Absent for a fact that starts its own chain: version 1, no parent, and
         // a null root that means "this row is the origin".
-        ...lineage.get(index),
+        ...placements[index]!.lineage,
+        // A fact a later one in the same batch already corrected is written
+        // retired, so the batch leaves exactly one current answer per chain.
+        ...(placements[index]!.supersededReason === undefined ? {} : {
+          isLatest: false,
+          supersededAt: new Date(),
+          supersededReason: placements[index]!.supersededReason,
+        }),
         characterCount: item.content.length,
         profileScope: item.scope ?? "EPISODIC",
         embeddingModel: this.embeddingModel,

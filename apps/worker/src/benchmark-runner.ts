@@ -229,8 +229,8 @@ export class BenchmarkRunner {
     for (const benchmarkCase of cases) {
       // Checked between cases rather than only at the end: a suite is minutes
       // of inference, and an operator who pressed stop should not wait it out.
-      if (await this.stopped(run.id)) {
-        await this.recordCancelled(run.id, results, cases.length);
+      if (await this.stopped(run.id, workerId)) {
+        await this.recordCancelled(run.id, results, cases.length, workerId);
         return {
           runId: run.id,
           suiteSlug: run.suiteSlug,
@@ -263,14 +263,21 @@ export class BenchmarkRunner {
     return { runId: run.id, suiteSlug: run.suiteSlug, status: "COMPLETED", passedCases, totalCases: results.length };
   }
 
-  /** Whether an operator stopped the run, or another worker took the lease. */
-  private async stopped(runId: string): Promise<boolean> {
+  /**
+   * Whether an operator stopped the run, or another worker took the lease.
+   *
+   * The lease half needs `leaseOwner`: a stolen lease leaves the row RUNNING,
+   * so reading `status` alone detected only the operator half and the
+   * dispossessed worker carried on executing the same suite in parallel with
+   * its replacement, each overwriting the other's results.
+   */
+  private async stopped(runId: string, workerId: string): Promise<boolean> {
     const [row] = await this.database
-      .select({ status: benchmarkRun.status })
+      .select({ status: benchmarkRun.status, leaseOwner: benchmarkRun.leaseOwner })
       .from(benchmarkRun)
       .where(eq(benchmarkRun.id, runId))
       .limit(1);
-    return row?.status !== "RUNNING";
+    return row?.status !== "RUNNING" || row.leaseOwner !== workerId;
   }
 
   /**
@@ -295,7 +302,13 @@ export class BenchmarkRunner {
         totalCases,
         passedCases: results.filter(({ passed }) => passed).length,
       })
-      .where(and(eq(benchmarkRun.id, runId), eq(benchmarkRun.status, "RUNNING")))
+      // Also matched on the lease owner, so a worker whose claim was stolen
+      // cannot quietly take it back and resume writing over the new holder.
+      .where(and(
+        eq(benchmarkRun.id, runId),
+        eq(benchmarkRun.status, "RUNNING"),
+        eq(benchmarkRun.leaseOwner, workerId),
+      ))
       .catch((cause: unknown) => {
         console.error("OrcaSynapse could not record benchmark progress", runId, cause);
       });
@@ -325,7 +338,17 @@ export class BenchmarkRunner {
           leaseOwner: null,
           leaseExpiresAt: null,
         })
-        .where(eq(benchmarkRun.id, run.id));
+        // Status *and* ownership, matching `renewLease`. Status alone caught the
+        // operator-cancel case but not lease theft: a single-case suite has no
+        // top-of-loop check after its case, so a worker that lost its lease
+        // mid-case still arrived here, matched on id + RUNNING, and wrote
+        // COMPLETED with a full pass rate over the run its replacement owns --
+        // which `attachEvidence` then accepts as a PASSED promotion gate.
+        .where(and(
+          eq(benchmarkRun.id, run.id),
+          eq(benchmarkRun.status, "RUNNING"),
+          eq(benchmarkRun.leaseOwner, workerId),
+        ));
       await transaction.insert(auditEvent).values({
         actorType: "SERVICE",
         actorId: workerId,
@@ -350,6 +373,7 @@ export class BenchmarkRunner {
     runId: string,
     results: readonly BenchmarkCaseResult[],
     totalCases: number,
+    workerId: string,
   ): Promise<void> {
     // No pass rate: a suite stopped a third of the way through has a real count
     // of cases that passed, and turning that into a score would answer a
@@ -364,7 +388,20 @@ export class BenchmarkRunner {
         leaseOwner: null,
         leaseExpiresAt: null,
       })
-      .where(eq(benchmarkRun.id, runId));
+      // Guarded like every other write here. `stopped()` now reports true when
+      // another worker takes the lease, which routes the dispossessed worker
+      // through this method -- and unguarded it would null the new holder's
+      // lease and overwrite its results with a partial set, handing the run to
+      // a third worker. That is the outcome the lease check exists to prevent.
+      // Matched on the lease alone, deliberately. Both reasons `stopped()`
+      // fires land here, and they need opposite treatment: an operator cancel
+      // has already set status away from RUNNING but the lease is still ours,
+      // and the partial results are worth keeping; a stolen lease leaves status
+      // RUNNING but the row belongs to another worker, and writing to it would
+      // null its lease and overwrite its results. Ownership is what separates
+      // them -- a status guard would silently discard every cancelled run's
+      // scores instead.
+      .where(and(eq(benchmarkRun.id, runId), eq(benchmarkRun.leaseOwner, workerId)));
   }
 
   private async fail(runId: string, message: string): Promise<void> {

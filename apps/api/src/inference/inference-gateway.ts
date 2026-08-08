@@ -35,7 +35,34 @@ export class InferenceGatewayError extends Error {
 export interface InferenceGatewayResult {
   response: Response;
   maxResponseBytes: number;
+  /** True when the body is SSE, so the route can end it in a way the caller can read. */
+  stream: boolean;
 }
+
+/**
+ * Wire bytes to allow per token of a streamed completion.
+ *
+ * `maxOutputCharacters` bounds *content*, and on a single JSON body content and
+ * bytes stay within a small constant of each other. On SSE they do not: every
+ * token arrives as its own framed chunk — `data: ` plus a whole
+ * chat-completion envelope plus a blank line — measured at about 231 wire bytes
+ * per four characters of content, roughly 50:1. Reasoning models are worse
+ * again, because `reasoning_content` deltas cost wire bytes and produce no
+ * output characters at all.
+ *
+ * So a streamed budget is derived from the deployment's token ceiling, which is
+ * the real bound on how many frames the approved route can emit, times what a
+ * frame costs with headroom for reasoning deltas and keepalives. Deriving it
+ * from characters at 8 bytes each cut the default 200,000-character policy off
+ * after ~6,900 frames — below an 8,192-token deployment — and cut it *after*
+ * the headers were flushed, which the caller could not tell from a complete
+ * answer.
+ */
+const SSE_WIRE_BYTES_PER_TOKEN = 512;
+/** A streamed body is piped, never buffered, so this bounds the wire and not the heap. */
+const MAX_STREAM_RESPONSE_BYTES = 64_000_000;
+const MAX_JSON_RESPONSE_BYTES = 8_000_000;
+const MIN_RESPONSE_BYTES = 65_536;
 
 function numbers(value: unknown, fallback: number, minimum: number, maximum: number): number {
   return typeof value === "number" && Number.isFinite(value)
@@ -85,13 +112,58 @@ function compatibilityHintsFor(backend: InferenceBackend): Set<CompatibilityHint
   return new Set(backend === "LLAMA_CPP" ? COMPATIBILITY_HINTS : []);
 }
 
-async function rejectedCompatibilityHints(response: Response): Promise<Set<CompatibilityHint>> {
+/**
+ * Reads at most `limit` bytes, then stops pulling and cancels the body.
+ *
+ * The declared-length check above cannot stand alone: `content-length` is
+ * absent on a chunked response, `Number(null)` is 0, and 0 is not greater than
+ * the limit — so every chunked error body fell straight through to an unbounded
+ * `.text()` and the size check ran only after the whole thing was already in
+ * the heap. An upstream that answers 400 with a multi-gigabyte chunked body
+ * (an error page, or a validation error echoing the prompt) took the API with
+ * it, and the rate limiter is consumed before the upstream call, so a node can
+ * drive this repeatedly.
+ */
+async function readBounded(response: Response, limit: number): Promise<string> {
+  const reader = response.body?.getReader();
+  if (!reader) return "";
+  const decoder = new TextDecoder();
+  let text = "";
+  let read = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      read += value.byteLength;
+      text += decoder.decode(value, { stream: true });
+      if (read > limit) break;
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+  return text;
+}
+
+/**
+ * Exported for its own test; not part of the gateway's public surface.
+ *
+ * Reads the rejected response's own body, never a clone of it. `clone()` tees
+ * the stream: every chunk the read branch pulls is also queued on the branch
+ * nobody reads, so the bound stopped nothing from being retained, and — worse —
+ * a tee branch's `cancel()` only settles once *both* branches are cancelled, so
+ * the bounded read's own cleanup never returned. A chunked 400 therefore hung
+ * the gateway request with no timeout covering it and left the upstream body
+ * open. Consuming the body here is safe because a 400 is never handed on: it is
+ * either retried as a fresh request without the named hints, or turned into
+ * UPSTREAM_FAILED.
+ */
+export async function rejectedCompatibilityHints(response: Response): Promise<Set<CompatibilityHint>> {
   if (response.status !== 400) return new Set();
   const declaredLength = Number(response.headers.get("content-length"));
   if (Number.isFinite(declaredLength) && declaredLength > 16_384) return new Set();
   let text = "";
   try {
-    text = await response.clone().text();
+    text = await readBounded(response, 16_384);
   } catch {
     return new Set();
   }
@@ -330,9 +402,21 @@ export class DrizzleInferenceGateway {
     if (!response.ok) {
       throw new InferenceGatewayError("UPSTREAM_FAILED", `The approved inference server returned status ${response.status}.`);
     }
+    const jsonResponseBytes = Math.min(
+      MAX_JSON_RESPONSE_BYTES,
+      Math.max(MIN_RESPONSE_BYTES, policy.maxOutputCharacters * 8),
+    );
     return {
       response,
-      maxResponseBytes: Math.min(8_000_000, Math.max(65_536, policy.maxOutputCharacters * 8)),
+      // Never below the JSON budget: the guardrail's own character allowance
+      // must not be the thing that truncates a stream.
+      maxResponseBytes: input.stream
+        ? Math.min(
+          MAX_STREAM_RESPONSE_BYTES,
+          Math.max(jsonResponseBytes, runtime.maxOutputTokens * SSE_WIRE_BYTES_PER_TOKEN),
+        )
+        : jsonResponseBytes,
+      stream: input.stream === true,
     };
   }
 }

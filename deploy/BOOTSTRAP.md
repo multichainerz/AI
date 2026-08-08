@@ -1,9 +1,20 @@
 # OrcaSynapse Installation Bootstrap
 
+## Host sizing
+
+VM1 needs at least **2 vCPU, 4 GiB of memory, and 5 GiB of free disk**; **4 vCPU and 8 GiB** is what a production control plane should be given. Disk is the only hard requirement of the three — the stack starts on a smaller CPU or memory allocation — but document embedding runs on this host, so a 1 vCPU or 2 GiB machine spends minutes on an upload that should take seconds. The installer measures all three in its first step, ahead of dependency installation, so a host that misses the disk requirement is refused before `apt-get` installs Docker and `systemctl` enables it — by then the public bootstrap below has fetched only its own small dependency set (curl, tar, coreutils) and the release archive. The two checks that need Docker itself, a reachable daemon and a free HTTP port, necessarily run after it.
+
 On a clean Debian or Ubuntu server, run the public bootstrap from the OrcaSynapse repository:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/multichainerz/AI/main/install.sh | sudo bash
+```
+
+Behind an upstream TLS terminator, declare the scheme browsers really use — see **Public scheme** below — by adding the flag to the same command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/multichainerz/AI/main/install.sh \
+  | sudo bash -s -- --public-scheme https
 ```
 
 For an inspect-first workflow that does not open a full-screen pager:
@@ -12,10 +23,10 @@ For an inspect-first workflow that does not open a full-screen pager:
 curl --proto '=https' --tlsv1.2 -fsSLo orcasynapse-install.sh \
   https://raw.githubusercontent.com/multichainerz/AI/main/install.sh
 sed -n '1,240p' orcasynapse-install.sh
-sudo bash orcasynapse-install.sh
+sudo bash orcasynapse-install.sh --public-scheme https
 ```
 
-The one-line form is the default convenience path; the inspect-first form is available for controlled environments without opening a terminal pager. The installer automatically uses plain output when no interactive terminal is attached, and `NO_COLOR=1` disables terminal colors.
+The one-line form is the default convenience path; the inspect-first form is available for controlled environments without opening a terminal pager. Both accept `--public-scheme http|https`, and omitting it leaves the safe `http` default. The installer automatically uses plain output when no interactive terminal is attached, and `NO_COLOR=1` disables terminal colors.
 
 The bootstrap resolves `ORCASYNAPSE_REF` (default `main`) to an immutable Git commit, downloads that commit from GitHub, records the source identity under `/opt/orcasynapse`, and handles an existing path through the guarded recovery flow below. An acceptance environment should set an approved commit and checksum explicitly:
 
@@ -28,14 +39,24 @@ When `/opt/orcasynapse` already exists, the installer distinguishes a verified e
 From an intact local release bundle, the equivalent host command is:
 
 ```bash
-sudo ./scripts/install-orcasynapse.sh
+sudo ./scripts/install-orcasynapse.sh --public-scheme https
 ```
 
-The installer runs six steps: it checks or installs Docker Compose v2, OpenSSL, and curl; **preflights the host** (Docker daemon, port collision, disk space, memory, existing-state summary) before any mutation; builds the release; generates the database password, credential-encryption key, and permanent Installation Key in a root-only host directory; starts the stack (PostgreSQL runs the bundled `pgvector/pgvector:pg17` image — the migrator creates the `vector` extension for the knowledge index) and waits for readiness; and provisions a PostgreSQL-backed local `admin` account. Application-secret files use a narrowly scoped container group so the non-root API, worker, and migration processes can read only the secrets explicitly mounted into them. It prints the one-time temporary password and requires replacement at first sign-in. It separately prints the Installation Key, which must be stored offline in the organization vault and is accepted only for local-account recovery.
+The installer runs seven steps: it **sizes the host** (disk space, memory, CPU count) before it installs anything; checks or installs Docker Compose v2, OpenSSL, and curl; **preflights the host** (Docker daemon, port collision, existing-state summary) before any further mutation; builds the release; generates the database password, credential-encryption key, and permanent Installation Key in a root-only host directory; starts the stack (PostgreSQL runs the bundled `pgvector/pgvector:pg17` image — the migrator creates the `vector` extension for the knowledge index) and waits for readiness; and provisions a PostgreSQL-backed local `admin` account. Application-secret files use a narrowly scoped container group so the non-root API, worker, and migration processes can read only the secrets explicitly mounted into them. It prints the one-time temporary password and requires replacement at first sign-in. It separately prints the Installation Key, which must be stored offline in the organization vault and is accepted only for local-account recovery.
 
-The banner and summary show the release version and source commit read from the extracted tree. A secret-free install log is written to `.local/state/install-<timestamp>.log` and a machine-readable completion marker to `.local/state/install-complete.json` (the printed temporary password and Installation Key never enter the log). Data volumes created before the pgvector base-image switch are reindexed once automatically after startup (musl-to-glibc collation change); the marker `.local/state/postgres-libc-reindexed` records completion.
+The banner and summary show the release version and source commit read from the extracted tree. The summary also states the public scheme in force and, when it is `http`, says plainly that the administrator and enterprise session cookies are not `Secure`. A secret-free install log is written to `.local/state/install-<timestamp>.log` and a machine-readable completion marker to `.local/state/install-complete.json`, which records the version, source commit, completion time, and public scheme (the printed temporary password and Installation Key never enter either). Data volumes created before the pgvector base-image switch are reindexed once automatically after startup (musl-to-glibc collation change); the marker `.local/state/postgres-libc-reindexed` records completion.
 
-Set `ORCASYNAPSE_HTTP_PORT` before invoking the script to use a port other than `8080`. Terminate TLS at a customer-approved reverse proxy or load balancer before using OrcaSynapse outside a protected deployment network. That upstream proxy must overwrite `X-Forwarded-Proto`, and direct access to the OrcaSynapse HTTP port must remain restricted; OrcaSynapse's bundled Nginx discards inbound forwarding chains and reports only its direct peer to the API.
+Set `ORCASYNAPSE_HTTP_PORT` before invoking the script to use a port other than `8080`.
+
+### Public scheme
+
+Terminate TLS at a customer-approved reverse proxy or load balancer before using OrcaSynapse outside a protected deployment network, and declare that with `--public-scheme https`. The bundled Nginx listens on plain HTTP, so it cannot observe the TLS an upstream terminator provides; this flag is the operator's declaration of the scheme browsers really use, and it is the only thing that makes the administrator and enterprise session cookies `Secure`. Declare it only where TLS genuinely terminates upstream — over cleartext a `Secure` cookie is one the browser never sends back. Omitted, the scheme stays `http`, which withholds `Secure` rather than claiming a TLS session the deployment does not have.
+
+It is a flag rather than an environment variable because every command on this page runs through `sudo`, and stock sudoers is `Defaults env_reset`: an exported `ORCASYNAPSE_PUBLIC_SCHEME` is discarded before the script starts, which silently produced plain-HTTP cookies on deployments that had declared `https`. Where an environment variable is genuinely more convenient, `sudo env ORCASYNAPSE_PUBLIC_SCHEME=https ...` and `sudo -E` both work, and both are treated as the same explicit declaration as the flag.
+
+The declaration is recorded in the root-only `.local/state/public-scheme` — an operator setting, never a secret, and never written into `.local/secrets`. Re-running the installer, and the break-glass `rotate-installation-key.sh` below, read it back rather than re-deriving the default, so neither can silently return a correct installation to `http`. Passing the flag again replaces the recorded value and says so. An installation created before this was recorded has nothing to read back: declare the scheme once more on the next install or rotation, and it is remembered from then on. Restarting the stack by hand with `docker compose up -d` bypasses both scripts and both records, so use the scripts, or pass `ORCASYNAPSE_PUBLIC_SCHEME` to that command yourself.
+
+Nothing a client sends can substitute for that declaration: OrcaSynapse's bundled Nginx discards inbound forwarding chains, overwriting `X-Forwarded-Proto` with the declared scheme and `X-Forwarded-For` with its own direct peer, so the upstream proxy's forwarding headers are neither required nor honoured. Direct access to the OrcaSynapse HTTP port must remain restricted.
 
 The installer refuses to overwrite any partial secret set. A complete existing set is preserved for idempotent restarts. It does not take an SSH password, mount the Docker socket into OrcaSynapse, or grant the dashboard host-level command execution.
 
@@ -65,6 +86,8 @@ sudo ./scripts/rotate-installation-key.sh --confirm-revoke-recovery-sessions
 ```
 
 This replaces the root-owned key file, immediately revokes recovery sessions, and recreates the API. The next recovery use records the new verifier in PostgreSQL. Local-password and federated OIDC sessions are otherwise independent. Routine administration uses the local account or mapped OIDC groups, including Microsoft Entra ID; the Installation Key remains the on-premises break-glass path.
+
+Rotation also recreates the web container, so it reports the public scheme it is about to bring the proxy back on and takes the same `--public-scheme` flag. On an installation that recorded `https` it reads that back and keeps `Secure` on the session cookies; add the flag only to declare a scheme that was never recorded, or to change one.
 
 ## Manual development flow
 

@@ -18,7 +18,7 @@ import { DocumentIngestor } from "./document-ingestor.js";
 let context: TestDatabase;
 
 beforeAll(async () => { context = await createTestDatabase(); }, 120_000);
-afterAll(async () => { await context?.drop(); });
+afterAll(async () => { await context?.drop(); }, 120_000);
 beforeEach(async () => { await context.reset(); });
 
 const OWNER = "user:pilot";
@@ -222,5 +222,89 @@ describe("documents stranded before the ingestion queue existed", () => {
     const after = await stateOf(id);
     expect(after.status).toBe("FAILED");
     expect(after.failureCode).toBe("EXTRACTION_FAILED");
+  });
+
+  it("does not resurrect a document deleted while it was being embedded", async () => {
+    // Embedding a large document takes tens of seconds locally, and an operator
+    // may delete it in that window. The finishing worker used to write READY
+    // back over DELETED and re-insert the chunk text; because every read filters
+    // on status rather than deletedAt, the document reappeared in the dashboard
+    // with its content re-indexed. A deletion that reports success must hold.
+    const id = await queued("a policy paragraph worth indexing");
+
+    const slowEmbedder = embedder();
+    const original = slowEmbedder.embed;
+    slowEmbedder.embed = vi.fn(async (inputs: string[]) => {
+      // The delete lands mid-embed, exactly as it would on a real host.
+      await context.database
+        .update(document)
+        .set({ status: "DELETED", deletedAt: new Date() })
+        .where(eq(document.id, id));
+      return original(inputs);
+    });
+
+    const outcome = await ingestor(slowEmbedder).processNext(WORKER);
+
+    expect(outcome).toMatchObject({ documentId: id, status: "SUPERSEDED" });
+    const after = await stateOf(id);
+    expect(after.status).toBe("DELETED");
+    // And its text is not left behind in the index under a deleted row.
+    const chunks = await context.database
+      .select({ id: documentChunk.id }).from(documentChunk).where(eq(documentChunk.documentId, id));
+    expect(chunks).toHaveLength(0);
+  });
+
+  it("does not release a lease it no longer holds", async () => {
+    // The retry branch (attempts under the cap) nulls the lease so another
+    // attempt can start sooner. Unguarded, a worker whose own lease had already
+    // lapsed would null the lease of the worker that replaced it -- and claim()
+    // matches on isNull(ingestionLeaseExpiresAt), so a third worker then takes
+    // a document the second is still embedding.
+    const id = await queued("a policy paragraph worth indexing");
+    const thief = randomUUID();
+    const failing: TextEmbedder = {
+      model: "Xenova/bge-m3",
+      dimensions: APPROVED_EMBEDDING_DIMENSIONS,
+      embed: async () => {
+        await context.database
+          .update(document)
+          .set({ ingestionLeaseOwner: thief, ingestionLeaseExpiresAt: new Date(Date.now() + 300_000) })
+          .where(eq(document.id, id));
+        throw new Error("embedding runtime unavailable");
+      },
+    };
+
+    expect(await ingestor(failing).processNext(WORKER)).toBeNull();
+
+    expect((await stateOf(id)).leaseOwner, "the replacement worker's lease was released").toBe(thief);
+  });
+
+  it("leaves the index alone when its own claim was stolen", async () => {
+    // claim() reclaims a CONVERTING row whose lease lapsed, which is the
+    // slow-embed case, so two workers can hold the same document in turn. The
+    // dispossessed one must not retract chunks: the row is not deleted, so the
+    // index belongs to whoever holds the claim now. Deleting would leave a
+    // document that reads as indexed and returns no passages.
+    const id = await queued("a policy paragraph worth indexing");
+
+    const slowEmbedder = embedder();
+    const original = slowEmbedder.embed;
+    slowEmbedder.embed = vi.fn(async (inputs: string[]) => {
+      // Another worker takes the claim while this one is still embedding.
+      await context.database
+        .update(document)
+        .set({ ingestionLeaseOwner: randomUUID(), ingestionLeaseExpiresAt: new Date(Date.now() + 300_000) })
+        .where(eq(document.id, id));
+      return original(inputs);
+    });
+
+    const outcome = await ingestor(slowEmbedder).processNext(WORKER);
+
+    expect(outcome).toMatchObject({ documentId: id, status: "SUPERSEDED" });
+    // Still CONVERTING and owned by the other worker — not written over.
+    expect((await stateOf(id)).status).toBe("CONVERTING");
+    const chunks = await context.database
+      .select({ id: documentChunk.id }).from(documentChunk).where(eq(documentChunk.documentId, id));
+    expect(chunks.length, "chunks were retracted from a document that was not deleted").toBeGreaterThan(0);
   });
 });

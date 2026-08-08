@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="v1.5.0"
+INSTALLER_VERSION="v1.6.0"
 # Honor the same state-root overrides the installer accepts, so a non-default
 # layout installed with ORCASYNAPSE_*_STATE_ROOT can be removed the same way.
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
@@ -497,7 +497,16 @@ UI_BANNER_META="Remover ${INSTALLER_VERSION}"
 
 validate_state_root() {
   local label="$1" path="$2"
-  [[ "${path}" == /*/* && "${path}" != *..* ]] \
+  # `/*/*` alone is not "two levels deep": the trailing `*` matches the empty
+  # string, so `/var/` and `/etc/` both pass it and reach `rm -rf`. Requiring a
+  # non-slash character after the second slash is what the message has always
+  # claimed. A trailing slash is stripped first so `/var/lib/x/` still works.
+  path="${path%/}"
+  # `//` is rejected explicitly: `/*/?*` alone matches `///etc` and `//x`,
+  # because `*` and `?` both match a slash. Those collapse to `/etc` and `/x`,
+  # so the earlier trailing-slash fix closed one shape of the same hole and
+  # left another that still reached `rm -rf`.
+  [[ "${path}" == /*/?* && "${path}" != *..* && "${path}" != *//* ]] \
     || fail "unsafe ${label} state path '${path}'; an absolute path at least two levels deep is required"
   [[ ! -L "${path}" ]] || fail "refusing to traverse a symbolic-link ${label} state root"
 }
@@ -534,6 +543,37 @@ managed_install_exists() {
 # is sufficient and both are things only our installer writes, so a Hermes
 # someone set up by hand -- with no unit, or a unit of their own -- is never
 # mistaken for ours and destroyed.
+# Positive proof that OrcaSynapse installed what we are about to delete.
+#
+# Distinct from validate_service_ownership, which only refuses a unit that is
+# demonstrably *not* ours. Absence of a unit is not evidence of ownership, and
+# the Hermes program lives at the same path whether we installed it or the
+# operator did -- so deleting it needs a reason, not merely the lack of an
+# objection. Either artefact below is created solely by our installer.
+# Captured once, before anything is deleted, because both pieces of evidence are
+# themselves removed during the purge.
+RUNTIME_IS_OURS=0
+
+managed_ownership_proof() {
+  # One artefact, written by the installer only after it has itself installed
+  # the Hermes program and verified the commit pin.
+  #
+  # Two weaker signals were tried and both are wrong. The unit file is deleted
+  # by the step that later consults this, so its marker can never be seen. And
+  # the node identity is created in step 3 -- *before* step 4 discovers a
+  # pre-existing Hermes and tells the operator to decommission -- so treating it
+  # as proof destroys exactly the installation this guard exists to protect.
+  # The marker the installer writes after installing and pin-verifying Hermes.
+  [[ -e "${STATE_ROOT}/runtime-owned" ]] && return 0
+  # Nodes enrolled before that marker existed carry no such file, and refusing
+  # to decommission every one of them is not an option. Their unit still has the
+  # managed marker, which only our installer writes -- but it is deleted during
+  # the purge, so this must be evaluated before the purge starts.
+  local unit="/etc/systemd/system/${RUNTIME_SERVICE}.service"
+  [[ -e "${unit}" ]] && grep -Fq "X-OrcaSynapse-Managed=true" "${unit}" && return 0
+  return 1
+}
+
 validate_service_ownership() {
   local unit="/etc/systemd/system/${RUNTIME_SERVICE}.service"
   [[ -e "${unit}" ]] || return 0
@@ -574,6 +614,15 @@ stop_managed_services() {
   systemctl stop "${HEARTBEAT_SERVICE}.service" >/dev/null 2>&1 || true
   systemctl disable --now "${DESIRED_STATE_SERVICE}.timer" >/dev/null 2>&1 || true
   systemctl stop "${DESIRED_STATE_SERVICE}.service" >/dev/null 2>&1 || true
+
+  # Every call above tolerates failure, so success has to be checked rather than
+  # assumed. A stop job that hangs or times out would otherwise be reported as
+  # stopped, and the steps after this delete the unit file and the program out
+  # from under a live process -- leaving Hermes listening on 8642 with its
+  # credentials in memory and no unit left to stop it.
+  if systemctl is-active --quiet "${RUNTIME_SERVICE}.service"; then
+    fail "the ${RUNTIME_SERVICE} service is still active after a stop request; resolve that before destroying its files"
+  fi
   success "Managed heartbeat services stopped."
 }
 
@@ -587,10 +636,19 @@ remove_hermes_runtime() {
   fi
 
   # The program itself, which the container path deleted as image layers.
-  # Scoped to the two paths the installer creates and nothing else: an operator
-  # who installed Hermes for themselves before enrolling keeps their own copy
-  # only if it is not at the managed location, which the installer refuses to
-  # overwrite in the first place.
+  #
+  # Only when we can prove we installed it. Hermes's own installer defaults to
+  # exactly ${HERMES_INSTALL_DIR}, so "it is at the managed location" proves
+  # nothing -- a Hermes the operator installed for themselves lands in the same
+  # place. And the installer actively steers people here: it refuses to enrol a
+  # host that already has Hermes and tells them to decommission first. Following
+  # that instruction must not destroy an installation we never made.
+  if (( RUNTIME_IS_OURS == 0 )); then
+    warning "A Hermes installation exists at ${HERMES_INSTALL_DIR} but nothing identifies it as OrcaSynapse-managed; leaving it untouched."
+    warning "Remove it yourself if it is unwanted: rm -rf ${HERMES_INSTALL_DIR} ${HERMES_BINARY}"
+    return 0
+  fi
+
   local removed=0
   if [[ -d "${HERMES_INSTALL_DIR}" ]]; then
     rm -rf -- "${HERMES_INSTALL_DIR}"
@@ -641,6 +699,9 @@ main() {
   step 1 4 "Inventory the managed installation"
   require_safe_host
   validate_service_ownership
+  # Before confirm_destruction, so the panel below can tell the operator what
+  # will and will not be removed rather than surprising them mid-purge.
+  managed_ownership_proof && RUNTIME_IS_OURS=1
   if ! managed_install_exists; then
     success "No OrcaSynapse-managed Agentic System installation was found."
     printf '\n%b  NOTHING TO REMOVE%b\n' "${UI_GREEN}${UI_BOLD}" "${UI_RESET}"

@@ -25,7 +25,7 @@ let context: TestDatabase;
 let manager: DrizzleBenchmarkManager;
 
 beforeAll(async () => { context = await createTestDatabase(); }, 120_000);
-afterAll(async () => { await context?.drop(); });
+afterAll(async () => { await context?.drop(); }, 120_000);
 beforeEach(async () => {
   await context.reset();
   // The real ledger, not a fake: the point of attaching evidence is that the

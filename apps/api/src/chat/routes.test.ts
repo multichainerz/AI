@@ -1,3 +1,6 @@
+import { once } from "node:events";
+import { connect, type AddressInfo, type Socket } from "node:net";
+import { setTimeout as delay } from "node:timers/promises";
 import { ADMIN_SCOPES, type ChatMessage } from "@orcasynapse/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.js";
@@ -360,6 +363,69 @@ describe("controlled chat routes", () => {
     });
     expect(response.statusCode).toBe(503);
     expect(response.json()).toEqual({ error: "CHAT_NOT_CONFIGURED", message: "Test vLLM first." });
+  });
+});
+
+describe("SSE write backpressure", () => {
+  const FRAMES = 200;
+  const FRAME_CONTENT = "x".repeat(128 * 1_024);
+
+  it("stops producing for a subscriber that has stopped reading", async () => {
+    // Resuming a long run replays saved events as fast as the database returns
+    // them. `reply.raw.write` was called for each one and its return value
+    // discarded, so an authenticated pilot whose tab stopped reading — a
+    // suspended laptop, a proxy that stalled — had the whole replay accumulate
+    // in this process's heap: measured at 7.1 MB for one subscriber before the
+    // producer was paced by drain.
+    let emitted = 0;
+    const manager = memoryChatManager();
+    manager.subscribe = vi.fn(async (_principal, conversationId, messageId, _cursor, emit) => {
+      for (let index = 0; index < FRAMES; index += 1) {
+        await emit({ type: "delta", conversationId, messageId, cursor: String(index + 1), delta: FRAME_CONTENT });
+        emitted += 1;
+      }
+    });
+    const app = await chatApp(manager);
+    let handedToTransport = 0;
+    // A transport that takes the bytes, answers false, and never drains. It is
+    // simulated at this seam rather than provoked with a slow client because
+    // how much a kernel absorbs for a reader that never reads is
+    // platform-dependent: Windows loopback swallowed 26 MB of this same
+    // response, which would hide on this machine a defect that is fatal on the
+    // pilot. What is measured — bytes handed over while the consumer is
+    // stalled — is the same quantity either way.
+    app.server.on("connection", (socket) => {
+      const stalled = ((chunk: unknown) => {
+        handedToTransport += typeof chunk === "string"
+          ? Buffer.byteLength(chunk)
+          : Buffer.isBuffer(chunk) ? chunk.byteLength : 0;
+        return false;
+      }) as Socket["write"];
+      socket.write = stalled;
+    });
+    await app.listen({ port: 0, host: "127.0.0.1" });
+
+    const client = connect({
+      port: (app.server.address() as AddressInfo).port,
+      host: "127.0.0.1",
+    });
+    await once(client, "connect");
+    // Never read: this is a stalled consumer, not a slow one.
+    client.pause();
+    client.write(
+      `GET /api/v1/chat/conversations/${CONVERSATION_ID}/messages/${MESSAGE_ID}/events HTTP/1.1\r\n` +
+      `Host: 127.0.0.1\r\nCookie: ${ADMIN_SESSION_COOKIE}=${SESSION_TOKEN}\r\n\r\n`,
+    );
+    await delay(500);
+    // Sampled before the socket is torn down: closing releases the producer,
+    // which then runs to completion against a dead response.
+    const producedWhileStalled = emitted;
+    const bufferedWhileStalled = handedToTransport;
+    client.destroy();
+    await delay(50);
+
+    expect(producedWhileStalled).toBeLessThan(FRAMES);
+    expect(bufferedWhileStalled).toBeLessThan(2 * 1_024 * 1_024);
   });
 });
 

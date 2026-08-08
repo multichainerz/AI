@@ -236,7 +236,9 @@ export function ChatView({
   onSessionExpired,
 }: ChatViewProps) {
   const [knowledgeOpen, setKnowledgeOpen] = useState(false);
-  const [library, setLibrary] = useState<DocumentSummary[]>([]);
+  // `null` is "not loaded", distinct from the empty array that means "nothing
+  // indexed". Collapsing the two let a failed load render as an empty library.
+  const [library, setLibrary] = useState<DocumentSummary[] | null>(null);
   const [memoryOpen, setMemoryOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [skillsOpen, setSkillsOpen] = useState(false);
@@ -586,6 +588,11 @@ export function ChatView({
       if (!(cause instanceof DOMException && cause.name === "AbortError")) {
         handleError(cause, "Unable to send the message.");
       }
+      // The composer is cleared before the request so the send feels immediate,
+      // but a submit that never reached the server creates no assistant row —
+      // and `retryMessage` can only read text back out of one. Without this a
+      // long message is gone. Anything typed since wins over the restore.
+      setDraft((current) => current.trim() ? current : content);
       if (conversation) {
         await getChatConversation(conversation.id).then(setActive).catch(() => undefined);
         await refreshList().catch(() => undefined);
@@ -673,12 +680,19 @@ export function ChatView({
 
   const openKnowledge = async () => {
     setKnowledgeOpen(true);
+    setLibrary(null);
     try {
       // Only READY documents can be pinned; anything else would narrow
       // retrieval to a source that has no embedded chunks yet.
       setLibrary(pinnableDocuments((await getDocuments()).items));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to load your documents.");
+      // Left open, the picker answers a failed load with "No indexed documents
+      // yet" while the real cause renders behind the backdrop — so the operator
+      // concludes the library is empty rather than unreachable. Skills and
+      // Memory already close on failure; `handleError` also routes a 401 to the
+      // session handler instead of printing it as a message.
+      setKnowledgeOpen(false);
+      handleError(cause, "Unable to load your documents.");
     }
   };
 
@@ -1107,7 +1121,9 @@ export function ChatView({
           title="Knowledge for this conversation"
           description={active ? knowledgeScopeSummary(active.knowledgeDocuments.length) : undefined}
         >
-          {library.length === 0 ? (
+          {library === null ? (
+            <p className="m-0 text-body text-faint">Loading…</p>
+          ) : library.length === 0 ? (
             <EmptyState title="No indexed documents yet">
               Upload one in Knowledge and it becomes pinnable once indexing completes.
             </EmptyState>

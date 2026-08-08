@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { auditEvent, createTestDatabase, document, type TestDatabase } from "@orcasynapse/database";
 import { APPROVED_EMBEDDING_DIMENSIONS, DocumentVectorStore, type TextEmbedder } from "@orcasynapse/knowledge";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -15,7 +15,7 @@ import {
 let context: TestDatabase;
 
 beforeAll(async () => { context = await createTestDatabase(); }, 120_000);
-afterAll(async () => { await context?.drop(); });
+afterAll(async () => { await context?.drop(); }, 120_000);
 beforeEach(async () => { await context.reset(); });
 
 const owner: DocumentPrincipal = {
@@ -109,6 +109,26 @@ describe("DrizzleDocumentManager", () => {
     ).rejects.toBeInstanceOf(DocumentConflictError);
   });
 
+  it("admits only one of two concurrent uploads of the same file", async () => {
+    // The duplicate rule was a read followed by an insert, with extraction
+    // sitting between them: both uploads read an empty result, both stored a
+    // row, and retrieval then returned every passage of that file twice.
+    // A cold pg pool opens connections one at a time, so the second upload
+    // would queue behind the first and never overlap it. Warm it first, which
+    // is the state a running installation is always in.
+    await Promise.all(Array.from({ length: 4 }, () => manager().list(owner)));
+    const body = "One file, two uploads, one checksum.";
+    const settled = await Promise.allSettled([
+      manager().upload(owner, upload("first.txt", body), metadata),
+      manager().upload(owner, upload("second.txt", body), metadata),
+    ]);
+
+    expect(settled.filter(({ status }) => status === "fulfilled")).toHaveLength(1);
+    const [refused] = settled.filter((result) => result.status === "rejected");
+    expect(refused?.reason).toBeInstanceOf(DocumentConflictError);
+    expect(await context.database.select().from(document)).toHaveLength(1);
+  });
+
   it("records a document with no extractable text as failed with an OCR reason", async () => {
     const stored = await manager().upload(owner, upload("blank.txt", "   \n\t  "), metadata);
 
@@ -116,6 +136,36 @@ describe("DrizzleDocumentManager", () => {
     expect(stored.failureCode).toBe("OCR_PROVIDER_REQUIRED");
     expect(stored.failureMessage).toMatch(/OCR provider/i);
   });
+
+  it("survives more concurrent deletes than the connection pool has connections", async () => {
+    // delete() runs inside a transaction, which holds one pooled client for its
+    // whole body. Calling the vector store on the pool handle checked out a
+    // SECOND client from inside that transaction, so with pg-pool's default
+    // max of 10 -- and connectionTimeoutMillis unset, meaning waiters never
+    // time out -- ten simultaneous deletes each held one and waited forever for
+    // an eleventh. The whole pool wedged, not just deletes: every unrelated
+    // query behind it blocked too.
+    const stored = await Promise.all(
+      Array.from({ length: 12 }, (_, index) =>
+        manager().upload(owner, upload(`policy-${index}.txt`, `Body text number ${index}.`), metadata),
+      ),
+    );
+
+    const deletions = Promise.all(stored.map(({ id }) =>
+      manager().delete(administrator, id, { force: true, reason: "Legal removal request." }),
+    ));
+    const timeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("concurrent deletes deadlocked the connection pool")), 20_000),
+    );
+
+    await expect(Promise.race([deletions, timeout])).resolves.toBeDefined();
+
+    const remaining = await context.database
+      .select({ id: document.id })
+      .from(document)
+      .where(and(eq(document.status, "DELETED")));
+    expect(remaining).toHaveLength(12);
+  }, 40_000);
 
   it("holds a delete inside the retention window unless an administrator overrides it", async () => {
     const stored = await manager().upload(owner, upload("policy.txt", "Retained body text."), metadata);

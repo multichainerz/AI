@@ -748,7 +748,12 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
         // Availability is based on control-plane receipt time. A skewed or
         // malicious node clock must not keep a dead runtime looking online.
         lastSeenAt: receivedAt,
-        revision: increment(hermesRuntimeNode.revision),
+        // Deliberately does NOT bump `revision`. That field is the optimistic
+        // concurrency token for operator actions -- `mutate` requires an exact
+        // match on it. A node heartbeats every minute, so bumping it here made
+        // the token a clock: any dashboard tab open longer than a minute had a
+        // stale revision and its first Drain/Suspend/Revoke failed with a 409,
+        // including the emergency revoke path for a compromised node.
       })
       .where(eq(hermesRuntimeNode.id, nodeId));
     return { accepted: true, serverTime: receivedAt.toISOString() };

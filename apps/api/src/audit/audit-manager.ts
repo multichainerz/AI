@@ -98,13 +98,15 @@ export class DrizzleAuditManager implements AuditManager {
       .where(eq(auditForwardingState.id, "global"))
       .limit(1);
 
-    const after = state?.lastForwardedAt && state.lastForwardedId
-      ? or(
-        gt(auditEvent.occurredAt, state.lastForwardedAt),
-        and(eq(auditEvent.occurredAt, state.lastForwardedAt), gt(auditEvent.id, state.lastForwardedId)),
-      )
-      : undefined;
-    const [pending] = await this.database.select({ total: count() }).from(auditEvent).where(after);
+    // The backlog is everything past the forwarder's position, counted the same
+    // way the forwarder advances it. Counting by timestamp instead would agree
+    // with the forwarder even where both are wrong: an event whose transaction
+    // committed late carries a timestamp the cursor has already passed, so it
+    // would be reported as delivered while never having been sent.
+    const [pending] = await this.database
+      .select({ total: count() })
+      .from(auditEvent)
+      .where(gt(auditEvent.cursor, state?.lastForwardedCursor ?? 0n));
     const pendingCount = pending?.total ?? 0;
 
     if ((configured?.total ?? 0) === 0) {

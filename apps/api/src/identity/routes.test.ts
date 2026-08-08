@@ -104,6 +104,63 @@ describe("enterprise identity routes", () => {
     expect(manager.startLogin).toHaveBeenCalledWith("/", expect.any(Object));
   });
 
+  it("rejects backslash forms that browsers resolve off-site", async () => {
+    // Blocking `//host` alone was not enough: browsers treat `/\host` as
+    // scheme-relative, so `new URL("/\\evil.example", origin)` yields
+    // https://evil.example/. That redirect fires the instant a user completes a
+    // genuine corporate SSO, which is the ideal setup for credential replay.
+    for (const hostile of ["%2F%5Cevil.example", "%2F%5C%5Cevil.example", "%2F%5C%2Fevil.example"]) {
+      const manager = memoryIdentityManager();
+      const app = await identityApp(manager);
+      await app.inject({ method: "GET", url: `/api/v1/auth/oidc/start?returnTo=${hostile}` });
+      expect(manager.startLogin, `returnTo=${hostile}`).toHaveBeenCalledWith("/", expect.any(Object));
+      await app.close();
+    }
+  });
+
+  it("rejects a tab-smuggled return target", async () => {
+    // WHATWG URL parsing strips TAB, CR and LF before resolving, but Node only
+    // refuses CR and LF in a header value. `/<TAB>/evil.example` therefore
+    // survived as a Location header and the browser resolved it to
+    // https://evil.example/ -- the same off-site post-SSO redirect the
+    // backslash forms above were closed for.
+    for (const hostile of ["%2F%09%2Fevil.example", "%2F%09%5Cevil.example", "%2F%09%09%2Fevil.example"]) {
+      const manager = memoryIdentityManager();
+      const app = await identityApp(manager);
+      await app.inject({ method: "GET", url: `/api/v1/auth/oidc/start?returnTo=${hostile}` });
+      expect(manager.startLogin, `returnTo=${hostile}`).toHaveBeenCalledWith("/", expect.any(Object));
+      await app.close();
+    }
+  });
+
+  it("refuses to redirect to a tab-smuggled target the provider hands back", async () => {
+    const manager = memoryIdentityManager();
+    manager.completeLogin = vi.fn(async () => ({
+      token: SESSION_TOKEN,
+      returnTo: "/\t/evil.example",
+      principal,
+    }));
+    const app = await identityApp(manager);
+
+    const response = await app.inject({
+      method: "GET",
+      url: `/api/v1/auth/oidc/callback?code=approved&state=${STATE}`,
+      headers: { cookie: `${OIDC_STATE_COOKIE}=${STATE}` },
+    });
+
+    expect(response.statusCode).toBe(302);
+    expect(response.headers.location).toBe("/");
+    expect(new URL(String(response.headers.location), "https://orcasynapse.example").origin)
+      .toBe("https://orcasynapse.example");
+  });
+
+  it("still accepts an ordinary in-app path", async () => {
+    const manager = memoryIdentityManager();
+    const app = await identityApp(manager);
+    await app.inject({ method: "GET", url: "/api/v1/auth/oidc/start?returnTo=%2Fchat%3Ftab%3D1" });
+    expect(manager.startLogin).toHaveBeenCalledWith("/chat?tab=1", expect.any(Object));
+  });
+
   it("exchanges the callback for an opaque enterprise session cookie", async () => {
     const manager = memoryIdentityManager();
     const app = await identityApp(manager);

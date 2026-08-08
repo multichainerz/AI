@@ -15,7 +15,7 @@ let context: TestDatabase;
 const actor = { id: randomUUID(), subject: "platform-admin" } as never;
 
 beforeAll(async () => { context = await createTestDatabase(); }, 120_000);
-afterAll(async () => { await context?.drop(); });
+afterAll(async () => { await context?.drop(); }, 120_000);
 beforeEach(async () => { await context.reset(); });
 
 /**

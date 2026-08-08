@@ -8,7 +8,7 @@ import type {
   ServiceConnectionSummary,
   ServiceKind,
 } from "@orcasynapse/contracts";
-import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import {
   OrcaSynapseApiError,
   completeOnboarding,
@@ -91,6 +91,18 @@ export function OnboardingView({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialTab]);
 
+  // Held in a ref so the snapshot effect below depends only on `unlocked`.
+  //
+  // App re-renders on its own poll and hands down a fresh `onSessionExpired`
+  // arrow every few seconds. Tracking that identity re-ran the load, and each
+  // run writes the stored recovery owner back into the field -- so a name an
+  // operator was typing into the recovery kit form was silently replaced
+  // mid-entry. The route effect above carries a disable for the same hazard.
+  const latestOnSessionExpired = useRef(onSessionExpired);
+  useEffect(() => {
+    latestOnSessionExpired.current = onSessionExpired;
+  }, [onSessionExpired]);
+
   useEffect(() => {
     if (!unlocked) {
       setSnapshot(null);
@@ -103,11 +115,11 @@ export function OnboardingView({
       setRecoveryOwner(next.recovery.recoveryOwner ?? "");
     }).catch((cause: unknown) => {
       if (!active) return;
-      if (cause instanceof OrcaSynapseApiError && cause.status === 401) onSessionExpired();
+      if (cause instanceof OrcaSynapseApiError && cause.status === 401) latestOnSessionExpired.current();
       else setError(cause instanceof Error ? cause.message : "Platform setup could not be loaded.");
     });
     return () => { active = false; };
-  }, [onSessionExpired, unlocked]);
+  }, [unlocked]);
 
   const run = async (key: string, operation: () => Promise<void>) => {
     if (busy) return;

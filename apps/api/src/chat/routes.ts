@@ -277,11 +277,34 @@ export async function registerChatRoutes(
       if (!reply.raw.destroyed) reply.raw.write(`: heartbeat ${Date.now()}\n\n`);
     }, 15_000);
     heartbeat.unref();
-    const emit = (value: unknown) => {
+    /** Settles on the next drain, or at once if the subscriber is already gone. */
+    const drained = () => new Promise<void>((resolve) => {
+      if (reply.raw.destroyed || controller.signal.aborted) {
+        resolve();
+        return;
+      }
+      const settle = () => {
+        reply.raw.off("drain", settle);
+        reply.raw.off("close", settle);
+        controller.signal.removeEventListener("abort", settle);
+        resolve();
+      };
+      reply.raw.once("drain", settle);
+      reply.raw.once("close", settle);
+      controller.signal.addEventListener("abort", settle, { once: true });
+    });
+    const emit = (value: unknown): void | Promise<void> => {
       const event = chatStreamEventSchema.parse(value);
       if (reply.raw.destroyed) return;
       const idLine = event.cursor ? `id: ${event.cursor}\n` : "";
-      reply.raw.write(`${idLine}event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+      if (reply.raw.write(`${idLine}event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)) return;
+      // A false return means the frame is held in this process, not on the
+      // wire. Discarding it is what let a single subscriber who stopped
+      // reading — a suspended tab resuming a long run from cursor 0 — pull the
+      // whole replay into the heap: 15,590 of 15,800 writes buffered rather
+      // than sent, 7.1 MB for one /events request. Producing again only once
+      // the response drains gives that limit back to the transport.
+      return drained();
     };
     try {
       await options.manager.subscribe(

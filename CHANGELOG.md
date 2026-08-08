@@ -5,6 +5,43 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v1.6.0 — 2026-08-08
+
+Three rounds of multi-agent audit, then a cohesion pass and two remediation
+rounds over what it found. The theme of the second half is that the first half's
+fixes were correct in code and wrong at the deployment boundary — the layer no
+unit test can see.
+
+- **No dialog in the product could be typed into.** The focus-trap effect
+  depended on `onClose`, which every call site passes as an inline arrow, so it
+  tore down and re-ran on every keystroke. That includes the VM2 installer
+  generator, so enrollment could not be completed through the dashboard at all.
+- **Ten concurrent document deletes deadlocked the API permanently** — a
+  transaction holding one pooled client while the chunk delete beside it checked
+  out a second, with waiters that never time out.
+- **`LEARN_USER` was storing the model's own answers on the default path**, and a
+  CRLF stream silently truncated an answer to its first delta while reporting
+  success, after which the distiller wrote memory derived from a fragment.
+- **`docker compose up` would have failed outright on any host with fewer than
+  four vCPUs.** Per-service `cpus:` ceilings map to NanoCPUs and the daemon
+  refuses container creation rather than clamping, so compose rolled the whole
+  stack back. Replaced with `cpu_shares:` weights, which have no host bound.
+- **Behind an upstream TLS terminator the session cookies carried no `Secure`
+  flag**, because the bundled Nginx forwarded `X-Forwarded-Proto: $scheme` while
+  listening on plain 8080. The scheme is declared by the operator now and
+  recorded, so key rotation cannot silently undo it.
+- Also, each with a regression test: the decommissioner destroyed Hermes
+  installations it did not install; the resume path had never once been executed
+  and aborted every resumed install on `set -u`; `validate_state_root` accepted
+  `/var/`; the gateway key sat in `curl`'s argv every five minutes; deleting a
+  document mid-ingestion resurrected it; a heartbeat consumed the operator
+  concurrency token; and the desired-state timer lost its state root, reporting
+  success while applying nothing.
+- Not everything the audit reported was true. Two findings were refuted with
+  probes and are recorded as refuted, because the verification is the point.
+
+1,127 tests across 121 files.
+
 ## v1.5.0 — 2026-08-07 – 2026-08-08
 
 Installer smoke tests, and VM2 running Hermes under systemd with the container

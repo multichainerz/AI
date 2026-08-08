@@ -4,6 +4,7 @@ import type { CreateAgentProfile } from "@orcasynapse/contracts";
 import {
   agentProfile,
   agentRun,
+  agentRunEvent,
   agentRuntimeControl,
   auditEvent,
   componentCompatibility,
@@ -26,7 +27,7 @@ import {
 let context: TestDatabase;
 
 beforeAll(async () => { context = await createTestDatabase(); }, 120_000);
-afterAll(async () => { await context?.drop(); });
+afterAll(async () => { await context?.drop(); }, 120_000);
 beforeEach(async () => { await context.reset(); });
 
 const principal: AgentPrincipal = { id: randomUUID(), subject: "local-admin:operator" } as AgentPrincipal;
@@ -316,6 +317,57 @@ describe("DrizzleAgentManager runs", () => {
     const metrics = await manager().metrics();
 
     expect(metrics).toMatchObject({ profiles: 2, activeProfiles: 1, queuedRuns: 1, runningRuns: 0 });
+  });
+});
+
+describe("DrizzleAgentManager run events", () => {
+  /** A run the event log can hang off; every gate submitRun checks is satisfied. */
+  async function queuedRun() {
+    const active = await activeProfile();
+    await enableRuntime();
+    await enrolHealthyRuntime();
+    return manager().submitRun(principal, { profileId: active.id, input: "trace me" } as never);
+  }
+
+  it("replays a same-millisecond burst in the order it was appended", async () => {
+    const run = await queuedRun();
+    // Hermes emits a burst faster than the timestamp column can separate:
+    // occurredAt is millisecond-resolution and id is a random UUID v4, so any
+    // order built from those two is the UUID's order, which is no order at all.
+    // A tool result then precedes its own call and delta text reassembles
+    // scrambled. cursor is the append order the row already carries.
+    const occurredAt = new Date();
+    for (let index = 0; index < 20; index += 1) {
+      await context.database
+        .insert(agentRunEvent)
+        .values({ runId: run.id, type: "MESSAGE_DELTA", delta: String(index), occurredAt });
+    }
+
+    const { items } = await manager().listRunEvents(principal, run.id, false);
+
+    expect(items.map(({ delta }) => delta)).toEqual(Array.from({ length: 20 }, (_, index) => String(index)));
+  });
+
+  it("returns the newest page of a run longer than one page", async () => {
+    const run = await queuedRun();
+    // 600 events, one per second, so the ordering question is settled and only
+    // the window is under test: a reader needs the tail of a long run, and an
+    // ascending cap showed nothing that happened after the first 500 events.
+    const start = Date.now() - 600_000;
+    await context.database.insert(agentRunEvent).values(
+      Array.from({ length: 600 }, (_, index) => ({
+        runId: run.id,
+        type: "MESSAGE_DELTA",
+        delta: String(index),
+        occurredAt: new Date(start + index * 1_000),
+      })),
+    );
+
+    const { items } = await manager().listRunEvents(principal, run.id, false);
+
+    expect(items).toHaveLength(500);
+    expect(items[0]?.delta).toBe("100");
+    expect(items.at(-1)?.delta).toBe("599");
   });
 });
 

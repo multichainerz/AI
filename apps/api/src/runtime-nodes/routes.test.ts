@@ -242,7 +242,7 @@ describe("Hermes runtime-node routes", () => {
         publicKeyPem: `-----BEGIN PUBLIC KEY-----\n${"A".repeat(80)}\n-----END PUBLIC KEY-----`,
         controlPlaneUrl: "https://orcasynapse.internal",
         apiKey: "k".repeat(64),
-        hermesVersion: "nousresearch/hermes-agent:latest",
+        hermesVersion: "c015663b215c0e14de4295346b0727db602cbb1d",
         installerVersion: "v1.70.0",
         capabilities: ["gateway-api"],
       },
@@ -267,5 +267,42 @@ describe("Hermes runtime-node routes", () => {
     });
     expect(response.statusCode).toBe(401);
     expect(response.json()).toMatchObject({ error: "INVALID_NODE_SIGNATURE" });
+  });
+
+  it("fails closed on a malformed node id instead of reaching the database", async () => {
+    // The body was schema-validated; the path parameter was not. A non-UUID
+    // reached a `uuid` column, PostgreSQL raised 22P02, and sendError's rethrow
+    // turned it into a 500 with an error log — on routes that take no
+    // credentials, so anyone could drive both. Every other bad-credential path
+    // here answers 401, and so must this.
+    const runtimeNodeManager = manager();
+    const { app } = await testApp(runtimeNodeManager);
+    for (const badId of ["not-a-uuid", "1", "'; select 1--", `${NODE_ID}x`]) {
+      const heartbeat = await app.inject({
+        method: "POST",
+        url: `/api/v1/runtime-nodes/${encodeURIComponent(badId)}/heartbeat`,
+        headers: {
+          "x-orcasynapse-node-timestamp": NOW,
+          "x-orcasynapse-node-nonce": "b6b4dc94-bcfc-41c4-bbd2-5d8e3dbc3dac",
+          "x-orcasynapse-node-signature": "invalid",
+        },
+        payload: { observedAt: NOW, status: "ONLINE", hermesVersion: "0.1.0", capabilities: [] },
+      });
+      expect(heartbeat.statusCode, `heartbeat with id ${badId}`).toBe(401);
+
+      const desired = await app.inject({
+        method: "GET",
+        url: `/api/v1/runtime-nodes/${encodeURIComponent(badId)}/desired-state`,
+        headers: {
+          "x-orcasynapse-node-timestamp": NOW,
+          "x-orcasynapse-node-nonce": "b6b4dc94-bcfc-41c4-bbd2-5d8e3dbc3dac",
+          "x-orcasynapse-node-signature": "invalid",
+        },
+      });
+      expect(desired.statusCode, `desired-state with id ${badId}`).toBe(401);
+    }
+    // Refused before the manager is consulted at all.
+    expect(runtimeNodeManager.heartbeat).not.toHaveBeenCalled();
+    expect(runtimeNodeManager.desiredState).not.toHaveBeenCalled();
   });
 });

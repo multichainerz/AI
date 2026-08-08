@@ -9,8 +9,8 @@ This document is the sanitized transfer context for continuing OrcaSynapse work 
 - Repository: <https://github.com/multichainerz/AI>
 - Local workspace: `C:\Users\Veros\Documents\GitHub\MPM`
 - Branch: `main`.
-- Baseline release: **v1.5.0** (this file ships in that release commit; `git log -1` gives the hash). Releases are tagged starting at `v0.4.0`.
-- Baseline verification: `pnpm verify` passes — 1,035 tests, typecheck, production build, and `drizzle-kit check` all green. `pnpm verify:postgres` passes against a pgvector server; `pnpm security:audit` reports no known vulnerabilities; and the four static guards (`sync-installer-ui.sh --check`, `test-release-consistency.sh`, `test-docker-build-closure.sh`, `test-csp-closure.sh`) pass.
+- Baseline release: **v1.6.0** (this file ships in that release commit; `git log -1` gives the hash). Releases are tagged starting at `v0.4.0`.
+- Baseline verification: `pnpm verify` passes — 1,039 tests, typecheck, production build, and `drizzle-kit check` all green. `pnpm verify:postgres` passes against a pgvector server; `pnpm security:audit` reports no known vulnerabilities; and the four static guards (`sync-installer-ui.sh --check`, `test-release-consistency.sh`, `test-docker-build-closure.sh`, `test-csp-closure.sh`) pass.
 - Both installers are covered end to end by lifecycle tests that execute `main()`: `scripts/test-orcasynapse-installer-smoke.sh` (VM1) and `scripts/test-agentic-installer-smoke.sh` (VM2, including decommission). Both need root and a systemd host — a WSL Ubuntu 24.04 instance with `[boot] systemd=true` is enough.
 
 **Check what is actually on the remote before assuming a deployment tests your
@@ -41,7 +41,7 @@ The operator journey:
 
 1. OrcaSynapse owns enterprise identity, authorization, policy, encrypted configuration, orchestration, audit, and inference mediation.
 2. Hermes is the only normal Chat and agent-execution path. Chat must never call the model directly.
-3. VM2 runs the agent runtime and holds no durable store. Knowledge lives in OrcaSynapse's local pgvector index and never transits VM2. Cross-conversation agent memory is not part of this release; a governed pgvector-backed replacement is the next planned change.
+3. VM2 runs the agent runtime and holds no durable store. Knowledge lives in OrcaSynapse's local pgvector index and never transits VM2. Cross-conversation agent memory ships as a governed pgvector-backed store, scoped to one person and one agent, with an installation-wide policy cap. See the agent-memory entry under What is implemented.
 4. PostgreSQL stores control-plane state, metadata, sessions, audit, durable run state, extracted knowledge chunks, and their embeddings — never original enterprise files or model weights.
 5. Source files are never persisted in OrcaSynapse: extraction happens in flight, and a failed ingestion requires re-upload.
 6. AI Inference serves models but does not own policy or durable memory.
@@ -79,10 +79,11 @@ flowchart LR
 | `packages/runtime-clients` | Hermes server-side client and connection resolver |
 | `packages/security` | Password hashing, envelope encryption, capability checks, recovery-kit primitives |
 | `install.sh` | Public VM1 bootstrap (self-contained; embeds the UI library) |
-| `scripts/install-orcasynapse.sh` | VM1 installer (sources `scripts/lib/installer-ui.sh`; six steps incl. preflight) |
+| `scripts/install-orcasynapse.sh` | VM1 installer (sources `scripts/lib/installer-ui.sh`; seven steps incl. preflight and embedding-model seed) |
 | `scripts/install-agentic-node.sh` | VM2 enrollment installer (self-contained; served by the VM1 API) |
 | `scripts/remove-agentic-node.sh` | VM2 destructive uninstall (self-contained; served by the VM1 API) |
 | `scripts/lib/installer-ui.sh` | Canonical installer terminal UI; `scripts/sync-installer-ui.sh` syncs the embedded copies |
+| `scripts/lib/public-scheme.sh` | The `--public-scheme` declaration: parsed from the command line (sudo strips the environment), recorded in `.local/state/public-scheme`, read back by install and rotation |
 | `scripts/test-*.sh` | CI-run conformance and recovery tests |
 | `compose.yaml` | VM1 postgres (pgvector image), migrate, api, worker, web services |
 
@@ -92,7 +93,7 @@ One commit per release on `main`: subject `vX.Y.Z`, body = summary sentence plus
 
 ## What is implemented
 
-- **VM1 installation**: public tarball bootstrap with upgrade/erase recovery; six-step branded installer with preflight, persistent secret-free log, versioned banner/summary, completion marker, and a one-time reindex guard for pre-pgvector data volumes.
+- **VM1 installation**: public tarball bootstrap with upgrade/erase recovery; seven-step branded installer with preflight, persistent secret-free log, versioned banner/summary, completion marker, and a one-time reindex guard for pre-pgvector data volumes.
 - **AI Inference**: guided discovery/validation for vLLM, llama.cpp, SGLang, Ollama, TGI and compatible servers; node-scoped gateway at `/internal/v1` with request limits counted in `InferenceGatewayRequest`.
 - **Agentic System**: one-time claims, Ed25519 identity, signed replay-protected enrollment and heartbeats, commit-pinned native Hermes under systemd, resumable recovery journal, drain/suspend/revoke/remove lifecycle. VM2 runs a single plane, so a node is ONLINE exactly when its Hermes API port answers. The installer refuses to adopt a Hermes it did not install, and passes `--force-commit` so the control plane's approved revision always wins over whatever the host already had.
 - **Chat**: governed Hermes Agent Runs with durable leases, resumable streams, cancellation, telemetry, feedback, fork/archive/export, and **conversation-scoped knowledge pinning** (`ChatConversationDocument`, `AgentRun.knowledgeDocumentIds`).

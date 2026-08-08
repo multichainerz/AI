@@ -1,2 +1,11 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Not a style preference. Dockerfile.api copies install-agentic-node.sh and
+# remove-agentic-node.sh out of the build context into the API image, and the
+# API serves them to operators who pipe them straight into `sudo bash`. Under
+# `* text=auto` alone a Windows clone with core.autocrlf=true -- the Git for
+# Windows default -- checks those scripts out as CRLF, and an image built from
+# that tree ships a CRLF shebang: execve then fails outright with
+# "/usr/bin/env: 'bash\r': No such file or directory".
+*.sh text eol=lf

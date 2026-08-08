@@ -19,6 +19,21 @@ export interface TestDatabase {
   database: OrcaSynapseDatabase;
   /** Empties every table without re-running migrations. */
   reset(): Promise<void>;
+  /**
+   * Releases the database. Give the hook that calls this a real budget.
+   *
+   * DROP DATABASE forces an immediate checkpoint and waits for it, so what this
+   * costs is set by how much the whole cluster has dirtied rather than by how
+   * much this one file wrote. A recursive `pnpm test` finishes twenty files at
+   * once, their drops queue behind one another's checkpoints, and a call that
+   * takes 75ms on an idle machine was measured at up to 10.8s across a
+   * concurrent run - straddling Vitest's 10s default, which failed suites on
+   * cleanup after every one of their tests had passed. Callers pass the same
+   * 120_000 their createTestDatabase hook already passes. The packages that run
+   * these suites also declare it centrally in vitest.shared.ts, so a suite
+   * written without the annotation still gets the budget rather than leaking
+   * the database it provisioned.
+   */
   drop(): Promise<void>;
 }
 

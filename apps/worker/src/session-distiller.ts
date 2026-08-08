@@ -174,8 +174,13 @@ export class SessionMemoryDistiller {
     const known = new Map<string, string>();
     for (const fact of [...profile, ...candidates]) known.set(fact.id, fact.content);
 
+    // LEARN_USER means the model's own output is not memory material. `mode`
+    // gated entry to this method but nothing filtered the turns afterwards, so
+    // the session sweep distilled assistant answers under the mode that
+    // promises it will not — the same defect the per-turn path had.
+    const offered = mode === "LEARN_EXCHANGE" ? turns : turns.filter((turn) => turn.role === "user");
     const extraction = await this.distiller.distil(
-      turns,
+      offered,
       [...known].map(([id, content]) => ({ id, content })),
     );
     if (!extraction.succeeded) {
@@ -244,7 +249,17 @@ export class SessionMemoryDistiller {
         inArray(chatMessage.role, ["USER", "ASSISTANT"]),
         ...(since ? [sql`${chatMessage.createdAt} > ${since}`] : []),
       ))
-      .orderBy(desc(chatMessage.createdAt))
+      // createdAt cannot separate a turn from its answer. The USER row and the
+      // ASSISTANT row are written by one statement inside one transaction, so
+      // both take the same CURRENT_TIMESTAMP, and a fork copies a whole
+      // conversation in one statement so every row in it ties. Ordering by that
+      // alone leaves the pair wherever the plan happened to put it: an index
+      // scan returns them in heap order and looks right, while the sort the
+      // planner picks once the table has statistics does not. Read backwards,
+      // the exchange teaches the model that the assistant asked the questions.
+      // ordinal is what records who spoke first, and it is unique per
+      // conversation, so it settles every tie.
+      .orderBy(desc(chatMessage.createdAt), desc(chatMessage.ordinal))
       .limit(MAXIMUM_TURNS);
     return rows
       .reverse()

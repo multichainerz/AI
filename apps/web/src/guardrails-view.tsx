@@ -12,6 +12,7 @@ import {
   updateGuardrailPolicy,
 } from "./api.js";
 import { adminAccess } from "./admin-access.js";
+import { slugAsTyped, slugify } from "./benchmark-suite-editor.js";
 import {
   Alert, Button, EmptyState, Field, Input, LockedScreen, Metric, MetricRow, MicroLabel,
   PageHeader, Panel, StatusText, Textarea, cn, toneFor,
@@ -64,18 +65,34 @@ export function GuardrailsView({
   const { unlocked, can } = adminAccess(session);
   const canManage = can("guardrails:manage");
 
-  const load = async () => {
-    if (!unlocked) return;
+  const load = async (): Promise<GuardrailPolicy[]> => {
+    if (!unlocked) return policies;
     try {
-      setPolicies((await getGuardrailPolicies()).items);
+      const { items } = await getGuardrailPolicies();
+      setPolicies(items);
       setError(null);
+      return items;
     } catch (cause) {
       if (cause instanceof OrcaSynapseApiError && cause.status === 401) onSessionExpired();
       else setError(cause instanceof Error ? cause.message : "Unable to load guardrail policies.");
+      return policies;
     }
   };
 
   useEffect(() => { void load(); }, [session]);
+
+  /**
+   * A 409 means another operator saved first, so the revision this screen is
+   * holding can never succeed again. Refetch, and re-point the open editor at
+   * what was actually saved: this screen has no Refresh control and load() runs
+   * only on [session], so without this every retry resends the revision that
+   * already lost and the only way out is to navigate away and back.
+   */
+  const resyncAfterConflict = async (cause: unknown) => {
+    if (!(cause instanceof OrcaSynapseApiError) || cause.status !== 409) return;
+    const items = await load();
+    setEditing((current) => (current ? items.find(({ id }) => id === current.id) ?? current : null));
+  };
 
   const startCreate = () => {
     setEditing(null);
@@ -121,7 +138,7 @@ export function GuardrailsView({
         });
         setMessage("Policy updated. Material changes now require matching promoted safety evidence.");
       } else {
-        await createGuardrailPolicy(draft);
+        await createGuardrailPolicy({ ...draft, slug: slugify(draft.slug) });
         setMessage("Draft guardrail policy created.");
       }
       setEditing(null);
@@ -129,7 +146,10 @@ export function GuardrailsView({
       await load();
     } catch (cause) {
       if (cause instanceof OrcaSynapseApiError && cause.status === 401) onSessionExpired();
-      else setError(cause instanceof Error ? cause.message : "Unable to save the guardrail policy.");
+      else {
+        await resyncAfterConflict(cause);
+        setError(cause instanceof Error ? cause.message : "Unable to save the guardrail policy.");
+      }
     } finally {
       setBusy(false);
     }
@@ -155,7 +175,10 @@ export function GuardrailsView({
       await load();
     } catch (cause) {
       if (cause instanceof OrcaSynapseApiError && cause.status === 401) onSessionExpired();
-      else setError(cause instanceof Error ? cause.message : "Unable to change the guardrail policy state.");
+      else {
+        await resyncAfterConflict(cause);
+        setError(cause instanceof Error ? cause.message : "Unable to change the guardrail policy state.");
+      }
     } finally {
       setBusy(false);
     }
@@ -244,7 +267,7 @@ export function GuardrailsView({
         </header>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Display name"><Input value={draft.displayName} minLength={2} maxLength={120} required onChange={(event) => setDraft({ ...draft, displayName: event.target.value })} /></Field>
-          <Field label="Policy slug"><Input value={draft.slug} disabled={Boolean(editing)} required onChange={(event) => setDraft({ ...draft, slug: event.target.value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") })} /></Field>
+          <Field label="Policy slug"><Input value={draft.slug} disabled={Boolean(editing)} required onChange={(event) => setDraft({ ...draft, slug: slugAsTyped(event.target.value) })} onBlur={() => setDraft((current) => ({ ...current, slug: slugify(current.slug) }))} /></Field>
           <Field label="Immutable version"><Input value={draft.version} maxLength={120} required onChange={(event) => setDraft({ ...draft, version: event.target.value })} /></Field>
           <Field label="Maximum input characters"><Input type="number" min={256} max={32000} value={draft.maxInputCharacters} required onChange={(event) => setDraft({ ...draft, maxInputCharacters: Number(event.target.value) })} /></Field>
           <Field label="Maximum output characters"><Input type="number" min={1024} max={1000000} value={draft.maxOutputCharacters} required onChange={(event) => setDraft({ ...draft, maxOutputCharacters: Number(event.target.value) })} /></Field>

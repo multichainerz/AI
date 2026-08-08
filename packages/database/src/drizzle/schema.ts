@@ -122,9 +122,19 @@ export const auditEvent = pgTable("AuditEvent", {
 	correlationId: uuid(),
 	sourceIp: inet(),
 	metadata: jsonb().default({}).notNull(),
+	/**
+	 * Delivery position for SIEM forwarding.
+	 *
+	 * occurredAt is transaction_timestamp(), so it orders events by when their
+	 * transaction began rather than by when they became readable, and a cursor
+	 * over it skips an event whose transaction commits late. This orders them
+	 * the way AgentRunEvent.cursor orders run events.
+	 */
+	cursor: bigserial({ mode: "bigint" }).notNull(),
 }, (table) => [
 	index("AuditEvent_actorId_occurredAt_idx").using("btree", table.actorId.asc().nullsLast(), table.occurredAt.asc().nullsLast()),
 	index("AuditEvent_correlationId_idx").using("btree", table.correlationId.asc().nullsLast()),
+	uniqueIndex("AuditEvent_cursor_key").using("btree", table.cursor.asc().nullsLast()),
 	index("AuditEvent_occurredAt_idx").using("btree", table.occurredAt.asc().nullsLast()),
 	index("AuditEvent_resourceType_resourceId_idx").using("btree", table.resourceType.asc().nullsLast(), table.resourceId.asc().nullsLast()),
 ]);
@@ -1239,12 +1249,17 @@ export const chatConversationDocument = pgTable("ChatConversationDocument", {
 /**
  * How far the audit trail has been forwarded to a SIEM.
  *
- * The trail is append-only and ordered by (occurredAt, id), so a keyset cursor
- * is enough to resume: everything at or before the cursor has been delivered.
- * Failures leave the cursor untouched, so a batch is retried rather than lost.
+ * Position is AuditEvent.cursor: everything at or below it has been delivered.
+ * Failures leave it untouched, so a batch is retried rather than lost.
+ *
+ * lastForwardedAt and lastForwardedId describe the last event sent and are
+ * shown to operators; they are not the position. A wall-clock cursor orders
+ * events by when their transaction began rather than by when they became
+ * readable, which permanently skipped events written by slow transactions.
  */
 export const auditForwardingState = pgTable("AuditForwardingState", {
 	id: varchar({ length: 32 }).default('global').primaryKey().notNull(),
+	lastForwardedCursor: bigint({ mode: "bigint" }),
 	lastForwardedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
 	lastForwardedId: uuid(),
 	lastAttemptAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
