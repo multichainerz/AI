@@ -167,23 +167,30 @@ export function WorkspaceContextBar({ area, activeView, onSelect, trailing }: Wo
   if (!items?.length) return null;
 
   return (
-    <div className="workspace-context-bar">
-      <div>
-        <span>{area}</span>
-        <nav aria-label={`${area} sections`}>
-          {items.map((item) => (
-            <button
-              key={item.view}
-              type="button"
-              className={item.view === activeView ? "active" : undefined}
-              aria-current={item.view === activeView ? "page" : undefined}
-              onClick={() => onSelect(item.view)}
-            >
-              {item.label}
-            </button>
-          ))}
-        </nav>
-      </div>
+    /*
+     * Pill tabs on the workspace surface, per the design's tab treatment: the
+     * selected pill takes the accent-soft fill, the rest are quiet until
+     * hovered. The old bar carried its own dark background, which survived the
+     * theme switch as a black slab on a white page.
+     */
+    <div className="mb-7 flex min-h-[44px] items-center justify-between gap-4">
+      <nav aria-label={`${area} sections`} className="flex min-w-0 items-center gap-1.5 overflow-x-auto">
+        {items.map((item) => (
+          <button
+            key={item.view}
+            type="button"
+            className={
+              item.view === activeView
+                ? "whitespace-nowrap rounded-pill border border-accent/30 bg-soft px-4 py-2 text-caption font-semibold text-accent"
+                : "whitespace-nowrap rounded-pill border border-transparent px-4 py-2 text-caption font-medium text-muted transition-colors hover:border-border-strong hover:text-text"
+            }
+            aria-current={item.view === activeView ? "page" : undefined}
+            onClick={() => onSelect(item.view)}
+          >
+            {item.label}
+          </button>
+        ))}
+      </nav>
       {trailing}
     </div>
   );

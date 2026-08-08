@@ -29,9 +29,11 @@ describe("bundled fonts", () => {
     // A family declared and then listed behind a system font would load the
     // file over the network and never draw a glyph from it.
     const families = faces.map((face) => /font-family:\s*"([^"]+)"/.exec(face)?.[1]).filter(Boolean);
-    expect(families).toContain("Inter");
+    expect(families).toContain("Plus Jakarta Sans");
+    expect(families).toContain("Space Grotesk");
     expect(families).toContain("JetBrains Mono");
-    expect(/--sans:\s*Inter\b/.test(styles), "--sans must lead with Inter").toBe(true);
+    expect(/--sans:\s*"Plus Jakarta Sans"/.test(styles), "--sans must lead with Plus Jakarta Sans").toBe(true);
+    expect(/--display:\s*"Space Grotesk"/.test(styles), "--display must lead with Space Grotesk").toBe(true);
     expect(/--mono:\s*"JetBrains Mono"/.test(styles), "--mono must lead with JetBrains Mono").toBe(true);
   });
 

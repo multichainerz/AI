@@ -48,36 +48,59 @@ export default {
         faint: "rgb(var(--faint-rgb) / <alpha-value>)",
         accent: "rgb(var(--accent-rgb) / <alpha-value>)",
         "accent-strong": "rgb(var(--accent-strong-rgb) / <alpha-value>)",
+        // Text set on an accent fill. Near-black in dark (the design's violet is
+        // light enough to carry it), white in light — a token, because guessing
+        // per call site is how one theme ends up illegible.
+        onaccent: "rgb(var(--onaccent-rgb) / <alpha-value>)",
+        // The accent-soft fill for chips, chat bubbles and avatars — a solid
+        // computed against the surface, so it reads identically everywhere.
+        soft: "rgb(var(--soft-rgb) / <alpha-value>)",
         good: "rgb(var(--good-rgb) / <alpha-value>)",
         warn: "rgb(var(--warn-rgb) / <alpha-value>)",
         bad: "rgb(var(--bad-rgb) / <alpha-value>)",
+        // The cyan "live node" — one dot of it per composition, never more.
+        node: "rgb(var(--node-rgb) / <alpha-value>)",
+        // The deep-violet brand panel behind the sidebar and the login hero.
+        // Identical in both themes; content on it is always white-on-violet.
+        brand: "rgb(var(--brand-rgb) / <alpha-value>)",
+        // Overlay backdrops, always used with an alpha modifier (bg-backdrop/50).
+        backdrop: "rgb(var(--backdrop-rgb) / <alpha-value>)",
       },
       fontFamily: {
         sans: "var(--sans)",
+        display: "var(--display)",
         mono: "var(--mono)",
       },
       fontSize: {
-        // A micro-label names a figure without competing with it: small, tracked
-        // and set in mono so a column of them lines up.
-        micro: ["9px", { lineHeight: "1.4", letterSpacing: "0.11em" }],
-        caption: ["10px", { lineHeight: "1.5" }],
-        body: ["11px", { lineHeight: "1.6" }],
-        figure: ["26px", { lineHeight: "1.1", letterSpacing: "-0.02em" }],
+        // A micro-label names a figure without competing with it: small,
+        // uppercase, tracked, tabular.
+        micro: ["10px", { lineHeight: "1.4", letterSpacing: "0.08em" }],
+        caption: ["11px", { lineHeight: "1.5" }],
+        body: ["13px", { lineHeight: "1.55" }],
+        // KPI-column value and hero stat number, both Space Grotesk.
+        figure: ["22px", { lineHeight: "1.1", letterSpacing: "-0.02em" }],
+        display: ["40px", { lineHeight: "1.05", letterSpacing: "-0.03em" }],
+        // Section and panel titles.
+        title: ["19px", { lineHeight: "1.25", letterSpacing: "-0.02em" }],
       },
       borderRadius: {
-        // Brutalist: edges are sharp. Nothing here is softer than 4px, and the
-        // pill radius exists only for the one control that must read as round.
+        // The OrcaNeuron radius scale: soft, and layered — outer surfaces are
+        // rounder than the controls inside them.
         none: "0",
-        DEFAULT: "4px",
-        md: "4px",
-        lg: "6px",
+        DEFAULT: "10px",
+        md: "8px",
+        lg: "14px",
+        input: "12px",
+        card: "18px",
+        modal: "20px",
         pill: "999px",
       },
       boxShadow: {
-        // Depth is expressed by border contrast, not by shadow. Overlays get the
-        // single exception because they must detach from the page behind them.
+        // Themed through variables: dark separates by border contrast and casts
+        // nothing; light carries the design's soft card shadow.
         none: "none",
-        overlay: "0 16px 48px rgba(0, 0, 0, .6)",
+        card: "var(--shadow-card)",
+        overlay: "var(--shadow-overlay)",
       },
     },
   },

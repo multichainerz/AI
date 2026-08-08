@@ -30,7 +30,7 @@ export function toneFor(value: string): Tone {
   return "neutral";
 }
 
-const status = cva("inline-flex items-center font-mono text-micro uppercase", {
+const status = cva("inline-flex items-center text-micro font-semibold uppercase tabular-nums", {
   variants: {
     tone: {
       neutral: "text-faint",
@@ -59,11 +59,11 @@ export function StatusText({
   return (
     <span className={cn(status({ tone }), dot ? "gap-2" : null, className)} {...rest}>
       {/*
-       * A square, and a small one. Four stylesheet rules drew this dot as a
-       * circle at four different sizes; one shape stated once is the whole point
-       * of the set, and square is what the rest of the system is.
+       * Round and breathing, per the design's live indicator. The pulse is a
+       * class from styles.css so prefers-reduced-motion can stop the whole
+       * family in one rule.
        */}
-      {dot ? <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 bg-current" /> : null}
+      {dot ? <span aria-hidden="true" className="anim-live h-1.5 w-1.5 shrink-0 rounded-pill bg-current" /> : null}
       {children}
     </span>
   );
@@ -146,7 +146,7 @@ export function LockedScreen(props: {
     <div className="grid gap-4">
       <header>
         <MicroLabel className="mb-1.5 block">{props.kicker ?? "Administration"}</MicroLabel>
-        <h1 className="m-0 text-xl font-semibold tracking-[-0.02em] text-text">{props.title}</h1>
+        <h1 className="m-0 font-display text-xl font-semibold tracking-[-0.02em] text-text">{props.title}</h1>
       </header>
       {/*
         * Three columns only once there is room for them. At 375px the auto
@@ -157,7 +157,7 @@ export function LockedScreen(props: {
       <Panel className="mx-auto my-16 grid max-w-[680px] grid-cols-[auto_minmax(0,1fr)] items-center gap-4 sm:grid-cols-[auto_minmax(0,1fr)_auto]">
         <span
           aria-hidden="true"
-          className="grid h-11 w-11 place-items-center rounded border border-border-strong bg-raised font-mono text-[15px] font-bold text-accent"
+          className="grid h-11 w-11 place-items-center rounded-pill bg-soft font-display text-[15px] font-semibold text-accent"
         >
           {props.mark}
         </span>

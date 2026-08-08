@@ -49,33 +49,42 @@
 }
 
 /*
- * Inter and JetBrains Mono, self-hosted.
+ * Plus Jakarta Sans, Space Grotesk and JetBrains Mono, self-hosted.
  *
  * `font-src 'self'` forbids a CDN, so the only legal option is a file served
- * from this origin. Both are the **latin variable** cuts only — one file each
- * covering weight 100-900, 48 KB and 40 KB — taken from
- * `@fontsource-variable/{inter,jetbrains-mono}@5.3.0` (SIL OFL-1.1). The
- * packages stay in devDependencies as provenance: they are how these two files
- * are regenerated, not how they are served.
+ * from this origin. All three are the **latin variable** cuts only — one file
+ * each, 27 KB / 22 KB / 40 KB — taken from `@fontsource-variable/*@5.3.0`
+ * (SIL OFL-1.1). The packages stay in devDependencies as provenance: they are
+ * how these files are regenerated, not how they are served.
  *
  * The whole subset set is deliberately not imported. Fontsource's stylesheet
  * carries cyrillic, greek and vietnamese behind `unicode-range`, and while a
  * browser would never fetch them, Vite emits every one into the image.
  *
- * Mono is load-bearing here rather than decorative: every micro-label, every
- * figure and every identifier is set in it, and the tabular numerals are what
- * stop a column of values shifting as it updates.
+ * The split of duties comes from the OrcaNeuron design system: Space Grotesk
+ * draws everything display-sized — headings, the big stat numbers, the brand —
+ * and Plus Jakarta Sans sets body and every kicker, with `tabular-nums` doing
+ * the column alignment mono used to. Mono remains for genuine identifiers:
+ * hashes, keys, addresses.
  *
  * `font-display: swap` — text renders immediately in the fallback and reflows
  * when the file lands. On a control plane, readable-now beats invisible-then-
  * perfect.
  */
 @font-face {
-  font-family: "Inter";
+  font-family: "Plus Jakarta Sans";
   font-style: normal;
-  font-weight: 100 900;
+  font-weight: 200 800;
   font-display: swap;
-  src: url("/fonts/inter-latin-variable.woff2") format("woff2-variations");
+  src: url("/fonts/plus-jakarta-sans-latin-variable.woff2") format("woff2-variations");
+}
+
+@font-face {
+  font-family: "Space Grotesk";
+  font-style: normal;
+  font-weight: 300 700;
+  font-display: swap;
+  src: url("/fonts/space-grotesk-latin-variable.woff2") format("woff2-variations");
 }
 
 @font-face {
@@ -88,13 +97,10 @@
 
 :root {
   /*
-   * Surfaces are neutral; violet is the only saturated colour on the screen.
+   * The OrcaNeuron token sheet. Dark is the default; `[data-theme="light"]`
+   * below overrides the same custom properties, so every utility and every
+   * legacy rule themes without knowing themes exist.
    *
-   * An earlier pass tinted the neutrals violet too, which made every panel feel
-   * coloured and left the accent nothing to stand against. Emphasis has to come
-   * from one hue against grey, not from a screen that is quietly all one hue.
-   */
-  /*
    * Channels first, hex derived from them.
    *
    * Tailwind can only apply an opacity modifier — `bg-bad/10`, `border-accent/50`
@@ -107,20 +113,31 @@
    * The channel form is the source of truth and the hex alias is derived, so the
    * two cannot drift. `styles.css` keeps using `var(--bad)`; Tailwind uses
    * `--bad-rgb`.
+   *
+   * Hairlines and the accent-soft fill are *solid* colours computed against the
+   * surfaces they sit on, not alpha layers: an alpha border needs `--line` to
+   * know what is behind it, and the one place that guess goes wrong is a token
+   * that reads differently on every surface. The design's alpha values are in
+   * the comments beside each computation.
    */
-  --bg-rgb: 10 10 11;
-  --surface-rgb: 17 17 18;
-  --raised-rgb: 23 23 26;
-  --border-rgb: 35 35 38;
-  --border-strong-rgb: 52 52 58;
-  --text-rgb: 237 237 240;
-  --muted-rgb: 161 161 170;
-  --faint-rgb: 139 139 148;
-  --accent-rgb: 162 146 221;
-  --accent-strong-rgb: 139 125 196;
-  --good-rgb: 126 201 143;
-  --warn-rgb: 217 164 65;
-  --bad-rgb: 224 118 127;
+  --bg-rgb: 16 16 20;            /* #101014 */
+  --surface-rgb: 22 22 28;       /* #16161C */
+  --raised-rgb: 28 28 36;        /* #1C1C24 */
+  --border-rgb: 38 38 44;        /* white 7% over surface */
+  --border-strong-rgb: 59 59 66; /* white 16% over surface — the design's "edge" */
+  --text-rgb: 237 237 239;       /* #EDEDEF */
+  --muted-rgb: 138 138 147;      /* #8A8A93 — the design's "dim" */
+  --faint-rgb: 92 92 100;        /* #5C5C64 */
+  --accent-rgb: 146 119 245;     /* #9277F5 */
+  --accent-strong-rgb: 168 146 248; /* #A892F8 — hover/link emphasis */
+  --onaccent-rgb: 11 11 13;      /* text on an accent fill; near-black in dark */
+  --soft-rgb: 45 40 67;          /* accent 18% over surface — chips, bubbles, avatars */
+  --good-rgb: 143 168 122;       /* sage #8FA87A */
+  --warn-rgb: 201 169 97;        /* amber #C9A961 */
+  --bad-rgb: 199 127 98;         /* coral #C77F62 */
+  --node-rgb: 34 211 238;        /* the cyan "live node" #22D3EE */
+  --brand-rgb: 43 19 100;        /* #2B1364 — sidebar and login hero, both themes */
+  --backdrop-rgb: 20 8 50;       /* overlay backdrops, used with an alpha modifier */
 
   --bg: rgb(var(--bg-rgb));
   --surface: rgb(var(--surface-rgb));
@@ -138,7 +155,17 @@
   --warn: rgb(var(--warn-rgb));
   --bad: rgb(var(--bad-rgb));
 
-  --sans: Inter, ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
+  /*
+   * Depth is themed, not constant: dark surfaces separate by border contrast
+   * and carry no shadow at all; light surfaces need the shadow because their
+   * borders are faint by design.
+   */
+  --shadow-card: none;
+  --shadow-overlay: 0 40px 90px -40px rgba(20, 8, 60, 0.55);
+
+  --sans: "Plus Jakarta Sans", ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
+  /* Display type — headings, stat figures, the brand — per the design system. */
+  --display: "Space Grotesk", var(--sans);
   /* The bundled file leads; the stack behind it only covers the moment before
      it loads, or a build where it is missing. */
   --mono: "JetBrains Mono", ui-monospace, "SF Mono", Consolas, monospace;
@@ -149,6 +176,33 @@
   background: var(--bg);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+}
+
+/*
+ * The light theme re-declares only what differs. The attribute lives on <html>
+ * (set before first paint by `theme.ts`), so there is no flash and no rule in
+ * this file ever needs to know which theme it is running under.
+ */
+[data-theme="light"] {
+  --bg-rgb: 239 240 237;         /* #EFF0ED */
+  --surface-rgb: 255 255 255;
+  --raised-rgb: 247 247 245;     /* #F7F7F5 */
+  --border-rgb: 229 229 229;     /* black 10% over white */
+  --border-strong-rgb: 209 209 209; /* black 18% */
+  --text-rgb: 25 26 28;          /* #191A1C */
+  --muted-rgb: 107 108 116;      /* #6B6C74 */
+  --faint-rgb: 147 148 156;      /* #93949C */
+  --accent-rgb: 112 61 239;      /* #703DEF */
+  --accent-strong-rgb: 91 46 219; /* #5B2EDB */
+  --onaccent-rgb: 255 255 255;
+  --soft-rgb: 241 236 253;       /* accent 10% over white */
+  --good-rgb: 79 107 59;         /* #4F6B3B */
+  --warn-rgb: 138 108 34;        /* #8A6C22 */
+  --bad-rgb: 169 78 44;          /* #A94E2C */
+  --node-rgb: 14 155 181;        /* #0E9BB5 */
+
+  --shadow-card: 0 1px 2px rgba(16, 20, 14, 0.04), 0 8px 24px -12px rgba(16, 20, 14, 0.1);
+  --shadow-overlay: 0 24px 60px -28px rgba(20, 8, 60, 0.35);
 }
 
 * { box-sizing: border-box; }
@@ -162,15 +216,20 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .application-failure > p:not(.page-kicker) { max-width: 560px; margin: 0 0 8px; color: var(--muted); font-size: 13px; line-height: 1.6; }
 
 .app-shell { min-height: 100vh; display: grid; grid-template-columns: 248px minmax(0, 1fr); }
-.sidebar { position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; padding: 24px 14px 18px; border-right: 1px solid var(--border); background: var(--surface); }
+/*
+ * The rail is the brand panel: the one deep-violet surface, identical in both
+ * themes, so its foreground colours are fixed white/alpha rather than tokens —
+ * a themed grey would vanish against a constant background.
+ */
+.sidebar { position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; padding: 20px 12px 16px; border-right: 1px solid rgba(255, 255, 255, 0.12); background: rgb(var(--brand-rgb)); }
 .brand, .mobile-brand { display: flex; align-items: center; gap: 11px; }
 .brand { padding: 0 8px 25px; }
 .brand-mark { flex: 0 0 auto; width: 38px; height: 38px; display: grid; place-items: center; border-radius: 10px; color: #fff; background: linear-gradient(145deg, #7e4fea, #6e47c9); box-shadow: inset 0 1px 0 #ffffff2b, 0 7px 18px #263d9b2e; }
 .brand-mark svg { width: 27px; height: 27px; overflow: visible; fill: currentColor; }
 .brand-mark .synapse-link { fill: none; stroke: #ceb9ff; stroke-width: 1.15; stroke-linecap: round; }
-.brand strong, .operator strong, .mobile-brand strong { display: block; font-size: 14px; font-weight: 650; letter-spacing: -.01em; }
-.brand span, .operator span { display: block; margin-top: 2px; color: var(--faint); font-size: 10px; }
-.sidebar nav { min-height: 0; flex: 1; display: grid; align-content: start; gap: 17px; padding: 1px 2px 10px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #8e82ab transparent; }
+.brand strong, .operator strong, .mobile-brand strong { display: block; font-family: var(--display); font-size: 15px; font-weight: 600; letter-spacing: -.01em; color: #fff; }
+.brand span, .operator span { display: block; margin-top: 2px; color: rgba(255, 255, 255, 0.48); font-size: 10px; }
+.sidebar nav { min-height: 0; flex: 1; display: grid; align-content: start; gap: 17px; padding: 1px 2px 10px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.28) transparent; }
 .nav-group { display: grid; gap: 3px; }
 .nav-item { width: 100%; min-height: 48px; display: flex; align-items: center; gap: 12px; padding: 9px 11px; color: var(--muted); border: 0; border-radius: 8px; background: transparent; cursor: pointer; text-align: left; transition: color .15s ease, background .15s ease; }
 .nav-item svg { flex: 0 0 auto; width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
@@ -181,14 +240,22 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .nav-item > span > strong { color: inherit; font-size: 12px; font-weight: 650; }
 .nav-item > span > small { overflow: hidden; color: #9d94a9; font-size: 9px; font-weight: 450; text-overflow: ellipsis; white-space: nowrap; }
 .sidebar-bottom { flex: 0 0 auto; margin-top: 12px; }
-.operator { display: flex; align-items: center; gap: 10px; margin-top: 13px; padding: 16px 8px 0; border-top: 1px solid var(--border); }
+.operator { display: flex; align-items: center; gap: 10px; margin-top: 13px; padding: 16px 8px 0; border-top: 1px solid rgba(255, 255, 255, 0.14); }
+.operator strong { font-family: var(--sans); font-size: 12px; }
 .operator > div:nth-child(2) { min-width: 0; flex: 1; }
-.operator > button { padding: 5px 7px; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; background: transparent; cursor: pointer; font-size: 9px; }
-.operator > button:hover { color: var(--text); border-color: #8d83a6; }
-.avatar { flex: 0 0 auto; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 50%; color: #d7c6ff; background: #31264a; font-size: 10px; font-weight: 700; }
+.operator > button { padding: 5px 8px; color: rgba(255, 255, 255, 0.62); border: 1px solid rgba(255, 255, 255, 0.22); border-radius: 999px; background: transparent; cursor: pointer; font-size: 9.5px; font-weight: 600; }
+.operator > button:hover { color: #fff; border-color: rgba(255, 255, 255, 0.42); }
+.avatar { flex: 0 0 auto; width: 32px; height: 32px; display: grid; place-items: center; border-radius: 50%; color: #fff; background: rgba(255, 255, 255, 0.14); border: 1px solid rgba(255, 255, 255, 0.18); font-family: var(--display); font-size: 11px; font-weight: 600; }
 
-main { min-width: 0; padding: 38px clamp(24px, 4vw, 64px) 64px; background: #0e0b16; }
+main { min-width: 0; padding: 0 clamp(24px, 4vw, 64px) 64px; background: var(--bg); }
 main > * { width: min(100%, 1380px); margin-left: auto; margin-right: auto; }
+/*
+ * The sticky band bleeds to the workspace edges: it cancels main's inline
+ * padding with the same clamp, re-applies it inside, and escapes the 1380px
+ * child cap so the hairline runs the full width the way the design draws it.
+ * Content beneath starts 26px later, standing in for main's old top padding.
+ */
+.workspace-header { position: sticky; top: 0; z-index: 40; width: auto; max-width: none; margin: 0 calc(-1 * clamp(24px, 4vw, 64px)) 26px; padding: 0 clamp(24px, 4vw, 64px); border-bottom: 1px solid var(--border); background: rgb(var(--bg-rgb) / 0.92); backdrop-filter: blur(12px); }
 .mobile-brand { display: none; }
 .workspace-context-bar { min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 6px 8px 6px 14px; margin-top: -18px; margin-bottom: 28px; border: 1px solid var(--border); border-radius: 10px; background: #151020; }
 .workspace-context-bar > div { min-width: 0; display: flex; align-items: center; gap: 16px; }
@@ -257,6 +324,9 @@ button:disabled { opacity: .48; cursor: not-allowed; }
 
 .chat-page { height: 100vh; padding: 0; overflow: hidden; }
 .chat-page > .mobile-brand { display: none; }
+/* Chat owns its full height; the band would push the composer off-screen, and
+   its negative clamp margins have no padding to cancel here. */
+.chat-page > .workspace-header { display: none; }
 .chat-messages { min-height: 0; overflow-y: auto; padding: 28px clamp(22px, 6vw, 84px); scrollbar-gutter: stable; }
 /*
  * The one part of the transcript that stays a stylesheet rule rather than
@@ -480,7 +550,7 @@ button:disabled { opacity: .48; cursor: not-allowed; }
 @media (max-width: 760px) {
   body { padding-bottom: 72px; }
   .app-shell { display: block; }
-  .sidebar { position: fixed; inset: auto 0 0; z-index: 150; width: 100%; height: 72px; display: flex; flex-direction: row; padding: 7px max(10px, env(safe-area-inset-right)) calc(7px + env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left)); border: 0; border-top: 1px solid var(--border); background: #10161df2; backdrop-filter: blur(16px); }
+  .sidebar { position: fixed; inset: auto 0 0; z-index: 150; width: 100%; height: 72px; display: flex; flex-direction: row; padding: 7px max(10px, env(safe-area-inset-right)) calc(7px + env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left)); border: 0; border-top: 1px solid rgba(255, 255, 255, 0.14); background: rgb(var(--brand-rgb) / 0.95); backdrop-filter: blur(16px); }
   .brand, .operator, .sidebar nav .nav-item:disabled { display: none; }
   .sidebar nav { min-width: 0; flex: 1 1 auto; display: flex; align-content: initial; gap: 2px; padding: 0; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
   .sidebar nav::-webkit-scrollbar { display: none; }
@@ -729,3 +799,29 @@ strong, .metrics dd, output, time, td, th { font-variant-numeric: tabular-nums; 
 .metric-progress.is-bad::-moz-progress-bar { background: var(--bad); }
 
 /* A retired or forgotten fact states why, directly under what it said. */
+
+/*
+ * Motion, from the design system. Three movements only: things arrive
+ * (`on-rise`), live things breathe (`live-pulse`), and the ask surface glints
+ * (`ask-shine`). Each is a plain class rather than a Tailwind animation so the
+ * reduced-motion override below can kill the whole family in one rule — an
+ * accessibility switch, not a preference.
+ */
+@keyframes on-rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes live-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1.15); }
+}
+@keyframes ask-shine {
+  0% { transform: translateX(-140%); }
+  55%, 100% { transform: translateX(360%); }
+}
+.anim-rise { animation: on-rise 0.3s ease both; }
+.anim-live { animation: live-pulse 2s ease-in-out infinite; }
+.anim-shine { animation: ask-shine 5.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .anim-rise, .anim-live, .anim-shine { animation: none; }
+}

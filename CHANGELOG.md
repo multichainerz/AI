@@ -5,7 +5,49 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
-## ai-v1.85.0 — 2026-08-08
+## ai-v1.86.0 — 2026-08-08
+
+The first of five releases moving the dashboard onto the OrcaNeuron design
+system — the foundation: tokens, fonts, themes, primitives, and the shell.
+No behaviour changed; 225 web tests pass untouched, which was the point of
+funnelling every view through one primitive set first.
+
+**The token sheet is now the design system's.** Dark stays the default —
+`#101014` surfaces, hairline borders computed as solids, violet `#9277F5`
+accent — and a complete light theme (`#EFF0ED` page, white cards, `#703DEF`
+accent) arrives as `[data-theme="light"]` overrides of the same custom
+properties, so every utility and every legacy rule themes without knowing
+themes exist. New semantic tokens: `onaccent` (near-black on violet in dark,
+white in light — the design's primary buttons are illegible without it),
+`soft` (the accent-soft fill for chips, bubbles and avatars), `node` (the one
+cyan live-dot per composition), `brand` (the deep-violet rail, identical in
+both themes), and themed shadows — dark casts nothing, light carries the
+design's soft card shadow.
+
+**Typography changed families.** Plus Jakarta Sans sets body and every kicker
+(with `tabular-nums` doing the column alignment mono used to); Space Grotesk
+draws headings, stat figures and the brand. Both vendored as latin variable
+woff2 — 27 KB and 22 KB — because `font-src 'self'` forbids the CDN the design
+referenced. Inter retired; JetBrains Mono stays for genuine identifiers.
+
+**The theme toggle lives in a new sticky workspace header**, and selection is
+applied from the entry module before React mounts — `script-src 'self'`
+forbids the classic inline pre-paint snippet, and running in `main.tsx` is
+early enough that no dark frame is ever shown to a light-theme operator. Only
+"light" is ever persisted, so a tampered value degrades to dark.
+
+**Every primitive was restyled in place** — same exports, elements and props,
+so no view changed: buttons are pills, cards are radius-18 with the themed
+shadow, inputs are radius-12 on the raised surface, overlays sit under the
+design's blurred violet backdrop, the status dot is round and breathes, and
+the section tabs are pills with the accent-soft selected fill. The sidebar is
+the brand-violet rail with the Sivali mark and the Relay duotone icon set
+(26 glyphs adapted to `currentColor` + a themed `fill-node` accent so they
+follow the theme; the upstream set hard-coded all three colours).
+
+Registered every new text-size, radius and shadow token in `cn.ts` — the
+tailwind-merge that is not told about a token deletes it silently, which is
+the one lesson this design system's first release taught.
 
 A cohesion pass over ai-v1.84.0's audit work, then two remediation rounds against
 what that pass found. The theme is that the previous release's fixes were correct

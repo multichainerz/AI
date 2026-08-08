@@ -48,6 +48,20 @@ import { HomeView, type HomeLayer, type HomeReadinessCheck } from "./home-view.j
 import { connectionFor, deriveWorkspaceReadiness } from "./platform-readiness.js";
 import { MicroLabel, cn } from "./ui/index.js";
 import {
+  ApiIcon,
+  ContainerIcon,
+  CpuIcon,
+  DeployIcon,
+  GearIcon,
+  LayersIcon,
+  MonitorIcon,
+  NodeIcon,
+  SecurityIcon,
+  StorageIcon,
+  TerminalIcon,
+} from "./ui/relay-icons.js";
+import { currentTheme, toggleTheme, type Theme } from "./theme.js";
+import {
   pathForView,
   primaryNavigationGroups,
   productAreaForView,
@@ -69,63 +83,83 @@ const MemoryView = lazy(() => import("./memory-view.js").then((module) => ({ def
 const OnboardingView = lazy(() => import("./onboarding-view.js").then((module) => ({ default: module.OnboardingView })));
 const AuditView = lazy(() => import("./audit-view.js").then((module) => ({ default: module.AuditView })));
 
+/**
+ * Navigation glyphs, dispatched by the icon key `workspace-navigation.tsx`
+ * already carries. The drawings are the Relay duotone set from the design
+ * system (`ui/relay-icons.tsx`); the mapping lives here because it is a
+ * navigation decision, not an icon-library one.
+ */
 function Glyph({ name }: { name: string }) {
   const glyphs: Record<string, ReactNode> = {
-    overview: <><path d="M4 13h6V4H4v9Z"/><path d="M14 20h6v-9h-6v9Z"/><path d="M4 20h6v-3H4v3Z"/><path d="M14 7h6V4h-6v3Z"/></>,
-    setup: <><path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h5M8 17h3"/><path d="m15.5 16.5 1.5 1.5 3-3"/></>,
-    chat: <path d="M21 12a8 8 0 0 1-8 8H7l-4 2 1.4-4.2A8 8 0 1 1 21 12Z"/>,
-    models: <><path d="m12 2 8 4.5-8 4.5-8-4.5L12 2Z"/><path d="m4 11 8 4.5 8-4.5"/><path d="m4 15.5 8 4.5 8-4.5"/></>,
-    prompts: <><path d="M6 3h12v18H6z"/><path d="M9 8h6M9 12h6M9 16h4"/></>,
-    agents: <><rect x="4" y="7" width="16" height="13" rx="3"/><path d="M9 12h.01M15 12h.01M9 16h6M12 7V3M9 3h6"/></>,
-    documents: <><path d="M6 2h8l4 4v16H6z"/><path d="M14 2v5h5M9 12h6M9 16h6"/></>,
-    integrations: <><path d="M8 12h8M12 8v8"/><circle cx="12" cy="12" r="9"/></>,
-    guardrails: <path d="M12 2 20 5v6c0 5-3.4 9-8 11-4.6-2-8-6-8-11V5l8-3Z"/>,
-    operations: <><path d="M4 18v-5M9 18V8M14 18v-3M19 18V5"/><path d="M3 21h18"/></>,
-    settings: <><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H3v-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.6V3h4v.1a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></>,
+    overview: <LayersIcon size={17} />,
+    setup: <ContainerIcon size={17} />,
+    chat: <NodeIcon size={17} />,
+    models: <CpuIcon size={17} />,
+    prompts: <TerminalIcon size={17} />,
+    agents: <DeployIcon size={17} />,
+    documents: <StorageIcon size={17} />,
+    integrations: <ApiIcon size={17} />,
+    guardrails: <SecurityIcon size={17} />,
+    operations: <MonitorIcon size={17} />,
+    settings: <GearIcon size={17} />,
   };
 
   /*
-   * The glyph carries its own presentation.
-   *
-   * It used to inherit size and stroke from `.nav-item svg`, so rebuilding the
-   * nav row on utility classes dropped the rule and every icon fell back to the
-   * SVG default: 300x150, filled black. Nothing caught it — a black shape on a
-   * dark panel has no text for the contrast sweep to measure, and the
-   * accessibility tree does not report size. Presentation attributes rather than
-   * an inline `style`, which `style-src 'self'` refuses.
+   * The glyph carries its own presentation (the Relay set brings size, stroke
+   * and the duotone fills as presentation attributes — never an inline `style`,
+   * which `style-src 'self'` refuses). It used to inherit from `.nav-item svg`,
+   * and losing that rule once rendered every icon at the SVG default 300x150,
+   * filled black, with nothing to catch it.
    */
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-      className="h-[18px] w-[18px] shrink-0"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.7}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      {glyphs[name]}
-    </svg>
-  );
+  return glyphs[name] ?? null;
 }
 
-function OrcaSynapseMark() {
-  return (
-    <svg viewBox="0 0 32 32" aria-hidden="true">
-      <path d="M7 20.5c2.2-7 7-10.2 14.5-9.8 2.5.2 4.5 1 6 2.4-2.4.2-4.4 1.1-5.8 2.8-2.3 2.7-5.1 4.4-8.4 5.2-2.2.5-4.3.3-6.3-.6Z" />
-      <path d="M21.2 10.8c.2-2 1.3-3.6 3.2-4.8.2 2.3-.5 4.2-2.1 5.7" />
-      <circle cx="10" cy="13.4" r="1.4" />
-      <circle cx="16.1" cy="9.4" r="1.2" />
-      <circle cx="22.7" cy="16.2" r="1.2" />
-      <path className="synapse-link" d="m10.9 12.4 4.2-2.3m2.2.1 4.4 5.1" />
-    </svg>
-  );
+/**
+ * The Sivali mark, served as a file rather than inlined: the traced SVG is
+ * 66 KB, so as an <img> it is fetched once and cached instead of riding in
+ * every render.
+ */
+function BrandMark({ size = 28 }: { size?: number }) {
+  return <img src="/brand/sivali-mark.svg" alt="" width={size} height={size} className="block shrink-0" />;
 }
 
 function connectionState(connection: ServiceConnectionSummary | undefined) {
   const state = connectionReadiness(connection);
   return { label: state.label, tone: state.tone };
+}
+
+/**
+ * The sticky band above every screen: where you are, and the theme switch.
+ * Blurred over the content it floats on, per the design's header treatment.
+ */
+function WorkspaceHeader({ area }: { area: string }) {
+  const [theme, setTheme] = useState<Theme>(() => currentTheme());
+  return (
+    <header className="workspace-header">
+      <div className="flex h-12 items-center gap-4">
+        <span className="font-display text-[15px] font-semibold tracking-[-0.01em] text-text">{area}</span>
+        <span className="flex-1" />
+        <button
+          type="button"
+          className="flex items-center gap-2 rounded-md border border-border-strong px-2.5 py-1.5 text-caption font-medium text-muted transition-colors hover:border-faint hover:text-text"
+          onClick={() => setTheme(toggleTheme())}
+          title={theme === "light" ? "Switch to the dark theme" : "Switch to the light theme"}
+        >
+          {theme === "light" ? (
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+              <path d="M20.4 13.2A8.4 8.4 0 0 1 10.8 3.6a8.4 8.4 0 1 0 9.6 9.6z" fill="currentColor" fillOpacity="0.14" />
+            </svg>
+          ) : (
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="4.2" fill="currentColor" fillOpacity="0.14" />
+              <path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6" />
+            </svg>
+          )}
+          {theme === "light" ? "Dark" : "Light"}
+        </button>
+      </div>
+    </header>
+  );
 }
 
 function App() {
@@ -682,26 +716,28 @@ function App() {
     <div className="app-shell">
       <aside className="sidebar" aria-label="OrcaSynapse navigation">
         <div className="brand">
-          <div className="brand-mark"><OrcaSynapseMark /></div>
+          <BrandMark />
           <div><strong>OrcaSynapse</strong><span>On-prem AI control plane</span></div>
         </div>
         <nav aria-label="Primary navigation">
           {primaryNavigationGroups.map((group) => (
             <div className="nav-group" key={group.label}>
-              <MicroLabel className="mx-2.5 mb-2 block">{group.label}</MicroLabel>
+              <MicroLabel className="mx-2.5 mb-2 block text-white/40">{group.label}</MicroLabel>
               {group.items.map(({ area, icon, target, description }) => (
                 <button
                   /*
-                   * The active row is marked by an accent rule on its leading
-                   * edge and a lift in text weight - not a filled block. A solid
-                   * highlight competes with the content it is pointing at, which
-                   * on a screen this dense is the thing that should hold the eye.
+                   * White on the brand violet, per the design: the active row is
+                   * a soft white fill and a lift to full white; inactive rows sit
+                   * at 60% and brighten on hover. Tokens would be wrong here —
+                   * the rail's background never themes, so its foreground must
+                   * not either. The description now lives in the tooltip; the
+                   * row itself is the single 13px line the design draws.
                    */
                   className={cn(
-                    "flex w-full items-center gap-3 rounded border-l-2 px-2.5 py-2 text-left transition-colors",
+                    "flex w-full items-center gap-3 rounded px-3 py-2 text-left text-[13px] transition-colors",
                     area === activeArea
-                      ? "border-l-accent bg-raised text-text"
-                      : "border-l-transparent text-muted hover:bg-raised hover:text-text",
+                      ? "bg-white/10 font-semibold text-white"
+                      : "font-medium text-white/60 hover:bg-white/[0.07] hover:text-white",
                   )}
                   key={area}
                   ref={area === activeArea ? activeNavigationItem : undefined}
@@ -711,10 +747,7 @@ function App() {
                   onClick={() => selectView(target)}
                 >
                   <Glyph name={icon} />
-                  <span className="min-w-0">
-                    <strong className="block text-[12px] font-medium leading-tight">{area}</strong>
-                    <small className="mt-0.5 block truncate text-[9px] leading-tight text-faint">{description}</small>
-                  </span>
+                  <span className="min-w-0 flex-1 truncate">{area}</span>
                 </button>
               ))}
             </div>
@@ -733,7 +766,8 @@ function App() {
       </aside>
 
       <main className={activeView === "Chat" ? "chat-page" : undefined}>
-        <div className="mobile-brand"><span className="brand-mark"><OrcaSynapseMark /></span><strong>OrcaSynapse</strong></div>
+        <div className="mobile-brand"><BrandMark size={26} /><strong>OrcaSynapse</strong></div>
+        <WorkspaceHeader area={activeArea} />
         {activeView !== "Chat" && activeView !== "Overview" && (
           <WorkspaceContextBar area={activeArea} activeView={activeView} onSelect={selectView} />
         )}

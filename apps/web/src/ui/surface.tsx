@@ -12,12 +12,24 @@ import { cn } from "./cn.js";
  */
 
 export function Panel({ className, ...rest }: HTMLAttributes<HTMLElement>) {
-  return <section className={cn("rounded border border-border bg-surface p-5", className)} {...rest} />;
+  return (
+    <section
+      className={cn("rounded-card border border-border bg-surface p-5 shadow-card", className)}
+      {...rest}
+    />
+  );
 }
 
-/** Uppercase, tracked, monospace, quiet — it names a thing without competing. */
+/**
+ * Uppercase, tracked, tabular, quiet — it names a thing without competing.
+ * Sans with tabular-nums rather than mono, per the design system: the numerals
+ * still column-align, and the label reads as part of the type family instead of
+ * as code.
+ */
 export function MicroLabel({ className, ...rest }: HTMLAttributes<HTMLSpanElement>) {
-  return <span className={cn("font-mono text-micro uppercase text-faint", className)} {...rest} />;
+  return (
+    <span className={cn("text-micro font-semibold uppercase tabular-nums text-faint", className)} {...rest} />
+  );
 }
 
 /**
@@ -39,9 +51,9 @@ export function PageHeader(props: {
     <header className={cn("mb-7 flex items-start justify-between gap-7", props.className)}>
       <div className="min-w-0 max-w-[72ch]">
         {props.kicker ? <MicroLabel className="mb-2 block">{props.kicker}</MicroLabel> : null}
-        <h1 className="m-0 text-[26px] font-semibold leading-[1.15] tracking-[-0.03em] text-text">{props.title}</h1>
+        <h1 className="m-0 font-display text-[26px] font-semibold leading-[1.15] tracking-[-0.03em] text-text">{props.title}</h1>
         {props.description ? (
-          <p className="mb-0 mt-2.5 text-[12px] leading-relaxed text-muted">{props.description}</p>
+          <p className="mb-0 mt-2.5 text-[12.5px] leading-relaxed text-muted">{props.description}</p>
         ) : null}
       </div>
       {props.actions ? <div className="flex shrink-0 items-center gap-2.5 pt-1">{props.actions}</div> : null}
@@ -60,7 +72,7 @@ export function PanelHeading(props: {
     <header className={cn("mb-4 flex items-start justify-between gap-6", props.className)}>
       <div className="min-w-0">
         {props.kicker ? <MicroLabel className="mb-1.5 block">{props.kicker}</MicroLabel> : null}
-        <h2 className="m-0 text-[15px] font-semibold tracking-[-0.01em] text-text">{props.title}</h2>
+        <h2 className="m-0 font-display text-[17px] font-semibold tracking-[-0.02em] text-text">{props.title}</h2>
         {props.description ? (
           <p className="mb-0 mt-1.5 max-w-[68ch] text-body text-muted">{props.description}</p>
         ) : null}
@@ -70,7 +82,9 @@ export function PanelHeading(props: {
   );
 }
 
-const figure = cva("block font-semibold tabular-nums tracking-[-0.02em]", {
+// Space Grotesk for every figure, per the design: the display face is what
+// makes a 22px number read as a stat rather than as large body text.
+const figure = cva("block font-display font-semibold tabular-nums tracking-[-0.02em]", {
   variants: {
     tone: {
       neutral: "text-text",
