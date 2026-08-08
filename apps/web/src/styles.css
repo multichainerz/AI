@@ -365,7 +365,7 @@ button:disabled { opacity: .48; cursor: not-allowed; }
 .ops-form label > span:first-child,
 .ops-form legend,
 .ops-form > span:first-child { color: var(--faint); font-family: var(--mono); font-size: 9px; font-weight: 500; letter-spacing: .11em; text-transform: uppercase; }
-.ops-form input, .ops-form select, .ops-form textarea { width: 100%; min-height: 36px; padding: 8px 10px; resize: vertical; color: var(--text); border: 1px solid var(--border); border-radius: 4px; outline: 0; background: var(--bg); font-size: 11px; line-height: 1.6; }
+.ops-form input, .ops-form select, .ops-form textarea { width: 100%; min-height: 36px; padding: 8px 12px; resize: vertical; color: var(--text); border: 1px solid var(--border); border-radius: 12px; outline: 0; background: var(--raised); font-size: 13px; line-height: 1.55; }
 .ops-form input:focus-visible, .ops-form select:focus-visible, .ops-form textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ops-form fieldset { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; padding: 12px; margin: 0; border: 1px solid var(--border); border-radius: 4px; }
 .ops-form fieldset legend { padding: 0 6px; }

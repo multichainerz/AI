@@ -158,3 +158,61 @@ export function MetricRow({ className, ...rest }: HTMLAttributes<HTMLDivElement>
     />
   );
 }
+
+export interface HeroBannerProps extends HTMLAttributes<HTMLElement> {
+  /**
+   * The screen's one number. `accent` draws it on the violet block with the
+   * soft circle decorations; `plain` sets it large on the card itself — the
+   * design uses the block where the figure is an achievement and the plain
+   * form where it is simply a count.
+   */
+  highlight: { label: string; value: ReactNode; caption?: ReactNode };
+  tone?: "accent" | "plain";
+  metrics: MetricProps[];
+}
+
+/**
+ * The stat banner every main screen opens with: one highlighted figure, then a
+ * row of KPI columns split by hairlines. White on the accent block is the
+ * design's choice in both themes — the block, unlike the primary button, sets
+ * display-sized type that carries the lighter dark-mode violet.
+ *
+ * Rest props reach the Panel: several screens name this region with an
+ * aria-label their tests address it by.
+ */
+export function HeroBanner({ highlight, tone = "accent", metrics, className, ...rest }: HeroBannerProps) {
+  return (
+    <Panel className={cn("flex flex-wrap items-stretch gap-y-5 p-5 sm:p-6", className)} {...rest}>
+      {tone === "accent" ? (
+        <div className="relative -my-1.5 mr-6 min-w-[240px] overflow-hidden rounded-lg bg-accent px-5 py-4 text-white">
+          <span aria-hidden="true" className="absolute -right-8 -top-8 h-28 w-28 rounded-pill bg-white/10" />
+          <span aria-hidden="true" className="absolute -bottom-10 right-1.5 h-24 w-24 rounded-pill bg-white/[0.07]" />
+          <div className="relative">
+            <MicroLabel className="block text-white/70">{highlight.label}</MicroLabel>
+            <strong className="mt-2 block font-display text-display font-semibold">{highlight.value}</strong>
+            {highlight.caption ? (
+              <small className="mt-2 block text-caption text-white/80">{highlight.caption}</small>
+            ) : null}
+          </div>
+        </div>
+      ) : (
+        <div className="mr-8 min-w-[220px]">
+          <MicroLabel className="block">{highlight.label}</MicroLabel>
+          <strong className="mt-2 block font-display text-display font-semibold text-text">{highlight.value}</strong>
+          {highlight.caption ? (
+            <small className="mt-2 block text-caption text-muted">{highlight.caption}</small>
+          ) : null}
+        </div>
+      )}
+      <div className="flex min-w-[280px] flex-1 flex-wrap items-stretch gap-y-4 border-border sm:border-l">
+        {metrics.map((metric) => (
+          <Metric
+            key={metric.label}
+            {...metric}
+            className={cn("flex-1 basis-36 border-r border-border/60 px-5 last:border-r-0", metric.className)}
+          />
+        ))}
+      </div>
+    </Panel>
+  );
+}

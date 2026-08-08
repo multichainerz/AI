@@ -16,7 +16,7 @@ import {
   updateAgentRuntime,
 } from "./api.js";
 import {
-  Alert, Button, Dialog, EmptyState, Field, Input, LockedScreen, Metric, MetricRow, MicroLabel,
+  Alert, Button, Dialog, EmptyState, Field, HeroBanner, Input, LockedScreen, MicroLabel,
   PageHeader, Panel, PanelHeading, Select, StatusText, Textarea, cn, toneFor,
 } from "./ui/index.js";
 
@@ -382,21 +382,32 @@ export function AgentsView({ unlocked, administrator, activationReady, activatio
         </div>
       </Panel>}
 
-      <MetricRow className="lg:grid-cols-4" aria-label="Agent operations summary">
-        <Metric
-          label="Profiles"
-          value={metrics?.profiles ?? profiles.length}
-          caption={`${metrics?.activeProfiles ?? profiles.filter(({ status }) => status === "ACTIVE").length} active`}
-        />
-        <Metric label="Queued" value={metrics?.queuedRuns ?? runs.filter(({ status }) => status === "QUEUED").length} caption="awaiting worker" />
-        <Metric
-          label="Running"
-          tone="accent"
-          value={metrics?.runningRuns ?? runs.filter(({ status }) => runningStatuses.has(status)).length}
-          caption="live or stopping"
-        />
-        <Metric label="Completed" value={metrics?.completedRuns ?? runs.filter(({ status }) => status === "COMPLETED").length} caption="retained outcomes" />
-      </MetricRow>
+      <HeroBanner
+        aria-label="Agent operations summary"
+        highlight={{
+          label: "Completed runs",
+          value: metrics?.completedRuns ?? runs.filter(({ status }) => status === "COMPLETED").length,
+          caption: "Retained outcomes with their complete lifecycle",
+        }}
+        metrics={[
+          {
+            label: "Profiles",
+            value: metrics?.profiles ?? profiles.length,
+            caption: `${metrics?.activeProfiles ?? profiles.filter(({ status }) => status === "ACTIVE").length} active`,
+          },
+          {
+            label: "Queued",
+            value: metrics?.queuedRuns ?? runs.filter(({ status }) => status === "QUEUED").length,
+            caption: "awaiting worker",
+          },
+          {
+            label: "Running",
+            tone: "accent",
+            value: metrics?.runningRuns ?? runs.filter(({ status }) => runningStatuses.has(status)).length,
+            caption: "live or stopping",
+          },
+        ]}
+      />
 
       <Panel>
         <PanelHeading

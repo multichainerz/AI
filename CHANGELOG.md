@@ -5,7 +5,30 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
-## ai-v1.87.0 — 2026-08-08
+## ai-v1.88.0 — 2026-08-08
+
+Screen alignment: the design's stat banner and ask surface arrive on the main
+screens. One new primitive carries most of it — `HeroBanner`, the banner every
+main screen opens with: one highlighted figure, then KPI columns split by
+hairlines. Its `accent` form draws the figure on the violet block with the
+soft circle decorations (white type in both themes — the block, unlike the
+primary button, sets display-sized type that carries the lighter dark-mode
+violet); its `plain` form sets the figure large on the card, which is the
+design's shape for a count rather than an achievement.
+
+Home opens with the accent banner on capability readiness and gains the ask
+surface as its doorway into Chat — the shine sweep, the underline input drawn
+as the launcher it actually is, and suggestion chips, all routing to Chat
+rather than pretending a question could be answered in place. Knowledge and
+Operations take the plain banner (sources, services needing attention);
+Agents takes the accent banner on completed runs. Operations also sheds its
+last bespoke `panel`/`panel-heading` markup for the primitives, and the
+`ops-form` controls take the design's input geometry ahead of their full
+conversion in the holdout sweep.
+
+`HeroBanner` forwards rest props to its Panel — several screens name the
+region with an aria-label their tests address it by, and the first draft
+silently dropped it.
 
 The front page. Signed-out users no longer see the workspace shell with locked
 panels — they see the design system's entrance: the violet hero stating what
