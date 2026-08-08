@@ -26,7 +26,7 @@ import {
 } from "./api.js";
 import { adminAccess } from "./admin-access.js";
 import {
-  Alert, Button, EmptyState, LockedScreen, Metric, MetricRow, MicroLabel,
+  Alert, Button, EmptyState, HeroBanner, LockedScreen, Metric, MetricRow, MicroLabel,
   PageHeader, Panel, PanelHeading, StatusText, cn, toneFor,
 } from "./ui/index.js";
 
@@ -356,25 +356,33 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
       </nav>
 
       {tab === "control" && <div className="grid gap-5">
-        <MetricRow className="lg:grid-cols-4" aria-label="AI operations summary">
-          <Metric
-            label="Services needing attention"
-            value={overview?.components.filter(({ status }) => status !== "HEALTHY").length ?? "--"}
-            caption={`${overview?.components.length ?? 0} observed components`}
-          />
-          <Metric
-            label="Open incidents"
-            tone={overview?.incidents.critical ? "bad" : "neutral"}
-            value={overview?.incidents.open ?? "--"}
-            caption={`${overview?.incidents.critical ?? 0} critical`}
-          />
-          <Metric label="Hermes runs pending" value={numberFormatter.format(pendingWork)} caption={`${failedWork} retained agent-run failures`} />
-          <Metric
-            label="Release evidence"
-            value={overview?.evaluations.passed ?? "--"}
-            caption={`${overview?.evaluations.drafts ?? 0} draft / ${overview?.evaluations.promoted ?? 0} promoted`}
-          />
-        </MetricRow>
+        <HeroBanner
+          tone="plain"
+          aria-label="AI operations summary"
+          highlight={{
+            label: "Services needing attention",
+            value: overview?.components.filter(({ status }) => status !== "HEALTHY").length ?? "--",
+            caption: `${overview?.components.length ?? 0} observed components`,
+          }}
+          metrics={[
+            {
+              label: "Open incidents",
+              tone: overview?.incidents.critical ? "bad" : "neutral",
+              value: overview?.incidents.open ?? "--",
+              caption: `${overview?.incidents.critical ?? 0} critical`,
+            },
+            {
+              label: "Hermes runs pending",
+              value: numberFormatter.format(pendingWork),
+              caption: `${failedWork} retained agent-run failures`,
+            },
+            {
+              label: "Release evidence",
+              value: overview?.evaluations.passed ?? "--",
+              caption: `${overview?.evaluations.drafts ?? 0} draft / ${overview?.evaluations.promoted ?? 0} promoted`,
+            },
+          ]}
+        />
 
         <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(300px,0.8fr)]">
           <Panel>
@@ -554,7 +562,7 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
           <div className="ops-form grid gap-1 rounded border border-border bg-raised p-3 sm:col-span-2"><span>Required evidence</span><p>{EVALUATION_CATEGORIES.map(humanLabel).join(" / ")}</p></div>
           <div className="flex justify-end sm:col-span-2"><button className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded border border-accent bg-accent px-3.5 text-body font-medium text-[#0a0a0b] transition-colors hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-40" type="submit" disabled={busy}>Create candidate</button></div>
         </form>}
-        <div className="grid gap-3">{evaluations.map((run) => <article className="panel evaluation-card" key={run.id}>
+        <div className="grid gap-3">{evaluations.map((run) => <article className="rounded-card border border-border bg-surface p-5 shadow-card" key={run.id}>
           <header><div><span>{humanLabel(run.targetType)}</span><h3>{run.name}</h3></div><strong className={run.status.toLowerCase()}>{humanLabel(run.status)}</strong></header>
           <p className="m-0 font-mono text-caption text-muted">{run.targetReference}<span>/ {run.targetVersion}</span></p>
           <div className="grid grid-cols-2 gap-px rounded border border-border bg-border sm:grid-cols-4"><div><strong>{percentage(run.passRate)}</strong><span>observed pass rate</span></div><div><strong>{run.passedCases}/{run.totalCases}</strong><span>cases passed</span></div><div><strong>{run.criticalFailures}</strong><span>critical failures</span></div><div><strong>{percentage(run.minimumPassRate)}</strong><span>required minimum</span></div></div>
@@ -606,11 +614,11 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
           </article>)}{readiness?.controls.length === 0 && <p className="m-0 rounded border border-dashed border-border px-4 py-7 text-body text-muted">The production-readiness checklist has not been migrated.</p>}</div>
 
           <aside className="grid gap-4">
-            <section className="panel readiness-approvals"><div className="panel-heading"><div><p className="font-mono text-micro uppercase text-faint">Latest authority decisions</p><h2>Formal sign-offs</h2></div></div><div>{(["SECURITY", "INFRASTRUCTURE", "PRODUCT", "BUSINESS"] as const).map((role) => {
+            <Panel className="readiness-approvals"><PanelHeading kicker="Latest authority decisions" title="Formal sign-offs" /><div>{(["SECURITY", "INFRASTRUCTURE", "PRODUCT", "BUSINESS"] as const).map((role) => {
               const approval = readiness?.approvals.find((item) => item.role === role);
               return <article key={role}><header><strong>{humanLabel(role)}</strong><span className={!approval ? "missing" : approval.isCurrent ? approval.decision.toLowerCase() : "stale"}>{approval ? `${humanLabel(approval.decision)}${approval.isCurrent ? "" : " / stale"}` : "Not recorded"}</span></header>{approval ? <><p>{approval.authority}</p><small>Recorded by {approval.recordedBy} / {relativeTime(approval.recordedAt)}</small><code>{approval.evidenceRef}</code></> : <p>No external authority decision is retained.</p>}</article>;
-            })}</div></section>
-            <section className="panel readiness-blockers"><div className="panel-heading"><div><p className="font-mono text-micro uppercase text-faint">Open gate conditions</p><h2>Readiness blockers</h2></div><strong>{readiness?.blockers.length ?? 0}</strong></div><ol>{readiness?.blockers.map((blocker) => <li key={blocker}>{blocker}</li>)}</ol>{readiness?.blockers.length === 0 && <p className="m-0 rounded border border-dashed border-border px-4 py-7 text-body text-muted">No derived blockers remain.</p>}</section>
+            })}</div></Panel>
+            <Panel className="readiness-blockers"><PanelHeading kicker="Open gate conditions" title="Readiness blockers" actions={<strong className="font-display text-[19px] font-semibold tabular-nums text-text">{readiness?.blockers.length ?? 0}</strong>} /><ol>{readiness?.blockers.map((blocker) => <li key={blocker}>{blocker}</li>)}</ol>{readiness?.blockers.length === 0 && <p className="m-0 rounded border border-dashed border-border px-4 py-7 text-body text-muted">No derived blockers remain.</p>}</Panel>
           </aside>
         </div>
       </section>}

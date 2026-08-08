@@ -2,10 +2,10 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "dashboard",
+      "name": "orcasynapse-dev",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--filter", "@orcasynapse/web", "dev"],
-      "autoPort": true
+      "runtimeArgs": ["dev"],
+      "port": 5173
     }
   ]
 }

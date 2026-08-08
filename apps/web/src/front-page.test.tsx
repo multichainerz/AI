@@ -1,0 +1,143 @@
+/**
+ * @vitest-environment jsdom
+ *
+ * The front page is the only door into the product now, so what these cases
+ * pin is the doorway itself: each of the four ways in reaches its handler
+ * with what the operator typed, and the states that must not be offered —
+ * SSO without OIDC, submission while trust is not READY — are absent rather
+ * than merely disabled-looking.
+ */
+import { ORCASYNAPSE_VERSION, type AdministratorSession } from "@orcasynapse/contracts";
+import { cleanup, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { FrontPage } from "./front-page.js";
+
+const handlers = () => ({
+  onLogin: vi.fn(async () => true),
+  onStartRecovery: vi.fn(async () => true),
+  onChangePassword: vi.fn(async () => true),
+  onRecover: vi.fn(async () => true),
+});
+
+const base = {
+  bootstrapState: "READY" as const,
+  busy: false,
+  error: null,
+  oidcConfigured: false,
+  session: null,
+};
+
+function changeSession(method: AdministratorSession["authenticationMethod"]): AdministratorSession {
+  return {
+    id: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d",
+    subject: "local:admin",
+    role: "PLATFORM_ADMIN",
+    scopes: ["sessions:manage"],
+    createdAt: new Date().toISOString(),
+    idleExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+    absoluteExpiresAt: new Date(Date.now() + 120_000).toISOString(),
+    authenticationMethod: method,
+    passwordChangeRequired: true,
+  };
+}
+
+afterEach(cleanup);
+
+describe("signing in from the front page", () => {
+  it("sends the typed credentials to the local sign-in handler", async () => {
+    const user = userEvent.setup();
+    const on = handlers();
+    render(<FrontPage {...base} {...on} />);
+
+    const username = screen.getByLabelText(/^username$/i);
+    await user.clear(username);
+    await user.type(username, "operations");
+    await user.type(screen.getByLabelText(/^password$/i), "a-long-enough-password");
+    await user.click(screen.getByRole("button", { name: /^sign in$/i }));
+
+    expect(on.onLogin).toHaveBeenCalledWith("operations", "a-long-enough-password");
+    expect(on.onStartRecovery).not.toHaveBeenCalled();
+  });
+
+  it("shows the version and the handler's error where the operator is looking", () => {
+    render(<FrontPage {...base} {...handlers()} error="Unable to sign in with the supplied local account." />);
+    expect(screen.getByRole("alert").textContent).toContain("Unable to sign in");
+    expect(screen.getByText(new RegExp(ORCASYNAPSE_VERSION))).toBeTruthy();
+  });
+
+  it("refuses to submit while installation trust is not READY", () => {
+    render(<FrontPage {...base} {...handlers()} bootstrapState="LOCKED" />);
+    expect(screen.getByText(/installation trust is locked/i)).toBeTruthy();
+    expect((screen.getByRole("button", { name: /^sign in$/i }) as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe("the recovery path", () => {
+  it("swaps to the Installation Key form and hands the key to its own handler", async () => {
+    const user = userEvent.setup();
+    const on = handlers();
+    render(<FrontPage {...base} {...on} />);
+
+    await user.click(screen.getByRole("button", { name: /use offline recovery key/i }));
+    await user.type(screen.getByLabelText(/installation key/i), "k".repeat(43));
+    await user.click(screen.getByRole("button", { name: /continue recovery/i }));
+
+    expect(on.onStartRecovery).toHaveBeenCalledWith("k".repeat(43));
+    expect(on.onLogin).not.toHaveBeenCalled();
+  });
+});
+
+describe("enterprise SSO", () => {
+  it("is offered only when the deployment has OIDC configured", () => {
+    const { unmount } = render(<FrontPage {...base} {...handlers()} />);
+    expect(screen.queryByRole("button", { name: /enterprise sso/i })).toBeNull();
+    unmount();
+
+    render(<FrontPage {...base} {...handlers()} oidcConfigured />);
+    expect(screen.getByRole("button", { name: /enterprise sso/i })).toBeTruthy();
+  });
+});
+
+describe("the forced password change", () => {
+  it("changes a temporary password through the change handler", async () => {
+    const user = userEvent.setup();
+    const on = handlers();
+    render(<FrontPage {...base} {...on} session={changeSession("LOCAL_PASSWORD")} />);
+
+    await user.type(screen.getByLabelText(/temporary password/i), "the-temporary-one");
+    await user.type(screen.getByLabelText(/^new password$/i), "the-permanent-one!");
+    await user.type(screen.getByLabelText(/confirm new password/i), "the-permanent-one!");
+    await user.click(screen.getByRole("button", { name: /change password/i }));
+
+    expect(on.onChangePassword).toHaveBeenCalledWith("the-temporary-one", "the-permanent-one!");
+    expect(on.onRecover).not.toHaveBeenCalled();
+  });
+
+  it("keeps mismatched passwords from ever reaching a handler", async () => {
+    const user = userEvent.setup();
+    const on = handlers();
+    render(<FrontPage {...base} {...on} session={changeSession("LOCAL_PASSWORD")} />);
+
+    await user.type(screen.getByLabelText(/temporary password/i), "the-temporary-one");
+    await user.type(screen.getByLabelText(/^new password$/i), "the-permanent-one!");
+    await user.type(screen.getByLabelText(/confirm new password/i), "a-different-one!!");
+
+    expect(screen.getByText(/do not match/i)).toBeTruthy();
+    expect((screen.getByRole("button", { name: /change password/i }) as HTMLButtonElement).disabled).toBe(true);
+    expect(on.onChangePassword).not.toHaveBeenCalled();
+  });
+
+  it("resets through the recovery handler when the session came from the Installation Key", async () => {
+    const user = userEvent.setup();
+    const on = handlers();
+    render(<FrontPage {...base} {...on} session={changeSession("INSTALLATION_KEY_RECOVERY")} />);
+
+    await user.type(screen.getByLabelText(/^new password$/i), "the-permanent-one!");
+    await user.type(screen.getByLabelText(/confirm new password/i), "the-permanent-one!");
+    await user.click(screen.getByRole("button", { name: /reset and sign in/i }));
+
+    expect(on.onRecover).toHaveBeenCalledWith("admin", "the-permanent-one!");
+    expect(on.onChangePassword).not.toHaveBeenCalled();
+  });
+});

@@ -5,6 +5,36 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v1.7.0 — 2026-08-08
+
+The OrcaNeuron design system, end to end: tokens, the front page, the banner
+primitive, Chat, and the dead-CSS sweep that closes the arc.
+
+- **The token sheet is the design system's.** Dark stays the default, and a
+  complete light theme arrives as `[data-theme="light"]` overrides of the same
+  custom properties, so every utility and every legacy rule themes without
+  knowing themes exist. New semantic tokens — `onaccent`, `soft`, `node`,
+  `brand` — and themed shadows.
+- **Typography changed families.** Plus Jakarta Sans sets body and kickers, Space
+  Grotesk draws headings and figures, both vendored as latin variable woff2
+  because `font-src 'self'` forbids the CDN the design referenced. Theme
+  selection is applied from the entry module before React mounts, since
+  `script-src 'self'` forbids the usual inline pre-paint snippet.
+- **The front page is an entrance, not a workspace.** Signed-out users see the
+  violet hero and a sign-in card carrying all four ways in, instead of the
+  workspace shell with locked panels. The connection drawer sheds its sign-in,
+  recovery and password-change branches; a new `AdminSignInDialog` owns elevation
+  from inside the shell, because the person who meets a locked screen is an
+  employee whose session opens Chat but not the governed areas. Both session
+  probes are awaited, so no surface flashes the wrong page.
+- **`HeroBanner`** is the banner every main screen opens with, and Chat takes the
+  design's three-column shape — a conversation rail led by the one action it
+  exists for, and an xl-only context rail stating what the conversation can see,
+  read-only by design.
+- Sixty-nine dead CSS rules left `styles.css`, each proven dead by a direct
+  search before deletion, because the classifier that produced the candidate list
+  cannot see a template-constructed class name.
+
 ## v1.6.0 — 2026-08-08
 
 Three rounds of multi-agent audit, then a cohesion pass and two remediation

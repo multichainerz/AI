@@ -1,3 +1,7 @@
+// First, before styles or React: sets data-theme on <html> from storage, so the
+// first painted frame is already in the operator's theme. CSP forbids the
+// classic inline <head> snippet; the entry module is the earliest legal moment.
+import "./theme.js";
 import { Component, StrictMode, type ErrorInfo, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./app.js";

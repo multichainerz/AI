@@ -891,22 +891,22 @@ export function ChatView({
      * layout be stated here rather than in a stylesheet rule keyed to a class
      * name.
      */
-    <section className="m-0 grid h-full w-full max-w-none grid-cols-1 bg-bg lg:grid-cols-[280px_minmax(0,1fr)]">
+    <section className="m-0 grid h-full w-full max-w-none grid-cols-1 bg-bg lg:grid-cols-[272px_minmax(0,1fr)] xl:grid-cols-[272px_minmax(0,1fr)_264px]">
       <aside
         className={cn(
-          "min-w-0 flex-col border-r border-border bg-surface px-3.5 pb-4 pt-5",
+          "min-w-0 flex-col border-r border-border bg-surface px-3.5 pb-4 pt-4",
           historyOpen ? "flex" : "hidden lg:flex",
         )}
       >
-        <div className="mb-4 flex items-center justify-between gap-3 px-1">
-          <div>
-            <MicroLabel className="mb-1 block">Workspace</MicroLabel>
-            <h1 className="m-0 text-[19px] font-semibold tracking-[-0.02em] text-text">Chat</h1>
-          </div>
-          <Button size="sm" onClick={newConversation}>
-            + New
-          </Button>
-        </div>
+        <h1 className="sr-only">Chat</h1>
+        {/*
+          * The rail leads with the one action it exists for, drawn the design's
+          * way: full width, accent fill, bold — a beginning, not a utility.
+          */}
+        <Button variant="primary" className="mb-3 w-full justify-center gap-2 font-bold" onClick={newConversation}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true"><path d="M12 5.5v13M5.5 12h13" /></svg>
+          New conversation
+        </Button>
         <label className="mb-3 block px-1">
           <span className="sr-only">Search conversations</span>
           <Input
@@ -928,20 +928,30 @@ export function ChatView({
               key={conversation.id}
               aria-current={active?.id === conversation.id ? "true" : undefined}
               className={cn(
-                "relative grid w-full gap-1 rounded border py-2.5 pl-3 pr-11 text-left transition-colors",
+                // The design's row: radius 10, and the active conversation is
+                // named by a short accent mark on its leading edge rather than
+                // a border all the way round.
+                "relative grid w-full gap-0.5 rounded py-2.5 pl-3.5 pr-3 text-left transition-colors",
+                "before:absolute before:bottom-2.5 before:left-0 before:top-2.5 before:w-[2.5px] before:rounded before:content-['']",
                 active?.id === conversation.id
-                  ? "border-border-strong bg-raised"
-                  : "border-transparent hover:bg-raised",
+                  ? "bg-raised before:bg-accent"
+                  : "before:bg-transparent hover:bg-raised/60",
               )}
               onClick={() => void selectConversation(conversation.id)}
             >
-              <strong className="truncate text-[11px] font-semibold text-text">{conversation.title}</strong>
-              <span className="truncate text-caption text-muted">
-                {conversation.lastMessagePreview ?? conversation.profileName ?? conversation.modelAlias}
+              <strong className={cn(
+                "truncate text-[12.5px] text-text",
+                active?.id === conversation.id ? "font-semibold" : "font-medium",
+              )}>{conversation.title}</strong>
+              <span className="flex items-center gap-1.5 text-[10.5px] text-faint">
+                <span className="shrink-0">
+                  {conversation.status === "ARCHIVED" ? "Archived" : formatConversationTime(conversation.lastMessageAt)}
+                </span>
+                <span aria-hidden="true" className="h-[2.5px] w-[2.5px] shrink-0 rounded-pill bg-faint" />
+                <span className="truncate">
+                  {conversation.lastMessagePreview ?? conversation.profileName ?? conversation.modelAlias}
+                </span>
               </span>
-              <small className="absolute right-2.5 top-3 font-mono text-[8px] text-faint">
-                {conversation.status === "ARCHIVED" ? "Archived" : formatConversationTime(conversation.lastMessageAt)}
-              </small>
             </button>
           ))}
         </div>
@@ -1011,11 +1021,11 @@ export function ChatView({
                 </Button>
               </form>
             ) : (
-              <strong className="block truncate text-[12px] font-semibold text-text">
+              <strong className="block truncate font-display text-[15px] font-semibold tracking-[-0.02em] text-text">
                 {active?.title ?? "New conversation"}
               </strong>
             )}
-            <span className="mt-1 block truncate text-caption text-faint">
+            <span className="mt-0.5 block truncate text-caption text-faint">
               {active
                 ? `${active.profileName ?? "Legacy route"} · ${active.messages.length} messages`
                 : "Start a governed Hermes conversation"}
@@ -1259,16 +1269,19 @@ export function ChatView({
 
         <div className="chat-messages" aria-live="polite">
           {!active || active.messages.length === 0 ? (
-            <div className="mx-auto max-w-[720px] pt-[min(12vh,110px)] text-center">
+            <div className="mx-auto w-full max-w-[720px] pt-[min(10vh,90px)]">
               <div
                 aria-hidden="true"
-                className="mx-auto mb-4 grid h-11 w-11 place-items-center rounded border border-border-strong bg-raised font-mono text-[14px] font-bold text-accent"
+                className="mb-4 grid h-[46px] w-[46px] place-items-center rounded-pill bg-soft"
               >
-                H
+                <img src="/brand/sivali-mark.svg" alt="" width={28} height={28} className="block" />
               </div>
-              <MicroLabel className="mb-2 block">Hermes through OrcaSynapse</MicroLabel>
-              <h2 className="m-0 text-[28px] font-semibold tracking-[-0.03em] text-text">How can I help?</h2>
-              <p className="mx-auto mb-6 mt-3 max-w-[580px] text-[12px] leading-relaxed text-muted">
+              <h2 className="m-0 font-display text-[30px] font-semibold leading-[1.2] tracking-[-0.03em] text-text">
+                Ask anything about
+                <br />
+                your workspace.
+              </h2>
+              <p className="mb-6 mt-3 max-w-[460px] text-[13px] leading-relaxed text-muted">
                 Every response is a governed Hermes Agent Run. Your selected profile controls behavior, skills, memory
                 access, and tool policy.
               </p>
@@ -1309,25 +1322,28 @@ export function ChatView({
                   </Select>
                 </Field>
               </Panel>
-              <div className="grid gap-2 sm:grid-cols-2">
+              <div className="grid gap-3 sm:grid-cols-2">
                 {[
                   {
                     label: "Outline an on-premise AI deployment",
+                    sub: "Main considerations, stated concisely",
                     prompt: "Summarize the main considerations for an on-premise AI deployment.",
                   },
                   {
                     label: "Create an AI risk checklist",
+                    sub: "For an internal assistant rollout",
                     prompt: "Create a concise risk checklist for deploying an internal AI assistant.",
                   },
                 ].map((suggestion) => (
                   <button
-                    className="rounded border border-border bg-surface px-4 py-3.5 text-left text-body leading-relaxed text-muted transition-colors hover:border-border-strong hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                    className="grid gap-1.5 rounded-lg border border-border bg-surface px-4 py-3.5 text-left transition-colors hover:border-accent hover:bg-raised/60 disabled:cursor-not-allowed disabled:opacity-40"
                     key={suggestion.label}
                     type="button"
                     disabled={!routeReady}
                     onClick={() => setDraft(suggestion.prompt)}
                   >
-                    {suggestion.label}
+                    <span className="text-[13px] font-semibold leading-snug text-text">{suggestion.label}</span>
+                    <span className="text-caption leading-snug text-faint">{suggestion.sub}</span>
                   </button>
                 ))}
               </div>
@@ -1342,24 +1358,28 @@ export function ChatView({
                */
               <article
                 className={cn(
-                  "mx-auto grid max-w-[940px] grid-cols-[34px_minmax(0,1fr)] gap-3.5",
+                  /*
+                   * The design's asymmetry, sharpened: the person's turn is a
+                   * right-aligned soft-violet bubble with the flattened corner
+                   * pointing back at them; the agent's turn is an open row
+                   * under the mark. The eye finds where an exchange begins
+                   * without reading a word, which on a long governed
+                   * transcript is most of what makes it navigable.
+                   */
                   message.role === "USER"
-                    ? "my-3.5 rounded border border-border bg-surface p-4"
-                    : "border-b border-border py-5 last-of-type:border-b-0",
+                    ? "my-3.5 ml-auto max-w-[600px] rounded-[16px] rounded-br-[5px] bg-soft px-4 py-3"
+                    : "mx-auto grid w-full max-w-[940px] grid-cols-[34px_minmax(0,1fr)] gap-3.5 border-b border-border py-5 last-of-type:border-b-0",
                 )}
                 key={message.id}
               >
-                <div
-                  aria-hidden="true"
-                  className={cn(
-                    "grid h-8 w-8 place-items-center rounded border font-mono text-micro font-bold",
-                    message.role === "USER"
-                      ? "border-border-strong bg-raised text-muted"
-                      : "border-accent/50 bg-accent/10 text-accent",
-                  )}
-                >
-                  {message.role === "USER" ? "You" : "H"}
-                </div>
+                {message.role !== "USER" && (
+                  <div
+                    aria-hidden="true"
+                    className="grid h-8 w-8 place-items-center rounded-pill bg-soft"
+                  >
+                    <img src="/brand/sivali-mark.svg" alt="" width={19} height={19} className="block" />
+                  </div>
+                )}
                 <div className="min-w-0">
                   <div className="flex min-h-[24px] items-center justify-between gap-3">
                     <div className="flex min-w-0 items-baseline gap-2">
@@ -1386,7 +1406,7 @@ export function ChatView({
                     </div>
                   </div>
                   {message.role === "USER"
-                    ? <p className="my-1.5 whitespace-pre-wrap break-words text-[12px] leading-[1.78] text-muted">{message.content}</p>
+                    ? <p className="my-1 whitespace-pre-wrap break-words text-[13px] leading-[1.6] text-text">{message.content}</p>
                     : <MarkdownMessage content={message.content || (message.status === "PENDING" ? "Thinking…" : "No content returned.")} />}
                   {message.role === "ASSISTANT" && message.status === "PENDING" && (
                     <div
@@ -1686,6 +1706,46 @@ export function ChatView({
           </div>
         </div>
       </div>
+
+      {/*
+        * The design's context rail: what this conversation can see, stated
+        * beside it rather than behind a button. Read-only — the knowledge
+        * dialog remains the one place scope changes — and xl-only, because
+        * below that width the transcript needs every pixel.
+        */}
+      <aside className="hidden min-w-0 flex-col gap-4 overflow-y-auto border-l border-border bg-surface px-5 py-5 xl:flex" aria-label="Conversation context">
+        <MicroLabel className="block">Conversation context</MicroLabel>
+        <div className="grid gap-0">
+          {active && active.knowledgeDocuments.length > 0 ? (
+            active.knowledgeDocuments.map((pin) => (
+              <div className="flex items-start gap-2.5 border-b border-border/60 py-2.5 last:border-b-0" key={pin.id}>
+                <span aria-hidden="true" className="mt-1.5 h-[5px] w-[5px] shrink-0 rounded-pill bg-accent" />
+                <div className="min-w-0">
+                  <span className="block truncate text-caption font-semibold text-text">{pin.fileName}</span>
+                  <span className="mt-0.5 block text-micro normal-case tracking-normal text-faint">{pin.classification}</span>
+                </div>
+              </div>
+            ))
+          ) : (
+            <p className="m-0 py-2 text-caption leading-relaxed text-faint">
+              {active
+                ? "No pinned sources. Retrieval may reach any indexed document this identity owns."
+                : "Open a conversation to see its knowledge scope."}
+            </p>
+          )}
+        </div>
+        {active && (
+          <Button size="sm" className="justify-self-start" disabled={working || loading} onClick={() => void openKnowledge()}>
+            Manage scope
+          </Button>
+        )}
+        <div className="mt-auto rounded-lg border border-border p-3.5">
+          <span className="block text-caption font-semibold text-text">Private by architecture</span>
+          <p className="mb-0 mt-1.5 text-caption leading-relaxed text-muted">
+            Retrieval is owner-scoped and every response is a governed run. Nothing leaves this deployment.
+          </p>
+        </div>
+      </aside>
     </section>
   );
 }

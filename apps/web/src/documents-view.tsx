@@ -16,7 +16,7 @@ import {
   uploadDocument,
 } from "./api.js";
 import {
-  Alert, Button, EmptyState, Field, Input, LockedScreen, Metric, MetricRow,
+  Alert, Button, EmptyState, Field, HeroBanner, Input, LockedScreen,
   PageHeader, Panel, PanelHeading, Select, StatusText, Textarea, cn, toneFor,
 } from "./ui/index.js";
 
@@ -229,20 +229,32 @@ export function DocumentsView(props: DocumentsViewProps) {
       </form>
     </Panel>}
 
-    <MetricRow className="lg:grid-cols-4" aria-label="Knowledge summary">
-      <Metric label="Sources" value={metrics?.total ?? documents.length} />
-      <Metric
-        label="Indexing"
-        value={metrics?.processing ?? documents.filter(({ status }) => processingStatuses.has(status)).length}
-      />
-      <Metric
-        label="Ready"
-        tone="good"
-        value={metrics?.ready ?? documents.filter(({ status }) => status === "READY").length}
-      />
-      {/* Zero is the claim, not a placeholder: the original file never lands. */}
-      <Metric label="Source bytes retained" value="0 B" caption="Chunks and metadata only" />
-    </MetricRow>
+    {/*
+      * The plain banner variant: a count is a fact, not an achievement, so the
+      * sources figure sits large on the card rather than on the accent block.
+      */}
+    <HeroBanner
+      tone="plain"
+      aria-label="Knowledge summary"
+      highlight={{
+        label: "Sources",
+        value: metrics?.total ?? documents.length,
+        caption: "Indexed for owner-scoped retrieval",
+      }}
+      metrics={[
+        {
+          label: "Indexing",
+          value: metrics?.processing ?? documents.filter(({ status }) => processingStatuses.has(status)).length,
+        },
+        {
+          label: "Ready",
+          tone: "good",
+          value: metrics?.ready ?? documents.filter(({ status }) => status === "READY").length,
+        },
+        // Zero is the claim, not a placeholder: the original file never lands.
+        { label: "Source bytes retained", value: "0 B", caption: "Chunks and metadata only" },
+      ]}
+    />
 
     <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.85fr)]">
       <Panel aria-label="Knowledge source list">

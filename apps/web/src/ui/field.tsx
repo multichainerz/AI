@@ -16,7 +16,7 @@ import { cn } from "./cn.js";
  */
 
 const control =
-  "w-full rounded border border-border bg-bg px-2.5 text-body text-text " +
+  "w-full rounded-input border border-border bg-raised px-3 text-body text-text " +
   "placeholder:text-faint " +
   "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent " +
   "disabled:cursor-not-allowed disabled:opacity-40";
@@ -30,7 +30,7 @@ export function Field(props: {
 }) {
   return (
     <label className={cn("grid gap-1.5", props.className)} htmlFor={props.htmlFor}>
-      <span className="font-mono text-micro uppercase text-faint">{props.label}</span>
+      <span className="text-micro font-semibold uppercase tabular-nums text-faint">{props.label}</span>
       {props.children}
       {props.hint ? <small className="text-caption leading-relaxed text-muted">{props.hint}</small> : null}
     </label>

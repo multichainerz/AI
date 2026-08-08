@@ -26,10 +26,10 @@ const twMerge = extendTailwindMerge({
     classGroups: {
       // The scale from `tailwind.config.ts`. Adding one there means adding it
       // here, and `cn.test.ts` fails if the two drift apart.
-      "font-size": [{ text: ["micro", "caption", "body", "figure"] }],
-      shadow: [{ shadow: ["overlay"] }],
+      "font-size": [{ text: ["micro", "caption", "body", "figure", "display", "title"] }],
+      shadow: [{ shadow: ["overlay", "card"] }],
     },
-    theme: { borderRadius: ["pill"] },
+    theme: { borderRadius: ["pill", "input", "card", "modal"] },
   },
 });
 

@@ -49,33 +49,42 @@
 }
 
 /*
- * Inter and JetBrains Mono, self-hosted.
+ * Plus Jakarta Sans, Space Grotesk and JetBrains Mono, self-hosted.
  *
  * `font-src 'self'` forbids a CDN, so the only legal option is a file served
- * from this origin. Both are the **latin variable** cuts only — one file each
- * covering weight 100-900, 48 KB and 40 KB — taken from
- * `@fontsource-variable/{inter,jetbrains-mono}@5.3.0` (SIL OFL-1.1). The
- * packages stay in devDependencies as provenance: they are how these two files
- * are regenerated, not how they are served.
+ * from this origin. All three are the **latin variable** cuts only — one file
+ * each, 27 KB / 22 KB / 40 KB — taken from `@fontsource-variable/*@5.3.0`
+ * (SIL OFL-1.1). The packages stay in devDependencies as provenance: they are
+ * how these files are regenerated, not how they are served.
  *
  * The whole subset set is deliberately not imported. Fontsource's stylesheet
  * carries cyrillic, greek and vietnamese behind `unicode-range`, and while a
  * browser would never fetch them, Vite emits every one into the image.
  *
- * Mono is load-bearing here rather than decorative: every micro-label, every
- * figure and every identifier is set in it, and the tabular numerals are what
- * stop a column of values shifting as it updates.
+ * The split of duties comes from the OrcaNeuron design system: Space Grotesk
+ * draws everything display-sized — headings, the big stat numbers, the brand —
+ * and Plus Jakarta Sans sets body and every kicker, with `tabular-nums` doing
+ * the column alignment mono used to. Mono remains for genuine identifiers:
+ * hashes, keys, addresses.
  *
  * `font-display: swap` — text renders immediately in the fallback and reflows
  * when the file lands. On a control plane, readable-now beats invisible-then-
  * perfect.
  */
 @font-face {
-  font-family: "Inter";
+  font-family: "Plus Jakarta Sans";
   font-style: normal;
-  font-weight: 100 900;
+  font-weight: 200 800;
   font-display: swap;
-  src: url("/fonts/inter-latin-variable.woff2") format("woff2-variations");
+  src: url("/fonts/plus-jakarta-sans-latin-variable.woff2") format("woff2-variations");
+}
+
+@font-face {
+  font-family: "Space Grotesk";
+  font-style: normal;
+  font-weight: 300 700;
+  font-display: swap;
+  src: url("/fonts/space-grotesk-latin-variable.woff2") format("woff2-variations");
 }
 
 @font-face {
@@ -88,13 +97,10 @@
 
 :root {
   /*
-   * Surfaces are neutral; violet is the only saturated colour on the screen.
+   * The OrcaNeuron token sheet. Dark is the default; `[data-theme="light"]`
+   * below overrides the same custom properties, so every utility and every
+   * legacy rule themes without knowing themes exist.
    *
-   * An earlier pass tinted the neutrals violet too, which made every panel feel
-   * coloured and left the accent nothing to stand against. Emphasis has to come
-   * from one hue against grey, not from a screen that is quietly all one hue.
-   */
-  /*
    * Channels first, hex derived from them.
    *
    * Tailwind can only apply an opacity modifier — `bg-bad/10`, `border-accent/50`
@@ -107,20 +113,31 @@
    * The channel form is the source of truth and the hex alias is derived, so the
    * two cannot drift. `styles.css` keeps using `var(--bad)`; Tailwind uses
    * `--bad-rgb`.
+   *
+   * Hairlines and the accent-soft fill are *solid* colours computed against the
+   * surfaces they sit on, not alpha layers: an alpha border needs `--line` to
+   * know what is behind it, and the one place that guess goes wrong is a token
+   * that reads differently on every surface. The design's alpha values are in
+   * the comments beside each computation.
    */
-  --bg-rgb: 10 10 11;
-  --surface-rgb: 17 17 18;
-  --raised-rgb: 23 23 26;
-  --border-rgb: 35 35 38;
-  --border-strong-rgb: 52 52 58;
-  --text-rgb: 237 237 240;
-  --muted-rgb: 161 161 170;
-  --faint-rgb: 139 139 148;
-  --accent-rgb: 162 146 221;
-  --accent-strong-rgb: 139 125 196;
-  --good-rgb: 126 201 143;
-  --warn-rgb: 217 164 65;
-  --bad-rgb: 224 118 127;
+  --bg-rgb: 16 16 20;            /* #101014 */
+  --surface-rgb: 22 22 28;       /* #16161C */
+  --raised-rgb: 28 28 36;        /* #1C1C24 */
+  --border-rgb: 38 38 44;        /* white 7% over surface */
+  --border-strong-rgb: 59 59 66; /* white 16% over surface — the design's "edge" */
+  --text-rgb: 237 237 239;       /* #EDEDEF */
+  --muted-rgb: 138 138 147;      /* #8A8A93 — the design's "dim" */
+  --faint-rgb: 92 92 100;        /* #5C5C64 */
+  --accent-rgb: 146 119 245;     /* #9277F5 */
+  --accent-strong-rgb: 168 146 248; /* #A892F8 — hover/link emphasis */
+  --onaccent-rgb: 11 11 13;      /* text on an accent fill; near-black in dark */
+  --soft-rgb: 45 40 67;          /* accent 18% over surface — chips, bubbles, avatars */
+  --good-rgb: 143 168 122;       /* sage #8FA87A */
+  --warn-rgb: 201 169 97;        /* amber #C9A961 */
+  --bad-rgb: 199 127 98;         /* coral #C77F62 */
+  --node-rgb: 34 211 238;        /* the cyan "live node" #22D3EE */
+  --brand-rgb: 43 19 100;        /* #2B1364 — sidebar and login hero, both themes */
+  --backdrop-rgb: 20 8 50;       /* overlay backdrops, used with an alpha modifier */
 
   --bg: rgb(var(--bg-rgb));
   --surface: rgb(var(--surface-rgb));
@@ -138,17 +155,53 @@
   --warn: rgb(var(--warn-rgb));
   --bad: rgb(var(--bad-rgb));
 
-  --sans: Inter, ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
+  /*
+   * Depth is themed, not constant: dark surfaces separate by border contrast
+   * and carry no shadow at all; light surfaces need the shadow because their
+   * borders are faint by design.
+   */
+  --shadow-card: none;
+  --shadow-overlay: 0 40px 90px -40px rgba(20, 8, 60, 0.55);
+
+  --sans: "Plus Jakarta Sans", ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
+  /* Display type — headings, stat figures, the brand — per the design system. */
+  --display: "Space Grotesk", var(--sans);
   /* The bundled file leads; the stack behind it only covers the moment before
      it loads, or a build where it is missing. */
   --mono: "JetBrains Mono", ui-monospace, "SF Mono", Consolas, monospace;
-
 
   font-family: var(--sans);
   color: var(--text);
   background: var(--bg);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+}
+
+/*
+ * The light theme re-declares only what differs. The attribute lives on <html>
+ * (set before first paint by `theme.ts`), so there is no flash and no rule in
+ * this file ever needs to know which theme it is running under.
+ */
+[data-theme="light"] {
+  --bg-rgb: 239 240 237;         /* #EFF0ED */
+  --surface-rgb: 255 255 255;
+  --raised-rgb: 247 247 245;     /* #F7F7F5 */
+  --border-rgb: 229 229 229;     /* black 10% over white */
+  --border-strong-rgb: 209 209 209; /* black 18% */
+  --text-rgb: 25 26 28;          /* #191A1C */
+  --muted-rgb: 107 108 116;      /* #6B6C74 */
+  --faint-rgb: 147 148 156;      /* #93949C */
+  --accent-rgb: 112 61 239;      /* #703DEF */
+  --accent-strong-rgb: 91 46 219; /* #5B2EDB */
+  --onaccent-rgb: 255 255 255;
+  --soft-rgb: 241 236 253;       /* accent 10% over white */
+  --good-rgb: 79 107 59;         /* #4F6B3B */
+  --warn-rgb: 138 108 34;        /* #8A6C22 */
+  --bad-rgb: 169 78 44;          /* #A94E2C */
+  --node-rgb: 14 155 181;        /* #0E9BB5 */
+
+  --shadow-card: 0 1px 2px rgba(16, 20, 14, 0.04), 0 8px 24px -12px rgba(16, 20, 14, 0.1);
+  --shadow-overlay: 0 24px 60px -28px rgba(20, 8, 60, 0.35);
 }
 
 * { box-sizing: border-box; }
@@ -162,42 +215,38 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .application-failure > p:not(.page-kicker) { max-width: 560px; margin: 0 0 8px; color: var(--muted); font-size: 13px; line-height: 1.6; }
 
 .app-shell { min-height: 100vh; display: grid; grid-template-columns: 248px minmax(0, 1fr); }
-.sidebar { position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; padding: 24px 14px 18px; border-right: 1px solid var(--border); background: var(--surface); }
+/*
+ * The rail is the brand panel: the one deep-violet surface, identical in both
+ * themes, so its foreground colours are fixed white/alpha rather than tokens —
+ * a themed grey would vanish against a constant background.
+ */
+.sidebar { position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; padding: 20px 12px 16px; border-right: 1px solid rgba(255, 255, 255, 0.12); background: rgb(var(--brand-rgb)); }
 .brand, .mobile-brand { display: flex; align-items: center; gap: 11px; }
 .brand { padding: 0 8px 25px; }
 .brand-mark { flex: 0 0 auto; width: 38px; height: 38px; display: grid; place-items: center; border-radius: 10px; color: #fff; background: linear-gradient(145deg, #7e4fea, #6e47c9); box-shadow: inset 0 1px 0 #ffffff2b, 0 7px 18px #263d9b2e; }
 .brand-mark svg { width: 27px; height: 27px; overflow: visible; fill: currentColor; }
-.brand-mark .synapse-link { fill: none; stroke: #ceb9ff; stroke-width: 1.15; stroke-linecap: round; }
-.brand strong, .operator strong, .mobile-brand strong { display: block; font-size: 14px; font-weight: 650; letter-spacing: -.01em; }
-.brand span, .operator span { display: block; margin-top: 2px; color: var(--faint); font-size: 10px; }
-.sidebar nav { min-height: 0; flex: 1; display: grid; align-content: start; gap: 17px; padding: 1px 2px 10px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #8e82ab transparent; }
+.brand strong, .operator strong, .mobile-brand strong { display: block; font-family: var(--display); font-size: 15px; font-weight: 600; letter-spacing: -.01em; color: #fff; }
+.brand span, .operator span { display: block; margin-top: 2px; color: rgba(255, 255, 255, 0.48); font-size: 10px; }
+.sidebar nav { min-height: 0; flex: 1; display: grid; align-content: start; gap: 17px; padding: 1px 2px 10px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.28) transparent; }
 .nav-group { display: grid; gap: 3px; }
-.nav-item { width: 100%; min-height: 48px; display: flex; align-items: center; gap: 12px; padding: 9px 11px; color: var(--muted); border: 0; border-radius: 8px; background: transparent; cursor: pointer; text-align: left; transition: color .15s ease, background .15s ease; }
-.nav-item svg { flex: 0 0 auto; width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
-.nav-item:hover:not(:disabled) { color: var(--text); background: var(--raised); }
-.nav-item.active { color: #fff; background: #28203a; box-shadow: inset 2px 0 0 var(--accent); }
-.nav-item:disabled { color: #8c849a; cursor: not-allowed; }
-.nav-item > span { min-width: 0; display: grid; gap: 2px; }
-.nav-item > span > strong { color: inherit; font-size: 12px; font-weight: 650; }
-.nav-item > span > small { overflow: hidden; color: #9d94a9; font-size: 9px; font-weight: 450; text-overflow: ellipsis; white-space: nowrap; }
 .sidebar-bottom { flex: 0 0 auto; margin-top: 12px; }
-.operator { display: flex; align-items: center; gap: 10px; margin-top: 13px; padding: 16px 8px 0; border-top: 1px solid var(--border); }
+.operator { display: flex; align-items: center; gap: 10px; margin-top: 13px; padding: 16px 8px 0; border-top: 1px solid rgba(255, 255, 255, 0.14); }
+.operator strong { font-family: var(--sans); font-size: 12px; }
 .operator > div:nth-child(2) { min-width: 0; flex: 1; }
-.operator > button { padding: 5px 7px; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; background: transparent; cursor: pointer; font-size: 9px; }
-.operator > button:hover { color: var(--text); border-color: #8d83a6; }
-.avatar { flex: 0 0 auto; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 50%; color: #d7c6ff; background: #31264a; font-size: 10px; font-weight: 700; }
+.operator > button { padding: 5px 8px; color: rgba(255, 255, 255, 0.62); border: 1px solid rgba(255, 255, 255, 0.22); border-radius: 999px; background: transparent; cursor: pointer; font-size: 9.5px; font-weight: 600; }
+.operator > button:hover { color: #fff; border-color: rgba(255, 255, 255, 0.42); }
+.avatar { flex: 0 0 auto; width: 32px; height: 32px; display: grid; place-items: center; border-radius: 50%; color: #fff; background: rgba(255, 255, 255, 0.14); border: 1px solid rgba(255, 255, 255, 0.18); font-family: var(--display); font-size: 11px; font-weight: 600; }
 
-main { min-width: 0; padding: 38px clamp(24px, 4vw, 64px) 64px; background: #0e0b16; }
+main { min-width: 0; padding: 0 clamp(24px, 4vw, 64px) 64px; background: var(--bg); }
 main > * { width: min(100%, 1380px); margin-left: auto; margin-right: auto; }
+/*
+ * The sticky band bleeds to the workspace edges: it cancels main's inline
+ * padding with the same clamp, re-applies it inside, and escapes the 1380px
+ * child cap so the hairline runs the full width the way the design draws it.
+ * Content beneath starts 26px later, standing in for main's old top padding.
+ */
+.workspace-header { position: sticky; top: 0; z-index: 40; width: auto; max-width: none; margin: 0 calc(-1 * clamp(24px, 4vw, 64px)) 26px; padding: 0 clamp(24px, 4vw, 64px); border-bottom: 1px solid var(--border); background: rgb(var(--bg-rgb) / 0.92); backdrop-filter: blur(12px); }
 .mobile-brand { display: none; }
-.workspace-context-bar { min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 6px 8px 6px 14px; margin-top: -18px; margin-bottom: 28px; border: 1px solid var(--border); border-radius: 10px; background: #151020; }
-.workspace-context-bar > div { min-width: 0; display: flex; align-items: center; gap: 16px; }
-.workspace-context-bar > div > span { flex: 0 0 auto; color: #c0b9d2; font-size: 11px; font-weight: 700; }
-.workspace-context-bar nav { min-width: 0; display: flex; align-items: center; gap: 3px; overflow-x: auto; scrollbar-width: none; }
-.workspace-context-bar nav::-webkit-scrollbar { display: none; }
-.workspace-context-bar button { min-height: 36px; padding: 7px 10px; color: var(--muted); border: 0; border-radius: 7px; background: transparent; cursor: pointer; font-size: 10px; font-weight: 600; white-space: nowrap; }
-.workspace-context-bar button:hover { color: var(--text); background: #1e182c; }
-.workspace-context-bar button.active { color: #fff; background: #302549; box-shadow: inset 0 0 0 1px #51407a; }
 /*
  * Micro-label: monospace, uppercase, widely tracked, quiet.
  *
@@ -257,6 +306,9 @@ button:disabled { opacity: .48; cursor: not-allowed; }
 
 .chat-page { height: 100vh; padding: 0; overflow: hidden; }
 .chat-page > .mobile-brand { display: none; }
+/* Chat owns its full height; the band would push the composer off-screen, and
+   its negative clamp margins have no padding to cancel here. */
+.chat-page > .workspace-header { display: none; }
 .chat-messages { min-height: 0; overflow-y: auto; padding: 28px clamp(22px, 6vw, 84px); scrollbar-gutter: stable; }
 /*
  * The one part of the transcript that stays a stylesheet rule rather than
@@ -295,7 +347,7 @@ button:disabled { opacity: .48; cursor: not-allowed; }
 .ops-form label > span:first-child,
 .ops-form legend,
 .ops-form > span:first-child { color: var(--faint); font-family: var(--mono); font-size: 9px; font-weight: 500; letter-spacing: .11em; text-transform: uppercase; }
-.ops-form input, .ops-form select, .ops-form textarea { width: 100%; min-height: 36px; padding: 8px 10px; resize: vertical; color: var(--text); border: 1px solid var(--border); border-radius: 4px; outline: 0; background: var(--bg); font-size: 11px; line-height: 1.6; }
+.ops-form input, .ops-form select, .ops-form textarea { width: 100%; min-height: 36px; padding: 8px 12px; resize: vertical; color: var(--text); border: 1px solid var(--border); border-radius: 12px; outline: 0; background: var(--raised); font-size: 13px; line-height: 1.55; }
 .ops-form input:focus-visible, .ops-form select:focus-visible, .ops-form textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ops-form fieldset { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; padding: 12px; margin: 0; border: 1px solid var(--border); border-radius: 4px; }
 .ops-form fieldset legend { padding: 0 6px; }
@@ -303,12 +355,6 @@ button:disabled { opacity: .48; cursor: not-allowed; }
 /* Field hints. Without this they inherit the panel's body size and read
    as loud as the label they are explaining. */
 .ops-form label > small { color: var(--muted); font-size: 10px; line-height: 1.55; }
-
-/* The evaluation score strip: four figures that must line up as a column. */
-
-
-.connection-drawer { width: min(650px, 100%); height: 100%; overflow-y: auto; padding: 27px; color: var(--text); border-left: 1px solid var(--border); background: #14101d; box-shadow: -18px 0 45px #0008; }
-.connection-drawer > header { display: flex; justify-content: space-between; align-items: flex-start; padding-bottom: 19px; border-bottom: 1px solid var(--border); }
 .drawer-operations-details { margin-top: 14px; border: 1px solid var(--border); border-radius: 8px; background: #130e1d; }
 .drawer-operations-details > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 13px; color: var(--muted); cursor: pointer; list-style: none; }
 .drawer-operations-details > summary::-webkit-details-marker { display: none; }
@@ -325,19 +371,9 @@ button:disabled { opacity: .48; cursor: not-allowed; }
 .monitoring-control > div span { margin-top: 4px; color: var(--muted); font-size: 10px; line-height: 1.5; }
 .monitoring-control > button { min-height: 42px; white-space: nowrap; }
 .monitoring-control .monitoring-toggle { min-height: 42px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; background: #100c18; white-space: nowrap; }
-.monitoring-control .monitoring-toggle input { width: 15px; min-height: 15px; margin: 0; accent-color: var(--accent); }
-.unlock-form { max-width: 400px; margin: 62px auto; text-align: center; }
-.lock-mark { width: 50px; height: 50px; display: grid; place-items: center; margin: 0 auto 17px; color: #e0d3ff; border: 1px solid #554678; border-radius: 11px; background: #302548; font-weight: 750; }
-.unlock-form h3, .form-heading h3 { margin: 0; font-size: 18px; }
-.unlock-form > p { margin: 9px 0 23px; color: var(--muted); font-size: 12px; line-height: 1.6; }
-.form-notice, .form-error { padding: 10px 12px; border-radius: 8px; font-size: 11px; text-align: left; }
-.form-notice { color: #f0c887; border: 1px solid #604b2e; background: #2a2218; }
-.form-error { color: #ffc0c5; border: 1px solid #663a42; background: #291a20; }
-.unlock-form label, .connection-form label { display: grid; gap: 7px; color: #b4adc5; font-size: 11px; font-weight: 600; text-align: left; }
-.connection-form input, .connection-form select, .unlock-form input { width: 100%; min-height: 42px; padding: 9px 11px; color: var(--text); border: 1px solid #3d354e; border-radius: 8px; outline: none; background: #100c18; }
-.connection-form input:focus, .connection-form select:focus, .unlock-form input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px #7894ff1f; }
+.monitoring-control .monitoring-toggle input { width: 15px; min-height: 15px; margin: 0; accent-color: var(--accent); }.form-heading h3 { margin: 0; font-size: 18px; }.form-error { padding: 10px 12px; border-radius: 8px; font-size: 11px; text-align: left; }
+.form-error { color: #ffc0c5; border: 1px solid #663a42; background: #291a20; }.connection-form label { display: grid; gap: 7px; color: #b4adc5; font-size: 11px; font-weight: 600; text-align: left; }.connection-form input, .connection-form select { width: 100%; min-height: 42px; padding: 9px 11px; color: var(--text); border: 1px solid #3d354e; border-radius: 8px; outline: none; background: #100c18; }.connection-form input:focus, .connection-form select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px #7894ff1f; }
 .connection-form input:disabled { color: var(--faint); background: #191522; }
-.drawer-submit { width: 100%; margin-top: 14px; }
 .kind-tabs { display: flex; gap: 6px; overflow-x: auto; padding: 19px 0 14px; scrollbar-width: none; }
 .kind-tabs::-webkit-scrollbar { display: none; }
 .kind-tabs button { flex: 0 0 auto; min-height: 34px; padding: 7px 10px; color: var(--muted); border: 1px solid var(--border); border-radius: 7px; background: var(--bg); cursor: pointer; font-size: 10px; }
@@ -442,9 +478,7 @@ button:disabled { opacity: .48; cursor: not-allowed; }
 
 .documents-alert { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 11px 13px; color: #ffc0c5; border: 1px solid #663a42; border-radius: 8px; background: #291a20; font-size: 10px; }
 .documents-alert button { color: inherit; border: 0; background: transparent; cursor: pointer; font-size: 9px; font-weight: 650; }
-.documents-alert.agent-success { color: #b8ead2; border-color: #549578; background: #13231d; }
 .document-section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 15px; padding: 17px 18px; border-bottom: 1px solid var(--border); }
-.document-section-heading .section-kicker { margin-bottom: 4px; font-size: 9px; }
 .document-section-heading h2 { overflow-wrap: anywhere; font-size: 16px; }
 .document-section-heading > button { min-height: 31px; padding: 6px 9px; color: var(--muted); border: 1px solid var(--border); border-radius: 7px; background: var(--bg); cursor: pointer; font-size: 9px; }
 .document-status { display: inline-flex; align-items: center; padding: 0; color: var(--faint); border: 0; border-radius: 0; background: none; font: 9px/1.5 var(--mono); font-weight: 500; letter-spacing: .09em; text-transform: uppercase; white-space: nowrap; }
@@ -453,58 +487,27 @@ button:disabled { opacity: .48; cursor: not-allowed; }
 .document-status.quarantined { color: var(--warn); }
 .document-status.processing { color: #d1bdff; border-color: #927fbc; background: #2a2042; }
 @keyframes document-spin { to { transform: rotate(360deg); } }
-.agent-editor input, .agent-editor textarea { width: 100%; color: var(--text); border: 1px solid #3d354e; border-radius: 8px; outline: 0; background: #100c18; }
-.agent-editor input:focus, .agent-editor textarea:focus { border-color: #907ebb; box-shadow: 0 0 0 3px #7894ff17; }
-.agent-editor > label { display: grid; gap: 6px; color: #a29bb4; font-size: 8px; font-weight: 650; }
-.agent-editor-backdrop { position: fixed; inset: 0; z-index: 400; display: grid; justify-items: end; background: #05080ca8; backdrop-filter: blur(5px); }
-.agent-editor { width: min(620px, 100%); height: 100%; overflow-y: auto; display: grid; align-content: start; gap: 15px; padding: 24px; border-left: 1px solid var(--border); background: #161120; box-shadow: -20px 0 65px #0008; }
-.agent-editor header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding-bottom: 15px; border-bottom: 1px solid var(--border); }
-.agent-editor header h2 { margin-top: 4px; font-size: 19px; }
-.agent-editor header > button { color: #a29ab3; border: 0; background: transparent; cursor: pointer; font-size: 24px; line-height: 1; }
-.agent-editor input { min-height: 39px; padding: 8px 10px; font-size: 9px; }
-.agent-editor textarea { min-height: 74px; resize: vertical; padding: 9px 10px; font-size: 9px; line-height: 1.5; }
-.agent-editor textarea.instructions { min-height: 145px; }
-.agent-editor input:disabled { color: #8d849b; background: #1a1524; }
-.agent-editor footer { display: flex; justify-content: flex-end; gap: 8px; padding-top: 4px; }
-
-
-
-
 
 /* Shared workspace rhythm */
 
 @media (max-width: 1120px) {
   .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-
-@media (max-width: 760px) {
+}@media (max-width: 760px) {
   body { padding-bottom: 72px; }
   .app-shell { display: block; }
-  .sidebar { position: fixed; inset: auto 0 0; z-index: 150; width: 100%; height: 72px; display: flex; flex-direction: row; padding: 7px max(10px, env(safe-area-inset-right)) calc(7px + env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left)); border: 0; border-top: 1px solid var(--border); background: #10161df2; backdrop-filter: blur(16px); }
-  .brand, .operator, .sidebar nav .nav-item:disabled { display: none; }
+  .sidebar { position: fixed; inset: auto 0 0; z-index: 150; width: 100%; height: 72px; display: flex; flex-direction: row; padding: 7px max(10px, env(safe-area-inset-right)) calc(7px + env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left)); border: 0; border-top: 1px solid rgba(255, 255, 255, 0.14); background: rgb(var(--brand-rgb) / 0.95); backdrop-filter: blur(16px); }.brand, .operator { display: none; }
   .sidebar nav { min-width: 0; flex: 1 1 auto; display: flex; align-content: initial; gap: 2px; padding: 0; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
   .sidebar nav::-webkit-scrollbar { display: none; }
   .nav-group { display: contents; }
   .sidebar-bottom { display: none; }
-  .nav-item { min-width: 52px; flex: 1 1 0; min-height: 55px; flex-direction: column; justify-content: center; gap: 4px; padding: 5px 3px; text-align: center; }
-  .nav-item svg { width: 20px; height: 20px; }
-  .nav-item > span { display: block; }
-  .nav-item > span > strong { display: block; overflow: hidden; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
-  .nav-item > span > small { display: none; }
-  .nav-item.active { box-shadow: inset 0 2px 0 var(--accent); }
   main { padding: 19px 16px 38px; }
-  .workspace-context-bar { align-items: stretch; flex-direction: column; padding: 9px; margin-top: -8px; margin-bottom: 20px; }
-  .workspace-context-bar > div { align-items: flex-start; flex-direction: column; gap: 6px; }
-  .workspace-context-bar nav { width: 100%; }
   .mobile-brand { display: flex; margin-bottom: 24px; }
   .mobile-brand .brand-mark { width: 32px; height: 32px; border-radius: 8px; }
   .mobile-brand .brand-mark svg { width: 23px; height: 23px; }
   .mobile-brand strong { font-size: 13px; }
   .chat-page { height: calc(100dvh - 72px); padding: 0; }
   .chat-messages { padding: 22px 16px; }
-}
-
-@media (max-width: 560px) {
+}@media (max-width: 560px) {
   .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .metrics article { padding: 15px; }
   .metrics strong { font-size: 22px; }
@@ -524,7 +527,6 @@ button:disabled { opacity: .48; cursor: not-allowed; }
   .inference-discovery-facts > span:last-child { border-bottom: 0; }
   .discovery-evidence p { grid-template-columns: 16px minmax(0, 1fr); }
   .discovery-evidence p small { grid-column: 2; text-align: left; }
-  .connection-drawer { padding: 21px 16px calc(24px + env(safe-area-inset-bottom)); border-left: 0; }
   .monitoring-control { grid-template-columns: 1fr; align-items: stretch; }
   .monitoring-control > div { grid-column: auto; }
   .monitoring-control > button { width: 100%; }
@@ -533,10 +535,7 @@ button:disabled { opacity: .48; cursor: not-allowed; }
   .diagnostic-result { grid-template-columns: 1fr auto; }
   .diagnostic-result button { grid-column: 1 / -1; }
   .document-section-heading { padding: 15px; }
-  .agent-editor { padding: 20px 16px calc(25px + env(safe-area-inset-bottom)); border-left: 0; }
-}
-
-@media (max-width: 390px) {
+}@media (max-width: 390px) {
   main { padding-inline: 12px; }
 }
 
@@ -579,10 +578,6 @@ button:disabled { opacity: .48; cursor: not-allowed; }
 .runtime-network-note { padding: 12px; margin-top: 17px; border: 1px solid #473d5d; border-radius: 8px; background: #1b1529; }
 .runtime-network-note strong { color: #cfc7e1; font-size: 9px; }
 .runtime-network-note p { margin: 5px 0 0; color: var(--muted); font-size: 8px; line-height: 1.55; }
-.runtime-node-editor form { display: grid; gap: 13px; }
-.runtime-node-editor label em { margin-left: 5px; color: var(--faint); font-size: 7px; font-style: normal; text-transform: uppercase; }
-.runtime-node-editor label small { color: var(--faint); font-size: 8px; font-weight: 400; line-height: 1.45; }
-.runtime-node-editor code { color: #c4b8e1; font-family: var(--font-mono); font-size: 8px; }
 .runtime-form-intro { margin: 0; color: var(--muted); font-size: 9px; line-height: 1.55; }
 .runtime-install-preview { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 9px 10px; padding: 12px; border: 1px solid #3e3454; border-radius: 8px; background: #151021; }
 .runtime-install-preview > span { width: 24px; height: 24px; display: grid; place-items: center; color: #dbcbff; border: 1px solid #64528e; border-radius: 50%; background: #332553; font-size: 8px; font-weight: 750; }
@@ -610,7 +605,6 @@ button:disabled { opacity: .48; cursor: not-allowed; }
 .runtime-install-steps li button { margin-top: 9px; }
 .runtime-install-steps li code { display: block; overflow-x: auto; padding: 10px; margin-top: 7px; border: 1px solid var(--border); border-radius: 6px; background: #110d1a; line-height: 1.6; white-space: pre; }
 .runtime-install-steps footer { display: flex; justify-content: flex-end; gap: 9px; margin-top: 5px; }
-.runtime-removal-editor { width: min(100%, 540px); }
 .runtime-removal-warning { padding: 13px; border: 1px solid #71404a; border-radius: 8px; background: #2a1a20; }
 .runtime-removal-warning strong { color: #f0adb4; font-size: 10px; }
 .runtime-removal-warning p { margin: 5px 0 0; color: #c89ca2; font-size: 8px; line-height: 1.55; }
@@ -623,22 +617,14 @@ button:disabled { opacity: .48; cursor: not-allowed; }
 .runtime-removal-steps code { display: block; overflow-x: auto; padding: 10px; margin-top: 8px; border: 1px solid var(--border); border-radius: 6px; background: #110d1a; line-height: 1.6; white-space: pre; }
 .runtime-removal-steps button { margin-top: 8px; }
 .runtime-removal-attestation { grid-template-columns: auto minmax(0, 1fr) !important; align-items: start; gap: 8px !important; padding: 10px; margin-top: 8px; border: 1px solid #463e57; border-radius: 7px; background: #15101f; cursor: pointer; }
-.runtime-removal-attestation span { color: var(--muted); font-size: 8px; font-weight: 500; line-height: 1.45; }
-.runtime-removal-editor footer .danger-button:disabled { cursor: not-allowed; opacity: .45; }
-
-@media (max-width: 980px) {
+.runtime-removal-attestation span { color: var(--muted); font-size: 8px; font-weight: 500; line-height: 1.45; }@media (max-width: 980px) {
   .runtime-nodes-layout { grid-template-columns: 1fr; }
   .runtime-node-principles { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .runtime-node-principles > div { grid-column: 1 / -1; min-height: auto; }
   .runtime-node-list > article { grid-template-columns: auto minmax(0, 1fr) auto; }
   .runtime-node-list dl { grid-column: 2; }
   .runtime-node-actions { grid-column: 3; grid-row: 1 / span 2; }
-}
-
-@media (max-width: 760px) {
-}
-
-@media (max-width: 560px) {
+}@media (max-width: 560px) {
   .runtime-nodes-overview .document-section-heading { align-items: stretch; flex-direction: column; }
   .runtime-node-heading-actions { width: 100%; }
   .runtime-node-heading-actions button { flex: 1; }
@@ -652,32 +638,6 @@ button:disabled { opacity: .48; cursor: not-allowed; }
   .runtime-deployment-details > div { grid-template-columns: 1fr; }
   .runtime-deployment-details > div label:nth-last-child(-n+2) { grid-column: auto; }
 }
-
-.agent-editor > label > small { color: var(--faint); font-size: 8px; font-weight: 400; line-height: 1.5; }
-
-@media (max-width: 560px) {
-}
-
-/* Cohesive operator readability floor. Dense evidence remains compact without
-   falling below a practical desktop/mobile reading size. */
-:is(
-  .aiops-workspace
-) small { font-size: max(9px, .625rem); line-height: 1.45; }
-
-:is(
-  .aiops-workspace
-) button { font-size: max(10px, .6875rem); }
-
-:is(.agent-run-times, .document-facts, .readiness-control, .incident-card) dt {
-  font-size: max(9px, .5625rem);
-}
-
-
-@media (max-width: 900px) {
-}
-
-
-
 
 /* A blocked agent is the most urgent thing on this page, so the panel reads as
    an action list rather than another table. */
@@ -729,3 +689,67 @@ strong, .metrics dd, output, time, td, th { font-variant-numeric: tabular-nums; 
 .metric-progress.is-bad::-moz-progress-bar { background: var(--bad); }
 
 /* A retired or forgotten fact states why, directly under what it said. */
+
+/*
+ * Motion, from the design system. Three movements only: things arrive
+ * (`on-rise`), live things breathe (`live-pulse`), and the ask surface glints
+ * (`ask-shine`). Each is a plain class rather than a Tailwind animation so the
+ * reduced-motion override below can kill the whole family in one rule — an
+ * accessibility switch, not a preference.
+ */
+@keyframes on-rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes live-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1.15); }
+}
+@keyframes ask-shine {
+  0% { transform: translateX(-140%); }
+  55%, 100% { transform: translateX(360%); }
+}
+.anim-rise { animation: on-rise 0.3s ease both; }
+.anim-live { animation: live-pulse 2s ease-in-out infinite; }
+.anim-shine { animation: ask-shine 5.4s ease-in-out infinite; }
+
+/*
+ * The front page's network diagram. Every moving part is a class so the
+ * reduced-motion rule below can still the whole drawing at once; the SVG
+ * carries no inline style, per `style-src 'self'`.
+ */
+@keyframes orb-dash { to { stroke-dashoffset: -340; } }
+@keyframes orb-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-9px); } }
+@keyframes orb-scan {
+  0% { transform: translateY(0); opacity: 0; }
+  12% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { transform: translateY(74px); opacity: 0; }
+}
+@keyframes orb-travel {
+  0% { transform: translateX(0); opacity: 0; }
+  12% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { transform: translateX(62px); opacity: 0; }
+}
+@keyframes orb-pulse {
+  0%, 100% { opacity: 0.34; transform: scale(1); }
+  50% { opacity: 0.62; transform: scale(1.09); }
+}
+@keyframes orb-core { 0%, 100% { r: 9; opacity: 0.9; } 50% { r: 11.5; opacity: 1; } }
+@keyframes orb-spin { to { transform: rotate(360deg); } }
+@keyframes orb-blink { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+.orb-dash { animation: orb-dash 22s linear infinite; }
+.orb-float { animation: orb-float 7s ease-in-out infinite; }
+.orb-scan { animation: orb-scan 2.6s ease-in-out infinite; }
+.orb-travel { animation: orb-travel 2.8s linear infinite; }
+.orb-travel-late { animation-delay: -1.4s; }
+.orb-pulse { animation: orb-pulse 3.4s ease-in-out infinite; transform-origin: 246px 128px; }
+.orb-core { animation: orb-core 2.2s ease-in-out infinite; }
+.orb-spin { animation: orb-spin 14s linear infinite; transform-origin: 246px 128px; }
+.orb-blink { animation: orb-blink 1.8s ease-in-out infinite; }
+.orb-blink-late { animation-delay: -0.6s; }
+.orb-blink-later { animation-delay: -1.2s; }@media (prefers-reduced-motion: reduce) {
+  .anim-rise, .anim-live, .anim-shine,
+  .orb-dash, .orb-float, .orb-scan, .orb-travel, .orb-pulse, .orb-core, .orb-spin, .orb-blink { animation: none; }
+}

@@ -98,7 +98,7 @@ interface OverlayProps {
 function Backdrop(props: { onClose: () => void; children: ReactNode; align: string }) {
   return (
     <div
-      className={cn("fixed inset-0 z-50 flex bg-black/70 p-4", props.align)}
+      className={cn("fixed inset-0 z-50 flex bg-backdrop/50 p-4 backdrop-blur-[3px]", props.align)}
       // Closing on mousedown rather than click so a drag that starts inside the
       // panel and ends on the backdrop does not dismiss the operator's work.
       onMouseDown={(event) => {
@@ -121,15 +121,15 @@ function Chrome(props: OverlayProps & { panelClass: string }) {
         aria-modal="true"
         aria-label={props.title}
         className={cn(
-          "flex min-h-0 flex-col overflow-hidden border border-border-strong bg-surface shadow-overlay",
+          "flex min-h-0 flex-col overflow-hidden border border-border bg-surface shadow-overlay",
           props.panelClass,
           props.className,
         )}
       >
         <header className="flex items-start justify-between gap-6 border-b border-border px-5 py-4">
           <div className="min-w-0">
-            {props.kicker ? <MicroLabel className="mb-1.5 block">{props.kicker}</MicroLabel> : null}
-            <h2 className="m-0 text-[14px] font-semibold tracking-[-0.01em] text-text">{props.title}</h2>
+            {props.kicker ? <MicroLabel className="mb-1.5 block text-accent">{props.kicker}</MicroLabel> : null}
+            <h2 className="m-0 font-display text-[16px] font-semibold tracking-[-0.02em] text-text">{props.title}</h2>
             {props.description ? (
               <p className="mb-0 mt-1.5 max-w-[62ch] text-body text-muted">{props.description}</p>
             ) : null}
@@ -151,7 +151,7 @@ function Chrome(props: OverlayProps & { panelClass: string }) {
 
 /** Centred, for a decision or a short form. */
 export function Dialog(props: OverlayProps) {
-  return <Chrome {...props} panelClass="w-full max-w-[560px] max-h-[86vh] rounded" />;
+  return <Chrome {...props} panelClass="w-full max-w-[560px] max-h-[86vh] rounded-modal" />;
 }
 
 /** Edge-anchored, for the longer configuration forms. */
