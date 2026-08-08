@@ -5,7 +5,28 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
-## ai-v1.89.0 — 2026-08-09
+## ai-v1.90.0 — 2026-08-09
+
+The design-system sweep that closes the five-release arc. Sixty-nine dead CSS
+rules left `styles.css` — the retired sign-in form, the old context bar, the
+pre-primitive nav rows, two editors that no longer exist, and the emptied
+media blocks that only served them — each proven dead by a direct search
+before deletion, because the classifier that produced the candidate list
+cannot see a template-constructed name like `is-${"{tone}"}` and would have
+deleted the metric bar's tone classes on its say-so.
+
+Light-theme QA passed across every area — front page, Home, Chat, Knowledge,
+Agents, Platform (all tabs), Operations — with both themes exercised live.
+
+Stated debt rather than silent debt: `runtime-nodes-panel`, the `ops-form`
+family and the connection drawer's configuration form still render through
+tokenized legacy CSS. They theme correctly and sit visually inside the design
+language; converting them to the primitive set is code hygiene deferred with
+its scope known, not a gap discovered later.
+
+The dashboard now looks like the OrcaNeuron design end to end: its tokens,
+its type, its shell, its entrance, its banners, its chat — under the same
+CSP, the same tests, and the same behaviour it had five releases ago.
 
 Chat takes the design's three-column shape: the conversation rail leads with
 the one action it exists for (a full-width accent "New conversation"), rows
