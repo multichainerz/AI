@@ -20,7 +20,7 @@ let context: TestDatabase;
 const encryption = new EnvelopeEncryption({ masterKey: new Uint8Array(32).fill(7) });
 
 beforeAll(async () => { context = await createTestDatabase(); }, 120_000);
-afterAll(async () => { await context?.drop(); });
+afterAll(async () => { await context?.drop(); }, 120_000);
 beforeEach(async () => { await context.reset(); });
 
 const platformAdmin = { id: randomUUID(), role: "PLATFORM_ADMIN" } as never;

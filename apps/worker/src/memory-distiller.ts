@@ -328,19 +328,79 @@ function withoutQuotedContent(
   });
 }
 
+/**
+ * Where the array opened at `start` closes, or -1 if it never does.
+ *
+ * String contents are stepped over so a bracket inside a fact cannot close the
+ * array early, and an unterminated answer reports -1 rather than a span that
+ * happens to end on someone else's bracket.
+ */
+function balancedEnd(text: string, start: number): number {
+  let depth = 0;
+  let quoted = false;
+  let escaped = false;
+  for (let index = start; index < text.length; index += 1) {
+    const character = text[index];
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === "\"") quoted = false;
+      continue;
+    }
+    if (character === "\"") quoted = true;
+    else if (character === "[" || character === "{") depth += 1;
+    else if (character === "]" || character === "}") {
+      depth -= 1;
+      if (depth === 0) return index;
+      if (depth < 0) return -1;
+    }
+  }
+  return -1;
+}
+
+/**
+ * The model's answer array, or null when it did not produce one.
+ *
+ * Spanning the first "[" to the last "]" stops being a JSON array the moment
+ * the model writes a bracket anywhere around its answer. Echoing "KNOWN FACTS
+ * [1] and [2]" before answering is enough, and so is a serving stack that emits
+ * its thinking into `content`: the span then swallows the prose between the two
+ * brackets, the parse fails, and a session that taught something is reported as
+ * one that taught nothing.
+ *
+ * Balanced spans are scanned instead and the last one wins. A model that
+ * reasons in `content` puts its conclusion at the end, and [] is the correct
+ * answer for most conversations — so taking the first or the widest span would
+ * read the preamble's brackets as the facts.
+ *
+ * The same reading is duplicated in the API's forget-matcher, which has the
+ * same problem against a different prompt; the two packages share no code.
+ */
+function readJsonArray(text: string): unknown[] | null {
+  let answer: unknown[] | null = null;
+  let index = text.indexOf("[");
+  while (index !== -1) {
+    const end = balancedEnd(text, index);
+    let parsed: unknown;
+    try {
+      parsed = end === -1 ? undefined : JSON.parse(text.slice(index, end + 1));
+    } catch {
+      parsed = undefined;
+    }
+    if (Array.isArray(parsed)) {
+      answer = parsed;
+      index = text.indexOf("[", end + 1);
+    } else {
+      index = text.indexOf("[", index + 1);
+    }
+  }
+  return answer;
+}
+
 export function parseDistillation(content: string, known: readonly KnownFact[] = []): DistilledFact[] {
   const fenced = content.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const body = (fenced?.[1] ?? content).trim();
-  const start = body.indexOf("[");
-  const end = body.lastIndexOf("]");
-  if (start === -1 || end <= start) return [];
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(body.slice(start, end + 1));
-  } catch {
-    return [];
-  }
-  if (!Array.isArray(parsed)) return [];
+  const parsed = readJsonArray((fenced?.[1] ?? content).trim());
+  if (parsed === null) return [];
   const facts: DistilledFact[] = [];
   for (const entry of parsed) {
     const read = readEntry(entry, known);
@@ -430,18 +490,26 @@ export class MemoryDistiller {
       ...(this.fetcher === fetch ? {} : { fetcher: this.fetcher }),
     });
     if (!answer.succeeded) return { facts: [], succeeded: false };
-    if (answer.content.trim().length === 0) {
-      // Worth telling apart: a reasoning model that hit the ceiling returns an
-      // empty answer that looks identical to a refusal, and the fix for one
-      // (raise the budget) is not the fix for the other.
-      if (answer.finishReason === "length") {
-        console.error(
-          "OrcaSynapse memory distillation ran out of tokens before answering; "
-          + `raise MAXIMUM_RESPONSE_TOKENS above ${MAXIMUM_RESPONSE_TOKENS}.`,
-        );
-      }
+    // Truncation is a failure whatever it left behind, and checking it only for
+    // an empty answer missed the commoner shape: the model opened the array,
+    // was cut off part-way through a fact, and the unterminated JSON parses to
+    // nothing. That reads downstream as "this session taught nothing durable",
+    // so the sweep leaves memoryDistilledAt stamped and those turns are never
+    // offered again — the whole session lost, reported as a clean distillation.
+    // A parseable prefix is discarded with the rest: half an extraction cannot
+    // resolve the arc the session was read for, and storing it would mark the
+    // session read on the strength of the facts that happened to fit.
+    //
+    // Worth logging separately from a refusal: the fix for one (raise the
+    // budget) is not the fix for the other, and they look alike in the body.
+    if (answer.finishReason === "length") {
+      console.error(
+        "OrcaSynapse memory distillation ran out of tokens before answering; "
+        + `raise MAXIMUM_RESPONSE_TOKENS above ${MAXIMUM_RESPONSE_TOKENS}.`,
+      );
       return { facts: [], succeeded: false };
     }
+    if (answer.content.trim().length === 0) return { facts: [], succeeded: false };
     return {
       facts: withoutQuotedContent(parseDistillation(answer.content, known), spoken),
       succeeded: true,

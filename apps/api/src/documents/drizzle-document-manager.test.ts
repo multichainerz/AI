@@ -15,7 +15,7 @@ import {
 let context: TestDatabase;
 
 beforeAll(async () => { context = await createTestDatabase(); }, 120_000);
-afterAll(async () => { await context?.drop(); });
+afterAll(async () => { await context?.drop(); }, 120_000);
 beforeEach(async () => { await context.reset(); });
 
 const owner: DocumentPrincipal = {
@@ -107,6 +107,26 @@ describe("DrizzleDocumentManager", () => {
     await expect(
       manager().upload(owner, upload("second.txt", "Identical body text for the checksum."), metadata),
     ).rejects.toBeInstanceOf(DocumentConflictError);
+  });
+
+  it("admits only one of two concurrent uploads of the same file", async () => {
+    // The duplicate rule was a read followed by an insert, with extraction
+    // sitting between them: both uploads read an empty result, both stored a
+    // row, and retrieval then returned every passage of that file twice.
+    // A cold pg pool opens connections one at a time, so the second upload
+    // would queue behind the first and never overlap it. Warm it first, which
+    // is the state a running installation is always in.
+    await Promise.all(Array.from({ length: 4 }, () => manager().list(owner)));
+    const body = "One file, two uploads, one checksum.";
+    const settled = await Promise.allSettled([
+      manager().upload(owner, upload("first.txt", body), metadata),
+      manager().upload(owner, upload("second.txt", body), metadata),
+    ]);
+
+    expect(settled.filter(({ status }) => status === "fulfilled")).toHaveLength(1);
+    const [refused] = settled.filter((result) => result.status === "rejected");
+    expect(refused?.reason).toBeInstanceOf(DocumentConflictError);
+    expect(await context.database.select().from(document)).toHaveLength(1);
   });
 
   it("records a document with no extractable text as failed with an OCR reason", async () => {

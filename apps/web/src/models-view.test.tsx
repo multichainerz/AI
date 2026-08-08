@@ -9,7 +9,7 @@
  * `pnpm --filter @orcasynapse/web build` and it opens in a browser.
  */
 import { ADMIN_SCOPES, type AdministratorSession, type ModelDeployment, type ServiceConnectionSummary } from "@orcasynapse/contracts";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { writeFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -51,30 +51,41 @@ const model = (over: Partial<ModelDeployment>): ModelDeployment => ({
   ...over,
 } as ModelDeployment);
 
-const models = [
-  model({}),
-  model({
-    id: "7c9e6679-7425-40de-944b-e07fc1f90ae7",
-    slug: "chat-frontline",
-    displayName: "Chat frontline",
-    modelAlias: "qwen3.6-27b",
-    workload: "CHAT",
-    version: "3.6-awq",
-    status: "DRAFT",
-    isDefault: false,
-    revision: 1,
-    firstActivatedAt: null,
-    activationEvaluationId: null,
-    license: null,
-  }),
-];
+const draftRoute = model({
+  id: "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  slug: "chat-frontline",
+  displayName: "Chat frontline",
+  modelAlias: "qwen3.6-27b",
+  workload: "CHAT",
+  version: "3.6-awq",
+  status: "DRAFT",
+  isDefault: false,
+  revision: 1,
+  firstActivatedAt: null,
+  activationEvaluationId: null,
+  license: null,
+});
+
+const models = [model({}), draftRoute];
+
+/** What the API would return now, which a conflict test moves underneath the screen. */
+let catalogue: ModelDeployment[] = models;
+
+const updateModelDeployment = vi.fn();
+const changeModelDeploymentState = vi.fn();
 
 vi.mock("./api.js", async () => {
   const actual = await vi.importActual<typeof import("./api.js")>("./api.js");
-  return { ...actual, getModelDeployments: vi.fn(async () => ({ items: models })) };
+  return {
+    ...actual,
+    getModelDeployments: vi.fn(async () => ({ items: catalogue })),
+    updateModelDeployment: (...args: unknown[]) => updateModelDeployment(...args as []),
+    changeModelDeploymentState: (...args: unknown[]) => changeModelDeploymentState(...args as []),
+  };
 });
 
 const { ModelsView } = await import("./models-view.js");
+const { OrcaSynapseApiError } = await import("./api.js");
 
 async function view() {
   render(
@@ -94,7 +105,99 @@ async function view() {
   }
 }
 
-afterEach(cleanup);
+/**
+ * Types one character at a time, which is the only way a keystroke-by-keystroke
+ * rewrite can be observed. Setting the whole string at once hides it.
+ */
+function typeInto(input: HTMLElement, text: string) {
+  const control = input as HTMLInputElement;
+  for (const character of text) {
+    fireEvent.change(control, { target: { value: control.value + character } });
+  }
+}
+
+afterEach(() => {
+  cleanup();
+  catalogue = models;
+  updateModelDeployment.mockReset();
+  changeModelDeploymentState.mockReset();
+});
+
+describe("a route another operator moved first", () => {
+  /** The revision the screen loaded is dead; only the one that won can succeed. */
+  function conflictOnce(then: ModelDeployment) {
+    return async (_id: string, ...rest: unknown[]) => {
+      const input = rest.at(-1) as { expectedRevision: number };
+      if (input.expectedRevision === draftRoute.revision) {
+        catalogue = [models[0]!, then];
+        throw new OrcaSynapseApiError(409, "This model route changed since it was loaded.");
+      }
+      return { ...then, revision: then.revision + 1 };
+    };
+  }
+
+  it("activates on the retry after a conflict, instead of failing identically forever", async () => {
+    // Nothing on this screen refetches — there is no Refresh control and load()
+    // runs only on [session] — so without a refetch here every retry resends
+    // the revision that already lost and the only escape is leaving the screen.
+    changeModelDeploymentState.mockImplementation(
+      conflictOnce(model({ ...draftRoute, revision: 2 })),
+    );
+    await view();
+
+    fireEvent.click(screen.getByRole("button", { name: "Activate" }));
+    fireEvent.change(screen.getByLabelText(/^Operator reason/), {
+      target: { value: "Evidence promoted for 3.6-awq." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() => screen.getByText(/changed since it was loaded/));
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() => screen.getByText("Model route activated."));
+    expect(changeModelDeploymentState.mock.calls[1]![2]).toMatchObject({ expectedRevision: 2 });
+  });
+
+  it("saves the edit on the retry after a conflict", async () => {
+    // The open editor holds its own snapshot of the record, so a refetch that
+    // only refreshes the list still leaves the form sending the lost revision.
+    updateModelDeployment.mockImplementation(conflictOnce(model({ ...draftRoute, revision: 2 })));
+    await view();
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save new revision" }));
+    await waitFor(() => screen.getByText(/changed since it was loaded/));
+
+    fireEvent.click(screen.getByRole("button", { name: "Save new revision" }));
+    await waitFor(() => screen.getByText(/Model route updated/));
+    expect(updateModelDeployment.mock.calls[1]![1]).toMatchObject({ expectedRevision: 2 });
+  });
+});
+
+describe("naming a new route", () => {
+  it("lets a hyphen be typed into the slug, because every seeded slug has one", async () => {
+    // Trimming the trailing hyphen on each keystroke deletes the separator
+    // before the next character arrives, so 'chat-frontline' would be
+    // unreachable by typing.
+    await view();
+    fireEvent.click(screen.getByRole("button", { name: "New model route" }));
+    const slug = screen.getByLabelText(/^Slug/);
+    fireEvent.change(slug, { target: { value: "" } });
+
+    typeInto(slug, "chat-frontline");
+    expect(slug).toHaveProperty("value", "chat-frontline");
+  });
+
+  it("trims a half-typed trailing hyphen when the field is left", async () => {
+    await view();
+    fireEvent.click(screen.getByRole("button", { name: "New model route" }));
+    const slug = screen.getByLabelText(/^Slug/);
+    fireEvent.change(slug, { target: { value: "" } });
+
+    typeInto(slug, "chat-frontline-");
+    fireEvent.blur(slug);
+    expect(slug).toHaveProperty("value", "chat-frontline");
+  });
+});
 
 describe("models catalogue", () => {
   it("counts the catalogue by the things an operator decides about", async () => {

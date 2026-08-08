@@ -49,12 +49,24 @@ const forgetMatchingAgentMemory = vi.fn(async (input: { dryRun: boolean }) => ({
   capped: false,
 }));
 
+/**
+ * A macrotask of latency on both loads, because a mock that answers inside the
+ * same microtask queue as the keystroke that caused it models a local variable,
+ * not a control plane across a link.
+ *
+ * It is not decoration. While the filter box was itself the fetch key, opening
+ * this screen and typing into its three fields ran twenty-five load cycles, and
+ * under this mock on a loaded machine the first case here failed on the 5000 ms
+ * timeout in two of four whole-suite runs. Post-commit it runs two.
+ */
+const afterOneMacrotask = () => new Promise((resolve) => setTimeout(resolve, 0));
+
 vi.mock("./api.js", async () => {
   const actual = await vi.importActual<typeof import("./api.js")>("./api.js");
   return {
     ...actual,
-    getMemoryPolicies: vi.fn(async () => ({ items: [] })),
-    getAgentMemoryRecords: vi.fn(async () => records),
+    getMemoryPolicies: vi.fn(async () => { await afterOneMacrotask(); return { items: [] }; }),
+    getAgentMemoryRecords: vi.fn(async () => { await afterOneMacrotask(); return records; }),
     forgetMatchingAgentMemory,
   };
 });
@@ -67,10 +79,15 @@ beforeEach(() => { forgetMatchingAgentMemory.mockClear(); });
 afterEach(cleanup);
 
 describe("forget by topic", () => {
-  /** The control only appears once a person is named, so every case starts here. */
+  /**
+   * The control only appears once a person is named, so every case starts here.
+   * Naming is two steps: the box is a draft, and the panel is scoped to the
+   * value committed out of it, so nothing below exists before the click.
+   */
   async function openFor(user: ReturnType<typeof userEvent.setup>) {
     render(<MemoryView {...props} />);
     await user.type(await screen.findByPlaceholderText(/filter by person/i), "user:ada");
+    await user.click(screen.getByRole("button", { name: /^filter$/i }));
     await user.type(screen.getByLabelText(/decision reason/i), "They asked us to forget it.");
     await user.type(await screen.findByPlaceholderText(/project titan/i), "Project Titan");
   }
@@ -115,6 +132,7 @@ describe("forget by topic", () => {
     const user = userEvent.setup();
     render(<MemoryView {...props} />);
     await user.type(await screen.findByPlaceholderText(/filter by person/i), "user:ada");
+    await user.click(screen.getByRole("button", { name: /^filter$/i }));
     await user.type(await screen.findByPlaceholderText(/project titan/i), "Project Titan");
     await user.clear(screen.getByLabelText(/decision reason/i));
 

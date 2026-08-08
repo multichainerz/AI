@@ -67,6 +67,17 @@ function fill(scope: HTMLElement, label: string, value: string) {
   fireEvent.change(field(scope, label), { target: { value } });
 }
 
+/**
+ * Types one character at a time, which is the only way a keystroke-by-keystroke
+ * rewrite can be observed. Setting the whole string at once hides it.
+ */
+function typeInto(input: HTMLElement, text: string) {
+  const control = input as HTMLInputElement;
+  for (const character of text) {
+    fireEvent.change(control, { target: { value: control.value + character } });
+  }
+}
+
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
 describe("authoring a suite", () => {
@@ -82,6 +93,49 @@ describe("authoring a suite", () => {
     const drawer = editor();
     fill(drawer, "Display name", "Chat baseline (core)");
     expect(field(drawer, "Slug")).toHaveProperty("value", "chat-baseline-core");
+  });
+
+  it("lets a hyphen be typed into the slug, because every seeded slug has one", () => {
+    // Trimming the trailing hyphen on each keystroke deletes the separator
+    // before the next character arrives, so 'retrieval-latency' would be
+    // unreachable by typing.
+    const drawer = editor();
+    const slug = field(drawer, "Slug");
+    typeInto(slug, "retrieval-latency");
+    expect(slug).toHaveProperty("value", "retrieval-latency");
+  });
+
+  it("lets a hyphen be typed into a case id, which is slugged the same way", () => {
+    const drawer = editor();
+    const caseId = within(drawer).getAllByLabelText("Case id")[0]!;
+    fireEvent.change(caseId, { target: { value: "" } });
+    typeInto(caseId, "cites-runbook");
+    expect(caseId).toHaveProperty("value", "cites-runbook");
+  });
+
+  it("trims a half-typed trailing hyphen when the field is left", () => {
+    const drawer = editor();
+    const slug = field(drawer, "Slug");
+    typeInto(slug, "retrieval-");
+    fireEvent.blur(slug);
+    expect(slug).toHaveProperty("value", "retrieval");
+  });
+
+  it("sends a valid slug even when the operator left a trailing hyphen", async () => {
+    const drawer = editor();
+    // Slug first: while it is empty the field mirrors the display name, and
+    // typing would then append to that mirror rather than replace it.
+    typeInto(field(drawer, "Slug"), "retrieval-latency-");
+    fill(drawer, "Display name", "Retrieval latency");
+    fill(drawer, "Description", "The questions this installation must keep answering.");
+    fill(drawer, "Question", "What should we check before promoting?");
+    fill(drawer, "Why this case exists", "A promotion question must cite the runbook.");
+    fill(drawer, "Case case-1 check 1 value", "migrations");
+
+    fireEvent.click(within(drawer).getByRole("button", { name: "Create suite" }));
+    await waitFor(() => expect(createBenchmarkSuite).toHaveBeenCalledWith(expect.objectContaining({
+      slug: "retrieval-latency",
+    })));
   });
 
   it("sends what was authored", async () => {

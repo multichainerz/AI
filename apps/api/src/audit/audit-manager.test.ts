@@ -12,7 +12,7 @@ import { DrizzleAuditManager } from "./audit-manager.js";
 let context: TestDatabase;
 
 beforeAll(async () => { context = await createTestDatabase(); }, 120_000);
-afterAll(async () => { await context?.drop(); });
+afterAll(async () => { await context?.drop(); }, 120_000);
 beforeEach(async () => { await context.reset(); });
 
 function manager() {
@@ -35,8 +35,8 @@ async function record(overrides: Record<string, unknown> = {}) {
       metadata: {},
       ...overrides,
     })
-    .returning({ id: auditEvent.id });
-  return row!.id;
+    .returning({ id: auditEvent.id, cursor: auditEvent.cursor });
+  return row!;
 }
 
 describe("DrizzleAuditManager", () => {
@@ -148,13 +148,35 @@ describe("DrizzleAuditManager forwarding health", () => {
     const first = await record({ occurredAt: base });
     await record({ occurredAt: new Date(base.getTime() + 1_000) });
     await context.database.insert(auditForwardingState).values({
-      id: "global", lastForwardedAt: base, lastForwardedId: first, deliveredCount: 1,
+      id: "global", lastForwardedCursor: first.cursor, lastForwardedAt: base, lastForwardedId: first.id, deliveredCount: 1,
     });
 
     const state = await manager().forwarding();
 
     expect(state).toMatchObject({ status: "HEALTHY", pendingCount: 1, deliveredCount: 1 });
     expect(state.lastForwardedAt).toBe(base.toISOString());
+  });
+
+  it("counts an event recorded out of timestamp order as still pending", async () => {
+    await enableSiem();
+    // The forwarder has delivered up to `delivered`. The event after it carries
+    // an earlier occurredAt, which is what a transaction that started earlier
+    // and committed later leaves behind - counting the backlog by timestamp
+    // would report it as delivered and the trail as complete.
+    const delivered = await record({ action: "delivered", occurredAt: new Date(base.getTime() + 1_000) });
+    await record({ action: "committed late", occurredAt: base });
+    await context.database.insert(auditForwardingState).values({
+      id: "global",
+      lastForwardedCursor: delivered.cursor,
+      lastForwardedAt: new Date(base.getTime() + 1_000),
+      lastForwardedId: delivered.id,
+      deliveredCount: 1,
+    });
+
+    const state = await manager().forwarding();
+
+    expect(state.pendingCount).toBe(1);
+    expect(state.summary).not.toContain("Every recorded event has been accepted");
   });
 
   it("reports a rejecting destination as failing, not merely behind", async () => {

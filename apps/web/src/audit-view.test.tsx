@@ -1,12 +1,29 @@
-import type { AdministratorSession, AdminScope } from "@orcasynapse/contracts";
+/** @vitest-environment jsdom */
+import {
+  auditEventQuerySchema,
+  type AdministratorSession,
+  type AdminScope,
+  type AuditEventQuery,
+} from "@orcasynapse/contracts";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuditView } from "./audit-view.js";
+
+const queried = vi.fn(async (_query: AuditEventQuery) => ({ items: [], nextCursor: null }));
 
 vi.mock("./api.js", async () => {
   const actual = await vi.importActual<typeof import("./api.js")>("./api.js");
-  return { ...actual, getAuditEvents: vi.fn(async () => ({ items: [], nextCursor: null })) };
+  return {
+    ...actual,
+    getAuditEvents: (...args: unknown[]) => queried(...args as [AuditEventQuery]),
+    // Never settles: the forwarding banner is not what these tests are about,
+    // and a resolution landing outside `act` is only noise.
+    getAuditForwarding: vi.fn(() => new Promise<never>(() => {})),
+  };
 });
+
+afterEach(() => { cleanup(); queried.mockClear(); });
 
 function session(scopes: AdminScope[]): AdministratorSession {
   return {
@@ -56,5 +73,23 @@ describe("AuditView", () => {
 
     // The append-only guarantee is the point of the trail; say it where it is read.
     expect(markup).toContain("append-only");
+  });
+
+  it("sends a pasted identifier the query contract still matches on", async () => {
+    // A pasted id often carries trailing whitespace, and the filters are exact
+    // matches — but `auditEventQuerySchema` is what the API parses the request
+    // with, and it trims before matching. Asserted through that schema rather
+    // than against a literal, so this stays true of what the API actually does:
+    // if the contract ever stopped trimming, this view would have to.
+    const identifier = "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb";
+    render(<AuditView session={session(["audit:read"] as AdminScope[])} onSessionExpired={vi.fn()} />);
+    await waitFor(() => expect(queried).toHaveBeenCalledTimes(1));
+
+    fireEvent.change(screen.getByLabelText(/^Resource ID/), { target: { value: `${identifier} ` } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    await waitFor(() => expect(queried).toHaveBeenCalledTimes(2));
+
+    expect(auditEventQuerySchema.parse(queried.mock.calls[1]![0]))
+      .toMatchObject({ resourceId: identifier });
   });
 });

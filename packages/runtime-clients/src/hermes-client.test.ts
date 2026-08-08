@@ -21,6 +21,17 @@ const capabilities = {
   features: { run_submission: true, run_status: true, run_events_sse: true, run_stop: true },
 };
 
+/** One SSE frame per chunk, so a test controls exactly what each read delivers. */
+function sseStream(chunks: string[]): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  return new ReadableStream({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+      controller.close();
+    },
+  });
+}
+
 describe("HermesClient", () => {
   it("accepts an authenticated Runs API only when every API-server toolset is disabled", async () => {
     const fetcher = vi.fn<typeof fetch>(async (input, init) => {
@@ -336,6 +347,152 @@ describe("HermesClient", () => {
     });
     expect(projected[3]).not.toHaveProperty("hidden_prompt");
     expect(projected[3]).not.toHaveProperty("tool_arguments");
+  });
+
+  it("delivers a 70 KB tool preview instead of ending the run stream over it", async () => {
+    // Reproduced against a real Hermes: one `tool.complete` carrying a 70 KB
+    // preview ended `events()` outright and *zero* events were delivered, so
+    // the run degraded to polling — the message froze mid-generation and then
+    // jumped to the final answer. Nothing here is oversized; the old guard
+    // measured the whole accumulated buffer against a 64 KB ceiling.
+    const chunks = [
+      "data: {\"event\":\"message.delta\",\"id\":\"delta-1\",\"delta\":\"Partial answer\"}\n\n",
+      `data: {"event":"tool.complete","id":"large","tool":"search","preview":"${"x".repeat(70_000)}"}\n\n`,
+      "data: {\"event\":\"message.delta\",\"id\":\"delta-2\",\"delta\":\" continues\"}\n\n",
+      "data: {\"event\":\"run.complete\",\"id\":\"final\",\"status\":\"completed\",\"output\":\"Partial answer continues\"}\n\n",
+    ];
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(sseStream(chunks), {
+      status: 200,
+      headers: { "content-type": "text/event-stream; charset=utf-8" },
+    }));
+    const projected: Array<{ type: string; preview: string | null }> = [];
+    await expect(new HermesClient(resolver(), fetcher).events(
+      "run_external_1",
+      (event) => { projected.push({ type: event.type, preview: event.preview }); },
+      new AbortController().signal,
+    )).resolves.toBeUndefined();
+    expect(projected.map((event) => event.type))
+      .toEqual(["MESSAGE_DELTA", "TOOL_COMPLETED", "MESSAGE_DELTA", "RUN_COMPLETED"]);
+    // The preview is bounded where previews are bounded, not by ending the run.
+    expect(projected[1]?.preview).toHaveLength(1_000);
+  });
+
+  it("skips one genuinely oversized event and keeps delivering the ones around it", async () => {
+    const chunks = [
+      "data: {\"event\":\"message.delta\",\"id\":\"delta-1\",\"delta\":\"Partial answer\"}\n\n",
+      `data: {"event":"tool.complete","id":"oversized","tool":"search","preview":"${"x".repeat(600_000)}"}\n\n`,
+      "data: {\"event\":\"message.delta\",\"id\":\"delta-2\",\"delta\":\" continues\"}\n\n",
+      "data: {\"event\":\"run.complete\",\"id\":\"final\",\"status\":\"completed\",\"output\":\"Partial answer continues\"}\n\n",
+    ];
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(sseStream(chunks), {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    }));
+    const projected: Array<{ type: string; delta: string | null }> = [];
+    await expect(new HermesClient(resolver(), fetcher).events(
+      "run_external_1",
+      (event) => { projected.push({ type: event.type, delta: event.delta }); },
+      new AbortController().signal,
+    )).resolves.toBeUndefined();
+    expect(projected.map((event) => event.type)).toEqual(["MESSAGE_DELTA", "RUN_COMPLETED"]);
+    expect(projected[0]?.delta).toBe("Partial answer continues");
+  });
+
+  it("resynchronises on the next boundary when one event outgrows what it will buffer", async () => {
+    // The oversized event arrives unterminated and split across reads, so the
+    // bound trips with no boundary in sight. Everything after its terminator
+    // still has to be delivered.
+    const chunks = [
+      "data: {\"event\":\"message.delta\",\"id\":\"delta-1\",\"delta\":\"Partial answer\"}\n\n",
+      `data: {"event":"tool.complete","id":"oversized","tool":"search","preview":"${"x".repeat(600_000)}`,
+      "\"}\n\ndata: {\"event\":\"message.delta\",\"id\":\"delta-2\",\"delta\":\" continues\"}\n\n"
+        + "data: {\"event\":\"run.complete\",\"id\":\"final\",\"status\":\"completed\",\"output\":\"Partial answer continues\"}\n\n",
+    ];
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(sseStream(chunks), {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    }));
+    const projected: Array<{ type: string; delta: string | null }> = [];
+    await expect(new HermesClient(resolver(), fetcher).events(
+      "run_external_1",
+      (event) => { projected.push({ type: event.type, delta: event.delta }); },
+      new AbortController().signal,
+    )).resolves.toBeUndefined();
+    expect(projected.map((event) => event.type)).toEqual(["MESSAGE_DELTA", "RUN_COMPLETED"]);
+    expect(projected[0]?.delta).toBe("Partial answer continues");
+  });
+
+  it("measures an event in characters, so multi-byte text is not mistaken for an oversized event", async () => {
+    // The guard counted UTF-8 bytes while `safeDelta` caps at 64,000
+    // characters, so roughly 22k CJK characters tripped a limit their
+    // character count was nowhere near.
+    const delta = "録".repeat(30_000);
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(sseStream([
+      `data: {"event":"message.delta","id":"delta-1","delta":"${delta}"}\n\n`,
+    ]), { status: 200, headers: { "content-type": "text/event-stream" } }));
+    const projected: Array<string | null> = [];
+    await expect(new HermesClient(resolver(), fetcher).events(
+      "run_external_1",
+      (event) => { projected.push(event.delta); },
+      new AbortController().signal,
+    )).resolves.toBeUndefined();
+    expect(projected).toEqual([delta]);
+  });
+
+  it("hands over coalesced output when the stream fails mid-run", async () => {
+    // A delta that was coalesced but never flushed is real output the caller
+    // already paid for. Frozen clock, so the 100 ms coalescing window cannot
+    // flush it for us and the abnormal exit path is the only thing that can.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(
+            "data: {\"event\":\"message.delta\",\"id\":\"delta-1\",\"delta\":\"Partial answer\"}\n\n",
+          ));
+        },
+        pull(controller) { controller.error(new Error("upstream reset")); },
+      });
+      const fetcher = vi.fn<typeof fetch>(async () => new Response(body, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      }));
+      const projected: Array<string | null> = [];
+      await expect(new HermesClient(resolver(), fetcher).events(
+        "run_external_1",
+        (event) => { projected.push(event.delta); },
+        new AbortController().signal,
+      )).rejects.toThrow("upstream reset");
+      expect(projected).toEqual(["Partial answer"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels the upstream reader rather than abandoning a stream that is still producing", async () => {
+    // Releasing the lock alone leaves Hermes writing into a stream nobody
+    // reads. The run here is still open when the consumer gives up, which is
+    // exactly the case where the upstream has to be told to stop.
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(
+          "data: {\"event\":\"tool.start\",\"id\":\"tool-1\",\"tool\":\"search\"}\n\n",
+        ));
+      },
+      pull: () => new Promise<void>(() => undefined),
+      cancel() { cancelled = true; },
+    });
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(body, {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    }));
+    await expect(new HermesClient(resolver(), fetcher).events(
+      "run_external_1",
+      () => { throw new Error("consumer stopped reading"); },
+      new AbortController().signal,
+    )).rejects.toThrow("consumer stopped reading");
+    expect(cancelled).toBe(true);
   });
 
   it("forwards a bounded allow-once approval to the official run endpoint", async () => {

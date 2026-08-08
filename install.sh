@@ -509,6 +509,49 @@ require_root() {
   [[ "${EUID}" -eq 0 ]] || fail "run this installer as root (for example: sudo bash install.sh)"
 }
 
+# The operator's declaration of the scheme browsers really reach OrcaSynapse
+# with, carried on the command line because that is the only channel a sudo
+# invocation cannot strip. Every command deploy/BOOTSTRAP.md prints goes through
+# sudo, stock sudoers is `Defaults env_reset`, and an exported
+# ORCASYNAPSE_PUBLIC_SCHEME is dropped on the way in -- so an operator who set
+# the variable got a plain-HTTP proxy and a summary that said nothing.
+#
+# This is a deliberate second copy of scripts/lib/public-scheme.sh's parser.
+# This file is fetched over HTTPS and piped into a root shell with nothing else
+# beside it; it cannot source a library that is not on the host yet. It only
+# needs the parse: the value is exported here and the resolution, recording and
+# reporting all happen in scripts/install-orcasynapse.sh, which this script
+# execs into within the same process, where an export always survives.
+orcasynapse_take_public_scheme_flag() {
+  local value
+  ORCASYNAPSE_REMAINING_ARGS=()
+  while (( $# > 0 )); do
+    case "$1" in
+      --public-scheme)
+        (( $# >= 2 )) || fail "--public-scheme needs a value: --public-scheme https"
+        value="$2"
+        shift 2
+        ;;
+      --public-scheme=*)
+        value="${1#*=}"
+        shift
+        ;;
+      *)
+        ORCASYNAPSE_REMAINING_ARGS+=("$1")
+        shift
+        continue
+        ;;
+    esac
+    # Anything the bundled proxy does not recognise as https is rendered as
+    # http, so a near miss would leave an operator believing the session cookies
+    # are Secure when they are not. Refused here, before any download.
+    [[ "${value}" == "http" || "${value}" == "https" ]] \
+      || fail "--public-scheme must be http or https, not '${value}'"
+    ORCASYNAPSE_PUBLIC_SCHEME="${value}"
+    export ORCASYNAPSE_PUBLIC_SCHEME
+  done
+}
+
 install_bootstrap_dependencies() {
   if command -v curl >/dev/null 2>&1 && command -v tar >/dev/null 2>&1 \
     && command -v sha256sum >/dev/null 2>&1; then
@@ -781,6 +824,13 @@ install_source_tree() {
 }
 
 main() {
+  # Before the banner and before any network call: a mistyped scheme should cost
+  # a line of output, not a download and a build.
+  orcasynapse_take_public_scheme_flag "$@"
+  if (( ${#ORCASYNAPSE_REMAINING_ARGS[@]} > 0 )); then
+    fail "unrecognised argument '${ORCASYNAPSE_REMAINING_ARGS[0]}'; this bootstrap takes only --public-scheme http|https"
+  fi
+
   banner
   step 1 4 "Preflight checks"
   require_root

@@ -79,20 +79,89 @@ export interface ForgetMatch {
   truncated: boolean;
 }
 
-/** Reads the model's 1-based numbers back to ids, ignoring anything else. */
-export function parseMatches(content: string, candidates: readonly ForgetCandidate[]): string[] {
-  const fenced = content.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const body = (fenced?.[1] ?? content).trim();
-  const start = body.indexOf("[");
-  const end = body.lastIndexOf("]");
-  if (start === -1 || end <= start) return [];
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(body.slice(start, end + 1));
-  } catch {
-    return [];
+/**
+ * Where the array opened at `start` closes, or -1 if it never does.
+ *
+ * String contents are stepped over so a bracket inside a stored fact cannot
+ * close the array early, and an unterminated answer reports -1 rather than a
+ * span that happens to end on someone else's bracket.
+ */
+function balancedEnd(text: string, start: number): number {
+  let depth = 0;
+  let quoted = false;
+  let escaped = false;
+  for (let index = start; index < text.length; index += 1) {
+    const character = text[index];
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === "\"") quoted = false;
+      continue;
+    }
+    if (character === "\"") quoted = true;
+    else if (character === "[" || character === "{") depth += 1;
+    else if (character === "]" || character === "}") {
+      depth -= 1;
+      if (depth === 0) return index;
+      if (depth < 0) return -1;
+    }
   }
-  if (!Array.isArray(parsed)) return [];
+  return -1;
+}
+
+/**
+ * The model's answer array, or null when it did not produce one.
+ *
+ * Spanning the first "[" to the last "]" stops being a JSON array the moment
+ * the model writes a bracket anywhere around its answer. Restating the numbered
+ * facts it was shown is enough, and so is a serving stack that emits its
+ * thinking into `content`: the span then swallows the prose between the two
+ * brackets and the parse fails, which reaches the operator as "nothing matched"
+ * — the one answer this path must never invent.
+ *
+ * Balanced spans are scanned instead and the last one wins. A model that
+ * reasons in `content` puts its conclusion at the end, and [] is a real answer
+ * here, so taking the first or the widest span would read the preamble's
+ * brackets as a decision to forget.
+ *
+ * The same reading is duplicated in the worker's distiller, which has the same
+ * problem against a different prompt; the two packages share no code.
+ */
+function readJsonArray(text: string): unknown[] | null {
+  let answer: unknown[] | null = null;
+  let index = text.indexOf("[");
+  while (index !== -1) {
+    const end = balancedEnd(text, index);
+    let parsed: unknown;
+    try {
+      parsed = end === -1 ? undefined : JSON.parse(text.slice(index, end + 1));
+    } catch {
+      parsed = undefined;
+    }
+    if (Array.isArray(parsed)) {
+      answer = parsed;
+      index = text.indexOf("[", end + 1);
+    } else {
+      index = text.indexOf("[", index + 1);
+    }
+  }
+  return answer;
+}
+
+/**
+ * Reads the model's 1-based numbers back to ids, ignoring anything else.
+ *
+ * Null, not an empty list, when the answer held no array at all: the caller has
+ * to be able to tell a model that decided nothing matches from one that never
+ * decided, because only the first of those is safe to report to an operator.
+ */
+export function parseMatches(
+  content: string,
+  candidates: readonly ForgetCandidate[],
+): string[] | null {
+  const fenced = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+  const parsed = readJsonArray((fenced?.[1] ?? content).trim());
+  if (parsed === null) return null;
   const matched = new Set<string>();
   for (const entry of parsed) {
     // Objects and strings are accepted too: a small model asked for numbers
@@ -158,6 +227,11 @@ export class ForgetMatcher {
     if (!answer.succeeded || answer.content.trim().length === 0) {
       return { matchedIds: [], succeeded: false, truncated };
     }
-    return { matchedIds: parseMatches(answer.content, shown), succeeded: true, truncated };
+    // And an answer with no array in it is the same failure wearing prose: the
+    // model was asked for numbers and produced something nobody can act on, so
+    // it becomes a 503 the operator can retry rather than a clean dry run.
+    const matchedIds = parseMatches(answer.content, shown);
+    if (matchedIds === null) return { matchedIds: [], succeeded: false, truncated };
+    return { matchedIds, succeeded: true, truncated };
   }
 }

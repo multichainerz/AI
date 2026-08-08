@@ -1,7 +1,58 @@
 name: orcasynapse
 
+# The VM2 agentic node has run under MemoryMax, CPUQuota, TasksMax,
+# NoNewPrivileges and a CapabilityBoundingSet since it shipped; the VM1 control
+# plane -- which holds the database -- had none of it. Unbounded, the worker's
+# ~2 GB of BGE-M3 weights push the host into the kernel OOM killer, and the
+# process it picks by RSS is routinely PostgreSQL. A cgroup ceiling per service
+# turns that into a contained restart of the service that overran.
+#
+# Every limit is overridable so a larger or smaller host can be tuned without
+# forking the file. The memory ceilings are the ones doing that work: they are
+# per-service caps that bound the blast radius, not reservations, so they do not
+# have to sum to anything. The host floor itself is stated by the installer
+# preflight and deploy/BOOTSTRAP.md.
+#
+# CPU is a relative weight here and a quota on VM2, and the asymmetry is
+# deliberate rather than an oversight. systemd's CPUQuota=200% on a host with
+# fewer cores is a throttle that simply never binds; Compose's `cpus:` maps to
+# NanoCPUs, which the daemon validates against the host's CPU count and refuses
+# outright -- "range of CPUs is from 0.01 to 2.00, as there are only 2 CPUs
+# available". A per-service core count chosen for a well-provisioned VM1 is
+# therefore not a slower install on a 2 vCPU host, it is a `docker compose up`
+# that cannot create the container at all, and the service it kills first is the
+# worker asking for the most. cpu_shares carries the intent that actually
+# mattered -- under contention the worker's embedding burst yields to the
+# database everything else waits on -- and is in range on every host size.
+x-unprivileged: &unprivileged
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  pids_limit: 512
+
+# postgres and nginx both start as root and drop to their service user through
+# their entrypoint, so an empty capability set stops them booting at all --
+# postgres with "failed switching to 'postgres'", nginx with a chown failure on
+# its cache directory. This is the same set the VM2 unit's
+# CapabilityBoundingSet allows, and no wider.
+x-drops-privileges: &drops-privileges
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  cap_add:
+    - CHOWN
+    - DAC_OVERRIDE
+    - SETGID
+    - SETUID
+  pids_limit: 512
+
 services:
   postgres:
+    <<: *drops-privileges
+    mem_limit: ${ORCASYNAPSE_POSTGRES_MEMORY_LIMIT:-1g}
+    cpu_shares: ${ORCASYNAPSE_POSTGRES_CPU_SHARES:-1024}
     # pgvector, not stock postgres: the migrator creates the vector extension
     # and the baseline declares vector columns, so a plain image cannot apply
     # migrations at all. Must stay identical to the CI service image.
@@ -16,14 +67,27 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U orcasynapse -d orcasynapse"]
+      # -h, so the probe crosses TCP the way every client does. Without it
+      # pg_isready reaches the UNIX socket, and the official entrypoint runs its
+      # initdb-phase server with listen_addresses='' -- the socket answers while
+      # the port still refuses. A probe landing in that window reports healthy,
+      # migrate starts against a refusing port, exits non-zero, and api never
+      # starts. start_period keeps that same phase from spending the retries
+      # budgeted for a server that has actually started.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U orcasynapse -d orcasynapse"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 60s
     networks:
       - data
 
   migrate:
+    <<: *unprivileged
+    # Weighted with the database rather than below it: migrate is short-lived,
+    # and api and worker both wait on it completing.
+    mem_limit: ${ORCASYNAPSE_MIGRATE_MEMORY_LIMIT:-512m}
+    cpu_shares: ${ORCASYNAPSE_MIGRATE_CPU_SHARES:-1024}
     build:
       context: .
       dockerfile: Dockerfile.api
@@ -39,6 +103,9 @@ services:
       - data
 
   api:
+    <<: *unprivileged
+    mem_limit: ${ORCASYNAPSE_API_MEMORY_LIMIT:-1g}
+    cpu_shares: ${ORCASYNAPSE_API_CPU_SHARES:-1024}
     build:
       context: .
       dockerfile: Dockerfile.api
@@ -60,6 +127,17 @@ services:
       retries: 5
 
   worker:
+    <<: *unprivileged
+    # The ceiling has to clear the ~2 GB of BGE-M3 weights plus the ONNX
+    # runtime's arenas, or the fix for an OOM becomes an OOM of its own.
+    mem_limit: ${ORCASYNAPSE_WORKER_MEMORY_LIMIT:-3g}
+    # The lightest weight in the file, and not a throttle: shares only decide
+    # who yields when every core is already busy, so embedding still uses the
+    # whole machine while it is otherwise idle. What this buys is that an
+    # ingestion burst cannot starve postgres and api of the CPU they need to
+    # keep answering, which is the failure an operator reads as "the dashboard
+    # hung during an upload".
+    cpu_shares: ${ORCASYNAPSE_WORKER_CPU_SHARES:-256}
     build:
       context: .
       dockerfile: Dockerfile.worker
@@ -84,15 +162,45 @@ services:
       - data
 
   web:
+    <<: *drops-privileges
+    mem_limit: ${ORCASYNAPSE_WEB_MEMORY_LIMIT:-128m}
+    cpu_shares: ${ORCASYNAPSE_WEB_CPU_SHARES:-512}
     build:
       context: .
       dockerfile: Dockerfile.web
     restart: unless-stopped
+    environment:
+      # The scheme browsers actually reach OrcaSynapse with, which only the
+      # operator knows: the bundled proxy listens on plain HTTP, so it cannot
+      # observe the TLS that BOOTSTRAP.md asks a customer-approved reverse proxy
+      # to terminate in front of it. It is forwarded to the API as
+      # X-Forwarded-Proto, and that is what decides whether the administrator and
+      # enterprise session cookies carry Secure. Leave it alone for a plain-HTTP
+      # deployment; declare https once TLS terminates upstream, and only then --
+      # declaring https over cleartext marks cookies the browser will then never
+      # send back.
+      #
+      # Operators declare it with `--public-scheme https` on the installer or on
+      # rotate-installation-key.sh rather than by exporting it here, because
+      # those scripts run under sudo and sudo's env_reset drops the variable.
+      # Both record the choice in .local/state/public-scheme and export it into
+      # the `docker compose` invocations they make, which is where this
+      # interpolation reads it from. A bare `docker compose up -d` run by hand
+      # reads neither, so it falls back to the http default below.
+      ORCASYNAPSE_PUBLIC_SCHEME: ${ORCASYNAPSE_PUBLIC_SCHEME:-http}
     depends_on:
       api:
         condition: service_healthy
     ports:
-      - "${ORCASYNAPSE_HTTP_PORT:-8080}:8080"
+      # An explicit bind address, because a published port with none takes
+      # Docker's NAT path, which is evaluated before ufw's INPUT chain: an
+      # operator who follows BOOTSTRAP.md and restricts this port on the host
+      # finds the rule has no effect and believes the dashboard is protected.
+      # The default stays open, since the installer prints a LAN URL and VM2
+      # reaches this port to enrol; set ORCASYNAPSE_HTTP_BIND=127.0.0.1 when a
+      # reverse proxy terminates TLS on the same host, which is the posture
+      # BOOTSTRAP.md asks for outside a protected deployment network.
+      - "${ORCASYNAPSE_HTTP_BIND:-0.0.0.0}:${ORCASYNAPSE_HTTP_PORT:-8080}:8080"
     networks:
       - application
     healthcheck:

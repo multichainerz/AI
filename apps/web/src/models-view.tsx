@@ -14,6 +14,7 @@ import {
   updateModelDeployment,
 } from "./api.js";
 import { adminAccess } from "./admin-access.js";
+import { slugAsTyped, slugify } from "./benchmark-suite-editor.js";
 import {
   Alert,
   Button,
@@ -93,18 +94,34 @@ export function ModelsView({
     [connections, draft.workload],
   );
 
-  const load = async () => {
-    if (!unlocked) return;
+  const load = async (): Promise<ModelDeployment[]> => {
+    if (!unlocked) return models;
     try {
-      setModels((await getModelDeployments()).items);
+      const { items } = await getModelDeployments();
+      setModels(items);
       setError(null);
+      return items;
     } catch (loadError) {
       if (loadError instanceof OrcaSynapseApiError && loadError.status === 401) onSessionExpired();
       else setError(loadError instanceof Error ? loadError.message : "Unable to load model routes.");
+      return models;
     }
   };
 
   useEffect(() => { void load(); }, [session]);
+
+  /**
+   * A 409 means another operator saved first, so the revision this screen is
+   * holding can never succeed again. Refetch, and re-point the open editor at
+   * what was actually saved: this screen has no Refresh control and load() runs
+   * only on [session], so without this every retry resends the revision that
+   * already lost and the only way out is to navigate away and back.
+   */
+  const resyncAfterConflict = async (cause: unknown) => {
+    if (!(cause instanceof OrcaSynapseApiError) || cause.status !== 409) return;
+    const items = await load();
+    setEditing((current) => (current ? items.find(({ id }) => id === current.id) ?? current : null));
+  };
 
   useEffect(() => {
     if (eligibleConnections.some(({ id }) => id === draft.connectionId)) return;
@@ -162,7 +179,7 @@ export function ModelsView({
         });
         setMessage("Model route updated. Material changes require matching evaluation evidence before activation.");
       } else {
-        await createModelDeployment(draft);
+        await createModelDeployment({ ...draft, slug: slugify(draft.slug) });
         setMessage("Draft model route created.");
       }
       setShowEditor(false);
@@ -170,7 +187,10 @@ export function ModelsView({
       await load();
     } catch (saveError) {
       if (saveError instanceof OrcaSynapseApiError && saveError.status === 401) onSessionExpired();
-      else setError(saveError instanceof Error ? saveError.message : "Unable to save the model route.");
+      else {
+        await resyncAfterConflict(saveError);
+        setError(saveError instanceof Error ? saveError.message : "Unable to save the model route.");
+      }
     } finally {
       setBusy(false);
     }
@@ -195,7 +215,10 @@ export function ModelsView({
       await load();
     } catch (decisionError) {
       if (decisionError instanceof OrcaSynapseApiError && decisionError.status === 401) onSessionExpired();
-      else setError(decisionError instanceof Error ? decisionError.message : "Unable to change the model route state.");
+      else {
+        await resyncAfterConflict(decisionError);
+        setError(decisionError instanceof Error ? decisionError.message : "Unable to change the model route state.");
+      }
     } finally {
       setBusy(false);
     }
@@ -268,7 +291,7 @@ export function ModelsView({
         </header>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <Field label="Display name"><Input value={draft.displayName} minLength={2} maxLength={120} required onChange={(event) => setDraft({ ...draft, displayName: event.target.value })} /></Field>
-          <Field label="Slug"><Input value={draft.slug} required disabled={Boolean(editing)} onChange={(event) => setDraft({ ...draft, slug: event.target.value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") })} /></Field>
+          <Field label="Slug"><Input value={draft.slug} required disabled={Boolean(editing)} onChange={(event) => setDraft({ ...draft, slug: slugAsTyped(event.target.value) })} onBlur={() => setDraft((current) => ({ ...current, slug: slugify(current.slug) }))} /></Field>
           <Field label="Workload"><Select value={draft.workload} disabled={Boolean(editing)} onChange={(event) => setDraft({ ...draft, workload: event.target.value as ModelWorkload })}><option value="CHAT">Chat</option><option value="AGENT">Hermes agent</option></Select></Field>
           <Field label="Serving connection"><Select value={draft.connectionId} required onChange={(event) => setDraft({ ...draft, connectionId: event.target.value })}><option value="">Select a connection</option>{eligibleConnections.map((connection) => <option key={connection.id} value={connection.id}>{connection.displayName} - {connection.kind}</option>)}</Select></Field>
           <Field label="Model alias"><Input value={draft.modelAlias} required onChange={(event) => setDraft({ ...draft, modelAlias: event.target.value })} /></Field>

@@ -8,6 +8,7 @@ import {
   updatePromptTemplate,
 } from "./api.js";
 import { adminAccess } from "./admin-access.js";
+import { slugAsTyped, slugify } from "./benchmark-suite-editor.js";
 import {
   Alert, Button, EmptyState, Field, Input, LockedScreen, Metric, MetricRow, MicroLabel,
   PageHeader, Panel, StatusText, Textarea, cn, toneFor,
@@ -51,18 +52,34 @@ export function PromptsView({ session, onOpenOperations, onOpenSettings, onSessi
   const { unlocked, can } = adminAccess(session);
   const canManage = can("prompts:manage");
 
-  const load = async () => {
-    if (!unlocked) return;
+  const load = async (): Promise<PromptTemplate[]> => {
+    if (!unlocked) return prompts;
     try {
-      setPrompts((await getPromptTemplates()).items);
+      const { items } = await getPromptTemplates();
+      setPrompts(items);
       setError(null);
+      return items;
     } catch (cause) {
       if (cause instanceof OrcaSynapseApiError && cause.status === 401) onSessionExpired();
       else setError(cause instanceof Error ? cause.message : "Unable to load prompt templates.");
+      return prompts;
     }
   };
 
   useEffect(() => { void load(); }, [session]);
+
+  /**
+   * A 409 means another operator saved first, so the revision this screen is
+   * holding can never succeed again. Refetch, and re-point the open editor at
+   * what was actually saved: this screen has no Refresh control and load() runs
+   * only on [session], so without this every retry resends the revision that
+   * already lost and the only way out is to navigate away and back.
+   */
+  const resyncAfterConflict = async (cause: unknown) => {
+    if (!(cause instanceof OrcaSynapseApiError) || cause.status !== 409) return;
+    const items = await load();
+    setEditing((current) => (current ? items.find(({ id }) => id === current.id) ?? current : null));
+  };
 
   const startCreate = () => {
     setEditing(null);
@@ -103,7 +120,7 @@ export function PromptsView({ session, onOpenOperations, onOpenSettings, onSessi
         });
         setMessage("Prompt revision saved. Content or version changes require new promoted evidence.");
       } else {
-        await createPromptTemplate(draft);
+        await createPromptTemplate({ ...draft, slug: slugify(draft.slug) });
         setMessage("Draft chat-system prompt created.");
       }
       setEditing(null);
@@ -111,7 +128,10 @@ export function PromptsView({ session, onOpenOperations, onOpenSettings, onSessi
       await load();
     } catch (cause) {
       if (cause instanceof OrcaSynapseApiError && cause.status === 401) onSessionExpired();
-      else setError(cause instanceof Error ? cause.message : "Unable to save the prompt template.");
+      else {
+        await resyncAfterConflict(cause);
+        setError(cause instanceof Error ? cause.message : "Unable to save the prompt template.");
+      }
     } finally {
       setBusy(false);
     }
@@ -137,7 +157,10 @@ export function PromptsView({ session, onOpenOperations, onOpenSettings, onSessi
       await load();
     } catch (cause) {
       if (cause instanceof OrcaSynapseApiError && cause.status === 401) onSessionExpired();
-      else setError(cause instanceof Error ? cause.message : "Unable to change the prompt state.");
+      else {
+        await resyncAfterConflict(cause);
+        setError(cause instanceof Error ? cause.message : "Unable to change the prompt state.");
+      }
     } finally {
       setBusy(false);
     }
@@ -235,7 +258,7 @@ export function PromptsView({ session, onOpenOperations, onOpenSettings, onSessi
         </header>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Display name"><Input value={draft.displayName} minLength={2} maxLength={120} required onChange={(event) => setDraft({ ...draft, displayName: event.target.value })} /></Field>
-          <Field label="Prompt slug"><Input value={draft.slug} disabled={Boolean(editing)} required onChange={(event) => setDraft({ ...draft, slug: event.target.value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") })} /></Field>
+          <Field label="Prompt slug"><Input value={draft.slug} disabled={Boolean(editing)} required onChange={(event) => setDraft({ ...draft, slug: slugAsTyped(event.target.value) })} onBlur={() => setDraft((current) => ({ ...current, slug: slugify(current.slug) }))} /></Field>
           <Field label="Version"><Input value={draft.version} maxLength={120} required onChange={(event) => setDraft({ ...draft, version: event.target.value })} /></Field>
           <Field label="Runtime purpose"><Input value="Chat system" disabled /></Field>
           <Field label="Purpose and ownership" className="sm:col-span-2">

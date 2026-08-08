@@ -479,11 +479,27 @@ export class DrizzleToolingManager implements ToolingManager {
     }
 
     // Expire it durably, so the record reflects why nothing ran.
-    await this.database
+    //
+    // The row count is the answer, not the clock. An administrator can decide
+    // between the last poll and the deadline, and this update then matches
+    // nothing: reporting EXPIRED regardless failed a call a named human had
+    // already approved, leaving the trail holding tool.call_approved SUCCESS
+    // beside a record asserting nobody decided. findExistingResult replays that
+    // FAILED call, so the run could never recover from it either.
+    const expired = await this.database
       .update(toolApproval)
       .set({ status: "EXPIRED", decidedAt: new Date() })
-      .where(and(eq(toolApproval.callId, callId), eq(toolApproval.status, "PENDING")));
-    return "EXPIRED";
+      .where(and(eq(toolApproval.callId, callId), eq(toolApproval.status, "PENDING")))
+      .returning({ id: toolApproval.id });
+    if (expired.length === 1) return "EXPIRED";
+
+    const [decided] = await this.database
+      .select({ status: toolApproval.status })
+      .from(toolApproval)
+      .where(eq(toolApproval.callId, callId))
+      .limit(1);
+    if (decided?.status === "APPROVED") return "APPROVED";
+    return decided?.status === "REJECTED" ? "REJECTED" : "EXPIRED";
   }
 
   /** Approvals still awaiting a human, newest first. */

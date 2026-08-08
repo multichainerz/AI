@@ -11,6 +11,14 @@ export ORCASYNAPSE_HTTP_PORT
 
 # shellcheck source=lib/installer-ui.sh
 . "${ORCASYNAPSE_ROOT}/scripts/lib/installer-ui.sh"
+# This script force-recreates the web container, so it decides the public scheme
+# the proxy comes back with. It reads the declaration the install recorded
+# instead of re-deriving a default, because the documented invocation is a sudo
+# command and an exported variable does not survive one: re-deriving meant a
+# correct TLS installation silently lost Secure on every administrator and
+# enterprise session cookie the moment somebody rotated the key.
+# shellcheck source=lib/public-scheme.sh
+. "${ORCASYNAPSE_ROOT}/scripts/lib/public-scheme.sh"
 
 UI_ACCENT="${UI_AMBER}"
 UI_ACCENT_SOFT="${UI_AMBER_SOFT}"
@@ -19,7 +27,13 @@ TOTAL_STEPS=3
 
 validate_protected_installation() {
   [[ "${EUID}" -eq 0 ]] || fail "run this break-glass command as root"
-  [[ "${1:-}" == "--confirm-revoke-recovery-sessions" || "${1:-}" == "--confirm-revoke-local-sessions" ]] \
+  # Exactly the confirmation, and nothing this script does not understand. The
+  # public-scheme flag has already been taken out of the list by the time this
+  # runs, so a leftover argument here is a typo, and a typo that is silently
+  # ignored is how an operator ends up believing they declared something they
+  # did not.
+  (( $# == 1 )) \
+    && [[ "$1" == "--confirm-revoke-recovery-sessions" || "$1" == "--confirm-revoke-local-sessions" ]] \
     || fail "explicit confirmation is required: sudo ./scripts/rotate-installation-key.sh --confirm-revoke-recovery-sessions"
   command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 is required"
   command -v openssl >/dev/null 2>&1 || fail "OpenSSL is required"
@@ -41,12 +55,19 @@ wait_for_readiness() {
 }
 
 main() {
+  orcasynapse_take_public_scheme_flag "$@"
+  set -- ${ORCASYNAPSE_REMAINING_ARGS[@]+"${ORCASYNAPSE_REMAINING_ARGS[@]}"}
+
   UI_BANNER_META="Release $(installer_release_version)"
   banner
 
   step 1 "${TOTAL_STEPS}" "Validate the protected installation"
-  validate_protected_installation "${1:-}"
+  validate_protected_installation "$@"
   cd "${ORCASYNAPSE_ROOT}"
+  # Read back from the installation's own state, then recorded again if this
+  # invocation declared something new, so the next rotation reads that instead.
+  orcasynapse_resolve_public_scheme
+  orcasynapse_persist_public_scheme
 
   step 2 "${TOTAL_STEPS}" "Rotate the Installation Key and revoke recovery sessions"
   local new_key key_tmp
@@ -67,6 +88,10 @@ main() {
   success "Existing Installation-Key recovery sessions were revoked."
 
   step 3 "${TOTAL_STEPS}" "Restart and verify the control plane"
+  # Beside the recreation it describes rather than in a closing panel, because
+  # what an operator needs to read here is which scheme the proxy is coming back
+  # on -- and on an installation that never recorded one, that it is http.
+  orcasynapse_report_public_scheme
   run_with_progress "Restart the control plane with the rotated key" \
     docker compose up -d --no-build --force-recreate api web \
     || fail "could not restart the control plane"

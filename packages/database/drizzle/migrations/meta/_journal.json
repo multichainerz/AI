@@ -183,6 +183,13 @@
       "when": 1786180000000,
       "tag": "0025_hermes_commit_pin",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1786190400000,
+      "tag": "0026_audit_forwarding_cursor",
+      "breakpoints": true
     }
   ]
 }

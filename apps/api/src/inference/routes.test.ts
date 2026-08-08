@@ -5,7 +5,7 @@ import { InferenceGatewayError } from "./inference-gateway.js";
 const apps: Awaited<ReturnType<typeof createApp>>[] = [];
 afterEach(async () => Promise.all(apps.splice(0).map((app) => app.close())));
 
-async function gatewayApp() {
+async function gatewayApp(chatResult?: () => { response: Response; maxResponseBytes: number; stream: boolean }) {
   const gateway = {
     models: vi.fn(async (token: string | undefined) => {
       if (token !== "runtime-key") throw new InferenceGatewayError("UNAUTHORIZED", "Invalid runtime key.");
@@ -13,15 +13,36 @@ async function gatewayApp() {
     }),
     chat: vi.fn(async (token: string | undefined) => {
       if (token !== "runtime-key") throw new InferenceGatewayError("UNAUTHORIZED", "Invalid runtime key.");
-      return {
+      return chatResult?.() ?? {
         response: new Response(JSON.stringify({ id: "chatcmpl-1", choices: [] }), { headers: { "content-type": "application/json" } }),
         maxResponseBytes: 65_536,
+        stream: false,
       };
     }),
   };
   const app = await createApp({ logger: false, runtime: { bootstrapState: "READY", inferenceGateway: gateway as never } });
   apps.push(app);
   return { app, gateway };
+}
+
+/** An upstream SSE stream of `count` token frames, in the OpenAI wire shape. */
+function tokenFrames(count: number): Response {
+  const frames = Array.from({ length: count }, (_, index) => `data: ${JSON.stringify({
+    id: "chatcmpl-1",
+    object: "chat.completion.chunk",
+    choices: [{ index: 0, delta: { content: `tok${index} ` }, finish_reason: null }],
+  })}\n\n`);
+  const encoder = new TextEncoder();
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const frame of frames) controller.enqueue(encoder.encode(frame));
+        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+        controller.close();
+      },
+    }),
+    { headers: { "content-type": "text/event-stream" } },
+  );
 }
 
 describe("internal inference gateway routes", () => {
@@ -43,6 +64,33 @@ describe("internal inference gateway routes", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({ id: "chatcmpl-1" });
     expect(gateway.chat).toHaveBeenCalledWith("runtime-key", expect.objectContaining({ messages: [{ role: "user", content: "hello" }] }), expect.any(AbortSignal));
+  });
+
+  it("says so on the wire when it stops a stream at its byte limit", async () => {
+    // The limit is enforced after the headers are flushed, so throwing simply
+    // ended the body: no `[DONE]`, no error frame, and a caller holding a
+    // truncated answer with nothing to distinguish it from a complete one.
+    const { app } = await gatewayApp(() => ({
+      response: tokenFrames(200),
+      maxResponseBytes: 1_000,
+      stream: true,
+    }));
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/internal/v1/chat/completions",
+      headers: { authorization: "Bearer runtime-key" },
+      payload: { model: "caller-choice", messages: [{ role: "user", content: "write at length" }], stream: true },
+    });
+
+    // Some content got through, and then the caller was told why it stopped.
+    expect(response.payload).toContain("tok0");
+    expect(response.payload).toContain("orcasynapse_response_limit");
+    const frames = response.payload.split("\n\n").filter(Boolean);
+    expect(JSON.parse(frames.at(-2)!.slice("data: ".length))).toMatchObject({
+      error: { type: "response_limit_exceeded" },
+    });
+    expect(frames.at(-1)).toBe("data: [DONE]");
   });
 
   it("rejects unknown provider fields at the boundary", async () => {

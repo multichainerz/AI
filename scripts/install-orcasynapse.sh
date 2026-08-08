@@ -7,10 +7,18 @@ ORCASYNAPSE_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 ORCASYNAPSE_HTTP_PORT="${ORCASYNAPSE_HTTP_PORT:-8080}"
 ORCASYNAPSE_SECRET_DIR="${ORCASYNAPSE_ROOT}/.local/secrets"
 ORCASYNAPSE_APPLICATION_SECRET_GID=1000
+# The host floor deploy/BOOTSTRAP.md documents, kept here so the preflight and
+# the document cannot drift apart.
+ORCASYNAPSE_MINIMUM_VCPUS=2
 export ORCASYNAPSE_HTTP_PORT
 
 # shellcheck source=lib/installer-ui.sh
 . "${ORCASYNAPSE_ROOT}/scripts/lib/installer-ui.sh"
+# The scheme browsers really reach OrcaSynapse with -- declared on the command
+# line, recorded under .local/state, and never defaulted over a recording.
+# Sourced after the UI library because it reports through fail/warning/info.
+# shellcheck source=lib/public-scheme.sh
+. "${ORCASYNAPSE_ROOT}/scripts/lib/public-scheme.sh"
 
 UI_BANNER_TAGLINE="PRIVATE AI CONTROL PLANE  /  VM1 PROVISIONING"
 UI_BANNER_ACTIVITY="Establishing secure installation context"
@@ -60,6 +68,13 @@ validate_inputs() {
   [[ -f "${ORCASYNAPSE_ROOT}/compose.yaml" ]] || fail "compose.yaml is missing; run this script from an intact OrcaSynapse release bundle"
   [[ "${ORCASYNAPSE_HTTP_PORT}" =~ ^[0-9]+$ ]] && (( ORCASYNAPSE_HTTP_PORT >= 1 && ORCASYNAPSE_HTTP_PORT <= 65535 )) \
     || fail "ORCASYNAPSE_HTTP_PORT must be an integer from 1 through 65535"
+  # Anything the proxy does not recognise as https is treated as http, so a
+  # value like "HTTPS://" or a misspelling would leave the operator believing
+  # the session cookies are Secure when they are not. The flag and the recorded
+  # value are each checked where they are read; this is the last gate before the
+  # value is handed to Compose.
+  orcasynapse_validate_public_scheme "${ORCASYNAPSE_PUBLIC_SCHEME:-}" \
+    || fail "the public scheme must be http or https, not '${ORCASYNAPSE_PUBLIC_SCHEME:-unset}'"
   docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 is required"
 }
 
@@ -210,6 +225,86 @@ reindex_after_libc_migration() {
   chmod 0600 "${marker}"
 }
 
+# The host CPU count, or 0 when it cannot be determined. getconf is the fallback
+# for a minimal image without coreutils, and 0 means "unknown" -- better to say
+# nothing than to invent a number and warn an adequately sized host about it.
+host_cpu_count() {
+  local count=""
+  count="$(nproc 2>/dev/null || true)"
+  [[ "${count}" =~ ^[0-9]+$ ]] || count="$(getconf _NPROCESSORS_ONLN 2>/dev/null || true)"
+  [[ "${count}" =~ ^[0-9]+$ ]] || count=0
+  printf '%d' "${count}"
+}
+
+# Says the CPU count out loud before the install rather than after it.
+#
+# This deployment used to encode its CPU expectation as a per-service `cpus:`
+# ceiling in compose.yaml, which the Docker daemon validates against the host
+# and refuses when it is exceeded -- so an undersized host learned its size from
+# a failed `docker compose up` with the stack half-created. compose.yaml now
+# weights CPU instead of capping it, so nothing here can refuse to start, and
+# this warning is what remains: the floor is still real, and an operator under
+# it should hear it from the installer rather than from a slow dashboard.
+check_cpu_capacity() {
+  local cpu_count
+  cpu_count="$(host_cpu_count)"
+  if (( cpu_count > 0 && cpu_count < ORCASYNAPSE_MINIMUM_VCPUS )); then
+    warning "this host has ${cpu_count} vCPU; OrcaSynapse expects at least ${ORCASYNAPSE_MINIMUM_VCPUS}, and document embedding stays slow below 4"
+  fi
+}
+
+# Disk, memory and CPU -- the three figures deploy/BOOTSTRAP.md states as the
+# host floor, and the only preflight work that needs nothing installed first.
+#
+# Kept apart from preflight_checks and called ahead of install_host_dependencies
+# because the disk shortfall is a hard failure: grouped with the Docker-dependent
+# checks it aborted an undersized host only after apt-get had installed docker.io
+# and systemctl had enabled the daemon, so the operator was told the machine was
+# too small by a run that had already changed it. Nothing here reads Docker.
+#
+# The daemon's data root, or the nearest ancestor that exists yet. Running ahead
+# of the install means /var/lib/docker has not been created, so `df` on it
+# reports nothing; the first version of this fell back to ORCASYNAPSE_ROOT, which
+# silently measured a different filesystem. On the ordinary layout where /var is
+# its own volume, that let a 4 GiB partition satisfy a 5 GiB requirement -- apt
+# then installed Docker and the image build filled /var and died half created,
+# which is the failure the check exists to prevent. Walking up lands on /var/lib,
+# or /var, or / -- whichever holds the mount the data root will be created under.
+docker_data_root_probe() {
+  local path="/var/lib/docker"
+  while [[ ! -e "${path}" && "${path}" != "/" ]]; do
+    path="$(dirname -- "${path}")"
+  done
+  printf '%s\n' "${path}"
+}
+
+check_host_sizing() {
+  local free_root_gib free_docker_gib docker_probe
+  docker_probe="$(docker_data_root_probe)"
+  free_root_gib="$(df -Pk "${ORCASYNAPSE_ROOT}" 2>/dev/null | awk 'NR==2 {print int($4/1048576)}' || true)"
+  free_docker_gib="$(df -Pk "${docker_probe}" 2>/dev/null | awk 'NR==2 {print int($4/1048576)}' || true)"
+  free_docker_gib="${free_docker_gib:-0}"
+  if [[ -n "${free_root_gib}" ]] && (( free_root_gib < 5 )); then
+    fail "only ${free_root_gib} GiB free under ${ORCASYNAPSE_ROOT}; at least 5 GiB is required"
+  fi
+  if (( free_docker_gib < 5 )); then
+    fail "only ${free_docker_gib} GiB free under ${docker_probe}, which is where Docker's data root lands; at least 5 GiB is required for images and the database volume"
+  fi
+  if [[ -n "${free_root_gib}" ]] && (( free_root_gib < 10 )); then
+    warning "less than 10 GiB free under ${ORCASYNAPSE_ROOT}; plan for growth before production use"
+  fi
+
+  local memory_kib
+  memory_kib="$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || printf '0')"
+  if (( memory_kib > 0 && memory_kib < 4194304 )); then
+    warning "this host has less than 4 GiB of memory; the control plane may be slow under load"
+  fi
+
+  check_cpu_capacity
+}
+
+# What is left once sizing has been reported: the checks that genuinely require
+# a running Docker daemon, and so cannot run before it is installed.
 preflight_checks() {
   docker info >/dev/null 2>&1 || fail "the Docker daemon is not running; start it with: systemctl start docker"
 
@@ -223,26 +318,6 @@ preflight_checks() {
     fail "TCP port ${ORCASYNAPSE_HTTP_PORT} is already in use; stop the conflicting service or set ORCASYNAPSE_HTTP_PORT"
   fi
 
-  local free_root_gib free_docker_gib
-  free_root_gib="$(df -Pk "${ORCASYNAPSE_ROOT}" 2>/dev/null | awk 'NR==2 {print int($4/1048576)}' || true)"
-  free_docker_gib="$(df -Pk /var/lib/docker 2>/dev/null | awk 'NR==2 {print int($4/1048576)}' || true)"
-  free_docker_gib="${free_docker_gib:-${free_root_gib:-0}}"
-  if [[ -n "${free_root_gib}" ]] && (( free_root_gib < 5 )); then
-    fail "only ${free_root_gib} GiB free under ${ORCASYNAPSE_ROOT}; at least 5 GiB is required"
-  fi
-  if (( free_docker_gib < 5 )); then
-    fail "only ${free_docker_gib} GiB free under /var/lib/docker; at least 5 GiB is required for images and the database volume"
-  fi
-  if [[ -n "${free_root_gib}" ]] && (( free_root_gib < 10 )); then
-    warning "less than 10 GiB free under ${ORCASYNAPSE_ROOT}; plan for growth before production use"
-  fi
-
-  local memory_kib
-  memory_kib="$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || printf '0')"
-  if (( memory_kib > 0 && memory_kib < 4194304 )); then
-    warning "this host has less than 4 GiB of memory; the control plane may be slow under load"
-  fi
-
   if all_secrets_exist; then
     info "Protected secrets are present; existing installation state will be preserved."
   else
@@ -251,13 +326,16 @@ preflight_checks() {
   success "Preflight checks passed."
 }
 
-# A machine-readable completion record for operators and support tooling.
+# A machine-readable completion record for operators and support tooling. The
+# public scheme belongs in it: it is a non-secret operator declaration, and an
+# audit that has to answer "did this installation issue Secure cookies" should
+# not have to reconstruct it from the proxy configuration.
 write_completion_marker() {
   local version="$1" commit="$2" completed_at
   completed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   install -d -m 0700 "${ORCASYNAPSE_ROOT}/.local/state"
-  printf '{"version":"%s","commit":"%s","completedAt":"%s"}\n' \
-    "${version}" "${commit}" "${completed_at}" \
+  printf '{"version":"%s","commit":"%s","completedAt":"%s","publicScheme":"%s"}\n' \
+    "${version}" "${commit}" "${completed_at}" "${ORCASYNAPSE_PUBLIC_SCHEME}" \
     > "${ORCASYNAPSE_ROOT}/.local/state/install-complete.json"
   chmod 0600 "${ORCASYNAPSE_ROOT}/.local/state/install-complete.json"
 }
@@ -281,6 +359,14 @@ provision_local_administrator() {
 }
 
 main() {
+  # Before the banner: a mistyped declaration must stop here, not after a build.
+  # sudo's env_reset drops an exported ORCASYNAPSE_PUBLIC_SCHEME on the way in,
+  # so the command line is the only channel every documented invocation has.
+  orcasynapse_take_public_scheme_flag "$@"
+  if (( ${#ORCASYNAPSE_REMAINING_ARGS[@]} > 0 )); then
+    fail "unrecognised argument '${ORCASYNAPSE_REMAINING_ARGS[0]}'; this installer takes only --public-scheme http|https"
+  fi
+
   local release_version source_commit=""
   release_version="$(installer_release_version)"
   if [[ -r "${ORCASYNAPSE_ROOT}/.orcasynapse-source-commit" ]]; then
@@ -305,6 +391,17 @@ main() {
   : > "${UI_LOG_FILE}"
   chmod 0600 "${UI_LOG_FILE}"
   ui_log "installer release=${release_version} commit=${source_commit:-none}"
+  # Settled and recorded before anything is built, so the rest of the run -- and
+  # every later run, including the break-glass rotation -- reads one answer.
+  # Re-running the installer with no flag on a declared installation must not
+  # fall back to the default, which is why resolution consults the recording.
+  orcasynapse_resolve_public_scheme
+  orcasynapse_persist_public_scheme
+  # Before install_host_dependencies, not after: this is the last point at which
+  # an undersized host can be turned away without an apt transaction and an
+  # enabled Docker service behind it. The log file above is opened first so the
+  # abort still reaches the artifact an operator sends to support.
+  check_host_sizing
   install_host_dependencies
   validate_inputs
   success "Docker Compose and host dependencies are ready."
@@ -355,8 +452,14 @@ main() {
   installation_key="$(<"$(secret_file orcasynapse_installation_key)")"
 
   ui_complete "ORCASYNAPSE IS READY"
-  ui_panel_kv 'Dashboard' "http://${host_ip}:${ORCASYNAPSE_HTTP_PORT}/"
+  # "Direct address", not "Dashboard": on an installation that declared https
+  # this is the plain-HTTP port behind the TLS terminator, not the address
+  # browsers use, and labelling it as the dashboard invites an operator to reach
+  # the control plane over cleartext -- where the Secure cookie they just asked
+  # for is one the browser will never send back.
+  ui_panel_kv 'Direct address' "http://${host_ip}:${ORCASYNAPSE_HTTP_PORT}/"
   ui_panel_kv 'Release' "${release_version}${source_commit:+ (${source_commit:0:12})}"
+  ui_panel_kv 'Public scheme' "${ORCASYNAPSE_PUBLIC_SCHEME}"
   # Printed, never logged: ui_panel_line does not write to UI_LOG_FILE, which
   # is the only reason the key may appear through a UI helper at all.
   ui_panel_line ''
@@ -365,6 +468,11 @@ main() {
   warning "Store the Installation Key in your organization password vault before closing this terminal."
   info "It is for offline local-account recovery, does not expire, and is not the routine dashboard login."
   info "Export and verify the encrypted recovery kit before production activation."
+  # Said out loud rather than left to be inferred from the proxy configuration.
+  # An install that terminates TLS upstream but never declared it looks
+  # identical to a correct one from here, and that silence is exactly how a
+  # deployment reached production with session cookies that were not Secure.
+  orcasynapse_report_public_scheme
   write_completion_marker "${release_version}" "${source_commit:-unknown}"
   ui_next "Open the dashboard, change the temporary password, then connect AI Inference."
 }

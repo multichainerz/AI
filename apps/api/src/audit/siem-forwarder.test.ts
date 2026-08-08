@@ -6,14 +6,16 @@ import {
   serviceConnection,
   type TestDatabase,
 } from "@orcasynapse/database";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { sql, type SQL } from "drizzle-orm";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConnectionDiagnosticStore } from "../connections/diagnostics/types.js";
+import { DrizzleAuditManager } from "./audit-manager.js";
 import { SiemForwarder } from "./siem-forwarder.js";
 
 let context: TestDatabase;
 
 beforeAll(async () => { context = await createTestDatabase(); }, 120_000);
-afterAll(async () => { await context?.drop(); });
+afterAll(async () => { await context?.drop(); }, 120_000);
 beforeEach(async () => { await context.reset(); });
 
 const logger = { error: vi.fn() };
@@ -51,9 +53,9 @@ function connections(id: string, configuration: Record<string, unknown> = {}) {
   } as unknown as ConnectionDiagnosticStore;
 }
 
-async function record(action: string, occurredAt: Date) {
-  await context.database.insert(auditEvent).values({
-    actorType: "USER",
+function event(action: string, occurredAt: Date | SQL) {
+  return {
+    actorType: "USER" as const,
     actorId: randomUUID(),
     action,
     resourceType: "ServiceConnection",
@@ -61,7 +63,72 @@ async function record(action: string, occurredAt: Date) {
     outcome: "SUCCESS",
     occurredAt,
     metadata: { note: action },
+  };
+}
+
+async function record(action: string, occurredAt: Date) {
+  await context.database.insert(auditEvent).values(event(action, occurredAt));
+}
+
+/**
+ * Records an event inside a transaction that stays open until it is released.
+ *
+ * This is how insert order and commit order come apart in production: audit
+ * events are written inside the transaction doing the governed work, and
+ * occurredAt defaults to CURRENT_TIMESTAMP, which PostgreSQL freezes at the
+ * start of that transaction.
+ */
+async function recordInHeldTransaction(action: string, occurredAt: Date) {
+  let reached!: () => void;
+  let release!: () => void;
+  const inserted = new Promise<void>((resolve) => { reached = resolve; });
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const committed = context.database.transaction(async (transaction) => {
+    await transaction.insert(auditEvent).values(event(action, occurredAt));
+    reached();
+    await held;
   });
+  const commit = async () => { openTransactions.delete(commit); release(); await committed; };
+  openTransactions.add(commit);
+  // Racing the transaction surfaces a failed insert instead of hanging here.
+  await Promise.race([inserted, committed]);
+  return { commit };
+}
+
+// A held transaction keeps a lock on the trail, so a test that fails before
+// releasing one would otherwise hang the next test's TRUNCATE rather than
+// report its own failure.
+const openTransactions = new Set<() => Promise<void>>();
+afterEach(async () => { for (const commit of openTransactions) await commit(); });
+
+/**
+ * Waits until nothing older than this event is still running on the cluster.
+ *
+ * Stepping over a hole is the one thing the forwarder cannot decide from the
+ * trail alone: it needs pg_snapshot_xmin to pass the event, and that horizon is
+ * computed across every backend in the cluster rather than across this database
+ * alone, so a migration another test file is running in its own database pins
+ * it. Retrying forward() a fixed number of times instead asserts that the
+ * horizon moves within a few hundred milliseconds, which nothing promises -
+ * under a concurrent run it does not, and the test failed on a machine that was
+ * merely busy. Waiting for the condition the behaviour actually needs is what
+ * makes the answer the same on a loaded machine as on an idle one.
+ */
+async function waitUntilSettled(action: string): Promise<void> {
+  await vi.waitFor(async () => {
+    const { rows } = await context.database.execute<{ settled: boolean }>(
+      sql`SELECT age(xmin) > age(pg_snapshot_xmin(pg_current_snapshot())::xid) AS settled
+          FROM ${auditEvent} WHERE ${auditEvent.action} = ${action}`,
+    );
+    expect(rows[0]?.settled).toBe(true);
+  }, { timeout: 45_000, interval: 100 });
+}
+
+/** Every event handed to the destination across every cycle, in delivery order. */
+function delivered(fetcher: typeof fetch): Array<{ id: string; action: string }> {
+  return vi.mocked(fetcher).mock.calls.flatMap(
+    ([, init]) => JSON.parse(String(init!.body)).events as Array<{ id: string; action: string }>,
+  );
 }
 
 const base = new Date("2026-08-01T12:00:00.000Z");
@@ -137,6 +204,101 @@ describe("SiemForwarder", () => {
     const [state] = await context.database.select().from(auditForwardingState);
     expect(state?.deliveredCount).toBe(4);
   });
+
+  it("does not skip an event whose transaction commits after a later one's", async () => {
+    const id = await seedSiem();
+    const fetcher = accepted();
+    const forward = () => new SiemForwarder(context.database, connections(id), logger, fetcher).forward();
+
+    // The slow transaction records first and commits last, so its event carries
+    // the earlier timestamp while becoming visible after the later one.
+    const slow = await recordInHeldTransaction("slow", new Date(base.getTime() + 248));
+    await record("fast", new Date(base.getTime() + 669));
+
+    // A cycle runs while the slow transaction is still open. The later event is
+    // no evidence that nothing earlier is outstanding.
+    await forward();
+    await slow.commit();
+    await forward();
+
+    expect(delivered(fetcher).map((entry) => entry.action).sort()).toEqual(["fast", "slow"]);
+    expect(new Set(delivered(fetcher).map((entry) => entry.id)).size).toBe(2);
+  });
+
+  it("forwards up to the outstanding event and no further", async () => {
+    const id = await seedSiem();
+    const fetcher = accepted();
+    const forward = () => new SiemForwarder(context.database, connections(id), logger, fetcher).forward();
+
+    await record("before", base);
+    const slow = await recordInHeldTransaction("during", new Date(base.getTime() + 1));
+    await record("after", new Date(base.getTime() + 2));
+
+    // Everything up to the open transaction is safe to send; nothing past it is,
+    // because the batch is delivered and the position advanced as one.
+    expect(await forward()).toMatchObject({ forwarded: 1 });
+    await slow.commit();
+    expect(await forward()).toMatchObject({ forwarded: 2 });
+
+    expect(delivered(fetcher).map((entry) => entry.action)).toEqual(["before", "during", "after"]);
+  });
+
+  it("does not report a trail with an undelivered event as fully forwarded", async () => {
+    const id = await seedSiem();
+    const slow = await recordInHeldTransaction("slow", new Date(base.getTime() + 248));
+    await record("fast", new Date(base.getTime() + 669));
+
+    await new SiemForwarder(context.database, connections(id), logger, accepted()).forward();
+    await slow.commit();
+
+    // The operator reads completeness off this surface; it must not claim the
+    // trail is fully delivered while an event of it has never been sent.
+    const health = await new DrizzleAuditManager(context.database).forwarding();
+    expect(health.pendingCount).toBeGreaterThan(0);
+    expect(health.summary).not.toContain("Every recorded event has been accepted");
+  });
+
+  it("delivers an event recorded with microsecond precision exactly once", async () => {
+    const id = await seedSiem();
+    // PostgreSQL keeps microseconds; a JavaScript Date does not. A position
+    // that round-trips through a Date lands before the event it just sent.
+    await context.database
+      .insert(auditEvent)
+      .values(event("precise", sql`TIMESTAMPTZ '2026-08-01T12:00:00.919532Z'`));
+    const fetcher = accepted();
+    const forward = () => new SiemForwarder(context.database, connections(id), logger, fetcher).forward();
+
+    const first = await forward();
+    const second = await forward();
+
+    expect(first.forwarded).toBe(1);
+    expect(second.forwarded).toBe(0);
+    expect(delivered(fetcher)).toHaveLength(1);
+    const [state] = await context.database.select().from(auditForwardingState);
+    expect(state?.deliveredCount).toBe(1);
+  });
+
+  it("does not stall when a rolled-back write leaves a hole in the trail", async () => {
+    const id = await seedSiem();
+    // A position is claimed inside the transaction and is not returned when it
+    // fails, so a hole in the order is permanent and cannot be waited out.
+    await expect(context.database.transaction(async (transaction) => {
+      await transaction.insert(auditEvent).values(event("doomed", base));
+      throw new Error("the surrounding work failed");
+    })).rejects.toThrow("the surrounding work failed");
+    await record("survivor", new Date(base.getTime() + 1_000));
+
+    // Resolving a hole means waiting out the writes that were in flight around
+    // it, which other tests on this cluster may still be holding open. Once
+    // they are gone one cycle has to clear it, so this asserts on a single
+    // pass rather than on however many a busy machine happens to need.
+    await waitUntilSettled("survivor");
+    const fetcher = accepted();
+    const result = await new SiemForwarder(context.database, connections(id), logger, fetcher).forward();
+
+    expect(result.forwarded).toBe(1);
+    expect(delivered(fetcher).map((entry) => entry.action)).toEqual(["survivor"]);
+  }, 60_000);
 
   it("retries a rejected batch rather than losing it", async () => {
     const id = await seedSiem();

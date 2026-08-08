@@ -124,7 +124,15 @@ function when(value: string | null): string {
 export function BenchmarksView({ session, onOpenOperations, onSessionExpired }: BenchmarksViewProps) {
   const [suites, setSuites] = useState<BenchmarkSuite[]>([]);
   const [runs, setRuns] = useState<BenchmarkRun[]>([]);
-  const [inspecting, setInspecting] = useState<BenchmarkRun | null>(null);
+  /*
+   * The run being inspected is held by id, not by value.
+   *
+   * Opening the results on a run in flight is the case the poll exists for, and
+   * a snapshot taken at open time freezes at the cases scored so far — and never
+   * reaches COMPLETED, so the evidence form the run was commissioned for never
+   * appears however long the operator waits.
+   */
+  const [inspectingId, setInspectingId] = useState<string | null>(null);
   /** null when closed; `{ suite: null }` for a new one. */
   const [editing, setEditing] = useState<{ suite: BenchmarkSuite | null } | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
@@ -168,6 +176,8 @@ export function BenchmarksView({ session, onOpenOperations, onSessionExpired }: 
     const timer = setInterval(() => void load(), REFRESH_MS);
     return () => clearInterval(timer);
   }, [unlocked, active.length]);
+
+  const inspecting = inspectingId === null ? null : runs.find(({ id }) => id === inspectingId) ?? null;
 
   const latestBySuite = useMemo(() => {
     const latest = new Map<string, BenchmarkRun>();
@@ -358,7 +368,7 @@ export function BenchmarksView({ session, onOpenOperations, onSessionExpired }: 
                   `evaluations:read` is for, and an auditor who cannot see a
                   result cannot audit the decision made on it. */}
               {latest && latest.results.length > 0 && (
-                <Button size="sm" onClick={() => setInspecting(latest)}>Results</Button>
+                <Button size="sm" onClick={() => setInspectingId(latest.id)}>Results</Button>
               )}
               {canManage && !running && (
                 <Button size="sm" onClick={() => setEditing({ suite })}>Edit</Button>
@@ -404,8 +414,8 @@ export function BenchmarksView({ session, onOpenOperations, onSessionExpired }: 
       run={inspecting}
       canManage={canManage}
       suite={suites.find(({ id }) => id === inspecting.suiteId) ?? null}
-      onRecorded={(note) => { setInspecting(null); setMessage(note); void load(); }}
-      onClose={() => setInspecting(null)}
+      onRecorded={(note) => { setInspectingId(null); setMessage(note); void load(); }}
+      onClose={() => setInspectingId(null)}
     />}
   </div>;
 }

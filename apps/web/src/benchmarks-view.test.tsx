@@ -14,7 +14,7 @@ import {
   type BenchmarkRun,
   type BenchmarkSuite,
 } from "@orcasynapse/contracts";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { writeFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -137,6 +137,19 @@ const running: BenchmarkRun = {
   completedAt: null,
 };
 
+/** The same run once the worker has scored the rest of its cases. */
+const finished: BenchmarkRun = {
+  ...running,
+  status: "COMPLETED",
+  passRate: 0.5,
+  medianLatencyMs: 4_120,
+  results: completed.results,
+  completedAt: "2026-08-07T09:00:45.000Z",
+};
+
+/** What the API would return now, which the poll test moves underneath the screen. */
+let runList: BenchmarkRun[] = [running, completed];
+
 const startBenchmarkRun = vi.fn(async () => running);
 const cancelBenchmarkRun = vi.fn(async () => ({ ...running, status: "CANCELLED" as const }));
 const attachBenchmarkEvidence = vi.fn(async (_id: string, _input: AttachBenchmarkEvidence) => ({
@@ -150,7 +163,7 @@ vi.mock("./api.js", async () => {
   return {
     ...actual,
     getBenchmarkSuites: vi.fn(async () => ({ items: [chatSuite, retrievalSuite] })),
-    getBenchmarkRuns: vi.fn(async () => ({ items: [running, completed] })),
+    getBenchmarkRuns: vi.fn(async () => ({ items: runList })),
     startBenchmarkRun: (...args: unknown[]) => startBenchmarkRun(...args as []),
     cancelBenchmarkRun: (...args: unknown[]) => cancelBenchmarkRun(...args as []),
     attachBenchmarkEvidence: (...args: unknown[]) =>
@@ -172,7 +185,7 @@ async function view(as: AdministratorSession = session) {
   }
 }
 
-afterEach(() => { cleanup(); vi.clearAllMocks(); });
+afterEach(() => { cleanup(); vi.clearAllMocks(); vi.useRealTimers(); runList = [running, completed]; });
 
 describe("benchmark suites", () => {
   it("counts a completed run below its threshold as a regression", async () => {
@@ -257,6 +270,30 @@ describe("run results", () => {
   it("renders no inline style, which the CSP would refuse in the built container", async () => {
     await view();
     expect(document.body.innerHTML).not.toMatch(/\sstyle="/);
+  });
+
+  it("follows the run it is showing as the poll scores the rest of it", async () => {
+    // Opened on a run in flight, the results are the reason the poll exists. A
+    // snapshot taken at open time freezes at the cases scored so far and, worse,
+    // never reaches COMPLETED — so the evidence form the run was commissioned
+    // for never appears and the operator has no way to tell it is stale.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    await view();
+    fireEvent.click(screen.getAllByRole("button", { name: "Results" })[1]!);
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/retrieval-baseline/)).toBeTruthy();
+    expect(within(dialog).queryByText("An answer must never name another tenant.")).toBeNull();
+    expect(within(dialog).queryByRole("button", { name: "Record as evidence" })).toBeNull();
+
+    runList = [finished, completed];
+    await act(async () => { await vi.advanceTimersByTimeAsync(4_000); });
+
+    // The card behind the dialog does refresh, which is what makes the frozen
+    // dialog a lie rather than a delay.
+    expect(screen.queryByText("1 of 2 cases scored")).toBeNull();
+    expect(within(dialog).getByText("An answer must never name another tenant.")).toBeTruthy();
+    expect(within(dialog).getByRole("button", { name: "Record as evidence" })).toBeTruthy();
   });
 });
 

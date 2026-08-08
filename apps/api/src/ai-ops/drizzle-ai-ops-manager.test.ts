@@ -16,7 +16,7 @@ import type { AiOpsDependencies } from "./drizzle-ai-ops-manager.js";
 let context: TestDatabase;
 
 beforeAll(async () => { context = await createTestDatabase(); }, 120_000);
-afterAll(async () => { await context?.drop(); });
+afterAll(async () => { await context?.drop(); }, 120_000);
 beforeEach(async () => { await context.reset(); });
 
 const principal = { id: randomUUID(), subject: "local-admin:operator" } as AdminPrincipal;

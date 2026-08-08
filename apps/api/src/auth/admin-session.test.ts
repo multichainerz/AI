@@ -10,7 +10,7 @@ import {
 } from "@orcasynapse/database";
 import { hashLocalPassword } from "@orcasynapse/security";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import type { InstallationKeyVerifier } from "./installation-key-auth.js";
+import { InstallationKeyAuthenticator, type InstallationKeyVerifier } from "./installation-key-auth.js";
 import {
   ADMIN_SESSION_IDLE_MS,
   ADMIN_SESSION_TOUCH_INTERVAL_MS,
@@ -23,13 +23,16 @@ import {
 let context: TestDatabase;
 
 beforeAll(async () => { context = await createTestDatabase(); }, 120_000);
-afterAll(async () => { await context?.drop(); });
+afterAll(async () => { await context?.drop(); }, 120_000);
 beforeEach(async () => { await context.reset(); });
 afterEach(() => vi.useRealTimers());
 
 const INSTALLATION_KEY = "a-secure-permanent-installation-key";
-const acceptsInstallationKey: InstallationKeyVerifier = { verify: (candidate) => candidate === INSTALLATION_KEY };
-const rejectsInstallationKey: InstallationKeyVerifier = { verify: () => false };
+const ROTATED_KEY = "an-entirely-different-installation-key";
+/** The real authenticator, so the mounted key and the stored hash agree. */
+const acceptsInstallationKey: InstallationKeyVerifier = new InstallationKeyAuthenticator(INSTALLATION_KEY);
+/** Stands in for an installation whose mounted key matches nothing on record. */
+const rejectsInstallationKey: InstallationKeyVerifier = { verify: () => false, matchesDigest: () => false };
 
 function manager(authenticator: InstallationKeyVerifier = rejectsInstallationKey) {
   return new DrizzleAdminSessionManager(context.database, authenticator);
@@ -136,13 +139,46 @@ describe("DrizzleAdminSessionManager installation key", () => {
   it("revokes outstanding recovery sessions when the mounted key is rotated", async () => {
     const first = await manager(acceptsInstallationKey).createInstallationKeySession(INSTALLATION_KEY, {});
 
-    const rotatedKey = "an-entirely-different-installation-key";
-    const rotated = await manager({ verify: (candidate) => candidate === rotatedKey })
-      .createInstallationKeySession(rotatedKey, {});
+    const afterRotation = new InstallationKeyAuthenticator(ROTATED_KEY);
+    const rotated = await manager(afterRotation).createInstallationKeySession(ROTATED_KEY, {});
 
     expect(rotated).not.toBeNull();
-    expect(await manager(rejectsInstallationKey).authenticate(first!.token, "sessions:manage")).toBeNull();
-    expect(await manager(rejectsInstallationKey).authenticate(rotated!.token, "sessions:manage")).not.toBeNull();
+    expect(await manager(afterRotation).authenticate(first!.token, "sessions:manage")).toBeNull();
+    expect(await manager(afterRotation).authenticate(rotated!.token, "sessions:manage")).not.toBeNull();
+  });
+
+  it("revokes an outstanding recovery session on the next use of the rotated key alone", async () => {
+    // The leak response an operator actually performs: write a new key file and
+    // restart. Nobody presents the new key, so nothing rewrites the stored
+    // hash, and the attacker's recovery row used to keep working for its full
+    // absolute lifetime -- long enough to reset the local administrator.
+    await seedLocalAdministrator();
+    const stolen = await manager(acceptsInstallationKey).createInstallationKeySession(INSTALLATION_KEY, {});
+    const restarted = () => manager(new InstallationKeyAuthenticator(ROTATED_KEY));
+
+    expect(
+      await restarted().recoverLocalAdministrator(stolen!.token, "admin", "a-much-stronger-password", {}),
+    ).toBeNull();
+    expect(await restarted().authenticate(stolen!.token, "sessions:manage")).toBeNull();
+
+    // The password the attacker tried to replace is untouched.
+    expect(await manager().createLocalPasswordSession("admin", "a-much-stronger-password", {})).toBeNull();
+    expect(await manager().createLocalPasswordSession("admin", "temporary-password", {})).not.toBeNull();
+  }, 60_000);
+
+  it("records a rejected Installation Key so break-glass probing shows up in audit", async () => {
+    expect(
+      await manager().createInstallationKeySession("a-long-enough-but-entirely-wrong-key", { sourceIp: "203.0.113.9" }),
+    ).toBeNull();
+
+    const failures = (await context.database.select().from(auditEvent))
+      .filter(({ outcome }) => outcome === "FAILED");
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatchObject({
+      action: "administrator.installation_key_login_failed",
+      resourceType: "InstallationCredential",
+      sourceIp: "203.0.113.9",
+    });
   });
 });
 
@@ -217,6 +253,21 @@ describe("DrizzleAdminSessionManager local password", () => {
       .from(localAdministrator)
       .where(eq(localAdministrator.id, account.id));
     expect(updated?.passwordChangeRequired).toBe(false);
+  }, 60_000);
+
+  it("burns an outstanding recovery session when the password changes", async () => {
+    // Recovery sessions carry the subject `installation-key-administrator`, so
+    // revoking by subject alone left the break-glass way in open behind an
+    // administrator who had just responded to a suspected compromise by
+    // changing the password.
+    await seedLocalAdministrator();
+    const recovery = await manager(acceptsInstallationKey).createInstallationKeySession(INSTALLATION_KEY, {});
+    const local = await manager(acceptsInstallationKey).createLocalPasswordSession("admin", "temporary-password", {});
+
+    await manager(acceptsInstallationKey)
+      .changeLocalPassword(local!.token, "temporary-password", "a-much-stronger-password", {});
+
+    expect(await manager(acceptsInstallationKey).authenticate(recovery!.token, "sessions:manage")).toBeNull();
   }, 60_000);
 
   it("refuses a password change that reuses the current password", async () => {

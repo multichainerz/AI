@@ -5,6 +5,79 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.85.0 — 2026-08-08
+
+A cohesion pass over ai-v1.84.0's audit work, then two remediation rounds against
+what that pass found. The theme is that the previous release's fixes were correct
+in code and wrong at the deployment boundary — the layer no unit test can see.
+
+**`docker compose up` would have failed outright on any host with fewer than four
+vCPUs.** The per-service `cpus:` ceilings added for OOM protection map to Docker's
+NanoCPUs, and the daemon refuses container creation when the request exceeds the
+host's CPU count — an error, not a clamp: `range of CPUs is from 0.01 to 20.00, as
+there are only 20 CPUs available`. `worker` asked for 4. Compose rolls the whole
+stack back, so the install died at the start-the-stack step with nothing created.
+Replaced with `cpu_shares:` relative weights, which have no host bound and still
+express the thing that mattered — an ingestion burst yields to the database rather
+than starving it. Scaling the numbers down would only have moved the landmine to
+1 vCPU. The installer preflight gained the CPU count it never checked, and
+`deploy/BOOTSTRAP.md` now states the host floor it never documented.
+
+**Behind an upstream TLS terminator, the administrator and enterprise session
+cookies carried no `Secure` flag.** The bundled Nginx forwarded
+`X-Forwarded-Proto: $scheme`, and since it listens on plain 8080 that is
+permanently `http` — so `request.protocol`, which is what decides `Secure`, was
+always `http` on exactly the deployments BOOTSTRAP.md tells operators to build.
+The scheme is now declared by the operator through `--public-scheme`, rendered
+into the proxy config, and recorded in the root-only state directory. A flag
+rather than an environment variable because every command the runbook prints is a
+`sudo` command and stock sudoers is `Defaults env_reset`: an exported declaration
+is stripped on the way in, measured with a script file rather than an inline
+expansion the calling shell would resolve first. Recording it is what stops
+`rotate-installation-key.sh` from silently recreating the proxy on `http` and
+removing `Secure` from a previously-correct install at break-glass time.
+
+**The bulk memory purge could delete everything for a person the operator was not
+looking at.** Committing the filter box fixed half of it — the purge stopped being
+aimed by half-typed text — and left the mirror image: apply Ada, retype the box to
+Brix without pressing Filter, and the screen reads Brix while a button labelled
+"this person", naming nobody, still purges Ada. No confirmation dialog, the reason
+field already filled, one click, irreversible. The button now names the subject and
+refuses while the box has moved on.
+
+**The disk check stopped measuring the volume it was written for.** Moving host
+sizing ahead of dependency installation — so an undersized host is refused before
+`apt-get` installs Docker — meant `/var/lib/docker` no longer existed when it was
+measured, and the fallback re-reported the bundle's filesystem. On the ordinary
+layout where `/var` is its own volume, a 4 GiB partition passed a 5 GiB
+requirement and the image build filled it and died half-created. It now walks up
+to the nearest existing ancestor, which is the filesystem the data root lands on.
+The test could not have caught this: its `df` stub answered identically for every
+path, so deleting the measurement outright left the suite green.
+
+**Suites timed out under concurrent load while asserting nothing wrong.** There
+was no Vitest config anywhere in the repository, so every suite ran on the 5s
+default and the only remedy ever reached for was `}, 30_000)` on whichever test
+had just failed — leaving its heavier siblings on the default. Database-backed
+packages now declare a shared timeout profile, `scripts/test-database-test-budgets.mjs`
+keeps a package from acquiring database tests without it, and, because a trailing
+timeout replaces the config rather than raising it, that guard also refuses
+per-test budgets that sit below the profile.
+
+**A controlled input re-queried the control plane on every keystroke.** Typing an
+eight-character owner filter fired eight pairs of requests, and each answer
+re-rendered the field under the caret — which is how scrambled names reached the
+requests the panel below sent.
+
+Also: the audit trail forwards on a commit-ordered sequence rather than
+`occurredAt`, which is `transaction_timestamp()` and therefore not commit order;
+`.gitattributes` pins `*.sh` to LF, because the API serves those scripts to
+operators who pipe them into `sudo bash` and a CRLF shebang fails `execve`
+outright; and the installer smoke test is no longer advisory in CI.
+
+1,127 tests across 121 files, green on the full concurrent run that was failing
+before. Neither VM lifecycle has been re-run against this release.
+
 ## ai-v1.84.0 — 2026-08-08
 
 Three rounds of audit, fifteen agents, and the defects that survived them.

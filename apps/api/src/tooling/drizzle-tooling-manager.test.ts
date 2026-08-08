@@ -30,7 +30,7 @@ import {
 let context: TestDatabase;
 
 beforeAll(async () => { context = await createTestDatabase(); }, 120_000);
-afterAll(async () => { await context?.drop(); });
+afterAll(async () => { await context?.drop(); }, 120_000);
 beforeEach(async () => { await context.reset(); });
 
 const principal: ToolingPrincipal = { id: randomUUID() } as ToolingPrincipal;
@@ -522,6 +522,83 @@ describe("DrizzleToolingManager invocation", () => {
     expect(call?.errorCode).toBe("TOOL_APPROVAL_REJECTED");
     // Nothing ran, so nothing was started.
     expect(call?.startedAt).toBeNull();
+  });
+
+  it("honours an approval that lands after the deadline but before the poll notices", async () => {
+    await enableGateway(5);
+    const tool = await seedTool({ risk: "CONSEQUENTIAL" });
+    const { version, run, authorization } = await seedRunnableAgent();
+    await grantTool(version.id, tool.id);
+    const stored = await seedDocument(run.ownerSubject);
+    const subject = manager();
+
+    // The wait is a poll, so the deadline can pass while the poll is asleep.
+    // Moving the clock past it *before* the decision is what pins that
+    // ordering: the loop re-checks the clock before it re-reads the row, so it
+    // leaves on the clock having never seen the administrator's answer.
+    const realNow = Date.now;
+    let offsetMs = 0;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => realNow() + offsetMs);
+    try {
+      const invocation = subject.invoke(tool.slug, {
+        authorization, requestId: randomUUID(), arguments: { documentId: stored.id },
+      });
+      const approvalId = await waitForPendingApproval(subject);
+      // The deadline is read once, just after the approval row is written. The
+      // beat keeps the jump from landing before that read, which would shorten
+      // the whole wait to nothing and test something else entirely.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      offsetMs = 10 * 60_000;
+      await subject.decideApproval(principal, approvalId, true, "Reviewed and approved.");
+
+      const result = await invocation;
+      expect(JSON.stringify(result.data)).not.toContain("No human decision was recorded");
+      expect(result).toMatchObject({ status: "COMPLETED", isError: false });
+    } finally {
+      clock.mockRestore();
+    }
+
+    const [approval] = await context.database.select().from(toolApproval);
+    expect(approval?.status).toBe("APPROVED");
+    const [call] = await context.database.select().from(governedToolCall);
+    expect(call?.status).toBe("COMPLETED");
+    // The trail must never carry a named administrator's approval beside a
+    // record asserting nobody decided.
+    const actions = (await context.database.select().from(auditEvent)).map(({ action }) => action);
+    expect(actions).toContain("tool.call_approved");
+    expect(actions).not.toContain("tool.call_failed");
+  });
+
+  it("still expires a consequential call nobody decided", async () => {
+    await enableGateway(5);
+    const tool = await seedTool({ risk: "CONSEQUENTIAL" });
+    const { version, run, authorization } = await seedRunnableAgent();
+    await grantTool(version.id, tool.id);
+    const stored = await seedDocument(run.ownerSubject);
+    const subject = manager();
+
+    const realNow = Date.now;
+    let offsetMs = 0;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => realNow() + offsetMs);
+    try {
+      const invocation = subject.invoke(tool.slug, {
+        authorization, requestId: randomUUID(), arguments: { documentId: stored.id },
+      });
+      await waitForPendingApproval(subject);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      offsetMs = 10 * 60_000;
+
+      const result = await invocation;
+      expect(result).toMatchObject({ status: "FAILED", isError: true });
+      expect(result.data).toMatchObject({ message: expect.stringContaining("expired") });
+    } finally {
+      clock.mockRestore();
+    }
+
+    const [approval] = await context.database.select().from(toolApproval);
+    expect(approval?.status).toBe("EXPIRED");
+    const [call] = await context.database.select().from(governedToolCall);
+    expect(call?.errorCode).toBe("TOOL_APPROVAL_EXPIRED");
   });
 
   it("refuses to decide an approval twice", async () => {

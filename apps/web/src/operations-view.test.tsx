@@ -8,7 +8,7 @@
  * a session; see `chat-transcript.test.tsx`.
  */
 import { ADMIN_SCOPES, type AdministratorSession } from "@orcasynapse/contracts";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { writeFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -71,6 +71,7 @@ vi.mock("./api.js", async () => {
 });
 
 const { OperationsView } = await import("./operations-view.js");
+const { getAiOpsOverview } = await import("./api.js");
 
 async function view() {
   render(<main><OperationsView session={session} onConfigure={vi.fn()} onSessionExpired={vi.fn()} /></main>);
@@ -122,5 +123,23 @@ describe("operations control room", () => {
   it("renders no inline style, which the CSP would refuse in the built container", async () => {
     await view();
     expect(document.body.innerHTML).not.toMatch(/\sstyle="/);
+  });
+
+  it("does not reload on every parent render, which App produces every few seconds", async () => {
+    // App polls and hands down a fresh `onSessionExpired` arrow each time. When
+    // the load effect tracks that identity through the handleError -> refresh
+    // chain, Operations refetches all four endpoints forever: every cycle sets
+    // busy (disabling every submit) and clears the error being read.
+    const props = { session, onConfigure: vi.fn() };
+    const { rerender } = render(
+      <main><OperationsView {...props} onSessionExpired={() => undefined} /></main>,
+    );
+    await waitFor(() => screen.getByText("Hermes runtime"));
+    const loads = vi.mocked(getAiOpsOverview).mock.calls.length;
+
+    rerender(<main><OperationsView {...props} onSessionExpired={() => undefined} /></main>);
+    await act(async () => { await Promise.resolve(); });
+
+    expect(vi.mocked(getAiOpsOverview).mock.calls.length).toBe(loads);
   });
 });

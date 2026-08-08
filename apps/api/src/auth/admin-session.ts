@@ -240,11 +240,55 @@ export class DrizzleAdminSessionManager implements AdminSessionManager {
     return session;
   }
 
+  /**
+   * Revokes outstanding recovery sessions once the mounted Installation Key
+   * stops matching the digest recorded for it.
+   *
+   * Rotation used to take effect only when somebody later signed in with the
+   * new key. The operator response to a suspected leak is to write a new key
+   * file and restart, and nothing in that sequence presents a key — so an
+   * attacker's recovery row survived for its full absolute lifetime and could
+   * still reset the local administrator password.
+   */
+  private async installationKeyRotated(executor: Executor, now: Date): Promise<boolean> {
+    const [credential] = await executor
+      .select({ keyHash: installationCredential.keyHash })
+      .from(installationCredential)
+      .where(eq(installationCredential.id, "primary"))
+      .limit(1);
+    if (!credential || this.installationKeyAuthenticator.matchesDigest(credential.keyHash)) return false;
+
+    await executor
+      .update(administratorSession)
+      .set({ revokedAt: now })
+      .where(
+        and(
+          eq(administratorSession.authenticationMethod, "INSTALLATION_KEY_RECOVERY"),
+          isNull(administratorSession.revokedAt),
+        ),
+      );
+    return true;
+  }
+
   async createInstallationKeySession(
     installationKey: string | undefined,
     context: AdminRequestContext,
   ): Promise<IssuedAdminSession | null> {
-    if (!installationKey || !this.installationKeyAuthenticator.verify(installationKey)) return null;
+    if (!installationKey || !this.installationKeyAuthenticator.verify(installationKey)) {
+      // Nothing rate-limits break-glass, so a refusal that wrote nothing let the
+      // Installation Key be probed indefinitely while the audit review showed a
+      // clean log. The local-password path records every failure; so does this.
+      await this.database.insert(auditEvent).values({
+        actorType: "USER",
+        action: "administrator.installation_key_login_failed",
+        resourceType: "InstallationCredential",
+        resourceId: "primary",
+        outcome: "FAILED",
+        sourceIp: context.sourceIp && isIP(context.sourceIp) ? context.sourceIp : null,
+        metadata: { authenticationMethod: "installation-key-recovery" },
+      });
+      return null;
+    }
 
     const token = randomBytes(32).toString("base64url");
     const sourceIp = context.sourceIp && isIP(context.sourceIp) ? context.sourceIp : null;
@@ -460,10 +504,22 @@ export class DrizzleAdminSessionManager implements AdminSessionManager {
           lockedUntil: null,
         })
         .where(eq(localAdministrator.id, account.id));
+      // Recovery sessions carry `installation-key-administrator`, not this
+      // subject, so revoking by subject alone left the break-glass way in open
+      // behind an administrator who had just changed the password in response
+      // to a suspected compromise. Same predicate as recoverLocalAdministrator.
       await transaction
         .update(administratorSession)
         .set({ revokedAt: now })
-        .where(and(eq(administratorSession.subject, session.subject), isNull(administratorSession.revokedAt)));
+        .where(
+          and(
+            isNull(administratorSession.revokedAt),
+            or(
+              eq(administratorSession.subject, session.subject),
+              eq(administratorSession.authenticationMethod, "INSTALLATION_KEY_RECOVERY"),
+            ),
+          ),
+        );
       const created = await createSessionRecord(transaction, {
         token: replacementToken,
         subject: session.subject,
@@ -511,6 +567,9 @@ export class DrizzleAdminSessionManager implements AdminSessionManager {
         || !activeSession(recoverySession, now)
         || recoverySession.authenticationMethod !== "INSTALLATION_KEY_RECOVERY"
       ) return null;
+      // Nothing else on this route re-reads the mounted key, and the route
+      // resets a password without ever calling authenticate.
+      if (await this.installationKeyRotated(transaction, now)) return null;
       await transaction.execute(advisoryLock(`orcasynapse-local-admin:${normalizedUsername}`));
       const [account] = await transaction
         .select()
@@ -621,6 +680,13 @@ export class DrizzleAdminSessionManager implements AdminSessionManager {
       }
       return null;
     }
+
+    // A rotated key has to end recovery sessions on its own; only a recovery
+    // session pays for the extra read.
+    if (
+      session.authenticationMethod === "INSTALLATION_KEY_RECOVERY"
+      && await this.installationKeyRotated(this.database, now)
+    ) return null;
 
     const scopes: readonly AdminScope[] = session.authenticationMethod === "INSTALLATION_KEY_RECOVERY"
       ? ["sessions:manage"]

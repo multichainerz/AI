@@ -23,7 +23,7 @@ beforeAll(async () => {
   parsed.pathname = `/${row!.name}`;
   url = parsed.toString();
 }, 120_000);
-afterAll(async () => { await context?.drop(); });
+afterAll(async () => { await context?.drop(); }, 120_000);
 
 /** Resolves on the next wake, or rejects rather than hanging the suite. */
 function nextWake(timeoutMs = 5_000): { promise: Promise<void>; onWake: () => void } {

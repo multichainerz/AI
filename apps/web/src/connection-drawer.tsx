@@ -12,6 +12,7 @@ import type {
   ServiceKind,
 } from "@orcasynapse/contracts";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { slugAsTyped, slugify } from "./benchmark-suite-editor.js";
 import { connectionDefinitions, inferenceEndpointPresets } from "./connection-definitions.js";
 import { Button, Drawer } from "./ui/index.js";
 
@@ -48,15 +49,6 @@ interface ConnectionDrawerProps {
     expectedActiveRevision: number,
   ) => Promise<void>;
   onSignOut: () => Promise<void>;
-}
-
-function slugFor(name: string): string {
-  return name
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 64);
 }
 
 function endpointOrigin(value: string | null | undefined): string | null {
@@ -181,7 +173,7 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
     );
     void props.onSave({
       ...(existing ? { existingId: existing.id } : {}),
-      slug: slugFor(slug),
+      slug: slugify(slug),
       displayName,
       kind: selectedKind,
       environment,
@@ -368,7 +360,7 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
 
             {selectedKind !== "INFERENCE" && <div className="form-grid">
               <label>Display name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} required minLength={2}/></label>
-              <label>Slug<input value={slug} onChange={(event) => setSlug(slugFor(event.target.value))} required disabled={Boolean(existing)}/></label>
+              <label>Slug<input value={slug} onChange={(event) => setSlug(slugAsTyped(event.target.value))} onBlur={() => setSlug((current) => slugify(current))} required disabled={Boolean(existing)}/></label>
               <label className="sm:col-span-2">{definition.endpointLabel ?? "Endpoint URL"}<input type="url" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder={selectedKind === "OIDC" ? "https://identity.orcasynapse.internal" : "https://service.orcasynapse.internal"}/></label>
               <label>Environment<select value={environment} onChange={(event) => setEnvironment(event.target.value as Environment)}><option value="DEVELOPMENT">Development</option><option value="STAGING">Staging</option><option value="PRODUCTION">Production</option></select></label>
               <label className="switch-label"><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)}/><span>Enable after saving</span></label>
@@ -459,7 +451,7 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
               <div><strong>Operational settings</strong><span>Validated non-secret values</span></div>
               {selectedKind === "INFERENCE" && <div className="form-grid inference-identity-grid">
                 <label>Display name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} required minLength={2}/></label>
-                <label>Slug<input value={slug} onChange={(event) => setSlug(slugFor(event.target.value))} required disabled={Boolean(existing)}/></label>
+                <label>Slug<input value={slug} onChange={(event) => setSlug(slugAsTyped(event.target.value))} onBlur={() => setSlug((current) => slugify(current))} required disabled={Boolean(existing)}/></label>
                 <label>Environment<select value={environment} onChange={(event) => setEnvironment(event.target.value as Environment)}><option value="DEVELOPMENT">Development</option><option value="STAGING">Staging</option><option value="PRODUCTION">Production</option></select></label>
               </div>}
               <div className="configuration-grid">

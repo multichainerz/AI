@@ -46,9 +46,31 @@ const assertionHint: Record<BenchmarkAssertionKind, string> = {
   MAX_LATENCY_MS: "A whole number of milliseconds.",
 };
 
-/** Cases are identified by slug, so the field produces one from any typing. */
-function slugify(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 64);
+/**
+ * Slug fields, shared by every screen that names a record by one.
+ *
+ * A slug field rewrites what it is given, which means the rewrite runs once per
+ * keystroke. `slugAsTyped` is therefore the only rule allowed there, and it
+ * deliberately keeps a trailing hyphen: trimming one on each keystroke removes
+ * the separator before the character after it arrives, so `retrieval-latency`
+ * comes out `retrievallatency` and no hyphenated slug — which every seeded
+ * default in this product is — can be typed at all.
+ *
+ * `slugify` settles the value instead, and so belongs on blur and on submit,
+ * where the operator has finished typing. It trims after the length cap rather
+ * than before, because a cut at a hyphen would otherwise leave one trailing.
+ */
+export function slugAsTyped(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^-+/, "")
+    .slice(0, 64);
+}
+
+export function slugify(value: string): string {
+  return slugAsTyped(value).replace(/-+$/, "");
 }
 
 const emptyCase = (index: number): BenchmarkCase => ({
@@ -107,12 +129,16 @@ export function BenchmarkSuiteEditor({ suite, onSaved, onClose }: SuiteEditorPro
           expectedRevision: suite.revision,
           displayName: draft.displayName,
           description: draft.description,
-          cases: draft.cases,
+          cases: draft.cases.map((item) => ({ ...item, id: slugify(item.id) })),
           passThreshold: draft.passThreshold,
         });
         onSaved(`'${draft.displayName}' saved.`);
       } else {
-        await createBenchmarkSuite({ ...draft, slug: draft.slug || slugify(draft.displayName) });
+        await createBenchmarkSuite({
+          ...draft,
+          slug: slugify(draft.slug) || slugify(draft.displayName),
+          cases: draft.cases.map((item) => ({ ...item, id: slugify(item.id) })),
+        });
         onSaved(`'${draft.displayName}' created. Run it to produce a first score.`);
       }
     } catch (saveError) {
@@ -122,8 +148,10 @@ export function BenchmarkSuiteEditor({ suite, onSaved, onClose }: SuiteEditorPro
     }
   };
 
+  // Compared as they will be sent, so 'cites-runbook-' and 'cites-runbook' —
+  // one of them mid-edit — are recognised as the same row in the results.
   const duplicateIds = new Set(
-    draft.cases.map(({ id }) => id).filter((id, index, all) => all.indexOf(id) !== index),
+    draft.cases.map(({ id }) => slugify(id)).filter((id, index, all) => all.indexOf(id) !== index),
   );
 
   return <Drawer
@@ -161,7 +189,8 @@ export function BenchmarkSuiteEditor({ suite, onSaved, onClose }: SuiteEditorPro
           <Input
             value={draft.slug || (suite ? "" : slugify(draft.displayName))}
             disabled={Boolean(suite)}
-            onChange={(event) => setDraft({ ...draft, slug: slugify(event.target.value) })}
+            onChange={(event) => setDraft({ ...draft, slug: slugAsTyped(event.target.value) })}
+            onBlur={() => setDraft((current) => ({ ...current, slug: slugify(current.slug) }))}
           />
         </Field>
         <Field
@@ -231,7 +260,8 @@ export function BenchmarkSuiteEditor({ suite, onSaved, onClose }: SuiteEditorPro
               <Input
                 value={item.id}
                 required
-                onChange={(event) => patchCase(caseIndex, { id: slugify(event.target.value) })}
+                onChange={(event) => patchCase(caseIndex, { id: slugAsTyped(event.target.value) })}
+                onBlur={() => patchCase(caseIndex, { id: slugify(item.id) })}
               />
             </Field>
             <div className="flex items-end justify-end">

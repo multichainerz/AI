@@ -9,7 +9,7 @@ This document is the sanitized transfer context for continuing OrcaSynapse work 
 - Repository: <https://github.com/multichainerz/AI>
 - Local workspace: `C:\Users\Veros\Documents\GitHub\MPM`
 - Branch: `main`.
-- Baseline release: **ai-v1.84.0** (this file ships in that release commit; `git log -1` gives the hash). Releases are tagged starting at `ai-v1.25.0`.
+- Baseline release: **ai-v1.85.0** (this file ships in that release commit; `git log -1` gives the hash). Releases are tagged starting at `ai-v1.25.0`.
 - Baseline verification: `pnpm verify` passes — 1,039 tests, typecheck, production build, and `drizzle-kit check` all green. `pnpm verify:postgres` passes against a pgvector server; `pnpm security:audit` reports no known vulnerabilities; and the four static guards (`sync-installer-ui.sh --check`, `test-release-consistency.sh`, `test-docker-build-closure.sh`, `test-csp-closure.sh`) pass.
 - Both installers are covered end to end by lifecycle tests that execute `main()`: `scripts/test-orcasynapse-installer-smoke.sh` (VM1) and `scripts/test-agentic-installer-smoke.sh` (VM2, including decommission). Both need root and a systemd host — a WSL Ubuntu 24.04 instance with `[boot] systemd=true` is enough.
 
@@ -83,6 +83,7 @@ flowchart LR
 | `scripts/install-agentic-node.sh` | VM2 enrollment installer (self-contained; served by the VM1 API) |
 | `scripts/remove-agentic-node.sh` | VM2 destructive uninstall (self-contained; served by the VM1 API) |
 | `scripts/lib/installer-ui.sh` | Canonical installer terminal UI; `scripts/sync-installer-ui.sh` syncs the embedded copies |
+| `scripts/lib/public-scheme.sh` | The `--public-scheme` declaration: parsed from the command line (sudo strips the environment), recorded in `.local/state/public-scheme`, read back by install and rotation |
 | `scripts/test-*.sh` | CI-run conformance and recovery tests |
 | `compose.yaml` | VM1 postgres (pgvector image), migrate, api, worker, web services |
 

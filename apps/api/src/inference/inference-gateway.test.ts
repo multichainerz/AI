@@ -16,7 +16,7 @@ import { InferenceGatewayError, DrizzleInferenceGateway } from "./inference-gate
 let context: TestDatabase;
 
 beforeAll(async () => { context = await createTestDatabase(); }, 120_000);
-afterAll(async () => { await context?.drop(); });
+afterAll(async () => { await context?.drop(); }, 120_000);
 beforeEach(async () => { await context.reset(); });
 
 const request: InferenceGatewayChatRequest = {
@@ -33,6 +33,50 @@ const okResponse = () =>
       headers: { "content-type": "application/json" },
     }),
   ) as typeof fetch;
+
+const streamedResponse = () =>
+  vi.fn(async () =>
+    new Response("data: [DONE]\n\n", {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    }),
+  ) as typeof fetch;
+
+/**
+ * Wire bytes one streamed token actually costs, measured against a real vLLM
+ * SSE stream: `data: ` plus a full chat-completion envelope plus `\n\n`, about
+ * 231 bytes carrying roughly four characters of content.
+ */
+const MEASURED_SSE_BYTES_PER_TOKEN = 231;
+
+/**
+ * An endless chunked 400, with counters for how much of it reached the process
+ * and whether the upstream body was released.
+ *
+ * `content-length` is deliberately absent — that is what a chunked error
+ * response looks like, and `Number(null)` is 0, so the declared-length guard
+ * never fires on one. The source never closes, so only a cancel can end it:
+ * this is the multi-gigabyte error page an upstream can answer 400 with.
+ */
+function endlessChunkedError() {
+  const chunk = new Uint8Array(64 * 1_024).fill(120);
+  let pulled = 0;
+  let cancelled = false;
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      pulled += 1;
+      controller.enqueue(chunk.slice());
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+  return {
+    response: new Response(body, { status: 400 }),
+    pulledBytes: () => pulled * chunk.byteLength,
+    cancelled: () => cancelled,
+  };
+}
 
 /**
  * Provisions the connections the gateway authenticates against. Only credential
@@ -226,6 +270,30 @@ describe("DrizzleInferenceGateway", () => {
     expect(retriedBody).not.toHaveProperty("stream_options");
   });
 
+  it("bounds and releases a chunked 400 instead of teeing it", async () => {
+    // The hint reader used to inspect `response.clone()`. A clone tees the body,
+    // and a tee branch's `cancel()` only settles once *both* branches are
+    // cancelled — so the bounded read's own cleanup never returned, the request
+    // hung with no timeout covering it, and the upstream body was never
+    // released. The rate limiter is consumed before the upstream call, so a
+    // node can drive this repeatedly.
+    const upstream = endlessChunkedError();
+    const { gateway } = await harness(vi.fn(async () => upstream.response) as typeof fetch);
+
+    const outcome = await Promise.race([
+      gateway.chat("runtime-key", request, new AbortController().signal)
+        .then(() => "resolved" as const, (error: unknown) => error),
+      new Promise((resolve) => setTimeout(() => resolve("HUNG"), 2_000)),
+    ]);
+
+    expect(outcome).not.toBe("HUNG");
+    expect(outcome).toMatchObject({ code: "UPSTREAM_FAILED" });
+    // Cancelling the body is what ends an endless upstream and frees the
+    // connection; without it the source keeps whatever it has already produced.
+    expect(upstream.cancelled()).toBe(true);
+    expect(upstream.pulledBytes()).toBeLessThanOrEqual(128 * 1_024);
+  });
+
   it("blocks recognizable credentials before calling the inference server", async () => {
     const { gateway, fetcher } = await harness();
 
@@ -237,6 +305,37 @@ describe("DrizzleInferenceGateway", () => {
       ),
     ).rejects.toMatchObject({ code: "POLICY_REJECTED" });
     expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("budgets a streamed response in wire bytes rather than in output characters", async () => {
+    // The byte budget was `maxOutputCharacters * 8`, a ratio that only holds
+    // for a single JSON body. On SSE every token is its own framed chunk at
+    // roughly 231 wire bytes per four characters of content — about 50:1 — so
+    // the default 200,000-character policy ran out after ~6,900 token frames,
+    // below the 8,192-token deployment this repo ships as an example. Worse,
+    // it ran out after the headers were flushed, so the caller got a truncated
+    // answer that looked complete.
+    const { gateway } = await harness(streamedResponse(), { maxOutputTokens: 8_192 });
+
+    const result = await gateway.chat(
+      "runtime-key",
+      { ...request, stream: true },
+      new AbortController().signal,
+    );
+
+    expect(result.maxResponseBytes).toBeGreaterThanOrEqual(8_192 * MEASURED_SSE_BYTES_PER_TOKEN);
+    expect(result.stream).toBe(true);
+  });
+
+  it("still holds a non-streamed body to the character-derived budget", async () => {
+    // Nothing above may be read as licence to loosen the JSON path, where
+    // bytes and characters really are within a constant of each other.
+    const { gateway } = await harness(okResponse(), { maxOutputTokens: 8_192 });
+
+    const result = await gateway.chat("runtime-key", request, new AbortController().signal);
+
+    // The default policy allows 200,000 output characters.
+    expect(result.maxResponseBytes).toBe(200_000 * 8);
   });
 
   it("refuses to serve when a suspended node leaves no eligible runtime", async () => {

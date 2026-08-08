@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import {
   agentMemory,
   agentProfile,
@@ -13,7 +13,7 @@ import { APPROVED_EMBEDDING_DIMENSIONS, APPROVED_EMBEDDING_MODEL } from "./embed
 let context: TestDatabase;
 
 beforeAll(async () => { context = await createTestDatabase(); }, 120_000);
-afterAll(async () => { await context?.drop(); });
+afterAll(async () => { await context?.drop(); }, 120_000);
 beforeEach(async () => { await context.reset(); });
 
 function store() {
@@ -47,6 +47,32 @@ async function profileFor(slug: string): Promise<string> {
 }
 
 const ALL = { limit: 10, minimumScore: -1 };
+
+/** A promise the test resolves by hand, to pin one interleaving. */
+function gate(): { open: () => void; opened: Promise<void> } {
+  let release: () => void = () => {};
+  const opened = new Promise<void>((resolve) => { release = resolve; });
+  return { open: () => { release(); }, opened };
+}
+
+/**
+ * Waits until some statement in this test database is stuck on a row lock.
+ *
+ * The race only exists while one capture holds the row another is trying to
+ * retire, so the test has to observe that state rather than guess at it with a
+ * sleep. Scoped to this file's own database so a suite running next door cannot
+ * satisfy the wait.
+ */
+async function waitForBlockedStatement(): Promise<boolean> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const { rows } = await context.database.execute<{ blocked: number }>(sql`
+      SELECT count(*)::int AS blocked FROM pg_stat_activity
+      WHERE datname = current_database() AND wait_event_type = 'Lock'`);
+    if ((rows[0]?.blocked ?? 0) > 0) return true;
+    await new Promise((resolve) => { setTimeout(resolve, 25); });
+  }
+  return false;
+}
 
 describe("AgentMemoryStore", () => {
   it("recalls what an owner told this agent", async () => {
@@ -155,6 +181,99 @@ describe("AgentMemoryStore", () => {
     // And the already-retired row keeps its original reason.
     expect(rows.find((row) => row.id === origin!.id)?.supersededReason).toContain("Bandung");
   });
+
+  it("chains a second correction in the same batch onto the first", async () => {
+    // The distiller dedups fact text but nothing dedups the ids in `replaces`,
+    // so one batch can name the same fact twice. Both corrections used to land
+    // as current: the second one's read already saw the first one's retirement,
+    // found nothing live, and started its own chain beside it - leaving the
+    // agent asserting two contradictory STATIC facts in every prompt.
+    const profileId = await profileFor("assistant");
+    await store().remember("user-a", profileId, [
+      { content: "The user works in Jakarta.", embedding: vector(31), scope: "STATIC" },
+    ]);
+    const [origin] = await store().list("user-a", profileId);
+
+    await store().remember("user-a", profileId, [
+      { content: "The user works in Bandung.", embedding: vector(32), scope: "STATIC", replaces: [origin!.id] },
+      { content: "The user works in Surabaya.", embedding: vector(33), scope: "STATIC", replaces: [origin!.id] },
+    ]);
+
+    const rows = await context.database.select().from(agentMemory);
+    const byContent = (needle: string) => rows.find((row) => row.content.includes(needle));
+    expect(rows.filter((row) => row.isLatest).map(({ content }) => content))
+      .toEqual(["The user works in Surabaya."]);
+    expect(byContent("Bandung")).toMatchObject({
+      version: 2, parentMemoryId: origin!.id, rootMemoryId: origin!.id, isLatest: false,
+    });
+    expect(byContent("Surabaya")).toMatchObject({
+      version: 3, parentMemoryId: byContent("Bandung")!.id, rootMemoryId: origin!.id, isLatest: true,
+    });
+    // What the chain is for: one current answer reaches the prompt.
+    expect((await store().profile("user-a", profileId)).map(({ content }) => content))
+      .toEqual(["The user works in Surabaya."]);
+  });
+
+  it("does not fork the chain when another capture retires the fact first", async () => {
+    // Two captures for one (owner, agent) can overlap in the shipped topology -
+    // the session sweep and an inline run capture both distil and both name the
+    // same id. Retiring was not a compare-and-swap: the loser's write matched on
+    // id alone, so it retired an already-retired fact, overwrote the winner's
+    // reason, and claimed the version and parent the winner had taken.
+    const profileId = await profileFor("assistant");
+    await store().remember("user-a", profileId, [
+      { content: "The user works in Jakarta.", embedding: vector(41), scope: "STATIC" },
+    ]);
+    const [origin] = await store().list("user-a", profileId);
+
+    const winner = gate();
+    const wrote = gate();
+    const winning = context.database.transaction(async (transaction) => {
+      await transaction
+        .update(agentMemory)
+        .set({
+          isLatest: false,
+          supersededAt: new Date(),
+          supersededReason: "Superseded by a later statement: The user works in Bandung.",
+        })
+        .where(eq(agentMemory.id, origin!.id));
+      await transaction.insert(agentMemory).values({
+        ownerSubject: "user-a",
+        agentProfileId: profileId,
+        content: "The user works in Bandung.",
+        characterCount: 26,
+        profileScope: "STATIC",
+        embeddingModel: APPROVED_EMBEDDING_MODEL,
+        embedding: vector(42),
+        version: 2,
+        parentMemoryId: origin!.id,
+        rootMemoryId: origin!.id,
+      });
+      wrote.open();
+      await winner.opened;
+    });
+
+    await wrote.opened;
+    const losing = store().remember("user-a", profileId, [{
+      content: "The user works in Surabaya.", embedding: vector(43), scope: "STATIC", replaces: [origin!.id],
+    }]);
+    const contended = await waitForBlockedStatement();
+    winner.open();
+    await winning;
+    await losing;
+
+    // The interleaving the defect needs actually happened.
+    expect(contended).toBe(true);
+    const rows = await context.database.select().from(agentMemory);
+    // Exactly one row may take Jakarta's place; a second would be a fork that
+    // no reader walking the chain can resolve.
+    expect(rows.filter((row) => row.parentMemoryId === origin!.id)).toHaveLength(1);
+    // Losing the swap is the same situation as naming an already-retired id.
+    expect(rows.find((row) => row.content.includes("Surabaya")))
+      .toMatchObject({ version: 1, parentMemoryId: null, rootMemoryId: null });
+    // And the retirement reason belongs to the capture that actually won it.
+    expect(rows.find((row) => row.id === origin!.id)?.supersededReason).toContain("Bandung");
+  }, 30_000);
 
   it("cannot retire another owner's fact by naming its id", async () => {
     // Supersession is scoped by the same predicate as everything else, so a
