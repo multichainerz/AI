@@ -189,7 +189,7 @@ export function GuardrailsView({
       kicker="Policy control"
       title="Guardrails"
       mark="G"
-      reason="Claim or sign in to OrcaSynapse to inspect policy versions and activation evidence."
+      reason="Sign in as an administrator to inspect policy versions and activation evidence; the workspace session you already have stays active."
       actionLabel="Open platform settings"
       onAction={onConfigureInference}
     />;
@@ -256,7 +256,7 @@ export function GuardrailsView({
       <form onSubmit={(event) => void save(event)}>
         <header className="mb-4 flex items-start justify-between gap-6">
           <div className="min-w-0">
-            <h2 className="font-display m-0 text-[15px] font-semibold tracking-[-0.01em] text-text">
+            <h2 className="m-0 font-display text-[15px] font-semibold tracking-[-0.01em] text-text">
               {editing ? `Edit ${editing.displayName}` : "New chat policy"}
             </h2>
             <p className="mb-0 mt-1.5 text-body text-muted">
@@ -313,7 +313,7 @@ export function GuardrailsView({
             {policy.displayName.slice(0, 2).toUpperCase()}
           </span>
           <div className="min-w-0">
-            <h2 className="font-display m-0 truncate text-[14px] font-semibold tracking-[-0.01em] text-text">{policy.displayName}</h2>
+            <h2 className="m-0 truncate font-display text-[14px] font-semibold tracking-[-0.01em] text-text">{policy.displayName}</h2>
             <p className="mb-0 mt-0.5 truncate text-caption text-muted">{policy.description}</p>
           </div>
         </div>

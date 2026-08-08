@@ -43,7 +43,6 @@ function props(overrides: Partial<Parameters<typeof HomeView>[0]> = {}) {
     apiAvailable: true,
     bootstrapState: "READY" as const,
     unlocked: true,
-    passwordChangePending: false,
     healthyConnections: 3,
     monitoring: { enabled: true, intervalSeconds: 300, reason: null, updatedAt: "2026-08-07T00:00:00.000Z", updatedBy: null },
     chatMetrics,
@@ -115,6 +114,19 @@ describe("Home", () => {
   it("says the control plane is offline instead of showing stale figures as live", () => {
     render(<HomeView {...props({ apiAvailable: false })} />);
     expect(screen.getByText("Control plane offline")).toBeTruthy();
+  });
+
+  it("offers local sign-in once bootstrap is done but the session is not an administrator one", () => {
+    /*
+     * This banner used to have a second locked arm for a pending password
+     * change. It cannot render: `app.tsx` hands a password-change session to
+     * the front page instead of the shell, so Home only ever draws while that
+     * flag is false. Pinning the surviving copy is what makes deleting the
+     * other arm a provable no-op rather than a hopeful one.
+     */
+    render(<HomeView {...props({ unlocked: false })} />);
+    expect(screen.getByText("Local sign-in ready")).toBeTruthy();
+    expect(screen.getByText("Sign in to manage encrypted endpoints, agents, and knowledge.")).toBeTruthy();
   });
 
   it("keeps the installer banner ahead of everything else until bootstrap completes", () => {

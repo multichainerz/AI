@@ -5,6 +5,73 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.92.0 — 2026-08-09
+
+The navigation rail rebuilt against the design reference, and the last of the
+audit findings the previous release left open.
+
+**Six navigation icons, and every one of them wrong in the same invisible
+way.** The Relay set paints one "live node" per glyph in cyan through
+`.fill-node`, so the rail carried six cyan dots that stayed cyan whatever the
+row was doing — the active state had nothing left to tint. The icon wrapper now
+puts the whole glyph on `currentColor`, and the active row reads
+`rgb(146,119,245)` against `rgba(255,255,255,0.45)` for the rest. Separately,
+five of the six were dispatched to the wrong area: Home drew stacked planes,
+Chat a node graph, Agents a rocket, Platform a cube, Operations a monitor. All
+six are rewired from glyphs that already existed; `ui/relay-icons.tsx` is
+unchanged. Rows are 40px at 10px radius, the strapline and the two group
+headings are gone, and the brand row no longer uses `.brand` — a rule declared
+after `@tailwind utilities` at equal specificity, which wins every tie.
+
+**`text-accent` made the selected icon the quietest thing in the column.**
+Left themed, `--accent-rgb` resolves to `#703DEF` in light, which measures
+**2.61:1** against the constant `#2B1364` rail — dimmer than the 4.05:1 muted
+lavender beside it. The rail pins the channels instead (`--accent-rgb` on
+`.sidebar`), so `text-accent` means the same violet on the brand panel under
+either theme: 4.48:1 in both, with the focus ring inside the rail no longer
+dimming either. Confirmed not to leak — `main` still resolves `112 61 239` in
+light and `146 119 245` in dark.
+
+**A locked screen promised a sign-in its button could not perform.**
+Benchmarks told a signed-out operator to sign in as an administrator and
+answered with navigation to Operations — locked behind the same session, so the
+only available move led to a screen repeating the sentence. It reaches the
+elevation dialog now. Prompts was still in the retired "Unlock OrcaSynapse"
+register while its two siblings had moved on. `locked-screen-contract.test.tsx`
+pins all four as one table rather than four tests: the property worth holding is
+that the screens agree with each other, which no per-screen test can see.
+
+**Chat was the one governed area that never checked a scope.** `chatUnlocked`
+accepted any enterprise session, while Knowledge and Agents asked for
+`documents:use` and `agents:use` — which is why an audit found Chat's locked
+screen unreachable and its siblings' merely unlikely. The check is symmetric
+now. Deleting the screen was the other way to resolve it, and the wrong one: it
+is the surface an employee is most likely to reach without permission.
+`enterpriseSessionSchema.scopes` is still a fixed three-literal tuple, so all
+three answer true in practice — a property of the contract, not of these lines.
+
+**Dead stylesheet, verified against the built bundle rather than the source.**
+`.application-failure`, `.brand-mark` and `.page-kicker` were orphaned when the
+error boundary was rewritten, and `.brand` by the rail; all four now measure
+zero occurrences in `dist/assets`. `.mobile-brand` and `.operator` still render,
+so what they needed from the shared selectors survives, split out. The
+micro-label comment went with them: it described a monospace treatment the
+primitive replaced with sans and `tabular-nums` two releases ago.
+
+**Radius and button drift.** Three top-level forms in Operations sat at 10px on
+the page background while their direct peer twelve lines away was a proper card;
+they are `rounded-card` with the card shadow now. Thirteen hand-rolled copies of
+the secondary Button — rendering as filled rectangles beside real pills on the
+same screens — match the primitive. Four SVG fills on the front page were
+`currentColor`, which resolves to the *themed* text colour: a page whose own
+docblock says it is deliberately theme-independent was changing with the
+dashboard theme.
+
+Still open and named rather than quietly carried: `.ops-form` and
+`runtime-nodes-panel`'s `.panel` remain on the legacy stylesheet, nothing in the
+suite renders `App`, and migrations 0022–0026 have no Drizzle snapshot — the
+next `db:generate` diffs against 0021 and cannot complete non-interactively.
+
 ## ai-v1.91.0 — 2026-08-09
 
 An audit of the five design-system releases, and the repair of what it found.

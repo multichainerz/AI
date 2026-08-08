@@ -42,6 +42,13 @@ import {
 interface BenchmarksViewProps {
   session: AdministratorSession | null;
   onOpenOperations: () => void;
+  /**
+   * Distinct from `onOpenOperations` on purpose. The locked screen asks for an
+   * administrator sign-in, and Operations is locked behind the same session —
+   * so answering with navigation left the operator reading the same sentence
+   * on a second screen. This one reaches the elevation dialog.
+   */
+  onOpenSettings: () => void;
   onSessionExpired: () => void;
 }
 
@@ -121,7 +128,7 @@ function when(value: string | null): string {
     : new Date(value).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" });
 }
 
-export function BenchmarksView({ session, onOpenOperations, onSessionExpired }: BenchmarksViewProps) {
+export function BenchmarksView({ session, onOpenOperations, onOpenSettings, onSessionExpired }: BenchmarksViewProps) {
   const [suites, setSuites] = useState<BenchmarkSuite[]>([]);
   const [runs, setRuns] = useState<BenchmarkRun[]>([]);
   /*
@@ -238,9 +245,9 @@ export function BenchmarksView({ session, onOpenOperations, onSessionExpired }: 
       kicker="Evidence"
       title="Benchmarks"
       mark="B"
-      reason="Claim or sign in to OrcaSynapse to run benchmarks. A run drives the live agent, so it is gated on the same permission that manages evaluations."
-      actionLabel="Open operations"
-      onAction={onOpenOperations}
+      reason="Sign in as an administrator to run benchmarks; the workspace session you already have stays active. A run drives the live agent, so it is gated on the same permission that manages evaluations."
+      actionLabel="Open platform settings"
+      onAction={onOpenSettings}
     />;
   }
 
@@ -327,7 +334,7 @@ export function BenchmarksView({ session, onOpenOperations, onSessionExpired }: 
           </header>
 
           <div className="min-w-0">
-            <h2 className="font-display m-0 truncate text-[14px] font-semibold tracking-[-0.01em] text-text">{suite.displayName}</h2>
+            <h2 className="m-0 truncate font-display text-[14px] font-semibold tracking-[-0.01em] text-text">{suite.displayName}</h2>
             <p className="mb-0 mt-1 text-body text-muted">{suite.description}</p>
             <p className="mb-0 mt-1 text-caption text-faint">{kindDescription[suite.kind]}</p>
           </div>
@@ -341,11 +348,12 @@ export function BenchmarksView({ session, onOpenOperations, onSessionExpired }: 
             ].map((fact) => (
               <div className="min-w-0 bg-surface px-2.5 py-2" key={fact.label}>
                 <dt className="truncate text-micro font-semibold uppercase tabular-nums text-faint">{fact.label}</dt>
-                {/* Titled because these cells truncate, and a half-shown model
-                alias is the fact you most need whole. */}
-            <dd className="m-0 mt-1 truncate font-mono text-caption tabular-nums text-muted" title={fact.value}>
-              {fact.value}
-            </dd>
+                {/* Titled because these cells truncate, and every value here is
+                    a figure: a half-shown number reads as a smaller number
+                    rather than as a truncation. */}
+                <dd className="m-0 mt-1 truncate font-mono text-caption tabular-nums text-muted" title={fact.value}>
+                  {fact.value}
+                </dd>
               </div>
             ))}
           </dl>

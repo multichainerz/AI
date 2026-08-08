@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { Alert, Button, EmptyState, Field, Input, LockedScreen, HeroBanner, Metric, Panel, PanelHeading, Select, StatusText } from "./index.js";
+import { Alert, Button, EmptyState, Field, Input, LockedScreen, HeroBanner, Metric, PageHeader, Panel, PanelHeading, Select, StatusText } from "./index.js";
 
 /**
  * The primitives, and the one property that cannot be allowed to regress.
@@ -123,6 +123,55 @@ describe("LockedScreen", () => {
       <LockedScreen title="Agents" mark="HA" actionLabel="Administrator setup" onAction={vi.fn()} secondaryLabel="Enterprise sign in" />,
     );
     expect(orphan).not.toContain("Enterprise sign in");
+  });
+
+  it("sets its title at the page-title size rather than a stock Tailwind step", () => {
+    /*
+     * The locked screen is a whole screen, and its <h1> is that screen's page
+     * title — the same role PageHeader's <h1> plays on the unlocked view it
+     * stands in for. It was set in `text-xl`: 20px, the one stock font-size
+     * utility left in the product, on no step of the OrcaNeuron scale, so
+     * unlocking an area shifted the heading six pixels. Read off PageHeader
+     * rather than written out here, so the two cannot drift apart again.
+     */
+    const titleSize = (html: string) =>
+      // `\b` cannot close an arbitrary value: the character before the space is
+      // `]`, which is not a word character, so there is no boundary to match.
+      /\btext-(\[[^\]]+\]|xs|sm|base|lg|[2-9]?xl)(?![\w-])/.exec(/<h1[^>]*class="([^"]*)"/.exec(html)?.[1] ?? "")?.[1];
+
+    const locked = markup(<LockedScreen title="Memory" mark="M" actionLabel="Open" onAction={vi.fn()} />);
+    expect(titleSize(locked)).toBeDefined();
+    expect(titleSize(locked)).toBe(titleSize(markup(<PageHeader title="Memory" />)));
+  });
+});
+
+describe("Metric", () => {
+  it("has one figure size, in a hero banner and standing on its own", () => {
+    /*
+     * `size` was a two-branch variant whose `lg` half no call site in the repo
+     * ever reached, so every figure in the product rendered at the `md`
+     * default. It is gone rather than wired: a KPI column set at the hero's
+     * own step would flatten the banner's hierarchy against the 40px
+     * highlight beside it, and a per-call size knob is exactly how the same
+     * stat tile arrived at nine spellings before the revamp collapsed them.
+     */
+    const figureClass = (html: string) =>
+      [...html.matchAll(/<strong class="([^"]*)"/g)].map(([, cls]) => cls).at(-1) ?? "";
+    const sizeOf = (cls: string) => /\btext-(\[[^\]]+\]|figure|display|body)(?![\w-])/.exec(cls)?.[1];
+
+    const alone = figureClass(markup(<Metric label="Queue" value="7" />));
+    const inBanner = figureClass(
+      markup(<HeroBanner tone="plain" highlight={{ label: "Total", value: "412" }} metrics={[{ label: "Queue", value: "7" }]} />),
+    );
+    expect(sizeOf(alone)).toBeDefined();
+    expect(sizeOf(inBanner)).toBe(sizeOf(alone));
+
+    // The knob is gone from the type as well as from the class list, so no
+    // screen can step one column up on its own. With `size` still on the
+    // component this directive is unused and the typecheck fails on it —
+    // which is the half of this test that has teeth.
+    // @ts-expect-error - Metric takes no `size`.
+    markup(<Metric label="Queue" value="7" size="lg" />);
   });
 });
 

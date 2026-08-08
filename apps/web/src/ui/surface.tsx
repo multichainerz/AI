@@ -83,9 +83,21 @@ export function PanelHeading(props: {
   );
 }
 
-// Space Grotesk for every figure, per the design: the display face is what
-// makes a 22px number read as a stat rather than as large body text.
-const figure = cva("block font-display font-semibold tabular-nums tracking-[-0.02em]", {
+/*
+ * Space Grotesk for every figure, per the design: the display face is what
+ * makes the number read as a stat rather than as large body text.
+ *
+ * One size, and no prop to change it. There was a second `lg` step at
+ * `text-figure`, and no call site in the repo ever reached it, so every Metric
+ * in the product has always rendered at 19px. Wiring it into HeroBanner's KPI
+ * columns was the alternative and is the wrong answer: the columns sit beside
+ * a 40px highlight whose whole job is to dominate them, and the same Metric
+ * also stands alone in six MetricRows where nothing would justify the larger
+ * step — so the size would have said "which container am I in", not "how
+ * important is this number". 19px stays a deliberate one-off between body and
+ * `figure`; `figure` remains the hero's own step.
+ */
+const figure = cva("block font-display text-[19px] font-semibold tabular-nums tracking-[-0.02em]", {
   variants: {
     tone: {
       neutral: "text-text",
@@ -94,9 +106,8 @@ const figure = cva("block font-display font-semibold tabular-nums tracking-[-0.0
       bad: "text-bad",
       accent: "text-accent",
     },
-    size: { md: "text-[19px]", lg: "text-figure" },
   },
-  defaultVariants: { tone: "neutral", size: "md" },
+  defaultVariants: { tone: "neutral" },
 });
 
 export interface MetricProps extends VariantProps<typeof figure> {
@@ -112,11 +123,11 @@ export interface MetricProps extends VariantProps<typeof figure> {
  * Tabular numerals are not cosmetic here: without them a column of values
  * aligns on nothing and a figure that updates shifts its neighbours sideways.
  */
-export function Metric({ label, value, caption, tone, size, className }: MetricProps) {
+export function Metric({ label, value, caption, tone, className }: MetricProps) {
   return (
     <article className={cn("min-w-0", className)}>
       <MicroLabel className="block">{label}</MicroLabel>
-      <strong className={cn(figure({ tone, size }), "mt-1.5")}>{value}</strong>
+      <strong className={cn(figure({ tone }), "mt-1.5")}>{value}</strong>
       {caption ? <small className="mt-1 block text-caption text-muted">{caption}</small> : null}
     </article>
   );

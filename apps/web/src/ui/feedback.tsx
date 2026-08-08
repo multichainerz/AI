@@ -146,7 +146,18 @@ export function LockedScreen(props: {
     <div className="grid gap-4">
       <header>
         <MicroLabel className="mb-1.5 block">{props.kicker ?? "Administration"}</MicroLabel>
-        <h1 className="m-0 font-display text-xl font-semibold tracking-[-0.02em] text-text">{props.title}</h1>
+        {/*
+         * PageHeader's exact one-off, deliberately, rather than a step of the
+         * scale: a kicker over an <h1> naming the area is precisely what
+         * PageHeader draws, and this header stands in for the one the area
+         * shows once it opens. Set at 20px it was the only stock Tailwind
+         * font size left in the product — on no step of the OrcaNeuron scale
+         * — and it made the title jump six pixels at the moment of unlocking,
+         * the one moment a person is looking straight at it.
+         */}
+        <h1 className="m-0 font-display text-[26px] font-semibold leading-[1.15] tracking-[-0.03em] text-text">
+          {props.title}
+        </h1>
       </header>
       {/*
         * Three columns only once there is room for them. At 375px the auto

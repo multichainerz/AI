@@ -229,7 +229,7 @@ export function ModelsView({
       kicker="Inference control"
       title="Models"
       mark="M"
-      reason="Claim or sign in to OrcaSynapse to view or change model routes. Serving credentials remain inside the encrypted credential store."
+      reason="Sign in as an administrator to view or change model routes; the workspace session you already have stays active. Serving credentials remain inside the encrypted credential store."
       actionLabel="Open platform settings"
       onAction={onConfigureConnections}
     />;
@@ -278,7 +278,7 @@ export function ModelsView({
       <form onSubmit={(event) => void save(event)}>
         <header className="mb-4 flex items-start justify-between gap-6">
           <div className="min-w-0">
-            <h2 className="font-display m-0 text-[15px] font-semibold tracking-[-0.01em] text-text">
+            <h2 className="m-0 font-display text-[15px] font-semibold tracking-[-0.01em] text-text">
               {editing ? `Edit ${editing.displayName}` : "New model route"}
             </h2>
             <p className="mb-0 mt-1.5 text-body text-muted">
@@ -333,7 +333,7 @@ export function ModelsView({
             {model.displayName.slice(0, 2).toUpperCase()}
           </span>
           <div className="min-w-0">
-            <h2 className="font-display m-0 truncate text-[14px] font-semibold tracking-[-0.01em] text-text">{model.displayName}</h2>
+            <h2 className="m-0 truncate font-display text-[14px] font-semibold tracking-[-0.01em] text-text">{model.displayName}</h2>
             <p className="mb-0 mt-0.5 truncate font-mono text-caption text-muted">{model.modelAlias}</p>
           </div>
         </div>

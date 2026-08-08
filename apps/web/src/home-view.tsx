@@ -1,5 +1,5 @@
 import type { ChatMetrics, ConnectionMonitoringControl } from "@orcasynapse/contracts";
-import { Button, HeroBanner, MicroLabel, PageHeader, Panel, PanelHeading, StatusText, cn, toneFor, Tile} from "./ui/index.js";
+import { Button, HeroBanner, MicroLabel, PageHeader, Panel, PanelHeading, StatusText, Tile, cn, toneFor } from "./ui/index.js";
 import { NodeIcon } from "./ui/relay-icons.js";
 import type { ActiveView } from "./workspace-navigation.js";
 
@@ -32,7 +32,6 @@ interface HomeViewProps {
   apiAvailable: boolean;
   bootstrapState: "LOCKED" | "REQUIRED" | "READY";
   unlocked: boolean;
-  passwordChangePending: boolean;
   healthyConnections: number;
   monitoring: ConnectionMonitoringControl | null;
   chatMetrics: ChatMetrics | null;
@@ -77,17 +76,21 @@ export function HomeView(props: HomeViewProps) {
   const next = props.readiness.find(({ ready }) => !ready);
   const open = (view: ActiveView) => (props.unlocked ? props.onSelect(view) : props.onUnlock());
 
+  /*
+   * There is no password-change arm here any more. The shell hands a session
+   * that still owes a password change straight to the front page, so Home is
+   * only ever mounted once that flag is false — the arm was drawing a state
+   * this screen cannot be in.
+   */
   const bannerTitle = props.bootstrapState !== "READY"
     ? props.bootstrapState === "REQUIRED" ? "Installation required" : "Installation trust locked"
     : !props.unlocked
-      ? props.passwordChangePending ? "Password change required" : "Local sign-in ready"
+      ? "Local sign-in ready"
       : allReady ? "Workspace ready" : "Administrator workspace active";
   const bannerDetail = props.bootstrapState !== "READY"
     ? "Run the protected VM1 installer before configuring services."
     : !props.unlocked
-      ? props.passwordChangePending
-        ? "Replace the temporary password before opening administrative operations."
-        : "Sign in to manage encrypted endpoints, agents, and knowledge."
+      ? "Sign in to manage encrypted endpoints, agents, and knowledge."
       : `${readyCount} of ${props.readiness.length} required capabilities are ready.`;
 
   return (

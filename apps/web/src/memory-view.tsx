@@ -20,7 +20,8 @@ import {
 import { adminAccess } from "./admin-access.js";
 import {
   Alert, Button, EmptyState, Field, Input, LockedScreen, PageHeader, Panel, PanelHeading,
-  Select, StatusText, toneFor, Tile,} from "./ui/index.js";
+  Select, StatusText, Tile, toneFor,
+} from "./ui/index.js";
 
 interface MemoryViewProps {
   session: AdministratorSession | null;
@@ -431,7 +432,7 @@ export function MemoryView({ session, onOpenSettings, onSessionExpired }: Memory
         }
       />
 
-      {canManage && ownerFilter && <Tile className="mb-4 grid gap-3 p-3.5">
+      {canManage && ownerFilter && <Tile pad="lg" className="mb-4 grid gap-3">
         <div className="flex flex-wrap items-end gap-3">
           <Field label="Forget by topic" className="min-w-[220px] flex-1">
             <Input

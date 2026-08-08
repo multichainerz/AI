@@ -176,7 +176,7 @@ const { BenchmarksView } = await import("./benchmarks-view.js");
 async function view(as: AdministratorSession = session) {
   render(
     <main>
-      <BenchmarksView session={as} onOpenOperations={vi.fn()} onSessionExpired={vi.fn()} />
+      <BenchmarksView session={as} onOpenOperations={vi.fn()} onOpenSettings={vi.fn()} onSessionExpired={vi.fn()} />
     </main>,
   );
   await waitFor(() => screen.getByText("Chat baseline"));

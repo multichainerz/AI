@@ -17,7 +17,8 @@ import {
 } from "./api.js";
 import {
   Alert, Button, Dialog, EmptyState, Field, HeroBanner, Input, LockedScreen, MicroLabel,
-  PageHeader, Panel, PanelHeading, Select, StatusText, Textarea, cn, toneFor, Tile,} from "./ui/index.js";
+  PageHeader, Panel, PanelHeading, Select, StatusText, Textarea, Tile, cn, toneFor,
+} from "./ui/index.js";
 
 interface AgentsViewProps {
   unlocked: boolean;

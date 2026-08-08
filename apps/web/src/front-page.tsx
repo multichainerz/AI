@@ -14,6 +14,15 @@ import { useState, type FormEvent } from "react";
  * colours are literals rather than tokens, the same way the sidebar's brand
  * panel is. Every colour is a class, never an inline style (`style-src 'self'`).
  *
+ * Literal does not mean free-hand: each one on the white card is the *value*
+ * of the matching light-theme token in `styles.css` (#EFF0ED bg, #F7F7F5
+ * raised, #191A1C text, #6B6C74 muted, #93949C faint, #703DEF accent,
+ * #A94E2C bad, #0E9BB5 node). Five had drifted a few units off — a page that
+ * is almost the light theme reads as a rendering fault rather than a design,
+ * so when a value here changes, copy it from the light block rather than
+ * eyeballing it. The violet hero is the exception: it is the brand panel, so
+ * its palette is the brand one, cyan #22D3EE included.
+ *
  * The four states of the card are the four ways in: local sign-in, offline
  * recovery with the Installation Key, the forced password change a temporary
  * password lands in, and the recovery reset. Enterprise SSO is a redirect the
@@ -107,10 +116,10 @@ function NetworkDiagram() {
 }
 
 const FIELD =
-  "flex items-center gap-2.5 rounded-input border border-black/[0.07] bg-[#F5F5FA] px-4 py-3 " +
+  "flex items-center gap-2.5 rounded-input border border-black/[0.07] bg-[#F7F7F5] px-4 py-3 " +
   "focus-within:border-[#703DEF]/50";
 const FIELD_INPUT =
-  "min-w-0 flex-1 border-0 bg-transparent p-0 text-[14px] text-[#191A1C] outline-none placeholder:text-[#9A9BA4]";
+  "min-w-0 flex-1 border-0 bg-transparent p-0 text-[14px] text-[#191A1C] outline-none placeholder:text-[#93949C]";
 const SUBMIT =
   "flex w-full items-center justify-between gap-3 rounded-input border-0 bg-[#703DEF] px-5 py-3.5 " +
   "text-[14.5px] font-semibold text-white transition-colors hover:bg-[#5B2EDB] " +
@@ -160,7 +169,7 @@ export function FrontPage(props: FrontPageProps) {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[#EEF0FA] px-7 py-8">
+    <div className="flex min-h-screen items-center justify-center bg-[#EFF0ED] px-7 py-8">
       <div className="w-full max-w-[1280px] rounded-[26px] bg-white p-[22px] shadow-[0_30px_80px_-40px_rgba(46,16,101,0.35)]">
         <div className="relative overflow-hidden rounded-modal bg-brand px-6 pt-6 sm:px-9 sm:pt-7">
 
@@ -198,7 +207,7 @@ export function FrontPage(props: FrontPageProps) {
                   </p>
 
                   {props.bootstrapState !== "READY" ? (
-                    <p className="mb-0 mt-4 rounded-input border border-[#C77F62]/40 bg-[#C77F62]/10 px-3.5 py-2.5 text-[12px] text-[#A94E2C]">
+                    <p className="mb-0 mt-4 rounded-input border border-[#A94E2C]/40 bg-[#A94E2C]/10 px-3.5 py-2.5 text-[12px] text-[#A94E2C]">
                       Installation trust is {props.bootstrapState.toLowerCase()}. Complete the host installer first.
                     </p>
                   ) : null}
@@ -217,9 +226,9 @@ export function FrontPage(props: FrontPageProps) {
                             required
                             maxLength={64}
                           />
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9A9BA4" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden="true">
-                            <circle cx="12" cy="9" r="3.6" fill="currentColor" fillOpacity="0.14" />
-                            <path d="M5.4 19.6a6.6 6.6 0 0 1 13.2 0" fill="currentColor" fillOpacity="0.14" />
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#93949C" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden="true">
+                            <circle cx="12" cy="9" r="3.6" fill="#93949C" fillOpacity="0.14" />
+                            <path d="M5.4 19.6a6.6 6.6 0 0 1 13.2 0" fill="#93949C" fillOpacity="0.14" />
                           </svg>
                         </label>
                         <label className={FIELD}>
@@ -235,8 +244,8 @@ export function FrontPage(props: FrontPageProps) {
                             minLength={12}
                             maxLength={1024}
                           />
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9A9BA4" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden="true">
-                            <rect x="4.8" y="10" width="14.4" height="10.2" rx="3" fill="currentColor" fillOpacity="0.14" />
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#93949C" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden="true">
+                            <rect x="4.8" y="10" width="14.4" height="10.2" rx="3" fill="#93949C" fillOpacity="0.14" />
                             <path d="M8 10V6.8a4 4 0 0 1 8 0V10" />
                           </svg>
                         </label>
@@ -278,7 +287,7 @@ export function FrontPage(props: FrontPageProps) {
 
                   {props.oidcConfigured ? (
                     <div className="mt-5 border-t border-black/[0.08] pt-4">
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#9A9BA4]">Or continue with</div>
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#93949C]">Or continue with</div>
                       <button
                         type="button"
                         className="mt-2.5 rounded-pill border border-black/[0.12] bg-transparent px-4 py-2 text-[12.5px] font-semibold text-[#191A1C] transition-colors hover:border-[#703DEF] hover:text-[#703DEF]"
@@ -291,7 +300,7 @@ export function FrontPage(props: FrontPageProps) {
 
                   <div className="mt-5 flex items-start gap-2.5">
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#6B6C74" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mt-0.5 shrink-0" aria-hidden="true">
-                      <path d="M12 2.8 5 5.8v5.4c0 4.2 3 6.9 7 8.6 4-1.7 7-4.4 7-8.6V5.8z" fill="currentColor" fillOpacity="0.14" />
+                      <path d="M12 2.8 5 5.8v5.4c0 4.2 3 6.9 7 8.6 4-1.7 7-4.4 7-8.6V5.8z" fill="#6B6C74" fillOpacity="0.14" />
                       <path d="M8.8 11.8 11 14l4.2-4.4" stroke="#0E9BB5" strokeWidth="2.3" />
                     </svg>
                     <p className="m-0 text-[11.5px] leading-[1.5] text-[#6B6C74]">

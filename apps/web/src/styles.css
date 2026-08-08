@@ -210,23 +210,35 @@ body { min-width: 320px; min-height: 100vh; margin: 0; background: var(--bg); }
 button, input, select, textarea { font: inherit; }
 button { -webkit-tap-highlight-color: transparent; }
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.application-failure { width: min(100% - 32px, 680px); min-height: 100vh; display: grid; place-content: center; justify-items: start; gap: 12px; padding: 32px; margin: auto; background: var(--bg); }
-.application-failure .brand-mark { margin-bottom: 8px; }
-.application-failure > p:not(.page-kicker) { max-width: 560px; margin: 0 0 8px; color: var(--muted); font-size: 13px; line-height: 1.6; }
 
 .app-shell { min-height: 100vh; display: grid; grid-template-columns: 248px minmax(0, 1fr); }
 /*
  * The rail is the brand panel: the one deep-violet surface, identical in both
  * themes, so its foreground colours are fixed white/alpha rather than tokens —
  * a themed grey would vanish against a constant background.
+ *
+ * The accent is the one token the rail still wants, because the selected nav
+ * row tints its glyph with it — so the rail pins the channels instead of
+ * banning it. Left themed, `--accent-rgb` resolves to #703DEF in light, which
+ * measures 2.61:1 against this constant #2B1364: dimmer than the 4.05:1 muted
+ * lavender on the rows beside it, so the selected icon became the quietest
+ * thing in the icon column rather than the loudest. Pinned, `text-accent`
+ * means the same bright violet on the brand panel under either theme, and the
+ * focus ring inside the rail stops dimming with it.
  */
-.sidebar { position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; padding: 20px 12px 16px; border-right: 1px solid rgba(255, 255, 255, 0.12); background: rgb(var(--brand-rgb)); }
-.brand, .mobile-brand { display: flex; align-items: center; gap: 11px; }
-.brand { padding: 0 8px 25px; }
-.brand-mark { flex: 0 0 auto; width: 38px; height: 38px; display: grid; place-items: center; border-radius: 10px; color: #fff; background: linear-gradient(145deg, var(--accent), var(--accent-strong)); box-shadow: inset 0 1px 0 rgb(var(--text-rgb) / 0.17), 0 7px 18px rgb(var(--accent-rgb) / 0.18); }
-.brand-mark svg { width: 27px; height: 27px; overflow: visible; fill: currentColor; }
-.brand strong, .operator strong, .mobile-brand strong { display: block; font-family: var(--display); font-size: 15px; font-weight: 600; letter-spacing: -.01em; color: #fff; }
-.brand span, .operator span { display: block; margin-top: 2px; color: rgba(255, 255, 255, 0.48); font-size: 10px; }
+.sidebar { position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; padding: 20px 12px 16px; border-right: 1px solid rgba(255, 255, 255, 0.12); background: rgb(var(--brand-rgb)); --accent-rgb: 146 119 245; }
+/*
+ * `.brand` and `.brand-mark` used to live here. The rail's brand row is built
+ * from utilities now, and the error boundary that was the last `.brand-mark`
+ * call site was rewritten with it — so these rules matched nothing, while
+ * still being declared after `@tailwind utilities` at equal specificity, which
+ * is exactly the shape that silently reimposes old spacing on whoever reuses
+ * the name next. `.mobile-brand` and `.operator` are still rendered, so what
+ * they needed from the shared selectors stays.
+ */
+.mobile-brand { display: flex; align-items: center; gap: 11px; }
+.operator strong, .mobile-brand strong { display: block; font-family: var(--display); font-size: 15px; font-weight: 600; letter-spacing: -.01em; color: #fff; }
+.operator span { display: block; margin-top: 2px; color: rgba(255, 255, 255, 0.48); font-size: 10px; }
 .sidebar nav { min-height: 0; flex: 1; display: grid; align-content: start; gap: 17px; padding: 1px 2px 10px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.28) transparent; }
 .nav-group { display: grid; gap: 3px; }
 .sidebar-bottom { flex: 0 0 auto; margin-top: 12px; }
@@ -247,16 +259,6 @@ main > * { width: min(100%, 1380px); margin-left: auto; margin-right: auto; }
  */
 .workspace-header { position: sticky; top: 0; z-index: 40; width: auto; max-width: none; margin: 0 calc(-1 * clamp(24px, 4vw, 64px)) 26px; padding: 0 clamp(24px, 4vw, 64px); border-bottom: 1px solid var(--border); background: rgb(var(--bg-rgb) / 0.92); backdrop-filter: blur(12px); }
 .mobile-brand { display: none; }
-/*
- * Micro-label: monospace, uppercase, widely tracked, quiet.
- *
- * These name a value rather than competing with it. Setting them in the mono
- * stack at a small size and low contrast is what lets a dense screen stay
- * readable — the eye lands on the figure and reads the label only when it needs
- * to. Coloured accent kickers did the opposite, pulling attention to the
- * caption instead of the number.
- */
-.page-kicker { margin: 0 0 8px; color: var(--faint); font: 9px/1.4 var(--mono); font-weight: 500; letter-spacing: .11em; text-transform: uppercase; }
 h1, h2, h3 { color: var(--text); font-family: inherit; letter-spacing: -.025em; }
 h1 { margin: 0; font-size: clamp(29px, 3vw, 38px); line-height: 1.15; font-weight: 680; }
 h2 { margin: 0; font-size: 18px; line-height: 1.3; font-weight: 650; }
@@ -483,15 +485,13 @@ button:disabled { opacity: .48; cursor: not-allowed; }.panel { border: 1px solid
 }@media (max-width: 760px) {
   body { padding-bottom: 72px; }
   .app-shell { display: block; }
-  .sidebar { position: fixed; inset: auto 0 0; z-index: 150; width: 100%; height: 72px; display: flex; flex-direction: row; padding: 7px max(10px, env(safe-area-inset-right)) calc(7px + env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left)); border: 0; border-top: 1px solid rgba(255, 255, 255, 0.14); background: rgb(var(--brand-rgb) / 0.95); backdrop-filter: blur(16px); }.brand, .operator { display: none; }
+  .sidebar { position: fixed; inset: auto 0 0; z-index: 150; width: 100%; height: 72px; display: flex; flex-direction: row; padding: 7px max(10px, env(safe-area-inset-right)) calc(7px + env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left)); border: 0; border-top: 1px solid rgba(255, 255, 255, 0.14); background: rgb(var(--brand-rgb) / 0.95); backdrop-filter: blur(16px); }.operator { display: none; }
   .sidebar nav { min-width: 0; flex: 1 1 auto; display: flex; align-content: initial; gap: 2px; padding: 0; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
   .sidebar nav::-webkit-scrollbar { display: none; }
   .nav-group { display: contents; }
   .sidebar-bottom { display: none; }
   main { padding: 19px 16px 38px; }
   .mobile-brand { display: flex; margin-bottom: 24px; }
-  .mobile-brand .brand-mark { width: 32px; height: 32px; border-radius: 8px; }
-  .mobile-brand .brand-mark svg { width: 23px; height: 23px; }
   .mobile-brand strong { font-size: 13px; }
   .chat-page { height: calc(100dvh - 72px); padding: 0; }
   .chat-messages { padding: 22px 16px; }

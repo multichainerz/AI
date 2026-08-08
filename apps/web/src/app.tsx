@@ -48,17 +48,12 @@ import { connectionReadiness } from "./connection-readiness.js";
 import { FrontPage } from "./front-page.js";
 import { HomeView, type HomeLayer, type HomeReadinessCheck } from "./home-view.js";
 import { connectionFor, deriveWorkspaceReadiness } from "./platform-readiness.js";
-import { MicroLabel, cn } from "./ui/index.js";
+import { cn } from "./ui/index.js";
 import {
-  ApiIcon,
-  ContainerIcon,
-  CpuIcon,
-  DeployIcon,
-  GearIcon,
-  LayersIcon,
+  BalancerIcon,
   MonitorIcon,
   NodeIcon,
-  SecurityIcon,
+  ServerIcon,
   StorageIcon,
   TerminalIcon,
 } from "./ui/relay-icons.js";
@@ -70,6 +65,7 @@ import {
   viewFromHash,
   WorkspaceContextBar,
   type ActiveView,
+  type ProductArea,
 } from "./workspace-navigation.js";
 
 const OperationsView = lazy(() => import("./operations-view.js").then((module) => ({ default: module.OperationsView })));
@@ -90,20 +86,25 @@ const AuditView = lazy(() => import("./audit-view.js").then((module) => ({ defau
  * already carries. The drawings are the Relay duotone set from the design
  * system (`ui/relay-icons.tsx`); the mapping lives here because it is a
  * navigation decision, not an icon-library one.
+ *
+ * One entry per product area and nothing else. The map used to carry eleven
+ * keys, five of which no caller could reach — `Glyph` is only ever handed the
+ * six `icon` values in `primaryNavigationGroups`, so the rest were imports
+ * held open for a dispatch that never happened.
+ *
+ * Each drawing is the one the design reference names for that area: a monitor
+ * for Home, a terminal window for Chat, a database cylinder for Knowledge, a
+ * node hierarchy for Agents, stacked server racks for Platform, and a node
+ * graph for Operations.
  */
 function Glyph({ name }: { name: string }) {
   const glyphs: Record<string, ReactNode> = {
-    overview: <LayersIcon size={17} />,
-    setup: <ContainerIcon size={17} />,
-    chat: <NodeIcon size={17} />,
-    models: <CpuIcon size={17} />,
-    prompts: <TerminalIcon size={17} />,
-    agents: <DeployIcon size={17} />,
-    documents: <StorageIcon size={17} />,
-    integrations: <ApiIcon size={17} />,
-    guardrails: <SecurityIcon size={17} />,
-    operations: <MonitorIcon size={17} />,
-    settings: <GearIcon size={17} />,
+    overview: <MonitorIcon size={18} />,
+    chat: <TerminalIcon size={18} />,
+    documents: <StorageIcon size={18} />,
+    agents: <NodeIcon size={18} />,
+    setup: <ServerIcon size={18} />,
+    operations: <BalancerIcon size={18} />,
   };
 
   /*
@@ -320,7 +321,22 @@ function App() {
     forgetAdminSession();
     setEnterpriseSession(null);
   };
-  const chatUnlocked = enterpriseSession !== null || unlocked;
+  /*
+   * All three read the same way on purpose. Chat used to accept any enterprise
+   * session without asking for its scope, which made it the one governed area
+   * whose locked screen could not render at all: past the front-page guard an
+   * enterprise session is always present when the administrator one is not, so
+   * `chatUnlocked` was a constant `true` while its two siblings were a real
+   * question. Deleting Chat's locked screen would have been the other way to
+   * resolve that, and the wrong one — it is the screen an employee is most
+   * likely to arrive at without permission.
+   *
+   * `enterpriseSessionSchema.scopes` is a fixed three-literal tuple today, so
+   * in practice all three still answer true. That is a property of the
+   * contract, not of these lines: widen the tuple and the three screens start
+   * disagreeing, which is exactly what they should do.
+   */
+  const chatUnlocked = unlocked || enterpriseSession?.scopes.includes("chat:use") === true;
   const documentsUnlocked = unlocked || enterpriseSession?.scopes.includes("documents:use") === true;
   const agentsUnlocked = unlocked || enterpriseSession?.scopes.includes("agents:use") === true;
 
@@ -760,6 +776,19 @@ function App() {
   const activeArea = productAreaForView(activeView);
 
   /*
+   * Sidebar counts, drawn only where the shell already holds the number.
+   *
+   * Chat has one: the conversation count from the same metrics window the Home
+   * screen reports its Hermes responses from. Knowledge and Operations do not —
+   * nothing in this component loads a document or an incident total — so those
+   * rows carry no badge at all rather than a plausible-looking figure. A badge
+   * is read as a fact about the workspace, and an invented one is worse than an
+   * absent one.
+   */
+  const navigationCounts: Partial<Record<ProductArea, number>> =
+    chatMetrics && chatMetrics.conversations > 0 ? { Chat: chatMetrics.conversations } : {};
+
+  /*
    * Three mutually exclusive surfaces, decided only once the session probes
    * have answered: the splash (a beat of brand violet, never the wrong page),
    * the front page (no session at all, or a session that must change its
@@ -791,55 +820,125 @@ function App() {
     );
   }
 
+  /*
+   * Past the two guards above, a session exists: the front page has already
+   * claimed the "nobody is signed in" case and the "this session still owes a
+   * password change" case, and neither can reach here. So the shell has no
+   * signed-out operator to draw, and the arms that used to draw one ("SA" with
+   * no name, "Not signed in", "No active session", a Sign out button that
+   * might not belong to anyone) were describing a screen that no longer
+   * exists. The non-null assertion states the invariant those guards
+   * establish, which TypeScript cannot carry across an early return; inventing
+   * a fallback string instead would just put the dead arm back under a
+   * different spelling.
+   */
+  const operator = adminSession
+    ? {
+      initials: "SA",
+      name: "System administrator",
+      detail: adminSession.role.replaceAll("_", " ").toLowerCase(),
+    }
+    : {
+      initials: enterpriseSession!.user.displayName.slice(0, 2).toUpperCase(),
+      name: enterpriseSession!.user.displayName,
+      detail: "Enterprise user",
+    };
+
   return (
     <div className="app-shell">
       <aside className="sidebar" aria-label="OrcaSynapse navigation">
-        <div className="brand">
+        {/*
+          * The brand band, 64px measured from the rail's top edge — which is
+          * why it cancels the sidebar's own 20px of top padding rather than
+          * sitting below it.
+          *
+          * It no longer carries the `.brand` class. That rule is declared
+          * after `@tailwind utilities` at the same specificity, so it wins
+          * every tie against a utility here, and what it was winning with was
+          * the old two-line lockup: an 11px gap, a 25px skirt and a strapline
+          * beneath the wordmark. The one thing it did that mattered is the
+          * mobile hide, restated as `max-[760px]:hidden` against the same
+          * 760px breakpoint the rail's bottom-bar layout uses.
+          */}
+        <div className="-mt-5 mb-5 flex h-16 shrink-0 items-center gap-2.5 px-1 max-[760px]:hidden">
           <BrandMark />
-          <div><strong>OrcaSynapse</strong><span>On-prem AI control plane</span></div>
+          <strong className="font-display text-[18px] font-bold leading-none tracking-[-0.01em] text-white">OrcaSynapse</strong>
         </div>
         <nav aria-label="Primary navigation">
-          {primaryNavigationGroups.map((group) => (
-            <div className="nav-group" key={group.label}>
-              <MicroLabel className="mx-2.5 mb-2 block text-white/40">{group.label}</MicroLabel>
-              {group.items.map(({ area, icon, target, description }) => (
+          {/*
+            * One flat list of six, not two labelled groups: the design draws
+            * the areas as a single run. The grouping still lives in
+            * `workspace-navigation.tsx` because that is where the product
+            * split is described — this only declines to draw a heading for it.
+            */}
+          <div className="nav-group">
+            {primaryNavigationGroups.flatMap((group) => group.items).map(({ area, icon, target, description }) => {
+              const active = area === activeArea;
+              const count = navigationCounts[area];
+              return (
                 <button
                   /*
-                   * White on the brand violet, per the design: the active row is
-                   * a soft white fill and a lift to full white; inactive rows sit
-                   * at 60% and brighten on hover. Tokens would be wrong here —
-                   * the rail's background never themes, so its foreground must
-                   * not either. The description now lives in the tooltip; the
-                   * row itself is the single 13px line the design draws.
+                   * White on the brand violet, per the design: the active row
+                   * is a soft white fill at full white and semibold; inactive
+                   * rows keep a near-white label and lose their weight. Tokens
+                   * would be wrong for the text — the rail's background never
+                   * themes, so its foreground must not either. The description
+                   * lives in the tooltip; the row itself is one line.
                    */
                   className={cn(
-                    "flex w-full items-center gap-3 rounded px-3 py-2 text-left text-body transition-colors",
-                    area === activeArea
+                    "flex h-10 w-full items-center gap-3 rounded px-3 text-left font-sans text-[14.5px] transition-colors",
+                    active
                       ? "bg-white/10 font-semibold text-white"
-                      : "font-medium text-white/60 hover:bg-white/[0.07] hover:text-white",
+                      : "font-medium text-white/85 hover:bg-white/[0.06] hover:text-white",
                   )}
                   key={area}
-                  ref={area === activeArea ? activeNavigationItem : undefined}
-                  aria-current={area === activeArea ? "page" : undefined}
+                  ref={active ? activeNavigationItem : undefined}
+                  aria-current={active ? "page" : undefined}
                   type="button"
                   title={description}
                   onClick={() => selectView(target)}
                 >
-                  <Glyph name={icon} />
+                  {/*
+                    * The glyph is the one thing on the row that is *not* the
+                    * label's colour: bright accent when the row is active,
+                    * muted lavender when it is not, so the icon column reads
+                    * as a second, quieter rank.
+                    *
+                    * The two descendant selectors put the Relay set's cyan
+                    * "live node" back on `currentColor` for the duration of
+                    * the rail. That accent is meant to appear once per
+                    * composition; six of them stacked down the sidebar was the
+                    * loudest thing on the screen, and it also defeated the
+                    * active/muted tinting, because the dot stayed cyan whether
+                    * the row was selected or not.
+                    */}
+                  <span
+                    className={cn(
+                      "flex shrink-0 [&_.fill-node]:fill-current [&_.stroke-node]:stroke-current",
+                      active ? "text-accent" : "text-white/45",
+                    )}
+                  >
+                    <Glyph name={icon} />
+                  </span>
                   <span className="min-w-0 flex-1 truncate">{area}</span>
+                  {count === undefined ? null : (
+                    <span className="shrink-0 text-[12px] tabular-nums text-white/45" title="Conversations in the last 24 hours">
+                      {count}
+                    </span>
+                  )}
                 </button>
-              ))}
-            </div>
-          ))}
+              );
+            })}
+          </div>
         </nav>
         <div className="sidebar-bottom">
           <div className="operator">
-            <div className="avatar">{adminSession ? "SA" : enterpriseSession ? enterpriseSession.user.displayName.slice(0, 2).toUpperCase() : "SA"}</div>
+            <div className="avatar">{operator.initials}</div>
             <div>
-              <strong>{passwordChangePending ? "Password change required" : adminSession ? "System administrator" : enterpriseSession?.user.displayName ?? "Not signed in"}</strong>
-              <span>{adminSession ? adminSession.role.replaceAll("_", " ").toLowerCase() : enterpriseSession ? "Enterprise user" : "No active session"}</span>
+              <strong>{operator.name}</strong>
+              <span>{operator.detail}</span>
             </div>
-            {(adminSession || enterpriseSession) && <button type="button" onClick={() => void signOut()}>Sign out</button>}
+            <button type="button" onClick={() => void signOut()}>Sign out</button>
           </div>
         </div>
       </aside>
@@ -862,8 +961,8 @@ function App() {
           Chat: () => (
             <ChatView
               unlocked={chatUnlocked}
-              identityMode={unlocked && adminSession ? "ADMINISTRATOR_PREVIEW" : enterpriseSession ? "ENTERPRISE" : null}
-              displayName={unlocked && adminSession ? "System administrator" : enterpriseSession?.user.displayName ?? null}
+              identityMode={adminSession ? "ADMINISTRATOR_PREVIEW" : "ENTERPRISE"}
+              displayName={operator.name}
               administratorReadiness={unlocked ? {
                 ready: readiness.chatReady,
                 title: readiness.nextChatStep?.title ?? "Hermes is ready",
@@ -932,7 +1031,13 @@ function App() {
           Integrations: () => (
             <ToolingView
               session={adminSession}
-              onConfigure={() => openConnectionSettings("MCP")}
+              // No kind is named because none can be honoured. Tooling raises
+              // this only from its locked screen, which it draws exactly when
+              // there is no administrator session — and that is the one case
+              // `openConnectionSettings` answers with the elevation dialog
+              // before it ever looks at the kind. There is no MCP connection
+              // definition either, so the drawer had nothing to render.
+              onConfigure={() => openConnectionSettings()}
               onSessionExpired={forgetAdminSession}
             />
           ),
@@ -978,6 +1083,10 @@ function App() {
             <BenchmarksView
               session={adminSession}
               onOpenOperations={() => selectView("Operations")}
+              // Locked, the screen asks for an administrator sign-in;
+              // `openConnectionSettings` answers with the elevation dialog
+              // whenever the session is not unlocked.
+              onOpenSettings={() => openConnectionSettings()}
               onSessionExpired={forgetAdminSession}
             />
           ),
@@ -986,7 +1095,6 @@ function App() {
               apiAvailable={apiAvailable}
               bootstrapState={bootstrapState}
               unlocked={unlocked}
-              passwordChangePending={passwordChangePending}
               healthyConnections={healthyConnections}
               monitoring={connectionMonitoring}
               chatMetrics={chatMetrics}

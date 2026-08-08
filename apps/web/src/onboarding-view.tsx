@@ -345,7 +345,7 @@ export function OnboardingView({
         </div>
         <div className="min-w-0">
           <div className="flex items-center gap-3">
-            <h2 className="font-display m-0 text-[14px] font-semibold tracking-[-0.01em] text-text">{stage.title}</h2>
+            <h2 className="m-0 font-display text-[14px] font-semibold tracking-[-0.01em] text-text">{stage.title}</h2>
             {stage.optional && <MicroLabel className="rounded border border-border bg-raised px-1.5 py-0.5">Optional</MicroLabel>}
           </div>
           <p className="mb-0 mt-1 text-body text-muted">{stage.description}</p>
@@ -361,7 +361,7 @@ export function OnboardingView({
     <section className="grid gap-4 lg:grid-cols-2" aria-label="Available workspaces">
       <Panel>
         <MicroLabel className="block">Employee workspace</MicroLabel>
-        <h2 className="font-display m-0 mt-1.5 text-[15px] font-semibold tracking-[-0.01em] text-text">Governed Chat</h2>
+        <h2 className="m-0 mt-1.5 font-display text-[15px] font-semibold tracking-[-0.01em] text-text">Governed Chat</h2>
         <p className="mb-4 mt-1.5 text-body leading-relaxed text-muted">
           Talk to an active Hermes Profile with policy, memory, tool activity, and runtime evidence around every response.
         </p>
@@ -371,7 +371,7 @@ export function OnboardingView({
       </Panel>
       <Panel>
         <MicroLabel className="block">Enterprise knowledge</MicroLabel>
-        <h2 className="font-display m-0 mt-1.5 text-[15px] font-semibold tracking-[-0.01em] text-text">Knowledge</h2>
+        <h2 className="m-0 mt-1.5 font-display text-[15px] font-semibold tracking-[-0.01em] text-text">Knowledge</h2>
         <p className="mb-4 mt-1.5 text-body leading-relaxed text-muted">
           Extract and index approved source files into the control plane's own knowledge index without retaining a copy
           of the file.
@@ -383,7 +383,7 @@ export function OnboardingView({
     <section className="grid gap-4 lg:grid-cols-2">
       <Panel className="flex flex-col">
         <MicroLabel className="block">Architecture decision</MicroLabel>
-        <h2 className="font-display m-0 mt-1.5 text-[15px] font-semibold tracking-[-0.01em] text-text">Topology and target environment</h2>
+        <h2 className="m-0 mt-1.5 font-display text-[15px] font-semibold tracking-[-0.01em] text-text">Topology and target environment</h2>
         <p className="mb-4 mt-1.5 flex-1 text-body leading-relaxed text-muted">
           {snapshot?.architecture.reason
             ? `${snapshot.architecture.topologyMode.toLowerCase().replaceAll("_", " ")} topology recorded for ${snapshot.architecture.targetEnvironment.toLowerCase()}.`
@@ -396,7 +396,7 @@ export function OnboardingView({
 
       <Panel>
         <MicroLabel className="block">Activation</MicroLabel>
-        <h2 className="font-display m-0 mt-1.5 text-[15px] font-semibold tracking-[-0.01em] text-text">
+        <h2 className="m-0 mt-1.5 font-display text-[15px] font-semibold tracking-[-0.01em] text-text">
           {snapshot?.journey.status === "COMPLETED" ? `Activated for ${snapshot.journey.activatedEnvironment?.toLowerCase()}` : "Record environment activation"}
         </h2>
         <p className="mb-0 mt-1.5 text-body leading-relaxed text-muted">

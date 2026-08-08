@@ -171,7 +171,7 @@ export function PromptsView({ session, onOpenOperations, onOpenSettings, onSessi
       kicker="Release governance"
       title="Prompts"
       mark="P"
-      reason="Unlock OrcaSynapse to review prompt content, checksums, and release evidence."
+      reason="Sign in as an administrator to review prompt content, checksums, and release evidence; the workspace session you already have stays active."
       actionLabel="Open platform settings"
       onAction={onOpenSettings}
     />;
@@ -247,7 +247,7 @@ export function PromptsView({ session, onOpenOperations, onOpenSettings, onSessi
       <form onSubmit={(event) => void save(event)}>
         <header className="mb-4 flex items-start justify-between gap-6">
           <div className="min-w-0">
-            <h2 className="font-display m-0 text-[15px] font-semibold tracking-[-0.01em] text-text">
+            <h2 className="m-0 font-display text-[15px] font-semibold tracking-[-0.01em] text-text">
               {editing ? `Edit ${editing.displayName}` : "New chat-system prompt"}
             </h2>
             <p className="mb-0 mt-1.5 text-body text-muted">
@@ -302,7 +302,7 @@ export function PromptsView({ session, onOpenOperations, onOpenSettings, onSessi
             P
           </span>
           <div className="min-w-0">
-            <h2 className="font-display m-0 truncate text-[14px] font-semibold tracking-[-0.01em] text-text">{prompt.displayName}</h2>
+            <h2 className="m-0 truncate font-display text-[14px] font-semibold tracking-[-0.01em] text-text">{prompt.displayName}</h2>
             <p className="mb-0 mt-0.5 truncate text-caption text-muted">{prompt.description}</p>
           </div>
         </div>
