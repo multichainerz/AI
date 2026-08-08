@@ -2,7 +2,7 @@ import { cva, type VariantProps } from "class-variance-authority";
 import type { HTMLAttributes, ReactNode } from "react";
 import { Button } from "./button.js";
 import { cn } from "./cn.js";
-import { MicroLabel, Panel } from "./surface.js";
+import { Mark, MicroLabel, Panel } from "./surface.js";
 
 /**
  * Status, alerts, empty states and the locked screen.
@@ -111,7 +111,7 @@ export function EmptyState(props: { title: string; children?: ReactNode; action?
         props.className,
       )}
     >
-      <strong className="text-[13px] font-semibold text-text">{props.title}</strong>
+      <strong className="text-body font-semibold text-text">{props.title}</strong>
       {props.children ? <span className="max-w-[62ch] text-body text-muted">{props.children}</span> : null}
       {props.action ? <div className="mt-2">{props.action}</div> : null}
     </div>
@@ -146,7 +146,18 @@ export function LockedScreen(props: {
     <div className="grid gap-4">
       <header>
         <MicroLabel className="mb-1.5 block">{props.kicker ?? "Administration"}</MicroLabel>
-        <h1 className="m-0 font-display text-xl font-semibold tracking-[-0.02em] text-text">{props.title}</h1>
+        {/*
+         * PageHeader's exact one-off, deliberately, rather than a step of the
+         * scale: a kicker over an <h1> naming the area is precisely what
+         * PageHeader draws, and this header stands in for the one the area
+         * shows once it opens. Set at 20px it was the only stock Tailwind
+         * font size left in the product — on no step of the OrcaNeuron scale
+         * — and it made the title jump six pixels at the moment of unlocking,
+         * the one moment a person is looking straight at it.
+         */}
+        <h1 className="m-0 font-display text-[26px] font-semibold leading-[1.15] tracking-[-0.03em] text-text">
+          {props.title}
+        </h1>
       </header>
       {/*
         * Three columns only once there is room for them. At 375px the auto
@@ -155,14 +166,9 @@ export function LockedScreen(props: {
         * the action takes the one beneath it.
         */}
       <Panel className="mx-auto my-16 grid max-w-[680px] grid-cols-[auto_minmax(0,1fr)] items-center gap-4 sm:grid-cols-[auto_minmax(0,1fr)_auto]">
-        <span
-          aria-hidden="true"
-          className="grid h-11 w-11 place-items-center rounded-pill bg-soft font-display text-[15px] font-semibold text-accent"
-        >
-          {props.mark}
-        </span>
+        <Mark size="lg">{props.mark}</Mark>
         <div className="min-w-0">
-          <strong className="block text-[13px] font-semibold text-text">
+          <strong className="block text-body font-semibold text-text">
             {props.headline ?? "Administrator session required"}
           </strong>
           <p className="mb-0 mt-1 text-body text-muted">

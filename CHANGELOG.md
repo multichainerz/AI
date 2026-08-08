@@ -5,6 +5,37 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v1.8.0 — 2026-08-09
+
+An audit of the design arc, and the navigation rail rebuilt against the design
+reference.
+
+- Ten agents swept the design releases across five dimensions and 71 findings
+  were confirmed against the built bundle and a real browser; three more agents
+  went over the repairs and found twelve problems in those.
+- **A feature had disappeared and every test stayed green.** Moving Home's banner
+  onto `HeroBanner` dropped `fill`, so the capability-readiness bar stopped
+  rendering — `Metric`'s progress branch had no production caller left while the
+  primitive's own test kept exercising it directly.
+- **The light theme was broken on two surfaces previously claimed correct.** 163
+  hex literals sat below the `[data-theme="light"]` block with no override, and
+  `.connection-form input` put themed near-black text on a hardcoded near-black
+  fill: **1.11:1**, which is to say an operator's typed connection URL was
+  invisible. Every literal is now a token, measured after at 15.22:1 light and
+  16.24:1 dark.
+- **Six navigation icons, all wrong in the same invisible way.** The Relay set
+  paints one cyan live node per glyph, so the active state had nothing left to
+  tint, and five of the six were dispatched to the wrong area. The rail pins its
+  own accent channels, so `text-accent` means the same violet under either theme.
+- Chat was the one governed area that never checked a scope, while Knowledge and
+  Agents asked for theirs; the check is symmetric now. Four locked screens are
+  pinned as one table rather than four tests, because the property worth holding
+  is that they agree with each other.
+- Dead stylesheet rules proven against `dist/assets` rather than a source grep,
+  which is how an earlier sweep kept a class that only matched a comment.
+
+1,142 tests.
+
 ## v1.7.0 — 2026-08-08
 
 The OrcaNeuron design system, end to end: tokens, the front page, the banner

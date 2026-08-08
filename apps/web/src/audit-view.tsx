@@ -121,7 +121,7 @@ export function AuditView({ session, onSessionExpired }: AuditViewProps) {
               : forwarding.status === "NOT_CONFIGURED" ? "border-l-border-strong" : "border-l-good",
         )}>
           <div className="min-w-0">
-            <strong className="block text-[12px] font-semibold text-text">
+            <strong className="block text-label font-semibold text-text">
               {forwarding.status === "NOT_CONFIGURED" ? "Retained locally"
                 : forwarding.status === "FAILING" ? "Forwarding is failing"
                   : forwarding.status === "BEHIND" ? "Forwarding is behind"
@@ -141,7 +141,7 @@ export function AuditView({ session, onSessionExpired }: AuditViewProps) {
               { label: "Last accepted", value: forwarding.lastForwardedAt ? relativeTime(forwarding.lastForwardedAt) : "never" },
             ].map((fact) => (
               <div key={fact.label}>
-                <dt className="font-mono text-micro uppercase text-faint">{fact.label}</dt>
+                <dt className="text-micro font-semibold uppercase tabular-nums text-faint">{fact.label}</dt>
                 <dd className="m-0 mt-1 font-mono text-caption tabular-nums text-muted">{fact.value}</dd>
               </div>
             ))}
@@ -205,7 +205,7 @@ export function AuditView({ session, onSessionExpired }: AuditViewProps) {
       <div className="overflow-x-auto rounded border border-border">
         <div className="grid min-w-[720px] grid-cols-[110px_minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1.2fr)_90px] gap-3 border-b border-border bg-raised px-3 py-2">
           {["When", "Action", "Actor", "Resource", "Outcome"].map((head) => (
-            <span className="font-mono text-micro uppercase text-faint" key={head}>{head}</span>
+            <span className="text-micro font-semibold uppercase tabular-nums text-faint" key={head}>{head}</span>
           ))}
         </div>
         {events.length === 0 && !busy ? (
@@ -247,7 +247,7 @@ export function AuditView({ session, onSessionExpired }: AuditViewProps) {
                       ...(event.sourceIp ? [{ label: "Source IP", value: event.sourceIp }] : []),
                     ].map((fact) => (
                       <div className="min-w-0" key={fact.label}>
-                        <dt className="font-mono text-micro uppercase text-faint">{fact.label}</dt>
+                        <dt className="text-micro font-semibold uppercase tabular-nums text-faint">{fact.label}</dt>
                         <dd className="m-0 mt-1 break-all font-mono text-caption text-muted">{fact.value}</dd>
                       </div>
                     ))}

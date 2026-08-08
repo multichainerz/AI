@@ -17,7 +17,7 @@ import {
 } from "./api.js";
 import {
   Alert, Button, Dialog, EmptyState, Field, HeroBanner, Input, LockedScreen, MicroLabel,
-  PageHeader, Panel, PanelHeading, Select, StatusText, Textarea, cn, toneFor,
+  PageHeader, Panel, PanelHeading, Select, StatusText, Textarea, Tile, cn, toneFor,
 } from "./ui/index.js";
 
 interface AgentsViewProps {
@@ -332,7 +332,7 @@ export function AgentsView({ unlocked, administrator, activationReady, activatio
       </Alert>}
       {administrator && activationReady === false && <Panel className="flex items-center gap-4 border-l-2 border-l-warn" role="status">
         <div className="min-w-0 flex-1">
-          <strong className="block text-[12px] font-semibold text-text">Profiles can be drafted now</strong>
+          <strong className="block text-label font-semibold text-text">Profiles can be drafted now</strong>
           <span className="mt-1 block text-body text-muted">
             {activationMessage ?? "Connect AI Inference and finish VM2 enrollment before activating a Profile for Chat."}
           </span>
@@ -348,21 +348,21 @@ export function AgentsView({ unlocked, administrator, activationReady, activatio
             alone, because this is the control an operator reaches for when
             something is already going wrong. */}
         <div className={cn(
-          "grid h-11 w-11 place-items-center rounded border font-mono text-[11px] font-bold",
+          "grid h-11 w-11 place-items-center rounded border font-mono text-caption font-bold",
           runtime?.enabled ? "border-good/50 bg-good/10 text-good" : "border-border-strong bg-raised text-muted",
         )}>
           {runtime?.enabled ? "ON" : "OFF"}
         </div>
         <div className="min-w-0">
           <MicroLabel className="block">Hermes execution</MicroLabel>
-          <strong className="mt-1.5 block text-[12px] font-semibold text-text">
+          <strong className="mt-1.5 block text-label font-semibold text-text">
             {runtime?.enabled ? "Ready for Chat" : "Activates with the first verified Profile"}
           </strong>
           <p className="mb-0 mt-1 text-body text-muted">
             {runtime?.enabled ? runtime.reason : "Create or verify a Profile; OrcaSynapse will test Hermes and enable this boundary automatically."}
           </p>
           <details className="mt-3">
-            <summary className="cursor-pointer font-mono text-micro uppercase text-faint">Manual control</summary>
+            <summary className="cursor-pointer text-micro font-semibold uppercase tabular-nums text-faint">Manual control</summary>
             <form
               className="mt-2.5 flex flex-wrap items-end gap-2.5"
               onSubmit={(event) => { event.preventDefault(); if (reason.trim().length >= 3) void action("runtime", () => updateAgentRuntime(!runtime?.enabled, reason.trim())); }}
@@ -443,7 +443,7 @@ export function AgentsView({ unlocked, administrator, activationReady, activatio
                 {profile.version.displayName.slice(0, 2).toUpperCase()}
               </span>
               <div className="min-w-0">
-                <strong className="block truncate text-[12px] font-semibold text-text">{profile.version.displayName}</strong>
+                <strong className="block truncate text-label font-semibold text-text">{profile.version.displayName}</strong>
                 <p className="mb-0 mt-0.5 truncate text-caption text-muted">{profile.version.purpose}</p>
                 {/* The distribution digest is what VM2 admits, so it is on the
                     row rather than behind a click. */}
@@ -483,7 +483,7 @@ export function AgentsView({ unlocked, administrator, activationReady, activatio
               onClick={() => setSelectedRunId(run.id)}
             >
               <StatusText dot tone={toneFor(statusTone(run.status))}>{run.status.replaceAll("_", " ").toLowerCase()}</StatusText>
-              <strong className="truncate text-[12px] font-semibold text-text">{run.profileName}</strong>
+              <strong className="truncate text-label font-semibold text-text">{run.profileName}</strong>
               <p className="mb-0 line-clamp-2 text-caption text-muted">{run.input}</p>
               <small className="font-mono text-micro text-faint">v{run.profileVersion} · {friendlyTime(run.createdAt)}</small>
             </button>)}
@@ -507,17 +507,17 @@ export function AgentsView({ unlocked, administrator, activationReady, activatio
                 { label: "Completed", value: friendlyTime(selectedRun.completedAt) },
               ].map((fact) => (
                 <div className="min-w-0 bg-surface px-2.5 py-2" key={fact.label}>
-                  <dt className="truncate font-mono text-micro uppercase text-faint">{fact.label}</dt>
+                  <dt className="truncate text-micro font-semibold uppercase tabular-nums text-faint">{fact.label}</dt>
                   <dd className="m-0 mt-1 truncate font-mono text-caption text-muted">{fact.value}</dd>
                 </div>
               ))}
             </dl>
-            <div className="mt-3 rounded border border-border bg-raised p-3">
+            <Tile className="mt-3">
               <MicroLabel className="block">Profile Distribution</MicroLabel>
               <code className="mt-1.5 block break-all font-mono text-micro text-muted">
                 {selectedRun.profileDistributionDigest ?? "Legacy run — no distribution digest"}
               </code>
-            </div>
+            </Tile>
             <section className="mt-3 overflow-hidden rounded border border-border" aria-label="Safe Hermes activity timeline">
               <header className="flex items-center justify-between border-b border-border bg-raised px-3 py-2">
                 <MicroLabel>Activity timeline</MicroLabel>
@@ -557,16 +557,16 @@ export function AgentsView({ unlocked, administrator, activationReady, activatio
               { label: "Input", body: selectedRun.input, tone: "" },
               ...(selectedRun.output ? [{ label: "Hermes output", body: selectedRun.output, tone: "border-l-2 border-l-accent" }] : []),
             ].map((block) => (
-              <div className={cn("mt-3 rounded border border-border bg-raised p-3", block.tone)} key={block.label}>
+              <Tile className={cn("mt-3", block.tone)} key={block.label}>
                 <MicroLabel className="block">{block.label}</MicroLabel>
                 <p className="mb-0 mt-1.5 whitespace-pre-wrap break-words text-body leading-relaxed text-text">{block.body}</p>
-              </div>
+              </Tile>
             ))}
             {selectedRun.failureMessage && <div className="mt-3 rounded border border-bad/40 bg-bad/10 p-3">
-              <strong className="block font-mono text-micro uppercase text-bad">{selectedRun.failureCode}</strong>
+              <strong className="block text-micro font-semibold uppercase tabular-nums text-bad">{selectedRun.failureCode}</strong>
               <p className="mb-0 mt-1.5 text-body leading-relaxed text-muted">{selectedRun.failureMessage}</p>
             </div>}
-            {selectedRun.sources.length > 0 && <div className="mt-3 grid gap-1.5 rounded border border-border bg-raised p-3">
+            {selectedRun.sources.length > 0 && <Tile className="mt-3 grid gap-1.5">
               <MicroLabel>Authorized private sources</MicroLabel>
               {selectedRun.sources.map((source) => <details className="rounded border border-border bg-surface p-2.5" key={source.documentId}>
                 <summary className="flex cursor-pointer items-center justify-between gap-3 text-body text-text">
@@ -577,7 +577,7 @@ export function AgentsView({ unlocked, administrator, activationReady, activatio
                 </summary>
                 <p className="mb-0 mt-2 text-caption leading-relaxed text-muted">{source.excerpt}</p>
               </details>)}
-            </div>}
+            </Tile>}
             {runningStatuses.has(selectedRun.status) && <Button
               variant="danger"
               className="mt-3"
@@ -655,7 +655,7 @@ export function AgentsView({ unlocked, administrator, activationReady, activatio
             "rounded border border-l-2 border-border p-3",
             activationReady === false ? "border-l-warn" : "border-l-accent",
           )}>
-            <strong className="block text-[12px] font-semibold text-text">
+            <strong className="block text-label font-semibold text-text">
               {activationReady === false ? "Draft until infrastructure is ready" : "Automatic activation"}
             </strong>
             <span className="mt-1 block text-body leading-relaxed text-muted">

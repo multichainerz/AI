@@ -1,5 +1,5 @@
 import type { ChatMetrics, ConnectionMonitoringControl } from "@orcasynapse/contracts";
-import { Button, HeroBanner, MicroLabel, PageHeader, Panel, PanelHeading, StatusText, cn, toneFor } from "./ui/index.js";
+import { Button, HeroBanner, MicroLabel, PageHeader, Panel, PanelHeading, StatusText, Tile, cn, toneFor } from "./ui/index.js";
 import { NodeIcon } from "./ui/relay-icons.js";
 import type { ActiveView } from "./workspace-navigation.js";
 
@@ -32,7 +32,6 @@ interface HomeViewProps {
   apiAvailable: boolean;
   bootstrapState: "LOCKED" | "REQUIRED" | "READY";
   unlocked: boolean;
-  passwordChangePending: boolean;
   healthyConnections: number;
   monitoring: ConnectionMonitoringControl | null;
   chatMetrics: ChatMetrics | null;
@@ -77,17 +76,21 @@ export function HomeView(props: HomeViewProps) {
   const next = props.readiness.find(({ ready }) => !ready);
   const open = (view: ActiveView) => (props.unlocked ? props.onSelect(view) : props.onUnlock());
 
+  /*
+   * There is no password-change arm here any more. The shell hands a session
+   * that still owes a password change straight to the front page, so Home is
+   * only ever mounted once that flag is false — the arm was drawing a state
+   * this screen cannot be in.
+   */
   const bannerTitle = props.bootstrapState !== "READY"
     ? props.bootstrapState === "REQUIRED" ? "Installation required" : "Installation trust locked"
     : !props.unlocked
-      ? props.passwordChangePending ? "Password change required" : "Local sign-in ready"
+      ? "Local sign-in ready"
       : allReady ? "Workspace ready" : "Administrator workspace active";
   const bannerDetail = props.bootstrapState !== "READY"
     ? "Run the protected VM1 installer before configuring services."
     : !props.unlocked
-      ? props.passwordChangePending
-        ? "Replace the temporary password before opening administrative operations."
-        : "Sign in to manage encrypted endpoints, agents, and knowledge."
+      ? "Sign in to manage encrypted endpoints, agents, and knowledge."
       : `${readyCount} of ${props.readiness.length} required capabilities are ready.`;
 
   return (
@@ -123,7 +126,7 @@ export function HomeView(props: HomeViewProps) {
       >
         <ShieldIcon className="h-5 w-5 text-accent" />
         <div className="min-w-0 flex-1">
-          <strong className="block text-[12px] font-semibold text-text">{bannerTitle}</strong>
+          <strong className="block text-label font-semibold text-text">{bannerTitle}</strong>
           <p className="mb-0 mt-1 text-body text-muted">{bannerDetail}</p>
         </div>
         <Button
@@ -142,6 +145,12 @@ export function HomeView(props: HomeViewProps) {
           caption: props.unlocked
             ? allReady ? "Chat and Knowledge are usable" : "One clear path remains"
             : "Sign in to verify",
+          // Readiness is a fraction, so it is the one figure on this screen
+          // with a denominator worth drawing. Locked, there is nothing to
+          // draw: an empty bar would state "nothing is ready" where the truth
+          // is "nobody has looked".
+          fill: props.unlocked ? readyCount / Math.max(1, props.readiness.length) : undefined,
+          tone: props.unlocked ? (allReady ? "good" : "warn") : undefined,
         }}
         metrics={[
           {
@@ -206,10 +215,7 @@ export function HomeView(props: HomeViewProps) {
           />
           <div className="grid gap-2">
             {props.layers.map((layer) => (
-              <article
-                className="grid grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-3.5 rounded border border-border bg-raised p-3"
-                key={layer.key}
-              >
+              <Tile as="article" className="grid grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-3.5" key={layer.key}>
                 <span
                   aria-hidden="true"
                   className="grid h-9 w-9 place-items-center rounded border border-border-strong bg-surface font-mono text-[10px] font-bold text-accent"
@@ -217,7 +223,7 @@ export function HomeView(props: HomeViewProps) {
                   {layer.mark}
                 </span>
                 <div className="min-w-0">
-                  <strong className="block text-[12px] font-semibold text-text">{layer.name}</strong>
+                  <strong className="block text-label font-semibold text-text">{layer.name}</strong>
                   <span className="mt-0.5 block text-caption text-muted">{layer.role}</span>
                   {layer.components.length > 0 && (
                     <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
@@ -240,7 +246,7 @@ export function HomeView(props: HomeViewProps) {
                 >
                   {props.unlocked ? (layer.state.tone === "unconfigured" ? "Configure" : "Review") : "Sign in"}
                 </Button>
-              </article>
+              </Tile>
             ))}
           </div>
         </Panel>
@@ -272,12 +278,12 @@ export function HomeView(props: HomeViewProps) {
                   )}
                 />
                 <span className="min-w-0">
-                  <strong className="block text-[12px] font-semibold">{check.label}</strong>
+                  <strong className="block text-label font-semibold">{check.label}</strong>
                   <small className="mt-1 block truncate text-caption text-muted">
                     {props.unlocked ? check.detail : "Sign in to view current readiness"}
                   </small>
                 </span>
-                <span aria-hidden="true" className="font-mono text-[12px] text-faint">
+                <span aria-hidden="true" className="font-mono text-label text-faint">
                   →
                 </span>
               </button>
@@ -300,21 +306,21 @@ export function HomeView(props: HomeViewProps) {
             {RUNTIME_STEPS.map((step, index) => (
               <li className="bg-surface p-3.5" key={step.name}>
                 <MicroLabel className="block text-accent">{String(index + 1).padStart(2, "0")}</MicroLabel>
-                <strong className="mt-2 block text-[12px] font-semibold text-text">{step.name}</strong>
+                <strong className="mt-2 block text-label font-semibold text-text">{step.name}</strong>
                 <small className="mt-1 block text-caption text-muted">{step.detail}</small>
               </li>
             ))}
           </ol>
-          <div className="mt-4 flex gap-3 rounded border border-border bg-raised p-3.5">
+          <Tile className="mt-4 flex gap-3 p-3.5">
             <ShieldIcon className="mt-0.5 h-4 w-4 text-accent" />
             <div className="min-w-0">
-              <strong className="block text-[12px] font-semibold text-text">Secrets terminate at OrcaSynapse</strong>
+              <strong className="block text-label font-semibold text-text">Secrets terminate at OrcaSynapse</strong>
               <p className="mb-0 mt-1 text-body text-muted">
                 Hermes receives node-scoped runtime access; PostgreSQL and enterprise connector credentials remain on
                 VM1.
               </p>
             </div>
-          </div>
+          </Tile>
         </Panel>
       </div>
     </>

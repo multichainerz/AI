@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { Alert, Button, EmptyState, Field, Input, LockedScreen, Metric, Panel, PanelHeading, Select, StatusText } from "./index.js";
+import { Alert, Button, EmptyState, Field, Input, LockedScreen, HeroBanner, Metric, PageHeader, Panel, PanelHeading, Select, StatusText } from "./index.js";
 
 /**
  * The primitives, and the one property that cannot be allowed to regress.
@@ -20,7 +20,7 @@ describe("CSP safety", () => {
         <Button variant="primary">Go</Button>
         <Panel>
           <PanelHeading kicker="Kicker" title="Title" description="Description" />
-          <Metric label="Queue" value="7" caption="documents" fill={0.42} tone="warn" />
+          <Metric label="Queue" value="7" caption="documents" tone="warn" />
           <StatusText tone="good">ready</StatusText>
           <Alert tone="error" onDismiss={vi.fn()}>Something failed</Alert>
           <EmptyState title="Nothing stored">No memory yet.</EmptyState>
@@ -33,10 +33,12 @@ describe("CSP safety", () => {
     expect(html).not.toMatch(/\sstyle=/);
   });
 
-  it("expresses a metric's fill as a progress value, not a width", () => {
+  it("expresses a highlight's fill as a progress value, not a width", () => {
     // The width of a bar is data. An inline width is the obvious way to say it
     // and the one way the CSP forbids, so it is an attribute on <progress>.
-    const html = markup(<Metric label="Capacity" value="412" fill={0.65} />);
+    // The bar lives on HeroBanner: it belongs to a figure with a denominator,
+    // and every such figure on this product is a screen's headline stat.
+    const html = markup(<HeroBanner tone="plain" highlight={{ label: "Capacity", value: "412", fill: 0.65 }} metrics={[]} />);
     expect(html).toContain("<progress");
     expect(html).toContain('value="65"');
     expect(html).toContain('max="100"');
@@ -44,8 +46,9 @@ describe("CSP safety", () => {
   });
 
   it("clamps a fill outside 0-1 rather than emitting an out-of-range bar", () => {
-    expect(markup(<Metric label="x" value="1" fill={2.5} />)).toContain('value="100"');
-    expect(markup(<Metric label="x" value="1" fill={-3} />)).toContain('value="0"');
+    const bar = (fill: number) => markup(<HeroBanner tone="plain" highlight={{ label: "x", value: "1", fill }} metrics={[]} />);
+    expect(bar(2.5)).toContain('value="100"');
+    expect(bar(-3)).toContain('value="0"');
   });
 
   it("omits the bar entirely when there is no fill to show", () => {
@@ -120,6 +123,55 @@ describe("LockedScreen", () => {
       <LockedScreen title="Agents" mark="HA" actionLabel="Administrator setup" onAction={vi.fn()} secondaryLabel="Enterprise sign in" />,
     );
     expect(orphan).not.toContain("Enterprise sign in");
+  });
+
+  it("sets its title at the page-title size rather than a stock Tailwind step", () => {
+    /*
+     * The locked screen is a whole screen, and its <h1> is that screen's page
+     * title — the same role PageHeader's <h1> plays on the unlocked view it
+     * stands in for. It was set in `text-xl`: 20px, the one stock font-size
+     * utility left in the product, on no step of the OrcaNeuron scale, so
+     * unlocking an area shifted the heading six pixels. Read off PageHeader
+     * rather than written out here, so the two cannot drift apart again.
+     */
+    const titleSize = (html: string) =>
+      // `\b` cannot close an arbitrary value: the character before the space is
+      // `]`, which is not a word character, so there is no boundary to match.
+      /\btext-(\[[^\]]+\]|xs|sm|base|lg|[2-9]?xl)(?![\w-])/.exec(/<h1[^>]*class="([^"]*)"/.exec(html)?.[1] ?? "")?.[1];
+
+    const locked = markup(<LockedScreen title="Memory" mark="M" actionLabel="Open" onAction={vi.fn()} />);
+    expect(titleSize(locked)).toBeDefined();
+    expect(titleSize(locked)).toBe(titleSize(markup(<PageHeader title="Memory" />)));
+  });
+});
+
+describe("Metric", () => {
+  it("has one figure size, in a hero banner and standing on its own", () => {
+    /*
+     * `size` was a two-branch variant whose `lg` half no call site in the repo
+     * ever reached, so every figure in the product rendered at the `md`
+     * default. It is gone rather than wired: a KPI column set at the hero's
+     * own step would flatten the banner's hierarchy against the 40px
+     * highlight beside it, and a per-call size knob is exactly how the same
+     * stat tile arrived at nine spellings before the revamp collapsed them.
+     */
+    const figureClass = (html: string) =>
+      [...html.matchAll(/<strong class="([^"]*)"/g)].map(([, cls]) => cls).at(-1) ?? "";
+    const sizeOf = (cls: string) => /\btext-(\[[^\]]+\]|figure|display|body)(?![\w-])/.exec(cls)?.[1];
+
+    const alone = figureClass(markup(<Metric label="Queue" value="7" />));
+    const inBanner = figureClass(
+      markup(<HeroBanner tone="plain" highlight={{ label: "Total", value: "412" }} metrics={[{ label: "Queue", value: "7" }]} />),
+    );
+    expect(sizeOf(alone)).toBeDefined();
+    expect(sizeOf(inBanner)).toBe(sizeOf(alone));
+
+    // The knob is gone from the type as well as from the class list, so no
+    // screen can step one column up on its own. With `size` still on the
+    // component this directive is unused and the typecheck fails on it —
+    // which is the half of this test that has teeth.
+    // @ts-expect-error - Metric takes no `size`.
+    markup(<Metric label="Queue" value="7" size="lg" />);
   });
 });
 

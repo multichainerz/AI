@@ -960,7 +960,7 @@ export function ChatView({
             <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 bg-good" />
             <div className="min-w-0">
               <MicroLabel className="block text-accent">Identity mode</MicroLabel>
-              <strong className="mt-1 block truncate text-[11px] font-semibold text-text">
+              <strong className="mt-1 block truncate text-caption font-semibold text-text">
                 {identityMode === "ENTERPRISE" ? "Enterprise Access" : "Administrator preview"}
               </strong>
               <small className="mt-0.5 block truncate text-caption text-faint">
@@ -970,11 +970,11 @@ export function ChatView({
           </div>
           <dl className="m-0 grid grid-cols-2 gap-2">
             <div className="min-w-0 rounded border border-border bg-bg p-2">
-              <dt className="font-mono text-micro uppercase text-faint">Agent</dt>
+              <dt className="text-micro font-semibold uppercase tabular-nums text-faint">Agent</dt>
               <dd className="m-0 mt-1 truncate font-mono text-caption text-muted">{active?.profileName ?? "Choose below"}</dd>
             </div>
             <div className="min-w-0 rounded border border-border bg-bg p-2">
-              <dt className="font-mono text-micro uppercase text-faint">Usage</dt>
+              <dt className="text-micro font-semibold uppercase tabular-nums text-faint">Usage</dt>
               <dd
                 className="m-0 mt-1 truncate font-mono text-caption text-muted"
                 title={conversationTotalTokens === null ? "This runtime does not report token usage." : undefined}
@@ -1151,7 +1151,7 @@ export function ChatView({
                         onChange={() => void togglePinned(item.id, pinned)}
                       />
                       <span className="min-w-0 flex-1 truncate text-body text-text">{item.fileName}</span>
-                      <small className="shrink-0 font-mono text-micro uppercase text-faint">
+                      <small className="shrink-0 text-micro font-semibold uppercase tabular-nums text-faint">
                         {item.classification.toLowerCase()}
                       </small>
                     </label>
@@ -1233,7 +1233,7 @@ export function ChatView({
                 >
                   <div className="min-w-0 flex-1">
                     <span className="block text-body text-text">{item.content}</span>
-                    <small className="mt-1 block font-mono text-micro uppercase text-faint">
+                    <small className="mt-1 block text-micro font-semibold uppercase tabular-nums text-faint">
                       {item.agentProfileSlug} · {new Date(item.createdAt).toLocaleDateString()}
                       {item.retentionUntil
                         ? ` · expires ${new Date(item.retentionUntil).toLocaleDateString()}`
@@ -1281,7 +1281,7 @@ export function ChatView({
                 <br />
                 your workspace.
               </h2>
-              <p className="mb-6 mt-3 max-w-[460px] text-[13px] leading-relaxed text-muted">
+              <p className="mb-6 mt-3 max-w-[460px] text-body leading-relaxed text-muted">
                 Every response is a governed Hermes Agent Run. Your selected profile controls behavior, skills, memory
                 access, and tool policy.
               </p>
@@ -1291,7 +1291,7 @@ export function ChatView({
                   role="status"
                 >
                   <div className="min-w-0">
-                    <strong className="block text-[12px] font-semibold text-text">{readinessTitle}</strong>
+                    <strong className="block text-label font-semibold text-text">{readinessTitle}</strong>
                     <span className="mt-1 block text-body text-muted">{readinessDetail}</span>
                   </div>
                   <Button variant="primary" className="shrink-0" onClick={openReadiness}>
@@ -1342,7 +1342,7 @@ export function ChatView({
                     disabled={!routeReady}
                     onClick={() => setDraft(suggestion.prompt)}
                   >
-                    <span className="text-[13px] font-semibold leading-snug text-text">{suggestion.label}</span>
+                    <span className="text-body font-semibold leading-snug text-text">{suggestion.label}</span>
                     <span className="text-caption leading-snug text-faint">{suggestion.sub}</span>
                   </button>
                 ))}
@@ -1383,7 +1383,7 @@ export function ChatView({
                 <div className="min-w-0">
                   <div className="flex min-h-[24px] items-center justify-between gap-3">
                     <div className="flex min-w-0 items-baseline gap-2">
-                      <strong className="text-[11px] font-semibold text-text">
+                      <strong className="text-caption font-semibold text-text">
                         {message.role === "USER" ? "You" : (active.profileName ?? "Hermes")}
                       </strong>
                       <time className="font-mono text-micro text-faint" dateTime={message.createdAt}>
@@ -1406,7 +1406,7 @@ export function ChatView({
                     </div>
                   </div>
                   {message.role === "USER"
-                    ? <p className="my-1 whitespace-pre-wrap break-words text-[13px] leading-[1.6] text-text">{message.content}</p>
+                    ? <p className="my-1 whitespace-pre-wrap break-words text-body leading-[1.6] text-text">{message.content}</p>
                     : <MarkdownMessage content={message.content || (message.status === "PENDING" ? "Thinking…" : "No content returned.")} />}
                   {message.role === "ASSISTANT" && message.status === "PENDING" && (
                     <div
@@ -1497,7 +1497,7 @@ export function ChatView({
                     >
                       <div
                         aria-hidden="true"
-                        className="grid h-7 w-7 place-items-center rounded border border-warn/50 bg-warn/10 font-mono text-[12px] font-bold text-warn"
+                        className="grid h-7 w-7 place-items-center rounded border border-warn/50 bg-warn/10 font-mono text-label font-bold text-warn"
                       >
                         !
                       </div>
@@ -1535,7 +1535,7 @@ export function ChatView({
                       <div className="flex flex-wrap gap-1.5">{message.sources.map((source) => (
                         <article className="grid min-w-[170px] gap-1 rounded border border-border bg-raised px-2.5 py-2" key={source.documentId}>
                           <span className="truncate text-caption font-semibold text-text">{source.fileName}</span>
-                          <small className="font-mono text-micro uppercase text-faint">
+                          <small className="text-micro font-semibold uppercase tabular-nums text-faint">
                             {source.classification.toLowerCase()} · {Math.round(source.score * 100)}% match
                           </small>
                         </article>
@@ -1577,11 +1577,11 @@ export function ChatView({
                               )}
                               key={metric.key}
                             >
-                              <dt className="truncate font-mono text-micro uppercase text-faint">{metric.label}</dt>
+                              <dt className="truncate text-micro font-semibold uppercase tabular-nums text-faint">{metric.label}</dt>
                               <dd
                                 className={cn(
                                   "m-0 mt-1 truncate font-mono text-caption font-semibold tabular-nums",
-                                  metric.key === "throughput" ? "text-[11px] text-accent" : "text-muted",
+                                  metric.key === "throughput" ? "text-caption text-accent" : "text-muted",
                                 )}
                               >
                                 {metric.value}
@@ -1659,7 +1659,7 @@ export function ChatView({
           >
             <div className="min-w-0">
               <textarea
-                className="max-h-[150px] min-h-[38px] w-full resize-y border-0 bg-transparent py-2 text-[12px] leading-relaxed text-text outline-0 placeholder:text-faint"
+                className="max-h-[150px] min-h-[38px] w-full resize-y border-0 bg-transparent py-2 text-label leading-relaxed text-text outline-0 placeholder:text-faint"
                 value={draft}
                 onChange={(event) => setDraft(event.target.value)}
                 onKeyDown={(event) => {

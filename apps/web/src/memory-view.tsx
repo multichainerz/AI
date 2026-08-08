@@ -20,7 +20,7 @@ import {
 import { adminAccess } from "./admin-access.js";
 import {
   Alert, Button, EmptyState, Field, Input, LockedScreen, PageHeader, Panel, PanelHeading,
-  Select, StatusText, toneFor,
+  Select, StatusText, Tile, toneFor,
 } from "./ui/index.js";
 
 interface MemoryViewProps {
@@ -291,13 +291,10 @@ export function MemoryView({ session, onOpenSettings, onSessionExpired }: Memory
       </p>
 
       <div className="grid gap-2">
-        {policies.map((policy) => <article
-          className="flex items-start justify-between gap-4 rounded border border-border bg-raised p-3"
-          key={policy.id}
-        >
+        {policies.map((policy) => <Tile as="article" className="flex items-start justify-between gap-4" key={policy.id}>
           <div className="min-w-0">
             <div className="flex items-center gap-3">
-              <strong className="text-[12px] font-semibold text-text">{policy.displayName}</strong>
+              <strong className="text-label font-semibold text-text">{policy.displayName}</strong>
               <StatusText dot tone={toneFor(statusTone(policy.status))}>{policy.status.toLowerCase()}</StatusText>
             </div>
             <small className="mt-1.5 block text-body text-muted">{ceilingSummary(policy.maximumCaptureMode)}</small>
@@ -323,7 +320,7 @@ export function MemoryView({ session, onOpenSettings, onSessionExpired }: Memory
               ? <Button variant="danger" size="sm" disabled={busy || reason.trim().length < 3} onClick={() => void changeState(policy, "suspend")}>Suspend</Button>
               : <Button variant="primary" size="sm" disabled={busy || reason.trim().length < 3} onClick={() => void changeState(policy, "activate")}>Activate</Button>}
           </div>}
-        </article>)}
+        </Tile>)}
         {policies.length === 0 && (
           <EmptyState title="No memory policy yet">Create one to bound every agent at once.</EmptyState>
         )}
@@ -435,7 +432,7 @@ export function MemoryView({ session, onOpenSettings, onSessionExpired }: Memory
         }
       />
 
-      {canManage && ownerFilter && <div className="mb-4 grid gap-3 rounded border border-border bg-raised p-3.5">
+      {canManage && ownerFilter && <Tile pad="lg" className="mb-4 grid gap-3">
         <div className="flex flex-wrap items-end gap-3">
           <Field label="Forget by topic" className="min-w-[220px] flex-1">
             <Input
@@ -484,7 +481,7 @@ export function MemoryView({ session, onOpenSettings, onSessionExpired }: Memory
                 </Button>
               </>}
         </div>}
-      </div>}
+      </Tile>}
 
       {records.length === 0
         ? <EmptyState title="Nothing stored">No agent has recorded anything about anyone in this scope.</EmptyState>
@@ -494,13 +491,10 @@ export function MemoryView({ session, onOpenSettings, onSessionExpired }: Memory
             still reaches an answer. <strong className="text-warn">Current context</strong> is included the same way but
             describes something expected to change. Everything else is reached only by search.
           </p>
-          <div className="grid gap-2">{records.map((record) => <article
-            className="flex items-start justify-between gap-4 rounded border border-border bg-raised p-3"
-            key={record.id}
-          >
+          <div className="grid gap-2">{records.map((record) => <Tile as="article" className="flex items-start justify-between gap-4" key={record.id}>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <strong className="text-[12px] font-semibold text-text">{record.ownerSubject}</strong>
+            <strong className="text-label font-semibold text-text">{record.ownerSubject}</strong>
             <StatusText>{record.agentProfileSlug}</StatusText>
             {record.profileScope !== "EPISODIC" && (
               <StatusText tone={record.profileScope === "STATIC" ? "good" : "warn"}>
@@ -538,7 +532,7 @@ export function MemoryView({ session, onOpenSettings, onSessionExpired }: Memory
               Forget
             </Button>
           )}
-        </article>)}</div></>}
+        </Tile>)}</div></>}
     </Panel>
   </div>;
 }

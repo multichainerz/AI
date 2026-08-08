@@ -7,6 +7,16 @@
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
+    // `strict` does not include this, so an import left behind by a refactor
+    // compiled cleanly and shipped: the connection drawer imported `Button`
+    // for a release without rendering one, and nothing said so. It is the
+    // cheapest guard the project was missing.
+    //
+    // `noUnusedParameters` is deliberately NOT set with it. Drizzle generates
+    // `(table) => [...]` callbacks that ignore their argument, and `db:generate`
+    // rewrites that file — so the flag would fail the build every time the
+    // schema is regenerated, for a class of finding that has never been a bug.
+    "noUnusedLocals": true,
     "useUnknownInCatchVariables": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,

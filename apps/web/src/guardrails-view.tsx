@@ -189,7 +189,7 @@ export function GuardrailsView({
       kicker="Policy control"
       title="Guardrails"
       mark="G"
-      reason="Claim or sign in to OrcaSynapse to inspect policy versions and activation evidence."
+      reason="Sign in as an administrator to inspect policy versions and activation evidence; the workspace session you already have stays active."
       actionLabel="Open platform settings"
       onAction={onConfigureInference}
     />;
@@ -234,7 +234,7 @@ export function GuardrailsView({
     )}>
       <div className="min-w-0 flex-1">
         <MicroLabel className="block">Runtime boundary</MicroLabel>
-        <strong className="mt-1.5 block text-[12px] font-semibold text-text">
+        <strong className="mt-1.5 block text-label font-semibold text-text">
           {active
             ? `${active.displayName} v${active.version} is enforcing chat.`
             : activatedBefore
@@ -256,7 +256,7 @@ export function GuardrailsView({
       <form onSubmit={(event) => void save(event)}>
         <header className="mb-4 flex items-start justify-between gap-6">
           <div className="min-w-0">
-            <h2 className="m-0 text-[15px] font-semibold tracking-[-0.01em] text-text">
+            <h2 className="m-0 font-display text-[15px] font-semibold tracking-[-0.01em] text-text">
               {editing ? `Edit ${editing.displayName}` : "New chat policy"}
             </h2>
             <p className="mb-0 mt-1.5 text-body text-muted">
@@ -313,7 +313,7 @@ export function GuardrailsView({
             {policy.displayName.slice(0, 2).toUpperCase()}
           </span>
           <div className="min-w-0">
-            <h2 className="m-0 truncate text-[14px] font-semibold tracking-[-0.01em] text-text">{policy.displayName}</h2>
+            <h2 className="m-0 truncate font-display text-[14px] font-semibold tracking-[-0.01em] text-text">{policy.displayName}</h2>
             <p className="mb-0 mt-0.5 truncate text-caption text-muted">{policy.description}</p>
           </div>
         </div>
@@ -335,7 +335,7 @@ export function GuardrailsView({
             { label: "Last updated", value: when(policy.updatedAt) },
           ].map((fact) => (
             <div className="min-w-0 bg-surface px-2.5 py-2" key={fact.label}>
-              <dt className="truncate font-mono text-micro uppercase text-faint">{fact.label}</dt>
+              <dt className="truncate text-micro font-semibold uppercase tabular-nums text-faint">{fact.label}</dt>
               <dd className="m-0 mt-1 truncate font-mono text-caption tabular-nums text-muted">{fact.value}</dd>
             </div>
           ))}
@@ -361,7 +361,7 @@ export function GuardrailsView({
           onSubmit={(event) => void applyDecision(event)}
         >
           <div>
-            <strong className="block text-[12px] font-semibold text-text">
+            <strong className="block text-label font-semibold text-text">
               {decision.action === "activate" ? "Activate evaluated policy" : "Suspend active policy"}
             </strong>
             <span className="mt-1 block text-body text-muted">

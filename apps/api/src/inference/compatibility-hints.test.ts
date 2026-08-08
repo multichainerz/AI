@@ -41,4 +41,24 @@ describe("rejectedCompatibilityHints", () => {
   it("ignores anything that is not a 400", async () => {
     expect((await rejectedCompatibilityHints(new Response("nope", { status: 500 }))).size).toBe(0);
   });
+
+  it("stops reading a chunked error body at the cap instead of draining it", async () => {
+    /*
+     * The assertion `chunkedError` was written for, and never given.
+     *
+     * A hostile or merely broken upstream can answer a 400 with an unbounded
+     * chunked body and no `content-length`. The declared-length guard above
+     * reads `Number(null)` as 0 and waves it through, so the only thing
+     * standing between the control plane and that stream is the 16 KiB bound
+     * inside `readBounded`. Counting the chunks actually pulled is the only
+     * way to observe that the read stopped: the return value is an empty set
+     * either way, whether the reader gave up after 16 KiB or swallowed a
+     * gigabyte first.
+     */
+    const oversized = chunkedError(512); // 512 x 64 KiB = 32 MiB if drained
+
+    expect((await rejectedCompatibilityHints(oversized.response)).size).toBe(0);
+    // 16 KiB of allowance against 64 KiB chunks: one chunk crosses the bound.
+    expect(oversized.pulledChunks()).toBeLessThanOrEqual(2);
+  });
 });

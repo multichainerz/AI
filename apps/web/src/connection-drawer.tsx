@@ -211,11 +211,10 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
                   <option value={3600}>Every hour</option>
                 </select>
               </label>
-              <label className="monitoring-reason">Operator reason
+              <label className="sm:col-span-2">Operator reason
                 <input minLength={3} maxLength={500} value={monitoringReason} onChange={(event) => setMonitoringReason(event.target.value)} />
               </label>
-              <button
-                className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded border border-accent bg-accent px-3.5 text-body font-medium text-[#0a0a0b] transition-colors hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-40"
+              <Button variant="primary"
                 type="button"
                 disabled={props.busy || monitoringReason.trim().length < 3}
                 onClick={() => void props.onUpdateMonitoring({
@@ -223,7 +222,7 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
                   intervalSeconds: monitoringInterval,
                   reason: monitoringReason.trim(),
                 })}
-              >{props.busy ? "Applying…" : "Save monitoring"}</button>
+              >{props.busy ? "Applying…" : "Save monitoring"}</Button>
               </section>
             </details>
             <div className="kind-tabs" role="tablist" aria-label="Connection type">
@@ -551,12 +550,12 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
 
             {props.error && <p className="form-error">{props.error}</p>}
             <div className="drawer-actions">
-              <button type="button" onClick={props.onClose}>Cancel</button>
-              <button className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded border border-accent bg-accent px-3.5 text-body font-medium text-[#0a0a0b] transition-colors hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-40" type="submit" disabled={props.busy}>{props.busy
+              <Button type="button" onClick={props.onClose}>Cancel</Button>
+              <Button variant="primary" type="submit" disabled={props.busy}>{props.busy
                 ? selectedKind === "INFERENCE" && enabled ? "Saving and verifying…" : "Saving…"
                 : selectedKind === "INFERENCE" && inferenceDiscovery?.status === "READY"
                   ? "Activate AI Inference"
-                  : existing ? "Save changes" : "Create connection"}</button>
+                  : existing ? "Save changes" : "Create connection"}</Button>
             </div>
           </form>
         )}
