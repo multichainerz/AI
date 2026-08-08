@@ -20,7 +20,7 @@ import { useState, type FormEvent } from "react";
  * API owns, shown only when the deployment has OIDC configured.
  */
 
-export type FrontPageMode = "LOGIN" | "RECOVERY";
+type FrontPageMode = "LOGIN" | "RECOVERY";
 
 interface FrontPageProps {
   bootstrapState: "REQUIRED" | "READY" | "LOCKED";

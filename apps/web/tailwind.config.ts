@@ -76,17 +76,18 @@ export default {
         // uppercase, tracked, tabular.
         micro: ["10px", { lineHeight: "1.4", letterSpacing: "0.08em" }],
         caption: ["11px", { lineHeight: "1.5" }],
+        // The step the scale was missing. Written as `text-[12px]` forty times
+        // across the views before it existed — the size a dense row label wants
+        // when caption is too quiet and body too loud.
+        label: ["12px", { lineHeight: "1.5" }],
         body: ["13px", { lineHeight: "1.55" }],
         // KPI-column value and hero stat number, both Space Grotesk.
         figure: ["22px", { lineHeight: "1.1", letterSpacing: "-0.02em" }],
         display: ["40px", { lineHeight: "1.05", letterSpacing: "-0.03em" }],
-        // Section and panel titles.
-        title: ["19px", { lineHeight: "1.25", letterSpacing: "-0.02em" }],
       },
       borderRadius: {
         // The OrcaNeuron radius scale: soft, and layered — outer surfaces are
         // rounder than the controls inside them.
-        none: "0",
         DEFAULT: "10px",
         md: "8px",
         lg: "14px",
@@ -98,7 +99,6 @@ export default {
       boxShadow: {
         // Themed through variables: dark separates by border contrast and casts
         // nothing; light carries the design's soft card shadow.
-        none: "none",
         card: "var(--shadow-card)",
         overlay: "var(--shadow-overlay)",
       },

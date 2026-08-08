@@ -260,7 +260,7 @@ export function ModelsView({
     <Panel className="flex items-center gap-4 border-l-2 border-l-accent">
       <div className="min-w-0 flex-1">
         <MicroLabel className="block">Control boundary</MicroLabel>
-        <strong className="mt-1.5 block text-[12px] font-semibold text-text">
+        <strong className="mt-1.5 block text-label font-semibold text-text">
           OrcaSynapse approves routes; AI Inference remains the serving plane.
         </strong>
         <p className="mb-0 mt-1 text-body text-muted">
@@ -278,7 +278,7 @@ export function ModelsView({
       <form onSubmit={(event) => void save(event)}>
         <header className="mb-4 flex items-start justify-between gap-6">
           <div className="min-w-0">
-            <h2 className="m-0 text-[15px] font-semibold tracking-[-0.01em] text-text">
+            <h2 className="font-display m-0 text-[15px] font-semibold tracking-[-0.01em] text-text">
               {editing ? `Edit ${editing.displayName}` : "New model route"}
             </h2>
             <p className="mb-0 mt-1.5 text-body text-muted">
@@ -333,7 +333,7 @@ export function ModelsView({
             {model.displayName.slice(0, 2).toUpperCase()}
           </span>
           <div className="min-w-0">
-            <h2 className="m-0 truncate text-[14px] font-semibold tracking-[-0.01em] text-text">{model.displayName}</h2>
+            <h2 className="font-display m-0 truncate text-[14px] font-semibold tracking-[-0.01em] text-text">{model.displayName}</h2>
             <p className="mb-0 mt-0.5 truncate font-mono text-caption text-muted">{model.modelAlias}</p>
           </div>
         </div>
@@ -349,7 +349,7 @@ export function ModelsView({
             { label: "Evidence", value: model.activationEvaluationId ? "Promoted" : "Required" },
           ].map((fact) => (
             <div className="min-w-0 bg-surface px-2.5 py-2" key={fact.label}>
-              <dt className="truncate font-mono text-micro uppercase text-faint">{fact.label}</dt>
+              <dt className="truncate text-micro font-semibold uppercase tabular-nums text-faint">{fact.label}</dt>
               <dd className="m-0 mt-1 truncate font-mono text-caption tabular-nums text-muted">{fact.value}</dd>
             </div>
           ))}
@@ -375,7 +375,7 @@ export function ModelsView({
           onSubmit={(event) => void applyDecision(event)}
         >
           <div>
-            <strong className="block text-[12px] font-semibold text-text">
+            <strong className="block text-label font-semibold text-text">
               {decision.action === "activate" ? "Activate evaluated route" : "Suspend route"}
             </strong>
             <span className="mt-1 block text-body text-muted">

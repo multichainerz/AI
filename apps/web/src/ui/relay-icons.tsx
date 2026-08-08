@@ -14,6 +14,14 @@ import { cn } from "./cn.js";
  * the theme switch.
  *
  * Presentation attributes only — no inline `style`, per `style-src 'self'`.
+ *
+ * The set is complete rather than trimmed to what the product currently draws:
+ * eleven of these are on screen today and the rest are not. They are kept
+ * deliberately, because they cost users nothing — each icon is a separate
+ * export with no side effects, so the bundler drops every unreferenced one.
+ * Verified rather than assumed: distinctive path data from four unused icons
+ * appears zero times in `dist/assets/*.js`. Deleting them would only mean
+ * fetching them back from the design project the next time a screen needs one.
  */
 
 export type IconProps = SVGProps<SVGSVGElement> & { size?: number | string };

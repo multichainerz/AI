@@ -191,8 +191,8 @@ export function RuntimeNodesPanel({
   return <div className="runtime-nodes-layout">
     <section className="panel runtime-nodes-overview">
       <div className="document-section-heading">
-        <div><p className="font-mono text-micro uppercase text-faint">Isolated VM2</p><h2>Agentic System</h2></div>
-        <div className="runtime-node-heading-actions"><button className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded border border-border-strong bg-raised px-3.5 text-body font-medium text-text transition-colors hover:border-faint disabled:cursor-not-allowed disabled:opacity-40" type="button" disabled={busy !== null} onClick={() => void load()}>Refresh</button><button className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded border border-accent bg-accent px-3.5 text-body font-medium text-[#0a0a0b] transition-colors hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-40" type="button" disabled={activeRuntimeExists || !inferenceReady} title={!inferenceReady ? "Configure and test AI Inference before enrolling the Agentic System." : activeRuntimeExists ? "Revoke the active execution boundary before enrolling its replacement." : undefined} onClick={() => { setInvitation(null); setEditorOpen(true); }}>Generate installer</button></div>
+        <div><p className="text-micro font-semibold uppercase tabular-nums text-faint">Isolated VM2</p><h2>Agentic System</h2></div>
+        <div className="runtime-node-heading-actions"><button className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded border border-border-strong bg-raised px-3.5 text-body font-medium text-text transition-colors hover:border-faint disabled:cursor-not-allowed disabled:opacity-40" type="button" disabled={busy !== null} onClick={() => void load()}>Refresh</button><Button variant="primary" type="button" disabled={activeRuntimeExists || !inferenceReady} title={!inferenceReady ? "Configure and test AI Inference before enrolling the Agentic System." : activeRuntimeExists ? "Revoke the active execution boundary before enrolling its replacement." : undefined} onClick={() => { setInvitation(null); setEditorOpen(true); }}>Generate installer</Button></div>
       </div>
       <div className="runtime-node-principles">
         <article><strong>{nodes.length}</strong><span>Registered nodes</span></article>
@@ -216,7 +216,7 @@ export function RuntimeNodesPanel({
     </section>
 
     <aside className="panel runtime-network-contract">
-      <p className="font-mono text-micro uppercase text-faint">Network contract</p><h2>Required paths</h2>
+      <p className="text-micro font-semibold uppercase tabular-nums text-faint">Network contract</p><h2>Required paths</h2>
       <ol><li><span>1</span><div><strong>OrcaSynapse → Hermes</strong><small>TCP 8642, health and governed agent API only.</small></div></li><li><span>2</span><div><strong>Runtime → OrcaSynapse</strong><small>HTTPS enrollment, heartbeat, and node-scoped inference gateway.</small></div></li></ol>
       <div className="runtime-network-note"><strong>The installer does not manage your firewall.</strong><p>Apply customer network policy before Production activation. Do not expose port 8642 to user or internet networks.</p></div>
     </aside>

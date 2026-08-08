@@ -5,6 +5,70 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.91.0 — 2026-08-09
+
+An audit of the five design-system releases, and the repair of what it found.
+Ten agents swept the revamp across five dimensions and confirmed 71 findings
+against the built bundle and a real browser; three more went over the repairs
+and found twelve problems in those. Everything below is the second number as
+much as the first.
+
+**A feature had disappeared and every test stayed green.** ai-v1.88.0 moved
+Home's banner onto `HeroBanner` and dropped `fill`, so the capability-readiness
+progress bar stopped rendering — `Metric`'s progress branch had no production
+caller left, and `ui.test.tsx` kept exercising it directly. The bar is back on
+`HeroBanner`, where a figure with a denominator belongs, and it now takes a
+tone: green when everything is ready, amber when it is not. The test asserts on
+the rendered class rather than the prop, because the first attempt at this fix
+set the tone and never forwarded it — the value was computed and discarded, and
+only an independent pass noticed.
+
+**The light theme was broken on two surfaces the previous release claimed
+themed correctly.** 163 hex literals sat below the `[data-theme="light"]` block
+with no override. `.connection-form input` put themed near-black text on a
+hardcoded near-black fill: **1.11:1**, which is to say an operator's typed
+connection URL was invisible. Every literal is now a token, applied by a script
+that refuses to finish if one is unmapped. Measured after: 15.22:1 light,
+16.24:1 dark. The destructive runtime actions went 2.28:1 → 4.81:1.
+
+That sweep then made two surfaces **worse** than the hardcoded values it
+replaced — an opaque fill turned into a tint with its white foreground left
+behind (1.58:1), and accent text on an accent tint (3.63:1, both themes). Both
+are repaired against measurements taken in a browser, with a probe rewritten to
+composite translucent layers after the first one reported 1.00:1 for a button
+that was perfectly legible.
+
+**The connection drawer's primary action rendered identical to Cancel** —
+`.drawer-actions > button` at (0,1,1) outranked every utility on it. Both
+buttons are `Button` now, and the seven hand-copied class strings across three
+files that froze the pre-token `text-[#0a0a0b]` are gone with it.
+
+**Three surfaces shared one error cell.** A workspace failure greeted the next
+operator as their sign-in card's alert. Deliberate transitions now clear it —
+and the involuntary one, a 401 that ends the session and swaps the app to the
+front page, returns the message that belongs where it will actually be read.
+`AdminSignInDialog` also kept a typed password in state after closing, and
+promised a workspace session its recovery path destroys.
+
+**Cohesion.** `Tile` and `Mark` are the two primitives 25 hand-rolled surfaces
+were working around; `Tile` takes `as` because hardcoding `<div>` stripped the
+ARIA article role from ten repeating lists. `text-[12px]`, written 40 times in
+the gap between caption and body, becomes the `label` token; thirteen more
+arbitrary sizes that duplicated a token's pixel value while dropping its
+line-height collapse onto it. 25 micro-labels still set in mono now match the
+primitive, and 13 headings get the display face.
+
+**Dead code**, proven against the built bundle rather than a source grep —
+which is how the last sweep kept `.metrics` (matches a prop name) and
+`.panel-heading` (matched a comment). Also gone: a spinner that had drawn a 0×0
+span since ai-v1.65.0, and `var(--font-mono)`, a custom property never declared
+in this file's history. `noUnusedLocals` is on, and it immediately found a test
+helper in `apps/api` written for an assertion nobody wrote — that a chunked 400
+with no `content-length` stops at the 16 KiB cap instead of draining. That test
+now exists.
+
+1,142 tests. Neither VM lifecycle has been re-run against this release.
+
 ## ai-v1.90.0 — 2026-08-09
 
 The design-system sweep that closes the five-release arc. Sixty-nine dead CSS
@@ -23,6 +87,19 @@ family and the connection drawer's configuration form still render through
 tokenized legacy CSS. They theme correctly and sit visually inside the design
 language; converting them to the primitive set is code hygiene deferred with
 its scope known, not a gap discovered later.
+
+> **Correction, made the day after this release.** The paragraph above is
+> wrong, and its confidence is the reason it went unchecked. Those surfaces did
+> not "theme correctly": below the light-theme block sat 163 hardcoded hex
+> literals with no override, and `.connection-form input` put themed near-black
+> text on a hardcoded near-black fill — measured at **1.11:1**, which is to say
+> the operator's typed connection URL was invisible in light mode. The
+> destructive actions on the runtime panel measured 2.28:1. What actually
+> happened is that Operations was opened in light mode, seen to theme (its
+> `ops-form` genuinely does, because it uses `var(--bg)`), and the result
+> generalised to two surfaces nobody opened. The claim is fixed in the release
+> below; the sentence stays here because a changelog that quietly edits its own
+> past is worth less than one that admits what it got wrong.
 
 The dashboard now looks like the OrcaNeuron design end to end: its tokens,
 its type, its shell, its entrance, its banners, its chat — under the same

@@ -295,10 +295,23 @@ function App() {
   const bootstrapState = platform?.bootstrapState ?? (apiAvailable ? "REQUIRED" : "LOCKED");
   const passwordChangePending = adminSession?.passwordChangeRequired === true;
   const unlocked = adminSession !== null && adminSession.passwordChangeRequired !== true;
+  /*
+   * One error cell serves three surfaces — the front page, the connection
+   * drawer and the elevation dialog — and only one of them is ever visible.
+   * Without clearing on the way in and out, a message raised in one is
+   * inherited verbatim by the next: "Unable to save the connection." greeted
+   * an operator on the sign-in card after their session expired, presented
+   * through role="alert" as though it described their sign-in.
+   */
+  const showSurface = (open: () => void) => {
+    setSettingsError(null);
+    open();
+  };
   // Every admin view reports an expired session the same way: bump the
   // generation so in-flight restores are ignored, then drop the session.
   const forgetAdminSession = () => {
     sessionGeneration.current += 1;
+    setSettingsError(null);
     setAdminSession(null);
   };
   // Chat, Knowledge and Agents also serve enterprise identities, so an expiry
@@ -471,6 +484,7 @@ function App() {
       return;
     }
     if (kind === "HERMES") {
+      setSettingsError(null);
       setDrawerOpen(false);
       selectView("Deployment", "nodes");
       return;
@@ -485,6 +499,17 @@ function App() {
     if (error instanceof OrcaSynapseApiError && error.status === 401) {
       sessionGeneration.current += 1;
       setAdminSession(null);
+      /*
+       * A 401 ends the session, and losing the session swaps the whole app to
+       * the front page — so whatever the caller was about to report is now the
+       * greeting on a sign-in card. Clearing the cell does not help: every
+       * caller writes its own message immediately after this returns. The
+       * message itself has to become the one that fits where it will actually
+       * be read. "Unable to save the connection." above a password field was
+       * the reported symptom, and it survived the first attempt at this fix
+       * because that attempt only covered the transitions an operator chooses.
+       */
+      return "Your administrator session expired. Sign in to continue.";
     }
     return error instanceof Error ? error.message : fallback;
   };
@@ -718,6 +743,7 @@ function App() {
 
   const signOut = async () => {
     sessionGeneration.current += 1;
+    setSettingsError(null);
     setAdminSession(null);
     setEnterpriseSession(null);
     setChatMetrics(null);
@@ -787,7 +813,7 @@ function App() {
                    * row itself is the single 13px line the design draws.
                    */
                   className={cn(
-                    "flex w-full items-center gap-3 rounded px-3 py-2 text-left text-[13px] transition-colors",
+                    "flex w-full items-center gap-3 rounded px-3 py-2 text-left text-body transition-colors",
                     area === activeArea
                       ? "bg-white/10 font-semibold text-white"
                       : "font-medium text-white/60 hover:bg-white/[0.07] hover:text-white",
@@ -967,7 +993,7 @@ function App() {
               layers={platformLayers}
               readiness={readinessChecks}
               onSelect={selectView}
-              onUnlock={() => setSignInOpen(true)}
+              onUnlock={() => showSurface(() => setSignInOpen(true))}
             />
           ),
         } satisfies Record<ActiveView, () => ReactNode>)[activeView]()}
@@ -984,7 +1010,7 @@ function App() {
         open={drawerOpen}
         revisionConnectionId={revisionConnectionId}
         revisionHistory={revisionHistory}
-        onClose={() => setDrawerOpen(false)}
+        onClose={() => showSurface(() => setDrawerOpen(false))}
         onOpenAgenticSystem={() => openConnectionSettings("HERMES")}
         onSave={saveConnection}
         onTest={runConnectionTest}
@@ -997,7 +1023,7 @@ function App() {
         open={signInOpen}
         busy={settingsBusy}
         error={settingsError}
-        onClose={() => setSignInOpen(false)}
+        onClose={() => showSurface(() => setSignInOpen(false))}
         onLogin={loginAdministrator}
         onStartRecovery={startAdministratorRecovery}
       />

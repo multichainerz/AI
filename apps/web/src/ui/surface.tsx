@@ -1,6 +1,7 @@
 import { cva, type VariantProps } from "class-variance-authority";
 import type { HTMLAttributes, ReactNode } from "react";
 import { cn } from "./cn.js";
+import type { Tone } from "./feedback.js";
 
 /**
  * Panels, headings, micro-labels and figures — the four things every screen is
@@ -102,14 +103,6 @@ export interface MetricProps extends VariantProps<typeof figure> {
   label: string;
   value: ReactNode;
   caption?: ReactNode;
-  /**
-   * 0–1. Renders the thin rule the reference puts under a capacity figure.
-   *
-   * Explicitly `| undefined` under `exactOptionalPropertyTypes`: a caller that
-   * has a fill only when a session is unlocked passes `undefined` rather than
-   * branching the whole element.
-   */
-  fill?: number | undefined;
   className?: string;
 }
 
@@ -119,31 +112,87 @@ export interface MetricProps extends VariantProps<typeof figure> {
  * Tabular numerals are not cosmetic here: without them a column of values
  * aligns on nothing and a figure that updates shifts its neighbours sideways.
  */
-export function Metric({ label, value, caption, fill, tone, size, className }: MetricProps) {
+export function Metric({ label, value, caption, tone, size, className }: MetricProps) {
   return (
     <article className={cn("min-w-0", className)}>
       <MicroLabel className="block">{label}</MicroLabel>
       <strong className={cn(figure({ tone, size }), "mt-1.5")}>{value}</strong>
       {caption ? <small className="mt-1 block text-caption text-muted">{caption}</small> : null}
-      {fill === undefined ? null : (
-        /*
-         * A real <progress>, not a styled div.
-         *
-         * The bar's width is data, and the obvious way to express it — an inline
-         * `style` — is blocked outright by `style-src 'self'`. `<progress>`
-         * carries its value as an *attribute*, so it needs no inline style at
-         * all, and it comes with the right semantics and screen-reader
-         * behaviour for free. Its track and value are painted from `styles.css`,
-         * since the ::-webkit-progress-* pseudo-elements cannot be reached by a
-         * utility class.
-         */
-        <progress
-          className={cn("metric-progress mt-2.5 block h-0.5 w-full", tone ? `is-${tone}` : null)}
-          value={Math.round(Math.max(0, Math.min(1, fill)) * 100)}
-          max={100}
-        />
-      )}
     </article>
+  );
+}
+
+/**
+ * The surface inside a Panel: a row, a sub-card, an item in a list.
+ *
+ * Written by hand forty-three times as
+ * `rounded border border-border bg-raised p-3` and its near-variants, which is
+ * how the same semantic element ended up at three paddings and two
+ * backgrounds across the product. `Panel` is the outer surface; this is what
+ * sits within one, one step down in radius and one step up in fill.
+ *
+ * `interactive` adds the hover treatment a clickable row needs — several
+ * screens grew their own, all slightly different.
+ */
+export function Tile({
+  className,
+  interactive,
+  pad = "md",
+  strong,
+  as: Element = "div",
+  ...rest
+}: HTMLAttributes<HTMLDivElement> & {
+  interactive?: boolean;
+  /** The three paddings the product actually uses; `md` is by far the common one. */
+  pad?: "sm" | "md" | "lg";
+  /** The heavier border, for a tile that has to separate from a busy neighbour. */
+  strong?: boolean;
+  /**
+   * The element to render. `article` for a repeating item that stands on its
+   * own — a policy row, a component, a sign-off — which is what most of these
+   * were before adopting this primitive. Hardcoding `div` silently stripped
+   * the implicit ARIA role from eleven such lists.
+   */
+  as?: "div" | "article";
+}) {
+  return (
+    <Element
+      className={cn(
+        "rounded bg-raised",
+        strong ? "border border-border-strong" : "border border-border",
+        pad === "sm" ? "p-2.5" : pad === "lg" ? "p-3.5" : "p-3",
+        interactive ? "text-left transition-colors hover:border-border-strong" : null,
+        className,
+      )}
+      {...rest}
+    />
+  );
+}
+
+/**
+ * The square-ish initials tile: a layer's two letters, an agent's mark, the
+ * locked screen's badge.
+ *
+ * Hand-rolled eight times at four box sizes and five type sizes, and the
+ * design system's own answer in `LockedScreen` disagreed with all of them on
+ * both shape and face. One shape, stated once: accent-soft fill, pill radius,
+ * display face — the same treatment the chat avatar uses.
+ */
+export function Mark({
+  size = "md",
+  className,
+  ...rest
+}: HTMLAttributes<HTMLSpanElement> & { size?: "sm" | "md" | "lg" }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        "grid shrink-0 place-items-center rounded-pill bg-soft font-display font-semibold text-accent",
+        size === "sm" ? "h-8 w-8 text-caption" : size === "lg" ? "h-11 w-11 text-[15px]" : "h-9 w-9 text-label",
+        className,
+      )}
+      {...rest}
+    />
   );
 }
 
@@ -165,10 +214,51 @@ export interface HeroBannerProps extends HTMLAttributes<HTMLElement> {
    * soft circle decorations; `plain` sets it large on the card itself — the
    * design uses the block where the figure is an achievement and the plain
    * form where it is simply a count.
+   *
+   * `fill` (0–1) draws the bar beneath it. A figure with a denominator is the
+   * only kind that earns one, and omitting it here is how the readiness bar
+   * left the product in ai-v1.88.0 without a single test noticing.
    */
-  highlight: { label: string; value: ReactNode; caption?: ReactNode };
+  highlight: { label: string; value: ReactNode; caption?: ReactNode; fill?: number | undefined; tone?: Tone | undefined };
   tone?: "accent" | "plain";
   metrics: MetricProps[];
+}
+
+/**
+ * The bar under a highlighted figure, drawn through `<progress>` for the same
+ * reason `Metric` does: the width is data, and `style-src 'self'` refuses the
+ * inline width that would express it. On the accent block it needs its own
+ * painting, since the stylesheet's track and value colours are tuned for a
+ * page surface and vanish against violet.
+ */
+function HighlightBar({
+  fill,
+  tone,
+  onAccent,
+}: {
+  fill?: number | undefined;
+  tone?: Tone | undefined;
+  onAccent?: boolean;
+}) {
+  if (fill === undefined) return null;
+  return (
+    <progress
+      // On the violet block the bar states its own colours; elsewhere it takes
+      // the figure's tone, so a readiness fraction reads good or warn at a
+      // glance rather than as a neutral rule.
+      className={cn(
+        "metric-progress mt-3 block h-0.5 w-full",
+        // Tone wins where it says something the figure does not. On the accent
+        // block a good/warn fill still reads against violet, and `on-accent`
+        // is only the fallback for a bar with nothing to report — the first
+        // version put `on-accent` first, which discarded every tone Home
+        // computed and left the .is-* rules with no consumer at all.
+        tone ? `is-${tone}` : onAccent ? "on-accent" : null,
+      )}
+      value={Math.round(Math.max(0, Math.min(1, fill)) * 100)}
+      max={100}
+    />
+  );
 }
 
 /**
@@ -193,6 +283,7 @@ export function HeroBanner({ highlight, tone = "accent", metrics, className, ...
             {highlight.caption ? (
               <small className="mt-2 block text-caption text-white/80">{highlight.caption}</small>
             ) : null}
+            <HighlightBar fill={highlight.fill} tone={highlight.tone} onAccent />
           </div>
         </div>
       ) : (
@@ -202,6 +293,7 @@ export function HeroBanner({ highlight, tone = "accent", metrics, className, ...
           {highlight.caption ? (
             <small className="mt-2 block text-caption text-muted">{highlight.caption}</small>
           ) : null}
+          <HighlightBar fill={highlight.fill} tone={highlight.tone} />
         </div>
       )}
       <div className="flex min-w-[280px] flex-1 flex-wrap items-stretch gap-y-4 border-border sm:border-l">

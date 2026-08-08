@@ -276,7 +276,7 @@ export function BenchmarksView({ session, onOpenOperations, onSessionExpired }: 
     <Panel className="flex items-center gap-4 border-l-2 border-l-accent">
       <div className="min-w-0 flex-1">
         <MicroLabel className="block">How a run is scored</MicroLabel>
-        <strong className="mt-1.5 block text-[12px] font-semibold text-text">
+        <strong className="mt-1.5 block text-label font-semibold text-text">
           Every check is a plain string or latency comparison. No model judges an answer.
         </strong>
         <p className="mb-0 mt-1 text-body text-muted">
@@ -327,7 +327,7 @@ export function BenchmarksView({ session, onOpenOperations, onSessionExpired }: 
           </header>
 
           <div className="min-w-0">
-            <h2 className="m-0 truncate text-[14px] font-semibold tracking-[-0.01em] text-text">{suite.displayName}</h2>
+            <h2 className="font-display m-0 truncate text-[14px] font-semibold tracking-[-0.01em] text-text">{suite.displayName}</h2>
             <p className="mb-0 mt-1 text-body text-muted">{suite.description}</p>
             <p className="mb-0 mt-1 text-caption text-faint">{kindDescription[suite.kind]}</p>
           </div>
@@ -340,7 +340,7 @@ export function BenchmarksView({ session, onOpenOperations, onSessionExpired }: 
               { label: "Median", value: duration(latest?.medianLatencyMs ?? null) },
             ].map((fact) => (
               <div className="min-w-0 bg-surface px-2.5 py-2" key={fact.label}>
-                <dt className="truncate font-mono text-micro uppercase text-faint">{fact.label}</dt>
+                <dt className="truncate text-micro font-semibold uppercase tabular-nums text-faint">{fact.label}</dt>
                 {/* Titled because these cells truncate, and a half-shown model
                 alias is the fact you most need whole. */}
             <dd className="m-0 mt-1 truncate font-mono text-caption tabular-nums text-muted" title={fact.value}>
@@ -385,7 +385,7 @@ export function BenchmarksView({ session, onOpenOperations, onSessionExpired }: 
 
           {confirmingDelete === suite.id && <div className="grid gap-3 rounded border border-bad/40 bg-bad/10 p-3">
             <div>
-              <strong className="block text-[12px] font-semibold text-text">Delete this suite?</strong>
+              <strong className="block text-label font-semibold text-text">Delete this suite?</strong>
               {/* The server refuses when a result is cited by an evaluation or a
                   run is still going, and says which — so this warns rather than
                   guesses. */}
@@ -452,7 +452,7 @@ function RunResults({ run, suite, canManage, onRecorded, onClose }: RunResultsPr
           { label: "Finished", value: when(run.completedAt) },
         ].map((fact) => (
           <div className="min-w-0 bg-surface px-2.5 py-2" key={fact.label}>
-            <dt className="truncate font-mono text-micro uppercase text-faint">{fact.label}</dt>
+            <dt className="truncate text-micro font-semibold uppercase tabular-nums text-faint">{fact.label}</dt>
             {/* Titled because these cells truncate, and a half-shown model
                 alias is the fact you most need whole. */}
             <dd className="m-0 mt-1 truncate font-mono text-caption tabular-nums text-muted" title={fact.value}>
@@ -550,7 +550,7 @@ function EvidenceForm({
     onSubmit={(event) => void submit(event)}
   >
     <div>
-      <strong className="block text-[12px] font-semibold text-text">Record as evaluation evidence</strong>
+      <strong className="block text-label font-semibold text-text">Record as evaluation evidence</strong>
       <span className="mt-1 block text-body text-muted">
         {run.passedCases} of {run.totalCases} cases are carried across unchanged. Only what you are deciding is typed.
       </span>
@@ -650,7 +650,7 @@ function CaseResult({ result }: { result: BenchmarkCaseResult }) {
     {result.failureReason && <StatusText tone="warn">{result.failureReason}</StatusText>}
     {result.outputExcerpt && (
       <details>
-        <summary className="cursor-pointer font-mono text-micro uppercase text-faint">Answer excerpt</summary>
+        <summary className="cursor-pointer text-micro font-semibold uppercase tabular-nums text-faint">Answer excerpt</summary>
         <p className="mb-0 mt-2 whitespace-pre-wrap break-words text-body text-muted">{result.outputExcerpt}</p>
       </details>
     )}

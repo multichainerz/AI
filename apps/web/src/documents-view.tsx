@@ -17,8 +17,7 @@ import {
 } from "./api.js";
 import {
   Alert, Button, EmptyState, Field, HeroBanner, Input, LockedScreen,
-  PageHeader, Panel, PanelHeading, Select, StatusText, Textarea, cn, toneFor,
-} from "./ui/index.js";
+  PageHeader, Panel, PanelHeading, Select, StatusText, Textarea, cn, toneFor, Tile,} from "./ui/index.js";
 
 interface DocumentsViewProps {
   unlocked: boolean;
@@ -198,14 +197,14 @@ export function DocumentsView(props: DocumentsViewProps) {
           description="OrcaSynapse checks identity and policy, extracts the text in flight, and embeds it into the local knowledge index. Only chunks and metadata are kept — never the file."
         />
         <label className="grid cursor-pointer gap-1 rounded border border-dashed border-border-strong bg-raised px-4 py-5 text-center">
-          <span className="text-[12px] font-semibold text-text">{file ? file.name : "Choose a source file"}</span>
+          <span className="text-label font-semibold text-text">{file ? file.name : "Choose a source file"}</span>
           <small className="text-caption text-muted">{SUPPORTED_FORMAT_LABEL} · up to 50 MB</small>
           <input className="sr-only" ref={fileInput} type="file" required accept={DOCUMENT_UPLOAD_ACCEPT} onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
         </label>
         {/* Stated up front rather than as a failure later: a scanned PDF is the
             most common thing someone tries and the least obvious thing to fail. */}
         <div className="rounded border border-warn/40 bg-warn/10 p-3">
-          <strong className="block text-[11px] font-semibold text-warn">Local extraction compatibility</strong>
+          <strong className="block text-caption font-semibold text-warn">Local extraction compatibility</strong>
           <span className="mt-1 block text-body leading-relaxed text-muted">
             Text is extracted on the control plane, then BGE-M3 embeds it locally for retrieval. There is no OCR:
             scanned or image-only PDFs carry no extractable text and will fail indexing. Image files are not accepted.
@@ -281,7 +280,7 @@ export function DocumentsView(props: DocumentsViewProps) {
               {extLabel(document.fileName)}
             </span>
             <span className="min-w-0">
-              <strong className="block truncate text-[12px] font-semibold text-text">{document.fileName}</strong>
+              <strong className="block truncate text-label font-semibold text-text">{document.fileName}</strong>
               <small className="mt-0.5 block truncate text-caption text-faint">
                 {formatBytes(document.sizeBytes)} · {document.classification.toLowerCase()}
               </small>
@@ -308,23 +307,23 @@ export function DocumentsView(props: DocumentsViewProps) {
               { label: "Metadata until", value: new Date(active.retentionUntil).toLocaleDateString() },
             ].map((fact) => (
               <div className="min-w-0 bg-surface px-2.5 py-2" key={fact.label}>
-                <dt className="truncate font-mono text-micro uppercase text-faint">{fact.label}</dt>
+                <dt className="truncate text-micro font-semibold uppercase tabular-nums text-faint">{fact.label}</dt>
                 <dd className="m-0 mt-1 truncate font-mono text-caption text-muted">{fact.value}</dd>
               </div>
             ))}
           </dl>
 
           {processingStatuses.has(active.status) && (
-            <div className="mt-3 rounded border border-border-strong bg-raised p-3">
+            <Tile strong className="mt-3">
               <StatusText dot tone="accent">OrcaSynapse is indexing this source</StatusText>
               <small className="mt-1.5 block text-caption text-muted">
                 Extraction, chunking, and embedding run locally; no copy leaves the control plane.
               </small>
-            </div>
+            </Tile>
           )}
           {(active.status === "FAILED" || active.status === "REJECTED") && (
             <div className="mt-3 rounded border border-bad/40 bg-bad/10 p-3">
-              <strong className="block font-mono text-micro uppercase text-bad">{active.failureCode ?? "INDEXING_FAILED"}</strong>
+              <strong className="block text-micro font-semibold uppercase tabular-nums text-bad">{active.failureCode ?? "INDEXING_FAILED"}</strong>
               <span className="mt-1.5 block text-body leading-relaxed text-muted">
                 {active.failureMessage ?? "OrcaSynapse could not extract indexable text from this source. Re-upload after correcting the file."}
               </span>
@@ -332,7 +331,7 @@ export function DocumentsView(props: DocumentsViewProps) {
           )}
 
           <div className="mt-3 rounded border border-good/40 bg-good/10 p-3">
-            <strong className="block text-[11px] font-semibold text-good">No source bytes retained by OrcaSynapse</strong>
+            <strong className="block text-caption font-semibold text-good">No source bytes retained by OrcaSynapse</strong>
             <span className="mt-1 block text-body leading-relaxed text-muted">
               PostgreSQL contains ownership, classification, checksum, projected status, retention, and audit metadata only.
             </span>

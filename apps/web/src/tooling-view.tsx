@@ -36,8 +36,7 @@ import {
 import { adminAccess } from "./admin-access.js";
 import {
   Alert, Button, EmptyState, Field, Input, LockedScreen, Metric, MetricRow, MicroLabel,
-  PageHeader, Panel, PanelHeading, Select, StatusText, cn, toneFor,
-} from "./ui/index.js";
+  PageHeader, Panel, PanelHeading, Select, StatusText, cn, toneFor, Tile,} from "./ui/index.js";
 
 interface ToolingViewProps {
   session: AdministratorSession | null;
@@ -207,14 +206,14 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
         {/* Fail-closed is the default and the word says so. OFF here means
             every call is denied, not that the feature is idle. */}
         <span className={cn(
-          "grid h-11 w-11 shrink-0 place-items-center rounded border font-mono text-[11px] font-bold",
+          "grid h-11 w-11 shrink-0 place-items-center rounded border font-mono text-caption font-bold",
           runtime?.enabled ? "border-good/50 bg-good/10 text-good" : "border-border-strong bg-raised text-muted",
         )}>
           {runtime?.enabled ? "ON" : "OFF"}
         </span>
         <div className="min-w-0">
           <MicroLabel className="block">Global MCP gateway</MicroLabel>
-          <strong className="mt-1.5 block text-[12px] font-semibold text-text">
+          <strong className="mt-1.5 block text-label font-semibold text-text">
             {runtime?.enabled ? "Governed calls are permitted" : "Every tool call is denied fail-closed"}
           </strong>
           <p className="mb-0 mt-1 text-body text-muted">{runtime?.reason ?? "Runtime state is loading."}</p>
@@ -278,7 +277,7 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
             >
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                  <strong className="font-mono text-[12px] font-semibold text-text">{row.name}</strong>
+                  <strong className="font-mono text-label font-semibold text-text">{row.name}</strong>
                   <StatusText dot tone={row.admitted ? "good" : "neutral"}>
                     {row.admitted ? "admitted" : "not admitted"}
                   </StatusText>
@@ -312,10 +311,7 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
     <div className="grid items-start gap-4 lg:grid-cols-2">
       <Panel>
         <PanelHeading kicker="Allowlisted surface" title="Tool registry" actions={<StatusText>{tools.length} built-in tools</StatusText>} />
-        <div className="grid gap-2">{tools.map((tool) => <article
-          className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded border border-border bg-raised p-3"
-          key={tool.id}
-        >
+        <div className="grid gap-2">{tools.map((tool) => <Tile as="article" className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3" key={tool.id}>
           {/* R or A: whether a call can only read, or needs a human. That is
               the whole risk model, so it leads the row. */}
           <span className={cn(
@@ -326,7 +322,7 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
           </span>
           <div className="min-w-0">
             <div className="flex items-center gap-3">
-              <strong className="truncate text-[12px] font-semibold text-text">{tool.displayName}</strong>
+              <strong className="truncate text-label font-semibold text-text">{tool.displayName}</strong>
               <StatusText dot tone={toneFor(tone(tool.status))}>{tool.status.toLowerCase()}</StatusText>
             </div>
             <p className="mb-0 mt-0.5 text-caption leading-relaxed text-muted">{tool.description}</p>
@@ -342,7 +338,7 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
           >
             {canManage ? tool.status === "ACTIVE" ? "Suspend" : "Activate" : "View only"}
           </Button>
-        </article>)}</div>
+        </Tile>)}</div>
       </Panel>
 
       <Panel>
@@ -378,10 +374,7 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
         </form>
         <div className="grid gap-2">{grants.length === 0
           ? <EmptyState title="No grants configured">The global gateway cannot be enabled until at least one exact-version grant exists.</EmptyState>
-          : grants.map((grant) => <article
-              className="flex items-center justify-between gap-3 rounded border border-border bg-raised p-2.5"
-              key={grant.id}
-            >
+          : grants.map((grant) => <Tile as="article" pad="sm" className="flex items-center justify-between gap-3" key={grant.id}>
               <div className="min-w-0">
                 <strong className="block truncate font-mono text-caption font-semibold text-text">
                   {grant.profileSlug} · v{grant.profileVersion} → {grant.toolName}
@@ -391,7 +384,7 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
                 </small>
               </div>
               <StatusText dot tone={grant.enabled ? "good" : "neutral"}>{grant.enabled ? "active" : "disabled"}</StatusText>
-            </article>)}</div>
+            </Tile>)}</div>
       </Panel>
     </div>
 
@@ -412,7 +405,7 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
           celebratory: navigating away loses it. */}
       {issuedCredential && <div className="mb-3 grid gap-2 rounded border border-warn/50 bg-warn/10 p-3">
         <div>
-          <strong className="block text-[12px] font-semibold text-warn">One-time credential</strong>
+          <strong className="block text-label font-semibold text-warn">One-time credential</strong>
           <span className="mt-1 block text-body text-muted">Store this in the isolated Hermes MCP header configuration.</span>
         </div>
         <code className="break-all rounded border border-border bg-bg px-2.5 py-2 font-mono text-caption text-text">
@@ -420,12 +413,9 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
         </code>
         <Button className="justify-self-end" onClick={() => void navigator.clipboard.writeText(issuedCredential.token)}>Copy</Button>
       </div>}
-      <div className="grid gap-2">{credentials.map((credential) => <article
-        className="flex flex-wrap items-center justify-between gap-3 rounded border border-border bg-raised p-2.5"
-        key={credential.id}
-      >
+      <div className="grid gap-2">{credentials.map((credential) => <Tile as="article" pad="sm" className="flex flex-wrap items-center justify-between gap-3" key={credential.id}>
         <div className="min-w-0">
-          <strong className="block truncate text-[12px] font-semibold text-text">{credential.name}</strong>
+          <strong className="block truncate text-label font-semibold text-text">{credential.name}</strong>
           <code className="mt-0.5 block font-mono text-micro text-faint">{credential.tokenPrefix}…</code>
         </div>
         <StatusText>Last used {when(credential.lastUsedAt)}</StatusText>
@@ -438,7 +428,7 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
         >
           {canManage ? "Revoke" : "View only"}
         </Button>}
-      </article>)}</div>
+      </Tile>)}</div>
     </Panel>
 
     {approvals.length > 0 && (
@@ -462,7 +452,7 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
         <div className="grid gap-2">{approvals.map((approval) => (
           <article className="flex flex-wrap items-center justify-between gap-4 rounded border border-warn/40 bg-warn/10 p-3" key={approval.id}>
             <div className="min-w-0">
-              <strong className="block text-[12px] font-semibold text-text">{approval.toolName}</strong>
+              <strong className="block text-label font-semibold text-text">{approval.toolName}</strong>
               <small className="mt-1 block text-caption text-muted">
                 {approval.profileSlug} · requested by {approval.requestedBySubject}
               </small>
@@ -499,7 +489,7 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
       <div className="overflow-x-auto rounded border border-border">
         <div className="grid min-w-[720px] grid-cols-[110px_minmax(0,1fr)_minmax(0,1fr)_120px_minmax(0,1.2fr)] gap-3 border-b border-border bg-raised px-3 py-2">
           {["Status", "Tool", "Agent", "Requested", "Outcome"].map((head) => (
-            <span className="font-mono text-micro uppercase text-faint" key={head}>{head}</span>
+            <span className="text-micro font-semibold uppercase tabular-nums text-faint" key={head}>{head}</span>
           ))}
         </div>
         {calls.length === 0
@@ -524,7 +514,7 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
     {/* The honest boundary, kept where an operator configuring grants will
         read it: the plane is deliberately narrower than it looks. */}
     <Panel className="border-l-2 border-l-accent">
-      <strong className="block text-[12px] font-semibold text-text">Hermes remains zero-tool by default</strong>
+      <strong className="block text-label font-semibold text-text">Hermes remains zero-tool by default</strong>
       <p className="mb-0 mt-1 text-body leading-relaxed text-muted">
         Only installed read-only OrcaSynapse handlers can be granted. Consequential actions remain denied until an
         independently reviewed execution and approval subsystem is delivered.

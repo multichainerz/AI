@@ -126,4 +126,38 @@ describe("Home", () => {
   it("renders no inline style, which the CSP would refuse in the built container", () => {
     expect(renderToStaticMarkup(<HomeView {...props()} />)).not.toMatch(/\sstyle=/);
   });
+
+  it("draws readiness as a bar, because a fraction has a denominator worth seeing", () => {
+    /*
+     * The one figure on this screen with a denominator. Moving the banner onto
+     * HeroBanner in ai-v1.88.0 dropped the `fill` that drew it, and nothing
+     * failed: `Metric` renders the bar only when a caller passes `fill`, the
+     * only production caller was this one, and `ui.test.tsx` kept exercising
+     * the branch directly. The feature left the product and the tests stayed
+     * green. Asserting on the rendered screen is what closes that gap.
+     */
+    const { container } = render(<HomeView {...props()} />);
+    const bar = container.querySelector("progress");
+    expect(bar, "the readiness figure renders no progress bar").toBeTruthy();
+    // Two of three checks ready, as the default fixture states.
+    expect(bar).toHaveProperty("value", 67);
+  });
+
+  it("colours the bar by readiness, not by decoration", () => {
+    /*
+     * The tone reached the component and stopped there: HeroBanner's accent
+     * branch forwarded `fill` but not `tone`, so every bar painted white and
+     * the three `.is-*` rules had no consumer. Asserting on the class is what
+     * makes the difference between "the prop is set" and "the pixel changes".
+     */
+    const { container } = render(<HomeView {...props()} />);
+    expect(container.querySelector("progress")?.className).toContain("is-warn");
+  });
+
+  it("draws no bar while the session is locked, rather than an empty one", () => {
+    // A zero-width bar under a dash reads as "nothing is ready" instead of
+    // "nobody has looked yet", which is the distinction the whole screen turns on.
+    const { container } = render(<HomeView {...props({ unlocked: false })} />);
+    expect(container.querySelector("progress")).toBeNull();
+  });
 });

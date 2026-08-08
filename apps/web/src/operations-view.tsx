@@ -27,8 +27,7 @@ import {
 import { adminAccess } from "./admin-access.js";
 import {
   Alert, Button, EmptyState, HeroBanner, LockedScreen, Metric, MetricRow, MicroLabel,
-  PageHeader, Panel, PanelHeading, StatusText, cn, toneFor,
-} from "./ui/index.js";
+  PageHeader, Panel, PanelHeading, StatusText, cn, toneFor, Tile,} from "./ui/index.js";
 
 interface OperationsViewProps {
   session: AdministratorSession | null;
@@ -394,10 +393,10 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
             />
             <div className="grid gap-2 sm:grid-cols-2">
               {sortedComponents.map((component) => (
-                <article className="grid gap-2 rounded border border-border bg-raised p-3" key={component.id}>
+                <Tile as="article" className="grid gap-2" key={component.id}>
                   <div className="flex items-center gap-2.5">
                     <StatusText dot tone={toneFor(component.status.toLowerCase())} />
-                    <strong className="min-w-0 truncate text-[12px] font-semibold text-text">{component.label}</strong>
+                    <strong className="min-w-0 truncate text-label font-semibold text-text">{component.label}</strong>
                     <StatusText className="ml-auto shrink-0">{humanLabel(component.status)}</StatusText>
                   </div>
                   <p className="mb-0 text-caption leading-relaxed text-muted">{component.summary}</p>
@@ -405,7 +404,7 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
                     <span>{component.source === "LAST_VERIFIED" ? `Verified ${relativeTime(component.observedAt)}` : humanLabel(component.source)}</span>
                     <span>{component.affectedWorkflows.length ? component.affectedWorkflows.map(humanLabel).join(" / ") : "Platform support"}</span>
                   </footer>
-                </article>
+                </Tile>
               ))}
               {!overview && <p className="m-0 text-body text-faint">Loading component state...</p>}
             </div>
@@ -418,10 +417,7 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
               actions={<Button variant="ghost" size="sm" onClick={() => setTab("incidents")}>View all</Button>}
             />
             <div className="grid gap-1.5">
-              {(overview?.incidents.items ?? []).slice(0, 5).map((item) => <article
-                className="flex items-start gap-2.5 rounded border border-border bg-raised p-2.5"
-                key={item.id}
-              >
+              {(overview?.incidents.items ?? []).slice(0, 5).map((item) => <Tile as="article" pad="sm" className="flex items-start gap-2.5" key={item.id}>
                 <span
                   aria-hidden="true"
                   className={cn("mt-1 h-1.5 w-1.5 shrink-0", item.severity === "CRITICAL" ? "bg-bad" : "bg-warn")}
@@ -432,7 +428,7 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
                     {humanLabel(item.status)} / {relativeTime(item.lastObservedAt)}
                   </small>
                 </div>
-              </article>)}
+              </Tile>)}
               {overview?.incidents.items.length === 0 && (
                 <EmptyState title="No active incidents">Automated degradation and operator-raised context appear here.</EmptyState>
               )}
@@ -446,18 +442,15 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
             title="Guardrail posture"
             description="Application controls are reported separately from target-environment evidence."
           />
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{overview?.guardrails.map((control) => <article
-            className="grid gap-1.5 rounded border border-border bg-raised p-3"
-            key={control.layer}
-          >
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{overview?.guardrails.map((control) => <Tile as="article" className="grid gap-1.5" key={control.layer}>
             <header className="flex items-center justify-between gap-3">
               <MicroLabel>{humanLabel(control.layer)}</MicroLabel>
               <StatusText dot tone={toneFor(control.status.toLowerCase())}>{humanLabel(control.status)}</StatusText>
             </header>
-            <h3 className="m-0 text-[12px] font-semibold text-text">{control.label}</h3>
+            <h3 className="font-display m-0 text-label font-semibold text-text">{control.label}</h3>
             <p className="mb-0 text-caption leading-relaxed text-muted">{control.summary}</p>
             <small className="font-mono text-micro text-faint">{control.evidence}</small>
-          </article>)}</div>
+          </Tile>)}</div>
         </Panel>
 
         <Panel>
@@ -487,7 +480,7 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
               <thead>
                 <tr className="border-b border-border bg-raised">
                   {["Workload", "Pending", "Active", "Failed", "Retained"].map((head) => (
-                    <th className="px-3 py-2 text-left font-mono text-micro font-medium uppercase text-faint" scope="col" key={head}>{head}</th>
+                    <th className="px-3 py-2 text-left text-micro font-semibold uppercase tabular-nums text-faint" scope="col" key={head}>{head}</th>
                   ))}
                 </tr>
               </thead>
@@ -504,10 +497,7 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
             </table>
           </div>
           <div className="mt-3 grid gap-1.5">
-            {executors.map((executor) => <article
-              className="flex flex-wrap items-center justify-between gap-3 rounded border border-border bg-raised p-2.5"
-              key={executor.id}
-            >
+            {executors.map((executor) => <Tile as="article" pad="sm" className="flex flex-wrap items-center justify-between gap-3" key={executor.id}>
               <div className="flex min-w-0 items-center gap-2.5">
                 <StatusText dot tone={toneFor(executor.status.toLowerCase())} />
                 <div className="min-w-0">
@@ -521,7 +511,7 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
                 <StatusText tone={toneFor(executor.status.toLowerCase())}>{humanLabel(executor.status)}</StatusText>
                 <span className="mt-0.5 block font-mono text-micro text-faint">{relativeTime(executor.lastSeenAt)}</span>
               </div>
-            </article>)}
+            </Tile>)}
             {executors.length === 0 && (
               <EmptyState title="No executor heartbeat">No runtime executor heartbeat has been recorded.</EmptyState>
             )}
@@ -537,11 +527,11 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
           <label><span>Component</span><input name="component" minLength={1} maxLength={80} placeholder="e.g. hermes-vm2" required /></label>
           <label><span>Owner</span><input name="owner" maxLength={160} placeholder="Optional team or operator" /></label>
           <label className="sm:col-span-2"><span>Summary</span><textarea name="summary" minLength={3} maxLength={1000} rows={3} required /></label>
-          <div className="flex justify-end sm:col-span-2"><button className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded border border-accent bg-accent px-3.5 text-body font-medium text-[#0a0a0b] transition-colors hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-40" type="submit" disabled={busy}>Create incident</button></div>
+          <div className="flex justify-end sm:col-span-2"><Button variant="primary" type="submit" disabled={busy}>Create incident</Button></div>
         </form>}
         <div className="grid gap-3">{incidents.map((item) => <article className={cn("grid gap-3 rounded border border-l-2 border-border bg-surface p-4",
             item.status === "RESOLVED" ? "border-l-good" : item.severity === "CRITICAL" ? "border-l-bad" : "border-l-warn")} key={item.id}>
-          <header><span className={cn("rounded border px-1.5 py-0.5 font-mono text-micro uppercase",
+          <header><span className={cn("rounded border px-1.5 py-0.5 text-micro font-semibold uppercase tabular-nums",
             item.severity === "CRITICAL" ? "border-bad/50 bg-bad/10 text-bad" : "border-warn/50 bg-warn/10 text-warn")}>{humanLabel(item.severity)}</span><span>{item.automated ? "Automatic observation" : "Operator raised"}</span><time>{relativeTime(item.detectedAt)}</time></header>
           <div><h3>{item.title}</h3><p>{item.summary}</p></div>
           <dl><div><dt>Status</dt><dd>{humanLabel(item.status)}</dd></div><div><dt>Component</dt><dd>{item.component}</dd></div><div><dt>Owner</dt><dd>{item.owner ?? "Unassigned"}</dd></div><div><dt>Last observed</dt><dd>{relativeTime(item.lastObservedAt)}</dd></div></dl>
@@ -559,8 +549,8 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
           <label><span>Target reference</span><input name="targetReference" placeholder="laguna-s / hermes-policy" maxLength={240} required /></label>
           <label><span>Version</span><input name="targetVersion" placeholder="Immutable version or digest" maxLength={120} required /></label>
           <label><span>Minimum pass rate</span><input name="minimumPassRate" type="number" min={50} max={100} step={0.1} defaultValue={95} required /></label>
-          <div className="ops-form grid gap-1 rounded border border-border bg-raised p-3 sm:col-span-2"><span>Required evidence</span><p>{EVALUATION_CATEGORIES.map(humanLabel).join(" / ")}</p></div>
-          <div className="flex justify-end sm:col-span-2"><button className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded border border-accent bg-accent px-3.5 text-body font-medium text-[#0a0a0b] transition-colors hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-40" type="submit" disabled={busy}>Create candidate</button></div>
+          <Tile className="ops-form grid gap-1 sm:col-span-2"><span>Required evidence</span><p>{EVALUATION_CATEGORIES.map(humanLabel).join(" / ")}</p></Tile>
+          <div className="flex justify-end sm:col-span-2"><Button variant="primary" type="submit" disabled={busy}>Create candidate</Button></div>
         </form>}
         <div className="grid gap-3">{evaluations.map((run) => <article className="rounded-card border border-border bg-surface p-5 shadow-card" key={run.id}>
           <header><div><span>{humanLabel(run.targetType)}</span><h3>{run.name}</h3></div><strong className={run.status.toLowerCase()}>{humanLabel(run.status)}</strong></header>
@@ -574,7 +564,7 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
             const draft = evidenceDraft[category];
             const update = (field: "totalCases" | "passedCases" | "criticalFailures" | "evidenceRef", value: string) => setEvidenceDraft((current) => ({ ...current, [category]: { totalCases: "", passedCases: "", criticalFailures: "0", evidenceRef: "", ...current[category], [field]: value } }));
             return <fieldset key={category}><legend>{humanLabel(category)}</legend><label><span>Total</span><input type="number" min={1} value={draft?.totalCases ?? ""} onChange={(event) => update("totalCases", event.target.value)} required /></label><label><span>Passed</span><input type="number" min={0} value={draft?.passedCases ?? ""} onChange={(event) => update("passedCases", event.target.value)} required /></label><label><span>Critical</span><input type="number" min={0} value={draft?.criticalFailures ?? "0"} onChange={(event) => update("criticalFailures", event.target.value)} required /></label><label className="sm:col-span-3"><span>Evidence reference</span><input value={draft?.evidenceRef ?? ""} onChange={(event) => update("evidenceRef", event.target.value)} placeholder="Report ID or immutable URI" required /></label></fieldset>;
-          })}<div className="flex justify-end sm:col-span-2"><button className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded border border-accent bg-accent px-3.5 text-body font-medium text-[#0a0a0b] transition-colors hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-40" type="submit" disabled={busy}>Complete evaluation</button></div></form>}
+          })}<div className="flex justify-end sm:col-span-2"><Button variant="primary" type="submit" disabled={busy}>Complete evaluation</Button></div></form>}
         </article>)}{evaluations.length === 0 && <p className="m-0 rounded border border-dashed border-border px-4 py-7 text-body text-muted">No evaluation candidates have been created.</p>}</div>
       </section>}
 
@@ -582,7 +572,7 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
         <div className="flex flex-wrap items-start justify-between gap-6"><div><h2>Production pilot readiness</h2><p>Evidence-backed controls and externally issued OrcaSynapse decisions. OrcaSynapse records approvals; it does not grant them.</p></div>{canApproveReadiness && <button className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded border border-border-strong bg-raised px-3.5 text-body font-medium text-text transition-colors hover:border-faint disabled:cursor-not-allowed disabled:opacity-40" type="button" onClick={() => setShowApprovalForm((shown) => !shown)}>{showApprovalForm ? "Cancel" : "Record sign-off"}</button>}</div>
         <section className={cn("grid gap-3 rounded border border-l-2 border-border bg-surface p-5",
           readiness?.status === "READY" ? "border-l-good" : "border-l-warn")}>
-          <div><p className="font-mono text-micro uppercase text-faint">Derived gate</p><h3>{readiness ? humanLabel(readiness.status) : "Loading"}</h3><p>Ready requires every control to be verified or formally waived and the latest Security, Infrastructure, Product, and Business decisions to be approved.</p></div>
+          <div><p className="text-micro font-semibold uppercase tabular-nums text-faint">Derived gate</p><h3>{readiness ? humanLabel(readiness.status) : "Loading"}</h3><p>Ready requires every control to be verified or formally waived and the latest Security, Infrastructure, Product, and Business decisions to be approved.</p></div>
           <dl><div><dt>Controls accepted</dt><dd>{readiness ? readiness.summary.verifiedControls + readiness.summary.waivedControls : "--"}<span> / {readiness?.summary.totalControls ?? 0}</span></dd></div><div><dt>External approvals</dt><dd>{readiness?.summary.approvedRoles ?? "--"}<span> / {readiness?.summary.requiredApprovals ?? 4}</span></dd></div><div><dt>Blocked controls</dt><dd>{readiness?.summary.blockedControls ?? "--"}</dd></div></dl>
         </section>
 
@@ -593,7 +583,7 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
           <label><span>Approving authority</span><input name="authority" minLength={1} maxLength={160} placeholder="OrcaSynapse Security Review Board" required /></label>
           <label><span>Approval evidence</span><input name="evidenceRef" minLength={1} maxLength={500} placeholder="Approval ID or immutable artifact reference" required /></label>
           <label className="sm:col-span-2"><span>Decision rationale</span><textarea name="reason" minLength={3} maxLength={1000} rows={3} required /></label>
-          <div className="flex justify-end sm:col-span-2"><button className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded border border-accent bg-accent px-3.5 text-body font-medium text-[#0a0a0b] transition-colors hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-40" type="submit" disabled={busy}>Append authority decision</button></div>
+          <div className="flex justify-end sm:col-span-2"><Button variant="primary" type="submit" disabled={busy}>Append authority decision</Button></div>
         </form>}
 
         <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(280px,0.7fr)]">
@@ -614,11 +604,28 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
           </article>)}{readiness?.controls.length === 0 && <p className="m-0 rounded border border-dashed border-border px-4 py-7 text-body text-muted">The production-readiness checklist has not been migrated.</p>}</div>
 
           <aside className="grid gap-4">
-            <Panel className="readiness-approvals"><PanelHeading kicker="Latest authority decisions" title="Formal sign-offs" /><div>{(["SECURITY", "INFRASTRUCTURE", "PRODUCT", "BUSINESS"] as const).map((role) => {
+            {/*
+              * Styled on the primitives rather than through class names whose
+              * rules were deleted in ai-v1.65.0: `readiness-approvals` and
+              * `readiness-blockers` survived as attributes matching nothing, so
+              * this aside rendered as unformatted running text.
+              */}
+            <Panel><PanelHeading kicker="Latest authority decisions" title="Formal sign-offs" /><div className="grid gap-2">{(["SECURITY", "INFRASTRUCTURE", "PRODUCT", "BUSINESS"] as const).map((role) => {
               const approval = readiness?.approvals.find((item) => item.role === role);
-              return <article key={role}><header><strong>{humanLabel(role)}</strong><span className={!approval ? "missing" : approval.isCurrent ? approval.decision.toLowerCase() : "stale"}>{approval ? `${humanLabel(approval.decision)}${approval.isCurrent ? "" : " / stale"}` : "Not recorded"}</span></header>{approval ? <><p>{approval.authority}</p><small>Recorded by {approval.recordedBy} / {relativeTime(approval.recordedAt)}</small><code>{approval.evidenceRef}</code></> : <p>No external authority decision is retained.</p>}</article>;
+              const tone = !approval ? "neutral" : approval.isCurrent ? toneFor(approval.decision.toLowerCase()) : "warn";
+              return <Tile as="article" key={role}>
+                <header className="flex items-baseline justify-between gap-3">
+                  <strong className="text-label font-semibold text-text">{humanLabel(role)}</strong>
+                  <StatusText tone={tone}>{approval ? `${humanLabel(approval.decision)}${approval.isCurrent ? "" : " / stale"}` : "Not recorded"}</StatusText>
+                </header>
+                {approval ? <>
+                  <p className="mb-0 mt-1.5 text-body text-muted">{approval.authority}</p>
+                  <small className="mt-1 block text-caption text-faint">Recorded by {approval.recordedBy} / {relativeTime(approval.recordedAt)}</small>
+                  <code className="mt-1.5 block truncate font-mono text-caption text-muted">{approval.evidenceRef}</code>
+                </> : <p className="mb-0 mt-1.5 text-body text-faint">No external authority decision is retained.</p>}
+              </Tile>;
             })}</div></Panel>
-            <Panel className="readiness-blockers"><PanelHeading kicker="Open gate conditions" title="Readiness blockers" actions={<strong className="font-display text-[19px] font-semibold tabular-nums text-text">{readiness?.blockers.length ?? 0}</strong>} /><ol>{readiness?.blockers.map((blocker) => <li key={blocker}>{blocker}</li>)}</ol>{readiness?.blockers.length === 0 && <p className="m-0 rounded border border-dashed border-border px-4 py-7 text-body text-muted">No derived blockers remain.</p>}</Panel>
+            <Panel><PanelHeading kicker="Open gate conditions" title="Readiness blockers" actions={<strong className="font-display text-[19px] font-semibold tabular-nums text-text">{readiness?.blockers.length ?? 0}</strong>} /><ol className="m-0 grid list-none gap-1.5 p-0">{readiness?.blockers.map((blocker) => <li className="flex gap-2.5 rounded border border-border bg-raised p-2.5 text-body text-muted" key={blocker}><span aria-hidden="true" className="mt-1.5 h-[5px] w-[5px] shrink-0 rounded-pill bg-warn" />{blocker}</li>)}</ol>{readiness?.blockers.length === 0 && <p className="m-0 rounded border border-dashed border-border px-4 py-7 text-body text-muted">No derived blockers remain.</p>}</Panel>
           </aside>
         </div>
       </section>}

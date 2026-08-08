@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Alert, Button, Dialog, Field, Input } from "./ui/index.js";
 
 /**
@@ -23,6 +23,19 @@ export function AdminSignInDialog(props: {
   const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("");
   const [installationKey, setInstallationKey] = useState("");
+
+  /*
+   * The dialog is hidden by `open={false}` rather than unmounted, so without
+   * this its state outlives the form: a typed password stayed in memory for
+   * the life of the page and was still in the field when the dialog reopened.
+   * A credential should not survive the form that collected it.
+   */
+  useEffect(() => {
+    if (props.open) return;
+    setPassword("");
+    setInstallationKey("");
+    setMode("LOGIN");
+  }, [props.open]);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -72,16 +85,31 @@ export function AdminSignInDialog(props: {
             </Field>
           </>
         ) : (
-          <Field label="Offline Installation Key" hint="Only when the local administrator password cannot be recovered normally.">
-            <Input
-              type="password"
-              value={installationKey}
-              onChange={(event) => setInstallationKey(event.target.value)}
-              autoComplete="off"
-              required
-              minLength={32}
-            />
-          </Field>
+          <>
+            {/*
+              * Stated before the key is typed, not after. A recovery session
+              * carries `passwordChangeRequired`, and the app routes any such
+              * session to the front page — so this path ends the workspace
+              * session the rest of this dialog exists to preserve. That is a
+              * reasonable trade at break-glass time and a nasty surprise
+              * otherwise.
+              */}
+            <Alert tone="warn">
+              Recovery will sign you out and return to the sign-in page, where you set a new
+              password. Use it only when the local administrator password cannot be recovered
+              normally.
+            </Alert>
+            <Field label="Offline Installation Key">
+              <Input
+                type="password"
+                value={installationKey}
+                onChange={(event) => setInstallationKey(event.target.value)}
+                autoComplete="off"
+                required
+                minLength={32}
+              />
+            </Field>
+          </>
         )}
         {props.error ? <Alert>{props.error}</Alert> : null}
         <div className="flex items-center justify-between gap-3">

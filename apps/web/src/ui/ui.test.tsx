@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { Alert, Button, EmptyState, Field, Input, LockedScreen, Metric, Panel, PanelHeading, Select, StatusText } from "./index.js";
+import { Alert, Button, EmptyState, Field, Input, LockedScreen, HeroBanner, Metric, Panel, PanelHeading, Select, StatusText } from "./index.js";
 
 /**
  * The primitives, and the one property that cannot be allowed to regress.
@@ -20,7 +20,7 @@ describe("CSP safety", () => {
         <Button variant="primary">Go</Button>
         <Panel>
           <PanelHeading kicker="Kicker" title="Title" description="Description" />
-          <Metric label="Queue" value="7" caption="documents" fill={0.42} tone="warn" />
+          <Metric label="Queue" value="7" caption="documents" tone="warn" />
           <StatusText tone="good">ready</StatusText>
           <Alert tone="error" onDismiss={vi.fn()}>Something failed</Alert>
           <EmptyState title="Nothing stored">No memory yet.</EmptyState>
@@ -33,10 +33,12 @@ describe("CSP safety", () => {
     expect(html).not.toMatch(/\sstyle=/);
   });
 
-  it("expresses a metric's fill as a progress value, not a width", () => {
+  it("expresses a highlight's fill as a progress value, not a width", () => {
     // The width of a bar is data. An inline width is the obvious way to say it
     // and the one way the CSP forbids, so it is an attribute on <progress>.
-    const html = markup(<Metric label="Capacity" value="412" fill={0.65} />);
+    // The bar lives on HeroBanner: it belongs to a figure with a denominator,
+    // and every such figure on this product is a screen's headline stat.
+    const html = markup(<HeroBanner tone="plain" highlight={{ label: "Capacity", value: "412", fill: 0.65 }} metrics={[]} />);
     expect(html).toContain("<progress");
     expect(html).toContain('value="65"');
     expect(html).toContain('max="100"');
@@ -44,8 +46,9 @@ describe("CSP safety", () => {
   });
 
   it("clamps a fill outside 0-1 rather than emitting an out-of-range bar", () => {
-    expect(markup(<Metric label="x" value="1" fill={2.5} />)).toContain('value="100"');
-    expect(markup(<Metric label="x" value="1" fill={-3} />)).toContain('value="0"');
+    const bar = (fill: number) => markup(<HeroBanner tone="plain" highlight={{ label: "x", value: "1", fill }} metrics={[]} />);
+    expect(bar(2.5)).toContain('value="100"');
+    expect(bar(-3)).toContain('value="0"');
   });
 
   it("omits the bar entirely when there is no fill to show", () => {
