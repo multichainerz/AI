@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="ai-v1.83.0"
+INSTALLER_VERSION="ai-v1.84.0"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 RUNTIME_SERVICE="orcasynapse-hermes"
 HEARTBEAT_SERVICE="orcasynapse-hermes-heartbeat"
@@ -542,6 +542,22 @@ require_ubuntu_host() {
     x86_64|aarch64) ;;
     *) fail "VM2 architecture '$(uname -m)' is unsupported; use x86_64 or aarch64 Ubuntu" ;;
   esac
+  validate_state_root "${STATE_ROOT}"
+}
+
+# The installer chmods and populates this path, and the decommissioner later
+# deletes it recursively. A one-level root like `/var/` would re-permission a
+# system directory to 0711 on install and be handed to `rm -rf` on removal, so
+# it is refused on the way in rather than only on the way out.
+validate_state_root() {
+  local path="${1%/}"
+  # `//` is rejected explicitly: `/*/?*` alone matches `///etc` and `//x`,
+  # because `*` and `?` both match a slash. Those collapse to `/etc` and `/x`,
+  # so the earlier trailing-slash fix closed one shape of the same hole and
+  # left another that still reached `rm -rf`.
+  [[ "${path}" == /*/?* && "${path}" != *..* && "${path}" != *//* ]] \
+    || fail "unsafe Hermes state path '${1}'; an absolute path at least two levels deep is required"
+  [[ ! -L "${path}" ]] || fail "refusing to use a symbolic-link Hermes state root"
 }
 
 install_hermes_directory() {
@@ -962,9 +978,13 @@ document_node="$(jq -r '.nodeId // empty' "${WORK}/document.json")"
 # Recorded after verification and before anything is applied, so the installer
 # and an operator reading the host can both see what the control plane last
 # admitted -- including the empty set, which is a real instruction.
-jq -r '.admittedToolsets[]?' "${WORK}/document.json" > "${STATE_ROOT}/admitted-toolsets.tmp"
-install -m 0644 -o root -g root "${STATE_ROOT}/admitted-toolsets.tmp" "${STATE_ROOT}/admitted-toolsets"
-rm -f -- "${STATE_ROOT}/admitted-toolsets.tmp"
+# Staged inside this run's own mktemp directory, not under a fixed name in the
+# shared state root. The boot timer and the installer's preseed both run this
+# script within seconds of each other on a fresh install, and a shared temp name
+# lets one delete the file the other is about to install, killing it under
+# `set -e`.
+jq -r '.admittedToolsets[]?' "${WORK}/document.json" > "${WORK}/admitted-toolsets"
+install -m 0644 -o root -g root "${WORK}/admitted-toolsets" "${STATE_ROOT}/admitted-toolsets"
 
 # Admitted names drive two settings, because one is not enough.
 #
@@ -975,8 +995,39 @@ rm -f -- "${STATE_ROOT}/admitted-toolsets.tmp"
 # is subtracted after every other rule, so naming everything unadmitted there is
 # what actually produces the admitted set and nothing else.
 KEY="$(sed -n 's/^API_SERVER_KEY=//p' "${STATE_ROOT}/data/.env" 2>/dev/null || true)"
-curl -s -m 10 -H "Authorization: Bearer ${KEY}" http://127.0.0.1:8642/v1/toolsets \
-  > "${WORK}/catalogue.json" 2>/dev/null || : > "${WORK}/catalogue.json"
+# KNOWN GAP: this key is visible in `ps` for the length of each tick, every
+# five minutes, for the life of the node -- the same credential the unit file
+# deliberately keeps out of its 0644 permissions.
+#
+# A `--config` file was tried here and reverted; it was not the cause of the
+# regression it was blamed for, and the replacement needs verifying against a
+# real node before it lands.
+#
+# The catalogue fetch is retried, and this is load-bearing. This script runs
+# immediately after `systemctl restart` of the runtime, so the very first
+# attempt regularly lands while Hermes is still coming back up. A single failed
+# attempt yielded an empty catalogue, which the reconciler treats as "nothing to
+# suppress" -- so `agent.disabled_toolsets` was never written and every
+# unadmitted toolset stayed live, on a node reporting healthy. The endpoint
+# answers 200 with a full catalogue seconds later, which is what made this look
+# like a fetch bug rather than a race.
+fetch_toolset_catalogue() {
+  local attempt
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    if curl -s -m 10 -H "Authorization: Bearer ${KEY}" http://127.0.0.1:8642/v1/toolsets \
+      > "${WORK}/catalogue.json" 2>/dev/null && [[ -s "${WORK}/catalogue.json" ]]; then
+      return 0
+    fi
+    sleep 3
+  done
+  : > "${WORK}/catalogue.json"
+  # Still fails open -- suppressing nothing is safer than applying a policy
+  # derived from a catalogue we could not read -- but it no longer does so
+  # silently, and the allowlist above still applies.
+  echo "orcasynapse: could not read the runtime toolset catalogue; unadmitted toolsets were NOT disabled this pass" >&2
+  return 0
+}
+fetch_toolset_catalogue
 
 python3 - "${MANAGED_CONFIG}" "${WORK}/document.json" "${WORK}/catalogue.json" "${WORK}/config.yaml" <<'RECONCILE'
 import json, re, sys
@@ -1031,6 +1082,14 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
+# The client derives every path it uses from these. The heartbeat unit already
+# carried the state root; without it here a non-default install reconciled
+# correctly during installation (which runs in the installer's own environment)
+# and then silently stopped forever, exiting 0 each tick so the timer reported
+# success while no admitted toolset was ever applied.
+Environment=ORCASYNAPSE_HERMES_STATE_ROOT=${STATE_ROOT}
+Environment=ORCASYNAPSE_HERMES_MANAGED_DIR=${HERMES_MANAGED_DIR}
+Environment=ORCASYNAPSE_HERMES_SERVICE=${RUNTIME_SERVICE}
 ExecStart=/usr/local/lib/orcasynapse/hermes-desired-state.sh
 EOF
 
@@ -1298,6 +1357,14 @@ EOF
     # is the whole artifact-identity story; an unverified one is worth nothing.
     [[ "${resolved_commit}" == "${hermes_commit}" ]] \
       || fail "Hermes installed commit ${resolved_commit} instead of the approved ${hermes_commit}"
+    # Written only once this installer has actually installed the program, and
+    # never when it declined to adopt a pre-existing one. The decommissioner
+    # deletes /usr/local/lib/hermes-agent only if this marker is present:
+    # Hermes's own installer defaults to that same path, so location proves
+    # nothing, and the node identity proves nothing either -- it is created in
+    # step 3, before step 4 discovers a foreign Hermes and aborts.
+    printf 'commit=%s\n' "${resolved_commit}" > "${STATE_ROOT}/runtime-owned"
+    chmod 0600 "${STATE_ROOT}/runtime-owned"
     success "Resolved the Hermes runtime to immutable artifact ${resolved_commit}."
 
     run_with_progress "Start the hardened Hermes service" systemctl enable --now "${RUNTIME_SERVICE}" \
@@ -1310,6 +1377,12 @@ EOF
   step 5 7 "Enroll with the OrcaSynapse control plane"
   local model_base_url_json model_alias_json model_api_key_json
   local model_base_url model_alias model_api_key
+  # Declared here, not in the branch that first obtains them: step 7 reads both
+  # unconditionally, and under `set -u` an unset one aborts the run outright.
+  # That is what made a resumed install unrecoverable -- it died with a raw bash
+  # error after Hermes was already installed and enrolled, so the node never got
+  # a heartbeat client and never came back online.
+  local control_plane_key="" desired_state_path=""
   if (( resuming )); then
     model_base_url_json="$(jq -c '.modelBootstrap.baseUrl' "${ENROLLMENT_STATE}")"
     model_alias_json="$(jq -c '.modelBootstrap.modelAlias' "${ENROLLMENT_STATE}")"
@@ -1317,6 +1390,11 @@ EOF
     model_base_url="$(jq -r '.modelBootstrap.baseUrl' "${ENROLLMENT_STATE}")"
     model_alias="$(jq -r '.modelBootstrap.modelAlias' "${ENROLLMENT_STATE}")"
     model_api_key="$(jq -r '.modelBootstrap.apiKey' "${ENROLLMENT_STATE}")"
+    # Restored from the receipt they were deliberately written to. Without this
+    # a resumed node would pin no control-plane key, and its desired-state
+    # client would exit early forever rather than apply a toolset allowlist.
+    control_plane_key="$(jq -r '.controlPlanePublicKeyPem // empty' "${ENROLLMENT_STATE}")"
+    desired_state_path="$(jq -r '.desiredStatePath // empty' "${ENROLLMENT_STATE}")"
     success "Enrollment is already complete; recovered its scoped inference configuration."
   else
     info "Registering the public node identity and requesting the approved inference route."
@@ -1423,8 +1501,17 @@ EOF
   if run_with_progress "Apply the admitted toolset allowlist" preseed_desired_state; then
     run_with_progress "Verify runtime health after applying the allowlist" wait_for_hermes 0 \
       || warning "Hermes is still settling; the reconcile timer will retry within five minutes."
-  else
+  elif [[ -s "${STATE_ROOT}/admitted-toolsets" ]]; then
     warning "Could not reach OrcaSynapse for the toolset allowlist; the reconcile timer retries every five minutes."
+  else
+    # Distinguished deliberately. The reconciler exits non-zero for a network
+    # failure and for a signature that did not verify, a document addressed to
+    # another node, or an unrecognized format -- and calling the second class a
+    # network blip tells an operator to wait for a retry that will never
+    # succeed. Nothing was applied either way, so the allowlist file is the
+    # tell: absent means the document was rejected, not unreachable.
+    warning "The toolset allowlist was not applied: OrcaSynapse was unreachable, or the signed document it returned was rejected."
+    warning "Check 'journalctl -u ${DESIRED_STATE_SERVICE}' after the next tick; a signature failure will not resolve itself."
   fi
   rm -f -- "${ENROLLMENT_STATE}"
   INSTALLATION_COMPLETED=1
@@ -1439,7 +1526,7 @@ EOF
   ui_panel_kv "Node fingerprint" "${node_fingerprint}"
   printf '\n'
   info "The one-time enrollment claim has been consumed."
-  info "OrcaSynapse now monitors this node without SSH or a Docker socket."
+  info "OrcaSynapse now monitors this node without SSH or any remote execution channel."
   info "Toolset changes made in the dashboard reach this node within five minutes."
   warning "Before production, allow OrcaSynapse to reach TCP/8642 and restrict VM2 egress to OrcaSynapse HTTPS plus approved inference and MCP destinations."
   ui_next "Return to OrcaSynapse and confirm this node reports Healthy."

@@ -17,6 +17,15 @@ class Sessions implements AdminSessionManager {
   async revoke() { return true; }
 }
 
+/** A session still holding the installer's temporary password. */
+class UnrotatedSessions implements AdminSessionManager {
+  async createInstallationKeySession() { return null; }
+  async authenticate(token: string | undefined) {
+    return token === SESSION_TOKEN ? { ...session, passwordChangeRequired: true } : null;
+  }
+  async revoke() { return true; }
+}
+
 function manager(): ToolingManager {
   return {
     listTools: vi.fn(async () => ({ items: [] })), listToolsForRun: vi.fn(async () => ({ items: [] })), setToolStatus: vi.fn(), listGrants: vi.fn(async () => ({ items: [] })),
@@ -111,5 +120,30 @@ describe("governed tooling routes", () => {
     expect(listed.statusCode).toBe(200);
     expect(toolingManager.listToolsForRun).toHaveBeenCalledWith(runAuthorization);
     expect(JSON.stringify(listed.json())).not.toContain(runAuthorization);
+  });
+
+  it("refuses an administrator who has not rotated the temporary password", async () => {
+    // This module resolves its own principal instead of using the shared
+    // requireAdmin, and so used to skip that helper's forced-rotation gate.
+    // POST /credentials returns a plaintext, non-expiring MCP bearer token, so
+    // the temporary password minted a permanent credential that outlived it.
+    const toolingManager = manager();
+    const app = await createApp({
+      logger: false,
+      runtime: { bootstrapState: "READY", sessionManager: new UnrotatedSessions(), toolingManager },
+    });
+    apps.push(app);
+    const headers = { cookie: `${ADMIN_SESSION_COOKIE}=${SESSION_TOKEN}` };
+
+    const issued = await app.inject({
+      method: "POST", url: "/api/v1/admin/tooling/credentials", headers,
+      payload: { displayName: "mcp", subject: "svc" },
+    });
+    expect(issued.statusCode).toBe(403);
+    expect(issued.json()).toMatchObject({ error: "PASSWORD_CHANGE_REQUIRED" });
+    expect(toolingManager.issueCredential).not.toHaveBeenCalled();
+
+    const listing = await app.inject({ method: "GET", url: "/api/v1/admin/tooling/tools", headers });
+    expect(listing.statusCode).toBe(403);
   });
 });

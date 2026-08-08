@@ -28,7 +28,6 @@ import {
 import {
   RuntimeNodeAuthenticationError,
   RuntimeNodeConflictError,
-  RuntimeNodeEnrollmentError,
   RuntimeNodeNotFoundError,
 } from "./runtime-node-manager.js";
 
@@ -383,6 +382,29 @@ describe("DrizzleHermesRuntimeNodeManager lifecycle", () => {
       .where(eq(hermesRuntimeNode.id, node.id));
 
     expect((await manager().list())[0]?.status).toBe("OFFLINE");
+  });
+
+  it("keeps an operator's pending action valid across a heartbeat", async () => {
+    // `revision` is the optimistic-concurrency token for operator actions, and
+    // a node heartbeats every minute. When the heartbeat bumped it too, any
+    // dashboard tab open longer than that had a stale revision and its first
+    // action failed 409 -- including the emergency revoke of a compromised
+    // node. Liveness is not an operator edit and must not consume the token.
+    const { node, identity } = await enrolledNode();
+    const body = { status: "ONLINE", hermesVersion: "1.0.1", capabilities: ["runs"] };
+
+    await manager().heartbeat(node.id, signedHeaders(identity.privateKey, body), body as never);
+
+    const [afterHeartbeat] = await context.database
+      .select().from(hermesRuntimeNode).where(eq(hermesRuntimeNode.id, node.id));
+    expect(afterHeartbeat?.revision).toBe(node.revision);
+    expect(afterHeartbeat?.lastSeenAt).not.toBeNull();
+
+    // The revision the operator's screen captured before the heartbeat still works.
+    const revoked = await manager().mutate(principal, node.id, {
+      action: "REVOKE", reason: "compromised host", expectedRevision: node.revision,
+    } as never);
+    expect(revoked.status).toBe("REVOKED");
   });
 
   it("refuses a mutation against a stale revision", async () => {

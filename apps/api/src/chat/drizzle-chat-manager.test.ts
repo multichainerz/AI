@@ -21,7 +21,6 @@ import type { AgentManager } from "../agents/agent-manager.js";
 import { boundedConversationHistory, DrizzleChatManager } from "./drizzle-chat-manager.js";
 import {
   ChatConfigurationError,
-  ChatConversationConflictError,
   ChatConversationNotFoundError,
   ChatMessageNotFoundError,
   ChatPolicyViolationError,

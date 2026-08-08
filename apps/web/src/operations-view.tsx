@@ -26,8 +26,8 @@ import {
 } from "./api.js";
 import { adminAccess } from "./admin-access.js";
 import {
-  Alert, Button, EmptyState, Field, Input, LockedScreen, Metric, MetricRow, MicroLabel,
-  PageHeader, Panel, PanelHeading, Select, StatusText, Textarea, cn, toneFor,
+  Alert, Button, EmptyState, LockedScreen, Metric, MetricRow, MicroLabel,
+  PageHeader, Panel, PanelHeading, StatusText, cn, toneFor,
 } from "./ui/index.js";
 
 interface OperationsViewProps {

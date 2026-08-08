@@ -17,7 +17,7 @@ describe("document contracts", () => {
     expect(() => documentUploadMetadataSchema.parse({ owner: "another-user" })).toThrow();
   });
 
-  it("exposes metadata and projected Supermemory state without source-storage fields", () => {
+  it("exposes document metadata without source-storage fields", () => {
     const parsed = documentDetailSchema.parse({
       id: DOCUMENT_ID,
       fileName: "policy.pdf",

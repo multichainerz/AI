@@ -85,13 +85,46 @@ function compatibilityHintsFor(backend: InferenceBackend): Set<CompatibilityHint
   return new Set(backend === "LLAMA_CPP" ? COMPATIBILITY_HINTS : []);
 }
 
-async function rejectedCompatibilityHints(response: Response): Promise<Set<CompatibilityHint>> {
+/**
+ * Reads at most `limit` bytes, then stops pulling and cancels the body.
+ *
+ * The declared-length check above cannot stand alone: `content-length` is
+ * absent on a chunked response, `Number(null)` is 0, and 0 is not greater than
+ * the limit — so every chunked error body fell straight through to an unbounded
+ * `.text()` and the size check ran only after the whole thing was already in
+ * the heap. An upstream that answers 400 with a multi-gigabyte chunked body
+ * (an error page, or a validation error echoing the prompt) took the API with
+ * it, and the rate limiter is consumed before the upstream call, so a node can
+ * drive this repeatedly.
+ */
+async function readBounded(response: Response, limit: number): Promise<string> {
+  const reader = response.body?.getReader();
+  if (!reader) return "";
+  const decoder = new TextDecoder();
+  let text = "";
+  let read = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      read += value.byteLength;
+      text += decoder.decode(value, { stream: true });
+      if (read > limit) break;
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+  return text;
+}
+
+/** Exported for its own test; not part of the gateway's public surface. */
+export async function rejectedCompatibilityHints(response: Response): Promise<Set<CompatibilityHint>> {
   if (response.status !== 400) return new Set();
   const declaredLength = Number(response.headers.get("content-length"));
   if (Number.isFinite(declaredLength) && declaredLength > 16_384) return new Set();
   let text = "";
   try {
-    text = await response.clone().text();
+    text = await readBounded(response.clone(), 16_384);
   } catch {
     return new Set();
   }

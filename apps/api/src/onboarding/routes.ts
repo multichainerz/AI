@@ -96,7 +96,14 @@ export async function registerOnboardingRoutes(app: FastifyInstance, options: On
   });
 
   app.post("/recovery/export", async (request, reply) => {
-    const principal = await requireAdmin(request, reply, options.sessionManager, "readiness:manage");
+    // `readiness:approve`, not `readiness:manage`. What this returns is the
+    // platform master encryption key wrapped under a passphrase the caller
+    // chooses, so anyone who can call it and can also read the SecretRecord
+    // table — from a backup, a replica, or a snapshot — holds every stored
+    // connection secret. `readiness:manage` is an OPERATIONS_ADMIN scope, a
+    // role otherwise denied every write and every secret value, which made
+    // exporting the master key cheaper than the `/complete` route beside it.
+    const principal = await requireAdmin(request, reply, options.sessionManager, "readiness:approve");
     const manager = managerOrLocked(options, reply);
     if (!principal || !manager) return reply;
     const input = exportRecoveryKitSchema.safeParse(request.body);

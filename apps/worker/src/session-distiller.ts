@@ -174,8 +174,13 @@ export class SessionMemoryDistiller {
     const known = new Map<string, string>();
     for (const fact of [...profile, ...candidates]) known.set(fact.id, fact.content);
 
+    // LEARN_USER means the model's own output is not memory material. `mode`
+    // gated entry to this method but nothing filtered the turns afterwards, so
+    // the session sweep distilled assistant answers under the mode that
+    // promises it will not — the same defect the per-turn path had.
+    const offered = mode === "LEARN_EXCHANGE" ? turns : turns.filter((turn) => turn.role === "user");
     const extraction = await this.distiller.distil(
-      turns,
+      offered,
       [...known].map(([id, content]) => ({ id, content })),
     );
     if (!extraction.succeeded) {

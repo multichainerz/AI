@@ -574,6 +574,33 @@ describe("DrizzleAgentProcessor", () => {
     expect(memory.captured[0]?.[0]?.scope).toBe("EPISODIC");
   });
 
+  it("keeps the model's answer away from the distiller when learning the user", async () => {
+    // Every other LEARN_USER test here runs without a distiller, so they all
+    // exercise the fallback branch. Policy defaults `distillCapture` to true,
+    // which means the distilled branch is the normal path — and it passed the
+    // assistant turn unconditionally, so a wrong answer became durable memory
+    // under the one mode that promises it will not.
+    await healthyBoundary();
+    const id = await queuedRun({}, "LEARN_USER");
+    const memory = memoryPort();
+    const seen: Array<Array<{ role: string; content: string }>> = [];
+    const distiller: MemoryDistillerPort = {
+      distil: vi.fn(async (turns: readonly { role: "assistant" | "user"; content: string }[]) => {
+        seen.push(turns.map(({ role, content }) => ({ role, content })));
+        return {
+          succeeded: true,
+          facts: [{ fact: "The user asked about the policy.", scope: "EPISODIC" as const, replaces: [] as string[] }],
+        };
+      }),
+    };
+
+    await processor(hermes(), noKnowledge, memory, distiller)
+      .process({ runId: id }, await jobIdOf(id), WORKER);
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.map(({ role }) => role), "the assistant turn reached the distiller").toEqual(["user"]);
+  });
+
   it("stores both sides of the turn only when the profile opts into it", async () => {
     await healthyBoundary();
     const id = await queuedRun({}, "LEARN_EXCHANGE");

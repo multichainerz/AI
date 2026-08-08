@@ -319,7 +319,13 @@ export class DrizzleDocumentManager implements DocumentManager {
     await this.database.transaction(async (transaction) => {
       // Chunks cascade from the document row, but they are removed explicitly so
       // retrieval stops immediately even though the metadata row is retained.
-      await this.vectors.deleteDocumentChunks(documentId);
+      //
+      // On the transaction's own handle. Reaching for the pool here checked out
+      // a second connection while this transaction held one, so ten concurrent
+      // deletes deadlocked the pool permanently — and because it committed
+      // separately, a rollback of this transaction also left a READY document
+      // with no chunks.
+      await this.vectors.deleteDocumentChunks(documentId, transaction);
       await transaction
         .update(document)
         .set({ status: "DELETED", deletedAt: new Date(), failureCode: null, failureMessage: null })

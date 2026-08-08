@@ -99,7 +99,14 @@ export async function streamChatCompletion(
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
       // Frames are separated by a blank line; keep the trailing partial.
-      const frames = buffer.split("\n\n");
+      //
+      // CRLF counts. SSE permits it and normalizing proxies emit it, and
+      // splitting on "\n\n" alone never closed a frame: the buffer grew for the
+      // whole request and only the first `data:` line was recovered at the end,
+      // still reported as a success. The distiller then wrote memory derived
+      // from a fragment of the answer. The Hermes parser in this same package
+      // has always used this pattern.
+      const frames = buffer.split(/\r?\n\r?\n/);
       buffer = frames.pop() ?? "";
       for (const frame of frames) {
         const payload = payloadOf(frame);

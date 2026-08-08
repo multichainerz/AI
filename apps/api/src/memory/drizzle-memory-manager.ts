@@ -19,7 +19,7 @@ import {
   memoryPolicy,
   type OrcaSynapseDatabase,
 } from "@orcasynapse/database";
-import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne } from "drizzle-orm";
 import { advisoryLock, increment, isUniqueViolation } from "../database-support.js";
 import type { AdminPrincipal } from "../auth/admin-session.js";
 import type { ForgetMatcher } from "./forget-matcher.js";
@@ -284,7 +284,11 @@ export class DrizzleMemoryManager implements MemoryManager {
       .returning({ ownerSubject: agentMemory.ownerSubject });
     if (removed.length !== 1) throw new AgentMemoryNotFoundError();
     await this.database.insert(auditEvent).values({
-      actorType: principal.ownerSubject ? "USER" : "USER",
+      // An enterprise principal deletes their own memory; an administrator
+      // governs everyone's. Both arms of this used to read "USER", which
+      // recorded an administrator's deletion in the audit trail as if the owner
+      // had done it -- the one distinction this record exists to preserve.
+      actorType: principal.ownerSubject ? "USER" : "SYSTEM",
       actorId: principal.id,
       action: "memory.deleted",
       resourceType: "AgentMemory",

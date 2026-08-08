@@ -5,6 +5,166 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.84.0 — 2026-08-08
+
+Three rounds of audit, fifteen agents, and the defects that survived them.
+
+**The one that would have stopped you cold: no dialog in the product could be
+typed into.** The focus-trap effect depended on `onClose`, which every call site
+passes as an inline arrow — so it tore down and re-ran on every keystroke,
+returning focus to the element that opened the dialog and then pulling it to the
+panel's first focusable. One character per field. That includes the VM2 installer
+generator, so enrollment could not be completed through the dashboard at all.
+192 web tests were green over it, because none of them re-rendered a parent while
+a dialog was open.
+
+**Ten concurrent document deletes deadlocked the entire API, permanently.**
+`delete` runs in a transaction, which holds one pooled client, and the chunk
+delete beside it reached for the pool instead of that transaction — checking out
+a second connection from inside the first. With `pg-pool`'s default max of 10 and
+`connectionTimeoutMillis` unset, waiters never time out. Reproduced live: nine
+complete, ten hang forever, and an unrelated `select 1` on the same pool never
+returns. Passing the transaction handle also closes a second defect at that site,
+where a rollback left a READY document with no chunks.
+
+**`LEARN_USER` was storing the model's own answers, on the default path.** The
+mode's contract is that only what the person said becomes memory — an answer the
+model got wrong once must not become a durable fact. The distilled branch passed
+the assistant turn unconditionally, and policy defaults `distillCapture` to true,
+so this was the normal path. Fixed on both the per-turn and session paths. Every
+existing `LEARN_USER` test ran without a distiller, so none of them reached it.
+
+**A CRLF stream silently truncated the answer to its first delta** and reported
+`succeeded: true`. SSE permits CRLF and normalizing proxies emit it; splitting on
+`\n\n` alone never closed a frame. The distiller then wrote memory derived from a
+fragment. The Hermes parser in the same package had always used `/\r?\n\r?\n/`.
+
+**Unadmitted toolsets were left enabled on a node reporting healthy.** The
+reconciler fetches the runtime's toolset catalogue immediately after restarting
+it, and a single failed attempt yielded an empty catalogue, which it treats as
+"nothing to suppress" — so `agent.disabled_toolsets` was never written. The fetch
+is retried now, and when it genuinely cannot read the catalogue it says so
+instead of enforcing nothing quietly. This was misdiagnosed twice from logs
+before instrumenting the assertion answered it in one run; that instrumentation
+stays.
+
+Also fixed, each with a regression test: three unguarded writes that let a worker
+whose lease had lapsed overwrite the run or document its replacement had taken
+over; an open redirect where `/\evil.example` resolved cross-origin immediately
+after a successful SSO; the tooling routes bypassing the forced-password-change
+gate, so the installer's temporary password minted a permanent MCP token;
+recovery-kit export reachable with `readiness:manage`, an OPERATIONS_ADMIN scope,
+while the route beside it required `readiness:approve`.
+
+Two installer defects that only a real install could show: **the embedding model
+was seeded before the secrets its container mounts**, so every fresh install
+silently shipped without BGE-M3 and blamed the network; and **nginx's 1 MB
+default capped a documented 50 MB upload**, so knowledge ingest worked under the
+dev proxy and failed behind the container. The VM1 lifecycle test asserted
+neither, and now does.
+
+Rounding out the installer: the state-root guard accepted `///etc` (the earlier
+trailing-slash fix closed one shape of the same hole), and the decommissioner's
+ownership proof is now a marker the installer writes only after installing and
+pin-verifying the runtime — captured before the purge begins, and accepting the
+unit marker so nodes enrolled before this release can still be decommissioned.
+
+Not everything the audit reported was true. A claim that the unit's
+`ReadOnlyPaths` would fail before its directory exists was **refuted** with a
+probe unit. A benchmark `fail()` finding was **downgraded** after tracing that
+every call site holds its own lease. And several fixes in this release were wrong
+on the first attempt — a document guard that matched anyway because deleting does
+not clear the lease, a status guard that discarded every cancelled run's scores,
+an ownership proof that fired on exactly the case it was written to protect.
+Each was caught by writing the test before believing the fix, and by reverting
+the fix to confirm the test could still fail.
+
+Deliberately deferred, unchanged: the SIEM commit-order watermark, the chat
+`fork` ordinal collision, installation-key rotation, `X-Forwarded-Proto`
+spoofing, the drizzle snapshot gap, compose hardening, and the dead-code
+inventory. All are reproduced and documented rather than guessed at.
+
+Five agents swept the tree independently — dead code, migration leftovers, shell
+bugs, TypeScript bugs, and things that do not belong — and every finding was
+re-verified against the code before being believed. One was **refuted**: a
+claim that the unit's `ReadOnlyPaths=/etc/hermes` would fail with
+`226/NAMESPACE` before step 6 creates that directory. A probe unit pointed at a
+non-existent path started fine; systemd tolerates it. It is recorded here
+because the verification is the point — the same pass produced a "bash ignores
+`set -e`" result that turned out to be Git Bash eating `$?` through the WSL
+call, and both would have been shipped as fact.
+
+**The resume path had never once been executed, and it was broken.**
+`control_plane_key` was assigned only inside the fresh-enrolment branch and read
+unconditionally two steps later, so `set -u` aborted every resumed install with
+a raw `unbound variable`. An install interrupted after enrolment — a network
+blip during step 6 is enough — left Hermes installed, enrolled, and permanently
+offline, with every retry failing identically. The recovery journal exists for
+exactly this case and defeated itself. Both smoke tests installed fresh; the
+recovery test only ever called `validate_resume_state`. The smoke test now
+reconstructs a receipt from what a real interrupted host would still hold and
+resumes through it, asserting the pinned signing key comes back — without which
+the node could never verify a desired-state document again.
+
+**The decommissioner destroyed Hermes installations it did not install.**
+Ownership was proved only by the absence of an objection: the guard returned
+success when no unit file existed, and the mere presence of
+`/usr/local/lib/hermes-agent` was taken as evidence. Hermes's own installer
+defaults to that exact path, so a self-installed one is indistinguishable by
+location — and the installer actively steers people into it, refusing to enrol a
+host that already has Hermes and telling them to decommission first. Following
+that instruction destroyed their own installation. Deletion now requires
+positive proof: our marker in the unit, or a node identity in the state root.
+
+Six more, each confirmed twice:
+
+- **`validate_state_root` accepted `/var/`, `/etc/`, `/opt/`.** The glob `/*/*`
+  matches a trailing empty component, so a typo'd state root reached
+  `rm -rf --one-file-system`. The installer had no such check at all and would
+  have re-permissioned the directory to 0711 on the way in; it does now.
+- **The gateway key was in `curl`'s argv every five minutes**, readable by any
+  local account through `ps` — the same credential ai-v1.83.0 deliberately kept
+  out of the 0644 unit file. It goes in through a 0600 config file now.
+- **Deleting a document mid-ingestion resurrected it.** The finishing worker
+  wrote READY back over DELETED and re-indexed the text; because every read
+  filters on status rather than `deletedAt`, it reappeared in the dashboard. The
+  first attempt at this fix was **wrong** — guarding on the lease owner alone
+  still matched, because deleting does not clear the lease — and the new test
+  caught it. The guard asserts status *and* owner.
+- **Heartbeats consumed the operator concurrency token.** `revision` is what
+  `mutate` matches on, and a node bumps it every minute, so any dashboard tab
+  open longer than that failed its first Drain/Suspend/**Revoke** with a 409.
+  Liveness is not an operator edit.
+- **A malformed node id returned 500 instead of 401.** Bodies were
+  schema-validated, path parameters were not, so a non-UUID reached a `uuid`
+  column and PostgreSQL's 22P02 surfaced through `sendError`'s rethrow — on
+  routes that take no credentials.
+- **The desired-state timer lost its state root.** The unit carried no
+  `Environment=`, so a non-default install reconciled once during installation
+  and then silently exited 0 every tick forever, reporting success while no
+  admitted toolset was ever applied.
+
+Also: a benchmark run cancelled during its final case was overwritten as
+COMPLETED with a full pass rate and would have been accepted as a PASSED
+promotion gate; `stopped()` documented lease-theft detection it did not
+implement; `startRun` counted-then-inserted with no advisory lock while its
+sibling took one; an administrator's memory deletion was recorded in the audit
+trail as the owner's, through `principal.ownerSubject ? "USER" : "USER"`; and
+the VM1 installer's log claimed `status=0` for every run including failed ones,
+which is the artifact support asks for.
+
+Four regression tests, each mutation-checked by reinstating the bug and
+confirming the test fails. Operator-facing text that still promised things about
+Docker — the dashboard's removal steps, the installer's completion panel, the
+architecture diagram — now matches what the software does.
+
+Deliberately **not** done, and left as debt rather than churned before a pilot
+install: five inert CSS classes, ~19 dead CSS rules, a dead
+`packages/knowledge/src/ingestion.ts`, 27 unused contract type aliases, and a
+long list of duplication (seven copies of a UUID regex, three of the node
+request signing). None are defects. `SystemCallFilter=` remains absent for the
+reason given in ai-v1.83.0.
+
 ## ai-v1.83.0 — 2026-08-08
 
 VM2 runs Hermes as a systemd service. The container is gone.

@@ -101,6 +101,35 @@ describe("the installer generator", () => {
   });
 });
 
+describe("typing in a dialog", () => {
+  it("keeps focus in the field across the re-renders typing causes", async () => {
+    // Every overlay call site passes an inline `onClose` arrow, so it is a new
+    // function each render — and typing into a dialog field re-renders the
+    // component that owns the dialog. While the focus-trap effect depended on
+    // `onClose`, it tore down per keystroke: the cleanup restored focus to the
+    // element that opened the dialog and the new run pulled it to the panel's
+    // first focusable. Only the first character of any value could be typed,
+    // which made every dialog form unusable — VM2 enrollment included.
+    await panel();
+    fireEvent.click(screen.getByRole("button", { name: "Generate VM2 installer" }));
+    const dialog = await screen.findByRole("dialog");
+    // Let the dialog's own opening focus land first. Measuring before that
+    // frame runs conflates "the overlay focused itself on open", which is
+    // correct behaviour, with "the overlay stole focus while typing".
+    await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+    const address = within(dialog).getByLabelText(/VM2 private address/) as HTMLInputElement;
+    address.focus();
+
+    for (const typed of ["h", "ht", "htt", "http"]) {
+      fireEvent.change(address, { target: { value: typed } });
+      await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+    }
+
+    expect(document.activeElement, "focus left the field while typing").toBe(address);
+    expect(address.value).toBe("http");
+  });
+});
+
 describe("the production artifact pin", () => {
   // The runtime is pinned to a git commit rather than an image digest, and the
   // 40-hex test is dashboard-only logic: the API refuses an unpinned PRODUCTION

@@ -28,7 +28,12 @@ function secureRequest(request: FastifyRequest): boolean {
 }
 
 function safeReturnTo(value: unknown): string {
-  return typeof value === "string" && value.length <= 500 && /^\/(?!\/)[^\r\n]*$/.test(value)
+  // The second character must be neither `/` nor `\`. Blocking only `//` is not
+  // enough: browsers treat `/\host` as scheme-relative for special schemes, so
+  // `/\evil.example` resolved to `https://evil.example/` — an off-site redirect
+  // handed to the user at the moment they complete a genuine corporate SSO,
+  // which is the most convincing possible setup for a credential-replay page.
+  return typeof value === "string" && value.length <= 500 && /^\/(?![/\\])[^\r\n]*$/.test(value)
     ? value
     : "/";
 }

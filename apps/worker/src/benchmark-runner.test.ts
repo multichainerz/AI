@@ -253,6 +253,81 @@ describe("claiming and executing", () => {
     expect(stored?.passRate).toBeNull();
   });
 
+  it("does not write over a run whose lease another worker took", async () => {
+    // stopped() reports true for two different reasons: an operator cancelled,
+    // or this worker lost the lease. Only the first should record partial
+    // results. Writing on the second nulls the new holder's lease and replaces
+    // its results with a partial set, which hands the run to a third worker.
+    const suite = await seedSuite([
+      singleCase,
+      { ...singleCase, id: "second-question", prompt: "And after that?" },
+    ]);
+    const queued = await queueRun(suite, { totalCases: 2 });
+    const thief = randomUUID();
+    const execute = vi.fn(async () => {
+      await context.database
+        .update(benchmarkRun)
+        .set({ leaseOwner: thief, leaseExpiresAt: new Date(Date.now() + 300_000) })
+        .where(eq(benchmarkRun.id, queued.id));
+      return output();
+    });
+
+    await new BenchmarkRunner(context.database, { execute }).runNext(WORKER);
+
+    const [stored] = await context.database.select().from(benchmarkRun).where(eq(benchmarkRun.id, queued.id));
+    expect(stored?.leaseOwner, "the new holder's lease was cleared").toBe(thief);
+    expect(stored?.status).toBe("RUNNING");
+  });
+
+  it("does not complete a run whose lease another worker holds", async () => {
+    // complete() guards on status but not on ownership, unlike renewLease and
+    // recordCancelled beside it. A single-case suite gives no top-of-loop check
+    // after the case, so a worker that lost its lease mid-case still reaches
+    // complete(), matches on id + RUNNING, and writes COMPLETED with a full
+    // pass rate over the run its replacement owns -- which attachEvidence then
+    // accepts as a PASSED promotion gate.
+    const suite = await seedSuite([singleCase]);
+    const queued = await queueRun(suite, { totalCases: 1 });
+    const thief = randomUUID();
+    const execute = vi.fn(async () => {
+      await context.database
+        .update(benchmarkRun)
+        .set({ leaseOwner: thief, leaseExpiresAt: new Date(Date.now() + 300_000) })
+        .where(eq(benchmarkRun.id, queued.id));
+      return output();
+    });
+
+    await new BenchmarkRunner(context.database, { execute }).runNext(WORKER);
+
+    const [stored] = await context.database.select().from(benchmarkRun).where(eq(benchmarkRun.id, queued.id));
+    expect(stored?.status, "a dispossessed worker completed the new holder's run").toBe("RUNNING");
+    expect(stored?.leaseOwner, "the new holder's lease was cleared").toBe(thief);
+  });
+
+  it("does not resurrect a run cancelled during its final case", async () => {
+    // The cancel check runs at the top of each iteration, so one landing during
+    // the last case is never seen by the loop. `complete()` then wrote the
+    // terminal row with no status guard — turning the run an operator stopped
+    // into a COMPLETED one with a full pass rate, which `attachEvidence` will
+    // accept as a PASSED promotion gate. A single-case suite is the whole
+    // window, and it is the shape a smoke suite most often has.
+    const suite = await seedSuite([singleCase]);
+    const queued = await queueRun(suite, { totalCases: 1 });
+    const execute = vi.fn(async () => {
+      await context.database
+        .update(benchmarkRun)
+        .set({ status: "CANCELLED", completedAt: new Date() })
+        .where(eq(benchmarkRun.id, queued.id));
+      return output();
+    });
+
+    await new BenchmarkRunner(context.database, { execute }).runNext(WORKER);
+
+    const [stored] = await context.database.select().from(benchmarkRun).where(eq(benchmarkRun.id, queued.id));
+    expect(stored?.status).toBe("CANCELLED");
+    expect(stored?.passRate).toBeNull();
+  });
+
   it("publishes progress as it goes, so a crash costs the remaining cases only", async () => {
     const suite = await seedSuite([
       singleCase,

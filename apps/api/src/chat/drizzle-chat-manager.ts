@@ -32,7 +32,6 @@ import {
   type OrcaSynapseDatabase,
 } from "@orcasynapse/database";
 import { and, asc, count, desc, eq, gt, gte, inArray, isNotNull, isNull, ne, sql, type SQL } from "drizzle-orm";
-import { increment } from "../database-support.js";
 import type { AgentManager, AgentPrincipal } from "../agents/agent-manager.js";
 import { inspectInputText } from "../guardrails/runtime-policy.js";
 import {

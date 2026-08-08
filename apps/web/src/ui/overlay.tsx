@@ -28,6 +28,20 @@ const FOCUSABLE =
 
 function useOverlayBehaviour(open: boolean, onClose: () => void) {
   const panel = useRef<HTMLDivElement>(null);
+  // Held in a ref so the effect below depends only on `open`.
+  //
+  // Every call site passes an inline arrow, so `onClose` is a new function on
+  // each render of the component owning the overlay -- and typing into a field
+  // inside the overlay re-renders exactly that component. With `onClose` in the
+  // dependency array the effect tore down and re-ran per keystroke: the cleanup
+  // returned focus to whatever opened the dialog, and the new run pulled it to
+  // the panel's first focusable. The result was that only the first character
+  // of any value could be typed, and every dialog form in the product -- VM2
+  // enrollment included -- was impossible to complete.
+  const latestOnClose = useRef(onClose);
+  useEffect(() => {
+    latestOnClose.current = onClose;
+  }, [onClose]);
 
   useEffect(() => {
     if (!open) return;
@@ -36,7 +50,7 @@ function useOverlayBehaviour(open: boolean, onClose: () => void) {
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        onClose();
+        latestOnClose.current();
         return;
       }
       if (event.key !== "Tab" || !panel.current) return;
@@ -65,7 +79,7 @@ function useOverlayBehaviour(open: boolean, onClose: () => void) {
       document.removeEventListener("keydown", onKeyDown);
       previousFocus?.focus();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   return panel;
 }

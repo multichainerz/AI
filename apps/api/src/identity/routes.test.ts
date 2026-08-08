@@ -104,6 +104,27 @@ describe("enterprise identity routes", () => {
     expect(manager.startLogin).toHaveBeenCalledWith("/", expect.any(Object));
   });
 
+  it("rejects backslash forms that browsers resolve off-site", async () => {
+    // Blocking `//host` alone was not enough: browsers treat `/\host` as
+    // scheme-relative, so `new URL("/\\evil.example", origin)` yields
+    // https://evil.example/. That redirect fires the instant a user completes a
+    // genuine corporate SSO, which is the ideal setup for credential replay.
+    for (const hostile of ["%2F%5Cevil.example", "%2F%5C%5Cevil.example", "%2F%5C%2Fevil.example"]) {
+      const manager = memoryIdentityManager();
+      const app = await identityApp(manager);
+      await app.inject({ method: "GET", url: `/api/v1/auth/oidc/start?returnTo=${hostile}` });
+      expect(manager.startLogin, `returnTo=${hostile}`).toHaveBeenCalledWith("/", expect.any(Object));
+      await app.close();
+    }
+  });
+
+  it("still accepts an ordinary in-app path", async () => {
+    const manager = memoryIdentityManager();
+    const app = await identityApp(manager);
+    await app.inject({ method: "GET", url: "/api/v1/auth/oidc/start?returnTo=%2Fchat%3Ftab%3D1" });
+    expect(manager.startLogin).toHaveBeenCalledWith("/chat?tab=1", expect.any(Object));
+  });
+
   it("exchanges the callback for an opaque enterprise session cookie", async () => {
     const manager = memoryIdentityManager();
     const app = await identityApp(manager);

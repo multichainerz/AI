@@ -6,7 +6,7 @@ import type {
   PromptTemplateList,
   UpdatePromptTemplate,
 } from "@orcasynapse/contracts";
-import { and, arrayContains, asc, desc, eq, ne, sql } from "drizzle-orm";
+import { and, arrayContains, asc, desc, eq, ne } from "drizzle-orm";
 import {
   auditEvent,
   evaluationRun,

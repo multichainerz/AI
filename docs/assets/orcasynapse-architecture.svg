@@ -80,5 +80,5 @@
   <!-- VM1 -.-> SIEM -->
   <line x1="582" y1="457" x2="696" y2="457" stroke="#6b7a8f" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#headMuted)"/>
 
-  <text x="600" y="524" fill="#6b7a8f" font-size="13" text-anchor="middle">Inference credentials never leave VM1 · Hermes never reaches PostgreSQL, Docker, or the open network</text>
+  <text x="600" y="524" fill="#6b7a8f" font-size="13" text-anchor="middle">Inference credentials never leave VM1 · Hermes never reaches PostgreSQL, host service control, or the open network</text>
 </svg>

@@ -32,8 +32,7 @@ import {
   toolRuntimeControl,
   type OrcaSynapseDatabase,
 } from "@orcasynapse/database";
-import { and, asc, count, desc, eq, gt, inArray, isNull, lte, sql } from "drizzle-orm";
-import { advisoryLock } from "../database-support.js";
+import { and, asc, count, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 import {
   ToolingConflictError,
   ToolingDeniedError,

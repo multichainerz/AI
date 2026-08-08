@@ -17,7 +17,11 @@ UI_BANNER_ACTIVITY="Establishing secure installation context"
 TOTAL_STEPS=7
 
 # Restore the cursor if an animated section is interrupted, and close the log.
-trap 'ui_show_cursor; ui_log "install finished status=$?"' EXIT
+#
+# $? is captured first: ui_show_cursor returns 0, so reading $? after it logged
+# "status=0" for every run including failed ones -- and this log is the artifact
+# an operator sends when an install goes wrong.
+trap 'orcasynapse_exit_status=$?; ui_show_cursor; ui_log "install finished status=${orcasynapse_exit_status}"' EXIT
 
 require_root() {
   if [[ "${EUID}" -ne 0 ]]; then
@@ -314,15 +318,7 @@ main() {
   run_with_progress "Build verified application images" docker compose build \
     || fail "application image build failed"
 
-  step 4 "${TOTAL_STEPS}" "Seed the local embedding model"
-  if run_with_progress "Download approved embedding weights" seed_embedding_model; then
-    success "Embedding weights are cached locally; retrieval works without internet access."
-  else
-    warning "The embedding model could not be downloaded now."
-    info "Knowledge upload and retrieval stay unavailable until this host can reach the model source once."
-  fi
-
-  step 5 "${TOTAL_STEPS}" "Protect installation secrets"
+  step 4 "${TOTAL_STEPS}" "Protect installation secrets"
   if all_secrets_exist; then
     success "Existing bootstrap material found and preserved."
   else
@@ -331,6 +327,14 @@ main() {
   fi
   protect_secret_files
   success "Secrets are host-protected and readable only by their intended container identities."
+
+  step 5 "${TOTAL_STEPS}" "Seed the local embedding model"
+  if run_with_progress "Download approved embedding weights" seed_embedding_model; then
+    success "Embedding weights are cached locally; retrieval works without internet access."
+  else
+    warning "The embedding model could not be downloaded now."
+    info "Knowledge upload and retrieval stay unavailable until this host can reach the model source once."
+  fi
 
   step 6 "${TOTAL_STEPS}" "Migrate PostgreSQL and start services"
   local postgres_volume_preexisted=0
