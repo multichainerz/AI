@@ -5,7 +5,41 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
-## ai-v1.86.0 — 2026-08-08
+## ai-v1.87.0 — 2026-08-08
+
+The front page. Signed-out users no longer see the workspace shell with locked
+panels — they see the design system's entrance: the violet hero stating what
+the product is (with the animated ingest-retrieve-serve diagram, every moving
+part a CSS class so `prefers-reduced-motion` stills the whole drawing in one
+rule), and a white card that signs them in. The shell renders only once a
+session exists.
+
+**All four ways in live on that card**: local administrator sign-in, offline
+recovery with the Installation Key, the forced password change a temporary
+password lands in, and the recovery reset. Enterprise SSO appears only when
+the deployment has OIDC configured. The page is deliberately theme-independent
+— an entrance, not a workspace — and the footer states the real
+`ORCASYNAPSE_VERSION`.
+
+**The connection drawer is now purely what its name says.** Its sign-in,
+recovery and password-change branches — the only reason a signed-out operator
+could ever reach it — moved out: the front page owns the signed-out world, and
+a new `AdminSignInDialog` owns elevation from inside the shell, because the
+one person who still meets a locked screen is an enterprise employee whose
+session opens Chat but not the governed areas, and sending them through the
+front page would sign them out. Five props and ninety lines of legacy form
+left the drawer.
+
+**No surface flashes.** Both session probes are awaited before anything
+renders — the enterprise probe used to be fire-and-forget, which was fine when
+the shell rendered regardless and would now flash the sign-in page at every
+employee on every reload. Until the answer arrives there is a beat of brand
+violet with the mark, never the wrong page.
+
+Verified live against the real API: the wrong-password path renders the
+server's own error on the card, and the failed attempt lands in the audit
+trail. 233 web tests (8 new in `front-page.test.tsx` covering every mode of
+the card).
 
 The first of five releases moving the dashboard onto the OrcaNeuron design
 system — the foundation: tokens, fonts, themes, primitives, and the shell.

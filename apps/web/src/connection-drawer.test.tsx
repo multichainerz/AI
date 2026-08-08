@@ -4,29 +4,15 @@
  * jsdom rather than node because the slug case below has to be typed: a
  * keystroke-by-keystroke rewrite is invisible to static markup.
  */
-import type { AdministratorSession } from "@orcasynapse/contracts";
 import type { ComponentProps } from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConnectionDrawer } from "./connection-drawer.js";
 
-const session: AdministratorSession = {
-  id: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d",
-  subject: "local:admin",
-  role: "PLATFORM_ADMIN",
-  scopes: ["connections:read", "connections:write"],
-  createdAt: new Date().toISOString(),
-  idleExpiresAt: new Date(Date.now() + 60_000).toISOString(),
-  absoluteExpiresAt: new Date(Date.now() + 120_000).toISOString(),
-  authenticationMethod: "LOCAL_PASSWORD",
-  passwordChangeRequired: false,
-};
-
 describe("ConnectionDrawer inference endpoint", () => {
   it("renders a guided discovery flow and keeps manual fields behind an advanced control", () => {
     const html = renderToStaticMarkup(<ConnectionDrawer
-      bootstrapState="READY"
       busy={false}
       connections={[]}
       monitoring={null}
@@ -34,7 +20,6 @@ describe("ConnectionDrawer inference endpoint", () => {
       diagnostic={null}
       initialKind="INFERENCE"
       open
-      session={session}
       revisionConnectionId={null}
       revisionHistory={null}
       onClose={vi.fn()}
@@ -43,13 +28,8 @@ describe("ConnectionDrawer inference endpoint", () => {
       onTest={vi.fn(async () => undefined)}
       onDiscoverInference={vi.fn(async () => null)}
       onUpdateMonitoring={vi.fn(async () => undefined)}
-      onLogin={vi.fn(async () => true)}
-      onStartRecovery={vi.fn(async () => true)}
-      onChangePassword={vi.fn(async () => true)}
-      onRecover={vi.fn(async () => true)}
       onLoadRevisions={vi.fn(async () => undefined)}
       onRollback={vi.fn(async () => undefined)}
-      onSignOut={vi.fn(async () => undefined)}
     />);
 
     expect(html).toContain("Connect a model server");
@@ -67,14 +47,12 @@ describe("ConnectionDrawer inference endpoint", () => {
 });
 
 const props: Omit<ComponentProps<typeof ConnectionDrawer>, "initialKind"> = {
-  bootstrapState: "READY",
   busy: false,
   connections: [],
   monitoring: null,
   error: null,
   diagnostic: null,
   open: true,
-  session,
   revisionConnectionId: null,
   revisionHistory: null,
   onClose: vi.fn(),
@@ -83,13 +61,8 @@ const props: Omit<ComponentProps<typeof ConnectionDrawer>, "initialKind"> = {
   onTest: vi.fn(async () => undefined),
   onDiscoverInference: vi.fn(async () => null),
   onUpdateMonitoring: vi.fn(async () => undefined),
-  onLogin: vi.fn(async () => true),
-  onStartRecovery: vi.fn(async () => true),
-  onChangePassword: vi.fn(async () => true),
-  onRecover: vi.fn(async () => true),
   onLoadRevisions: vi.fn(async () => undefined),
   onRollback: vi.fn(async () => undefined),
-  onSignOut: vi.fn(async () => undefined),
 };
 
 /**

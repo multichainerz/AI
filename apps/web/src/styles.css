@@ -822,6 +822,46 @@ strong, .metrics dd, output, time, td, th { font-variant-numeric: tabular-nums; 
 .anim-rise { animation: on-rise 0.3s ease both; }
 .anim-live { animation: live-pulse 2s ease-in-out infinite; }
 .anim-shine { animation: ask-shine 5.4s ease-in-out infinite; }
+
+/*
+ * The front page's network diagram. Every moving part is a class so the
+ * reduced-motion rule below can still the whole drawing at once; the SVG
+ * carries no inline style, per `style-src 'self'`.
+ */
+@keyframes orb-dash { to { stroke-dashoffset: -340; } }
+@keyframes orb-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-9px); } }
+@keyframes orb-scan {
+  0% { transform: translateY(0); opacity: 0; }
+  12% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { transform: translateY(74px); opacity: 0; }
+}
+@keyframes orb-travel {
+  0% { transform: translateX(0); opacity: 0; }
+  12% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { transform: translateX(62px); opacity: 0; }
+}
+@keyframes orb-pulse {
+  0%, 100% { opacity: 0.34; transform: scale(1); }
+  50% { opacity: 0.62; transform: scale(1.09); }
+}
+@keyframes orb-core { 0%, 100% { r: 9; opacity: 0.9; } 50% { r: 11.5; opacity: 1; } }
+@keyframes orb-spin { to { transform: rotate(360deg); } }
+@keyframes orb-blink { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+.orb-dash { animation: orb-dash 22s linear infinite; }
+.orb-float { animation: orb-float 7s ease-in-out infinite; }
+.orb-scan { animation: orb-scan 2.6s ease-in-out infinite; }
+.orb-travel { animation: orb-travel 2.8s linear infinite; }
+.orb-travel-late { animation-delay: -1.4s; }
+.orb-pulse { animation: orb-pulse 3.4s ease-in-out infinite; transform-origin: 246px 128px; }
+.orb-core { animation: orb-core 2.2s ease-in-out infinite; }
+.orb-spin { animation: orb-spin 14s linear infinite; transform-origin: 246px 128px; }
+.orb-blink { animation: orb-blink 1.8s ease-in-out infinite; }
+.orb-blink-late { animation-delay: -0.6s; }
+.orb-blink-later { animation-delay: -1.2s; }
+
 @media (prefers-reduced-motion: reduce) {
-  .anim-rise, .anim-live, .anim-shine { animation: none; }
+  .anim-rise, .anim-live, .anim-shine,
+  .orb-dash, .orb-float, .orb-scan, .orb-travel, .orb-pulse, .orb-core, .orb-spin, .orb-blink { animation: none; }
 }

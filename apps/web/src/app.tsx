@@ -42,8 +42,10 @@ import {
   updateConnection,
   updateConnectionMonitoring,
 } from "./api.js";
+import { AdminSignInDialog } from "./admin-sign-in-dialog.js";
 import { ConnectionDrawer, type ConnectionDraft } from "./connection-drawer.js";
 import { connectionReadiness } from "./connection-readiness.js";
+import { FrontPage } from "./front-page.js";
 import { HomeView, type HomeLayer, type HomeReadinessCheck } from "./home-view.js";
 import { connectionFor, deriveWorkspaceReadiness } from "./platform-readiness.js";
 import { MicroLabel, cn } from "./ui/index.js";
@@ -175,6 +177,11 @@ function App() {
   const [managedConnections, setManagedConnections] = useState<ServiceConnectionSummary[]>([]);
   const [connectionMonitoring, setConnectionMonitoring] = useState<ConnectionMonitoringControl | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [signInOpen, setSignInOpen] = useState(false);
+  // False until both session probes have answered once. The front page and the
+  // shell are mutually exclusive surfaces, so rendering either before the
+  // answer arrives shows the wrong one for a beat on every reload.
+  const [sessionRestored, setSessionRestored] = useState(false);
   const [drawerKind, setDrawerKind] = useState<ServiceKind>("INFERENCE");
   const [deploymentInitialTab, setDeploymentInitialTab] = useState<"journey" | "nodes" | "readiness">("journey");
   const [settingsBusy, setSettingsBusy] = useState(false);
@@ -225,7 +232,14 @@ function App() {
     let active = true;
     const generation = sessionGeneration.current;
     const restoreSession = async () => {
-      void getOidcStatus()
+      /*
+       * Both probes are awaited before `sessionRestored` flips, because the
+       * front page renders the moment no session exists: an enterprise
+       * employee whose probe was still in flight would see the sign-in page
+       * flash before the workspace replaced it. The enterprise chain used to
+       * be fire-and-forget when the shell rendered regardless.
+       */
+      const enterpriseRestore = getOidcStatus()
         .then((status) => {
           if (!active || sessionGeneration.current !== generation) return;
           setOidcStatus(status);
@@ -233,7 +247,7 @@ function App() {
             setEnterpriseSession(null);
             return;
           }
-          void getEnterpriseSession()
+          return getEnterpriseSession()
             .then((session) => {
               if (active && sessionGeneration.current === generation) setEnterpriseSession(session);
             })
@@ -246,10 +260,7 @@ function App() {
         const session = await getAdministratorSession();
         if (!active || sessionGeneration.current !== generation) return;
         setAdminSession(session);
-        if (session.passwordChangeRequired) {
-          setDrawerOpen(true);
-          return;
-        }
+        if (session.passwordChangeRequired) return;
         try {
           const connections = await getConnections();
           if (active && sessionGeneration.current === generation) {
@@ -272,6 +283,9 @@ function App() {
         }
       } catch {
         if (active && sessionGeneration.current === generation) setAdminSession(null);
+      } finally {
+        await enterpriseRestore.catch(() => undefined);
+        if (active && sessionGeneration.current === generation) setSessionRestored(true);
       }
     };
     void restoreSession();
@@ -447,6 +461,15 @@ function App() {
   ];
 
   const openConnectionSettings = (kind: ServiceKind = "INFERENCE") => {
+    // Without an unlocked administrator session the drawer has nothing to
+    // offer — its sign-in branch moved to the front page — so the ask becomes
+    // elevation: the dialog raises an administrator session beside the
+    // enterprise one, and the operator clicks their way back in.
+    if (!unlocked) {
+      setSettingsError(null);
+      setSignInOpen(true);
+      return;
+    }
     if (kind === "HERMES") {
       setDrawerOpen(false);
       selectView("Deployment", "nodes");
@@ -479,16 +502,14 @@ function App() {
       createdSession = true;
       if (sessionGeneration.current !== generation) return false;
       setAdminSession(session);
-      if (session.passwordChangeRequired) {
-        setDrawerOpen(true);
-        return true;
-      }
+      // A temporary password flips `passwordChangePending`, and the whole app
+      // swaps to the front page's change form on that flag alone.
+      if (session.passwordChangeRequired) return true;
       const response = await getConnections();
       if (sessionGeneration.current !== generation) return false;
       setManagedConnections(response.items);
       void getConnectionMonitoring().then(setConnectionMonitoring).catch(() => setConnectionMonitoring(null));
       void getChatMetrics().then(setChatMetrics).catch(() => setChatMetrics(null));
-      if (activeView === "Operations") setDrawerOpen(false);
       return true;
     } catch (error) {
       if (createdSession) await revokeAdministratorSession().catch(() => undefined);
@@ -712,6 +733,38 @@ function App() {
 
   const activeArea = productAreaForView(activeView);
 
+  /*
+   * Three mutually exclusive surfaces, decided only once the session probes
+   * have answered: the splash (a beat of brand violet, never the wrong page),
+   * the front page (no session at all, or a session that must change its
+   * password before it counts), and the workspace shell. Enterprise-only
+   * sessions get the shell exactly as before — the front page is strictly the
+   * signed-out and must-change surface.
+   */
+  if (!sessionRestored) {
+    return (
+      <div className="grid min-h-screen place-items-center bg-brand" aria-busy="true">
+        <BrandMark size={44} />
+      </div>
+    );
+  }
+
+  if ((!adminSession && !enterpriseSession) || passwordChangePending) {
+    return (
+      <FrontPage
+        bootstrapState={bootstrapState}
+        busy={settingsBusy}
+        error={settingsError}
+        oidcConfigured={oidcStatus?.configured === true}
+        session={adminSession}
+        onLogin={loginAdministrator}
+        onStartRecovery={startAdministratorRecovery}
+        onChangePassword={changeAdministratorPassword}
+        onRecover={recoverAdministrator}
+      />
+    );
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar" aria-label="OrcaSynapse navigation">
@@ -914,7 +967,7 @@ function App() {
               layers={platformLayers}
               readiness={readinessChecks}
               onSelect={selectView}
-              onUnlock={() => setDrawerOpen(true)}
+              onUnlock={() => setSignInOpen(true)}
             />
           ),
         } satisfies Record<ActiveView, () => ReactNode>)[activeView]()}
@@ -922,7 +975,6 @@ function App() {
       </main>
 
       <ConnectionDrawer
-        bootstrapState={bootstrapState}
         busy={settingsBusy}
         connections={managedConnections}
         monitoring={connectionMonitoring}
@@ -930,24 +982,24 @@ function App() {
         error={settingsError}
         initialKind={drawerKind}
         open={drawerOpen}
-        session={adminSession}
         revisionConnectionId={revisionConnectionId}
         revisionHistory={revisionHistory}
-        onClose={() => {
-          if (!adminSession?.passwordChangeRequired) setDrawerOpen(false);
-        }}
+        onClose={() => setDrawerOpen(false)}
         onOpenAgenticSystem={() => openConnectionSettings("HERMES")}
         onSave={saveConnection}
         onTest={runConnectionTest}
         onDiscoverInference={discoverInference}
         onUpdateMonitoring={saveConnectionMonitoring}
-        onLogin={loginAdministrator}
-        onStartRecovery={startAdministratorRecovery}
-        onChangePassword={changeAdministratorPassword}
-        onRecover={recoverAdministrator}
         onLoadRevisions={loadRevisions}
         onRollback={restoreRevision}
-        onSignOut={signOut}
+      />
+      <AdminSignInDialog
+        open={signInOpen}
+        busy={settingsBusy}
+        error={settingsError}
+        onClose={() => setSignInOpen(false)}
+        onLogin={loginAdministrator}
+        onStartRecovery={startAdministratorRecovery}
       />
     </div>
   );
