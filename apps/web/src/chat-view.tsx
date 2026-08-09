@@ -12,6 +12,7 @@ import type {
 import { applyStreamEventToConversation } from "./chat-stream-reducer.js";
 import { MarkdownMessage } from "./chat/markdown-message.js";
 import { groupConversationsByDate } from "./chat/conversation-groups.js";
+import { groupRuntimeEvents } from "./chat/timeline.js";
 import { COMPOSER_ZONE, THREAD_MEASURE, THREAD_SCROLLER } from "./chat/measure.js";
 import { shouldStickToBottom } from "./chat/stick-to-bottom.js";
 import { usePacedStream } from "./chat/use-paced-stream.js";
@@ -1285,14 +1286,20 @@ export function ChatView({
                             {message.runtimeEvents.length} event{message.runtimeEvents.length === 1 ? "" : "s"}
                           </span>
                         </header>
-                        <ol className="m-0 grid list-none p-0">{message.runtimeEvents.map((runtimeEvent) => {
-                          const kind = runtimeEvent.type.startsWith("TOOL_") ? "tool"
-                            : runtimeEvent.type.startsWith("SUBAGENT_") ? "subagent"
-                              : runtimeEvent.type === "APPROVAL_REQUIRED" ? "approval" : "lifecycle";
+                        <ol className="m-0 grid list-none p-0">{groupRuntimeEvents(message.runtimeEvents).map((entry) => {
+                          const kind = entry.kind;
+                          /*
+                           * The newest event carries the detail worth showing --
+                           * a completion's preview, a failure's code -- while
+                           * the entry carries what the call *is*. Rendering the
+                           * raw list instead gave one tool call four rows and
+                           * no way to tell which progress belonged to it.
+                           */
+                          const runtimeEvent = entry.events[entry.events.length - 1]!;
                           return (
                             <li
                               className="grid min-w-0 grid-cols-[26px_minmax(0,1fr)] gap-2.5 border-t border-border px-3 py-2.5 first:border-t-0"
-                              key={runtimeEvent.id}
+                              key={entry.key}
                             >
                               <span
                                 aria-hidden="true"
@@ -1308,10 +1315,22 @@ export function ChatView({
                               <div className="min-w-0">
                                 <div className="flex items-center justify-between gap-2.5">
                                   <strong className="min-w-0 truncate text-caption font-semibold text-text">
-                                    {runtimeEvent.toolName ?? (kind === "subagent" ? "Hermes subagent" : runtimeEventLabel(runtimeEvent.type))}
+                                    {kind === "tool" ? entry.label
+                                      : kind === "subagent" ? "Hermes subagent"
+                                        : runtimeEventLabel(runtimeEvent.type)}
                                   </strong>
-                                  <StatusText className="shrink-0">
-                                    {runtimeEvent.status ?? runtimeEventLabel(runtimeEvent.type)}
+                                  <StatusText
+                                    className="shrink-0"
+                                    tone={entry.status === "failed" ? "bad" : entry.status === "completed" ? "good" : "accent"}
+                                    dot={entry.status === "running"}
+                                  >
+                                    {/* The call's own state, not the last
+                                        event's label: a call that failed reads
+                                        as failed even though its final event is
+                                        just one more row. */}
+                                    {entry.status === "running" && entry.events.length > 1
+                                      ? `${entry.events.length} steps`
+                                      : entry.status}
                                   </StatusText>
                                 </div>
                                 {(runtimeEvent.preview || runtimeEvent.summary) && (
@@ -1320,7 +1339,7 @@ export function ChatView({
                                   </p>
                                 )}
                                 <small className="block font-mono text-micro text-faint">{[
-                                  formatRuntimeDuration(runtimeEvent.durationMs),
+                                  formatRuntimeDuration(entry.durationMs),
                                   runtimeEvent.inputTokens === null ? null : `${runtimeEvent.inputTokens.toLocaleString()} in`,
                                   runtimeEvent.outputTokens === null ? null : `${runtimeEvent.outputTokens.toLocaleString()} out`,
                                   runtimeEvent.reasoningTokens === null ? null : `${runtimeEvent.reasoningTokens.toLocaleString()} reasoning`,
