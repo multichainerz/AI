@@ -12,6 +12,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FrontPage } from "./front-page.js";
+import { applyTheme } from "./theme.js";
 
 const handlers = () => ({
   onLogin: vi.fn(async () => true),
@@ -42,9 +43,50 @@ function changeSession(method: AdministratorSession["authenticationMethod"]): Ad
   };
 }
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  applyTheme("dark");
+});
 
 describe("signing in from the front page", () => {
+  it("switches the persisted page backdrop between dark and light", async () => {
+    const user = userEvent.setup();
+    render(<FrontPage {...base} {...handlers()} />);
+    const theme = screen.getByRole("switch", { name: "Light appearance" });
+
+    expect(theme.getAttribute("aria-checked")).toBe("false");
+    await user.click(theme);
+    expect(theme.getAttribute("aria-checked")).toBe("true");
+    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
+    expect(window.localStorage.getItem("orcasynapse.theme")).toBe("light");
+  });
+
+  it("presents OrcaSynapse as a governed agentic harness rather than an OCR pipeline", () => {
+    const { container } = render(<FrontPage {...base} {...handlers()} />);
+
+    expect(screen.getByRole("heading", { name: "Dynamic intelligence, orchestrated into action." })).toBeTruthy();
+    expect(screen.getByText(/coordinates models, knowledge, memory, policy, and tools/i)).toBeTruthy();
+    expect(screen.getByLabelText(/agentic workflow coordinates intelligence and action/i)).toBeTruthy();
+    expect(container.textContent).toContain("AGENTIC HARNESS");
+    expect(container.textContent).not.toContain("OCR + RETRIEVAL");
+    expect(container.textContent).not.toMatch(/Governed agentic workflows|Plan and reason|Use governed tools|Retain context|Act with oversight/);
+  });
+
+  it("carries the shared static synapse field behind the sign-in surface", () => {
+    const { container } = render(<FrontPage {...base} {...handlers()} />);
+    const page = container.querySelector(".front-page");
+    const presentation = container.querySelector(".front-page__presentation");
+    const field = container.querySelector("svg.dashboard-synapse--front-page");
+
+    expect(page?.firstElementChild).toBe(field);
+    expect(presentation?.contains(field)).toBe(false);
+    expect(field).toBeTruthy();
+    expect(field?.getAttribute("aria-hidden")).toBe("true");
+    expect(field?.getAttribute("focusable")).toBe("false");
+    expect(field?.querySelectorAll(".dashboard-synapse__node")).toHaveLength(43);
+    expect(field?.querySelector("[class*='synapse__signal']")).toBeNull();
+  });
+
   it("sends the typed credentials to the local sign-in handler", async () => {
     const user = userEvent.setup();
     const on = handlers();

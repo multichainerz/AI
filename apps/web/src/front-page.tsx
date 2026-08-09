@@ -1,22 +1,25 @@
 import type { AdministratorSession } from "@orcasynapse/contracts";
 import { ORCASYNAPSE_VERSION } from "@orcasynapse/contracts";
 import { useState, type FormEvent } from "react";
+import { SynapseField } from "./dashboard-hero.js";
+import { currentTheme, toggleTheme, type Theme } from "./theme.js";
 
 /**
  * The pre-auth front page, from the OrcaNeuron design system: a violet hero
- * stating what the product is, and a white card that signs the operator in.
+ * presenting the private agentic harness, and a white card that signs the
+ * operator in.
  * Nobody sees the workspace shell without a session any more — this page is
  * the whole signed-out surface, replacing the sign-in branch that used to
  * live inside the connection drawer.
  *
- * Deliberately theme-independent. The design draws this page in fixed light
- * regardless of the dashboard theme — an entrance, not a workspace — so its
- * colours are literals rather than tokens, the same way the sidebar's brand
- * panel is. Every colour is a class, never an inline style (`style-src 'self'`).
+ * The outer field follows the persisted dashboard theme; the violet product
+ * panel and white authentication card stay fixed so their foreground contrast
+ * never shifts underneath the operator. Every colour is a class, never an
+ * inline style (`style-src 'self'`).
  *
  * Literal does not mean free-hand: each one on the white card is the *value*
- * of the matching light-theme token in `styles.css` (#EFF0ED bg, #F7F7F5
- * raised, #191A1C text, #6B6C74 muted, #93949C faint, #703DEF accent,
+ * of the matching light-theme token in `styles.css` (#F7F7F5 raised,
+ * #191A1C text, #6B6C74 muted, #93949C faint, #703DEF accent,
  * #A94E2C bad, #0E9BB5 node). Five had drifted a few units off — a page that
  * is almost the light theme reads as a rendering fault rather than a design,
  * so when a value here changes, copy it from the light block rather than
@@ -45,72 +48,87 @@ interface FrontPageProps {
 }
 
 /**
- * The network diagram from the design: documents scanned on the left, the
- * OCR + retrieval orb in the middle, the local servers on the right, all
- * framed by the dashed "internal network" boundary. Pure SVG with keyframe
- * classes from styles.css, so `prefers-reduced-motion` stills the whole
- * drawing in one rule.
+ * The product in one picture: intent enters a governed agentic harness, which
+ * coordinates models, knowledge, memory, policy, and tools before an action
+ * leaves the controlled environment. The return path makes the operational
+ * loop explicit without implying that a document pipeline is the product.
+ * Static by design, like the synapse field behind it.
  */
-function NetworkDiagram() {
+function AgenticHarnessDiagram() {
   return (
-    <svg viewBox="0 0 560 250" className="block w-full max-w-[560px] overflow-visible" aria-label="Ingestion and retrieval run inside your network">
-      <rect x="14" y="16" width="532" height="218" rx="22" fill="none" stroke="#FFFFFF" strokeOpacity="0.28" strokeWidth="1.6" strokeDasharray="9 8" className="orb-dash" />
-      <text x="34" y="42" fill="#B9A5FF" fontSize="10.5" fontWeight="600" letterSpacing="1.4" className="font-sans">INTERNAL NETWORK</text>
+    <svg
+      viewBox="0 0 560 250"
+      className="block w-full max-w-[520px] overflow-visible"
+      aria-label="Agentic workflow coordinates intelligence and action inside your controlled environment"
+    >
+      <defs>
+        <marker id="front-page-arrow" markerHeight="6" markerWidth="6" orient="auto" refX="5" refY="3">
+          <path d="M0 0 6 3 0 6Z" fill="#22D3EE" fillOpacity="0.9" />
+        </marker>
+      </defs>
 
-      <g className="orb-float">
-        <rect x="44" y="86" width="66" height="84" rx="8" fill="#FFFFFF" fillOpacity="0.94" />
-        <rect x="54" y="99" width="46" height="5" rx="2.5" fill="#6E5BC9" fillOpacity="0.55" />
-        <rect x="54" y="112" width="34" height="5" rx="2.5" fill="#6E5BC9" fillOpacity="0.35" />
-        <rect x="54" y="125" width="46" height="5" rx="2.5" fill="#6E5BC9" fillOpacity="0.35" />
-        <rect x="54" y="138" width="28" height="5" rx="2.5" fill="#6E5BC9" fillOpacity="0.35" />
-        <rect x="54" y="151" width="40" height="5" rx="2.5" fill="#6E5BC9" fillOpacity="0.2" />
-        <rect x="44" y="86" width="66" height="84" rx="8" fill="none" stroke="#22D3EE" strokeOpacity="0.9" strokeWidth="2" />
-        <rect x="44" y="86" width="66" height="10" rx="5" fill="#22D3EE" fillOpacity="0.5" className="orb-scan" />
+      <rect x="14" y="16" width="532" height="218" rx="22" fill="none" stroke="#FFFFFF" strokeOpacity="0.28" strokeWidth="1.6" strokeDasharray="9 8" />
+      <text x="34" y="42" fill="#B9A5FF" fontSize="10.5" fontWeight="600" letterSpacing="1.4" className="font-sans">CONTROLLED ENVIRONMENT</text>
+
+      <g>
+        <rect x="34" y="94" width="82" height="64" rx="12" fill="#FFFFFF" fillOpacity="0.1" stroke="#8C74F2" strokeOpacity="0.65" strokeWidth="1.5" />
+        <circle cx="53" cy="116" r="6" fill="#22D3EE" fillOpacity="0.18" stroke="#22D3EE" strokeWidth="1.5" />
+        <path d="m50 116 2 2 4-5" fill="none" stroke="#22D3EE" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" />
+        <text x="67" y="119" fill="#FFFFFF" fontSize="10.5" fontWeight="650" className="font-sans">INTENT</text>
+        <text x="51" y="140" fill="#B9A5FF" fontSize="8.5" className="font-sans">Human · event</text>
       </g>
 
-      <g stroke="#8C74F2" strokeOpacity="0.5" strokeWidth="2" strokeLinecap="round" fill="none">
-        <path d="M118 128h74" />
-        <path d="M300 128h58" />
-      </g>
-      <g fill="#22D3EE">
-        <circle cx="128" cy="128" r="3.4" className="orb-travel" />
-        <circle cx="308" cy="128" r="3.4" className="orb-travel orb-travel-late" />
+      <g fill="none" stroke="#8C74F2" strokeLinecap="round" strokeWidth="1.5">
+        <path d="M116 126h62" markerEnd="url(#front-page-arrow)" />
+        <path d="M326 126h56" markerEnd="url(#front-page-arrow)" />
+        <path d="M222 82 207 68" strokeOpacity="0.68" />
+        <path d="m276 82 29-14" strokeOpacity="0.68" />
+        <path d="m219 164-17 15" strokeOpacity="0.68" />
+        <path d="m278 163 20 16" strokeOpacity="0.68" />
       </g>
 
       <g>
-        <circle cx="246" cy="128" r="54" fill="#7C5CF5" fillOpacity="0.14" className="orb-pulse" />
-        <circle cx="246" cy="128" r="38" fill="#4A2BAE" fillOpacity="0.55" stroke="#B9A5FF" strokeOpacity="0.5" strokeWidth="1.6" />
-        <g stroke="#C9BAFF" strokeOpacity="0.75" strokeWidth="1.8" strokeLinecap="round" fill="none">
-          <path d="M246 110v-13M246 146v13M228 128h-14M264 128h14M233 115l-9-9M259 141l9 9M259 115l9-9M233 141l-9 9" />
-        </g>
-        <g fill="#B9A5FF">
-          <circle cx="246" cy="97" r="4" /><circle cx="246" cy="159" r="4" />
-          <circle cx="214" cy="128" r="4" /><circle cx="278" cy="128" r="4" />
-        </g>
-        <circle cx="246" cy="128" r="9" fill="#22D3EE" className="orb-core" />
-        <g fill="none" stroke="#22D3EE" strokeOpacity="0.55" strokeWidth="1.4">
-          <ellipse cx="246" cy="128" rx="62" ry="24" className="orb-spin" />
-        </g>
-        <text x="246" y="196" fill="#B9A5FF" textAnchor="middle" fontSize="10.5" fontWeight="600" letterSpacing="1.2" className="font-sans">OCR + RETRIEVAL</text>
+        <circle cx="252" cy="126" r="66" fill="#7C5CF5" fillOpacity="0.08" stroke="#8C74F2" strokeOpacity="0.22" />
+        <circle cx="252" cy="126" r="45" fill="#4A2BAE" fillOpacity="0.82" stroke="#B9A5FF" strokeOpacity="0.6" strokeWidth="1.6" />
+        <path d="M232 125c8-14 18-18 29-10 7 5 8 15 2 24-6 8-18 8-26 1-7-6-10-16-5-25" fill="none" stroke="#22D3EE" strokeLinecap="round" strokeWidth="2" />
+        <circle cx="232" cy="125" r="4" fill="#22D3EE" />
+        <circle cx="263" cy="139" r="4" fill="#22D3EE" />
+        <circle cx="261" cy="115" r="3" fill="#B9A5FF" />
+        <text x="252" y="150" fill="#FFFFFF" textAnchor="middle" fontSize="8.5" fontWeight="650" letterSpacing="0.9" className="font-sans">PLAN · REASON</text>
       </g>
 
+      {[
+        [166, 49, 76, "MODELS"],
+        [286, 49, 94, "KNOWLEDGE"],
+        [160, 176, 84, "MEMORY"],
+        [286, 176, 76, "POLICY"],
+      ].map(([x, y, width, label]) => (
+        <g key={String(label)}>
+          <rect x={x} y={y} width={width} height="25" rx="12.5" fill="#FFFFFF" fillOpacity="0.09" stroke="#B9A5FF" strokeOpacity="0.36" />
+          <circle cx={Number(x) + 13} cy={Number(y) + 12.5} r="2.8" fill="#22D3EE" />
+          <text x={Number(x) + 23} y={Number(y) + 16} fill="#D8CFFF" fontSize="8.5" fontWeight="650" letterSpacing="0.7" className="font-sans">{label}</text>
+        </g>
+      ))}
+      <text x="252" y="216" fill="#B9A5FF" textAnchor="middle" fontSize="10.5" fontWeight="650" letterSpacing="1.2" className="font-sans">AGENTIC HARNESS</text>
+
       <g>
-        <rect x="366" y="70" width="132" height="118" rx="12" fill="#2A1470" stroke="#8C74F2" strokeOpacity="0.5" strokeWidth="1.6" />
-        <rect x="380" y="84" width="104" height="28" rx="7" fill="#FFFFFF" fillOpacity="0.1" />
-        <rect x="380" y="118" width="104" height="28" rx="7" fill="#FFFFFF" fillOpacity="0.1" />
-        <rect x="380" y="152" width="104" height="22" rx="7" fill="#FFFFFF" fillOpacity="0.06" />
+        <rect x="389" y="77" width="130" height="96" rx="13" fill="#2A1470" stroke="#8C74F2" strokeOpacity="0.55" strokeWidth="1.5" />
+        <text x="406" y="100" fill="#FFFFFF" fontSize="10.5" fontWeight="650" className="font-sans">TOOLS + ACTIONS</text>
+        <g fill="#FFFFFF" fillOpacity="0.08">
+          <rect x="404" y="111" width="100" height="15" rx="7.5" />
+          <rect x="404" y="132" width="100" height="15" rx="7.5" />
+        </g>
         <g fill="#22D3EE">
-          <circle cx="394" cy="98" r="4" className="orb-blink" />
-          <circle cx="394" cy="132" r="4" className="orb-blink orb-blink-late" />
-          <circle cx="394" cy="163" r="3.4" className="orb-blink orb-blink-later" />
+          <circle cx="415" cy="118.5" r="2.8" />
+          <circle cx="415" cy="139.5" r="2.8" />
         </g>
-        <g fill="#B9A5FF" fillOpacity="0.7">
-          <rect x="410" y="95" width="52" height="5" rx="2.5" />
-          <rect x="410" y="129" width="40" height="5" rx="2.5" />
-          <rect x="410" y="159" width="46" height="5" rx="2.5" />
-        </g>
-        <text x="432" y="212" fill="#B9A5FF" textAnchor="middle" fontSize="10.5" fontWeight="600" letterSpacing="1.2" className="font-sans">YOUR SERVERS</text>
+        <text x="425" y="121.5" fill="#B9A5FF" fontSize="8" className="font-sans">Execute workflows</text>
+        <text x="425" y="142.5" fill="#B9A5FF" fontSize="8" className="font-sans">Operate systems</text>
+        <text x="454" y="162" fill="#22D3EE" textAnchor="middle" fontSize="8" fontWeight="650" letterSpacing="0.7" className="font-sans">GOVERNED OUTPUT</text>
       </g>
+
+      <path d="M454 180C431 224 145 228 75 170" fill="none" stroke="#22D3EE" strokeDasharray="4 7" strokeOpacity="0.55" strokeWidth="1.4" markerEnd="url(#front-page-arrow)" />
+      <text x="393" y="217" fill="#B9A5FF" fontSize="8" fontWeight="600" letterSpacing="0.7" className="font-sans">OBSERVE · ADAPT · CONTINUE</text>
     </svg>
   );
 }
@@ -134,6 +152,7 @@ function ArrowGlyph() {
 }
 
 export function FrontPage(props: FrontPageProps) {
+  const [theme, setTheme] = useState<Theme>(() => currentTheme());
   const [mode, setMode] = useState<FrontPageMode>("LOGIN");
   const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("");
@@ -169,28 +188,45 @@ export function FrontPage(props: FrontPageProps) {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[#EFF0ED] px-7 py-8">
-      <div className="w-full max-w-[1280px] rounded-[26px] bg-white p-[22px] shadow-[0_30px_80px_-40px_rgba(46,16,101,0.35)]">
-        <div className="relative overflow-hidden rounded-modal bg-brand px-6 pt-6 sm:px-9 sm:pt-7">
+    <div className="front-page relative isolate flex min-h-screen items-center justify-center overflow-hidden px-5 py-3 sm:px-7">
+      <SynapseField className="dashboard-synapse--front-page" />
+      <div className="front-page__frame relative z-[1] w-full max-w-[1180px] rounded-[26px] p-4">
+        <div className="front-page__presentation relative overflow-hidden rounded-modal bg-brand px-6 pt-5 sm:px-8">
 
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="relative z-[1] flex flex-wrap items-center gap-3">
             <img src="/brand/sivali-mark.svg" alt="" width={30} height={30} className="block shrink-0" />
             <span className="font-display text-[18px] font-semibold tracking-[-0.01em] text-white">OrcaSynapse</span>
             <span className="flex-1" />
-            <span className="text-caption text-white/60">On-prem AI control plane</span>
+            <div className="flex items-center gap-3">
+              <span className="hidden text-caption text-white/60 sm:inline">Private agentic intelligence</span>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={theme === "light"}
+                aria-label="Light appearance"
+                title={`Switch to the ${theme === "light" ? "dark" : "light"} theme`}
+                className="front-page-theme-toggle"
+                onClick={() => setTheme(toggleTheme())}
+              >
+                <span className="front-page-theme-toggle__track" aria-hidden="true">
+                  <span className="front-page-theme-toggle__thumb" />
+                </span>
+                <span>{theme === "light" ? "Light" : "Dark"}</span>
+              </button>
+            </div>
           </div>
 
-          <div className="grid items-center gap-11 py-9 lg:grid-cols-[minmax(0,1fr)_396px] lg:pb-11">
+          <div className="relative z-[1] grid items-center gap-8 py-6 lg:grid-cols-[minmax(0,1fr)_396px] lg:pb-7">
             <div className="min-w-0">
-              <h1 className="m-0 mt-3 max-w-[520px] font-display text-[34px] font-semibold leading-[1.14] tracking-[-0.035em] text-white sm:text-display">
-                Your documents, models and memory stay inside your network.
+              <h1 className="m-0 max-w-[520px] font-display text-[34px] font-semibold leading-[1.14] tracking-[-0.035em] text-white sm:text-display">
+                Dynamic intelligence, orchestrated into action.
               </h1>
               <p className="mb-0 mt-3.5 max-w-[470px] text-[15px] leading-[1.62] text-white/[0.68]">
-                Ingestion, retrieval and governed inference run on servers you control. Not one
-                byte reaches a third-party model provider.
+                OrcaSynapse is the agentic harness that coordinates models, knowledge, memory,
+                policy, and tools into adaptive workflows—all inside infrastructure you control.
               </p>
-              <div className="mt-6 hidden sm:block">
-                <NetworkDiagram />
+              <div className="mt-5 hidden sm:block">
+                <AgenticHarnessDiagram />
               </div>
             </div>
 
@@ -198,11 +234,11 @@ export function FrontPage(props: FrontPageProps) {
               {!changeRequired ? (
                 <form onSubmit={submitAccess}>
                   <h2 className="m-0 font-display text-[26px] font-semibold tracking-[-0.028em] text-[#191A1C]">
-                    {mode === "LOGIN" ? "Welcome back" : "Offline recovery"}
+                    {mode === "LOGIN" ? "Enter the control plane" : "Offline recovery"}
                   </h2>
                   <p className="mb-0 mt-1.5 text-[13px] text-[#6B6C74]">
                     {mode === "LOGIN"
-                      ? "Sign in with the local administrator account."
+                      ? "Sign in to operate and govern your intelligence workflows."
                       : "Use the Installation Key from your vault only when the password cannot be recovered normally."}
                   </p>
 
@@ -304,8 +340,8 @@ export function FrontPage(props: FrontPageProps) {
                       <path d="M8.8 11.8 11 14l4.2-4.4" stroke="#0E9BB5" strokeWidth="2.3" />
                     </svg>
                     <p className="m-0 text-[11.5px] leading-[1.5] text-[#6B6C74]">
-                      Authentication stays inside your network. Sessions are HttpOnly and are never
-                      stored by the browser.
+                      Identity, policy, and execution stay within your controlled environment.
+                      Sessions are HttpOnly and are never stored by the browser.
                     </p>
                   </div>
                 </form>
@@ -356,10 +392,10 @@ export function FrontPage(props: FrontPageProps) {
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-5 border-t border-white/[0.12] py-4">
+          <div className="relative z-[1] flex flex-wrap items-center gap-5 border-t border-white/[0.12] py-4">
             <span className="text-[12px] text-white/[0.52]">OrcaSynapse · {ORCASYNAPSE_VERSION}</span>
             <span className="flex-1" />
-            <span className="text-[12px] text-white/[0.62]">Private by architecture — no data leaves your deployment.</span>
+            <span className="text-[12px] text-white/[0.62]">Private intelligence. Governed execution. Your infrastructure.</span>
           </div>
 
         </div>
