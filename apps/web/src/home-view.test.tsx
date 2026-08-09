@@ -104,7 +104,7 @@ describe("Home", () => {
     expect(screen.getByText("2/3")).toBeTruthy();
   });
 
-  it("sends the primary action to the blocking step, and to Chat once nothing blocks", async () => {
+  it("sends the primary action to the blocking step, and to Session once nothing blocks", async () => {
     const user = userEvent.setup();
     const blocked = vi.fn();
     const { unmount } = render(<HomeView {...props({ onSelect: blocked })} />);
@@ -115,7 +115,9 @@ describe("Home", () => {
     const ready = vi.fn();
     render(<HomeView {...props({ readiness: readiness(true), onSelect: ready })} />);
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Your agentic workspace is ready");
-    await user.click(screen.getByRole("button", { name: "Open Chat" }));
+    // The label is the product word; the argument is the routing token, which
+    // deliberately did not follow the rename.
+    await user.click(screen.getByRole("button", { name: "Open Session" }));
     expect(ready).toHaveBeenCalledWith("Chat");
   });
 

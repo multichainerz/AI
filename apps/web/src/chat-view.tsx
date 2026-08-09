@@ -509,7 +509,7 @@ export function ChatView({
       return;
     }
     if (profiles.length === 0) {
-      setError("Create and activate an Agent Profile before starting Chat.");
+      setError("Create and activate an Agent Profile before starting a Session.");
       return;
     }
     setSubmitting(true);
@@ -518,7 +518,7 @@ export function ChatView({
     let conversation = active;
     try {
       if (!conversation) {
-        if (!selectedProfileId) throw new Error("Activate an Agent Profile before starting Chat.");
+        if (!selectedProfileId) throw new Error("Activate an Agent Profile before starting a Session.");
         const created = await createChatConversation({ profileId: selectedProfileId });
         conversation = await getChatConversation(created.id);
         setConversations((items) => [created, ...items]);
@@ -787,7 +787,7 @@ export function ChatView({
        */
       <div className="px-[clamp(24px,4vw,64px)] pb-16 pt-9">
         <LockedScreen
-          title="Chat"
+          title="Session"
           kicker="Workspace"
           mark="AI"
           headline={oidcConfigured ? "Sign in to OrcaSynapse" : "Enterprise access is not configured"}
@@ -855,7 +855,7 @@ export function ChatView({
           historyOpen ? "flex" : "hidden lg:flex",
         )}
       >
-        <h1 className="sr-only">Chat</h1>
+        <h1 className="sr-only">Session</h1>
         {/*
           * The rail leads with the one action it exists for, drawn the design's
           * way: full width, accent fill, bold — a beginning, not a utility.
@@ -1626,7 +1626,7 @@ export function ChatView({
                     event.currentTarget.form?.requestSubmit();
                   }
                 }}
-                placeholder={active?.status === "ARCHIVED" ? "Restore this conversation to continue" : chatReady ? "Message your selected Hermes agent" : "Finish the required setup to start Chat"}
+                placeholder={active?.status === "ARCHIVED" ? "Restore this conversation to continue" : chatReady ? "Message your selected Hermes agent" : "Finish the required setup to start a Session"}
                 rows={1}
                 maxLength={32_000}
                 disabled={working || !chatReady}

@@ -5,6 +5,30 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## v3.5.0 — 2026-08-09
+
+Home is Dashboard, Chat is Session.
+
+The rename reaches what a reader sees and what they can bookmark: nav labels,
+the strings that name the destination ("Open Session", "Finish the required
+setup to start a Session"), and the routes -- `#home` -> `#dashboard`, `#chat`
+-> `#session`.
+
+It deliberately stops there. `ActiveView` still calls the screens `Overview` and
+`Chat`, `chat-view.tsx` keeps its name, `.chat-page` keeps its class, and
+`chatMessageTelemetry` keeps its export. Those are internal routing and module
+names; renaming them would churn every view module, test fixture and stylesheet
+rule for nothing a reader would notice, and would touch the eight pinned test
+contracts from the thread rebuild. Two assertions now say so, so the next person
+does not "finish the job".
+
+**Old links still resolve.** `viewFromHash` already accepted several spellings
+per view -- that is what makes renaming a route cheap -- so `#chat` joins
+`#session` as a case. `#home` needed nothing: an unknown hash falls through to
+Overview, which is where it already went. Without the alias, every existing
+`#chat` bookmark would land silently on the Dashboard: no error, wrong screen.
+Deleting that one line fails the new test, which is how it was checked.
+
 ## v3.4.0 — 2026-08-09
 
 The landing banner reports what the deployment has done.
