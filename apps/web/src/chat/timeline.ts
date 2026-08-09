@@ -47,6 +47,38 @@ export interface TimelineEntry<E extends TimelineEvent = TimelineEvent> {
   durationMs: number | null;
 }
 
+/**
+ * What the activity list says about itself once it is closed.
+ *
+ * Agent work is worth watching while it happens and worth summarising once it
+ * has: a finished turn that still shows nine expanded rows buries the answer
+ * that was the point of the turn. This is the line that stands in for them.
+ *
+ * It reports only what the log records. `latencyMs` is the runtime's own figure
+ * for the turn, so the duration is absent rather than invented when the runtime
+ * did not send one, and a failure is named because a reader who sees a
+ * one-line summary must not have to open it to find out something broke.
+ */
+export function summariseTimeline(
+  entries: readonly TimelineEntry[],
+  latencyMs: number | null,
+): string {
+  const count = (kind: TimelineKind) => entries.filter((entry) => entry.kind === kind).length;
+  const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
+  const failed = entries.filter((entry) => entry.status === "failed").length;
+
+  const parts: string[] = [];
+  if (latencyMs !== null) parts.push(`Worked for ${(latencyMs / 1_000).toFixed(1)} s`);
+  if (count("tool") > 0) parts.push(plural(count("tool"), "tool"));
+  if (count("subagent") > 0) parts.push(plural(count("subagent"), "subagent"));
+  if (failed > 0) parts.push(`${failed} failed`);
+
+  // Reasoning and lifecycle entries have no noun worth printing, but a turn
+  // made only of them still happened.
+  if (parts.length === 0) return plural(entries.length, "step");
+  return parts.join(" · ");
+}
+
 function kindOf(type: string): TimelineKind {
   if (type.startsWith("TOOL_")) return "tool";
   if (type.startsWith("SUBAGENT_")) return "subagent";
