@@ -5,6 +5,37 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v2.4.0 — 2026-08-09
+
+A tool call is one thing in the activity list, not four.
+
+The list rendered one row per event, so a single call that started, reported
+progress twice and completed read as four unrelated entries -- and nothing told
+a reader which progress belonged to which call, or that the second call had
+failed rather than the first. `toolCallKey` was added to the event log in
+v1.9.0 for exactly this and the interface had never used it.
+
+`groupRuntimeEvents` collapses events sharing a key into one entry carrying the
+call's own state: `failed` if a terminal failure arrived, `completed` if a
+terminal success did, and `running` otherwise -- including for a call whose run
+died mid-flight, where "running" is what the log records and inventing a failure
+would be a claim it does not make. Entries hold first-appearance order, so a long
+call stays where it began instead of walking down the list on every progress
+report, which is what makes the list readable while a run is live. Duration comes
+from whichever event reported it, and a tool name is taken from a later event
+when the start did not carry one, which Hermes often does not.
+
+**The fixture had no `toolCallKey` at all**, which is why every existing test
+passed against an ungrouped list. It now contains a genuine two-event call, and
+the assertion is `getAllByRole("listitem")` -- four events, three rows. Disabling
+the grouping fails it with "expected length 3 but got 4", and fails four unit
+tests besides. The neighbouring `getByText("knowledge.search")` became a grouping
+assertion for free: it throws on multiple matches, so an ungrouped list now fails
+there too rather than passing quietly.
+
+This is the first piece of CHAT-R5. The interleaving of tool cards against the
+answer by `contentOffset`, and the reasoning lane, are still to come.
+
 ## v2.3.0 — 2026-08-09
 
 The chat thread layout, consolidated onto `main` with the five defects its
