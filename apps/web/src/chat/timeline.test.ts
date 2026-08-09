@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { groupRuntimeEvents, type TimelineEvent } from "./timeline.js";
+import { groupRuntimeEvents, summariseTimeline, type TimelineEvent } from "./timeline.js";
 
 let sequence = 0;
 const event = (over: Partial<TimelineEvent>): TimelineEvent => ({
@@ -93,5 +93,59 @@ describe("groupRuntimeEvents", () => {
 
   it("returns nothing for nothing", () => {
     expect(groupRuntimeEvents([])).toEqual([]);
+  });
+});
+
+describe("summariseTimeline", () => {
+  const entries = (...events: TimelineEvent[]) => groupRuntimeEvents(events);
+
+  it("stands in for the work once the turn is done", () => {
+    const summary = summariseTimeline(
+      entries(
+        event({ type: "TOOL_STARTED", toolCallKey: "a#1", toolName: "search" }),
+        event({ type: "TOOL_COMPLETED", toolCallKey: "a#1", toolName: "search" }),
+        event({ type: "TOOL_STARTED", toolCallKey: "b#1", toolName: "fetch" }),
+        event({ type: "TOOL_COMPLETED", toolCallKey: "b#1", toolName: "fetch" }),
+      ),
+      8_240,
+    );
+
+    expect(summary).toBe("Worked for 8.2 s · 2 tools");
+  });
+
+  it("names a failure, so a closed list never hides one", () => {
+    /*
+     * The whole risk of collapsing: a reader sees one calm line and never opens
+     * it. A turn where a tool failed has to say so while closed.
+     */
+    const summary = summariseTimeline(
+      entries(
+        event({ type: "TOOL_STARTED", toolCallKey: "a#1", toolName: "search" }),
+        event({ type: "TOOL_FAILED", toolCallKey: "a#1", toolName: "search", errorCode: "TOOL_TIMEOUT" }),
+      ),
+      1_000,
+    );
+
+    expect(summary).toBe("Worked for 1.0 s · 1 tool · 1 failed");
+  });
+
+  it("omits a duration the runtime never reported", () => {
+    // Rather than printing "Worked for 0.0 s", which is a claim the log does
+    // not make.
+    const summary = summariseTimeline(
+      entries(event({ type: "SUBAGENT_STARTED", toolCallKey: "s#1" })),
+      null,
+    );
+
+    expect(summary).toBe("1 subagent");
+  });
+
+  it("still counts a turn made only of reasoning", () => {
+    const summary = summariseTimeline(
+      entries(event({ type: "REASONING_REPORTED", text: "thinking" }), event({ type: "RUN_STARTED" })),
+      null,
+    );
+
+    expect(summary).toBe("2 steps");
   });
 });

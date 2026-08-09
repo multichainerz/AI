@@ -844,8 +844,14 @@ function App() {
       detail: "Enterprise user",
     };
 
+  /*
+   * Chat is the only view that is itself a workspace: it brings its own
+   * conversation rail, so the full navigation rail beside it put two vertical
+   * lists in front of the reader before a word of the thread. In Chat the rail
+   * collapses to its icons and hands ~170px back to the reading column.
+   */
   return (
-    <div className="app-shell">
+    <div className={cn("app-shell", activeView === "Chat" && "app-shell--focus")}>
       <aside className="sidebar" aria-label="OrcaSynapse navigation">
         {/*
           * The brand band, 64px measured from the rail's top edge — which is

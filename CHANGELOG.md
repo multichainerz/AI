@@ -5,6 +5,75 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v2.6.0 — 2026-08-09
+
+Chat stops reading like an admin console.
+
+The complaint was that it looked clunky next to Claude and Codex, and the cause
+turned out to be structural rather than cosmetic. `ChatView` is one 1,614-line
+function that renders the rail, header, empty state, transcript, tool cards,
+approvals, sources, telemetry, composer and context panel inline; with no
+component boundaries there is nowhere for hierarchy to live, so every surface is
+a sibling and every surface competes. Four zones stacked to 783px of chrome
+before a word of content, eight bordered cards carried the same weight, and eight
+uppercase kickers named figures that needed no naming.
+
+The worst of it was the reading itself. `.message-markdown` was **12px at
+line-height 1.72** inside the 46rem measure -- about 120 characters a line. The
+measure was corrected in ai-v1.89.0 and the size was never raised with it, which
+is why the answers still read as a wall. There is now a `read` step in the type
+scale, 15.5px/1.65, registered in `cn.ts` (`cn.test.ts` enumerates the config, so
+the drift guard covered it for free) and used by the transcript and its composer
+and nothing else -- the dense tables in Operations and Knowledge keep `body` and
+do not reflow. Markdown block rhythm scales with it, and tables inside an answer
+lose the 9px uppercase mono headers that suit a data grid and not prose.
+
+What else changed, in order of how much width it returned:
+
+- **The context rail is gone, not moved.** 264px holding a read-only copy of the
+  pinned sources, a button that opened the knowledge dialog, and a card of
+  marketing copy -- most often showing "Open a conversation to see its knowledge
+  scope". The header already carries `Knowledge · N`, which is both the count and
+  the way in, and the dialog it opens is where the pins live and the only place
+  scope changes.
+- **Focus mode.** Chat is the one view that is itself a workspace, so the global
+  nav rail collapses to 76px while it is active. 76 and not a true icon strip
+  because sign-out has to stay reachable once the operator block stacks; labels
+  go visually-hidden rather than `display: none`, because a rail a screen reader
+  cannot name is worse than a wide one.
+- **The empty state lost both configuration cards.** The agent-profile picker
+  moved into the header, where it is one compact control instead of a bordered
+  card with a label and a hint sitting in the middle of the greeting; it is only
+  live before a conversation exists, which is exactly when the empty state was
+  carrying it. What remains is the greeting, the blocking sentence, its button
+  and the suggestions.
+- **Agent activity folds when the turn lands.** Watching a governed run work is
+  the point of the product; nine expanded rows above a finished answer, forever,
+  is not. The list is a `<details>` whose `open` tracks the message's own status,
+  so it unfolds as the run starts and folds when it completes -- and the new
+  `summariseTimeline` names a failure while closed, because the risk of folding
+  is a reader who sees one calm line and never opens it.
+- **No rule between turns.** A hairline under every message made the transcript a
+  table with rows; the user's bubble already says where an exchange begins.
+- **The per-turn metadata header is hover-revealed.** Name, timestamp and model
+  alias on every single turn was the densest thing in the transcript and the
+  least read. It keeps its space so nothing shifts, and stays in the markup for
+  screen readers. A status that is not `COMPLETED` keeps permanent ink.
+- **The composer looks disabled when it is.** It was genuinely disabled and
+  entirely normal-looking, with the reason living in placeholder text that
+  vanishes the moment anyone types. The strip beneath it states the reason in
+  words. The send arrow is an SVG rather than the literal character `↑`, and the
+  keyboard hint and character counter appear on focus instead of permanently.
+
+Chrome before content: 783px to roughly 350px. Four kickers of eight remain.
+
+Found while working, and worth recording: `app.tsx` was left syntactically broken
+mid-edit and **all 314 tests still passed**. Only `main.tsx` imports it, so the
+shell has no test coverage at all and typecheck is the only gate on focus mode.
+
+Not verified against a screen. The streaming behaviour in particular -- the fold
+unfolding as a run starts -- has never been seen against a real Hermes turn.
+
 ## ai-v2.5.0 — 2026-08-09
 
 Two screens read one table and now agree on what a tool call is.

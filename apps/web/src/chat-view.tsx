@@ -12,7 +12,7 @@ import type {
 import { applyStreamEventToConversation } from "./chat-stream-reducer.js";
 import { MarkdownMessage } from "./chat/markdown-message.js";
 import { groupConversationsByDate } from "./chat/conversation-groups.js";
-import { groupRuntimeEvents } from "./chat/timeline.js";
+import { groupRuntimeEvents, summariseTimeline } from "./chat/timeline.js";
 import { COMPOSER_ZONE, THREAD_MEASURE, THREAD_SCROLLER } from "./chat/measure.js";
 import { shouldStickToBottom } from "./chat/stick-to-bottom.js";
 import { usePacedStream } from "./chat/use-paced-stream.js";
@@ -43,7 +43,6 @@ import {
   Button,
   Dialog,
   EmptyState,
-  Field,
   Input,
   LockedScreen,
   MicroLabel,
@@ -850,7 +849,7 @@ export function ChatView({
      * layout be stated here rather than in a stylesheet rule keyed to a class
      * name.
      */
-    <section className="m-0 grid h-full w-full max-w-none grid-cols-1 bg-bg lg:grid-cols-[272px_minmax(0,1fr)] xl:grid-cols-[272px_minmax(0,1fr)_264px]">
+    <section className="m-0 grid h-full w-full max-w-none grid-cols-1 bg-bg lg:grid-cols-[272px_minmax(0,1fr)]">
       <aside
         className={cn(
           "min-w-0 flex-col border-r border-border bg-surface px-3.5 pb-4 pt-4",
@@ -1010,17 +1009,37 @@ export function ChatView({
                   ? "Hermes ready"
                   : "Setup required"}
             </StatusText>
-            <span className="hidden min-w-0 md:block">
-              <MicroLabel className="block">Model</MicroLabel>
-              <strong className="mt-0.5 block max-w-[150px] truncate font-mono text-caption font-medium text-muted">
-                {active?.modelAlias ?? "Active default"}
-              </strong>
+            {/*
+              * The profile is bound when the conversation is created, so the
+              * picker is only live before there is one -- which is exactly when
+              * the empty state used to carry it, as a bordered card with a label
+              * and a hint sitting in the middle of the greeting. Here it is one
+              * compact control in the chrome, where configuration belongs.
+              */}
+            {!active && (
+              <Select
+                className="hidden h-8 w-[184px] text-caption sm:block"
+                disabled={!profileAvailable}
+                value={selectedProfileId}
+                onChange={(event) => setSelectedProfileId(event.target.value)}
+                aria-label="Agent Profile"
+              >
+                {profiles.length === 0 && <option value="">No active profiles</option>}
+                {profiles.map((profile) => (
+                  <option value={profile.id} key={profile.id}>
+                    {profile.activeVersionConfiguration?.displayName ?? profile.version.displayName}
+                  </option>
+                ))}
+              </Select>
+            )}
+            {/* Two kickers for two figures that need no naming: a model alias
+                reads as a model alias, and a token count reads as a token
+                count. */}
+            <span className="hidden max-w-[150px] truncate font-mono text-caption text-faint md:block">
+              {active?.modelAlias ?? "Active default"}
             </span>
-            <span className="hidden min-w-0 lg:block">
-              <MicroLabel className="block">Session usage</MicroLabel>
-              <strong className="mt-0.5 block truncate font-mono text-caption font-medium tabular-nums text-muted">
-                {conversationTotalTokens === null ? "—" : `${conversationTotalTokens.toLocaleString()} tok`}
-              </strong>
+            <span className="hidden truncate font-mono text-caption tabular-nums text-faint lg:block">
+              {conversationTotalTokens === null ? "—" : `${conversationTotalTokens.toLocaleString()} tok`}
             </span>
           </div>
           {active && !renaming && (
@@ -1119,11 +1138,16 @@ export function ChatView({
                   Every response is a governed Hermes Agent Run. Your selected profile controls behavior, skills, memory
                   access, and tool policy.
                 </p>
+                {/*
+                  * Two bordered cards used to stand between the greeting and the
+                  * one thing a reader came here to do. The profile picker moved
+                  * to the header, where configuration lives; what is left is the
+                  * blocking fact and the button that resolves it, with no box
+                  * around either -- a border here would only say "this is a
+                  * distinct object", which it is not. It is the sentence.
+                  */}
                 {!routeReady && (
-                  <Panel
-                    className="mx-auto mb-3 flex max-w-[560px] items-center justify-between gap-4 border-l-2 border-l-warn p-3.5 text-left"
-                    role="status"
-                  >
+                  <div className="mb-7 flex items-center justify-between gap-5 text-left" role="status">
                     <div className="min-w-0">
                       <strong className="block text-label font-semibold text-text">{readinessTitle}</strong>
                       <span className="mt-1 block text-body text-muted">{readinessDetail}</span>
@@ -1131,31 +1155,8 @@ export function ChatView({
                     <Button variant="primary" className="shrink-0" onClick={openReadiness}>
                       {!profileAvailable ? "Create Agent Profile" : "Review setup"}
                     </Button>
-                  </Panel>
+                  </div>
                 )}
-                <Panel className="mx-auto mb-3 max-w-[440px] p-3 text-left">
-                  <Field
-                    label="Agent Profile"
-                    hint={
-                      profiles.length === 0
-                        ? "Activate a profile in Agents before chatting."
-                        : "This profile remains bound to the conversation."
-                    }
-                  >
-                    <Select
-                      disabled={!profileAvailable}
-                      value={selectedProfileId}
-                      onChange={(event) => setSelectedProfileId(event.target.value)}
-                    >
-                      {profiles.length === 0 && <option value="">No active profiles</option>}
-                      {profiles.map((profile) => (
-                        <option value={profile.id} key={profile.id}>
-                          {profile.activeVersionConfiguration?.displayName ?? profile.version.displayName}
-                        </option>
-                      ))}
-                    </Select>
-                  </Field>
-                </Panel>
                 <div className="grid gap-3 sm:grid-cols-2">
                   {[
                     {
@@ -1200,9 +1201,19 @@ export function ChatView({
                      * without reading a word, which on a long governed
                      * transcript is most of what makes it navigable.
                      */
+                    "group",
                     message.role === "USER"
-                      ? "my-3.5 ml-auto max-w-[600px] rounded-[16px] rounded-br-[5px] bg-soft px-4 py-3"
-                      : "mx-auto grid w-full max-w-[940px] grid-cols-[34px_minmax(0,1fr)] gap-3.5 border-b border-border py-5 last-of-type:border-b-0",
+                      ? "mb-7 mt-2 ml-auto max-w-[540px] rounded-[18px] rounded-br-[6px] bg-soft px-4 py-3"
+                      /*
+                       * No rule between turns. A hairline under every message
+                       * made the transcript a table with rows; the bubble above
+                       * already says where an exchange begins, so the border was
+                       * saying it a second time and louder. Space does it.
+                       *
+                       * `max-w-[940px]` was here too and never bound -- the
+                       * measure wrapper is 46rem -- so it only misled.
+                       */
+                      : "grid w-full grid-cols-[30px_minmax(0,1fr)] gap-3.5 pb-8",
                   )}
                   key={message.id}
                 >
@@ -1215,29 +1226,36 @@ export function ChatView({
                     </div>
                   )}
                   <div className="min-w-0">
-                    <div className="flex min-h-[24px] items-center justify-between gap-3">
-                      <div className="flex min-w-0 items-baseline gap-2">
-                        <strong className="text-caption font-semibold text-text">
+                    {/*
+                      * Name, timestamp and model alias were a four-part header on
+                      * every single turn -- the densest thing in the transcript
+                      * and the least read. They stay in the markup, so a screen
+                      * reader and a hovering eye can both still get them, and
+                      * they hold their space so nothing shifts on hover. Only a
+                      * status that is not COMPLETED keeps permanent ink, because
+                      * that one is news.
+                      */}
+                    <div className="flex min-h-[20px] items-center justify-between gap-3">
+                      <div className="flex min-w-0 items-baseline gap-2 opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
+                        <strong className="text-caption font-semibold text-muted">
                           {message.role === "USER" ? "You" : (active.profileName ?? "Hermes")}
                         </strong>
                         <time className="font-mono text-micro text-faint" dateTime={message.createdAt}>
                           {formatMessageTime(message.createdAt)}
                         </time>
-                      </div>
-                      <div className="flex min-w-0 items-center justify-end gap-2">
                         {message.role === "ASSISTANT" && (
                           <span className="max-w-[220px] truncate font-mono text-micro text-faint">
                             {message.modelAlias ?? active.modelAlias}
                           </span>
                         )}
-                        {message.status !== "COMPLETED" && (
-                          <StatusText
-                            tone={message.status === "FAILED" || message.status === "CANCELLED" ? "bad" : "warn"}
-                          >
-                            {message.status.toLowerCase()}
-                          </StatusText>
-                        )}
                       </div>
+                      {message.status !== "COMPLETED" && (
+                        <StatusText
+                          tone={message.status === "FAILED" || message.status === "CANCELLED" ? "bad" : "warn"}
+                        >
+                          {message.status.toLowerCase()}
+                        </StatusText>
+                      )}
                     </div>
                     {message.role === "USER"
                       ? <p className="my-1 whitespace-pre-wrap break-words text-body leading-[1.6] text-text">{message.content}</p>
@@ -1276,17 +1294,38 @@ export function ChatView({
                       </div>
                     )}
                     {message.role === "ASSISTANT" && message.runtimeEvents.length > 0 && (
-                      <section
-                        className="my-3 overflow-hidden rounded border border-border bg-surface"
+                      /*
+                       * Loud while it happens, quiet once it has. Watching a
+                       * governed run work is the point of the product; nine
+                       * expanded rows sitting above a finished answer, forever,
+                       * is not -- by the third turn the transcript is mostly
+                       * machinery. `open` tracks the turn's own state, so it
+                       * unfolds as the run starts and folds when it lands, and
+                       * `summariseTimeline` names a failure while closed so a
+                       * calm one-liner can never hide one.
+                       *
+                       * `<details>` rather than component state because the
+                       * element already is this: it keeps its contents in the
+                       * accessibility tree, it is keyboard-operable, and it
+                       * needs no JavaScript to open.
+                       */
+                      <details
+                        className="my-3 overflow-hidden rounded-lg border border-border bg-surface"
+                        open={message.status !== "COMPLETED"}
+                        /* `<details>` maps to role="group", so the label is
+                           meaningful here and stays the region's name whether
+                           it is open or closed. */
                         aria-label="Hermes agent activity"
                       >
-                        <header className="flex items-center justify-between border-b border-border bg-raised px-3 py-2">
-                          <MicroLabel>Agent activity</MicroLabel>
-                          <span className="font-mono text-micro text-faint">
+                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-caption text-muted marker:content-none hover:bg-raised">
+                          <span className="min-w-0 truncate">
+                            {summariseTimeline(groupRuntimeEvents(message.runtimeEvents), message.latencyMs)}
+                          </span>
+                          <span className="shrink-0 font-mono text-micro text-faint">
                             {message.runtimeEvents.length} event{message.runtimeEvents.length === 1 ? "" : "s"}
                           </span>
-                        </header>
-                        <ol className="m-0 grid list-none p-0">{groupRuntimeEvents(message.runtimeEvents).map((entry) => {
+                        </summary>
+                        <ol className="m-0 grid list-none border-t border-border p-0">{groupRuntimeEvents(message.runtimeEvents).map((entry) => {
                           const kind = entry.kind;
                           /*
                            * The newest event carries the detail worth showing --
@@ -1349,7 +1388,7 @@ export function ChatView({
                             </li>
                           );
                         })}</ol>
-                      </section>
+                      </details>
                     )}
                     {message.role === "ASSISTANT" && message.approvals.map((approval) => (
                       /*
@@ -1542,12 +1581,25 @@ export function ChatView({
             </Alert>
           )}
           <form
-            className={cn(THREAD_MEASURE, "grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2.5 rounded border border-border-strong bg-raised py-2 pl-3.5 pr-2 focus-within:border-accent")}
+            className={cn(
+              THREAD_MEASURE,
+              "group grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2 rounded-lg border py-2 pl-4 pr-2 transition-colors",
+              /*
+               * A control that is off should look off. This one was genuinely
+               * disabled and entirely normal-looking, so the only way to find
+               * out was to click it and watch nothing happen; the reason lived
+               * in placeholder text, which vanishes the moment anyone types.
+               * The strip below the composer states the reason in words.
+               */
+              chatReady
+                ? "border-border-strong bg-raised focus-within:border-accent"
+                : "cursor-not-allowed border-border bg-surface opacity-60",
+            )}
             onSubmit={submit}
           >
             <div className="min-w-0">
               <textarea
-                className="max-h-[150px] min-h-[38px] w-full resize-y border-0 bg-transparent py-2 text-label leading-relaxed text-text outline-0 placeholder:text-faint"
+                className="max-h-[168px] min-h-[42px] w-full resize-y border-0 bg-transparent py-2 text-read text-text outline-0 placeholder:text-faint disabled:cursor-not-allowed"
                 value={draft}
                 onChange={(event) => setDraft(event.target.value)}
                 onKeyDown={(event) => {
@@ -1562,7 +1614,11 @@ export function ChatView({
                 disabled={working || !chatReady}
                 aria-label="Chat message"
               />
-              <div className="flex items-center justify-between gap-3.5 pb-0.5 text-micro text-faint">
+              {/* Two lines of permanent instruction under a text box everyone
+                  already knows how to use. Kept, because Shift+Enter is not
+                  guessable -- but only while the box has focus, which is the
+                  only moment either figure is worth anything. */}
+              <div className="flex items-center justify-between gap-3.5 pb-0.5 text-micro text-faint opacity-0 transition-opacity duration-150 group-focus-within:opacity-100">
                 <span>Enter to send · Shift + Enter for a new line</span>
                 <span className="shrink-0 font-mono tabular-nums">{draft.length.toLocaleString()} / 32,000</span>
               </div>
@@ -1577,7 +1633,22 @@ export function ChatView({
               </Button>
             ) : (
               <Button variant="primary" type="submit" disabled={!draft.trim() || !chatReady} aria-label="Send message">
-                ↑
+                {/* Was the literal character `↑`, which renders in the body face
+                    at whatever weight the button inherits and sits a few pixels
+                    off centre in most of them. */}
+                <svg
+                  viewBox="0 0 16 16"
+                  width="15"
+                  height="15"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.9"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M8 13.2V3.4M3.6 7.8 8 3.4l4.4 4.4" />
+                </svg>
               </Button>
             )}
           </form>
@@ -1596,44 +1667,17 @@ export function ChatView({
       </div>
 
       {/*
-        * The design's context rail: what this conversation can see, stated
-        * beside it rather than behind a button. Read-only — the knowledge
-        * dialog remains the one place scope changes — and xl-only, because
-        * below that width the transcript needs every pixel.
+        * The context rail is gone, not moved.
+        *
+        * It was a fourth vertical zone holding a read-only copy of the pinned
+        * sources, a button that opened the knowledge dialog, and a card of
+        * marketing copy -- 264px of permanent width, most often showing "Open a
+        * conversation to see its knowledge scope". The header already carries
+        * `Knowledge · N`, which is the count plus the way in; the dialog it
+        * opens is where the pins actually live and the only place scope
+        * changes. A panel that restates a button next to the button is width
+        * spent on nothing.
         */}
-      <aside className="hidden min-w-0 flex-col gap-4 overflow-y-auto border-l border-border bg-surface px-5 py-5 xl:flex" aria-label="Conversation context">
-        <MicroLabel className="block">Conversation context</MicroLabel>
-        <div className="grid gap-0">
-          {active && active.knowledgeDocuments.length > 0 ? (
-            active.knowledgeDocuments.map((pin) => (
-              <div className="flex items-start gap-2.5 border-b border-border/60 py-2.5 last:border-b-0" key={pin.id}>
-                <span aria-hidden="true" className="mt-1.5 h-[5px] w-[5px] shrink-0 rounded-pill bg-accent" />
-                <div className="min-w-0">
-                  <span className="block truncate text-caption font-semibold text-text">{pin.fileName}</span>
-                  <span className="mt-0.5 block text-micro normal-case tracking-normal text-faint">{pin.classification}</span>
-                </div>
-              </div>
-            ))
-          ) : (
-            <p className="m-0 py-2 text-caption leading-relaxed text-faint">
-              {active
-                ? "No pinned sources. Retrieval may reach any indexed document this identity owns."
-                : "Open a conversation to see its knowledge scope."}
-            </p>
-          )}
-        </div>
-        {active && (
-          <Button size="sm" className="justify-self-start" disabled={working || loading} onClick={() => void openKnowledge()}>
-            Manage scope
-          </Button>
-        )}
-        <div className="mt-auto rounded-lg border border-border p-3.5">
-          <span className="block text-caption font-semibold text-text">Private by architecture</span>
-          <p className="mb-0 mt-1.5 text-caption leading-relaxed text-muted">
-            Retrieval is owner-scoped and every response is a governed run. Nothing leaves this deployment.
-          </p>
-        </div>
-      </aside>
 
       {/*
         * All four of these were bare divs carrying role="dialog" and nothing
