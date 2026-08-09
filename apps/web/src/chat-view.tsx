@@ -1456,7 +1456,11 @@ export function ChatView({
                         <div className="flex flex-wrap gap-1.5">{message.sources.map((source) => (
                           <article className="grid min-w-[170px] gap-1 rounded border border-border bg-raised px-2.5 py-2" key={source.documentId}>
                             <span className="truncate text-caption font-semibold text-text">{source.fileName}</span>
-                            <small className="text-micro font-semibold uppercase tabular-nums text-faint">
+                            {/* The value was lowercased in JavaScript and then
+                                uppercased again by the class -- two opposite
+                                intentions, the CSS winning. Lowercase was the
+                                one someone meant. */}
+                            <small className="text-caption tabular-nums text-faint">
                               {source.classification.toLowerCase()} · {Math.round(source.score * 100)}% match
                             </small>
                           </article>
@@ -1498,7 +1502,11 @@ export function ChatView({
                                 )}
                                 key={metric.key}
                               >
-                                <dt className="truncate text-micro font-semibold uppercase tabular-nums text-faint">{metric.label}</dt>
+                                {/* Eight uppercase micro-labels in one strip
+                                    under an answer -- the single densest thing
+                                    on the screen, and every one of them names a
+                                    figure whose unit already names it. */}
+                                <dt className="truncate text-caption tabular-nums text-faint">{metric.label}</dt>
                                 <dd
                                   className={cn(
                                     "m-0 mt-1 truncate font-mono text-caption font-semibold tabular-nums",
@@ -1670,8 +1678,16 @@ export function ChatView({
                   ? "Hermes route ready"
                   : readinessTitle}
             </StatusText>
-            <StatusText>{identityMode === "ENTERPRISE" ? "Enterprise session" : "Administrator preview"}</StatusText>
-            <StatusText>OrcaSynapse policy · Hermes execution · private knowledge</StatusText>
+            {/* `StatusText` is uppercase by construction, which is right for a
+                status chip and wrong for a sentence. These two are prose: an
+                identity and a claim about the architecture, set in capitals
+                only because they were reaching for the nearest primitive. */}
+            <span className="text-caption text-faint">
+              {identityMode === "ENTERPRISE" ? "Enterprise session" : "Administrator preview"}
+            </span>
+            <span className="text-caption text-faint">
+              OrcaSynapse policy · Hermes execution · private knowledge
+            </span>
           </div>
         </div>
       </div>
