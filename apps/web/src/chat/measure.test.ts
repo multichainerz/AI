@@ -1,0 +1,77 @@
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+import { COMPOSER_ZONE, THREAD_MEASURE, THREAD_SCROLLER } from "./measure.js";
+
+/**
+ * The handover from `.chat-messages` to `THREAD_SCROLLER`.
+ *
+ * Deleting a stylesheet rule and re-supplying it as utility classes is the kind
+ * of change that looks complete in a diff and is not: every render test still
+ * passes with `min-height: 0` missing, because jsdom lays nothing out. The only
+ * thing that can catch a dropped declaration here is a check that reads both
+ * sides and says which ones had to survive.
+ */
+const stylesheet = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
+
+describe("thread measure", () => {
+  it("has one reading column, applied as a class rather than an inline width", () => {
+    // The CSP in the built container refuses an inline `style=`, so a measure
+    // expressed as a style attribute would work in dev and vanish in production.
+    expect(THREAD_MEASURE).toBe("mx-auto w-full max-w-[46rem]");
+  });
+
+  it("leaves no second definition of .chat-messages behind", () => {
+    /*
+     * Both the rule and its narrow-viewport override. Leaving either one means
+     * the transcript keeps a padding nobody can find from the JSX -- which is
+     * how the four disagreeing widths happened in the first place.
+     */
+    expect(stylesheet).not.toMatch(/\.chat-messages/);
+  });
+
+  it("re-supplies everything the deleted rule provided", () => {
+    /*
+     * `min-height: 0` is the one that fails silently and worst: without it the
+     * grid row refuses to shrink below its content, the transcript grows past
+     * the viewport, and the composer leaves the bottom of the screen. The
+     * reserved gutter is what stops the column stepping sideways the moment an
+     * answer grows tall enough to scroll.
+     */
+    expect(THREAD_SCROLLER).toContain("min-h-0");
+    expect(THREAD_SCROLLER).toContain("overflow-y-auto");
+    expect(THREAD_SCROLLER).toContain("[scrollbar-gutter:stable]");
+    // Horizontal padding at both steps: the tight one the narrow-viewport
+    // override used to hand back, and the roomier one above it.
+    expect(THREAD_SCROLLER).toMatch(/(^| )px-\d/);
+    expect(THREAD_SCROLLER).toMatch(/(^| )sm:px-\d/);
+  });
+
+  it("puts the composer on the same edges as the thread above it", () => {
+    // A composer indented differently from the messages reads as a step in the
+    // column every time the transcript starts scrolling.
+    for (const shared of ["px-4", "sm:px-6", "[scrollbar-gutter:stable]"]) {
+      expect(THREAD_SCROLLER).toContain(shared);
+      expect(COMPOSER_ZONE).toContain(shared);
+    }
+  });
+
+  it("gives the chat page a dynamic viewport height, with a static fallback first", () => {
+    /*
+     * Order matters: `dvh` has to come second so it wins where it is understood
+     * and is ignored where it is not. Reversed, a browser without `dvh` gets no
+     * height at all.
+     */
+    const rule = /\.chat-page \{[^}]*\}/.exec(stylesheet)?.[0] ?? "";
+    expect(rule).toContain("height: 100vh");
+    expect(rule).toContain("height: 100dvh");
+    expect(rule.indexOf("100vh")).toBeLessThan(rule.indexOf("100dvh"));
+  });
+
+  it("keeps the two rules that hide the workspace band inside chat", () => {
+    // Chat owns its full height; the sticky band would push the composer off
+    // the bottom of the screen, and its negative margins have nothing to cancel
+    // against here.
+    expect(stylesheet).toContain(".chat-page > .workspace-header { display: none; }");
+    expect(stylesheet).toContain(".chat-page > .mobile-brand { display: none; }");
+  });
+});
