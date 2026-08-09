@@ -934,29 +934,39 @@ export function ChatView({
           * moved into the header, which is the kind of thing a caption tells
           * you to do long after nobody can do it.
           */}
-        <div className="mt-auto grid gap-2.5 border-t border-border pt-3.5">
-          <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-2.5">
-            <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-pill bg-good" />
+        {/*
+          * Set at the rail's own reading size, not below it.
+          *
+          * Every line here was `text-caption` -- 11px at 1.5, which is the step
+          * for a dense grid header and two steps under anything in the thread
+          * beside it. Four facts about who you are and what you are pointed at
+          * were the tightest type on the screen, in the corner an operator looks
+          * at to confirm exactly that. `text-body` and real row spacing put it
+          * on the same footing as the window it sits next to.
+          */}
+        <div className="mt-auto grid gap-3.5 border-t border-border pt-4">
+          <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-2.5">
+            <span aria-hidden="true" className="mt-2 h-1.5 w-1.5 shrink-0 rounded-pill bg-good" />
             <div className="min-w-0">
-              <strong className="block truncate text-caption font-semibold text-text">
+              <strong className="block truncate text-body font-semibold leading-relaxed text-text">
                 {identityMode === "ENTERPRISE" ? "Enterprise Access" : "Administrator preview"}
               </strong>
-              <small className="mt-0.5 block truncate text-caption text-faint">
+              <small className="block truncate text-caption leading-relaxed text-faint">
                 {displayName ?? "Active OrcaSynapse session"}
               </small>
             </div>
           </div>
-          <dl className="m-0 grid gap-1">
+          <dl className="m-0 grid gap-2">
             <div className="flex min-w-0 items-baseline justify-between gap-3">
-              <dt className="shrink-0 text-caption text-faint">Agent</dt>
-              <dd className="m-0 min-w-0 truncate text-caption text-muted">
+              <dt className="shrink-0 text-body leading-relaxed text-faint">Agent</dt>
+              <dd className="m-0 min-w-0 truncate text-body leading-relaxed text-muted">
                 {active?.profileName ?? "None selected"}
               </dd>
             </div>
             <div className="flex min-w-0 items-baseline justify-between gap-3">
-              <dt className="shrink-0 text-caption text-faint">Usage</dt>
+              <dt className="shrink-0 text-body leading-relaxed text-faint">Usage</dt>
               <dd
-                className="m-0 min-w-0 truncate font-mono text-caption tabular-nums text-muted"
+                className="m-0 min-w-0 truncate font-mono text-body leading-relaxed tabular-nums text-muted"
                 title={conversationTotalTokens === null ? "This runtime does not report token usage." : undefined}
               >
                 {conversationTotalTokens === null ? "Not reported" : `${conversationTotalTokens.toLocaleString()} tokens`}
@@ -967,7 +977,12 @@ export function ChatView({
       </aside>
 
       <div className="relative grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)_auto]">
-        <header className="flex min-h-[68px] items-center gap-4 border-b border-border bg-surface px-5 py-2.5">
+        {/* 52px, not 68. The workspace band sits directly above this one from
+            v3.3.0, so the two together were 98px of chrome before a word of
+            the thread -- most of the reduction v2.6.0 bought back, spent
+            again. This bar keeps what only it can say: which conversation, and
+            the controls that act on it. */}
+        <header className="flex min-h-[52px] items-center gap-4 border-b border-border bg-surface px-5 py-2">
           <Button
             size="sm"
             className="lg:hidden"
@@ -1005,27 +1020,27 @@ export function ChatView({
                 {active?.title ?? "New conversation"}
               </strong>
             )}
-            <span className="mt-0.5 block truncate text-caption text-faint">
-              {active
-                ? `${active.profileName ?? "Legacy route"} · ${active.messages.length} messages`
-                : "Start a governed Hermes conversation"}
-            </span>
+            {/* Only when there is a conversation to describe. Without one this
+                line read "Start a governed Hermes conversation" -- an invitation
+                the empty state below already extends, in larger type. */}
+            {active && (
+              <span className="mt-0.5 block truncate text-caption text-faint">
+                {`${active.profileName ?? "Legacy route"} · ${active.messages.length} messages`}
+              </span>
+            )}
           </div>
-          <div className="flex min-w-0 items-center gap-4" aria-label="Conversation runtime summary">
-            <StatusText dot tone={working ? "accent" : routeReady ? "good" : "warn"} className="whitespace-nowrap">
-              {working
-                ? `${currentActivity ?? "Hermes is working"} · ${(streamElapsedMs / 1_000).toFixed(1)} s`
-                : routeReady
-                  ? "Hermes ready"
-                  : "Setup required"}
-            </StatusText>
-            {/*
-              * The profile is bound when the conversation is created, so the
-              * picker is only live before there is one -- which is exactly when
-              * the empty state used to carry it, as a bordered card with a label
-              * and a hint sitting in the middle of the greeting. Here it is one
-              * compact control in the chrome, where configuration belongs.
-              */}
+          {/*
+            * Two things, not four.
+            *
+            * This carried a readiness chip, the profile picker, the model alias
+            * and a token count across ~400px. Two of them said nothing on their
+            * own -- "Active default" and "—" are only legible if you already
+            * know which is the model and which is the usage -- and the token
+            * figure is the same one the rail's foot states under a label. What
+            * is left is the choice you can still make and whether the route can
+            * serve it.
+            */}
+          <div className="flex min-w-0 items-center gap-2.5" aria-label="Conversation runtime">
             {!active && (
               <Select
                 className="hidden h-8 w-[184px] text-caption sm:block"
@@ -1042,16 +1057,15 @@ export function ChatView({
                 ))}
               </Select>
             )}
-            {/* Two kickers for two figures that need no naming: a model alias
-                reads as a model alias, and a token count reads as a token
-                count. */}
-            <span className="hidden max-w-[150px] truncate font-mono text-caption text-faint md:block">
-              {active?.modelAlias ?? "Active default"}
-            </span>
-            <span className="hidden truncate font-mono text-caption tabular-nums text-faint lg:block">
-              {conversationTotalTokens === null ? "—" : `${conversationTotalTokens.toLocaleString()} tok`}
-            </span>
+            <StatusText dot tone={working ? "accent" : routeReady ? "good" : "warn"} className="whitespace-nowrap">
+              {working
+                ? `${(streamElapsedMs / 1_000).toFixed(1)} s`
+                : routeReady
+                  ? "Ready"
+                  : "Setup required"}
+            </StatusText>
           </div>
+
           {active && !renaming && (
             <div className="relative flex items-center gap-1.5" ref={moreMenu}>
               <Button size="sm" disabled={working || loading} onClick={() => void openKnowledge()}>
@@ -1670,25 +1684,26 @@ export function ChatView({
               </Button>
             )}
           </form>
-          <div className={cn(THREAD_MEASURE, "mt-2 flex flex-wrap items-center justify-center gap-x-3 gap-y-1")}>
-            <StatusText dot tone={working ? "accent" : routeReady ? "good" : "warn"}>
-              {working
-                ? (currentActivity ?? "Hermes is working")
-                : routeReady
-                  ? "Hermes route ready"
-                  : readinessTitle}
-            </StatusText>
-            {/* `StatusText` is uppercase by construction, which is right for a
-                status chip and wrong for a sentence. These two are prose: an
-                identity and a claim about the architecture, set in capitals
-                only because they were reaching for the nearest primitive. */}
-            <span className="text-caption text-faint">
-              {identityMode === "ENTERPRISE" ? "Enterprise session" : "Administrator preview"}
-            </span>
-            <span className="text-caption text-faint">
-              OrcaSynapse policy · Hermes execution · private knowledge
-            </span>
-          </div>
+          {/*
+            * The status strip that stood here is gone: a readiness chip that
+            * repeats the empty state's own heading, an identity the rail's foot
+            * already carries, and a sentence about the architecture. The live
+            * "Hermes is working" case is not lost with it -- the pending row in
+            * the transcript reports elapsed time while a run is in flight,
+            * which is where a reader is already looking.
+            */}
+          {/*
+            * The standing caution, on its own line rather than as a fourth chip
+            * in the strip above.
+            *
+            * A governed run is not a correct one: the policy line says where the
+            * answer came from and nothing about whether it is right. Grounding
+            * and attribution make a wrong answer easier to catch, which is a
+            * reason to check the sources, not a reason to skip it.
+            */}
+          <p className={cn(THREAD_MEASURE, "mb-0 mt-1.5 text-center text-micro leading-relaxed text-faint")}>
+            Answers are generated and can be wrong or incomplete. Check the cited sources before you rely on one.
+          </p>
         </div>
       </div>
 

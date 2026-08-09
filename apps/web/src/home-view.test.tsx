@@ -103,7 +103,13 @@ describe("Home", () => {
     render(<HomeView {...props()} />);
 
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Finish your private AI workspace");
-    expect(screen.getByText("Next: Create and activate an Agent Profile")).toBeTruthy();
+    /*
+     * The panel states the title and the action, not the step — it is the high
+     * level. The blocking step is still named on the screen, in the required
+     * capabilities list, which is the surface that owns it.
+     */
+    expect(screen.queryByText("Next: Create and activate an Agent Profile")).toBeNull();
+    expect(screen.getAllByText("Create and activate an Agent Profile").length).toBeGreaterThan(0);
     expect(screen.getByText("2/3")).toBeTruthy();
   });
 
