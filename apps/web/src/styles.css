@@ -300,6 +300,52 @@ main > * { width: min(100%, 1380px); margin-left: auto; margin-right: auto; }
  * child cap so the hairline runs the full width the way the design draws it.
  * Content beneath starts 26px later, standing in for main's old top padding.
  */
+/*
+ * The Dashboard's command panel: a full-bleed field, not a card on a page.
+ *
+ * `main > *` constrains every child to 1380px and centres it, which is right
+ * for reading and wrong for a surface whose whole point is to be the horizon.
+ * A class beats that element selector on specificity, so the width is retaken
+ * here and the page's own horizontal padding is cancelled and re-applied
+ * inside — the same arrangement `.workspace-header` uses to reach the edge.
+ *
+ * It does not theme. Like the rail's brand panel, this is a fixed dark field
+ * that always hosts white: a surface that flipped to near-white in light mode
+ * would stop being a command console and would take every foreground on it
+ * below AA on the way.
+ */
+.dashboard-hero {
+  /* The panel's field never themes, so neither may a token drawn on it.
+     `--node` shifts to a darker cyan in light mode for light surfaces, and on
+     this always-dark violet that measured 4.02:1 — the same trap `--accent`
+     fell into on the hero fill. Pinned to the dark-theme value here, the way
+     `.sidebar` pins `--accent-rgb` for the rail. */
+  --node-rgb: 34 211 238;
+  width: auto;
+  max-width: none;
+  margin: 0 calc(-1 * clamp(24px, 4vw, 64px)) 26px;
+  padding: 0 clamp(24px, 4vw, 64px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+  background:
+    radial-gradient(120% 140% at 82% 0%, rgba(146, 119, 245, 0.28) 0%, rgba(146, 119, 245, 0) 58%),
+    radial-gradient(90% 120% at 8% 100%, rgba(34, 211, 238, 0.1) 0%, rgba(34, 211, 238, 0) 55%),
+    rgb(var(--brand-rgb));
+}
+
+/* The survey grid behind the panel: two hairline rasters, deliberately faint —
+   it should read as depth at a glance and resolve into structure only if
+   someone looks for it. */
+.dashboard-hero-grid {
+  background-image:
+    repeating-linear-gradient(to right, rgba(255, 255, 255, 0.045) 0 1px, transparent 1px 64px),
+    repeating-linear-gradient(to bottom, rgba(255, 255, 255, 0.045) 0 1px, transparent 1px 64px);
+  mask-image: radial-gradient(120% 100% at 50% 0%, #000 0%, transparent 78%);
+}
+
+@media (max-width: 760px) {
+  .dashboard-hero { margin-inline: -16px; padding-inline: 16px; }
+}
+
 .workspace-header { position: sticky; top: 0; z-index: 40; width: auto; max-width: none; margin: 0 calc(-1 * clamp(24px, 4vw, 64px)) 26px; padding: 0 clamp(24px, 4vw, 64px); border-bottom: 1px solid var(--border); background: rgb(var(--bg-rgb) / 0.92); backdrop-filter: blur(12px); }
 .mobile-brand { display: none; }
 h1, h2, h3 { color: var(--text); font-family: inherit; letter-spacing: -.025em; }
