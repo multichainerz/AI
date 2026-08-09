@@ -53,6 +53,7 @@ import { ConnectionDrawer, type ConnectionDraft } from "./connection-drawer.js";
 import { connectionReadiness } from "./connection-readiness.js";
 import { FrontPage } from "./front-page.js";
 import { HomeView, type HomeLayer, type HomeReadinessCheck } from "./home-view.js";
+import { SynapseField } from "./dashboard-hero.js";
 import { connectionFor, deriveWorkspaceReadiness } from "./platform-readiness.js";
 import { cn } from "./ui/index.js";
 import {
@@ -131,6 +132,32 @@ function Glyph({ name }: { name: string }) {
  */
 function BrandMark({ size = 28 }: { size?: number }) {
   return <img src="/brand/sivali-mark.svg" alt="" width={size} height={size} className="block shrink-0" />;
+}
+
+/** The one intentional pause between browser chrome and the restored surface. */
+export function ApplicationBootScreen() {
+  return (
+    <div className="app-boot-screen" aria-busy="true" aria-live="polite">
+      <SynapseField className="dashboard-synapse--boot" />
+      <div className="app-boot-stage">
+        <div className="app-boot-orbit" aria-hidden="true">
+          <span className="app-boot-orbit__ring app-boot-orbit__ring--outer" />
+          <span className="app-boot-orbit__ring app-boot-orbit__ring--inner" />
+          <span className="app-boot-orbit__node app-boot-orbit__node--one" />
+          <span className="app-boot-orbit__node app-boot-orbit__node--two" />
+          <span className="app-boot-mark"><BrandMark size={58} /></span>
+        </div>
+        <div className="app-boot-wordmark">
+          <strong>OrcaSynapse</strong>
+          <span>Private agentic intelligence</span>
+        </div>
+        <div className="app-boot-status">
+          <span className="app-boot-progress" aria-hidden="true"><span /></span>
+          <span>Initializing the intelligence fabric</span>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function connectionState(connection: ServiceConnectionSummary | undefined) {
@@ -315,6 +342,7 @@ function App() {
   // shell are mutually exclusive surfaces, so rendering either before the
   // answer arrives shows the wrong one for a beat on every reload.
   const [sessionRestored, setSessionRestored] = useState(false);
+  const [minimumBootElapsed, setMinimumBootElapsed] = useState(false);
   const [drawerKind, setDrawerKind] = useState<ServiceKind>("INFERENCE");
   const [deploymentInitialTab, setDeploymentInitialTab] = useState<"journey" | "nodes" | "readiness">("journey");
   const [settingsBusy, setSettingsBusy] = useState(false);
@@ -325,6 +353,20 @@ function App() {
   const [revisionConnectionId, setRevisionConnectionId] = useState<string | null>(null);
   const sessionGeneration = useRef(0);
   const activeNavigationItem = useRef<HTMLButtonElement | null>(null);
+
+  /*
+   * The session probes often complete quickly enough that the old lone mark
+   * appeared as a flash rather than an intentional entrance. This timer runs
+   * beside the probes rather than inside them: neither can delay the other,
+   * and the shell opens as soon as both real state and one short brand cycle
+   * are ready. Reduced-motion keeps a brief visual hand-off without asking the
+   * operator to sit through the animated duration.
+   */
+  useEffect(() => {
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+    const timer = window.setTimeout(() => setMinimumBootElapsed(true), reducedMotion ? 240 : 1_400);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     const item = activeNavigationItem.current;
@@ -615,12 +657,14 @@ function App() {
       detail: readiness.inferenceReady ? "Approved model serving is reachable" : "Connect and verify model serving",
       ready: readiness.inferenceReady,
       action: "Deployment" as ActiveView,
+      deploymentTab: "journey" as const,
     },
     {
       label: "Isolated agent runtime",
       detail: readiness.runtimeNodeReady && readiness.hermesReady ? "VM2 is online and Hermes is reachable" : "Enroll VM2 and verify Hermes health",
       ready: readiness.runtimeNodeReady && readiness.hermesReady,
       action: "Deployment" as ActiveView,
+      deploymentTab: "nodes" as const,
     },
     {
       label: "Active Agent Profile",
@@ -946,12 +990,8 @@ function App() {
    * sessions get the shell exactly as before — the front page is strictly the
    * signed-out and must-change surface.
    */
-  if (!sessionRestored) {
-    return (
-      <div className="grid min-h-screen place-items-center bg-brand" aria-busy="true">
-        <BrandMark size={44} />
-      </div>
-    );
+  if (!sessionRestored || !minimumBootElapsed) {
+    return <ApplicationBootScreen />;
   }
 
   if ((!adminSession && !enterpriseSession) || passwordChangePending) {
@@ -1138,7 +1178,14 @@ function App() {
         </div>
       </aside>
 
-      <main className={activeView === "Chat" ? "chat-page" : undefined}>
+      <main
+        className={cn(
+          activeView === "Chat" && "chat-page",
+          activeView === "Overview" && "dashboard-page",
+          activeView !== "Overview" && "workspace-page--synapse",
+        )}
+      >
+        {activeView !== "Overview" && <SynapseField className="dashboard-synapse--workspace" />}
         <div className="mobile-brand"><BrandMark size={26} /><strong>OrcaSynapse</strong></div>
         <WorkspaceHeader area={activeArea} operator={operator} onSignOut={() => void signOut()} immersive={activeView === "Overview"} />
         {activeView !== "Chat" && activeView !== "Overview" && (
