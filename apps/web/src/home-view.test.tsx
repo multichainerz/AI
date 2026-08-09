@@ -6,9 +6,10 @@
  * is allowed to see, where the one primary action points, and whether a layer
  * row still routes to the right platform tab.
  */
-import type { ChatMetrics } from "@orcasynapse/contracts";
+import type { AgentMetrics, ChatMetrics, DocumentMetrics, ToolMetrics } from "@orcasynapse/contracts";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { writeFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HomeView, type HomeLayer, type HomeReadinessCheck } from "./home-view.js";
@@ -34,9 +35,25 @@ const readiness = (ready: boolean): HomeReadinessCheck[] => [
   { label: "Active Agent Profile", detail: "Create and activate an Agent Profile", ready, action: "Agents" },
 ];
 
-// Home reads exactly one field off the metrics payload; enumerating the other
-// nineteen would make this test fail every time the chat contract grows.
-const chatMetrics = { responses: 1_284 } as ChatMetrics;
+/*
+ * Only the fields the activity banner reads. Enumerating whole payloads would
+ * make this fail every time one of four contracts grows a field, and the cast
+ * is what keeps the fixture honest about how little Home actually consumes.
+ *
+ * It used to be one field. The banner reported readiness, which the callout
+ * directly above it already carried, so the loudest surface on the screen was
+ * saying nothing the screen did not say twice.
+ */
+const chatMetrics = {
+  conversations: 342,
+  responses: 1_284,
+  completed: 1_249,
+  failureRate: 0.02,
+  windowStartedAt: "2026-08-02T00:00:00.000Z",
+} as ChatMetrics;
+const documentMetrics = { total: 58, ready: 55 } as DocumentMetrics;
+const agentMetrics = { profiles: 4, activeProfiles: 2 } as AgentMetrics;
+const toolMetrics = { activeTools: 6, activeGrants: 3 } as ToolMetrics;
 
 function props(overrides: Partial<Parameters<typeof HomeView>[0]> = {}) {
   return {
@@ -46,6 +63,9 @@ function props(overrides: Partial<Parameters<typeof HomeView>[0]> = {}) {
     healthyConnections: 3,
     monitoring: { enabled: true, intervalSeconds: 300, reason: null, updatedAt: "2026-08-07T00:00:00.000Z", updatedBy: null },
     chatMetrics,
+    documentMetrics,
+    agentMetrics,
+    toolMetrics,
     layers,
     readiness: readiness(false),
     onSelect: vi.fn(),
@@ -63,10 +83,12 @@ describe("Home", () => {
     const user = userEvent.setup();
     render(<HomeView {...props({ unlocked: false, onUnlock, onSelect })} />);
 
-    expect(screen.getAllByText("—")).toHaveLength(3);
+    // Six: the banner headline plus its five columns. Every one is an
+    // authenticated read, so none of them may show a figure here.
+    expect(screen.getAllByText("—")).toHaveLength(6);
     expect(screen.queryByText("Approved model serving is reachable")).toBeNull();
     expect(screen.getAllByText("Sign in to view current readiness")).toHaveLength(3);
-    expect(screen.getByText("Sign in to verify")).toBeTruthy();
+    expect(screen.getByText("Sign in to see activity")).toBeTruthy();
     expect(screen.getByText("Locked")).toBeTruthy();
 
     await user.click(screen.getAllByRole("button", { name: "Sign in" })[0]!);
@@ -139,23 +161,56 @@ describe("Home", () => {
     expect(renderToStaticMarkup(<HomeView {...props()} />)).not.toMatch(/\sstyle=/);
   });
 
-  it("draws readiness as a bar, because a fraction has a denominator worth seeing", () => {
+  it("reports what the deployment has done, not what it is ready to do", () => {
     /*
-     * The one figure on this screen with a denominator. Moving the banner onto
-     * HeroBanner in ai-v1.88.0 dropped the `fill` that drew it, and nothing
-     * failed: `Metric` renders the bar only when a caller passes `fill`, the
-     * only production caller was this one, and `ui.test.tsx` kept exercising
-     * the branch directly. The feature left the product and the tests stayed
-     * green. Asserting on the rendered screen is what closes that gap.
+     * The banner used to restate readiness, which the callout directly above it
+     * already carries -- the same fraction twice, in the two loudest places on
+     * the screen. It reports activity now, and states the window it covers,
+     * because "342 conversations" is not a fact until you know over what.
+     */
+    render(<HomeView {...props()} />);
+
+    expect(screen.getByText("Governed conversations")).toBeTruthy();
+    expect(screen.getByText("342")).toBeTruthy();
+    /*
+     * The window is stated, not its spelling: `toLocaleDateString` renders
+     * "2 August" or "August 2" depending on where this runs, and pinning one of
+     * those makes the suite fail on a machine in the wrong place rather than on
+     * a caption that stopped saying anything.
+     */
+    expect(screen.getByText(/^Since \w/)).toBeTruthy();
+    expect(screen.getByText("1,249 completed")).toBeTruthy();
+    expect(screen.getByText("55 indexed")).toBeTruthy();
+    expect(screen.getByText("3 grants")).toBeTruthy();
+
+    /*
+     * Home takes every figure through props, so unlike the shell it can be seen
+     * without a session. Set `HOME_PREVIEW_OUT` to a path and this writes the
+     * populated markup there; pair it with the stylesheet from a web build and
+     * the banner opens in a browser. Attached to a real test rather than kept
+     * as a scratch script, so it cannot rot unnoticed.
+     */
+    if (process.env.HOME_PREVIEW_OUT) {
+      writeFileSync(process.env.HOME_PREVIEW_OUT, document.body.innerHTML, "utf8");
+    }
+  });
+
+  it("draws the completed share as a bar, because a fraction has a denominator worth seeing", () => {
+    /*
+     * The one figure here with a denominator. Moving the banner onto HeroBanner
+     * in ai-v1.88.0 dropped the `fill` that drew it and nothing failed: `Metric`
+     * renders the bar only when a caller passes `fill`, the only production
+     * caller was this one, and `ui.test.tsx` kept exercising the branch
+     * directly. The feature left the product and the tests stayed green.
      */
     const { container } = render(<HomeView {...props()} />);
     const bar = container.querySelector("progress");
-    expect(bar, "the readiness figure renders no progress bar").toBeTruthy();
-    // Two of three checks ready, as the default fixture states.
-    expect(bar).toHaveProperty("value", 67);
+    expect(bar, "the headline figure renders no progress bar").toBeTruthy();
+    // 1,249 of 1,284 responses completed.
+    expect(bar).toHaveProperty("value", 97);
   });
 
-  it("colours the bar by readiness, not by decoration", () => {
+  it("colours the bar by the failure rate, not by decoration", () => {
     /*
      * The tone reached the component and stopped there: HeroBanner's accent
      * branch forwarded `fill` but not `tone`, so every bar painted white and
@@ -163,7 +218,23 @@ describe("Home", () => {
      * makes the difference between "the prop is set" and "the pixel changes".
      */
     const { container } = render(<HomeView {...props()} />);
-    expect(container.querySelector("progress")?.className).toContain("is-warn");
+    expect(container.querySelector("progress")?.className).toContain("is-good");
+
+    cleanup();
+    const failing = { ...chatMetrics, failureRate: 0.4 } as ChatMetrics;
+    const { container: warned } = render(<HomeView {...props({ chatMetrics: failing })} />);
+    expect(warned.querySelector("progress")?.className).toContain("is-warn");
+  });
+
+  it("draws no bar before anything has run, rather than a full green one", () => {
+    /*
+     * `completed / responses` is 0/0 with no runs. A bar drawn from that is
+     * either NaN or, worse, rounds to something that reads as "everything
+     * succeeded" when the truth is "nothing has been attempted".
+     */
+    const untouched = { ...chatMetrics, conversations: 0, responses: 0, completed: 0 } as ChatMetrics;
+    const { container } = render(<HomeView {...props({ chatMetrics: untouched })} />);
+    expect(container.querySelector("progress")).toBeNull();
   });
 
   it("draws no bar while the session is locked, rather than an empty one", () => {
