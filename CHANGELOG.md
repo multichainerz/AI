@@ -5,6 +5,57 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v3.4.0 — 2026-08-09
+
+The landing banner reports what the deployment has done.
+
+Third of three shell releases; the rename to Dashboard and Session follows.
+
+It reported readiness -- the same fraction the callout directly above it already
+carried, so the two loudest surfaces on the screen said one thing twice. It now
+reports activity, from four metric sources that already existed: governed
+conversations as the headline with the window it covers stated from
+`windowStartedAt` ("Since 2 August"), then responses and how many completed,
+documents and how many are indexed, agent profiles and how many are active,
+tools allowed with their grant count, and healthy services.
+
+The readiness fraction did not vanish with the old banner -- it moved onto the
+callout that owns the subject, where it is a figure beside its own sentence
+rather than the largest number on a page about something else.
+
+Nothing here is invented. There is no user count in this product -- no user
+directory, nothing counting distinct identities -- so there is no user count on
+the banner, and a figure the deployment has not produced yet renders as an
+em dash rather than a zero.
+
+**The bar is drawn only when there is something to divide.** `completed /
+responses` is 0/0 on a fresh install; a bar from that is either NaN or rounds to
+something that reads as "everything succeeded" when the truth is "nothing has
+been attempted".
+
+### The accent block could not carry legible small text
+
+Found by measuring the finished banner, not by looking at it. `--accent` is
+`#9277F5`, tuned to read as an accent *colour* against a dark surface -- and
+**pure white over it measures 3.40:1**. Not the 70% white the kicker used, or
+the 80% the caption used: white itself, at full opacity, below AA. The design
+system's signature hero block could not host compliant small text at any
+opacity, on every screen that uses one.
+
+New `--accent-fill` token: `#703DEF`, which is the light theme's own accent and
+which white clears at 5.83. It deliberately does not theme -- like `--brand-rgb`
+behind the rail, a fill that always hosts white has to always be dark enough to.
+`HeroBanner` uses it for the accent block; `--accent` is untouched everywhere
+else, so buttons, links and chips are unchanged.
+
+Measured after: **0 contrast failures across 84 rendered nodes in both themes**,
+worst 4.65 dark and 4.56 light.
+
+Home can now be seen without a session -- it takes every figure through props --
+so `HOME_PREVIEW_OUT` on its test writes the populated markup for a browser,
+the same arrangement the chat transcript uses. That is how the accent-block
+defect surfaced.
+
 ## ai-v3.3.0 — 2026-08-09
 
 The account moves to the top-right corner, and becomes reachable on a phone.

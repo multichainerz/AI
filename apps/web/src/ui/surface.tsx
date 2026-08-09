@@ -285,14 +285,14 @@ export function HeroBanner({ highlight, tone = "accent", metrics, className, ...
   return (
     <Panel className={cn("flex flex-wrap items-stretch gap-y-5 p-5 sm:p-6", className)} {...rest}>
       {tone === "accent" ? (
-        <div className="relative -my-1.5 mr-6 min-w-[240px] overflow-hidden rounded-lg bg-accent px-5 py-4 text-white">
+        <div className="relative -my-1.5 mr-6 min-w-[240px] overflow-hidden rounded-lg bg-accent-fill px-5 py-4 text-white">
           <span aria-hidden="true" className="absolute -right-8 -top-8 h-28 w-28 rounded-pill bg-white/10" />
           <span aria-hidden="true" className="absolute -bottom-10 right-1.5 h-24 w-24 rounded-pill bg-white/[0.07]" />
           <div className="relative">
-            <MicroLabel className="block text-white/70">{highlight.label}</MicroLabel>
+            <MicroLabel className="block text-white/85">{highlight.label}</MicroLabel>
             <strong className="mt-2 block font-display text-display font-semibold">{highlight.value}</strong>
             {highlight.caption ? (
-              <small className="mt-2 block text-caption text-white/80">{highlight.caption}</small>
+              <small className="mt-2 block text-caption text-white/90">{highlight.caption}</small>
             ) : null}
             <HighlightBar fill={highlight.fill} tone={highlight.tone} onAccent />
           </div>

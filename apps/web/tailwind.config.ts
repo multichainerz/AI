@@ -48,6 +48,10 @@ export default {
         faint: "rgb(var(--faint-rgb) / <alpha-value>)",
         accent: "rgb(var(--accent-rgb) / <alpha-value>)",
         "accent-strong": "rgb(var(--accent-strong-rgb) / <alpha-value>)",
+        // The violet used *behind white text*. Distinct from `accent` because
+        // that one is tuned to read against a dark surface, and white over it
+        // measures 3.40:1 — below AA at any opacity.
+        "accent-fill": "rgb(var(--accent-fill-rgb) / <alpha-value>)",
         // Text set on an accent fill. Near-black in dark (the design's violet is
         // light enough to carry it), white in light — a token, because guessing
         // per call site is how one theme ends up illegible.
