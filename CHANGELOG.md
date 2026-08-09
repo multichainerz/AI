@@ -5,6 +5,51 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v3.1.0 — 2026-08-09
+
+A fresh install can hold a conversation.
+
+Until now it could not. There was no agent profile anywhere in a new deployment
+and nothing that created one, so Chat opened on "Setup required" and a Create
+Agent Profile button: the product's central screen was unusable until an
+operator wrote a system prompt into a blank box. Migration
+`0028_default_agent_profile` seeds one, ACTIVE with an active version, so
+`routeReady` is satisfied the moment a runtime is enrolled.
+
+The prompt it seeds is the substance of this release. What the create form
+offered before was two sentences -- "Provide concise, evidence-based answers.
+Clearly distinguish retrieved facts from analysis and state uncertainty." --
+enough to clear the schema's 10-character minimum and not enough to govern
+anything. Nothing in it told the model to prefer retrieved material over its own
+recall, which is the single thing a document-grounded deployment needs it to do;
+an operator who accepted the default got an assistant that would answer from
+training data about documents it was supposed to be reading.
+
+`DEFAULT_AGENT_PROFILE` replaces it with 2,492 characters written for an
+on-premise enterprise deployment, covering grounding (the corpus is the
+authority, and "the indexed documents do not cover this" is a complete answer),
+attribution (name the document; keep the line visible between what a document
+states and what is inferred), sensitive material (respect classification, never
+reproduce credentials found in a document even when asked), decisions (support
+them, do not make them; refer anything with legal, regulatory or safety
+consequence to the responsible human), form, and limits.
+
+It lives in `@orcasynapse/contracts` and is used by both the migration and the
+create form, so the two cannot drift -- `default-agent-profile.test.ts` reads
+the SQL as text and fails if they do. `packages/database` gained
+`@orcasynapse/contracts` as a devDependency for that test alone; there is no
+cycle, contracts depends on nothing but zod.
+
+Verified by applying migrations to a real database and reading the row back:
+ACTIVE, activeVersion 1, 2,492 characters of instructions. Both the drift guard
+and the migration snapshot chain were mutation-checked.
+
+One detail worth recording: every literal is dollar-quoted (`$seed$`). The
+prompt contains apostrophes -- "the organisation's own knowledge base" -- which
+would close a single-quoted SQL string early and leave the rest as broken
+syntax. That is a migration that fails on every install and is found only by
+installing; a test now asserts the quoting.
+
 ## v3.0.0 — 2026-08-09
 
 Zero WCAG AA failures on a populated transcript, in both themes.
