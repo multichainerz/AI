@@ -15,7 +15,7 @@ import type { ActiveView } from "./workspace-navigation.js";
  * The Dashboard's command panel.
  *
  * Every other screen in this product is a page of cards. This is the one
- * surface that is meant to be looked at rather than read: a full-bleed dark
+ * surface that is meant to be looked at rather than read: a full-bleed themed
  * field carrying what the deployment is, what it has done, and whether the
  * governed path from a question to an answer is intact end to end.
  *
@@ -24,9 +24,8 @@ import type { ActiveView } from "./workspace-navigation.js";
  * the four hops a message actually takes, which is what the topology draws, with
  * each hop's real state rather than a decorative one.
  *
- * Fixed dark in both themes, like the navigation rail: a command console that
- * turns near-white in light mode stops being one, and takes every foreground on
- * it below AA on the way.
+ * It uses the workspace's black/white canvas and keeps violet for actions and
+ * emphasis, so the same operational hierarchy survives either theme.
  */
 
 interface DashboardHeroProps {
@@ -121,12 +120,12 @@ function Clock() {
   return (
     <div className="flex shrink-0 items-baseline gap-2 text-right">
       <strong
-        className="font-mono text-[19px] font-semibold leading-none tabular-nums text-white sm:text-[21px]"
+        className="font-mono text-[19px] font-semibold leading-none tabular-nums text-text sm:text-[21px]"
         aria-label="Local time"
       >
         {two(now.getHours())}:{two(now.getMinutes())}:{two(now.getSeconds())}
       </strong>
-      <span className="font-mono text-micro uppercase tracking-[0.16em] text-white/55">{offset}</span>
+      <span className="font-mono text-micro uppercase tracking-[0.16em] text-faint">{offset}</span>
     </div>
   );
 }
@@ -389,26 +388,26 @@ export function DashboardHero(props: DashboardHeroProps) {
           */}
         <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-4">
           <div className="min-w-0 max-w-[72ch]">
-            <span className="block text-micro uppercase tracking-[0.18em] text-white/55">
+            <span className="block text-micro uppercase tracking-[0.18em] text-faint">
               OrcaSynapse control center
             </span>
-            <h1 className="m-0 mt-1.5 font-display text-[25px] font-semibold leading-[1.12] tracking-[-0.025em] text-white sm:text-[29px]">
+            <h1 className="m-0 mt-1.5 font-display text-[25px] font-semibold leading-[1.12] tracking-[-0.025em] text-text sm:text-[29px]">
               {props.title}
             </h1>
-            <p className="mb-0 mt-1.5 max-w-[72ch] text-caption leading-relaxed text-white/60">{props.detail}</p>
+            <p className="mb-0 mt-1.5 max-w-[72ch] text-caption leading-relaxed text-muted">{props.detail}</p>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-2.5">
-            <span className="flex items-center gap-2 rounded-pill border border-white/15 bg-white/[0.06] px-3 py-1.5 text-micro uppercase tracking-[0.12em] text-white/75">
+            <span className="flex items-center gap-2 rounded-pill border border-border bg-surface px-3 py-1.5 text-micro uppercase tracking-[0.12em] text-muted">
               <span
                 aria-hidden="true"
-                className={cn("h-1.5 w-1.5 rounded-pill", props.apiAvailable ? "bg-node" : "bg-bad")}
+                className={cn("h-1.5 w-1.5 rounded-full", props.apiAvailable ? "bg-node" : "bg-bad")}
               />
               {props.apiAvailable ? "Control plane online" : "Control plane offline"}
             </span>
             <button
               type="button"
               onClick={props.onPrimary}
-              className="rounded-pill bg-white px-4 py-2 text-caption font-semibold text-[#2B1364] transition-colors hover:bg-white/90"
+              className="rounded-pill bg-accent-fill px-4 py-2 text-caption font-semibold text-white transition-opacity hover:opacity-90"
             >
               {props.primaryLabel}
             </button>
@@ -424,28 +423,28 @@ export function DashboardHero(props: DashboardHeroProps) {
           * nothing typed here could be answered here, and a real input would
           * promise otherwise.
           */}
-        <div className="rounded-lg border border-white/12 bg-white/[0.05] p-3.5">
+        <div className="rounded-lg border border-border bg-surface p-3.5 shadow-card">
           <div className="flex flex-wrap items-center gap-3.5">
             {/* Session's own icon, the one the rail uses, rather than a generic
                 node glyph beside the word "ASK" — the placeholder already says
                 what the row is for, so the label was the caption on a caption. */}
             <span
               aria-hidden="true"
-              className="flex shrink-0 text-white/60 [&_.fill-node]:fill-current [&_.stroke-node]:stroke-current"
+              className="flex shrink-0 text-muted [&_.fill-node]:fill-current [&_.stroke-node]:stroke-current"
             >
               <TerminalIcon size={19} />
             </span>
             <button
               type="button"
               onClick={props.onAsk}
-              className="min-w-[220px] flex-1 border-b-[1.5px] border-white/20 pb-2 text-left text-[17px] tracking-[-0.01em] text-white/65 transition-colors hover:border-node hover:text-white/80"
+              className="min-w-[220px] flex-1 border-b-[1.5px] border-border-strong pb-2 text-left text-[17px] tracking-[-0.01em] text-muted transition-colors hover:border-accent hover:text-text"
             >
               Ask about your documents, agents, and operations…
             </button>
             <button
               type="button"
               onClick={props.onAsk}
-              className="shrink-0 rounded-pill bg-accent-fill px-4 py-2 text-caption font-semibold text-white transition-colors hover:bg-accent-strong hover:text-[#2B1364]"
+              className="shrink-0 rounded-pill bg-accent-fill px-4 py-2 text-caption font-semibold text-white transition-opacity hover:opacity-90"
             >
               Start a session
             </button>
@@ -454,20 +453,20 @@ export function DashboardHero(props: DashboardHeroProps) {
 
         <dl
           aria-label="Operational activity"
-          className="m-0 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-white/10 bg-white/10 sm:grid-cols-3 xl:grid-cols-6"
+          className="m-0 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-border bg-border sm:grid-cols-3 xl:grid-cols-6"
         >
           {metrics.map((metric) => (
-            <div className="min-w-0 bg-[#2B1364]/90 px-3 py-2.5" key={metric.label}>
-              <dt className="flex items-center gap-1.5 truncate text-micro uppercase tracking-[0.13em] text-white/55">
+            <div className="min-w-0 bg-surface px-3 py-2.5" key={metric.label}>
+              <dt className="flex items-center gap-1.5 truncate text-micro uppercase tracking-[0.13em] text-faint">
                 <span aria-hidden="true" className="flex shrink-0 [&_.fill-node]:fill-current [&_.stroke-node]:stroke-current">
                   {metric.icon}
                 </span>
                 <span className="truncate">{metric.label}</span>
               </dt>
-              <dd className="m-0 mt-1 truncate font-display text-[21px] font-semibold leading-none tabular-nums text-white">
+              <dd className="m-0 mt-1 truncate font-display text-[21px] font-semibold leading-none tabular-nums text-text">
                 {metric.value}
               </dd>
-              <dd className="m-0 mt-1 truncate text-micro text-white/60">{metric.detail}</dd>
+              <dd className="m-0 mt-1 truncate text-micro text-muted">{metric.detail}</dd>
               {metric.fill === undefined ? null : (
                 <dd className="m-0">
                   <progress
@@ -483,15 +482,15 @@ export function DashboardHero(props: DashboardHeroProps) {
         </dl>
 
         <div className="dashboard-hero__operations grid min-h-0 gap-3.5 xl:grid-cols-[minmax(280px,0.82fr)_minmax(0,1.58fr)]">
-          <section className="flex min-h-0 flex-col rounded-lg border border-white/10 bg-white/[0.035] p-4" aria-labelledby="dashboard-readiness-title">
+          <section className="flex min-h-0 flex-col rounded-lg border border-border bg-surface p-4 shadow-card" aria-labelledby="dashboard-readiness-title">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <span className="block text-micro uppercase tracking-[0.18em] text-white/55">Workspace readiness</span>
-                <h2 className="m-0 mt-1 font-display text-[17px] font-semibold tracking-[-0.02em] text-white" id="dashboard-readiness-title">
+                <span className="block text-micro uppercase tracking-[0.18em] text-faint">Workspace readiness</span>
+                <h2 className="m-0 mt-1 font-display text-[17px] font-semibold tracking-[-0.02em] text-text" id="dashboard-readiness-title">
                   Required capabilities
                 </h2>
               </div>
-              <strong className="rounded-pill border border-white/12 bg-white/[0.05] px-2.5 py-1 font-mono text-micro font-semibold tabular-nums text-white/75">
+              <strong className="rounded-pill border border-border bg-raised px-2.5 py-1 font-mono text-micro font-semibold tabular-nums text-muted">
                 {props.unlocked ? `${readyCount}/${props.readiness.length} ready` : "Locked"}
               </strong>
             </div>
@@ -505,7 +504,7 @@ export function DashboardHero(props: DashboardHeroProps) {
                       "grid min-h-12 w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2.5 rounded border px-3 py-2 text-left transition-colors",
                       isNext
                         ? "border-node/35 bg-node/[0.07] hover:border-node/60"
-                        : "border-white/10 bg-black/10 hover:border-white/25",
+                        : "border-border bg-bg hover:border-border-strong",
                     )}
                     key={check.label}
                     type="button"
@@ -514,20 +513,20 @@ export function DashboardHero(props: DashboardHeroProps) {
                     <span
                       aria-hidden="true"
                       className={cn(
-                        "h-1.5 w-1.5 rounded-pill",
-                        !props.unlocked ? "bg-white/30" : check.ready ? "bg-node" : "bg-white/35",
+                        "h-1.5 w-1.5 rounded-full",
+                        !props.unlocked ? "bg-faint" : check.ready ? "bg-node" : "bg-faint",
                       )}
                     />
                     <span className="min-w-0">
                       <span className="flex items-center gap-2">
-                        <strong className="truncate text-caption font-semibold text-white">{check.label}</strong>
+                        <strong className="truncate text-caption font-semibold text-text">{check.label}</strong>
                         {isNext && <span className="text-micro uppercase tracking-[0.12em] text-node">Next</span>}
                       </span>
-                      <small className="mt-0.5 block text-micro leading-snug text-white/55">
+                      <small className="mt-0.5 block text-micro leading-snug text-muted">
                         {props.unlocked ? check.detail : "Sign in to inspect readiness"}
                       </small>
                     </span>
-                    <span aria-hidden="true" className="font-mono text-caption text-white/40">→</span>
+                    <span aria-hidden="true" className="font-mono text-caption text-faint">→</span>
                   </button>
                 );
               })}
@@ -538,11 +537,11 @@ export function DashboardHero(props: DashboardHeroProps) {
           {/* A column, not a grid of rows: the assurance strip takes `mt-auto` so
               it sits on the panel's floor instead of leaving a void beneath the
               topology whenever the left column is the taller of the two. */}
-          <section className="flex min-h-0 flex-col gap-3 rounded-lg border border-white/10 bg-white/[0.03] p-4" aria-labelledby="dashboard-path-title">
+          <section className="flex min-h-0 flex-col gap-3 rounded-lg border border-border bg-surface p-4 shadow-card" aria-labelledby="dashboard-path-title">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="min-w-0">
-                <span className="block text-micro uppercase tracking-[0.18em] text-white/55">Governed path</span>
-                <h2 className="m-0 mt-1 font-display text-[17px] font-semibold tracking-[-0.02em] text-white" id="dashboard-path-title">
+                <span className="block text-micro uppercase tracking-[0.18em] text-faint">Governed path</span>
+                <h2 className="m-0 mt-1 font-display text-[17px] font-semibold tracking-[-0.02em] text-text" id="dashboard-path-title">
                   {intact ? "Every hop is answering" : "The path is not complete"}
                 </h2>
               </div>
@@ -554,7 +553,7 @@ export function DashboardHero(props: DashboardHeroProps) {
                 <li
                   className={cn(
                     "relative grid content-start gap-1.5 rounded-lg border p-3",
-                    hop.live ? "border-node/40 bg-node/[0.07]" : "border-white/10 bg-white/[0.02]",
+                    hop.live ? "border-node/40 bg-node/[0.07]" : "border-border bg-bg",
                   )}
                   key={hop.name}
                 >
@@ -563,21 +562,21 @@ export function DashboardHero(props: DashboardHeroProps) {
                   {index > 0 && (
                     <span
                       aria-hidden="true"
-                      className="absolute -left-2.5 top-1/2 hidden h-px w-2.5 bg-white/15 xl:block"
+                      className="absolute -left-2.5 top-1/2 hidden h-px w-2.5 bg-border-strong xl:block"
                     />
                   )}
                   <span className="flex items-center gap-2">
                     <span
                       aria-hidden="true"
-                      className={cn("h-1.5 w-1.5 shrink-0 rounded-pill", hop.live ? "bg-node" : "bg-white/30")}
+                      className={cn("h-1.5 w-1.5 shrink-0 rounded-full", hop.live ? "bg-node" : "bg-faint")}
                     />
-                    <strong className="min-w-0 truncate text-caption font-semibold text-white">{hop.name}</strong>
+                    <strong className="min-w-0 truncate text-caption font-semibold text-text">{hop.name}</strong>
                   </span>
-                  <span className="block text-micro leading-relaxed text-white/55">{hop.role}</span>
+                  <span className="block text-micro leading-relaxed text-muted">{hop.role}</span>
                   <span
                     className={cn(
                       "mt-0.5 block truncate text-micro font-semibold",
-                      hop.live ? "text-node" : "text-white/70",
+                      hop.live ? "text-node" : "text-muted",
                     )}
                   >
                     {hop.state}
@@ -586,9 +585,9 @@ export function DashboardHero(props: DashboardHeroProps) {
               ))}
             </ol>
 
-            <div className="mt-auto flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-white/10 pt-3 text-micro text-white/55">
+            <div className="mt-auto flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-border pt-3 text-micro text-faint">
               <span>
-                <strong className="font-semibold tabular-nums text-white/85">
+                <strong className="font-semibold tabular-nums text-muted">
                   {props.unlocked ? props.healthyConnections : "—"}
                 </strong>{" "}
                 services answering

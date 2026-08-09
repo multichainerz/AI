@@ -7,7 +7,7 @@ body:
     attributes:
       label: Version
       description: From the release tag, installer banner, or packages/contracts/src/version.ts.
-      placeholder: ai-v1.28.0
+      placeholder: ai-v3.12.0
     validations:
       required: true
   - type: dropdown
@@ -15,7 +15,7 @@ body:
     attributes:
       label: Surface
       options:
-        - Dashboard (web)
+        - Operator workspace (web)
         - API
         - Worker
         - VM1 installer (install.sh / install-orcasynapse.sh)

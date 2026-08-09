@@ -1,12 +1,12 @@
 <p align="center">
-  <img src="docs/assets/orcasynapse-wordmark.svg" alt="OrcaSynapse - private AI operations and agentic control plane" width="100%" />
+  <img src="docs/assets/orcasynapse-wordmark.svg" alt="OrcaSynapse - private agentic intelligence and governed execution, on-premises" width="100%" />
 </p>
 
-<h3 align="center">Your private AI. One control plane. Fully on-premises.</h3>
+<h3 align="center">Dynamic intelligence, orchestrated into action.</h3>
 
 <p align="center">
-  Point OrcaSynapse at any OpenAI-compatible inference server and it gives you governed Hermes agents,<br />
-  private document knowledge on pgvector, and an audit trail your SIEM can read — on hardware you own.
+  An on-premises agentic harness that coordinates models, private knowledge, memory, policy, and governed tools<br />
+  around an isolated Hermes runtime — with identity, secrets, audit, and oversight inside infrastructure you control.
 </p>
 
 <p align="center">
@@ -24,29 +24,29 @@
   <img src="docs/assets/orcasynapse-architecture.svg" alt="OrcaSynapse production baseline: VM1 runs the control plane with PostgreSQL and pgvector; VM2 runs only the isolated Hermes runtime; VM1 calls an OpenAI-compatible inference server and can forward audit batches to a SIEM" width="100%" />
 </p>
 
-Two VMs and an inference endpoint. Nothing leaves your network.
+Two VMs and an OpenAI-compatible inference endpoint, all under your network controls.
 
 | Layer | What you do | What OrcaSynapse manages |
 | --- | --- | --- |
 | **AI Inference** | Point at an existing endpoint | Discovery, model validation, routing, credentials, health, usage |
-| **Agentic System** | Enroll one isolated VM | Hermes runtime, managed policy, node identity, observability |
+| **Agentic System** | Enroll one isolated VM | Hermes runtime, governed execution policy, node identity, observability |
 | **Enterprise Access** | Connect your identity provider | Local recovery, OIDC / Microsoft Entra ID, roles, sessions, audit |
 
 No LiteLLM tier, Redis, Valkey, pg-boss, object store, or external vector database. pgvector ships inside the bundled PostgreSQL image.
 
 ## Install
 
-One clean Debian or Ubuntu VM. One command. It provisions Docker, PostgreSQL with pgvector, the API, worker, dashboard, encrypted secrets, and your first administrator.
+One clean Debian or Ubuntu VM. One command. It provisions Docker, PostgreSQL with pgvector, the API, worker, operator workspace, encrypted secrets, and your first administrator.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/multichainerz/AI/main/install.sh | sudo bash
 ```
 
 <p align="center">
-  <img src="docs/assets/orcasynapse-installer.svg" alt="The OrcaSynapse installer: branded banner showing the release and source commit, numbered provisioning steps with progress bars, and a final panel with the dashboard URL" width="88%" />
+  <img src="docs/assets/orcasynapse-installer.svg" alt="The OrcaSynapse installer: branded banner showing the release and source commit, numbered provisioning steps with progress bars, and a final panel with the direct address" width="88%" />
 </p>
 
-Open the dashboard URL it prints. That is the only command needed on VM1.
+Open OrcaSynapse at the address it prints. That is the only command needed on VM1.
 
 <details>
 <summary>Prefer to inspect the bootstrap first?</summary>
@@ -63,22 +63,24 @@ Production environments can pin an approved commit and archive checksum. See the
 ## From two empty VMs to governed agents
 
 1. **Install VM1** with the command above and sign in.
-2. **Connect AI Inference.** OrcaSynapse discovers compatible API paths and available models instead of asking you to guess endpoint URLs.
-3. **Enroll VM2** from **Deployment › Agentic System**. Once setup and inference are healthy, OrcaSynapse serves the VM2 installer and issues a one-time claim.
-4. **Create the first agent** from **Hermes Profiles**. In Development, **Create & activate** verifies VM2, activates the immutable profile, enables execution, and makes Chat ready in one action.
-5. **Add Enterprise Access** when you're ready, by connecting OIDC or Microsoft Entra ID and mapping groups to roles.
+2. **Connect AI Inference** from **Platform › AI Inference**. OrcaSynapse discovers compatible API paths and available models instead of asking you to guess endpoint URLs.
+3. **Enroll VM2** from **Platform › Agentic System**. Once setup and inference are healthy, OrcaSynapse serves the VM2 installer and issues a one-time claim.
+4. **Create the first agent** from **Agents › Hermes Profiles**. In Development, **Create & activate** verifies VM2, activates the immutable profile, enables execution, and makes Session ready in one action.
+5. **Add Enterprise Access** from **Platform** when you're ready, by connecting OIDC or Microsoft Entra ID and mapping groups to roles.
 
 VM2 generates its own identity, consumes the claim once, receives a scoped inference route, applies the managed guardrail baseline, and starts signed health reporting. Hermes runs as an ordinary systemd service pinned to an approved commit, so `systemctl` and `journalctl` work the way your operators already expect. An interrupted install resumes from protected local state without another claim. OrcaSynapse never needs the VM's SSH password or a remote execution channel.
 
 ## What you get
 
-**Hermes-first Chat** — durable conversations backed by governed agent runs. Closing the browser doesn't cancel execution: streams resume, cancellation is explicit, and every run carries tool and subagent activity, telemetry, feedback, fork, archive, and export.
+**A readiness command center** — the full-screen Dashboard compresses platform readiness, the next required capability, live service state, existing activity metrics, and the governed execution path into one responsive, theme-aware control surface.
+
+**Governed Sessions** — durable conversations backed by Hermes Agent Runs. Closing the browser doesn't cancel execution: streams resume, cancellation is explicit, and every run carries tool and subagent activity, telemetry, feedback, fork, archive, and export.
 
 **Private document knowledge** — upload TXT, Markdown, HTML, CSV, JSON, PDF, DOCX, PPTX, or XLSX. Text is extracted in flight, embedded locally with BGE-M3, and retrieved from pgvector. Original files are never stored. Pin documents to a conversation to scope exactly what an agent may consult.
 
-**Agents that remember, on your terms** — memory lives in the same pgvector plane as your documents, scoped to one person and one agent. Each agent's profile chooses what it stores: nothing at all (the default), recall without writing, learn from what the person says, or learn from the whole exchange. What is stored are facts extracted after the answer, not the messages themselves — a turn is mostly questions and greetings, and storing it verbatim makes recall match old questions instead of useful facts. One installation-wide policy caps every agent at once, and any stored memory can be read and deleted from the dashboard.
+**Agents that remember, on your terms** — memory lives in the same pgvector plane as your documents, scoped to one person and one agent. Each agent's profile chooses what it stores: nothing at all (the default), recall without writing, learn from what the person says, or learn from the whole exchange. What is stored are facts extracted after the answer, not the messages themselves — a turn is mostly questions and greetings, and storing it verbatim makes recall match old questions instead of useful facts. One installation-wide policy caps every agent at once, and any stored memory can be read and deleted from the workspace.
 
-**An audit trail you can actually read** — every governed action lands in an append-only trail with a filterable dashboard view. An optional forwarder ships it to your SIEM with at-least-once delivery, and reports its own health when the destination falls behind or starts rejecting batches.
+**An audit trail you can actually read** — every governed action lands in an append-only trail with a filterable Operations view. An optional forwarder ships it to your SIEM with at-least-once delivery, and reports its own health when the destination falls behind or starts rejecting batches.
 
 **Inference that configures itself** — vLLM, llama.cpp, SGLang, Ollama, TGI, or any compatible OpenAI-style server.
 

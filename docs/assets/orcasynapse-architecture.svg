@@ -33,7 +33,7 @@
   <text x="244" y="122" fill="#7f9cff" font-size="13" font-weight="600" letter-spacing="1.8">VM1 · CONTROL PLANE</text>
 
   <rect x="244" y="140" width="312" height="66" rx="12" fill="#121820" stroke="#27313c"/>
-  <text x="264" y="169" fill="#f2f5fb" font-size="17" font-weight="600">Dashboard · API · Worker</text>
+  <text x="264" y="169" fill="#f2f5fb" font-size="17" font-weight="600">Operator workspace · API · Worker</text>
   <text x="264" y="191" fill="#9aa9bc" font-size="13">identity · policy · orchestration · guardrails</text>
 
   <rect x="244" y="222" width="312" height="150" rx="12" fill="#121820" stroke="#27313c"/>

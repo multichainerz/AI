@@ -26,9 +26,9 @@ export ORCASYNAPSE_TEST_DATABASE_URL=postgresql://orca:orca@127.0.0.1:15432/post
 Day-to-day commands:
 
 ```bash
-pnpm dev            # API + dashboard
+pnpm dev            # API + operator workspace
 pnpm dev:worker     # background worker
-pnpm verify         # typecheck && test && build && db:validate — the merge gate
+pnpm verify         # build && typecheck && test && db:validate — the merge gate
 pnpm verify:postgres  # full-migration integration proof (needs ORCASYNAPSE_INTEGRATION_DATABASE_URL)
 ```
 
@@ -47,6 +47,9 @@ pnpm verify:postgres  # full-migration integration proof (needs ORCASYNAPSE_INTE
   `scripts/lib/installer-ui.sh`; the self-contained scripts embed it between
   markers — edit the library, then run `bash scripts/sync-installer-ui.sh`
   (CI runs `--check` and fails on drift).
+- The canonical Orca mark lives at `apps/web/public/brand/sivali-mark.svg`.
+  After changing it, run `pnpm docs:brand`; CI checks that the generated
+  `docs/assets/orcasynapse-wordmark.svg` remains identical.
 - Static conformance guards run in CI and locally:
   `bash scripts/test-release-consistency.sh` and
   `bash scripts/test-docker-build-closure.sh`.

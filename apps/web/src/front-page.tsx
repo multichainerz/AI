@@ -1,8 +1,9 @@
 import type { AdministratorSession } from "@orcasynapse/contracts";
 import { ORCASYNAPSE_VERSION } from "@orcasynapse/contracts";
-import { useState, type FormEvent } from "react";
+import { useState, type FormEvent, type InputHTMLAttributes, type ReactNode } from "react";
 import { SynapseField } from "./dashboard-hero.js";
-import { currentTheme, toggleTheme, type Theme } from "./theme.js";
+import { GatewayIcon, IdentityIcon, KeyIcon, LockIcon } from "./ui/relay-icons.js";
+import { ThemeToggle } from "./ui/theme-toggle.js";
 
 /**
  * The pre-auth front page, from the OrcaNeuron design system: a violet hero
@@ -134,14 +135,34 @@ function AgenticHarnessDiagram() {
 }
 
 const FIELD =
-  "flex items-center gap-2.5 rounded-input border border-black/[0.07] bg-[#F7F7F5] px-4 py-3 " +
-  "focus-within:border-[#703DEF]/50";
+  "flex min-h-[50px] items-center gap-3 rounded-input border border-black/[0.09] bg-[#F7F7F5] px-3.5 py-3 " +
+  "transition-[border-color,background-color,box-shadow] focus-within:border-[#703DEF]/55 focus-within:bg-white " +
+  "focus-within:shadow-[0_0_0_4px_rgba(112,61,239,0.08)]";
 const FIELD_INPUT =
-  "min-w-0 flex-1 border-0 bg-transparent p-0 text-[14px] text-[#191A1C] outline-none placeholder:text-[#93949C]";
+  "min-w-0 flex-1 border-0 bg-transparent p-0 text-[14.5px] text-[#191A1C] outline-none focus-visible:outline-none placeholder:text-[#93949C]";
 const SUBMIT =
-  "flex w-full items-center justify-between gap-3 rounded-input border-0 bg-[#703DEF] px-5 py-3.5 " +
-  "text-[14.5px] font-semibold text-white transition-colors hover:bg-[#5B2EDB] " +
+  "flex min-h-[50px] w-full items-center justify-between gap-3 rounded-input border-0 bg-[#703DEF] px-5 py-3.5 " +
+  "text-[14.5px] font-semibold text-white shadow-[0_12px_24px_-14px_rgba(112,61,239,0.8)] transition-colors hover:bg-[#5B2EDB] " +
   "disabled:cursor-not-allowed disabled:opacity-50";
+
+type CredentialFieldProps = Omit<InputHTMLAttributes<HTMLInputElement>, "className"> & {
+  label: string;
+  icon: ReactNode;
+};
+
+function CredentialField({ label, icon, ...input }: CredentialFieldProps) {
+  return (
+    <label className="group grid gap-1.5">
+      <span className="text-[10.5px] font-semibold uppercase tracking-[0.11em] text-[#6B6C74]">{label}</span>
+      <span className={FIELD}>
+        <span className="flex shrink-0 text-[#6B6C74] transition-colors group-focus-within:text-[#703DEF] [&_.fill-node]:fill-[#0E9BB5]">
+          {icon}
+        </span>
+        <input className={FIELD_INPUT} {...input} />
+      </span>
+    </label>
+  );
+}
 
 function ArrowGlyph() {
   return (
@@ -152,7 +173,6 @@ function ArrowGlyph() {
 }
 
 export function FrontPage(props: FrontPageProps) {
-  const [theme, setTheme] = useState<Theme>(() => currentTheme());
   const [mode, setMode] = useState<FrontPageMode>("LOGIN");
   const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("");
@@ -190,30 +210,14 @@ export function FrontPage(props: FrontPageProps) {
   return (
     <div className="front-page relative isolate flex min-h-screen items-center justify-center overflow-hidden px-5 py-3 sm:px-7">
       <SynapseField className="dashboard-synapse--front-page" />
-      <div className="front-page__frame relative z-[1] w-full max-w-[1180px] rounded-[26px] p-4">
+      <div className="front-page__frame relative z-[1] w-full max-w-[1180px] rounded p-4">
         <div className="front-page__presentation relative overflow-hidden rounded-modal bg-brand px-6 pt-5 sm:px-8">
 
           <div className="relative z-[1] flex flex-wrap items-center gap-3">
             <img src="/brand/sivali-mark.svg" alt="" width={30} height={30} className="block shrink-0" />
             <span className="font-display text-[18px] font-semibold tracking-[-0.01em] text-white">OrcaSynapse</span>
             <span className="flex-1" />
-            <div className="flex items-center gap-3">
-              <span className="hidden text-caption text-white/60 sm:inline">Private agentic intelligence</span>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={theme === "light"}
-                aria-label="Light appearance"
-                title={`Switch to the ${theme === "light" ? "dark" : "light"} theme`}
-                className="front-page-theme-toggle"
-                onClick={() => setTheme(toggleTheme())}
-              >
-                <span className="front-page-theme-toggle__track" aria-hidden="true">
-                  <span className="front-page-theme-toggle__thumb" />
-                </span>
-                <span>{theme === "light" ? "Light" : "Dark"}</span>
-              </button>
-            </div>
+            <ThemeToggle tone="brand" />
           </div>
 
           <div className="relative z-[1] grid items-center gap-8 py-6 lg:grid-cols-[minmax(0,1fr)_396px] lg:pb-7">
@@ -230,76 +234,61 @@ export function FrontPage(props: FrontPageProps) {
               </div>
             </div>
 
-            <div className="min-w-0 rounded-modal bg-white p-7 shadow-[0_24px_60px_-28px_rgba(20,8,60,0.55)] sm:p-8">
+            <div
+              className="min-w-0 overflow-hidden rounded border border-black/[0.12] bg-white shadow-[0_12px_30px_rgba(0,0,0,0.14)]"
+              role="region"
+              aria-label="Administrator access"
+            >
+              <div className="p-6 sm:p-7">
               {!changeRequired ? (
-                <form onSubmit={submitAccess}>
-                  <h2 className="m-0 font-display text-[26px] font-semibold tracking-[-0.028em] text-[#191A1C]">
-                    {mode === "LOGIN" ? "Enter the control plane" : "Offline recovery"}
-                  </h2>
-                  <p className="mb-0 mt-1.5 text-[13px] text-[#6B6C74]">
-                    {mode === "LOGIN"
-                      ? "Sign in to operate and govern your intelligence workflows."
-                      : "Use the Installation Key from your vault only when the password cannot be recovered normally."}
-                  </p>
-
+                <form onSubmit={submitAccess} aria-label={mode === "LOGIN" ? "Sign in" : "Offline recovery"}>
                   {props.bootstrapState !== "READY" ? (
-                    <p className="mb-0 mt-4 rounded-input border border-[#A94E2C]/40 bg-[#A94E2C]/10 px-3.5 py-2.5 text-[12px] text-[#A94E2C]">
+                    <p className="mb-4 mt-0 rounded-input border border-[#A94E2C]/40 bg-[#A94E2C]/10 px-3.5 py-2.5 text-[12px] text-[#A94E2C]">
                       Installation trust is {props.bootstrapState.toLowerCase()}. Complete the host installer first.
                     </p>
                   ) : null}
 
-                  <div className="mt-6 flex flex-col gap-3">
+                  <div className="flex flex-col gap-3">
                     {mode === "LOGIN" ? (
                       <>
-                        <label className={FIELD}>
-                          <input
-                            className={FIELD_INPUT}
-                            value={username}
-                            onChange={(event) => setUsername(event.target.value)}
-                            placeholder="Username"
-                            aria-label="Username"
-                            autoComplete="username"
-                            required
-                            maxLength={64}
-                          />
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#93949C" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden="true">
-                            <circle cx="12" cy="9" r="3.6" fill="#93949C" fillOpacity="0.14" />
-                            <path d="M5.4 19.6a6.6 6.6 0 0 1 13.2 0" fill="#93949C" fillOpacity="0.14" />
-                          </svg>
-                        </label>
-                        <label className={FIELD}>
-                          <input
-                            className={FIELD_INPUT}
-                            type="password"
-                            value={password}
-                            onChange={(event) => setPassword(event.target.value)}
-                            placeholder="Password"
-                            aria-label="Password"
-                            autoComplete="current-password"
-                            required
-                            minLength={12}
-                            maxLength={1024}
-                          />
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#93949C" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden="true">
-                            <rect x="4.8" y="10" width="14.4" height="10.2" rx="3" fill="#93949C" fillOpacity="0.14" />
-                            <path d="M8 10V6.8a4 4 0 0 1 8 0V10" />
-                          </svg>
-                        </label>
+                        <CredentialField
+                          label="Username"
+                          icon={<IdentityIcon size={18} />}
+                          value={username}
+                          onChange={(event) => setUsername(event.target.value)}
+                          placeholder="Administrator username"
+                          aria-label="Username"
+                          autoComplete="username"
+                          required
+                          maxLength={64}
+                        />
+                        <CredentialField
+                          label="Password"
+                          icon={<LockIcon size={18} />}
+                          type="password"
+                          value={password}
+                          onChange={(event) => setPassword(event.target.value)}
+                          placeholder="Enter your password"
+                          aria-label="Password"
+                          autoComplete="current-password"
+                          required
+                          minLength={12}
+                          maxLength={1024}
+                        />
                       </>
                     ) : (
-                      <label className={FIELD}>
-                        <input
-                          className={FIELD_INPUT}
-                          type="password"
-                          value={installationKey}
-                          onChange={(event) => setInstallationKey(event.target.value)}
-                          placeholder="Installation Key"
-                          aria-label="Installation Key"
-                          autoComplete="off"
-                          required
-                          minLength={32}
-                        />
-                      </label>
+                      <CredentialField
+                        label="Installation Key"
+                        icon={<KeyIcon size={18} />}
+                        type="password"
+                        value={installationKey}
+                        onChange={(event) => setInstallationKey(event.target.value)}
+                        placeholder="Paste your installation key"
+                        aria-label="Installation Key"
+                        autoComplete="off"
+                        required
+                        minLength={32}
+                      />
                     )}
                   </div>
 
@@ -315,10 +304,14 @@ export function FrontPage(props: FrontPageProps) {
                   </div>
                   <button
                     type="button"
-                    className="mt-3.5 border-0 bg-transparent p-0 text-[12.5px] font-semibold text-[#6B6C74] hover:text-[#191A1C]"
+                    className="mt-3.5 flex w-full items-center gap-2.5 rounded-input border border-black/[0.08] bg-transparent px-3.5 py-2.5 text-left text-[12.5px] font-semibold text-[#6B6C74] transition-colors hover:border-[#703DEF]/35 hover:bg-[#703DEF]/[0.04] hover:text-[#191A1C]"
                     onClick={() => setMode(mode === "LOGIN" ? "RECOVERY" : "LOGIN")}
                   >
-                    {mode === "LOGIN" ? "Use offline recovery key" : "Return to local sign-in"}
+                    <span className="flex text-[#703DEF] [&_.fill-node]:fill-[#0E9BB5]">
+                      {mode === "LOGIN" ? <KeyIcon size={17} /> : <IdentityIcon size={17} />}
+                    </span>
+                    <span className="flex-1">{mode === "LOGIN" ? "Use offline recovery key" : "Return to local sign-in"}</span>
+                    <ArrowGlyph />
                   </button>
 
                   {props.oidcConfigured ? (
@@ -326,52 +319,89 @@ export function FrontPage(props: FrontPageProps) {
                       <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#93949C]">Or continue with</div>
                       <button
                         type="button"
-                        className="mt-2.5 rounded-pill border border-black/[0.12] bg-transparent px-4 py-2 text-[12.5px] font-semibold text-[#191A1C] transition-colors hover:border-[#703DEF] hover:text-[#703DEF]"
+                        className="mt-2.5 flex w-full items-center gap-2.5 rounded-input border border-black/[0.12] bg-transparent px-3.5 py-2.5 text-[12.5px] font-semibold text-[#191A1C] transition-colors hover:border-[#703DEF] hover:text-[#703DEF]"
                         onClick={() => window.location.assign(`/api/v1/auth/oidc/start?returnTo=${encodeURIComponent("/#chat")}`)}
                       >
-                        Enterprise SSO
+                        <GatewayIcon size={17} />
+                        <span className="flex-1 text-left">Enterprise SSO</span>
+                        <ArrowGlyph />
                       </button>
                     </div>
                   ) : null}
-
-                  <div className="mt-5 flex items-start gap-2.5">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#6B6C74" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mt-0.5 shrink-0" aria-hidden="true">
-                      <path d="M12 2.8 5 5.8v5.4c0 4.2 3 6.9 7 8.6 4-1.7 7-4.4 7-8.6V5.8z" fill="#6B6C74" fillOpacity="0.14" />
-                      <path d="M8.8 11.8 11 14l4.2-4.4" stroke="#0E9BB5" strokeWidth="2.3" />
-                    </svg>
-                    <p className="m-0 text-[11.5px] leading-[1.5] text-[#6B6C74]">
-                      Identity, policy, and execution stay within your controlled environment.
-                      Sessions are HttpOnly and are never stored by the browser.
-                    </p>
-                  </div>
                 </form>
               ) : (
                 <form onSubmit={submitPassword}>
-                  <h2 className="m-0 font-display text-[26px] font-semibold tracking-[-0.028em] text-[#191A1C]">
-                    {recovering ? "Reset local administrator" : "Change temporary password"}
-                  </h2>
-                  <p className="mb-0 mt-1.5 text-[13px] text-[#6B6C74]">
-                    {recovering
-                      ? "The recovery key has been verified. Set a new local password; every other local and recovery session will be revoked."
-                      : "Set a permanent password before entering the workspace. Every other session for this account will be revoked."}
-                  </p>
+                  <div className="flex items-start gap-3.5">
+                    <span className="grid h-11 w-11 shrink-0 place-items-center rounded bg-[#703DEF]/10 text-[#703DEF] [&_.fill-node]:fill-[#0E9BB5]">
+                      <LockIcon size={21} />
+                    </span>
+                    <div className="min-w-0">
+                      <span className="block text-[10.5px] font-semibold uppercase tracking-[0.14em] text-[#703DEF]">Credential update</span>
+                      <h2 className="m-0 mt-1 font-display text-[25px] font-semibold tracking-[-0.028em] text-[#191A1C]">
+                        {recovering ? "Reset local administrator" : "Change temporary password"}
+                      </h2>
+                      <p className="mb-0 mt-1.5 text-[13px] leading-relaxed text-[#6B6C74]">
+                        {recovering
+                          ? "The recovery key has been verified. Set a new local password; every other local and recovery session will be revoked."
+                          : "Set a permanent password before entering the workspace. Every other session for this account will be revoked."}
+                      </p>
+                    </div>
+                  </div>
 
                   <div className="mt-6 flex flex-col gap-3">
                     {recovering ? (
-                      <label className={FIELD}>
-                        <input className={FIELD_INPUT} value={username} onChange={(event) => setUsername(event.target.value)} placeholder="Username" aria-label="Username" autoComplete="username" required maxLength={64} />
-                      </label>
+                      <CredentialField
+                        label="Username"
+                        icon={<IdentityIcon size={18} />}
+                        value={username}
+                        onChange={(event) => setUsername(event.target.value)}
+                        placeholder="Administrator username"
+                        aria-label="Username"
+                        autoComplete="username"
+                        required
+                        maxLength={64}
+                      />
                     ) : (
-                      <label className={FIELD}>
-                        <input className={FIELD_INPUT} type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} placeholder="Temporary password" aria-label="Temporary password" autoComplete="current-password" required minLength={12} maxLength={1024} />
-                      </label>
+                      <CredentialField
+                        label="Temporary password"
+                        icon={<KeyIcon size={18} />}
+                        type="password"
+                        value={currentPassword}
+                        onChange={(event) => setCurrentPassword(event.target.value)}
+                        placeholder="Enter temporary password"
+                        aria-label="Temporary password"
+                        autoComplete="current-password"
+                        required
+                        minLength={12}
+                        maxLength={1024}
+                      />
                     )}
-                    <label className={FIELD}>
-                      <input className={FIELD_INPUT} type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} placeholder="New password" aria-label="New password" autoComplete="new-password" required minLength={12} maxLength={1024} />
-                    </label>
-                    <label className={FIELD}>
-                      <input className={FIELD_INPUT} type="password" value={confirmedPassword} onChange={(event) => setConfirmedPassword(event.target.value)} placeholder="Confirm new password" aria-label="Confirm new password" autoComplete="new-password" required minLength={12} maxLength={1024} />
-                    </label>
+                    <CredentialField
+                      label="New password"
+                      icon={<LockIcon size={18} />}
+                      type="password"
+                      value={newPassword}
+                      onChange={(event) => setNewPassword(event.target.value)}
+                      placeholder="Create a permanent password"
+                      aria-label="New password"
+                      autoComplete="new-password"
+                      required
+                      minLength={12}
+                      maxLength={1024}
+                    />
+                    <CredentialField
+                      label="Confirm new password"
+                      icon={<LockIcon size={18} />}
+                      type="password"
+                      value={confirmedPassword}
+                      onChange={(event) => setConfirmedPassword(event.target.value)}
+                      placeholder="Repeat the permanent password"
+                      aria-label="Confirm new password"
+                      autoComplete="new-password"
+                      required
+                      minLength={12}
+                      maxLength={1024}
+                    />
                   </div>
 
                   {confirmedPassword && newPassword !== confirmedPassword ? (
@@ -389,13 +419,12 @@ export function FrontPage(props: FrontPageProps) {
                   </div>
                 </form>
               )}
+              </div>
             </div>
           </div>
 
           <div className="relative z-[1] flex flex-wrap items-center gap-5 border-t border-white/[0.12] py-4">
             <span className="text-[12px] text-white/[0.52]">OrcaSynapse · {ORCASYNAPSE_VERSION}</span>
-            <span className="flex-1" />
-            <span className="text-[12px] text-white/[0.62]">Private intelligence. Governed execution. Your infrastructure.</span>
           </div>
 
         </div>

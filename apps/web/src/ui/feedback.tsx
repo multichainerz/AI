@@ -63,7 +63,7 @@ export function StatusText({
        * class from styles.css so prefers-reduced-motion can stop the whole
        * family in one rule.
        */}
-      {dot ? <span aria-hidden="true" className="anim-live h-1.5 w-1.5 shrink-0 rounded-pill bg-current" /> : null}
+      {dot ? <span aria-hidden="true" className="anim-live h-1.5 w-1.5 shrink-0 rounded-full bg-current" /> : null}
       {children}
     </span>
   );

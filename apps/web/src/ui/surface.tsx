@@ -140,7 +140,7 @@ export function Metric({ label, value, caption, tone, className }: MetricProps) 
  * `rounded border border-border bg-raised p-3` and its near-variants, which is
  * how the same semantic element ended up at three paddings and two
  * backgrounds across the product. `Panel` is the outer surface; this is what
- * sits within one, one step down in radius and one step up in fill.
+ * sits within one, using the same silhouette and one step up in fill.
  *
  * `interactive` adds the hover treatment a clickable row needs — several
  * screens grew their own, all slightly different.
@@ -186,8 +186,8 @@ export function Tile({
  *
  * Hand-rolled eight times at four box sizes and five type sizes, and the
  * design system's own answer in `LockedScreen` disagreed with all of them on
- * both shape and face. One shape, stated once: accent-soft fill, pill radius,
- * display face — the same treatment the chat avatar uses.
+ * both shape and face. One shape, stated once: accent-soft fill, the shared
+ * semi-rounded component radius, and the display face.
  */
 export function Mark({
   size = "md",
@@ -198,7 +198,7 @@ export function Mark({
     <span
       aria-hidden="true"
       className={cn(
-        "grid shrink-0 place-items-center rounded-pill bg-soft font-display font-semibold text-accent",
+        "grid shrink-0 place-items-center rounded bg-soft font-display font-semibold text-accent",
         size === "sm" ? "h-8 w-8 text-caption" : size === "lg" ? "h-11 w-11 text-[15px]" : "h-9 w-9 text-label",
         className,
       )}
@@ -286,8 +286,8 @@ export function HeroBanner({ highlight, tone = "accent", metrics, className, ...
     <Panel className={cn("flex flex-wrap items-stretch gap-y-5 p-5 sm:p-6", className)} {...rest}>
       {tone === "accent" ? (
         <div className="relative -my-1.5 mr-6 min-w-[240px] overflow-hidden rounded-lg bg-accent-fill px-5 py-4 text-white">
-          <span aria-hidden="true" className="absolute -right-8 -top-8 h-28 w-28 rounded-pill bg-white/10" />
-          <span aria-hidden="true" className="absolute -bottom-10 right-1.5 h-24 w-24 rounded-pill bg-white/[0.07]" />
+          <span aria-hidden="true" className="absolute -right-8 -top-8 h-28 w-28 rounded-full bg-white/10" />
+          <span aria-hidden="true" className="absolute -bottom-10 right-1.5 h-24 w-24 rounded-full bg-white/[0.07]" />
           <div className="relative">
             <MicroLabel className="block text-white/85">{highlight.label}</MicroLabel>
             <strong className="mt-2 block font-display text-display font-semibold">{highlight.value}</strong>

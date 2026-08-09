@@ -50,6 +50,7 @@ import {
   StatusText,
   cn,
 } from "./ui/index.js";
+import { RobotIcon } from "./ui/relay-icons.js";
 
 interface ChatViewProps {
   unlocked: boolean;
@@ -820,6 +821,19 @@ export function ChatView({
     ? conversations.filter((conversation) => [conversation.title, conversation.profileName, conversation.lastMessagePreview]
       .some((value) => value?.toLowerCase().includes(normalizedHistoryFilter)))
     : conversations;
+  const selectedProfile = profiles.find(({ id }) => id === selectedProfileId);
+  const selectedAgentName = active?.profileName
+    ?? selectedProfile?.activeVersionConfiguration?.displayName
+    ?? selectedProfile?.version.displayName
+    ?? "No agent selected";
+  const sessionOwner = displayName ?? "OrcaSynapse operator";
+  const sessionInitials = sessionOwner
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("") || "OS";
+  const sessionAccessLabel = identityMode === "ENTERPRISE" ? "Enterprise access" : "Administrator preview";
   const readinessTitle = !profileAvailable
     ? "Create your first Agent Profile"
     : administratorReadiness?.title ?? "Hermes is ready";
@@ -848,36 +862,61 @@ export function ChatView({
      * layout be stated here rather than in a stylesheet rule keyed to a class
      * name.
      */
-    <section className="m-0 grid h-full w-full max-w-none grid-cols-1 bg-bg lg:grid-cols-[272px_minmax(0,1fr)]">
+    <section className="m-0 grid h-full w-full max-w-none grid-cols-1 bg-bg lg:grid-cols-[288px_minmax(0,1fr)]">
       <aside
         className={cn(
-          "min-w-0 flex-col border-r border-border bg-surface px-3.5 pb-4 pt-4",
+          "min-w-0 flex-col border-r border-border bg-surface px-3 pb-3 pt-3",
           historyOpen ? "flex" : "hidden lg:flex",
         )}
       >
         <h1 className="sr-only">Session</h1>
-        {/*
-          * The rail leads with the one action it exists for, drawn the design's
-          * way: full width, accent fill, bold — a beginning, not a utility.
-          */}
-        <Button variant="primary" className="mb-3 w-full justify-center gap-2 font-bold" onClick={newConversation}>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true"><path d="M12 5.5v13M5.5 12h13" /></svg>
+        <div className="mb-2.5 flex items-center justify-between px-1.5">
+          <strong className="font-display text-label font-semibold text-text">Conversations</strong>
+          {conversations.length > 0 ? (
+            <span className="font-mono text-micro tabular-nums text-faint">{conversations.length}</span>
+          ) : null}
+        </div>
+        <Button
+          variant="secondary"
+          className="mb-2.5 h-10 w-full justify-start gap-2.5 border-border bg-raised px-3.5 text-text hover:border-accent/40 hover:bg-soft"
+          onClick={newConversation}
+        >
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M5 6.5A2.5 2.5 0 0 1 7.5 4h9A2.5 2.5 0 0 1 19 6.5v7a2.5 2.5 0 0 1-2.5 2.5H11l-4.5 3v-3A2.5 2.5 0 0 1 4 13.5v-7Z" />
+            <path d="M12 7.5v5M9.5 10h5" />
+          </svg>
           New conversation
         </Button>
-        <label className="mb-3 block px-1">
+        <label className="relative mb-3 block">
           <span className="sr-only">Search conversations</span>
+          <svg className="pointer-events-none absolute left-3 top-1/2 z-[1] -translate-y-1/2 text-faint" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" aria-hidden="true">
+            <circle cx="10.8" cy="10.8" r="6.3" />
+            <path d="m16 16 4 4" />
+          </svg>
           <Input
             type="search"
+            className="bg-bg pl-9"
             value={historyFilter}
             onChange={(event) => setHistoryFilter(event.target.value)}
             placeholder="Search conversations"
           />
         </label>
-        <div className="grid min-h-0 content-start gap-1 overflow-y-auto" aria-label="Conversation history">
+        <div className="grid min-h-0 flex-1 content-start gap-1 overflow-y-auto pr-0.5" aria-label="Conversation history">
           {visibleConversations.length === 0 && !loading && (
-            <p className="px-3 py-7 text-center text-body text-faint">
-              {conversations.length === 0 ? "Your conversations will appear here." : "No conversations match this search."}
-            </p>
+            <div className="grid justify-items-center gap-2 px-4 py-10 text-center">
+              <span aria-hidden="true" className="grid h-9 w-9 place-items-center rounded bg-raised text-faint">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M5 5.5h14v10H9l-4 3v-13Z" />
+                  <path d="M8.5 9h7M8.5 12h4.5" />
+                </svg>
+              </span>
+              <strong className="text-label font-semibold text-muted">
+                {conversations.length === 0 ? "No conversations yet" : "No matching conversations"}
+              </strong>
+              <span className="max-w-[22ch] text-caption leading-relaxed text-faint">
+                {conversations.length === 0 ? "Start a new conversation and it will appear here." : "Try a different title, agent, or message."}
+              </span>
+            </div>
           )}
           {groupConversationsByDate(visibleConversations, new Date()).map((group) => (
             <section key={group.key} className="grid content-start gap-1">
@@ -886,7 +925,7 @@ export function ChatView({
                 * closes an open menu when clicked, and a second level-1 heading
                 * would make that target ambiguous.
                 */}
-              <h3 className="sticky top-0 z-[1] bg-surface px-3.5 pb-1 pt-3 text-micro font-semibold uppercase tracking-[0.08em] text-faint">
+              <h3 className="sticky top-0 z-[1] bg-surface px-3 pb-1 pt-3 text-micro font-semibold uppercase tracking-[0.08em] text-faint">
                 {group.label}
               </h3>
           {group.items.map((conversation) => (
@@ -895,14 +934,10 @@ export function ChatView({
               key={conversation.id}
               aria-current={active?.id === conversation.id ? "true" : undefined}
               className={cn(
-                // The design's row: radius 10, and the active conversation is
-                // named by a short accent mark on its leading edge rather than
-                // a border all the way round.
-                "relative grid w-full gap-0.5 rounded py-2.5 pl-3.5 pr-3 text-left transition-colors",
-                "before:absolute before:bottom-2.5 before:left-0 before:top-2.5 before:w-[2.5px] before:rounded before:content-['']",
+                "relative grid w-full gap-1 rounded px-3 py-2.5 text-left transition-colors",
                 active?.id === conversation.id
-                  ? "bg-raised before:bg-accent"
-                  : "before:bg-transparent hover:bg-raised/60",
+                  ? "bg-raised"
+                  : "hover:bg-raised/60",
               )}
               onClick={() => void selectConversation(conversation.id)}
             >
@@ -914,7 +949,7 @@ export function ChatView({
                 <span className="shrink-0">
                   {conversation.status === "ARCHIVED" ? "Archived" : formatConversationTime(conversation.lastMessageAt)}
                 </span>
-                <span aria-hidden="true" className="h-[2.5px] w-[2.5px] shrink-0 rounded-pill bg-faint" />
+                <span aria-hidden="true" className="h-[2.5px] w-[2.5px] shrink-0 rounded-full bg-faint" />
                 <span className="truncate">
                   {conversation.lastMessagePreview ?? conversation.profileName ?? conversation.modelAlias}
                 </span>
@@ -924,65 +959,51 @@ export function ChatView({
             </section>
           ))}
         </div>
-        {/*
-          * The rail's foot was a bordered Panel wrapping a kicker, a value, a
-          * name and two further bordered boxes carrying two more uppercase
-          * kickers: three cards and three kickers inside 200px, to state three
-          * facts. A hairline and a column state them.
-          *
-          * "Choose below" also stopped being true the moment the profile picker
-          * moved into the header, which is the kind of thing a caption tells
-          * you to do long after nobody can do it.
-          */}
-        {/*
-          * Set at the rail's own reading size, not below it.
-          *
-          * Every line here was `text-caption` -- 11px at 1.5, which is the step
-          * for a dense grid header and two steps under anything in the thread
-          * beside it. Four facts about who you are and what you are pointed at
-          * were the tightest type on the screen, in the corner an operator looks
-          * at to confirm exactly that. `text-body` and real row spacing put it
-          * on the same footing as the window it sits next to.
-          */}
-        <div className="mt-auto grid gap-3.5 border-t border-border pt-4">
-          <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-2.5">
-            <span aria-hidden="true" className="mt-2 h-1.5 w-1.5 shrink-0 rounded-pill bg-good" />
-            <div className="min-w-0">
-              <strong className="block truncate text-body font-semibold leading-relaxed text-text">
-                {identityMode === "ENTERPRISE" ? "Enterprise Access" : "Administrator preview"}
-              </strong>
-              <small className="block truncate text-caption leading-relaxed text-faint">
-                {displayName ?? "Active OrcaSynapse session"}
-              </small>
-            </div>
-          </div>
-          <dl className="m-0 grid gap-2">
-            <div className="flex min-w-0 items-baseline justify-between gap-3">
-              <dt className="shrink-0 text-body leading-relaxed text-faint">Agent</dt>
-              <dd className="m-0 min-w-0 truncate text-body leading-relaxed text-muted">
-                {active?.profileName ?? "None selected"}
-              </dd>
-            </div>
-            <div className="flex min-w-0 items-baseline justify-between gap-3">
-              <dt className="shrink-0 text-body leading-relaxed text-faint">Usage</dt>
-              <dd
-                className="m-0 min-w-0 truncate font-mono text-body leading-relaxed tabular-nums text-muted"
-                title={conversationTotalTokens === null ? "This runtime does not report token usage." : undefined}
-              >
-                {conversationTotalTokens === null ? "Not reported" : `${conversationTotalTokens.toLocaleString()} tokens`}
-              </dd>
-            </div>
-          </dl>
+        {/* The account-style summary anchors the rail like a familiar chat app:
+            identity first, then the two runtime facts an operator checks. */}
+        <div className="mt-auto border-t border-border pt-3">
+          <section className="rounded border border-border bg-raised p-2.5" aria-label="Current session identity">
+            <header className="flex min-w-0 items-center gap-2.5">
+              <span aria-hidden="true" className="grid h-9 w-9 shrink-0 place-items-center rounded bg-soft font-display text-caption font-semibold text-accent">
+                {sessionInitials}
+              </span>
+              <div className="min-w-0 flex-1">
+                <strong className="block truncate text-label font-semibold text-text">{sessionOwner}</strong>
+                <span className="mt-0.5 block truncate text-caption text-faint">{sessionAccessLabel}</span>
+              </div>
+              <span aria-label="Session active" className="h-2 w-2 shrink-0 rounded-full bg-good" />
+            </header>
+            <dl className="m-0 mt-2.5 grid gap-2 border-t border-border pt-2.5">
+              <div className="grid min-w-0 grid-cols-[18px_minmax(0,1fr)] items-center gap-2">
+                <RobotIcon size={15} className="text-accent" />
+                <div className="min-w-0">
+                  <dt className="text-micro font-semibold uppercase tracking-[0.06em] text-faint">Agent</dt>
+                  <dd className="m-0 truncate text-caption font-medium text-muted">{selectedAgentName}</dd>
+                </div>
+              </div>
+              <div className="grid min-w-0 grid-cols-[18px_minmax(0,1fr)] items-center gap-2">
+                <svg className="text-faint" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+                  <path d="M5 19V9M12 19V5M19 19v-7" />
+                </svg>
+                <div className="min-w-0">
+                  <dt className="text-micro font-semibold uppercase tracking-[0.06em] text-faint">Usage</dt>
+                  <dd
+                    className="m-0 truncate font-mono text-caption tabular-nums text-muted"
+                    title={conversationTotalTokens === null ? "This runtime does not report token usage." : undefined}
+                  >
+                    {conversationTotalTokens === null ? "Not reported" : `${conversationTotalTokens.toLocaleString()} tokens`}
+                  </dd>
+                </div>
+              </div>
+            </dl>
+          </section>
         </div>
       </aside>
 
       <div className="relative grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)_auto]">
-        {/* 52px, not 68. The workspace band sits directly above this one from
-            ai-v3.3.0, so the two together were 98px of chrome before a word of
-            the thread -- most of the reduction ai-v2.6.0 bought back, spent
-            again. This bar keeps what only it can say: which conversation, and
-            the controls that act on it. */}
-        <header className="flex min-h-[52px] items-center gap-4 border-b border-border bg-surface px-5 py-2">
+        {/* This bar keeps what only it can say: which conversation is open,
+            which agent owns a new one, and whether that route is usable. */}
+        <header className="flex min-h-[56px] items-center gap-4 bg-bg px-5 py-2">
           <Button
             size="sm"
             className="lg:hidden"
@@ -991,7 +1012,7 @@ export function ChatView({
           >
             ☰
           </Button>
-          <div className="min-w-[150px] flex-1">
+          <div className="min-w-0 flex-1">
             {renaming && active ? (
               <form
                 className="flex items-center gap-1.5"
@@ -1029,41 +1050,55 @@ export function ChatView({
               </span>
             )}
           </div>
-          {/*
-            * Two things, not four.
-            *
-            * This carried a readiness chip, the profile picker, the model alias
-            * and a token count across ~400px. Two of them said nothing on their
-            * own -- "Active default" and "—" are only legible if you already
-            * know which is the model and which is the usage -- and the token
-            * figure is the same one the rail's foot states under a label. What
-            * is left is the choice you can still make and whether the route can
-            * serve it.
-            */}
-          <div className="flex min-w-0 items-center gap-2.5" aria-label="Conversation runtime">
+          <div className="flex min-w-0 items-center gap-2" aria-label="Conversation runtime">
             {!active && (
-              <Select
-                className="hidden h-8 w-[184px] text-caption sm:block"
-                disabled={!profileAvailable}
-                value={selectedProfileId}
-                onChange={(event) => setSelectedProfileId(event.target.value)}
-                aria-label="Agent Profile"
+              <div
+                className="relative hidden h-10 min-w-0 items-center rounded border border-border bg-surface transition-colors focus-within:border-accent sm:flex"
+                data-agent-selector
               >
-                {profiles.length === 0 && <option value="">No active profiles</option>}
-                {profiles.map((profile) => (
-                  <option value={profile.id} key={profile.id}>
-                    {profile.activeVersionConfiguration?.displayName ?? profile.version.displayName}
-                  </option>
-                ))}
-              </Select>
+                <span className="pointer-events-none absolute left-2.5 top-1/2 z-[1] grid h-6 w-6 -translate-y-1/2 place-items-center rounded bg-soft text-accent" data-agent-selector-icon>
+                  <RobotIcon size={15} />
+                </span>
+                <Select
+                  className="h-9 w-[216px] border-0 bg-transparent pl-10 pr-2 text-caption font-semibold focus-visible:outline-offset-0"
+                  disabled={!profileAvailable}
+                  value={selectedProfileId}
+                  onChange={(event) => setSelectedProfileId(event.target.value)}
+                  aria-label="Agent Profile"
+                >
+                  {profiles.length === 0 && <option value="">No active profiles</option>}
+                  {profiles.map((profile) => (
+                    <option value={profile.id} key={profile.id}>
+                      {profile.activeVersionConfiguration?.displayName ?? profile.version.displayName}
+                    </option>
+                  ))}
+                </Select>
+              </div>
             )}
-            <StatusText dot tone={working ? "accent" : routeReady ? "good" : "warn"} className="whitespace-nowrap">
-              {working
-                ? `${(streamElapsedMs / 1_000).toFixed(1)} s`
-                : routeReady
-                  ? "Ready"
-                  : "Setup required"}
-            </StatusText>
+            {routeReady || working ? (
+              <div className="flex h-10 items-center gap-2 rounded border border-border bg-surface px-3 text-caption font-semibold text-muted">
+                <span aria-hidden="true" className={cn("h-2 w-2 rounded-full", working ? "anim-live bg-accent" : "bg-good")} />
+                <span className="whitespace-nowrap">{working ? `Working · ${(streamElapsedMs / 1_000).toFixed(1)} s` : "Agent ready"}</span>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="flex h-10 items-center gap-2 rounded border border-warn/35 bg-warn/10 px-2.5 text-left text-warn transition-colors hover:border-warn/60 hover:bg-warn/20"
+                onClick={openReadiness}
+                aria-label="Open agent setup: setup required"
+              >
+                <span className="grid h-6 w-6 place-items-center rounded bg-warn/10">
+                  <RobotIcon size={15} />
+                </span>
+                <span className="grid leading-tight">
+                  <span className="text-[9px] font-semibold uppercase tracking-[0.08em]">Agent</span>
+                  <strong className="text-caption font-semibold">Setup required</strong>
+                </span>
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M3 8h9M9 4l4 4-4 4" />
+                </svg>
+              </button>
+            )}
           </div>
 
           {active && !renaming && (
@@ -1227,7 +1262,7 @@ export function ChatView({
                      */
                     "group",
                     message.role === "USER"
-                      ? "mb-7 mt-2 ml-auto max-w-[540px] rounded-[18px] rounded-br-[6px] bg-soft px-4 py-3"
+                      ? "mb-7 mt-2 ml-auto max-w-[540px] rounded bg-soft px-4 py-3"
                       /*
                        * No rule between turns. A hairline under every message
                        * made the transcript a table with rows; the bubble above
@@ -1615,7 +1650,7 @@ export function ChatView({
           <form
             className={cn(
               THREAD_MEASURE,
-              "group grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2 rounded-lg border py-2 pl-4 pr-2 transition-colors",
+              "group grid gap-2 rounded-card border px-3 pb-2.5 pt-3 shadow-card transition-colors",
               /*
                * A control that is off should look off. This one was genuinely
                * disabled and entirely normal-looking, so the only way to find
@@ -1624,65 +1659,73 @@ export function ChatView({
                * The strip below the composer states the reason in words.
                */
               chatReady
-                ? "border-border-strong bg-raised focus-within:border-accent"
+                ? "border-border-strong bg-surface focus-within:border-accent"
                 : "cursor-not-allowed border-border bg-surface opacity-60",
             )}
             onSubmit={submit}
           >
-            <div className="min-w-0">
-              <textarea
-                className="max-h-[168px] min-h-[42px] w-full resize-y border-0 bg-transparent py-2 text-read text-text outline-0 placeholder:text-faint disabled:cursor-not-allowed"
-                value={draft}
-                onChange={(event) => setDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault();
-                    event.currentTarget.form?.requestSubmit();
-                  }
-                }}
-                placeholder={active?.status === "ARCHIVED" ? "Restore this conversation to continue" : chatReady ? "Message your selected Hermes agent" : "Finish the required setup to start a Session"}
-                rows={1}
-                maxLength={32_000}
-                disabled={working || !chatReady}
-                aria-label="Chat message"
-              />
-              {/* Two lines of permanent instruction under a text box everyone
-                  already knows how to use. Kept, because Shift+Enter is not
-                  guessable -- but only while the box has focus, which is the
-                  only moment either figure is worth anything. */}
-              <div className="flex items-center justify-between gap-3.5 pb-0.5 text-micro text-faint opacity-0 transition-opacity duration-150 group-focus-within:opacity-100">
-                <span>Enter to send · Shift + Enter for a new line</span>
-                <span className="shrink-0 font-mono tabular-nums">{draft.length.toLocaleString()} / 32,000</span>
+            <textarea
+              className="max-h-[180px] min-h-[54px] w-full resize-y border-0 bg-transparent px-1 py-1 text-read text-text outline-0 placeholder:text-faint disabled:cursor-not-allowed"
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  event.currentTarget.form?.requestSubmit();
+                }
+              }}
+              placeholder={active?.status === "ARCHIVED" ? "Restore this conversation to continue" : chatReady ? `Message ${selectedAgentName}` : "Finish the required setup to start a Session"}
+              rows={1}
+              maxLength={32_000}
+              disabled={working || !chatReady}
+              aria-label="Chat message"
+            />
+            <div className="flex min-w-0 items-center justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-2 px-1 text-micro text-faint">
+                <RobotIcon size={14} className="text-accent" />
+                <span className="max-w-[180px] truncate font-medium text-muted">{selectedAgentName}</span>
+                <span aria-hidden="true" className="hidden h-1 w-1 shrink-0 rounded-full bg-border-strong sm:block" />
+                <span className="hidden sm:inline">Shift + Enter for new line</span>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <span className="hidden font-mono text-micro tabular-nums text-faint opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 sm:inline">
+                  {draft.length.toLocaleString()} / 32,000
+                </span>
+                {busy ? (
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    className="h-9"
+                    disabled={currentActivity === "Cancellation requested"}
+                    onClick={() => void requestStop()}
+                  >
+                    {currentActivity === "Cancellation requested" ? "Stopping…" : "Stop"}
+                  </Button>
+                ) : (
+                  <Button
+                    variant="primary"
+                    type="submit"
+                    className="h-9 w-9 shrink-0 p-0"
+                    disabled={!draft.trim() || !chatReady}
+                    aria-label="Send message"
+                  >
+                    <svg
+                      viewBox="0 0 16 16"
+                      width="16"
+                      height="16"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.9"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M8 13.2V3.4M3.6 7.8 8 3.4l4.4 4.4" />
+                    </svg>
+                  </Button>
+                )}
               </div>
             </div>
-            {busy ? (
-              <Button
-                variant="danger"
-                disabled={currentActivity === "Cancellation requested"}
-                onClick={() => void requestStop()}
-              >
-                {currentActivity === "Cancellation requested" ? "Stopping…" : "Stop"}
-              </Button>
-            ) : (
-              <Button variant="primary" type="submit" disabled={!draft.trim() || !chatReady} aria-label="Send message">
-                {/* Was the literal character `↑`, which renders in the body face
-                    at whatever weight the button inherits and sits a few pixels
-                    off centre in most of them. */}
-                <svg
-                  viewBox="0 0 16 16"
-                  width="15"
-                  height="15"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.9"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M8 13.2V3.4M3.6 7.8 8 3.4l4.4 4.4" />
-                </svg>
-              </Button>
-            )}
           </form>
           {/*
             * The status strip that stood here is gone: a readiness chip that

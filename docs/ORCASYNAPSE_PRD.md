@@ -2,7 +2,7 @@
 
 ## Product outcome
 
-OrcaSynapse gives an organization one on-premises dashboard for local-AI chat, document knowledge, Hermes agents, model routes, policies, integrations, and operational evidence without turning the agent runtime into an infrastructure administrator.
+OrcaSynapse gives an organization one on-premises agentic intelligence harness for governed Sessions, document knowledge, durable agent memory, Hermes execution, model routes, policies, integrations, and operational evidence without turning the agent runtime into an infrastructure administrator.
 
 The product should feel usable after two actions: install OrcaSynapse on the control-plane host, then use the dashboard to connect an OpenAI-compatible inference server and enroll the isolated Hermes host.
 
@@ -12,17 +12,17 @@ The product should feel usable after two actions: install OrcaSynapse on the con
 - **Security administrator:** owns identity, guardrail, prompt, tool, and approval policy.
 - **AI operations administrator:** manages model routes, evaluations, profiles, capacity evidence, and incidents.
 - **Auditor:** reads immutable configuration, evidence, and audit history.
-- **Enterprise user:** chats, submits governed agent work, and uses only authorized knowledge.
+- **Enterprise user:** works in governed Sessions, submits agent work, and uses only authorized knowledge.
 
 ## Scope
 
 ### Dashboard
 
-The responsive React application provides six product areas: Home, Chat, Knowledge, Agents, Platform, and Operations. Models, prompts, guardrails, setup, tools, and approvals live under their owning area rather than becoming duplicate top-level destinations. Desktop and mobile layouts expose the same security and readiness state.
+The responsive React application provides six product areas: Dashboard, Session, Knowledge, Agents, Platform, and Operations. The Dashboard is a single-screen readiness command center; the other areas own their workflows without becoming duplicate top-level destinations. Desktop and mobile layouts expose the same security and readiness state, and light/dark presentation is shared across the application.
 
-### Chat
+### Session
 
-Normal Chat always uses an active Hermes Profile and stable Hermes session. Each message creates one governed Agent Run; OrcaSynapse persists the conversation, final response, usage and latency where Hermes reports them, cancellation/failure state, feedback, and sanitized audit data in PostgreSQL. The browser never receives the upstream serving credential.
+A normal Session always uses an active Hermes Profile and stable Hermes runtime session. Each message creates one governed Agent Run; OrcaSynapse persists the conversation, final response, usage and latency where Hermes reports them, cancellation/failure state, feedback, and sanitized audit data in PostgreSQL. The browser never receives the upstream serving credential.
 
 OrcaSynapse shows run status, projected tool/subagent activity, sources, cancellation, and final output without storing hidden reasoning, raw tool secrets, or unrestricted event payloads. Direct model testing belongs only in the Platform inference playground.
 
@@ -40,7 +40,7 @@ OrcaSynapse owns document knowledge end to end on the control plane. It is an ex
 
 ### Hermes agents
 
-OrcaSynapse manages immutable Profile Distributions: behavior instruction, selected model alias, Skill references, limits, memory policy, tool grants, and guardrails. In Development, creating the first Profile performs the live Hermes check, activates that immutable version, and enables Chat in one action. Pilot and Production activation additionally require promoted exact-version evaluation evidence; standby remains available for pre-release validation.
+OrcaSynapse manages immutable Profile Distributions: behavior instruction, selected model alias, Skill references, limits, memory policy, tool grants, and guardrails. In Development, creating the first Profile performs the live Hermes check, activates that immutable version, and enables Session in one action. Pilot and Production activation additionally require promoted exact-version evaluation evidence; standby remains available for pre-release validation.
 
 Hermes runs in an isolated environment and can reach only:
 
@@ -120,7 +120,7 @@ OrcaSynapse retains no SSH password/key and no remote execution channel. Upgrade
 
 ## Acceptance
 
-Development acceptance requires Hermes-first Chat, local document ingestion into the pgvector knowledge index, authorized status/deletion, Hermes enrollment, native agent memory, signed heartbeat, and capability-based dashboard readiness against real endpoints.
+Development acceptance requires Hermes-first Sessions, local document ingestion into the pgvector knowledge index, authorized status/deletion, Hermes enrollment, native agent memory, signed heartbeat, and capability-based Dashboard readiness against real endpoints.
 
 Pilot acceptance adds representative users/data, model evaluation, load/cancellation, restore practice, incident exercises, false-positive review, and operational ownership.
 
