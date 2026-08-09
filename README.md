@@ -92,7 +92,7 @@ VM2 generates its own identity, consumes the claim once, receives a scoped infer
 
 - **OrcaSynapse** owns identity, authorization, policy, encrypted configuration, audit, and inference access.
 - **PostgreSQL** owns control-plane state plus extracted knowledge chunks and their embeddings — never original files, never model weights.
-- **Hermes** runs isolated, with only approved model, memory, and tool capabilities. It runs as an unprivileged service account under a hardened systemd unit — no new privileges, a read-only system tree, a capability bounding set, a restricted set of address families, and write access limited to its own data directory. It never reaches PostgreSQL, host service control, or the open network.
+- **Hermes** runs isolated, with only approved model, memory, and tool capabilities. It runs as an unprivileged service account under a hardened systemd unit — no new privileges, a read-only system tree, a capability bounding set, a restricted set of address families, and write access limited to its managed data and workspace directories. It never reaches PostgreSQL, host service control, or the open network.
 - **VM2** runs the agent runtime and nothing else. It holds no durable store: knowledge and agent memory are served and governed entirely by OrcaSynapse, and never transit VM2.
 - **Inference credentials** stay on VM1. Agent nodes get a bounded, node-scoped gateway credential.
 

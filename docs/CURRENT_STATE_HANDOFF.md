@@ -1,6 +1,6 @@
 # OrcaSynapse Current-State Handoff
 
-Last verified: 2026-08-07 (Asia/Jakarta)
+Last verified: 2026-08-10 (Asia/Jakarta)
 
 This document is the sanitized transfer context for continuing OrcaSynapse work in another session. Read it before changing code. It records the repository state, decisions already made, verified behavior, and the pending work. It intentionally contains no passwords, installation keys, API keys, enrollment claims, or private-key material.
 
@@ -9,8 +9,8 @@ This document is the sanitized transfer context for continuing OrcaSynapse work 
 - Repository: <https://github.com/multichainerz/AI>
 - Local workspace: `C:\Users\Veros\Documents\GitHub\MPM`
 - Branch: `main`.
-- Baseline release: **v4.3.0** (this file ships in that release commit; `git log -1` gives the hash). Releases are tagged starting at `ai-v1.25.0`.
-- Baseline verification: `pnpm verify` passes — 1,039 tests, typecheck, production build, and `drizzle-kit check` all green. `pnpm verify:postgres` passes against a pgvector server; `pnpm security:audit` reports no known vulnerabilities; and the four static guards (`sync-installer-ui.sh --check`, `test-release-consistency.sh`, `test-docker-build-closure.sh`, `test-csp-closure.sh`) pass.
+- Baseline release: **v4.4.0** (this file ships in that release commit; `git log -1` gives the hash). Releases are tagged starting at `ai-v1.25.0`.
+- Baseline verification: `pnpm verify` passes the repository test suites, typecheck, production build, and `drizzle-kit check`. `pnpm verify:postgres` passes against a pgvector server; `pnpm security:audit` reports no known vulnerabilities; and the four static guards (`sync-installer-ui.sh --check`, `test-release-consistency.sh`, `test-docker-build-closure.sh`, `test-csp-closure.sh`) pass. Avoid recording a fixed aggregate test count here because it changes as package suites evolve.
 - Both installers are covered end to end by lifecycle tests that execute `main()`: `scripts/test-orcasynapse-installer-smoke.sh` (VM1) and `scripts/test-agentic-installer-smoke.sh` (VM2, including decommission). Both need root and a systemd host — a WSL Ubuntu 24.04 instance with `[boot] systemd=true` is enough.
 
 **Check what is actually on the remote before assuming a deployment tests your
