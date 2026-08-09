@@ -141,7 +141,7 @@ export function HomeView(props: HomeViewProps) {
               variant="primary"
               onClick={() => props.onSelect(allReady ? "Chat" : (next?.action ?? "Deployment"))}
             >
-              {allReady ? "Open Chat" : "Continue setup"}
+              {allReady ? "Open Session" : "Continue setup"}
             </Button>
           </>
         }

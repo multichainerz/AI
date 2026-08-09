@@ -905,7 +905,7 @@ function App() {
    * absent one.
    */
   const navigationCounts: Partial<Record<ProductArea, number>> =
-    chatMetrics && chatMetrics.conversations > 0 ? { Chat: chatMetrics.conversations } : {};
+    chatMetrics && chatMetrics.conversations > 0 ? { Session: chatMetrics.conversations } : {};
 
   /*
    * Three mutually exclusive surfaces, decided only once the session probes

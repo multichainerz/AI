@@ -15,7 +15,12 @@ export type ActiveView =
   | "Benchmarks"
   | "Audit";
 
-export type ProductArea = "Home" | "Chat" | "Knowledge" | "Agents" | "Platform" | "Operations";
+/*
+ * What the areas are called on screen. The `ActiveView` tokens above are
+ * internal routing names and deliberately did not follow: renaming those would
+ * churn every view module, test fixture and CSS class for no reader's benefit.
+ */
+export type ProductArea = "Dashboard" | "Session" | "Knowledge" | "Agents" | "Platform" | "Operations";
 
 export interface PrimaryNavigationItem {
   area: ProductArea;
@@ -36,8 +41,8 @@ export const primaryNavigationGroups: ReadonlyArray<{
   {
     label: "Workspace",
     items: [
-      { area: "Home", icon: "overview", target: "Overview", description: "Readiness and next actions" },
-      { area: "Chat", icon: "chat", target: "Chat", description: "Governed conversations" },
+      { area: "Dashboard", icon: "overview", target: "Overview", description: "Activity, readiness and next actions" },
+      { area: "Session", icon: "chat", target: "Chat", description: "Governed conversations" },
       { area: "Knowledge", icon: "documents", target: "Documents", description: "Documents and durable context" },
       { area: "Agents", icon: "agents", target: "Agents", description: "Profiles, runs and tools" },
     ],
@@ -71,8 +76,8 @@ const sectionNavigation: Partial<Record<ProductArea, ReadonlyArray<SectionNaviga
 };
 
 const areaByView: Record<ActiveView, ProductArea> = {
-  Overview: "Home",
-  Chat: "Chat",
+  Overview: "Dashboard",
+  Chat: "Session",
   Documents: "Knowledge",
   Agents: "Agents",
   Integrations: "Agents",
@@ -87,8 +92,8 @@ const areaByView: Record<ActiveView, ProductArea> = {
 };
 
 const pathByView: Record<ActiveView, string> = {
-  Overview: "#home",
-  Chat: "#chat",
+  Overview: "#dashboard",
+  Chat: "#session",
   Documents: "#knowledge/documents",
   Agents: "#agents/profiles",
   Integrations: "#agents/tools",
@@ -112,6 +117,13 @@ export function pathForView(view: ActiveView): string {
 
 export function viewFromHash(hash: string): ActiveView {
   switch (hash.toLowerCase()) {
+    /*
+     * Every view here already accepted more than one spelling, which is what
+     * makes renaming a route cheap: the old hash stays a case rather than
+     * becoming a dead link. `#home` needs no case at all -- an unknown hash
+     * falls through to Overview, which is where it went before.
+     */
+    case "#session":
     case "#chat":
       return "Chat";
     case "#operations/audit":

@@ -314,7 +314,7 @@ export function AgentsView({ unlocked, administrator, activationReady, activatio
         title="Hermes Profiles"
         description="Immutable Profile Distributions, scoped knowledge, optional OrcaSynapse-governed MCP actions, safe activity events, and an operator kill switch."
         actions={<>
-          <Button disabled={!chatAvailable} onClick={onOpenChat}>{chatAvailable ? "Open Chat" : "Chat not ready"}</Button>
+          <Button disabled={!chatAvailable} onClick={onOpenChat}>{chatAvailable ? "Open Session" : "Session not ready"}</Button>
           <Button onClick={() => void load()}>Refresh</Button>
           {administrator && <Button variant="primary" onClick={() => void openNewProfile()}>{activationReady === false ? "Create draft" : "Create agent"}</Button>}
         </>}
@@ -328,7 +328,7 @@ export function AgentsView({ unlocked, administrator, activationReady, activatio
       </Alert>}
       {notice && <Alert tone="good" onDismiss={() => setNotice(null)}>
         {notice}
-        {chatAvailable && <Button variant="ghost" size="sm" className="ml-3" onClick={onOpenChat}>Open Chat</Button>}
+        {chatAvailable && <Button variant="ghost" size="sm" className="ml-3" onClick={onOpenChat}>Open Session</Button>}
       </Alert>}
       {administrator && activationReady === false && <Panel className="flex items-center gap-4 border-l-2 border-l-warn" role="status">
         <div className="min-w-0 flex-1">
