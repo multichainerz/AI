@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="880" height="762" viewBox="0 0 880 762" role="img" aria-labelledby="title description">
-  <title id="title">The OrcaSynapse VM1 installer</title>
-  <desc id="description">Terminal output of the one-line OrcaSynapse installer: the branded banner with release and source commit, numbered provisioning steps with progress bars, and the final panel showing the dashboard URL and release.</desc>
+  <title id="title">The OrcaSynapse VM1 installer at ai-v3.12.0</title>
+  <desc id="description">Terminal output of the one-line OrcaSynapse installer: the branded banner with release and source commit, numbered provisioning steps with progress bars, and the final panel showing the direct address, release, and public scheme.</desc>
   <rect width="880" height="762" rx="14" fill="#0b1016" stroke="#27313c"/>
   <path d="M0 14a14 14 0 0 1 14-14h852a14 14 0 0 1 14 14v38H0z" fill="#141b26"/>
   <line x1="0" y1="52" x2="880" y2="52" stroke="#27313c"/>
@@ -21,25 +21,26 @@
 
     <text x="40" y="275" fill="#7a8798">  PRIVATE AI CONTROL PLANE  /  VM1 PROVISIONING</text>
     <text x="40" y="296" fill="#7a8798">  ----------------------------------------------------------------------</text>
-    <text x="40" y="317" fill="#7a8798">  Release ai-v1.31.0  /  source ef58f8512ab3</text>
+    <text x="40" y="317" fill="#7a8798">  Release ai-v3.12.0  /  source 4d2189f</text>
     <text x="40" y="338"><tspan fill="#d6dee8">  Establishing secure installation context</tspan><tspan fill="#5fd7d7">...</tspan><tspan fill="#5fd787" font-weight="bold"> READY</tspan></text>
 
-    <text x="40" y="380"><tspan fill="#5fd7d7" font-weight="bold">  STEP 02 OF 06</tspan><tspan fill="#f2f5fb" font-weight="bold">  Preflight the host for this release</tspan></text>
-    <text x="40" y="401"><tspan fill="#5fafff">  [#########...................]</tspan><tspan fill="#d6dee8">  33%</tspan></text>
+    <text x="40" y="380"><tspan fill="#5fd7d7" font-weight="bold">  STEP 02 OF 07</tspan><tspan fill="#f2f5fb" font-weight="bold">  Preflight the host for this release</tspan></text>
+    <text x="40" y="401"><tspan fill="#5fafff">  [########....................]</tspan><tspan fill="#d6dee8">  29%</tspan></text>
     <text x="40" y="422"><tspan fill="#5fd787" font-weight="bold">  [ OK ]</tspan><tspan fill="#d6dee8"> Preflight checks passed.</tspan></text>
 
-    <text x="40" y="464"><tspan fill="#5fd7d7" font-weight="bold">  STEP 05 OF 06</tspan><tspan fill="#f2f5fb" font-weight="bold">  Migrate PostgreSQL and start services</tspan></text>
-    <text x="40" y="485"><tspan fill="#5fafff">  [#######################.....]</tspan><tspan fill="#d6dee8">  83%</tspan></text>
+    <text x="40" y="464"><tspan fill="#5fd7d7" font-weight="bold">  STEP 06 OF 07</tspan><tspan fill="#f2f5fb" font-weight="bold">  Migrate PostgreSQL and start services</tspan></text>
+    <text x="40" y="485"><tspan fill="#5fafff">  [########################....]</tspan><tspan fill="#d6dee8">  86%</tspan></text>
     <text x="40" y="506"><tspan fill="#5fd787" font-weight="bold">  [ OK ]</tspan><tspan fill="#d6dee8"> Start PostgreSQL and application services</tspan></text>
     <text x="40" y="527"><tspan fill="#5fd787" font-weight="bold">  [ OK ]</tspan><tspan fill="#d6dee8"> Wait for control-plane readiness</tspan></text>
 
     <text x="40" y="569" fill="#5fd787" font-weight="bold">+======================================================================+</text>
     <text x="40" y="590" fill="#5fd787" font-weight="bold">|  ORCASYNAPSE IS READY                                                |</text>
     <text x="40" y="611" fill="#5fd787" font-weight="bold">+======================================================================+</text>
-    <text x="40" y="632" fill="#d6dee8">|  Dashboard            http://10.0.4.21:8080/                         |</text>
-    <text x="40" y="653" fill="#d6dee8">|  Release              ai-v1.31.0 (ef58f8512ab3)                      |</text>
-    <text x="40" y="674" fill="#5fd787" font-weight="bold">+======================================================================+</text>
+    <text x="40" y="632" fill="#d6dee8">|  Direct address       http://10.0.4.21:8080/                         |</text>
+    <text x="40" y="653" fill="#d6dee8">|  Release              ai-v3.12.0 (4d2189f)                           |</text>
+    <text x="40" y="674" fill="#d6dee8">|  Public scheme        http                                           |</text>
+    <text x="40" y="695" fill="#5fd787" font-weight="bold">+======================================================================+</text>
 
-    <text x="40" y="716"><tspan fill="#5fd7d7" font-weight="bold">  NEXT</tspan><tspan fill="#d6dee8">  Open the dashboard, change the temporary password, then connect AI Inference.</tspan></text>
+    <text x="40" y="729"><tspan fill="#5fd7d7" font-weight="bold">  NEXT</tspan><tspan fill="#d6dee8">  Open the dashboard, change the temporary password, then connect AI Inference.</tspan></text>
   </g>
 </svg>

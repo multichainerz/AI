@@ -11,8 +11,9 @@ import { cn } from "./cn.js";
  * table makes the set closed: there is no seventh kind of button without adding
  * one here on purpose.
  *
- * OrcaNeuron reading: every button is a pill, emphasis comes from fill against
- * hairline, and the primary fill takes `text-onaccent` — near-black in dark,
+ * OrcaNeuron reading: every button shares the semi-rounded application
+ * silhouette; emphasis comes from fill against a hairline.
+ * The primary fill takes `text-onaccent` — near-black in dark,
  * white in light — because the violet is light enough in dark mode that white
  * text on it fails contrast.
  */

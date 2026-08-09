@@ -4,12 +4,14 @@ This plan records what the current release implements and what remains environme
 
 > **Revision note:** the external memory plane described by Phase 0 and Phase 3 was removed in stages. Document ingestion, embedding, and retrieval moved into a local pgvector index inside OrcaSynapse's PostgreSQL (ai-v1.19–1.21), and the remaining agent-memory service was removed from VM2 entirely (ai-v1.29). Phase entries below are preserved as the historical delivery record; the invariants section reflects the current architecture.
 
+> **Interface note:** the current public navigation uses **Dashboard** and **Session**. Historical phase entries below retain the **Home** and **Chat** names used when that work shipped.
+
 ## Product architecture
 
 The dashboard has six product areas with one owner each:
 
-1. **Home** — actual Chat and Knowledge readiness plus the next useful action.
-2. **Chat** — the employee-facing governed Hermes conversation surface.
+1. **Dashboard** — the full-screen readiness command center, existing workspace metrics, and the next useful action.
+2. **Session** — the employee-facing governed Hermes conversation surface.
 3. **Knowledge** — local extraction and pgvector ingestion, status, provenance, retention, and deletion.
 4. **Agents** — immutable Hermes Profiles, runtime policy, runs, safe events, tools, and approvals.
 5. **Platform** — AI Inference, Agentic System enrollment, optional Enterprise Access, models, prompts, and guardrails.

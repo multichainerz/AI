@@ -9,7 +9,8 @@
 import type { AgentMetrics, ChatMetrics, DocumentMetrics, ToolMetrics } from "@orcasynapse/contracts";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HomeView, type HomeLayer, type HomeReadinessCheck } from "./home-view.js";
@@ -54,6 +55,7 @@ const chatMetrics = {
 const documentMetrics = { total: 58, ready: 55 } as DocumentMetrics;
 const agentMetrics = { profiles: 4, activeProfiles: 2 } as AgentMetrics;
 const toolMetrics = { activeTools: 6, activeGrants: 3 } as ToolMetrics;
+const stylesheet = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
 
 function props(overrides: Partial<Parameters<typeof HomeView>[0]> = {}) {
   return {
@@ -201,6 +203,23 @@ describe("Home", () => {
     const { container } = render(<HomeView {...props()} />);
 
     expect(container.querySelector("svg.dashboard-synapse")).toBeNull();
+  });
+
+  it("uses the themed workspace canvas instead of a fixed violet command field", () => {
+    render(<HomeView {...props()} />);
+
+    const panel = screen.getByLabelText("Deployment command panel");
+    expect(panel.outerHTML).not.toContain("border-white");
+    expect(panel.outerHTML).not.toContain("bg-white");
+    expect(panel.outerHTML).not.toContain("text-white/");
+    expect(panel.outerHTML).not.toContain("bg-[#2B1364]");
+
+    const heroRule = /\.dashboard-hero \{[^}]*\}/.exec(stylesheet)?.[0] ?? "";
+    const headerRule = /\.workspace-header--immersive \{[^}]*\}/.exec(stylesheet)?.[0] ?? "";
+    expect(heroRule).toContain("background: var(--bg)");
+    expect(headerRule).toContain("background: var(--bg)");
+    expect(heroRule).not.toContain("--brand-rgb");
+    expect(headerRule).not.toContain("--brand-rgb");
   });
 
   it("reports what the deployment has done, not what it is ready to do", () => {

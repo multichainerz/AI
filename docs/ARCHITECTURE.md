@@ -6,7 +6,7 @@ OrcaSynapse is the identity, policy, orchestration, and observability plane arou
 
 ```mermaid
 flowchart LR
-  USER["Browser"] --> WEB["OrcaSynapse dashboard"]
+  USER["Browser"] --> WEB["OrcaSynapse operator workspace"]
 
   subgraph VM1["VM1 · control plane"]
     WEB --> API["Fastify API"]

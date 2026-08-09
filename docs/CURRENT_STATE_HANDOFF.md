@@ -9,7 +9,7 @@ This document is the sanitized transfer context for continuing OrcaSynapse work 
 - Repository: <https://github.com/multichainerz/AI>
 - Local workspace: `C:\Users\Veros\Documents\GitHub\MPM`
 - Branch: `main`.
-- Baseline release: **v4.2.0** (this file ships in that release commit; `git log -1` gives the hash). Releases are tagged starting at `ai-v1.25.0`.
+- Baseline release: **v4.3.0** (this file ships in that release commit; `git log -1` gives the hash). Releases are tagged starting at `ai-v1.25.0`.
 - Baseline verification: `pnpm verify` passes — 1,039 tests, typecheck, production build, and `drizzle-kit check` all green. `pnpm verify:postgres` passes against a pgvector server; `pnpm security:audit` reports no known vulnerabilities; and the four static guards (`sync-installer-ui.sh --check`, `test-release-consistency.sh`, `test-docker-build-closure.sh`, `test-csp-closure.sh`) pass.
 - Both installers are covered end to end by lifecycle tests that execute `main()`: `scripts/test-orcasynapse-installer-smoke.sh` (VM1) and `scripts/test-agentic-installer-smoke.sh` (VM2, including decommission). Both need root and a systemd host — a WSL Ubuntu 24.04 instance with `[boot] systemd=true` is enough.
 
@@ -34,7 +34,7 @@ The operator journey:
 4. Generate the VM2 installer and one-time enrollment claim.
 5. Install the Agentic System on VM2; the installer provisions Hermes, managed policy, node identity, and signed monitoring.
 6. Create and activate the first Hermes Profile.
-7. Use Chat, Knowledge, Agents, Platform, and Operations from one dashboard.
+7. Use Dashboard, Session, Knowledge, Agents, Platform, and Operations from one operator workspace.
 8. Add OIDC or Microsoft Entra ID later for enterprise access and RBAC.
 
 ## Architectural invariants

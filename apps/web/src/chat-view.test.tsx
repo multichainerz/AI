@@ -36,6 +36,7 @@ const profile = {
 
 const mocks = vi.hoisted(() => ({
   getDocuments: vi.fn(),
+  getChatConversations: vi.fn(),
   submitChatMessage: vi.fn(),
 }));
 
@@ -43,7 +44,7 @@ vi.mock("./api.js", async () => {
   const actual = await vi.importActual<typeof import("./api.js")>("./api.js");
   return {
     ...actual,
-    getChatConversations: vi.fn(async () => ({ items: [{ ...conversation, messages: undefined }] })),
+    getChatConversations: mocks.getChatConversations,
     getChatConversation: vi.fn(async () => conversation),
     getAgentProfiles: vi.fn(async () => ({ items: [profile] })),
     getDocuments: mocks.getDocuments,
@@ -122,7 +123,11 @@ const props = {
 beforeEach(() => {
   mocks.getDocuments.mockReset();
   mocks.getDocuments.mockResolvedValue({ items: [] } as unknown as DocumentList);
+  mocks.getChatConversations.mockReset();
+  mocks.getChatConversations.mockResolvedValue({ items: [{ ...conversation, messages: undefined }] });
   mocks.submitChatMessage.mockReset();
+  props.onOpenAgents.mockReset();
+  props.onOpenPlatform.mockReset();
   props.onSessionExpired.mockReset();
 });
 afterEach(cleanup);
@@ -157,6 +162,46 @@ describe("chat knowledge picker failure", () => {
 });
 
 describe("chat composer", () => {
+  it("keeps the conversation header on the chat canvas", async () => {
+    render(<ChatView {...props} />);
+
+    const header = (await screen.findByLabelText("Conversation runtime")).closest("header");
+    expect(header?.classList.contains("bg-bg")).toBe(true);
+    expect(header?.classList.contains("bg-surface")).toBe(false);
+    expect(header?.classList.contains("border-b")).toBe(false);
+  });
+
+  it("identifies the agent picker and turns missing setup into an action", async () => {
+    mocks.getChatConversations.mockResolvedValueOnce({ items: [] });
+    const user = userEvent.setup();
+    const { container } = render(
+      <ChatView
+        {...props}
+        administratorReadiness={{
+          ready: false,
+          title: "Connect an agent runtime",
+          detail: "Choose and validate the agent execution route.",
+          target: "Agents",
+        }}
+      />,
+    );
+
+    await screen.findByLabelText("Agent Profile");
+    expect(container.querySelector("[data-agent-selector-icon]")).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "Open agent setup: setup required" }));
+    expect(props.onOpenAgents).toHaveBeenCalledTimes(1);
+  });
+
+  it("presents the administrator identity as a compact session summary", async () => {
+    render(<ChatView {...props} />);
+
+    const summary = await screen.findByLabelText("Current session identity");
+    expect(summary.textContent).toContain("Operator");
+    expect(summary.textContent).toContain("Administrator preview");
+    expect(summary.textContent).toContain("Support agent");
+  });
+
   it("keeps the message when the send fails, since nothing else can recover it", async () => {
     // The draft was cleared before the request. A failed submit creates no
     // assistant row, so Retry prompt has nothing to read back from - a long

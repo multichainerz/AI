@@ -12,6 +12,7 @@ import config from "../../tailwind.config.js";
 
 const styles = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
 const colors = config.theme?.extend?.colors as Record<string, string>;
+const radii = config.theme?.extend?.borderRadius as Record<string, string>;
 
 describe("colour tokens", () => {
   it("declares every colour in the alpha-capable form", () => {
@@ -56,5 +57,16 @@ describe("the border reset", () => {
     const reset = /@layer base\s*\{[\s\S]*?\bbutton\s*\{([^}]*)\}/.exec(styles)?.[1] ?? "";
     expect(reset, "the base button reset is missing").not.toBe("");
     expect(reset).toMatch(/border:\s*0\s+solid/);
+  });
+});
+
+describe("component radius", () => {
+  it("resolves every non-circular radius alias to one semi-rounded token", () => {
+    expect(styles).toContain("--radius-component: 10px;");
+
+    for (const [name, value] of Object.entries(radii)) {
+      expect(value, `radius \"${name}\" drifted from the application silhouette`)
+        .toBe("var(--radius-component)");
+    }
   });
 });

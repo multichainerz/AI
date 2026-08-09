@@ -64,8 +64,8 @@ import {
   StorageIcon,
   TerminalIcon,
 } from "./ui/relay-icons.js";
+import { ThemeToggle } from "./ui/theme-toggle.js";
 import { persistRailCollapsed, storedRailCollapsed } from "./shell-preferences.js";
-import { currentTheme, toggleTheme, type Theme } from "./theme.js";
 import {
   pathForView,
   primaryNavigationGroups,
@@ -107,12 +107,12 @@ const AuditView = lazy(() => import("./audit-view.js").then((module) => ({ defau
  */
 function Glyph({ name }: { name: string }) {
   const glyphs: Record<string, ReactNode> = {
-    overview: <MonitorIcon size={18} />,
-    chat: <TerminalIcon size={18} />,
-    documents: <StorageIcon size={18} />,
-    agents: <RobotIcon size={18} />,
-    setup: <ServerIcon size={18} />,
-    operations: <BalancerIcon size={18} />,
+    overview: <MonitorIcon size={22} />,
+    chat: <TerminalIcon size={22} />,
+    documents: <StorageIcon size={22} />,
+    agents: <RobotIcon size={22} />,
+    setup: <ServerIcon size={22} />,
+    operations: <BalancerIcon size={22} />,
   };
 
   /*
@@ -179,15 +179,12 @@ function WorkspaceHeader({
   operator: { initials: string; name: string; detail: string };
   onSignOut: () => void;
   /*
-   * The Dashboard's command panel begins directly beneath this band, and a
-   * page-coloured bar across the top of a violet field reads as a lid on it.
-   * Immersive takes the panel's own colour and its white foregrounds, so the
-   * two surfaces are one. It is not transparency: the band is sticky, so it has
-   * to stay legible once the panel has scrolled out from under it.
+   * The Dashboard's command panel begins directly beneath this band. Immersive
+   * keeps the header opaque on that same themed canvas so the sticky band and
+   * the command surface read as one continuous field.
    */
   immersive: boolean;
 }) {
-  const [theme, setTheme] = useState<Theme>(() => currentTheme());
   const [accountOpen, setAccountOpen] = useState(false);
   const account = useRef<HTMLDivElement | null>(null);
 
@@ -216,31 +213,9 @@ function WorkspaceHeader({
   return (
     <header className={cn("workspace-header", immersive && "workspace-header--immersive")}>
       <div className="flex h-12 items-center gap-4">
-        <span className={cn("font-display text-[15px] font-semibold tracking-[-0.01em]", immersive ? "text-white" : "text-text")}>{area}</span>
+        <span className="font-display text-[15px] font-semibold tracking-[-0.01em] text-text">{area}</span>
         <span className="flex-1" />
-        <button
-          type="button"
-          className={cn(
-            "flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-caption font-medium transition-colors",
-            immersive
-              ? "border-white/20 text-white/75 hover:border-white/40 hover:text-white"
-              : "border-border-strong text-muted hover:border-faint hover:text-text",
-          )}
-          onClick={() => setTheme(toggleTheme())}
-          title={theme === "light" ? "Switch to the dark theme" : "Switch to the light theme"}
-        >
-          {theme === "light" ? (
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-              <path d="M20.4 13.2A8.4 8.4 0 0 1 10.8 3.6a8.4 8.4 0 1 0 9.6 9.6z" fill="currentColor" fillOpacity="0.14" />
-            </svg>
-          ) : (
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-              <circle cx="12" cy="12" r="4.2" fill="currentColor" fillOpacity="0.14" />
-              <path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6" />
-            </svg>
-          )}
-          {theme === "light" ? "Dark" : "Light"}
-        </button>
+        <ThemeToggle />
         {/*
           * The account moved out of the rail and into the top-right corner.
           *
@@ -253,34 +228,26 @@ function WorkspaceHeader({
         <div className="relative flex items-center" ref={account}>
           <button
             type="button"
-            className={cn(
-              "flex items-center gap-2.5 rounded-pill border py-1 pl-1 pr-2.5 text-left transition-colors",
-              immersive ? "border-white/20 hover:border-white/40" : "border-border-strong hover:border-faint",
-            )}
+            className="flex items-center gap-2.5 rounded-pill border border-border-strong py-1 pl-1 pr-2.5 text-left transition-colors hover:border-faint"
             aria-haspopup="menu"
             aria-expanded={accountOpen}
             onClick={() => setAccountOpen((open) => !open)}
           >
             <span
               aria-hidden="true"
-              className={cn(
-                "grid h-7 w-7 shrink-0 place-items-center rounded-pill font-display text-micro font-semibold",
-                // `text-accent` on `bg-soft` measures 4.13 in dark. The strong
-                // step is the same identity and clears AA.
-                immersive ? "bg-white/15 text-white" : "bg-soft text-accent-strong",
-              )}
+              className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-soft font-display text-micro font-semibold text-accent-strong"
             >
               {operator.initials}
             </span>
             <span className="hidden min-w-0 sm:block">
-              <span className={cn("block max-w-[150px] truncate text-caption font-semibold leading-tight", immersive ? "text-white" : "text-text")}>
+              <span className="block max-w-[150px] truncate text-caption font-semibold leading-tight text-text">
                 {operator.name}
               </span>
-              <span className={cn("block max-w-[150px] truncate text-micro capitalize leading-tight", immersive ? "text-white/65" : "text-faint")}>
+              <span className="block max-w-[150px] truncate text-micro capitalize leading-tight text-faint">
                 {operator.detail}
               </span>
             </span>
-            <span aria-hidden="true" className={cn("shrink-0", immersive ? "text-white/60" : "text-faint")}>
+            <span aria-hidden="true" className="shrink-0 text-faint">
               <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M3 4.6 6 7.6l3-3" />
               </svg>
@@ -1060,21 +1027,10 @@ function App() {
           * mobile hide, restated as `max-[760px]:hidden` against the same
           * 760px breakpoint the rail's bottom-bar layout uses.
           */}
-        {/*
-          * The mark became a tile.
-          *
-          * Collapsed, the rail is 76px of icons with nothing at the top to say
-          * whose product this is -- the wordmark is the only identity there,
-          * and it is the first thing a collapse takes away. A filled tile reads
-          * as the application at either width, so the rail keeps an anchor
-          * instead of starting with a nav row.
-          */}
+        {/* The same unboxed white mark anchors both rail widths; collapse only hides the wordmark. */}
         <div className="-mt-5 mb-5 flex h-16 shrink-0 items-center gap-2.5 px-1 max-[760px]:hidden">
-          <span
-            aria-hidden="true"
-            className="grid h-11 w-11 shrink-0 place-items-center rounded-lg border border-white/15 bg-white/10"
-          >
-            <BrandMark size={24} />
+          <span aria-hidden="true" className="sidebar-brand-mark grid shrink-0 place-items-center">
+            <BrandMark size={38} />
           </span>
           <strong className="font-display text-[18px] font-bold leading-none tracking-[-0.01em] text-white">OrcaSynapse</strong>
         </div>
@@ -1128,7 +1084,7 @@ function App() {
                     */}
                   <span
                     className={cn(
-                      "flex shrink-0 [&_.fill-node]:fill-current [&_.stroke-node]:stroke-current",
+                      "nav-app-icon flex shrink-0 [&_.fill-node]:fill-current [&_.stroke-node]:stroke-current",
                       active ? "text-accent" : "text-white/45",
                     )}
                   >
@@ -1155,7 +1111,7 @@ function App() {
             */}
           <button
             type="button"
-            className="mb-3 flex h-9 w-full items-center gap-3 rounded px-3 text-left font-sans text-[13px] font-medium text-white/70 transition-colors hover:bg-white/[0.06] hover:text-white max-[760px]:hidden"
+            className="sidebar-collapse-button flex w-full items-center gap-3 px-4 text-left font-sans text-[13px] font-medium text-white/70 transition-colors hover:text-white max-[760px]:hidden"
             onClick={() => {
               const next = !railCollapsed;
               setRailCollapsed(next);
@@ -1164,8 +1120,8 @@ function App() {
             aria-expanded={!railCollapsed}
             aria-label={railCollapsed ? "Expand sidebar" : "Collapse sidebar"}
           >
-            <span aria-hidden="true" className="flex shrink-0 text-white/55">
-              <svg viewBox="0 0 16 16" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+            <span aria-hidden="true" className="sidebar-collapse-icon grid h-8 w-8 shrink-0 place-items-center text-white/55">
+              <svg viewBox="0 0 16 16" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="1.9" y="2.6" width="12.2" height="10.8" rx="2.2" />
                 <path d="M6.6 2.6v10.8" />
                 {railCollapsed ? <path d="M9.4 6.2 11.2 8l-1.8 1.8" /> : <path d="M11.2 6.2 9.4 8l1.8 1.8" />}

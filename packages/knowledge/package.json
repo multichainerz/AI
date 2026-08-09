@@ -1,6 +1,6 @@
 {
   "name": "@orcasynapse/knowledge",
-  "version": "4.2.0",
+  "version": "4.3.0",
   "description": "Local document knowledge pipeline: extraction, chunking, embedding, pgvector retrieval",
   "license": "BUSL-1.1",
   "private": true,
