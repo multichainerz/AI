@@ -5,7 +5,8 @@ import type {
   DocumentMetrics,
   ToolMetrics,
 } from "@orcasynapse/contracts";
-import { Button, HeroBanner, MicroLabel, PageHeader, Panel, PanelHeading, StatusText, Tile, cn, toneFor } from "./ui/index.js";
+import { Button, MicroLabel, PageHeader, Panel, PanelHeading, StatusText, Tile, cn, toneFor } from "./ui/index.js";
+import { DashboardHero } from "./dashboard-hero.js";
 import { NodeIcon } from "./ui/relay-icons.js";
 import type { ActiveView } from "./workspace-navigation.js";
 
@@ -48,32 +49,6 @@ interface HomeViewProps {
   readiness: HomeReadinessCheck[];
   onSelect: (view: ActiveView, deploymentTab?: "journey" | "nodes" | "readiness") => void;
   onUnlock: () => void;
-}
-
-/**
- * The window a usage figure covers, said in words.
- *
- * "1,284 conversations" is not a fact until you know over what -- an hour and a
- * quarter reads very differently from a quarter. The runtime reports
- * `windowStartedAt`, so the caption states it rather than the interface implying
- * a period it does not know.
- */
-function since(startedAt: string): string {
-  const started = new Date(startedAt);
-  if (Number.isNaN(started.getTime())) return "Over the reported window";
-  return `Since ${started.toLocaleDateString(undefined, { day: "numeric", month: "long" })}`;
-}
-
-/** A figure the deployment has not produced yet is absent, never zero. */
-function figure(value: number | null | undefined, unlocked: boolean): string {
-  if (!unlocked || value === null || value === undefined) return "—";
-  return value.toLocaleString();
-}
-
-function cadence(seconds: number): string {
-  if (seconds < 60) return `Checked every ${seconds} sec`;
-  if (seconds < 3_600) return `Checked every ${Math.round(seconds / 60)} min`;
-  return `Checked every ${Math.round(seconds / 3_600)} hr`;
 }
 
 function ShieldIcon({ className }: { className?: string }) {
@@ -147,6 +122,26 @@ export function HomeView(props: HomeViewProps) {
         }
       />
 
+      {/*
+        * The command panel, full-bleed and first.
+        *
+        * What stood here was a KPI strip in a card -- the same shape as every
+        * other row on the page, so the screen an operator lands on looked like
+        * a report rather than a console. This is the one surface meant to be
+        * looked at rather than read.
+        */}
+      <DashboardHero
+        unlocked={props.unlocked}
+        healthyConnections={props.healthyConnections}
+        chatMetrics={props.chatMetrics}
+        documentMetrics={props.documentMetrics}
+        agentMetrics={props.agentMetrics}
+        toolMetrics={props.toolMetrics}
+        monitoring={props.monitoring}
+        layers={props.layers}
+        onSelect={props.onSelect}
+      />
+
       <Panel
         className={cn(
           "mb-6 flex items-center gap-4 border-l-2 p-4",
@@ -177,68 +172,6 @@ export function HomeView(props: HomeViewProps) {
         </Button>
       </Panel>
 
-      {/*
-        * What this deployment has actually done.
-        *
-        * The banner used to restate readiness, which the callout directly above
-        * it already carries -- the same fraction twice, in the two loudest
-        * places on the screen. Readiness answers "can I use this yet"; that
-        * question is answered once, above. This answers the one after it.
-        *
-        * Every figure here is reported by the runtime. Nothing is derived from
-        * a guess and nothing is invented: there is no user count in this
-        * product, so there is no user count on this banner.
-        */}
-      <HeroBanner
-        className="mb-4"
-        aria-label="Deployment activity"
-        highlight={{
-          label: "Governed conversations",
-          value: figure(props.chatMetrics?.conversations, props.unlocked),
-          caption: props.unlocked
-            ? props.chatMetrics ? since(props.chatMetrics.windowStartedAt) : "No runs reported yet"
-            : "Sign in to see activity",
-          /*
-           * The bar is the share of responses that completed. It is drawn only
-           * when there are responses to divide -- a full green bar over zero
-           * work reads as "everything succeeded" when the truth is "nothing has
-           * run".
-           */
-          fill: props.unlocked && props.chatMetrics && props.chatMetrics.responses > 0
-            ? props.chatMetrics.completed / props.chatMetrics.responses
-            : undefined,
-          tone: props.unlocked && props.chatMetrics && props.chatMetrics.responses > 0
-            ? props.chatMetrics.failureRate > 0.1 ? "warn" : "good"
-            : undefined,
-        }}
-        metrics={[
-          {
-            label: "Responses",
-            value: figure(props.chatMetrics?.responses, props.unlocked),
-            caption: props.chatMetrics ? `${props.chatMetrics.completed.toLocaleString()} completed` : "Awaiting the first run",
-          },
-          {
-            label: "Documents",
-            value: figure(props.documentMetrics?.total, props.unlocked),
-            caption: props.documentMetrics ? `${props.documentMetrics.ready.toLocaleString()} indexed` : "None uploaded yet",
-          },
-          {
-            label: "Agent profiles",
-            value: figure(props.agentMetrics?.profiles, props.unlocked),
-            caption: props.agentMetrics ? `${props.agentMetrics.activeProfiles.toLocaleString()} active` : "None defined yet",
-          },
-          {
-            label: "Tools allowed",
-            value: figure(props.toolMetrics?.activeTools, props.unlocked),
-            caption: props.toolMetrics ? `${props.toolMetrics.activeGrants.toLocaleString()} grants` : "Default deny",
-          },
-          {
-            label: "Healthy services",
-            value: props.unlocked ? props.healthyConnections : "—",
-            caption: props.monitoring?.enabled ? cadence(props.monitoring.intervalSeconds) : "Credential-aware validation",
-          },
-        ]}
-      />
 
       {/*
         * The design's ask surface, serving as the doorway into Chat: the whole
