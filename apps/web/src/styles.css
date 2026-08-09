@@ -212,6 +212,25 @@ button { -webkit-tap-highlight-color: transparent; }
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .app-shell { min-height: 100vh; display: grid; grid-template-columns: 248px minmax(0, 1fr); }
+
+/* Focus mode, set by `app.tsx` while Chat is the active view.
+   76px rather than a true icon strip because the sign-out control still has to
+   fit under the avatar once the operator block stacks — a rail that collapses
+   sign-out out of reach is not a collapse, it is a trap.
+   Labels go visually-hidden rather than `display: none`: each nav row's
+   accessible name is its label, the tooltip already carries the description,
+   and a rail that a screen reader cannot name is worse than a wide one. */
+.app-shell--focus { grid-template-columns: 76px minmax(0, 1fr); }
+.app-shell--focus .sidebar { padding-left: 8px; padding-right: 8px; }
+.app-shell--focus .sidebar > div:first-child { justify-content: center; padding: 0; }
+.app-shell--focus .sidebar nav button { justify-content: center; gap: 0; padding-left: 0; padding-right: 0; }
+.app-shell--focus .operator { flex-direction: column; gap: 8px; padding-left: 0; padding-right: 0; }
+.app-shell--focus .sidebar nav button > span + span,
+.app-shell--focus .sidebar > div:first-child > strong,
+.app-shell--focus .operator > div:nth-child(2) {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
 /*
  * The rail is the brand panel: the one deep-violet surface, identical in both
  * themes, so its foreground colours are fixed white/alpha rather than tokens —
@@ -303,24 +322,29 @@ button:disabled { opacity: .48; cursor: not-allowed; }.panel { border: 1px solid
  * for a className to be put on. Everything it sets comes from the design tokens
  * so it moves with the rest of the system.
  */
-.message-markdown { margin: 6px 0 10px; color: var(--text); font-size: 12px; line-height: 1.72; overflow-wrap: anywhere; }
+/* The reading step, not the console step. Kept in sync with the `read` token in
+   tailwind.config.ts — this block styles markdown internals that Tailwind
+   classes cannot reach, so the size lives in two places by necessity. */
+.message-markdown { margin: 6px 0 10px; color: var(--text); font-size: 15.5px; line-height: 1.65; overflow-wrap: anywhere; }
 .message-markdown > :first-child { margin-top: 0; }
 .message-markdown > :last-child { margin-bottom: 0; }
-.message-markdown p { margin: 8px 0; white-space: normal; }
+.message-markdown p { margin: 12px 0; white-space: normal; }
 .message-markdown h1, .message-markdown h2, .message-markdown h3 { margin: 18px 0 8px; color: var(--text); line-height: 1.3; letter-spacing: -.02em; }
-.message-markdown h1 { font-size: 17px; }.message-markdown h2 { font-size: 14px; }.message-markdown h3 { font-size: 12px; }
-.message-markdown ul, .message-markdown ol { padding-left: 22px; margin: 9px 0; }
+.message-markdown h1 { font-size: 22px; }.message-markdown h2 { font-size: 18px; }.message-markdown h3 { font-size: 15.5px; font-weight: 600; }
+.message-markdown ul, .message-markdown ol { padding-left: 26px; margin: 12px 0; }
 /* Preflight removes list markers; a markdown checklist without them is prose. */
 .message-markdown ul { list-style: disc; }
 .message-markdown ol { list-style: decimal; }
-.message-markdown li + li { margin-top: 4px; }
+.message-markdown li + li { margin-top: 6px; }
 .message-markdown blockquote { padding: 3px 0 3px 12px; margin: 10px 0; color: var(--muted); border-left: 2px solid var(--accent); }
 .message-markdown code { padding: 2px 4px; color: var(--accent); border: 1px solid var(--border); border-radius: 4px; background: var(--raised); font-family: var(--mono); font-size: .92em; }
 .message-markdown pre { max-width: 100%; overflow-x: auto; padding: 13px 14px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); }
 .message-markdown pre code { padding: 0; color: var(--text); border: 0; background: transparent; }
 .message-markdown table { width: 100%; display: block; overflow-x: auto; border-collapse: collapse; margin: 12px 0; }
 .message-markdown th, .message-markdown td { padding: 7px 9px; border: 1px solid var(--border); text-align: left; }
-.message-markdown th { color: var(--text); background: var(--raised); font-family: var(--mono); font-size: 9px; font-weight: 500; letter-spacing: .11em; text-transform: uppercase; }
+/* A table inside an answer is prose, not a data grid: the 9px uppercase mono
+   kicker that suits Operations reads as noise here. */
+.message-markdown th { color: var(--text); background: var(--raised); font-size: 13.5px; font-weight: 600; }
 .message-markdown a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
 .blocked-inline-image { color: var(--warn); font-size: 9px; }
 

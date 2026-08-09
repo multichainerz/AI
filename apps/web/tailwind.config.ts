@@ -81,6 +81,12 @@ export default {
         // when caption is too quiet and body too loud.
         label: ["12px", { lineHeight: "1.5" }],
         body: ["13px", { lineHeight: "1.55" }],
+        // Chat is the one screen the product asks people to read prose on, and
+        // console density is wrong for prose: the answer text was 12px in a
+        // 940px column, about 130 characters a line. This is the reading step —
+        // used by the transcript and nothing else, so the dense tables in
+        // Operations and Knowledge keep `body` and do not reflow.
+        read: ["15.5px", { lineHeight: "1.65" }],
         // KPI-column value and hero stat number, both Space Grotesk.
         figure: ["22px", { lineHeight: "1.1", letterSpacing: "-0.02em" }],
         display: ["40px", { lineHeight: "1.05", letterSpacing: "-0.03em" }],

@@ -228,6 +228,29 @@ describe("chat transcript", () => {
     expect(within(activity).getByText("Hermes subagent")).toBeTruthy();
   });
 
+  it("folds the machinery away once the turn has landed", async () => {
+    /*
+     * Loud while it happens, quiet once it has. A finished answer with nine
+     * expanded rows of tool traffic above it buries the thing the reader asked
+     * for -- by the third turn the transcript is mostly machinery. The rows
+     * stay in the document, so this is a fold and not a deletion.
+     */
+    await transcript();
+    const activity = screen.getByLabelText("Hermes agent activity");
+
+    expect(activity.hasAttribute("open")).toBe(false);
+    expect(within(activity).getAllByRole("listitem")).toHaveLength(3);
+  });
+
+  it("says what happened while it is folded, including a failure", async () => {
+    // The risk of folding is a reader who sees one calm line and never opens
+    // it, so the summary has to carry the bad news itself.
+    await transcript();
+    const activity = screen.getByLabelText("Hermes agent activity");
+
+    expect(within(activity).getByText(/^Worked for /)).toBeTruthy();
+  });
+
   it("attributes the answer to the documents it retrieved", async () => {
     await transcript();
     const sources = screen.getByLabelText("Enterprise knowledge sources");
