@@ -95,12 +95,25 @@ const conversation = {
           costUsd: null, occurredAt: "2026-08-07T09:14:01.000Z",
         },
         {
+          /*
+           * The start of the call `e2` completes. Both carry the same
+           * `toolCallKey`, which is what makes them one call rather than two
+           * rows -- the fixture had no key at all, so the grouping this asserts
+           * was invisible to every test.
+           */
+          id: "e1b", type: "TOOL_STARTED", toolName: "knowledge.search", status: "started",
+          summary: null, preview: null, durationMs: null, inputTokens: null, outputTokens: null,
+          reasoningTokens: null, costUsd: null, toolCallKey: "knowledge.search#1",
+          occurredAt: "2026-08-07T09:14:01.500Z",
+        },
+        {
           // `TOOL_CALLED` and `SUBAGENT_FINISHED` stood here for months. Neither
           // is a member of AGENT_RUN_EVENT_TYPES, so this fixture described a
           // transcript the runtime cannot produce — and the cast below is what
           // let it compile. `chat-stream-reducer.test.ts` now pins the real
           // vocabulary; these two are the types the runtime actually emits.
           id: "e2", type: "TOOL_COMPLETED", toolName: "knowledge.search", status: "completed",
+          toolCallKey: "knowledge.search#1",
           summary: "Retrieved 6 chunks", preview: "query: promotion checklist", durationMs: 412,
           inputTokens: 120, outputTokens: 48, reasoningTokens: null, costUsd: 0.0012,
           occurredAt: "2026-08-07T09:14:02.000Z",
@@ -202,7 +215,14 @@ describe("chat transcript", () => {
     await transcript();
     const activity = screen.getByLabelText("Hermes agent activity");
 
-    expect(within(activity).getByText("3 events")).toBeTruthy();
+    expect(within(activity).getByText("4 events")).toBeTruthy();
+    /*
+     * Four events, three rows: the start and the completion of one tool call
+     * are one thing that happened. `getByText` is the assertion -- it throws on
+     * multiple matches, so an ungrouped list fails here with the name appearing
+     * twice rather than passing quietly.
+     */
+    expect(within(activity).getAllByRole("listitem")).toHaveLength(3);
     expect(within(activity).getByText("knowledge.search")).toBeTruthy();
     expect(within(activity).getByText(/412 ms · 120 in · 48 out · \$0\.0012/)).toBeTruthy();
     expect(within(activity).getByText("Hermes subagent")).toBeTruthy();
