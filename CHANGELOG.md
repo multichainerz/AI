@@ -5,6 +5,56 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## v2.3.0 — 2026-08-09
+
+The chat thread layout, consolidated onto `main` with the five defects its
+verification found repaired.
+
+The layout itself: one shared reading measure across thread, composer, alert and
+status, replacing four different widths (940 / 720 / 600 / 940); a scrolling
+thread and a pinned composer as two zones; the four Dialogs moved to the end of
+the root section so an open one can never add a grid row; delta pacing so a burst
+of frames is released over several animation frames rather than in one lump; and
+"Jump to latest" for a reader who has left the bottom.
+
+Four adversarial lanes reviewed it before any of it came near `main`. They
+cleared the two things that would have been serious -- no delta is ever split
+(the server's resume is exclusive, so a partial delta duplicates text on
+reconnect) and `flush()` drains synchronously at all three exits -- and found
+five real defects, all fixed here:
+
+- **`pinned` was written only by the scroll listener.** Content growing fires no
+  scroll event, so a reader left behind by a batch taller than the 64px slack
+  kept `pinned` true: the transcript correctly stopped following, but nothing
+  ever offered the way back and following never resumed. Pacing made that the
+  normal case rather than a rare one, since one commit can append a whole
+  backlog. The follow effect now recomputes `pinned` itself.
+- **`aria-live="polite"` covered the elapsed-seconds counter**, which a 250ms
+  interval rewrites -- a fresh announcement four times a second for the whole
+  run, which is the announcement storm moving it off the scroller was meant to
+  end. It now sits on the activity text alone.
+- **"Jump to latest" was anchored to the section with a guessed 92px offset**,
+  which lands inside the composer as soon as the textarea grows. The thread zone
+  now provides its own containing block, so the control ends where the composer
+  begins at any height.
+- **`usePacedStream`'s unmount cleanup cancelled the pending frame without
+  draining**, so the hook did not honour its own documented contract. It only
+  survived because the one caller happens to register a later cleanup that
+  flushes -- an ordering nobody declared and any edit could reverse.
+
+**A coverage gap, stated rather than papered over.** The `pinned` fix has no test.
+Driving it needs `active.messages` to change, which in this harness needs a real
+`sendChatMessage`; a test that triggered a re-render some other way would pass
+without exercising the path. It is verified by reading the effect's dependencies,
+not by a test, and that is weaker.
+
+Branch consolidation: `worktree-wf_7bba5c8d-d93-1` is merged and deleted, and
+`fix/worker-run-durability` was already an ancestor of `main` and is gone.
+`backup-pre-squash-2026-08-09` and `codex/pre-ai-version-recommit` are left
+alone deliberately -- `ai-v1.92.0` is an ancestor of `main`, so the first is
+pre-squash history whose content is already here, and merging either would
+delete 21,200 and 271,140 lines respectively.
+
 ## v2.2.0 — 2026-08-09
 
 The conversation rail is grouped by date.
