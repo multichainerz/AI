@@ -57,6 +57,7 @@ import {
   StorageIcon,
   TerminalIcon,
 } from "./ui/relay-icons.js";
+import { persistRailCollapsed, storedRailCollapsed } from "./shell-preferences.js";
 import { currentTheme, toggleTheme, type Theme } from "./theme.js";
 import {
   pathForView,
@@ -166,6 +167,9 @@ function WorkspaceHeader({ area }: { area: string }) {
 }
 
 function App() {
+  // Read once, from storage, so the rail opens at the width it was left at
+  // rather than snapping after mount.
+  const [railCollapsed, setRailCollapsed] = useState(() => storedRailCollapsed());
   const [platform, setPlatform] = useState<PlatformMeta | null>(null);
   const [apiAvailable, setApiAvailable] = useState(true);
   const [adminSession, setAdminSession] = useState<AdministratorSession | null>(null);
@@ -845,13 +849,17 @@ function App() {
     };
 
   /*
-   * Chat is the only view that is itself a workspace: it brings its own
-   * conversation rail, so the full navigation rail beside it put two vertical
-   * lists in front of the reader before a word of the thread. In Chat the rail
-   * collapses to its icons and hands ~170px back to the reading column.
+   * The rail's width is the operator's to set, not the router's.
+   *
+   * It used to collapse in Chat and expand everywhere else, which meant it moved
+   * under whoever was using it on every navigation and could never be chosen.
+   * Chat is still where collapsing pays most -- it brings its own conversation
+   * rail, and two vertical lists before a word of the thread is what started
+   * this -- but that is a reason to collapse it, not a reason to decide for
+   * someone. One preference, respected on every screen.
    */
   return (
-    <div className={cn("app-shell", activeView === "Chat" && "app-shell--focus")}>
+    <div className={cn("app-shell", railCollapsed && "app-shell--focus")}>
       <aside className="sidebar" aria-label="OrcaSynapse navigation">
         {/*
           * The brand band, 64px measured from the rail's top edge — which is
@@ -866,8 +874,22 @@ function App() {
           * mobile hide, restated as `max-[760px]:hidden` against the same
           * 760px breakpoint the rail's bottom-bar layout uses.
           */}
+        {/*
+          * The mark became a tile.
+          *
+          * Collapsed, the rail is 76px of icons with nothing at the top to say
+          * whose product this is -- the wordmark is the only identity there,
+          * and it is the first thing a collapse takes away. A filled tile reads
+          * as the application at either width, so the rail keeps an anchor
+          * instead of starting with a nav row.
+          */}
         <div className="-mt-5 mb-5 flex h-16 shrink-0 items-center gap-2.5 px-1 max-[760px]:hidden">
-          <BrandMark />
+          <span
+            aria-hidden="true"
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-lg border border-white/15 bg-white/10"
+          >
+            <BrandMark size={24} />
+          </span>
           <strong className="font-display text-[18px] font-bold leading-none tracking-[-0.01em] text-white">OrcaSynapse</strong>
         </div>
         <nav aria-label="Primary navigation">
@@ -938,6 +960,33 @@ function App() {
           </div>
         </nav>
         <div className="sidebar-bottom">
+          {/*
+            * The control that sets the rail's width lives in the rail.
+            *
+            * Hidden below 760px on purpose: down there the rail is already a
+            * fixed bottom bar with no width to collapse, and the same media
+            * guard keeps `.app-shell--focus` off that layout.
+            */}
+          <button
+            type="button"
+            className="mb-3 flex h-9 w-full items-center gap-3 rounded px-3 text-left font-sans text-[13px] font-medium text-white/70 transition-colors hover:bg-white/[0.06] hover:text-white max-[760px]:hidden"
+            onClick={() => {
+              const next = !railCollapsed;
+              setRailCollapsed(next);
+              persistRailCollapsed(next);
+            }}
+            aria-expanded={!railCollapsed}
+            aria-label={railCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          >
+            <span aria-hidden="true" className="flex shrink-0 text-white/55">
+              <svg viewBox="0 0 16 16" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="1.9" y="2.6" width="12.2" height="10.8" rx="2.2" />
+                <path d="M6.6 2.6v10.8" />
+                {railCollapsed ? <path d="M9.4 6.2 11.2 8l-1.8 1.8" /> : <path d="M11.2 6.2 9.4 8l1.8 1.8" />}
+              </svg>
+            </span>
+            <span className="min-w-0 flex-1 truncate">{railCollapsed ? "Expand" : "Collapse"}</span>
+          </button>
           <div className="operator">
             <div className="avatar">{operator.initials}</div>
             <div>
