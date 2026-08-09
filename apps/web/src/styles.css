@@ -338,73 +338,24 @@ main > * { width: min(100%, 1380px); margin-left: auto; margin-right: auto; }
    rather than removed from the band. */
 .workspace-header + .dashboard-hero { margin-top: -26px; }
 
-/*
- * The synapse field.
- *
- * A network at rest with signals travelling along it: what this product does,
- * drawn. Every value is authored — no randomness — because a background that
- * re-rolls on each render is a background that cannot be reviewed, and the
- * whole point is that it stays the same picture.
- *
- * Delays are staggered by `nth-child` rather than by an inline `style`, which
- * `style-src 'self'` refuses in the built container.
- */
-.synapse-edge { stroke: rgba(255, 255, 255, 0.09); stroke-width: 1; }
-.synapse-signal {
-  stroke: rgb(var(--node-rgb) / 0.85);
-  stroke-width: 1.6;
-  stroke-linecap: round;
-  stroke-dasharray: 5 240;
-  stroke-dashoffset: 245;
-  animation: synapse-travel 5.4s linear infinite;
-}
-.synapse-signal:nth-child(6n + 2) { animation-delay: -0.9s; animation-duration: 6.2s; }
-.synapse-signal:nth-child(6n + 3) { animation-delay: -1.8s; animation-duration: 4.8s; }
-.synapse-signal:nth-child(6n + 4) { animation-delay: -2.7s; animation-duration: 5.9s; }
-.synapse-signal:nth-child(6n + 5) { animation-delay: -3.6s; animation-duration: 5.1s; }
-.synapse-signal:nth-child(6n + 6) { animation-delay: -4.5s; animation-duration: 6.6s; }
-
-.synapse-node { fill: rgba(255, 255, 255, 0.5); animation: synapse-fire 4.6s ease-in-out infinite; }
-.synapse-node:nth-child(4n + 2) { animation-delay: -1.15s; }
-.synapse-node:nth-child(4n + 3) { animation-delay: -2.3s; }
-.synapse-node:nth-child(4n + 4) { animation-delay: -3.45s; }
-
-.synapse-halo { fill: rgb(var(--node-rgb) / 0.3); animation: synapse-halo 4.6s ease-in-out infinite; }
-.synapse-halo:nth-child(3n + 2) { animation-delay: -1.5s; }
-.synapse-halo:nth-child(3n + 3) { animation-delay: -3s; }
-
-@keyframes synapse-travel { to { stroke-dashoffset: 0; } }
-@keyframes synapse-fire {
-  0%, 62%, 100% { fill-opacity: 0.32; }
-  74% { fill-opacity: 1; }
-}
-@keyframes synapse-halo {
-  0%, 58%, 100% { opacity: 0; transform: scale(0.4); }
-  72% { opacity: 1; transform: scale(1); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  /* The network stays; only the traffic stops. */
-  .synapse-signal, .synapse-node, .synapse-halo { animation: none; }
-  .synapse-signal { stroke-dasharray: none; stroke-dashoffset: 0; stroke-opacity: 0.35; }
-  .synapse-halo { opacity: 0.5; }
-}
-
-/* The survey grid behind the panel: two hairline rasters, deliberately faint —
-   it should read as depth at a glance and resolve into structure only if
-   someone looks for it. */
-.dashboard-hero-grid {
-  background-image:
-    repeating-linear-gradient(to right, rgba(255, 255, 255, 0.045) 0 1px, transparent 1px 64px),
-    repeating-linear-gradient(to bottom, rgba(255, 255, 255, 0.045) 0 1px, transparent 1px 64px);
-  mask-image: radial-gradient(120% 100% at 50% 0%, #000 0%, transparent 78%);
-}
-
 @media (max-width: 760px) {
   .dashboard-hero { margin-inline: -16px; padding-inline: 16px; }
 }
 
 .workspace-header { position: sticky; top: 0; z-index: 40; width: auto; max-width: none; margin: 0 calc(-1 * clamp(24px, 4vw, 64px)) 26px; padding: 0 clamp(24px, 4vw, 64px); border-bottom: 1px solid var(--border); background: rgb(var(--bg-rgb) / 0.92); backdrop-filter: blur(12px); }
+/* On the Dashboard the band takes the command panel's own colour instead of the
+   page's, so the two read as one field rather than a lid on it. Opaque and not
+   transparent on purpose: the band is sticky, so it has to stay legible once
+   the panel has scrolled out from under it.
+
+   Declared *after* `.workspace-header` deliberately: both are a single class, so
+   neither wins on specificity and the later one takes it. Written above, this
+   rule was in the stylesheet and had no effect -- the class sat in the DOM and
+   the band stayed page-coloured. */
+.workspace-header--immersive {
+  border-bottom-color: rgba(255, 255, 255, 0.07);
+  background: rgb(var(--brand-rgb) / 0.94);
+}
 .mobile-brand { display: none; }
 h1, h2, h3 { color: var(--text); font-family: inherit; letter-spacing: -.025em; }
 h1 { margin: 0; font-size: clamp(29px, 3vw, 38px); line-height: 1.15; font-weight: 680; }

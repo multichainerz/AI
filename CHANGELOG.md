@@ -5,6 +5,51 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v3.8.0 — 2026-08-09
+
+The band joins the panel, and the field stops shouting.
+
+**The header takes the panel's colour on the Dashboard.** A page-coloured bar
+across the top of a violet field reads as a lid on it. It is opaque rather than
+transparent on purpose: the band is sticky, so it has to stay legible once the
+panel has scrolled out from under it. Its label, theme switch and account chip
+switch to white foregrounds with it.
+
+That rule was written and had no effect. `.workspace-header--immersive` and
+`.workspace-header` are both a single class, so neither wins on specificity and
+the later one takes it — and the immersive rule was above. The class sat in the
+DOM, the band stayed page-coloured, and nothing anywhere disagreed. Found by
+reading `backgroundColor` off the live element and getting `rgba(16,16,20,.92)`
+where the token says violet.
+
+**The square grid and the synapse network are both gone.** The field covered the
+whole panel and was scaled with `slice`, which stretched a wide graph over a
+tall surface: its edges became long diagonal scratches across the cards and its
+nodes floated over text. It read as scaffolding drawn on the content, and a
+second attempt — contained to the upper right, bowed, masked — did not earn its
+place either. Both are removed rather than iterated on; a background motif
+returns when there is a reference to build it against.
+
+What remains behind the panel is the wash it always had: a violet-to-cyan
+radial over the brand field, and nothing that competes with a figure.
+
+**0 contrast failures across 129 nodes in both themes**, measured on the running
+application rather than a static preview.
+
+### The probe was wrong again, and this time it is fixed
+
+The sweep skipped elements whose *own* `display` was `none` and measured
+everything else — so the mobile brand wordmark, hidden by a `display: none` on
+its parent, was scored as white-on-white and reported at 1.14. Elements with no
+boxes at all are now skipped via `getClientRects()`, which is the question that
+was actually being asked. Five such nodes on this screen.
+
+That is four consecutive releases where an impossible reading turned out to be
+the instrument: a stale dev build, a mid-transition colour, a markup dump older
+than its stylesheet, and now an unrendered element. The tell is always the same
+— a number that cannot be true — and it is worth suspecting the harness before
+the product every time one appears.
+
 ## v3.7.0 — 2026-08-09
 
 The Dashboard is one surface, and it launches sessions.

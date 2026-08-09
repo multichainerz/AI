@@ -114,73 +114,6 @@ function Clock() {
   );
 }
 
-/*
- * An authored network. Fixed coordinates, never generated: a background that
- * re-rolls on every render cannot be reviewed, and this one is meant to be the
- * same picture every time.
- */
-const NODES: ReadonlyArray<readonly [number, number]> = [
-  [60, 330], [165, 190], [255, 305], [340, 95], [430, 235], [525, 350], [610, 150],
-  [705, 275], [795, 70], [865, 205], [955, 335], [1045, 125], [1125, 255], [1180, 65],
-];
-const EDGES: ReadonlyArray<readonly [number, number]> = [
-  [0, 1], [1, 2], [1, 3], [2, 4], [3, 4], [4, 5], [4, 6], [5, 7], [6, 7],
-  [6, 8], [7, 9], [8, 9], [9, 10], [9, 11], [11, 12], [10, 12], [11, 13], [12, 13],
-];
-/** The junctions that fire. Not all of them, or the field reads as a strobe. */
-const FIRING = [1, 4, 7, 9, 11];
-
-/**
- * The field behind the panel: a network at rest with signals travelling it.
- *
- * What this product does, drawn — a question entering a graph of governed hops
- * and coming back. It is decoration, so it is `aria-hidden`, it carries no
- * information a reader needs, and `prefers-reduced-motion` stops the traffic
- * while leaving the network visible.
- */
-function SynapseField() {
-  return (
-    <svg
-      aria-hidden="true"
-      className="pointer-events-none absolute inset-0 -z-10 h-full w-full"
-      viewBox="0 0 1200 420"
-      preserveAspectRatio="xMidYMid slice"
-      fill="none"
-    >
-      <g>
-        {EDGES.map(([from, to]) => (
-          <line
-            className="synapse-edge"
-            key={`edge-${from}-${to}`}
-            x1={NODES[from]![0]} y1={NODES[from]![1]}
-            x2={NODES[to]![0]} y2={NODES[to]![1]}
-          />
-        ))}
-      </g>
-      <g>
-        {EDGES.map(([from, to]) => (
-          <line
-            className="synapse-signal"
-            key={`signal-${from}-${to}`}
-            x1={NODES[from]![0]} y1={NODES[from]![1]}
-            x2={NODES[to]![0]} y2={NODES[to]![1]}
-          />
-        ))}
-      </g>
-      <g>
-        {FIRING.map((index) => (
-          <circle className="synapse-halo" key={`halo-${index}`} cx={NODES[index]![0]} cy={NODES[index]![1]} r={11} />
-        ))}
-      </g>
-      <g>
-        {NODES.map(([x, y], index) => (
-          <circle className="synapse-node" key={`node-${x}-${y}`} cx={x} cy={y} r={FIRING.includes(index) ? 3.4 : 2.2} />
-        ))}
-      </g>
-    </svg>
-  );
-}
-
 /** The four hops a governed answer passes through, each with its real state. */
 function topology(props: DashboardHeroProps) {
   const layerState = (key: HomeLayer["key"]) => props.layers.find((layer) => layer.key === key)?.state;
@@ -236,8 +169,6 @@ export function DashboardHero(props: DashboardHeroProps) {
   return (
     <section className="dashboard-hero" aria-label="Deployment command panel">
       <div className="relative isolate overflow-hidden pb-8 pt-7">
-        <span aria-hidden="true" className="dashboard-hero-grid pointer-events-none absolute inset-0 -z-10" />
-        <SynapseField />
 
         {/*
           * The masthead, absorbed.
