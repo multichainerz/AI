@@ -571,17 +571,12 @@ main > * { width: min(100%, 1380px); margin-left: auto; margin-right: auto; }
 }
 
 /*
- * The same static neural drawing continues through the rest of the product.
- * Outside the command panel it is deliberately quieter: a fixed viewport
- * texture behind the workspace, a violet-panel texture at the front door, and
- * a restrained full-page field during startup or fatal recovery. Reusing the
- * one SVG keeps density and neuron hierarchy identical without adding timers,
- * canvas work, or another image request.
+ * The static neural drawing belongs to the application's transitional and
+ * signed-out surfaces: a violet-panel texture at the front door and a
+ * restrained full-page field during startup or fatal recovery. Reusing the one
+ * SVG keeps density and neuron hierarchy identical without adding timers,
+ * canvas work, or another image request. Authenticated workspaces stay clear.
  */
-.workspace-page--synapse {
-  position: relative;
-  isolation: isolate;
-}
 .front-page {
   background: #101014;
   transition: background-color 180ms ease;
@@ -651,14 +646,6 @@ main > * { width: min(100%, 1380px); margin-left: auto; margin-right: auto; }
 [data-theme="light"] .dashboard-synapse--front-page {
   opacity: 0.2;
 }
-.dashboard-synapse--workspace {
-  position: fixed;
-  z-index: -1;
-  inset: 0;
-  width: 100vw;
-  height: 100vh;
-  opacity: 0.28;
-}
 .dashboard-synapse--front-page {
   inset: 0;
   width: 100%;
@@ -677,7 +664,6 @@ main > * { width: min(100%, 1380px); margin-left: auto; margin-right: auto; }
   height: 112%;
   opacity: 0.28;
 }
-[data-theme="light"] .dashboard-synapse--workspace,
 [data-theme="light"] .dashboard-synapse--error {
   opacity: 0.2;
 }
@@ -691,12 +677,6 @@ main > * { width: min(100%, 1380px); margin-left: auto; margin-right: auto; }
 @media (max-width: 760px) {
   .dashboard-hero { margin-inline: -16px; padding-inline: 16px; }
   .dashboard-synapse { inset-inline: -52%; opacity: 0.48; }
-  .dashboard-synapse--workspace {
-    inset: 0;
-    width: 100vw;
-    height: 100vh;
-    opacity: 0.17;
-  }
   .dashboard-synapse--front-page {
     inset: 0;
     width: 100%;

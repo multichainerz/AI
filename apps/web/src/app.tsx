@@ -1182,10 +1182,8 @@ function App() {
         className={cn(
           activeView === "Chat" && "chat-page",
           activeView === "Overview" && "dashboard-page",
-          activeView !== "Overview" && "workspace-page--synapse",
         )}
       >
-        {activeView !== "Overview" && <SynapseField className="dashboard-synapse--workspace" />}
         <div className="mobile-brand"><BrandMark size={26} /><strong>OrcaSynapse</strong></div>
         <WorkspaceHeader area={activeArea} operator={operator} onSignOut={() => void signOut()} immersive={activeView === "Overview"} />
         {activeView !== "Chat" && activeView !== "Overview" && (

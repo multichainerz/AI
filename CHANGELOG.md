@@ -5,6 +5,15 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v4.2.0 — 2026-08-09
+
+Authenticated workspaces now keep the same clean surface as the Dashboard.
+
+The shared synapse renderer and its workspace-only styling have been removed
+from Knowledge, Agents, Platform, and Operations. The pattern remains reserved
+for sign-in, boot, and fatal-error recovery, where it marks the boundary into
+the application rather than competing with operational content.
+
 ## v4.1.0 — 2026-08-09
 
 The route into OrcaSynapse and the Dashboard now speak one visual language.
