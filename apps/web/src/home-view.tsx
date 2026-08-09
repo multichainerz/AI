@@ -1,4 +1,10 @@
-import type { ChatMetrics, ConnectionMonitoringControl } from "@orcasynapse/contracts";
+import type {
+  AgentMetrics,
+  ChatMetrics,
+  ConnectionMonitoringControl,
+  DocumentMetrics,
+  ToolMetrics,
+} from "@orcasynapse/contracts";
 import { Button, HeroBanner, MicroLabel, PageHeader, Panel, PanelHeading, StatusText, Tile, cn, toneFor } from "./ui/index.js";
 import { NodeIcon } from "./ui/relay-icons.js";
 import type { ActiveView } from "./workspace-navigation.js";
@@ -35,10 +41,33 @@ interface HomeViewProps {
   healthyConnections: number;
   monitoring: ConnectionMonitoringControl | null;
   chatMetrics: ChatMetrics | null;
+  documentMetrics: DocumentMetrics | null;
+  agentMetrics: AgentMetrics | null;
+  toolMetrics: ToolMetrics | null;
   layers: HomeLayer[];
   readiness: HomeReadinessCheck[];
   onSelect: (view: ActiveView, deploymentTab?: "journey" | "nodes" | "readiness") => void;
   onUnlock: () => void;
+}
+
+/**
+ * The window a usage figure covers, said in words.
+ *
+ * "1,284 conversations" is not a fact until you know over what -- an hour and a
+ * quarter reads very differently from a quarter. The runtime reports
+ * `windowStartedAt`, so the caption states it rather than the interface implying
+ * a period it does not know.
+ */
+function since(startedAt: string): string {
+  const started = new Date(startedAt);
+  if (Number.isNaN(started.getTime())) return "Over the reported window";
+  return `Since ${started.toLocaleDateString(undefined, { day: "numeric", month: "long" })}`;
+}
+
+/** A figure the deployment has not produced yet is absent, never zero. */
+function figure(value: number | null | undefined, unlocked: boolean): string {
+  if (!unlocked || value === null || value === undefined) return "—";
+  return value.toLocaleString();
 }
 
 function cadence(seconds: number): string {
@@ -129,6 +158,18 @@ export function HomeView(props: HomeViewProps) {
           <strong className="block text-label font-semibold text-text">{bannerTitle}</strong>
           <p className="mb-0 mt-1 text-body text-muted">{bannerDetail}</p>
         </div>
+        {/*
+          * The readiness fraction, which used to be the banner's headline.
+          * Moving the banner to activity would have dropped it from the screen
+          * altogether -- so it lands on the callout that already owns the
+          * subject, where it is a figure beside its own sentence rather than
+          * the loudest number on a page about something else.
+          */}
+        {props.unlocked && (
+          <strong className="shrink-0 font-display text-figure font-semibold tabular-nums text-text">
+            {readyCount}/{props.readiness.length}
+          </strong>
+        )}
         <Button
           onClick={() => (props.unlocked ? props.onSelect(next?.action ?? "Deployment") : props.onUnlock())}
         >
@@ -136,34 +177,66 @@ export function HomeView(props: HomeViewProps) {
         </Button>
       </Panel>
 
+      {/*
+        * What this deployment has actually done.
+        *
+        * The banner used to restate readiness, which the callout directly above
+        * it already carries -- the same fraction twice, in the two loudest
+        * places on the screen. Readiness answers "can I use this yet"; that
+        * question is answered once, above. This answers the one after it.
+        *
+        * Every figure here is reported by the runtime. Nothing is derived from
+        * a guess and nothing is invented: there is no user count in this
+        * product, so there is no user count on this banner.
+        */}
       <HeroBanner
         className="mb-4"
-        aria-label="Platform summary"
+        aria-label="Deployment activity"
         highlight={{
-          label: "Capability readiness",
-          value: props.unlocked ? `${readyCount}/${props.readiness.length}` : "—",
+          label: "Governed conversations",
+          value: figure(props.chatMetrics?.conversations, props.unlocked),
           caption: props.unlocked
-            ? allReady ? "Chat and Knowledge are usable" : "One clear path remains"
-            : "Sign in to verify",
-          // Readiness is a fraction, so it is the one figure on this screen
-          // with a denominator worth drawing. Locked, there is nothing to
-          // draw: an empty bar would state "nothing is ready" where the truth
-          // is "nobody has looked".
-          fill: props.unlocked ? readyCount / Math.max(1, props.readiness.length) : undefined,
-          tone: props.unlocked ? (allReady ? "good" : "warn") : undefined,
+            ? props.chatMetrics ? since(props.chatMetrics.windowStartedAt) : "No runs reported yet"
+            : "Sign in to see activity",
+          /*
+           * The bar is the share of responses that completed. It is drawn only
+           * when there are responses to divide -- a full green bar over zero
+           * work reads as "everything succeeded" when the truth is "nothing has
+           * run".
+           */
+          fill: props.unlocked && props.chatMetrics && props.chatMetrics.responses > 0
+            ? props.chatMetrics.completed / props.chatMetrics.responses
+            : undefined,
+          tone: props.unlocked && props.chatMetrics && props.chatMetrics.responses > 0
+            ? props.chatMetrics.failureRate > 0.1 ? "warn" : "good"
+            : undefined,
         }}
         metrics={[
+          {
+            label: "Responses",
+            value: figure(props.chatMetrics?.responses, props.unlocked),
+            caption: props.chatMetrics ? `${props.chatMetrics.completed.toLocaleString()} completed` : "Awaiting the first run",
+          },
+          {
+            label: "Documents",
+            value: figure(props.documentMetrics?.total, props.unlocked),
+            caption: props.documentMetrics ? `${props.documentMetrics.ready.toLocaleString()} indexed` : "None uploaded yet",
+          },
+          {
+            label: "Agent profiles",
+            value: figure(props.agentMetrics?.profiles, props.unlocked),
+            caption: props.agentMetrics ? `${props.agentMetrics.activeProfiles.toLocaleString()} active` : "None defined yet",
+          },
+          {
+            label: "Tools allowed",
+            value: figure(props.toolMetrics?.activeTools, props.unlocked),
+            caption: props.toolMetrics ? `${props.toolMetrics.activeGrants.toLocaleString()} grants` : "Default deny",
+          },
           {
             label: "Healthy services",
             value: props.unlocked ? props.healthyConnections : "—",
             caption: props.monitoring?.enabled ? cadence(props.monitoring.intervalSeconds) : "Credential-aware validation",
           },
-          {
-            label: "Hermes responses",
-            value: props.unlocked ? (props.chatMetrics?.responses.toLocaleString() ?? "0") : "—",
-            caption: "Completed in the last 24 hours",
-          },
-          { label: "Policy posture", value: "Default deny", caption: "Explicit identity, Profile, and tool grants" },
         ]}
       />
 

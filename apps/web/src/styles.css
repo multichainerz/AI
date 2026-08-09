@@ -137,6 +137,14 @@
   --faint-rgb: 134 134 140;      /* #86868C */
   --accent-rgb: 146 119 245;     /* #9277F5 */
   --accent-strong-rgb: 168 146 248; /* #A892F8 — hover/link emphasis */
+  /* The violet a *fill* uses when white text sits on it.
+     `--accent` is tuned to read as an accent colour against a dark surface, and
+     at #9277F5 even pure white over it measures 3.40:1 -- so the design's
+     signature hero block could not carry AA-compliant small text at any
+     opacity. This is the light theme's accent, which white clears at 5.83, and
+     it deliberately does not theme: like `--brand-rgb` behind the rail, a fill
+     that always hosts white must always be dark enough to. */
+  --accent-fill-rgb: 112 61 239;  /* #703DEF */
   --onaccent-rgb: 11 11 13;      /* text on an accent fill; near-black in dark */
   --soft-rgb: 45 40 67;          /* accent 18% over surface — chips, bubbles, avatars */
   --good-rgb: 143 168 122;       /* sage #8FA87A */

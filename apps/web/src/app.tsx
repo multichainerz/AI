@@ -9,6 +9,9 @@ import type {
   EnterpriseSession,
   OidcStatus,
   ChatMetrics,
+  DocumentMetrics,
+  AgentMetrics,
+  ToolMetrics,
   InferenceDiscoveryRequest,
   InferenceDiscoveryResult,
   AgentProfile,
@@ -27,7 +30,10 @@ import {
   getEnterpriseSession,
   getOidcStatus,
   getChatMetrics,
+  getAgentMetrics,
   getAgentProfiles,
+  getDocumentMetrics,
+  getToolMetrics,
   getAgentRuntime,
   getHermesRuntimeNodes,
   getConfigurationRevisions,
@@ -269,6 +275,13 @@ function App() {
   const [enterpriseSession, setEnterpriseSession] = useState<EnterpriseSession | null>(null);
   const [oidcStatus, setOidcStatus] = useState<OidcStatus | null>(null);
   const [chatMetrics, setChatMetrics] = useState<ChatMetrics | null>(null);
+  // The Dashboard hero reports what the deployment has actually done, so it
+  // needs the three counts that live outside chat. Fetched beside the chat
+  // figures and failing the same way: a metric that cannot be read is absent,
+  // never zero.
+  const [documentMetrics, setDocumentMetrics] = useState<DocumentMetrics | null>(null);
+  const [agentMetrics, setAgentMetrics] = useState<AgentMetrics | null>(null);
+  const [toolMetrics, setToolMetrics] = useState<ToolMetrics | null>(null);
   const [agentRuntime, setAgentRuntime] = useState<AgentRuntimeControl | null>(null);
   const [agentProfiles, setAgentProfiles] = useState<AgentProfile[]>([]);
   const [runtimeNodes, setRuntimeNodes] = useState<HermesRuntimeNode[]>([]);
@@ -368,6 +381,15 @@ function App() {
             }).catch(() => undefined);
             void getChatMetrics().then((metrics) => {
               if (active && sessionGeneration.current === generation) setChatMetrics(metrics);
+            }).catch(() => undefined);
+            void getDocumentMetrics().then((metrics) => {
+              if (active && sessionGeneration.current === generation) setDocumentMetrics(metrics);
+            }).catch(() => undefined);
+            void getAgentMetrics().then((metrics) => {
+              if (active && sessionGeneration.current === generation) setAgentMetrics(metrics);
+            }).catch(() => undefined);
+            void getToolMetrics().then((metrics) => {
+              if (active && sessionGeneration.current === generation) setToolMetrics(metrics);
             }).catch(() => undefined);
           }
         } catch (error) {
@@ -1240,6 +1262,9 @@ function App() {
               healthyConnections={healthyConnections}
               monitoring={connectionMonitoring}
               chatMetrics={chatMetrics}
+              documentMetrics={documentMetrics}
+              agentMetrics={agentMetrics}
+              toolMetrics={toolMetrics}
               layers={platformLayers}
               readiness={readinessChecks}
               onSelect={selectView}
