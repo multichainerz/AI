@@ -5,6 +5,45 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## v3.3.0 — 2026-08-09
+
+The account moves to the top-right corner, and becomes reachable on a phone.
+
+Second of three releases taking the shell toward the reference dashboard.
+
+It lived at the foot of the navigation rail, inside `.operator` -- which carries
+`display: none` below 760px, where the rail becomes a fixed bottom bar with no
+room for it. **Sign out was therefore unreachable on a phone**: in the markup,
+hidden by a rule written for a layout that cannot hold it, with no other way to
+end a session. Moving it is the fix; the corner is where it belongs anyway.
+
+It is now a chip in `WorkspaceHeader` -- initials, name, role, caret -- opening a
+menu with the identity and Sign out. The menu dismisses on `pointerdown` rather
+than `click`, because a click that begins outside and ends inside would leave it
+open, and on Escape.
+
+**The band renders in Chat now**, where it used to be hidden outright. That
+rule existed because the page was one fixed-height block and a sticky band would
+have pushed the composer off the bottom of the screen. `.chat-page` is a grid of
+two rows instead: `auto` for the band, `minmax(0, 1fr)` for the thread. Not
+`1fr` -- a grid row's default minimum is its content, so a long transcript would
+grow past the viewport and reintroduce exactly the overflow the composer was
+being pushed out of. The band's negative bleed margins, which exist to reach the
+edge of a padded page, are cancelled here rather than the band being hidden.
+
+`.operator` and `.avatar` are gone from the stylesheet entirely, along with the
+two focus-mode rules that positioned the operator block in a collapsed rail.
+`.mobile-brand` was sharing two of those selectors and keeps what it needs.
+
+Verified against the built stylesheet: 8 of 8 focus rules inside the 761px
+guard and 0 outside, `.chat-page` emitting `grid-template-rows: auto minmax(0,
+1fr)`, the hide rule gone, and zero remaining `.operator` or `.avatar`
+declarations. `measure.test.ts` pinned the old hide rule and now pins the
+replacement, including why the row minimum is `0`.
+
+Still unseen by eye, and `app.tsx` still has no test (#63) -- it now holds a
+menu with the only sign-out in the product, which raises what that gap costs.
+
 ## v3.2.0 — 2026-08-09
 
 The rail's width belongs to the operator.

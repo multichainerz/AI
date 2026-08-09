@@ -136,8 +136,41 @@ function connectionState(connection: ServiceConnectionSummary | undefined) {
  * The sticky band above every screen: where you are, and the theme switch.
  * Blurred over the content it floats on, per the design's header treatment.
  */
-function WorkspaceHeader({ area }: { area: string }) {
+function WorkspaceHeader({
+  area,
+  operator,
+  onSignOut,
+}: {
+  area: string;
+  operator: { initials: string; name: string; detail: string };
+  onSignOut: () => void;
+}) {
   const [theme, setTheme] = useState<Theme>(() => currentTheme());
+  const [accountOpen, setAccountOpen] = useState(false);
+  const account = useRef<HTMLDivElement | null>(null);
+
+  /*
+   * A menu that outlives the click that opened it is a menu you cannot put
+   * away, so it closes on an outside pointer and on Escape. `pointerdown`
+   * rather than `click`, because a click that begins outside and ends inside
+   * would otherwise leave it open.
+   */
+  useEffect(() => {
+    if (!accountOpen) return;
+    const dismiss = (event: PointerEvent) => {
+      if (!account.current?.contains(event.target as Node)) setAccountOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setAccountOpen(false);
+    };
+    document.addEventListener("pointerdown", dismiss);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("pointerdown", dismiss);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [accountOpen]);
+
   return (
     <header className="workspace-header">
       <div className="flex h-12 items-center gap-4">
@@ -161,6 +194,66 @@ function WorkspaceHeader({ area }: { area: string }) {
           )}
           {theme === "light" ? "Dark" : "Light"}
         </button>
+        {/*
+          * The account moved out of the rail and into the top-right corner.
+          *
+          * It sat at the foot of the sidebar, inside `.operator` -- which is
+          * `display: none` below 760px, where the rail becomes a bottom bar.
+          * Sign out was therefore unreachable on a phone: present in the markup,
+          * hidden by a rule written for a layout that has no room for it. Here
+          * it is reachable at every width, which is a fix rather than a move.
+          */}
+        <div className="relative flex items-center" ref={account}>
+          <button
+            type="button"
+            className="flex items-center gap-2.5 rounded-pill border border-border-strong py-1 pl-1 pr-2.5 text-left transition-colors hover:border-faint"
+            aria-haspopup="menu"
+            aria-expanded={accountOpen}
+            onClick={() => setAccountOpen((open) => !open)}
+          >
+            <span
+              aria-hidden="true"
+              className="grid h-7 w-7 shrink-0 place-items-center rounded-pill bg-soft font-display text-micro font-semibold text-accent"
+            >
+              {operator.initials}
+            </span>
+            <span className="hidden min-w-0 sm:block">
+              <span className="block max-w-[150px] truncate text-caption font-semibold leading-tight text-text">
+                {operator.name}
+              </span>
+              <span className="block max-w-[150px] truncate text-micro capitalize leading-tight text-faint">
+                {operator.detail}
+              </span>
+            </span>
+            <span aria-hidden="true" className="shrink-0 text-faint">
+              <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 4.6 6 7.6l3-3" />
+              </svg>
+            </span>
+          </button>
+          {accountOpen && (
+            <div
+              className="absolute right-0 top-[calc(100%+8px)] z-50 grid min-w-[212px] gap-1 rounded-lg border border-border-strong bg-raised p-2 shadow-overlay"
+              role="menu"
+            >
+              <div className="px-2 pb-1.5 pt-1">
+                <span className="block truncate text-caption font-semibold text-text">{operator.name}</span>
+                <span className="mt-0.5 block truncate text-micro capitalize text-faint">{operator.detail}</span>
+              </div>
+              <button
+                type="button"
+                role="menuitem"
+                className="rounded px-2 py-1.5 text-left text-caption font-medium text-muted transition-colors hover:bg-surface hover:text-text"
+                onClick={() => {
+                  setAccountOpen(false);
+                  onSignOut();
+                }}
+              >
+                Sign out
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </header>
   );
@@ -987,20 +1080,14 @@ function App() {
             </span>
             <span className="min-w-0 flex-1 truncate">{railCollapsed ? "Expand" : "Collapse"}</span>
           </button>
-          <div className="operator">
-            <div className="avatar">{operator.initials}</div>
-            <div>
-              <strong>{operator.name}</strong>
-              <span>{operator.detail}</span>
-            </div>
-            <button type="button" onClick={() => void signOut()}>Sign out</button>
-          </div>
+          {/* The operator block that lived here is now the account chip in the
+              top bar, where it is reachable at every width. */}
         </div>
       </aside>
 
       <main className={activeView === "Chat" ? "chat-page" : undefined}>
         <div className="mobile-brand"><BrandMark size={26} /><strong>OrcaSynapse</strong></div>
-        <WorkspaceHeader area={activeArea} />
+        <WorkspaceHeader area={activeArea} operator={operator} onSignOut={() => void signOut()} />
         {activeView !== "Chat" && activeView !== "Overview" && (
           <WorkspaceContextBar area={activeArea} activeView={activeView} onSelect={selectView} />
         )}
