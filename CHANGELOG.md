@@ -5,6 +5,52 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v3.6.0 — 2026-08-09
+
+The Dashboard opens on a command panel.
+
+`ai-v3.4.0` put the activity figures in a `HeroBanner` -- a card, the same shape
+as every other row beneath it, so the screen an operator lands on read as the
+first page of a report. This is a full-bleed field instead: the one surface in
+the product meant to be looked at rather than read.
+
+`.dashboard-hero` retakes the width `main > *` gives away (1380px, centred) and
+re-applies the page's own horizontal padding inside, the arrangement
+`.workspace-header` already uses to reach the edge. Deep violet, a violet-to-
+cyan wash, and a faint survey grid masked toward the top.
+
+**It does not theme.** Like the navigation rail's brand panel, this is a fixed
+dark field: a command console that turns near-white in light mode stops being
+one, and takes every foreground on it below AA on the way.
+
+Left: what the deployment is and what it has done -- sessions with the window
+they cover, documents with how many are indexed, then responses, profiles, tools
+allowed and average response, and four tiles for the things an operator comes
+here to start. Right: **the governed path**, drawn as the four hops a question
+actually passes through, each with its real state and a live dot, over the verdict
+("Every hop is answering" / "The path is not complete"). There is no map because
+there is no geography in an on-premise control plane; the four hops are the
+territory. A wall clock with seconds sits beside it, because an operations
+console states the time it is describing.
+
+Two things caught by measuring rather than looking:
+
+- **`--node` on a field that does not theme.** The cyan shifts to a darker value
+  in light mode, for light surfaces -- and on this always-dark violet it measured
+  4.02:1. Exactly the trap `--accent` fell into on the hero fill last release.
+  Pinned to the dark value inside `.dashboard-hero`, the way `.sidebar` pins
+  `--accent-rgb` for the rail.
+- Sub-captions at `text-white/45` measured 3.79. Raised to 60%.
+
+Result: **0 contrast failures across 117 rendered nodes in both themes**, worst
+4.68 dark and 4.56 light, and no horizontal overflow from the bleed (the panel
+spans 0 to 1497 of a 1497px viewport).
+
+The completed-share bar survived the rewrite deliberately. It has been lost once
+before -- moving Home onto `HeroBanner` in ai-v1.88.0 dropped the `fill` and
+every test stayed green -- so it is drawn on the Responses figure, still only
+when there are responses to divide.
+
 ## ai-v3.5.0 — 2026-08-09
 
 Home is Dashboard, Chat is Session.

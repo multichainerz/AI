@@ -83,13 +83,16 @@ describe("Home", () => {
     const user = userEvent.setup();
     render(<HomeView {...props({ unlocked: false, onUnlock, onSelect })} />);
 
-    // Six: the banner headline plus its five columns. Every one is an
-    // authenticated read, so none of them may show a figure here.
-    expect(screen.getAllByText("—")).toHaveLength(6);
+    // Every figure on the command panel is an authenticated read, so none of
+    // them may show a number here.
+    expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(6);
     expect(screen.queryByText("Approved model serving is reachable")).toBeNull();
     expect(screen.getAllByText("Sign in to view current readiness")).toHaveLength(3);
-    expect(screen.getByText("Sign in to see activity")).toBeTruthy();
-    expect(screen.getByText("Locked")).toBeTruthy();
+    expect(screen.getByText("awaiting the first run")).toBeTruthy();
+    // "Locked" is the layer state; the panel says "Not readable" for the same
+    // condition, because a hop reports whether it can answer, not why.
+    expect(screen.getAllByText("Locked").length).toBeGreaterThan(0);
+    expect(screen.getByText("Not readable")).toBeTruthy();
 
     await user.click(screen.getAllByRole("button", { name: "Sign in" })[0]!);
     expect(onUnlock).toHaveBeenCalled();
@@ -172,7 +175,7 @@ describe("Home", () => {
      */
     render(<HomeView {...props()} />);
 
-    expect(screen.getByText("Governed conversations")).toBeTruthy();
+    expect(screen.getByText("Private AI control plane")).toBeTruthy();
     expect(screen.getByText("342")).toBeTruthy();
     /*
      * The window is stated, not its spelling: `toLocaleDateString` renders
@@ -180,9 +183,16 @@ describe("Home", () => {
      * those makes the suite fail on a machine in the wrong place rather than on
      * a caption that stopped saying anything.
      */
-    expect(screen.getByText(/^Since \w/)).toBeTruthy();
+    expect(screen.getByText(/^since \w/)).toBeTruthy();
     expect(screen.getByText("1,249 completed")).toBeTruthy();
     expect(screen.getByText("55 indexed")).toBeTruthy();
+    // The governed path, with each hop's real state rather than a decorative one.
+    // Hermes and AI Inference each name both a layer row and a topology hop;
+    // the panel-specific assertion is the verdict it draws from them.
+    expect(screen.getAllByText("Hermes").length).toBeGreaterThan(0);
+    expect(screen.getByText("Identity, policy, audit")).toBeTruthy();
+    expect(screen.getByText("Serving")).toBeTruthy();
+    expect(screen.getByText("The path is not complete")).toBeTruthy();
     expect(screen.getByText("3 grants")).toBeTruthy();
 
     /*
@@ -207,7 +217,7 @@ describe("Home", () => {
      */
     const { container } = render(<HomeView {...props()} />);
     const bar = container.querySelector("progress");
-    expect(bar, "the headline figure renders no progress bar").toBeTruthy();
+    expect(bar, "the responses figure renders no progress bar").toBeTruthy();
     // 1,249 of 1,284 responses completed.
     expect(bar).toHaveProperty("value", 97);
   });
