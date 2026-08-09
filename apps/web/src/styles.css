@@ -127,7 +127,13 @@
   --border-strong-rgb: 59 59 66; /* white 16% over surface — the design's "edge" */
   --text-rgb: 237 237 239;       /* #EDEDEF */
   --muted-rgb: 138 138 147;      /* #8A8A93 — the design's "dim" */
-  --faint-rgb: 92 92 100;        /* #5C5C64 */
+  /* Raised from #5C5C64 to clear WCAG AA (4.5:1) on every surface it lands on.
+     Measured in a browser, not reasoned about: at the old value 42 of 112 text
+     nodes on a populated transcript failed, and every one of them was this
+     token -- timestamps, model aliases, counts, previews, date headings. Worst
+     case against --raised is now 4.61. It is deliberately still the quietest
+     step in the ramp; it is no longer quieter than a reader can follow. */
+  --faint-rgb: 133 133 139;      /* #85858B */
   --accent-rgb: 146 119 245;     /* #9277F5 */
   --accent-strong-rgb: 168 146 248; /* #A892F8 — hover/link emphasis */
   --onaccent-rgb: 11 11 13;      /* text on an accent fill; near-black in dark */
@@ -190,7 +196,9 @@
   --border-strong-rgb: 209 209 209; /* black 18% */
   --text-rgb: 25 26 28;          /* #191A1C */
   --muted-rgb: 107 108 116;      /* #6B6C74 */
-  --faint-rgb: 147 148 156;      /* #93949C */
+  /* Light-theme counterpart of the AA fix above. Worst case 4.52, measured
+     against white, --raised (#F7F7F5) and the violet user bubble. */
+  --faint-rgb: 107 108 114;      /* #6B6C72 */
   --accent-rgb: 112 61 239;      /* #703DEF */
   --accent-strong-rgb: 91 46 219; /* #5B2EDB */
   --onaccent-rgb: 255 255 255;
