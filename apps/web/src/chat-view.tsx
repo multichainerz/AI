@@ -12,7 +12,9 @@ import type {
 import { applyStreamEventToConversation } from "./chat-stream-reducer.js";
 import { MarkdownMessage } from "./chat/markdown-message.js";
 import { groupConversationsByDate } from "./chat/conversation-groups.js";
+import { COMPOSER_ZONE, THREAD_MEASURE, THREAD_SCROLLER } from "./chat/measure.js";
 import { shouldStickToBottom } from "./chat/stick-to-bottom.js";
+import { usePacedStream } from "./chat/use-paced-stream.js";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   OrcaSynapseApiError,
@@ -212,6 +214,13 @@ export function ChatView({
   const [titleDraft, setTitleDraft] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [approvalBusy, setApprovalBusy] = useState<string | null>(null);
+  /*
+   * Whether the reader is at the bottom of the transcript. Starts true: a fresh
+   * conversation has nothing to have scrolled away from, and a jump-to-latest
+   * offered before anything has been read is an offer to go where you already
+   * are.
+   */
+  const [pinned, setPinned] = useState(true);
   const abortController = useRef<AbortController | null>(null);
   const messageScroller = useRef<HTMLDivElement>(null);
   const moreMenu = useRef<HTMLDivElement>(null);
@@ -241,6 +250,29 @@ export function ChatView({
     ({ role, status, agentRunId }) => role === "ASSISTANT" && status === "PENDING" && agentRunId,
   ) ?? null;
   const working = busy || submitting;
+
+  /*
+   * Hermes emits deltas faster than a screen refreshes, so applying each one on
+   * arrival spends several React renders inside a frame nobody sees and paints
+   * the survivor as a jump of a whole sentence. Holding deltas for a frame and
+   * releasing a share of the backlog per tick costs the same total time and
+   * reads as writing.
+   *
+   * Whole frames only. The server resumes exclusively from the cursor the
+   * client acknowledged, so a delta applied halfway would be re-sent in full on
+   * reconnect and duplicate the half already on screen.
+   */
+  const stream = usePacedStream<ChatStreamEvent>((events) => {
+    const now = new Date().toISOString();
+    for (const event of events) describeStreamEvent(event);
+    // One `setActive` for the whole tick, folded with the same reducer a single
+    // event uses -- which returns its input by identity when nothing applies,
+    // so a frame carrying only foreign events still costs no render.
+    setActive((current) => events.reduce(
+      (conversation, event) => applyStreamEventToConversation(conversation, event, now),
+      current,
+    ));
+  });
 
   const handleError = (cause: unknown, fallback: string) => {
     if (cause instanceof OrcaSynapseApiError && cause.status === 401) onSessionExpired();
@@ -296,9 +328,49 @@ export function ChatView({
   useEffect(() => {
     const scroller = messageScroller.current;
     if (!scroller) return;
-    if (!shouldStickToBottom(scroller)) return;
+    /*
+     * `pinned` is recomputed here, not only in the scroll listener below.
+     *
+     * Content growing fires no scroll event, so this is the only place that can
+     * notice the reader has fallen behind. Without it `pinned` keeps whatever
+     * value the reader's last actual scroll left it with: the transcript
+     * correctly stops following, "Jump to latest" never appears because nothing
+     * marked them as unpinned, and there is no way back to the answer.
+     *
+     * Pacing makes that the normal case rather than a rare one -- a single
+     * commit can now append a whole backlog of frames, so one render can move
+     * the bottom far further than the slack allows.
+     */
+    const following = shouldStickToBottom(scroller);
+    setPinned(following);
+    if (!following) return;
     scroller.scrollTop = scroller.scrollHeight;
   }, [active?.messages, busy]);
+
+  /*
+   * The reader's position, read from the one element that scrolls.
+   *
+   * Stopping the transcript following is only half the fix: a reader who has
+   * scrolled up during a live run has no way back to the answer being written,
+   * and hunting for the bottom of a growing transcript by hand is worse than
+   * the yank this replaced. `pinned` is what decides whether that way back is
+   * offered.
+   */
+  useEffect(() => {
+    const scroller = messageScroller.current;
+    if (!scroller) return;
+    const readPosition = () => setPinned(shouldStickToBottom(scroller));
+    readPosition();
+    scroller.addEventListener("scroll", readPosition, { passive: true });
+    return () => scroller.removeEventListener("scroll", readPosition);
+  }, [unlocked]);
+
+  const jumpToLatest = () => {
+    const scroller = messageScroller.current;
+    if (!scroller) return;
+    scroller.scrollTop = scroller.scrollHeight;
+    setPinned(true);
+  };
 
   useEffect(() => {
     if (streamStartedAt === null) return;
@@ -334,16 +406,24 @@ export function ChatView({
             cursor,
             (event) => {
               if (event.cursor) cursor = event.cursor;
-              applyStreamEvent(event);
+              stream.push(event);
             },
             controller.signal,
           );
+          // Before the refetch, always: anything still queued is text the
+          // server has already been told the client holds, and it will not be
+          // sent again.
+          stream.flush();
           if (controller.signal.aborted) return;
           const refreshed = await getChatConversation(conversationId);
           setActive((current) => current?.id === conversationId ? refreshed : current);
           await refreshList();
           return;
         } catch (cause) {
+          // Same reason, one step earlier: the reconnect below re-reads the
+          // cursor the *server* recorded, so a queued frame dropped here is a
+          // sentence the reader never sees.
+          stream.flush();
           if (controller.signal.aborted || (cause instanceof DOMException && cause.name === "AbortError")) return;
           if (cause instanceof OrcaSynapseApiError && cause.status === 401) {
             onSessionExpired();
@@ -371,7 +451,12 @@ export function ChatView({
         setCurrentActivity(null);
       }
     });
-    return () => controller.abort();
+    return () => {
+      // And on abort or unmount, before the subscription goes away with the
+      // queue still holding frames the server will never resend.
+      stream.flush();
+      controller.abort();
+    };
   }, [unlocked, active?.id, activePending?.id]);
 
   const selectConversation = async (id: string) => {
@@ -395,7 +480,12 @@ export function ChatView({
     setCurrentActivity(null);
   };
 
-  function applyStreamEvent(event: ChatStreamEvent) {
+  /*
+   * What the run is doing, in the header and beside the pending answer. Split
+   * out of the state transition so a paced tick can narrate several events and
+   * still fold them into a single `setActive`.
+   */
+  function describeStreamEvent(event: ChatStreamEvent) {
     if (event.type === "started") setCurrentActivity("Hermes run queued");
     if (event.type === "state") {
       setCurrentActivity(event.status === "WAITING_FOR_APPROVAL"
@@ -408,7 +498,6 @@ export function ChatView({
     if (event.type === "completed" || event.type === "failed" || event.type === "cancelled") {
       setCurrentActivity(null);
     }
-    setActive((current) => applyStreamEventToConversation(current, event, new Date().toISOString()));
     if (event.type === "failed") setError(event.error);
   }
 
@@ -741,6 +830,16 @@ export function ChatView({
   const openReadiness = !profileAvailable || administratorReadiness?.target === "Agents"
     ? onOpenAgents
     : onOpenPlatform;
+  /*
+   * Each condition is the one the matching `Dialog` is rendered with, not a
+   * paraphrase: Knowledge and Delete both need an active conversation, and a
+   * flag that said "open" while the dialog was not would hide the jump control
+   * for no reason a reader could see.
+   */
+  const dialogOpen = (knowledgeOpen && active !== null)
+    || skillsOpen
+    || memoryOpen
+    || (confirmDelete && active !== null);
 
   return (
     /*
@@ -988,546 +1087,443 @@ export function ChatView({
         </header>
 
         {/*
-          * All four of these were bare divs carrying role="dialog" and nothing
-          * else — no aria-modal, no focus trap, no Escape, no scroll lock, no
-          * focus restore. A keyboard user could tab straight out of the memory
-          * panel into the transcript behind it while a screen reader kept
-          * announcing the page as if no dialog were open. `Dialog` supplies all
-          * of it once.
+          * The one element that scrolls, and the one column everything in it
+          * is read in. The scroller carries no aria-live: announcing the whole
+          * transcript on every delta reads a growing answer back from the top,
+          * several times a second. The live status beside the pending turn says
+          * the same thing once.
           */}
-        <Dialog
-          open={knowledgeOpen && active !== null}
-          onClose={() => setKnowledgeOpen(false)}
-          kicker="Conversation scope"
-          title="Knowledge for this conversation"
-          description={active ? knowledgeScopeSummary(active.knowledgeDocuments.length) : undefined}
-        >
-          {library === null ? (
-            <p className="m-0 text-body text-faint">Loading…</p>
-          ) : library.length === 0 ? (
-            <EmptyState title="No indexed documents yet">
-              Upload one in Knowledge and it becomes pinnable once indexing completes.
-            </EmptyState>
-          ) : (
-            <ul className="m-0 grid list-none gap-1 p-0">
-              {library.map((item) => {
-                const pinned = active?.knowledgeDocuments.some((pin) => pin.id === item.id) ?? false;
-                return (
-                  <li key={item.id}>
-                    <label className="flex cursor-pointer items-center gap-3 rounded border border-border bg-raised px-3 py-2.5">
-                      <input
-                        type="checkbox"
-                        checked={pinned}
-                        disabled={working}
-                        onChange={() => void togglePinned(item.id, pinned)}
-                      />
-                      <span className="min-w-0 flex-1 truncate text-body text-text">{item.fileName}</span>
-                      <small className="shrink-0 text-micro font-semibold uppercase tabular-nums text-faint">
-                        {item.classification.toLowerCase()}
-                      </small>
-                    </label>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </Dialog>
-
-        <Dialog
-          open={skillsOpen}
-          onClose={() => setSkillsOpen(false)}
-          kicker="Runtime capability"
-          title="What this runtime can do"
-          description="Read from Hermes on the enrolled node. Nothing here is enabled by viewing it."
-        >
-          {catalogue === null ? (
-            <p className="m-0 text-body text-faint">Loading…</p>
-          ) : (
-            <div className="grid gap-4">
-              <StatusText tone={catalogue.enabledToolsets === 0 ? "warn" : "good"} className="normal-case">
-                {catalogue.enabledToolsets === 0
-                  ? `All ${catalogue.toolsets.length} toolsets are disabled by the managed runtime policy. Agents answer from your documents and this conversation only.`
-                  : `${catalogue.enabledToolsets} of ${catalogue.toolsets.length} toolsets are enabled by the managed runtime policy.`}
-              </StatusText>
-              <div className="grid gap-2">
-                <MicroLabel>Toolsets · {catalogue.toolsets.length}</MicroLabel>
-                <div className="flex flex-wrap gap-1.5">
-                  {catalogue.toolsets.map((toolset) => (
-                    <StatusText
-                      dot
-                      key={toolset.name}
-                      tone={toolset.enabled ? "good" : "neutral"}
-                      className="rounded border border-border bg-raised px-2 py-1 normal-case"
-                    >
-                      {toolset.label ?? toolset.name}
-                    </StatusText>
-                  ))}
-                </div>
-              </div>
-              <div className="grid gap-2">
-                <MicroLabel>Skills · {catalogue.skills.length}</MicroLabel>
-                <div className="flex flex-wrap gap-1.5">
-                  {catalogue.skills.map((skill) => (
-                    <span
-                      className="rounded border border-border bg-raised px-2 py-1 font-mono text-caption text-muted"
-                      key={skill.name}
-                      title={skill.description ?? ""}
-                    >
-                      {skill.name}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-        </Dialog>
-
-        <Dialog
-          open={memoryOpen}
-          onClose={() => setMemoryOpen(false)}
-          kicker="Your data"
-          title="What agents remember about you"
-          description="Stored in this installation only. Deleting an item removes it for every agent immediately."
-        >
-          {memories === null ? (
-            <p className="m-0 text-body text-faint">Loading…</p>
-          ) : memories.length === 0 ? (
-            <EmptyState title="Nothing is stored about you">
-              Agents answer from documents and the current conversation only.
-            </EmptyState>
-          ) : (
-            <ul className="m-0 grid list-none gap-1 p-0">
-              {memories.map((item) => (
-                <li
-                  className="flex items-start gap-3 rounded border border-border bg-raised px-3 py-2.5"
-                  key={item.id}
+        {/* Containing block for the jump affordance: it has to end where the
+            composer begins, and the composer's height changes with the
+            textarea. Anchoring to the section instead needs a guessed offset,
+            which lands the control inside the composer as soon as the guess is
+            wrong. */}
+        <div className="relative grid min-h-0">
+        <div className={THREAD_SCROLLER} ref={messageScroller}>
+          <div className={THREAD_MEASURE}>
+            {!active || active.messages.length === 0 ? (
+              <div className="mx-auto w-full max-w-[720px] pt-[min(10vh,90px)]">
+                <div
+                  aria-hidden="true"
+                  className="mb-4 grid h-[46px] w-[46px] place-items-center rounded-pill bg-soft"
                 >
-                  <div className="min-w-0 flex-1">
-                    <span className="block text-body text-text">{item.content}</span>
-                    <small className="mt-1 block text-micro font-semibold uppercase tabular-nums text-faint">
-                      {item.agentProfileSlug} · {new Date(item.createdAt).toLocaleDateString()}
-                      {item.retentionUntil
-                        ? ` · expires ${new Date(item.retentionUntil).toLocaleDateString()}`
-                        : " · kept until deleted"}
-                    </small>
-                  </div>
-                  <Button variant="ghost" size="sm" onClick={() => void forgetMemory(item.id)}>
-                    Forget
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Dialog>
-
-        <Dialog
-          open={confirmDelete && active !== null}
-          onClose={() => setConfirmDelete(false)}
-          title="Delete this conversation?"
-          footer={
-            <>
-              <Button onClick={() => setConfirmDelete(false)}>Keep</Button>
-              <Button variant="danger" onClick={() => void removeConversation()}>
-                Delete permanently
-              </Button>
-            </>
-          }
-        >
-          <p className="m-0 text-body text-muted">
-            The transcript and its run telemetry will be removed. Audit evidence remains.
-          </p>
-        </Dialog>
-
-        <div className="chat-messages" aria-live="polite" ref={messageScroller}>
-          {!active || active.messages.length === 0 ? (
-            <div className="mx-auto w-full max-w-[720px] pt-[min(10vh,90px)]">
-              <div
-                aria-hidden="true"
-                className="mb-4 grid h-[46px] w-[46px] place-items-center rounded-pill bg-soft"
-              >
-                <img src="/brand/sivali-mark.svg" alt="" width={28} height={28} className="block" />
-              </div>
-              <h2 className="m-0 font-display text-[30px] font-semibold leading-[1.2] tracking-[-0.03em] text-text">
-                Ask anything about
-                <br />
-                your workspace.
-              </h2>
-              <p className="mb-6 mt-3 max-w-[460px] text-body leading-relaxed text-muted">
-                Every response is a governed Hermes Agent Run. Your selected profile controls behavior, skills, memory
-                access, and tool policy.
-              </p>
-              {!routeReady && (
-                <Panel
-                  className="mx-auto mb-3 flex max-w-[560px] items-center justify-between gap-4 border-l-2 border-l-warn p-3.5 text-left"
-                  role="status"
-                >
-                  <div className="min-w-0">
-                    <strong className="block text-label font-semibold text-text">{readinessTitle}</strong>
-                    <span className="mt-1 block text-body text-muted">{readinessDetail}</span>
-                  </div>
-                  <Button variant="primary" className="shrink-0" onClick={openReadiness}>
-                    {!profileAvailable ? "Create Agent Profile" : "Review setup"}
-                  </Button>
+                  <img src="/brand/sivali-mark.svg" alt="" width={28} height={28} className="block" />
+                </div>
+                <h2 className="m-0 font-display text-[30px] font-semibold leading-[1.2] tracking-[-0.03em] text-text">
+                  Ask anything about
+                  <br />
+                  your workspace.
+                </h2>
+                <p className="mb-6 mt-3 max-w-[460px] text-body leading-relaxed text-muted">
+                  Every response is a governed Hermes Agent Run. Your selected profile controls behavior, skills, memory
+                  access, and tool policy.
+                </p>
+                {!routeReady && (
+                  <Panel
+                    className="mx-auto mb-3 flex max-w-[560px] items-center justify-between gap-4 border-l-2 border-l-warn p-3.5 text-left"
+                    role="status"
+                  >
+                    <div className="min-w-0">
+                      <strong className="block text-label font-semibold text-text">{readinessTitle}</strong>
+                      <span className="mt-1 block text-body text-muted">{readinessDetail}</span>
+                    </div>
+                    <Button variant="primary" className="shrink-0" onClick={openReadiness}>
+                      {!profileAvailable ? "Create Agent Profile" : "Review setup"}
+                    </Button>
+                  </Panel>
+                )}
+                <Panel className="mx-auto mb-3 max-w-[440px] p-3 text-left">
+                  <Field
+                    label="Agent Profile"
+                    hint={
+                      profiles.length === 0
+                        ? "Activate a profile in Agents before chatting."
+                        : "This profile remains bound to the conversation."
+                    }
+                  >
+                    <Select
+                      disabled={!profileAvailable}
+                      value={selectedProfileId}
+                      onChange={(event) => setSelectedProfileId(event.target.value)}
+                    >
+                      {profiles.length === 0 && <option value="">No active profiles</option>}
+                      {profiles.map((profile) => (
+                        <option value={profile.id} key={profile.id}>
+                          {profile.activeVersionConfiguration?.displayName ?? profile.version.displayName}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
                 </Panel>
-              )}
-              <Panel className="mx-auto mb-3 max-w-[440px] p-3 text-left">
-                <Field
-                  label="Agent Profile"
-                  hint={
-                    profiles.length === 0
-                      ? "Activate a profile in Agents before chatting."
-                      : "This profile remains bound to the conversation."
-                  }
-                >
-                  <Select
-                    disabled={!profileAvailable}
-                    value={selectedProfileId}
-                    onChange={(event) => setSelectedProfileId(event.target.value)}
-                  >
-                    {profiles.length === 0 && <option value="">No active profiles</option>}
-                    {profiles.map((profile) => (
-                      <option value={profile.id} key={profile.id}>
-                        {profile.activeVersionConfiguration?.displayName ?? profile.version.displayName}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-              </Panel>
-              <div className="grid gap-3 sm:grid-cols-2">
-                {[
-                  {
-                    label: "Outline an on-premise AI deployment",
-                    sub: "Main considerations, stated concisely",
-                    prompt: "Summarize the main considerations for an on-premise AI deployment.",
-                  },
-                  {
-                    label: "Create an AI risk checklist",
-                    sub: "For an internal assistant rollout",
-                    prompt: "Create a concise risk checklist for deploying an internal AI assistant.",
-                  },
-                ].map((suggestion) => (
-                  <button
-                    className="grid gap-1.5 rounded-lg border border-border bg-surface px-4 py-3.5 text-left transition-colors hover:border-accent hover:bg-raised/60 disabled:cursor-not-allowed disabled:opacity-40"
-                    key={suggestion.label}
-                    type="button"
-                    disabled={!routeReady}
-                    onClick={() => setDraft(suggestion.prompt)}
-                  >
-                    <span className="text-body font-semibold leading-snug text-text">{suggestion.label}</span>
-                    <span className="text-caption leading-snug text-faint">{suggestion.sub}</span>
-                  </button>
-                ))}
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {[
+                    {
+                      label: "Outline an on-premise AI deployment",
+                      sub: "Main considerations, stated concisely",
+                      prompt: "Summarize the main considerations for an on-premise AI deployment.",
+                    },
+                    {
+                      label: "Create an AI risk checklist",
+                      sub: "For an internal assistant rollout",
+                      prompt: "Create a concise risk checklist for deploying an internal AI assistant.",
+                    },
+                  ].map((suggestion) => (
+                    <button
+                      className="grid gap-1.5 rounded-lg border border-border bg-surface px-4 py-3.5 text-left transition-colors hover:border-accent hover:bg-raised/60 disabled:cursor-not-allowed disabled:opacity-40"
+                      key={suggestion.label}
+                      type="button"
+                      disabled={!routeReady}
+                      onClick={() => setDraft(suggestion.prompt)}
+                    >
+                      <span className="text-body font-semibold leading-snug text-text">{suggestion.label}</span>
+                      <span className="text-caption leading-snug text-faint">{suggestion.sub}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
-          ) : (
-            active.messages.map((message) => (
-              /*
-               * The person's turn is a bounded card and the agent's is not.
-               * That asymmetry is the only thing that lets the eye find where
-               * an exchange begins without reading any of the text, which on a
-               * long governed transcript is most of what makes it navigable.
-               */
-              <article
-                className={cn(
-                  /*
-                   * The design's asymmetry, sharpened: the person's turn is a
-                   * right-aligned soft-violet bubble with the flattened corner
-                   * pointing back at them; the agent's turn is an open row
-                   * under the mark. The eye finds where an exchange begins
-                   * without reading a word, which on a long governed
-                   * transcript is most of what makes it navigable.
-                   */
-                  message.role === "USER"
-                    ? "my-3.5 ml-auto max-w-[600px] rounded-[16px] rounded-br-[5px] bg-soft px-4 py-3"
-                    : "mx-auto grid w-full max-w-[940px] grid-cols-[34px_minmax(0,1fr)] gap-3.5 border-b border-border py-5 last-of-type:border-b-0",
-                )}
-                key={message.id}
-              >
-                {message.role !== "USER" && (
-                  <div
-                    aria-hidden="true"
-                    className="grid h-8 w-8 place-items-center rounded-pill bg-soft"
-                  >
-                    <img src="/brand/sivali-mark.svg" alt="" width={19} height={19} className="block" />
-                  </div>
-                )}
-                <div className="min-w-0">
-                  <div className="flex min-h-[24px] items-center justify-between gap-3">
-                    <div className="flex min-w-0 items-baseline gap-2">
-                      <strong className="text-caption font-semibold text-text">
-                        {message.role === "USER" ? "You" : (active.profileName ?? "Hermes")}
-                      </strong>
-                      <time className="font-mono text-micro text-faint" dateTime={message.createdAt}>
-                        {formatMessageTime(message.createdAt)}
-                      </time>
-                    </div>
-                    <div className="flex min-w-0 items-center justify-end gap-2">
-                      {message.role === "ASSISTANT" && (
-                        <span className="max-w-[220px] truncate font-mono text-micro text-faint">
-                          {message.modelAlias ?? active.modelAlias}
-                        </span>
-                      )}
-                      {message.status !== "COMPLETED" && (
-                        <StatusText
-                          tone={message.status === "FAILED" || message.status === "CANCELLED" ? "bad" : "warn"}
-                        >
-                          {message.status.toLowerCase()}
-                        </StatusText>
-                      )}
-                    </div>
-                  </div>
-                  {message.role === "USER"
-                    ? <p className="my-1 whitespace-pre-wrap break-words text-body leading-[1.6] text-text">{message.content}</p>
-                    : <MarkdownMessage
-                        content={message.content || (message.status === "PENDING" ? "Thinking…" : "No content returned.")}
-                        streaming={message.status === "PENDING"}
-                      />}
-                  {message.role === "ASSISTANT" && message.status === "PENDING" && (
-                    <div
-                      className="my-2.5 flex items-center justify-between gap-3 rounded border border-border-strong bg-raised px-3 py-2"
-                      aria-label="Live generation status"
-                    >
-                      <StatusText dot tone="accent" className="whitespace-nowrap">
-                        {currentActivity ?? "Hermes is working"}
-                      </StatusText>
-                      <small className="truncate text-right text-micro text-faint">
-                        {busy ? `${(streamElapsedMs / 1_000).toFixed(1)} s elapsed` : "Awaiting recovery"} · governed run details appear as Hermes reports them
-                      </small>
-                    </div>
-                  )}
-                  {message.role === "ASSISTANT" && message.runtimeEvents.length > 0 && (
-                    <section
-                      className="my-3 overflow-hidden rounded border border-border bg-surface"
-                      aria-label="Hermes agent activity"
-                    >
-                      <header className="flex items-center justify-between border-b border-border bg-raised px-3 py-2">
-                        <MicroLabel>Agent activity</MicroLabel>
-                        <span className="font-mono text-micro text-faint">
-                          {message.runtimeEvents.length} event{message.runtimeEvents.length === 1 ? "" : "s"}
-                        </span>
-                      </header>
-                      <ol className="m-0 grid list-none p-0">{message.runtimeEvents.map((runtimeEvent) => {
-                        const kind = runtimeEvent.type.startsWith("TOOL_") ? "tool"
-                          : runtimeEvent.type.startsWith("SUBAGENT_") ? "subagent"
-                            : runtimeEvent.type === "APPROVAL_REQUIRED" ? "approval" : "lifecycle";
-                        return (
-                          <li
-                            className="grid min-w-0 grid-cols-[26px_minmax(0,1fr)] gap-2.5 border-t border-border px-3 py-2.5 first:border-t-0"
-                            key={runtimeEvent.id}
-                          >
-                            <span
-                              aria-hidden="true"
-                              className={cn(
-                                "grid h-[25px] w-[25px] place-items-center rounded border font-mono text-micro font-bold",
-                                kind === "tool" ? "border-good/50 bg-good/10 text-good"
-                                  : kind === "approval" ? "border-warn/50 bg-warn/10 text-warn"
-                                    : "border-border-strong bg-raised text-muted",
-                              )}
-                            >
-                              {kind === "tool" ? "TL" : kind === "subagent" ? "SA" : kind === "approval" ? "!" : "AI"}
-                            </span>
-                            <div className="min-w-0">
-                              <div className="flex items-center justify-between gap-2.5">
-                                <strong className="min-w-0 truncate text-caption font-semibold text-text">
-                                  {runtimeEvent.toolName ?? (kind === "subagent" ? "Hermes subagent" : runtimeEventLabel(runtimeEvent.type))}
-                                </strong>
-                                <StatusText className="shrink-0">
-                                  {runtimeEvent.status ?? runtimeEventLabel(runtimeEvent.type)}
-                                </StatusText>
-                              </div>
-                              {(runtimeEvent.preview || runtimeEvent.summary) && (
-                                <p className="my-1 text-micro leading-relaxed text-muted">
-                                  {runtimeEvent.preview ?? runtimeEvent.summary}
-                                </p>
-                              )}
-                              <small className="block font-mono text-micro text-faint">{[
-                                formatRuntimeDuration(runtimeEvent.durationMs),
-                                runtimeEvent.inputTokens === null ? null : `${runtimeEvent.inputTokens.toLocaleString()} in`,
-                                runtimeEvent.outputTokens === null ? null : `${runtimeEvent.outputTokens.toLocaleString()} out`,
-                                runtimeEvent.reasoningTokens === null ? null : `${runtimeEvent.reasoningTokens.toLocaleString()} reasoning`,
-                                runtimeEvent.costUsd === null ? null : `$${runtimeEvent.costUsd.toFixed(4)}`,
-                              ].filter(Boolean).join(" · ") || new Date(runtimeEvent.occurredAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</small>
-                            </div>
-                          </li>
-                        );
-                      })}</ol>
-                    </section>
-                  )}
-                  {message.role === "ASSISTANT" && message.approvals.map((approval) => (
+            ) : (
+              active.messages.map((message) => (
+                /*
+                 * The person's turn is a bounded card and the agent's is not.
+                 * That asymmetry is the only thing that lets the eye find where
+                 * an exchange begins without reading any of the text, which on a
+                 * long governed transcript is most of what makes it navigable.
+                 */
+                <article
+                  className={cn(
                     /*
-                     * The one block on the transcript that is warn-toned on
-                     * purpose: it is a decision the run is blocked on, not a
-                     * report of something already done.
+                     * The design's asymmetry, sharpened: the person's turn is a
+                     * right-aligned soft-violet bubble with the flattened corner
+                     * pointing back at them; the agent's turn is an open row
+                     * under the mark. The eye finds where an exchange begins
+                     * without reading a word, which on a long governed
+                     * transcript is most of what makes it navigable.
                      */
-                    <section
-                      className={cn(
-                        "my-3 grid grid-cols-[28px_minmax(0,1fr)_auto] items-center gap-3 rounded border p-3",
-                        approval.status === "PENDING" ? "border-warn/50 bg-warn/10"
-                          : approval.status === "APPROVED" ? "border-good/50 bg-good/10"
-                            : "border-bad/50 bg-bad/10",
-                      )}
-                      key={approval.id}
-                      aria-label="Hermes approval request"
+                    message.role === "USER"
+                      ? "my-3.5 ml-auto max-w-[600px] rounded-[16px] rounded-br-[5px] bg-soft px-4 py-3"
+                      : "mx-auto grid w-full max-w-[940px] grid-cols-[34px_minmax(0,1fr)] gap-3.5 border-b border-border py-5 last-of-type:border-b-0",
+                  )}
+                  key={message.id}
+                >
+                  {message.role !== "USER" && (
+                    <div
+                      aria-hidden="true"
+                      className="grid h-8 w-8 place-items-center rounded-pill bg-soft"
                     >
-                      <div
-                        aria-hidden="true"
-                        className="grid h-7 w-7 place-items-center rounded border border-warn/50 bg-warn/10 font-mono text-label font-bold text-warn"
-                      >
-                        !
-                      </div>
-                      <div className="grid min-w-0 gap-1">
-                        <MicroLabel className="text-warn">Human approval</MicroLabel>
+                      <img src="/brand/sivali-mark.svg" alt="" width={19} height={19} className="block" />
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <div className="flex min-h-[24px] items-center justify-between gap-3">
+                      <div className="flex min-w-0 items-baseline gap-2">
                         <strong className="text-caption font-semibold text-text">
-                          {approval.summary ?? "Hermes needs permission to continue"}
+                          {message.role === "USER" ? "You" : (active.profileName ?? "Hermes")}
                         </strong>
-                        {approval.command && (
-                          <code className="truncate rounded border border-border-strong bg-bg px-2 py-1.5 font-mono text-micro text-muted">
-                            {approval.command}
-                          </code>
+                        <time className="font-mono text-micro text-faint" dateTime={message.createdAt}>
+                          {formatMessageTime(message.createdAt)}
+                        </time>
+                      </div>
+                      <div className="flex min-w-0 items-center justify-end gap-2">
+                        {message.role === "ASSISTANT" && (
+                          <span className="max-w-[220px] truncate font-mono text-micro text-faint">
+                            {message.modelAlias ?? active.modelAlias}
+                          </span>
                         )}
-                        <small className="text-micro text-faint">
-                          {approval.status === "PENDING"
-                            ? `Expires ${new Date(approval.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
-                            : `Decision: ${(approval.decision ?? approval.status).replaceAll("_", " ").toLowerCase()}`}
+                        {message.status !== "COMPLETED" && (
+                          <StatusText
+                            tone={message.status === "FAILED" || message.status === "CANCELLED" ? "bad" : "warn"}
+                          >
+                            {message.status.toLowerCase()}
+                          </StatusText>
+                        )}
+                      </div>
+                    </div>
+                    {message.role === "USER"
+                      ? <p className="my-1 whitespace-pre-wrap break-words text-body leading-[1.6] text-text">{message.content}</p>
+                      : <MarkdownMessage
+                          content={message.content || (message.status === "PENDING" ? "Thinking…" : "No content returned.")}
+                          streaming={message.status === "PENDING"}
+                        />}
+                    {message.role === "ASSISTANT" && message.status === "PENDING" && (
+                      /*
+                        * The transcript's live region, moved here off the
+                        * scroller. Announcing the whole thread on every delta
+                        * read a growing answer back from the top several times
+                        * a second; this says what the run is doing, and says it
+                        * once per change.
+                        */
+                      <div
+                        className="my-2.5 flex items-center justify-between gap-3 rounded border border-border-strong bg-raised px-3 py-2"
+                        aria-label="Live generation status"
+                      >
+                        {/*
+                          * aria-live sits on the activity text alone. On the
+                          * container it also covered the elapsed-seconds
+                          * counter, which a 250ms interval rewrites -- a fresh
+                          * polite announcement four times a second for the
+                          * whole run, which is the announcement storm moving it
+                          * off the scroller was meant to end.
+                          */}
+                        <span aria-live="polite" className="min-w-0">
+                          <StatusText dot tone="accent" className="whitespace-nowrap">
+                            {currentActivity ?? "Hermes is working"}
+                          </StatusText>
+                        </span>
+                        <small className="truncate text-right text-micro text-faint">
+                          {busy ? `${(streamElapsedMs / 1_000).toFixed(1)} s elapsed` : "Awaiting recovery"} · governed run details appear as Hermes reports them
                         </small>
                       </div>
-                      {approval.status === "PENDING" && (
-                        <div className="flex gap-1.5">
-                          <Button size="sm" disabled={approvalBusy === approval.id} onClick={() => void decideApproval(approval, "DENY")}>
-                            Deny
-                          </Button>
-                          <Button variant="primary" size="sm" disabled={approvalBusy === approval.id} onClick={() => void decideApproval(approval, "ALLOW_ONCE")}>
-                            Allow once
-                          </Button>
-                        </div>
-                      )}
-                    </section>
-                  ))}
-                  {message.sources.length > 0 && (
-                    <div className="my-2.5 grid gap-2 rounded border border-border bg-surface p-3" aria-label="Enterprise knowledge sources">
-                      <MicroLabel>Sources</MicroLabel>
-                      <div className="flex flex-wrap gap-1.5">{message.sources.map((source) => (
-                        <article className="grid min-w-[170px] gap-1 rounded border border-border bg-raised px-2.5 py-2" key={source.documentId}>
-                          <span className="truncate text-caption font-semibold text-text">{source.fileName}</span>
-                          <small className="text-micro font-semibold uppercase tabular-nums text-faint">
-                            {source.classification.toLowerCase()} · {Math.round(source.score * 100)}% match
-                          </small>
-                        </article>
-                      ))}</div>
-                    </div>
-                  )}
-                  {message.role === "ASSISTANT" && message.status === "COMPLETED" && (
-                    <>
-                      <section className="mt-3.5 overflow-hidden rounded border border-border bg-surface" aria-label="Response performance">
-                        <header className="flex items-center justify-between gap-3.5 border-b border-border bg-raised px-3 py-2.5">
-                          <div>
-                            <MicroLabel className="block">Response telemetry</MicroLabel>
-                            <small className="mt-1 block text-micro text-faint">
-                              Reported by Hermes lifecycle events and measured by OrcaSynapse
-                            </small>
-                          </div>
-                          {message.sources.length > 0 && (
-                            <StatusText className="shrink-0">
-                              {message.sources.length} knowledge source{message.sources.length === 1 ? "" : "s"}
-                            </StatusText>
-                          )}
+                    )}
+                    {message.role === "ASSISTANT" && message.runtimeEvents.length > 0 && (
+                      <section
+                        className="my-3 overflow-hidden rounded border border-border bg-surface"
+                        aria-label="Hermes agent activity"
+                      >
+                        <header className="flex items-center justify-between border-b border-border bg-raised px-3 py-2">
+                          <MicroLabel>Agent activity</MicroLabel>
+                          <span className="font-mono text-micro text-faint">
+                            {message.runtimeEvents.length} event{message.runtimeEvents.length === 1 ? "" : "s"}
+                          </span>
                         </header>
-                        {/*
-                          * Hairlines come from the gap showing the container
-                          * behind, so no cell carries a border of its own and
-                          * none of them double against the panel edge — which
-                          * is what the four nth-child rules the old stylesheet
-                          * needed were working around.
-                          *
-                          * Tabular figures and a fixed grid: a column of numbers
-                          * that re-aligns as a run streams is unreadable.
-                          */}
-                        <dl className="m-0 grid grid-cols-2 gap-px bg-border sm:grid-cols-[1.25fr_repeat(3,minmax(72px,1fr))]">
-                          {chatMessageTelemetry(message).map((metric) => (
-                            <div
-                              className={cn(
-                                "min-w-0 px-3 py-2.5",
-                                metric.key === "throughput" ? "bg-raised" : "bg-surface",
-                              )}
-                              key={metric.key}
+                        <ol className="m-0 grid list-none p-0">{message.runtimeEvents.map((runtimeEvent) => {
+                          const kind = runtimeEvent.type.startsWith("TOOL_") ? "tool"
+                            : runtimeEvent.type.startsWith("SUBAGENT_") ? "subagent"
+                              : runtimeEvent.type === "APPROVAL_REQUIRED" ? "approval" : "lifecycle";
+                          return (
+                            <li
+                              className="grid min-w-0 grid-cols-[26px_minmax(0,1fr)] gap-2.5 border-t border-border px-3 py-2.5 first:border-t-0"
+                              key={runtimeEvent.id}
                             >
-                              <dt className="truncate text-micro font-semibold uppercase tabular-nums text-faint">{metric.label}</dt>
-                              <dd
+                              <span
+                                aria-hidden="true"
                                 className={cn(
-                                  "m-0 mt-1 truncate font-mono text-caption font-semibold tabular-nums",
-                                  metric.key === "throughput" ? "text-caption text-accent" : "text-muted",
+                                  "grid h-[25px] w-[25px] place-items-center rounded border font-mono text-micro font-bold",
+                                  kind === "tool" ? "border-good/50 bg-good/10 text-good"
+                                    : kind === "approval" ? "border-warn/50 bg-warn/10 text-warn"
+                                      : "border-border-strong bg-raised text-muted",
                                 )}
                               >
-                                {metric.value}
-                              </dd>
-                            </div>
-                          ))}
-                        </dl>
+                                {kind === "tool" ? "TL" : kind === "subagent" ? "SA" : kind === "approval" ? "!" : "AI"}
+                              </span>
+                              <div className="min-w-0">
+                                <div className="flex items-center justify-between gap-2.5">
+                                  <strong className="min-w-0 truncate text-caption font-semibold text-text">
+                                    {runtimeEvent.toolName ?? (kind === "subagent" ? "Hermes subagent" : runtimeEventLabel(runtimeEvent.type))}
+                                  </strong>
+                                  <StatusText className="shrink-0">
+                                    {runtimeEvent.status ?? runtimeEventLabel(runtimeEvent.type)}
+                                  </StatusText>
+                                </div>
+                                {(runtimeEvent.preview || runtimeEvent.summary) && (
+                                  <p className="my-1 text-micro leading-relaxed text-muted">
+                                    {runtimeEvent.preview ?? runtimeEvent.summary}
+                                  </p>
+                                )}
+                                <small className="block font-mono text-micro text-faint">{[
+                                  formatRuntimeDuration(runtimeEvent.durationMs),
+                                  runtimeEvent.inputTokens === null ? null : `${runtimeEvent.inputTokens.toLocaleString()} in`,
+                                  runtimeEvent.outputTokens === null ? null : `${runtimeEvent.outputTokens.toLocaleString()} out`,
+                                  runtimeEvent.reasoningTokens === null ? null : `${runtimeEvent.reasoningTokens.toLocaleString()} reasoning`,
+                                  runtimeEvent.costUsd === null ? null : `$${runtimeEvent.costUsd.toFixed(4)}`,
+                                ].filter(Boolean).join(" · ") || new Date(runtimeEvent.occurredAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</small>
+                              </div>
+                            </li>
+                          );
+                        })}</ol>
                       </section>
-                      <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
-                        <small className="text-micro leading-relaxed text-faint">
-                          Effective speed is output tokens divided by end-to-end response latency.
-                        </small>
-                        <div className="flex items-center gap-1.5" aria-label="Response actions">
-                          <Button variant="ghost" size="sm" onClick={() => void navigator.clipboard?.writeText(message.content)}>
-                            Copy
-                          </Button>
-                          <Button variant="ghost" size="sm" disabled={working} onClick={() => void forkConversation(message.id)}>
-                            Fork here
-                          </Button>
+                    )}
+                    {message.role === "ASSISTANT" && message.approvals.map((approval) => (
+                      /*
+                       * The one block on the transcript that is warn-toned on
+                       * purpose: it is a decision the run is blocked on, not a
+                       * report of something already done.
+                       */
+                      <section
+                        className={cn(
+                          "my-3 grid grid-cols-[28px_minmax(0,1fr)_auto] items-center gap-3 rounded border p-3",
+                          approval.status === "PENDING" ? "border-warn/50 bg-warn/10"
+                            : approval.status === "APPROVED" ? "border-good/50 bg-good/10"
+                              : "border-bad/50 bg-bad/10",
+                        )}
+                        key={approval.id}
+                        aria-label="Hermes approval request"
+                      >
+                        <div
+                          aria-hidden="true"
+                          className="grid h-7 w-7 place-items-center rounded border border-warn/50 bg-warn/10 font-mono text-label font-bold text-warn"
+                        >
+                          !
                         </div>
-                        <div className="flex items-center gap-1.5" aria-label="Response feedback">
-                          <Button
-                            size="sm"
-                            aria-label="Mark response helpful"
-                            aria-pressed={message.feedback?.rating === "HELPFUL"}
-                            disabled={feedbackBusy === message.id}
-                            className={cn(message.feedback?.rating === "HELPFUL" ? "border-accent text-accent" : null)}
-                            onClick={() => void recordFeedback(message.id, "HELPFUL")}
-                          >
-                            Helpful
-                          </Button>
-                          <Button
-                            size="sm"
-                            aria-label="Mark response not helpful"
-                            aria-pressed={message.feedback?.rating === "NOT_HELPFUL"}
-                            disabled={feedbackBusy === message.id}
-                            className={cn(message.feedback?.rating === "NOT_HELPFUL" ? "border-accent text-accent" : null)}
-                            onClick={() => void recordFeedback(message.id, "NOT_HELPFUL")}
-                          >
-                            Not helpful
-                          </Button>
+                        <div className="grid min-w-0 gap-1">
+                          <MicroLabel className="text-warn">Human approval</MicroLabel>
+                          <strong className="text-caption font-semibold text-text">
+                            {approval.summary ?? "Hermes needs permission to continue"}
+                          </strong>
+                          {approval.command && (
+                            <code className="truncate rounded border border-border-strong bg-bg px-2 py-1.5 font-mono text-micro text-muted">
+                              {approval.command}
+                            </code>
+                          )}
+                          <small className="text-micro text-faint">
+                            {approval.status === "PENDING"
+                              ? `Expires ${new Date(approval.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+                              : `Decision: ${(approval.decision ?? approval.status).replaceAll("_", " ").toLowerCase()}`}
+                          </small>
                         </div>
+                        {approval.status === "PENDING" && (
+                          <div className="flex gap-1.5">
+                            <Button size="sm" disabled={approvalBusy === approval.id} onClick={() => void decideApproval(approval, "DENY")}>
+                              Deny
+                            </Button>
+                            <Button variant="primary" size="sm" disabled={approvalBusy === approval.id} onClick={() => void decideApproval(approval, "ALLOW_ONCE")}>
+                              Allow once
+                            </Button>
+                          </div>
+                        )}
+                      </section>
+                    ))}
+                    {message.sources.length > 0 && (
+                      <div className="my-2.5 grid gap-2 rounded border border-border bg-surface p-3" aria-label="Enterprise knowledge sources">
+                        <MicroLabel>Sources</MicroLabel>
+                        <div className="flex flex-wrap gap-1.5">{message.sources.map((source) => (
+                          <article className="grid min-w-[170px] gap-1 rounded border border-border bg-raised px-2.5 py-2" key={source.documentId}>
+                            <span className="truncate text-caption font-semibold text-text">{source.fileName}</span>
+                            <small className="text-micro font-semibold uppercase tabular-nums text-faint">
+                              {source.classification.toLowerCase()} · {Math.round(source.score * 100)}% match
+                            </small>
+                          </article>
+                        ))}</div>
                       </div>
-                    </>
-                  )}
-                  {(message.status === "FAILED" || message.status === "CANCELLED") && (
-                    <div className="mt-2 flex items-center justify-between gap-2.5">
-                      <StatusText tone="bad">
-                        {message.status === "CANCELLED" ? "Generation cancelled" : `Generation failed · ${message.errorCode ?? "UNKNOWN"}`}
-                      </StatusText>
-                      <Button variant="ghost" size="sm" disabled={working} onClick={() => retryMessage(message.id)}>
-                        Retry prompt
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              </article>
-            ))
-          )}
+                    )}
+                    {message.role === "ASSISTANT" && message.status === "COMPLETED" && (
+                      <>
+                        <section className="mt-3.5 overflow-hidden rounded border border-border bg-surface" aria-label="Response performance">
+                          <header className="flex items-center justify-between gap-3.5 border-b border-border bg-raised px-3 py-2.5">
+                            <div>
+                              <MicroLabel className="block">Response telemetry</MicroLabel>
+                              <small className="mt-1 block text-micro text-faint">
+                                Reported by Hermes lifecycle events and measured by OrcaSynapse
+                              </small>
+                            </div>
+                            {message.sources.length > 0 && (
+                              <StatusText className="shrink-0">
+                                {message.sources.length} knowledge source{message.sources.length === 1 ? "" : "s"}
+                              </StatusText>
+                            )}
+                          </header>
+                          {/*
+                            * Hairlines come from the gap showing the container
+                            * behind, so no cell carries a border of its own and
+                            * none of them double against the panel edge — which
+                            * is what the four nth-child rules the old stylesheet
+                            * needed were working around.
+                            *
+                            * Tabular figures and a fixed grid: a column of numbers
+                            * that re-aligns as a run streams is unreadable.
+                            */}
+                          <dl className="m-0 grid grid-cols-2 gap-px bg-border sm:grid-cols-[1.25fr_repeat(3,minmax(72px,1fr))]">
+                            {chatMessageTelemetry(message).map((metric) => (
+                              <div
+                                className={cn(
+                                  "min-w-0 px-3 py-2.5",
+                                  metric.key === "throughput" ? "bg-raised" : "bg-surface",
+                                )}
+                                key={metric.key}
+                              >
+                                <dt className="truncate text-micro font-semibold uppercase tabular-nums text-faint">{metric.label}</dt>
+                                <dd
+                                  className={cn(
+                                    "m-0 mt-1 truncate font-mono text-caption font-semibold tabular-nums",
+                                    metric.key === "throughput" ? "text-caption text-accent" : "text-muted",
+                                  )}
+                                >
+                                  {metric.value}
+                                </dd>
+                              </div>
+                            ))}
+                          </dl>
+                        </section>
+                        <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+                          <small className="text-micro leading-relaxed text-faint">
+                            Effective speed is output tokens divided by end-to-end response latency.
+                          </small>
+                          <div className="flex items-center gap-1.5" aria-label="Response actions">
+                            <Button variant="ghost" size="sm" onClick={() => void navigator.clipboard?.writeText(message.content)}>
+                              Copy
+                            </Button>
+                            <Button variant="ghost" size="sm" disabled={working} onClick={() => void forkConversation(message.id)}>
+                              Fork here
+                            </Button>
+                          </div>
+                          <div className="flex items-center gap-1.5" aria-label="Response feedback">
+                            <Button
+                              size="sm"
+                              aria-label="Mark response helpful"
+                              aria-pressed={message.feedback?.rating === "HELPFUL"}
+                              disabled={feedbackBusy === message.id}
+                              className={cn(message.feedback?.rating === "HELPFUL" ? "border-accent text-accent" : null)}
+                              onClick={() => void recordFeedback(message.id, "HELPFUL")}
+                            >
+                              Helpful
+                            </Button>
+                            <Button
+                              size="sm"
+                              aria-label="Mark response not helpful"
+                              aria-pressed={message.feedback?.rating === "NOT_HELPFUL"}
+                              disabled={feedbackBusy === message.id}
+                              className={cn(message.feedback?.rating === "NOT_HELPFUL" ? "border-accent text-accent" : null)}
+                              onClick={() => void recordFeedback(message.id, "NOT_HELPFUL")}
+                            >
+                              Not helpful
+                            </Button>
+                          </div>
+                        </div>
+                      </>
+                    )}
+                    {(message.status === "FAILED" || message.status === "CANCELLED") && (
+                      <div className="mt-2 flex items-center justify-between gap-2.5">
+                        <StatusText tone="bad">
+                          {message.status === "CANCELLED" ? "Generation cancelled" : `Generation failed · ${message.errorCode ?? "UNKNOWN"}`}
+                        </StatusText>
+                        <Button variant="ghost" size="sm" disabled={working} onClick={() => retryMessage(message.id)}>
+                          Retry prompt
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                </article>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/*
+          * The way back, offered only to a reader who has actually left the
+          * bottom -- and never over an open dialog, which owns the screen while
+          * it is up and must not have a stray control floating on the backdrop.
+          */}
+        {!pinned && !dialogOpen && (
+          <Button
+            size="sm"
+            className="absolute bottom-4 left-1/2 z-30 -translate-x-1/2 shadow-overlay"
+            onClick={jumpToLatest}
+          >
+            Jump to latest
+          </Button>
+        )}
         </div>
 
         {/* Same horizontal padding and reserved scrollbar gutter as the
             transcript above, or the composer and the messages disagree on where
             the column ends. */}
-        <div className="border-t border-border bg-surface px-[clamp(22px,6vw,84px)] pb-3.5 pt-2.5 [scrollbar-gutter:stable]">
+        <div className={COMPOSER_ZONE}>
           {error && (
-            <Alert className="mx-auto mb-2 max-w-[940px]" onDismiss={() => setError(null)}>
+            <Alert className={cn(THREAD_MEASURE, "mb-2")} onDismiss={() => setError(null)}>
               {error}
             </Alert>
           )}
           <form
-            className="mx-auto grid max-w-[940px] grid-cols-[minmax(0,1fr)_auto] items-end gap-2.5 rounded border border-border-strong bg-raised py-2 pl-3.5 pr-2 focus-within:border-accent"
+            className={cn(THREAD_MEASURE, "grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2.5 rounded border border-border-strong bg-raised py-2 pl-3.5 pr-2 focus-within:border-accent")}
             onSubmit={submit}
           >
             <div className="min-w-0">
@@ -1566,7 +1562,7 @@ export function ChatView({
               </Button>
             )}
           </form>
-          <div className="mx-auto mt-2 flex max-w-[940px] flex-wrap items-center justify-center gap-x-3 gap-y-1">
+          <div className={cn(THREAD_MEASURE, "mt-2 flex flex-wrap items-center justify-center gap-x-3 gap-y-1")}>
             <StatusText dot tone={working ? "accent" : routeReady ? "good" : "warn"}>
               {working
                 ? (currentActivity ?? "Hermes is working")
@@ -1619,6 +1615,157 @@ export function ChatView({
           </p>
         </div>
       </aside>
+
+      {/*
+        * All four of these were bare divs carrying role="dialog" and nothing
+        * else — no aria-modal, no focus trap, no Escape, no scroll lock, no
+        * focus restore. A keyboard user could tab straight out of the memory
+        * panel into the transcript behind it while a screen reader kept
+        * announcing the page as if no dialog were open. `Dialog` supplies all
+        * of it once.
+        */}
+      <Dialog
+        open={knowledgeOpen && active !== null}
+        onClose={() => setKnowledgeOpen(false)}
+        kicker="Conversation scope"
+        title="Knowledge for this conversation"
+        description={active ? knowledgeScopeSummary(active.knowledgeDocuments.length) : undefined}
+      >
+        {library === null ? (
+          <p className="m-0 text-body text-faint">Loading…</p>
+        ) : library.length === 0 ? (
+          <EmptyState title="No indexed documents yet">
+            Upload one in Knowledge and it becomes pinnable once indexing completes.
+          </EmptyState>
+        ) : (
+          <ul className="m-0 grid list-none gap-1 p-0">
+            {library.map((item) => {
+              const pinned = active?.knowledgeDocuments.some((pin) => pin.id === item.id) ?? false;
+              return (
+                <li key={item.id}>
+                  <label className="flex cursor-pointer items-center gap-3 rounded border border-border bg-raised px-3 py-2.5">
+                    <input
+                      type="checkbox"
+                      checked={pinned}
+                      disabled={working}
+                      onChange={() => void togglePinned(item.id, pinned)}
+                    />
+                    <span className="min-w-0 flex-1 truncate text-body text-text">{item.fileName}</span>
+                    <small className="shrink-0 text-micro font-semibold uppercase tabular-nums text-faint">
+                      {item.classification.toLowerCase()}
+                    </small>
+                  </label>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </Dialog>
+
+      <Dialog
+        open={skillsOpen}
+        onClose={() => setSkillsOpen(false)}
+        kicker="Runtime capability"
+        title="What this runtime can do"
+        description="Read from Hermes on the enrolled node. Nothing here is enabled by viewing it."
+      >
+        {catalogue === null ? (
+          <p className="m-0 text-body text-faint">Loading…</p>
+        ) : (
+          <div className="grid gap-4">
+            <StatusText tone={catalogue.enabledToolsets === 0 ? "warn" : "good"} className="normal-case">
+              {catalogue.enabledToolsets === 0
+                ? `All ${catalogue.toolsets.length} toolsets are disabled by the managed runtime policy. Agents answer from your documents and this conversation only.`
+                : `${catalogue.enabledToolsets} of ${catalogue.toolsets.length} toolsets are enabled by the managed runtime policy.`}
+            </StatusText>
+            <div className="grid gap-2">
+              <MicroLabel>Toolsets · {catalogue.toolsets.length}</MicroLabel>
+              <div className="flex flex-wrap gap-1.5">
+                {catalogue.toolsets.map((toolset) => (
+                  <StatusText
+                    dot
+                    key={toolset.name}
+                    tone={toolset.enabled ? "good" : "neutral"}
+                    className="rounded border border-border bg-raised px-2 py-1 normal-case"
+                  >
+                    {toolset.label ?? toolset.name}
+                  </StatusText>
+                ))}
+              </div>
+            </div>
+            <div className="grid gap-2">
+              <MicroLabel>Skills · {catalogue.skills.length}</MicroLabel>
+              <div className="flex flex-wrap gap-1.5">
+                {catalogue.skills.map((skill) => (
+                  <span
+                    className="rounded border border-border bg-raised px-2 py-1 font-mono text-caption text-muted"
+                    key={skill.name}
+                    title={skill.description ?? ""}
+                  >
+                    {skill.name}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </Dialog>
+
+      <Dialog
+        open={memoryOpen}
+        onClose={() => setMemoryOpen(false)}
+        kicker="Your data"
+        title="What agents remember about you"
+        description="Stored in this installation only. Deleting an item removes it for every agent immediately."
+      >
+        {memories === null ? (
+          <p className="m-0 text-body text-faint">Loading…</p>
+        ) : memories.length === 0 ? (
+          <EmptyState title="Nothing is stored about you">
+            Agents answer from documents and the current conversation only.
+          </EmptyState>
+        ) : (
+          <ul className="m-0 grid list-none gap-1 p-0">
+            {memories.map((item) => (
+              <li
+                className="flex items-start gap-3 rounded border border-border bg-raised px-3 py-2.5"
+                key={item.id}
+              >
+                <div className="min-w-0 flex-1">
+                  <span className="block text-body text-text">{item.content}</span>
+                  <small className="mt-1 block text-micro font-semibold uppercase tabular-nums text-faint">
+                    {item.agentProfileSlug} · {new Date(item.createdAt).toLocaleDateString()}
+                    {item.retentionUntil
+                      ? ` · expires ${new Date(item.retentionUntil).toLocaleDateString()}`
+                      : " · kept until deleted"}
+                  </small>
+                </div>
+                <Button variant="ghost" size="sm" onClick={() => void forgetMemory(item.id)}>
+                  Forget
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Dialog>
+
+      <Dialog
+        open={confirmDelete && active !== null}
+        onClose={() => setConfirmDelete(false)}
+        title="Delete this conversation?"
+        footer={
+          <>
+            <Button onClick={() => setConfirmDelete(false)}>Keep</Button>
+            <Button variant="danger" onClick={() => void removeConversation()}>
+              Delete permanently
+            </Button>
+          </>
+        }
+      >
+        <p className="m-0 text-body text-muted">
+          The transcript and its run telemetry will be removed. Audit evidence remains.
+        </p>
+      </Dialog>
     </section>
   );
 }
