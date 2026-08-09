@@ -118,6 +118,9 @@ interface StoredRunEvent {
   summary: string | null;
   status: string | null;
   toolName: string | null;
+  toolCallKey: string | null;
+  text: string | null;
+  contentOffset: number | null;
   childSessionId: string | null;
   durationMs: number | null;
   inputTokens: number | null;
@@ -329,6 +332,9 @@ function runEventDto(event: StoredRunEvent): AgentRunEvent {
     summary: event.summary,
     status: event.status,
     toolName: event.toolName,
+    toolCallKey: event.toolCallKey,
+    text: event.text,
+    contentOffset: event.contentOffset,
     childSessionId: event.childSessionId,
     durationMs: event.durationMs,
     inputTokens: event.inputTokens,

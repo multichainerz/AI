@@ -228,6 +228,18 @@ export const agentRunEventSchema = z.object({
   summary: z.string().max(1000).nullable(),
   status: z.string().max(80).nullable(),
   toolName: z.string().max(160).nullable(),
+  /*
+   * The three fields that make a run legible, matching `chat.ts`.
+   *
+   * They were added to the event log in v1.9.0 and only ever reached the
+   * chat contract, so two schemas described one table differently and the run
+   * detail screen could not group a tool call's events the way chat does --
+   * every reader of this table needs the same vocabulary or the grouping has to
+   * be reinvented per surface.
+   */
+  toolCallKey: z.string().max(200).nullable(),
+  text: z.string().nullable(),
+  contentOffset: z.number().int().nonnegative().nullable(),
   childSessionId: z.string().max(255).nullable(),
   durationMs: z.number().int().nonnegative().nullable(),
   inputTokens: z.number().int().nonnegative().nullable(),

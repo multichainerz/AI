@@ -59,7 +59,8 @@ function manager(): AgentManager {
     listRunEvents: vi.fn(async () => ({ items: [{
       id: "d1fab491-ce72-4efe-8845-4d44150849d6", runId: RUN_ID, type: "SUBAGENT_COMPLETED" as const,
       cursor: "1", delta: null, preview: null, errorCode: null, approvalId: null,
-      summary: "Bounded research completed.", status: "completed", toolName: null, childSessionId: "child-1",
+      summary: "Bounded research completed.", status: "completed", toolName: null,
+      toolCallKey: null, text: null, contentOffset: null, childSessionId: "child-1",
       durationMs: 1200, inputTokens: 20, outputTokens: 30, reasoningTokens: 5, costUsd: null, occurredAt: "2026-07-30T00:00:01.000Z",
     }] })),
     submitRun: vi.fn(async () => run),
