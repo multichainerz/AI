@@ -5,9 +5,9 @@ import type {
   DocumentMetrics,
   ToolMetrics,
 } from "@orcasynapse/contracts";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { cn } from "./ui/index.js";
-import { NodeIcon } from "./ui/relay-icons.js";
+import { GearIcon, MonitorIcon, RobotIcon, ServerIcon, StorageIcon, SyncIcon, TerminalIcon } from "./ui/relay-icons.js";
 import type { HomeLayer } from "./home-view.js";
 import type { ActiveView } from "./workspace-navigation.js";
 
@@ -32,9 +32,8 @@ import type { ActiveView } from "./workspace-navigation.js";
 interface DashboardHeroProps {
   unlocked: boolean;
   apiAvailable: boolean;
-  /** The page's own title and next step, which this panel now carries. */
+  /** The page's own title, which this panel now carries. */
   title: string;
-  nextStep: string;
   primaryLabel: string;
   onPrimary: () => void;
   onAsk: () => void;
@@ -155,11 +154,15 @@ function topology(props: DashboardHeroProps) {
   ];
 }
 
-const ACTIONS: ReadonlyArray<{ label: string; detail: string; view: ActiveView }> = [
-  { label: "Start a session", detail: "Ask a governed agent", view: "Chat" },
-  { label: "Add knowledge", detail: "Upload and index documents", view: "Documents" },
-  { label: "Agent profiles", detail: "Instructions, memory, tools", view: "Agents" },
-  { label: "Platform setup", detail: "Runtimes, models, policy", view: "Deployment" },
+/*
+ * The same drawings the rail uses for the same destinations — a tile and a nav
+ * row that lead to one place should not be illustrated two different ways.
+ */
+const ACTIONS: ReadonlyArray<{ label: string; detail: string; view: ActiveView; icon: ReactNode }> = [
+  { label: "Start a session", detail: "Ask a governed agent", view: "Chat", icon: <TerminalIcon size={17} /> },
+  { label: "Add knowledge", detail: "Upload and index documents", view: "Documents", icon: <StorageIcon size={17} /> },
+  { label: "Agent profiles", detail: "Instructions, memory, tools", view: "Agents", icon: <RobotIcon size={17} /> },
+  { label: "Platform setup", detail: "Runtimes, models, policy", view: "Deployment", icon: <ServerIcon size={17} /> },
 ];
 
 export function DashboardHero(props: DashboardHeroProps) {
@@ -186,7 +189,6 @@ export function DashboardHero(props: DashboardHeroProps) {
             <h1 className="m-0 mt-2 font-display text-[27px] font-semibold leading-[1.15] tracking-[-0.025em] text-white sm:text-[32px]">
               {props.title}
             </h1>
-            <p className="mb-0 mt-2 text-caption leading-relaxed text-white/65">{props.nextStep}</p>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-2.5">
             <span className="flex items-center gap-2 rounded-pill border border-white/15 bg-white/[0.06] px-3 py-1.5 text-micro uppercase tracking-[0.12em] text-white/75">
@@ -217,9 +219,14 @@ export function DashboardHero(props: DashboardHeroProps) {
           */}
         <div className="mt-6 rounded-lg border border-white/12 bg-white/[0.05] p-4 sm:p-5">
           <div className="flex flex-wrap items-center gap-3.5">
-            <span className="flex shrink-0 items-center gap-2 text-micro font-semibold uppercase tracking-[0.14em] text-node">
-              <NodeIcon size={15} />
-              Ask
+            {/* Session's own icon, the one the rail uses, rather than a generic
+                node glyph beside the word "ASK" — the placeholder already says
+                what the row is for, so the label was the caption on a caption. */}
+            <span
+              aria-hidden="true"
+              className="flex shrink-0 text-white/60 [&_.fill-node]:fill-current [&_.stroke-node]:stroke-current"
+            >
+              <TerminalIcon size={19} />
             </span>
             <button
               type="button"
@@ -261,20 +268,19 @@ export function DashboardHero(props: DashboardHeroProps) {
               <strong className="block font-display text-[19px] font-semibold tracking-[-0.02em] text-white">
                 Private AI control plane
               </strong>
-              <p className="mb-0 mt-1 text-caption leading-relaxed text-white/65">
-                Every answer is a governed run inside this deployment. Nothing leaves it.
-              </p>
 
               <div className="mt-4 grid grid-cols-2 gap-3">
                 {[
                   {
                     value: count(props.chatMetrics?.conversations, props.unlocked),
                     label: "Sessions",
+                    icon: <TerminalIcon size={15} />,
                     sub: since(props.chatMetrics?.windowStartedAt, props.unlocked),
                   },
                   {
                     value: count(props.documentMetrics?.total, props.unlocked),
                     label: "Documents",
+                    icon: <StorageIcon size={15} />,
                     sub: props.documentMetrics
                       ? `${props.documentMetrics.ready.toLocaleString()} indexed`
                       : "none uploaded",
@@ -284,7 +290,10 @@ export function DashboardHero(props: DashboardHeroProps) {
                     <strong className="block font-display text-[30px] font-semibold leading-none tabular-nums text-white">
                       {stat.value}
                     </strong>
-                    <span className="mt-1.5 block text-micro uppercase tracking-[0.14em] text-white/55">
+                    <span className="mt-1.5 flex items-center gap-1.5 text-micro uppercase tracking-[0.14em] text-white/55">
+                      <span aria-hidden="true" className="flex shrink-0 [&_.fill-node]:fill-current [&_.stroke-node]:stroke-current">
+                        {stat.icon}
+                      </span>
                       {stat.label}
                     </span>
                     <span className="mt-1 block truncate text-micro text-white/60">{stat.sub}</span>
@@ -296,6 +305,7 @@ export function DashboardHero(props: DashboardHeroProps) {
                 {[
                   {
                     label: "Responses",
+                    icon: <SyncIcon size={14} />,
                     value: count(props.chatMetrics?.responses, props.unlocked),
                     sub: props.chatMetrics ? `${props.chatMetrics.completed.toLocaleString()} completed` : "none yet",
                     /*
@@ -316,22 +326,30 @@ export function DashboardHero(props: DashboardHeroProps) {
                   },
                   {
                     label: "Agent profiles",
+                    icon: <RobotIcon size={14} />,
                     value: count(props.agentMetrics?.profiles, props.unlocked),
                     sub: props.agentMetrics ? `${props.agentMetrics.activeProfiles.toLocaleString()} active` : "none yet",
                   },
                   {
                     label: "Tools allowed",
+                    icon: <GearIcon size={14} />,
                     value: count(props.toolMetrics?.activeTools, props.unlocked),
                     sub: props.toolMetrics ? `${props.toolMetrics.activeGrants.toLocaleString()} grants` : "default deny",
                   },
                   {
                     label: "Avg response",
+                    icon: <MonitorIcon size={14} />,
                     value: latency(props.chatMetrics?.averageLatencyMs, props.unlocked),
                     sub: "end to end",
                   },
                 ].map((stat) => (
                   <div className="min-w-0 rounded border border-white/[0.08] px-3 py-2.5" key={stat.label}>
-                    <dt className="truncate text-micro uppercase tracking-[0.14em] text-white/55">{stat.label}</dt>
+                    <dt className="flex items-center gap-1.5 truncate text-micro uppercase tracking-[0.14em] text-white/55">
+                      <span aria-hidden="true" className="flex shrink-0 [&_.fill-node]:fill-current [&_.stroke-node]:stroke-current">
+                        {stat.icon}
+                      </span>
+                      <span className="truncate">{stat.label}</span>
+                    </dt>
                     <dd className="m-0 mt-1 truncate font-display text-[17px] font-semibold tabular-nums text-white">
                       {stat.value}
                     </dd>
@@ -360,8 +378,18 @@ export function DashboardHero(props: DashboardHeroProps) {
                   onClick={() => props.onSelect(action.view)}
                   className="group grid content-start gap-1 rounded-lg border border-white/10 bg-white/[0.035] p-3.5 text-left transition-colors hover:border-white/25 hover:bg-white/[0.07]"
                 >
-                  <span className="flex items-center justify-between gap-2">
-                    <strong className="min-w-0 truncate text-caption font-semibold text-white">{action.label}</strong>
+                  <span className="flex items-center gap-2.5">
+                    {/* The Relay set paints its "live node" accent cyan once per
+                        drawing; four of them stacked would be the loudest thing
+                        in the panel, so it is folded onto `currentColor` here
+                        exactly as the rail folds it. */}
+                    <span
+                      aria-hidden="true"
+                      className="flex shrink-0 text-white/55 transition-colors [&_.fill-node]:fill-current [&_.stroke-node]:stroke-current group-hover:text-white"
+                    >
+                      {action.icon}
+                    </span>
+                    <strong className="min-w-0 flex-1 truncate text-caption font-semibold text-white">{action.label}</strong>
                     <span aria-hidden="true" className="shrink-0 text-white/40 transition-colors group-hover:text-white">
                       <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
                         <path d="M4.2 9.8 9.8 4.2M5.2 4.2h4.6v4.6" />
@@ -385,9 +413,6 @@ export function DashboardHero(props: DashboardHeroProps) {
                 <strong className="mt-1.5 block font-display text-[19px] font-semibold tracking-[-0.02em] text-white">
                   {intact ? "Every hop is answering" : "The path is not complete"}
                 </strong>
-                <p className="mb-0 mt-1 max-w-[52ch] text-caption leading-relaxed text-white/65">
-                  A question passes through all four. Any hop that is not answering is the reason Session cannot run.
-                </p>
               </div>
               <Clock />
             </div>
