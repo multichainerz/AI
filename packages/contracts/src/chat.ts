@@ -224,6 +224,18 @@ export const chatStreamEventSchema = z.discriminatedUnion("type", [
     errorCode: z.string().min(1).max(80),
   }),
   chatStreamBaseSchema.extend({ type: z.literal("cancelled") }),
+  /*
+   * The transport gave out, not the run. Distinct from `failed`, which is the
+   * run itself reporting an error code: here the run may still be going, and
+   * the honest thing to tell a reader is that the connection stopped and can
+   * be resumed from the cursor they already hold -- not that their answer
+   * failed. It was the one frame written raw, past the validation every other
+   * frame goes through, and hand-parsed at the other end.
+   */
+  chatStreamBaseSchema.extend({
+    type: z.literal("stream_error"),
+    error: z.string().min(1).max(500),
+  }),
 ]);
 
 export type ChatConversationStatus = z.infer<typeof chatConversationStatusSchema>;

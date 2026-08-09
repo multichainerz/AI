@@ -503,19 +503,22 @@ export async function streamChatEvents(
   let buffer = "";
   let streamError: string | null = null;
   const consumeFrame = (frame: string) => {
-    const eventName = frame.split(/\r?\n/).find((line) => line.startsWith("event:"))?.slice(6).trim();
+    // The SSE `event:` line is not read: every frame carries its own `type`,
+    // and trusting one over the other is how the two could ever disagree.
     const data = frame
       .split(/\r?\n/)
       .filter((line) => line.startsWith("data:"))
       .map((line) => line.slice(5).trimStart())
       .join("\n");
     if (!data) return;
-    if (eventName === "stream_error") {
-      const value = JSON.parse(data) as { message?: unknown };
-      streamError = typeof value.message === "string" ? value.message : "The Hermes event stream failed.";
+    const event = chatStreamEventSchema.parse(JSON.parse(data) as unknown);
+    if (event.type === "stream_error") {
+      // Held rather than dispatched: the run may still be going, and the
+      // reducer has no state to change for a transport that dropped.
+      streamError = event.error;
       return;
     }
-    onEvent(chatStreamEventSchema.parse(JSON.parse(data) as unknown));
+    onEvent(event);
   };
 
   while (true) {

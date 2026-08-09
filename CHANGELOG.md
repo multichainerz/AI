@@ -5,6 +5,39 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.94.0 — 2026-08-09
+
+The frame that reports a broken stream was the one frame nobody checked.
+
+**`stream_error` bypassed the validation every other frame goes through.**
+The SSE route parses each event through `chatStreamEventSchema` before writing
+it -- except this one, which was written raw at the catch site, and read at the
+other end by a hand-rolled `JSON.parse(data) as { message?: unknown }` with a
+`typeof` guard. So the single frame whose job is to tell a reader their stream
+died was typed by assertion on both ends and described by neither. It is now a
+member of the union, emitted through the same `emit` path as everything else,
+and parsed by the schema in the browser. The payload field is `error`, matching
+the sibling `failed` member rather than colliding with `completed`, where
+`message` is an entire ChatMessage.
+
+Removing the hand-parse left the SSE `event:` line with no reader, which
+`noUnusedLocals` caught immediately: every frame already carries its own
+`type`, and preferring one of the two over the other is the only way they could
+ever have disagreed. The transport's copy is gone.
+
+`stream_error` and `failed` are now distinguishable, and deliberately not yet
+distinguished in the UI -- `failed` is the run reporting an error code, while
+`stream_error` is the transport dropping while the run may well still be going.
+Telling a reader their answer failed when the connection merely broke, and can
+be resumed from the cursor they already hold, is the wrong message; making the
+UI say so is the rest of this release series.
+
+**A reconnect no longer waits three seconds.** The event stream now sends a
+`retry: 1000` preamble, replacing the browser's default. A run resumes from
+`lastEventCursor`, so reconnecting costs one indexed query and replays nothing
+already read -- the cost of trying sooner is small, and the cost of waiting is
+an answer that appears to stop mid-sentence.
+
 ## ai-v1.93.0 — 2026-08-09
 
 `db:generate` works again, and one tool call is one object.
