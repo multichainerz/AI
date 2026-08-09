@@ -5,6 +5,34 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v2.1.0 — 2026-08-09
+
+Scrolling up during a streaming answer no longer yanks you back down.
+
+The transcript scrolled itself into view on every message change, which during a
+streaming turn is several times a second. Scrolling up to re-read something got
+you dragged back to the bottom before the sentence finished -- the single most
+irritating thing about the old chat, and entirely unrelated to how fast the
+stream was. It now follows only when the reader is already at the bottom.
+Scrolling away is the reader saying they want to be somewhere else.
+
+`scrollTop` on the container replaces `scrollIntoView` on a sentinel, because
+scrollIntoView cannot ask the question: it moves whichever ancestor happens to
+scroll and offers no way to know where the reader was first. The sentinel div is
+gone with it.
+
+The rule lives in `chat/stick-to-bottom.ts` as a pure function rather than inline
+in the effect, and that is the substance of this release rather than a tidiness
+preference. **jsdom reports every scroll metric as zero**, so a component test
+exercises exactly one case and cannot distinguish a working rule from a missing
+one -- the full suite stayed green through the entire change with nothing
+covering it. As three numbers it is testable directly: at the bottom, scrolled
+up, and either side of the 64px slack that absorbs fractional metrics and a nudge
+of the wheel. Mutating it back to an unconditional follow fails two of them.
+
+The zeroed-metrics case is asserted too, and pins to "follow", so the existing
+render tests stay meaningful instead of accidentally green.
+
 ## v2.0.0 — 2026-08-09
 
 **Why 2.0.0.** The minor digit runs 0-9 and then rolls into the major, so the
