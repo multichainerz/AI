@@ -131,9 +131,10 @@
      Measured in a browser, not reasoned about: at the old value 42 of 112 text
      nodes on a populated transcript failed, and every one of them was this
      token -- timestamps, model aliases, counts, previews, date headings. Worst
-     case against --raised is now 4.61. It is deliberately still the quietest
-     step in the ramp; it is no longer quieter than a reader can follow. */
-  --faint-rgb: 133 133 139;      /* #85858B */
+     case is now 4.53, solved against --bg, --surface, --raised and the warn
+     card's tint. It is deliberately still the quietest step in the ramp; it is
+     no longer quieter than a reader can follow. */
+  --faint-rgb: 134 134 140;      /* #86868C */
   --accent-rgb: 146 119 245;     /* #9277F5 */
   --accent-strong-rgb: 168 146 248; /* #A892F8 — hover/link emphasis */
   --onaccent-rgb: 11 11 13;      /* text on an accent fill; near-black in dark */
@@ -198,13 +199,16 @@
   --muted-rgb: 107 108 116;      /* #6B6C74 */
   /* Light-theme counterpart of the AA fix above. Worst case 4.52, measured
      against white, --raised (#F7F7F5) and the violet user bubble. */
-  --faint-rgb: 107 108 114;      /* #6B6C72 */
+  --faint-rgb: 98 98 104;        /* #626268 */
   --accent-rgb: 112 61 239;      /* #703DEF */
   --accent-strong-rgb: 91 46 219; /* #5B2EDB */
   --onaccent-rgb: 255 255 255;
   --soft-rgb: 241 236 253;       /* accent 10% over white */
   --good-rgb: 79 107 59;         /* #4F6B3B */
-  --warn-rgb: 138 108 34;        /* #8A6C22 */
+  /* Warn text lands on its own 10% tint, which in light theme is a pale
+     surface rather than a dark one -- the amber that reads clearly on #16161C
+     came to 3.40 there. Solved against both tints it sits on: worst 4.50. */
+  --warn-rgb: 112 87 27;         /* #70571B */
   --bad-rgb: 169 78 44;          /* #A94E2C */
   --node-rgb: 14 155 181;        /* #0E9BB5 */
 

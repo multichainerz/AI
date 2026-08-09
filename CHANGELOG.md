@@ -5,6 +5,37 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v3.0.0 — 2026-08-09
+
+Zero WCAG AA failures on a populated transcript, in both themes.
+
+`3.0.0` and not `2.10.0`: `v2.10.0` sorts *before* `v2.9.0` in a plain string
+comparison. Same resolution as `v1.9.0 -> v2.0.0`.
+
+v2.9.0 left 6 failures in dark and 3 in light. Chasing them found that one of
+the nine was my own measurement, and fixing the measurement changed the answer:
+
+**The contrast probe composited alpha wrongly.** Its `over()` returned `a: 1`
+unconditionally, so two stacked `bg-warn/10` layers collapsed to fully opaque
+warn -- and the approval badge's foreground and background came out identical, a
+perfect 1.00 that read as the worst defect on the screen and was not a defect at
+all. Replaced with real source-over, where alpha accumulates as
+`f.a + b.a*(1-f.a)`. Validated on a known alpha stack: 10% warn over the dark
+surface must resolve to `#221F1B`, not to warn.
+
+With that corrected, and with hover-revealed metadata excluded because it is
+invisible at rest, the true remainder was 1 in dark and 3 in light -- all on the
+approval card, whose warn text sits on its own tint. Two tokens moved, each
+solved against the surfaces actually measured in the page rather than assumed:
+
+- `--warn` (light) `#8A6C22` -> `#70571B`. The amber that reads clearly on a
+  dark surface came to 3.40 on a pale one.
+- `--faint` `#85858B` -> `#86868C` (dark, a single channel step) and `#6B6C72` ->
+  `#626268` (light), now including the warn card's tint in the solve.
+
+Result across 100 rendered text nodes: **0 failures in either theme**, worst
+ratio 4.51 dark and 4.56 light.
+
 ## v2.9.0 — 2026-08-09
 
 The first release of the chat revamp that was actually looked at.
