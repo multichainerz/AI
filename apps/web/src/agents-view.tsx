@@ -1,5 +1,6 @@
 import type { AgentMetrics, AgentProfile, AgentRun, AgentRunEvent, AgentRuntimeControl, AgentSkillReference, CreateAgentProfile } from "@orcasynapse/contracts";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { groupRuntimeEvents } from "./chat/timeline.js";
 import {
   OrcaSynapseApiError,
   cancelAgentRun,
@@ -525,27 +526,39 @@ export function AgentsView({ unlocked, administrator, activationReady, activatio
               </header>
               {runEvents.length === 0
                 ? <p className="m-0 px-3 py-4 text-body text-faint">No bounded Hermes activity events have been retained for this run.</p>
-                : <ol className="m-0 grid list-none p-0">{runEvents.map((event) => <li
+                /*
+                  * Grouped by tool call, sharing the function chat uses. Two
+                  * screens read one table, so they had better agree on what a
+                  * tool call is -- this one listed every event separately until
+                  * `toolCallKey` reached the agents contract.
+                  */
+                : <ol className="m-0 grid list-none p-0">{groupRuntimeEvents(runEvents).map((entry) => {
+                  const event = entry.events[entry.events.length - 1]!;
+                  return <li
                     className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-2.5 border-t border-border px-3 py-2.5 first:border-t-0"
-                    key={event.id}
+                    key={entry.key}
                   >
                     <span
                       aria-hidden="true"
                       className={cn(
                         "mt-1 h-1.5 w-1.5 shrink-0",
-                        event.type.includes("FAILED") ? "bg-bad" : event.type.includes("COMPLETED") ? "bg-good" : "bg-accent",
+                        entry.status === "failed" ? "bg-bad" : entry.status === "completed" ? "bg-good" : "bg-accent",
                       )}
                     />
                     <div className="min-w-0">
-                      <strong className="block text-caption font-semibold text-text">{eventTitle(event)}</strong>
+                      <strong className="block text-caption font-semibold text-text">
+                        {entry.kind === "tool" ? `Governed tool: ${entry.label}` : eventTitle(event)}
+                        {entry.events.length > 1 ? ` · ${entry.events.length} steps` : ""}
+                      </strong>
                       <p className="mb-0 mt-0.5 text-caption leading-relaxed text-muted">{eventDetail(event)}</p>
                       <small className="mt-1 block font-mono text-micro text-faint">
                         {friendlyTime(event.occurredAt)}
-                        {event.durationMs !== null ? ` · ${Math.round(event.durationMs / 100) / 10}s` : ""}
+                        {entry.durationMs !== null ? ` · ${Math.round(entry.durationMs / 100) / 10}s` : ""}
                         {event.inputTokens !== null || event.outputTokens !== null ? ` · ${(event.inputTokens ?? 0) + (event.outputTokens ?? 0)} tokens` : ""}
                       </small>
                     </div>
-                  </li>)}</ol>}
+                  </li>;
+                })}</ol>}
               {/* The list is bounded on purpose, and says so: an operator
                   reading it should not assume the omissions are absences. */}
               <footer className="border-t border-border bg-bg px-3 py-2 text-micro leading-relaxed text-faint">

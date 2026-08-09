@@ -5,6 +5,31 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## v2.5.0 — 2026-08-09
+
+Two screens read one table and now agree on what a tool call is.
+
+`toolCallKey`, `text` and `contentOffset` reached the event log in ai-v1.93.0 and
+only ever reached the *chat* contract. `agents.ts` described the same table
+without them, so the run-detail screen listed every event separately -- four rows
+for one call -- and could not have grouped them even if it wanted to, because the
+fields were not on the wire. Two contracts for one table is how a fix lands on
+one surface and silently misses the other.
+
+The three fields are now on `agentRunEventSchema`, carried through the agents API
+mapping, and the run-detail list renders through the same `groupRuntimeEvents`
+chat uses: one entry per call, its own status, a step count when there is more
+than one event, and duration from whichever event reported it.
+
+Adding the fields immediately failed `agents/routes.test.ts` on a fixture that
+did not carry them -- the type system reporting a fixture describing a run the
+API can no longer return, which is the same class of drift this release exists to
+close and the reason widening a shared schema is worth doing at the contract
+rather than per screen.
+
+This closes the last backend gap in the chat work. `maxTurns: z.literal(1)`
+remains, blocking only CHAT-R8, which is deliberately out of scope for launch.
+
 ## v2.4.0 — 2026-08-09
 
 A tool call is one thing in the activity list, not four.
