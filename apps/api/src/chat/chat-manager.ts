@@ -45,7 +45,13 @@ export interface ChatManager {
     conversationId: string,
     messageId: string,
     afterCursor: string | null,
-    emit: (event: ChatStreamEvent) => void,
+    /*
+     * Awaited by the implementation, so a consumer that cannot take the next
+     * frame yet stops the producer. Typed as widely here as it is there: the
+     * narrower `=> void` let a caller supply an emit that silently discarded
+     * backpressure while still satisfying this interface.
+     */
+    emit: (event: ChatStreamEvent) => void | Promise<void>,
     signal: AbortSignal,
   ): Promise<void>;
   cancelActiveRun(

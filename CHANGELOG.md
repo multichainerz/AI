@@ -5,6 +5,19 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.98.0 — 2026-08-09
+
+`ChatManager.subscribe` declares the emit signature its implementation actually
+has. The interface said `(event) => void` while the implementation has always
+taken `void | Promise<void>` and awaited it, which is how a streaming consumer
+tells the producer to slow down. A caller coding against the interface would
+therefore write a synchronous emit, satisfy the type, and silently discard the
+backpressure the SSE route depends on -- the interface was documenting a
+weaker contract than the only implementation provides.
+
+Closes the last file of the refuted CHAT-R3 branch; `chat-r3-refuted` is now
+fully landed across ai-v1.95.0 through ai-v1.98.0 and has been deleted.
+
 ## ai-v1.97.0 — 2026-08-09
 
 Streamed text now arrives in readable pieces rather than kilobyte lumps.
