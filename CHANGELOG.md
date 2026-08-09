@@ -5,6 +5,43 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v2.0.0 — 2026-08-09
+
+**Why 2.0.0.** The minor digit runs 0-9 and then rolls into the major, so the
+release after `v1.9.0` is this one rather than a tenth minor -- a rule worth
+keeping because `v1.10.0` sorts *before* `v1.9.0` under any lexical sort,
+including `git tag -l | sort` and the eye of anyone scanning the list. There is
+a substantive claim behind the boundary too: `v1.9.0` and this release rebuilt
+the chat read path end to end, and `listenForAgentRunWake` changed shape while
+they did.
+
+A streaming answer no longer re-parses itself on every token.
+
+`MarkdownMessage` moves out of `chat-view.tsx` into `apps/web/src/chat/`, wraps
+each parsed block in `memo`, and while a turn is in flight renders the settled
+prefix and the live tail as two blocks instead of one. React reuses the prefix
+untouched, so a delta costs the paragraph it lands in rather than the whole
+document -- previously the cost of one token grew with the length of the answer,
+which by the end of a long reply is the difference between text that flows and
+text that stutters. It is the consumer v1.9.0's `splitStableMarkdown` was
+built for.
+
+A finished turn takes the single-block path unconditionally. That is not an
+optimisation but a guarantee: completed content stays byte-identical to what one
+ReactMarkdown produced before any of this existed, which is what the transcript
+tests pin and what a reader is left looking at. There is one
+`.message-markdown` wrapper regardless of path, because every markdown element
+style is a descendant selector on that class.
+
+The streaming path had no coverage at all -- every message the transcript tests
+render is COMPLETED, so they only ever exercised a single block. Four new tests
+render mid-stream content carrying a heading, a table and a fenced block, and
+assert the elements survive the split, that a partially arrived table renders as
+one table and never as a paragraph of pipes, that completed output is identical
+across both paths, and that neither path emits an inline `style` attribute --
+the CSP closure script checks built output only, so a streaming-only leak would
+never reach it.
+
 ## v1.9.0 — 2026-08-09
 
 The chat read path rebuilt end to end, so a turn can no longer end on top of its
