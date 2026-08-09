@@ -18,6 +18,28 @@ const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
  */
 const MAX_SSE_EVENT_CHARACTERS = 512 * 1024;
 
+/*
+ * How much of an answer may pool before it is handed over.
+ *
+ * Each flush becomes one AgentRunEvent row and one cursor, so this pair sets
+ * both how smooth the answer looks and how much the database is asked to do. At
+ * 1,024 characters a reader received the answer in kilobyte lumps about ten
+ * times a second, which reads as jumpy however fast delivery is. These values
+ * are only affordable because a subscriber is now woken when the row commits
+ * rather than finding it on its next poll (ai-v1.96.0).
+ *
+ * The interval is a THRESHOLD, not a latency guarantee: it is evaluated only
+ * when a new delta arrives. If Hermes goes quiet mid-buffer nothing flushes
+ * until the next delta, the next non-delta event, or the end of the stream --
+ * exactly as before. The character bound is the one that binds on a fast
+ * producer, so it is both the dial to turn if the write rate proves too
+ * expensive and the one the test pins; the interval is deliberately not
+ * asserted, because a test that drives the clock past it would be asserting the
+ * clock rather than this.
+ */
+const DELTA_FLUSH_CHARACTERS = 256;
+const DELTA_FLUSH_INTERVAL_MS = 40;
+
 /**
  * Derived from the contract rather than restated.
  *
@@ -735,7 +757,8 @@ export class HermesClient {
           if (event.type === "MESSAGE_DELTA" && event.delta) {
             pendingDeltaEvent = event;
             pendingDelta += event.delta;
-            if (pendingDelta.length >= 1_024 || Date.now() - lastDeltaFlushAt >= 100) {
+            if (pendingDelta.length >= DELTA_FLUSH_CHARACTERS
+              || Date.now() - lastDeltaFlushAt >= DELTA_FLUSH_INTERVAL_MS) {
               await flushDelta();
             }
             continue;

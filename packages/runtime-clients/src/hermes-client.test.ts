@@ -562,6 +562,50 @@ describe("HermesClient", () => {
     expect(projected.filter(({ type }) => type === "TOOL_PROGRESS")).toHaveLength(2);
   });
 
+  it("hands the answer over in readable pieces rather than kilobyte lumps", async () => {
+    /*
+     * The character bound on delta coalescing, which is what makes streamed text
+     * look like typing instead of paste. It is asserted and the time threshold
+     * is not, deliberately: the character bound is the one that binds on a
+     * producer fast enough to matter, and a test that drove the clock past the
+     * interval would be asserting the clock.
+     *
+     * Twelve 100-character deltas, delivered with no delay, so only the
+     * character bound can fire. At 256 the buffer crosses on every third delta:
+     * four full flushes of 300 and nothing left over. At the old 1,024 the whole
+     * 1,200 characters arrive as one flush of 1,024 and a remainder -- which is
+     * the shape this exists to prevent, and what this test fails on if the
+     * constant drifts back up.
+     */
+    const chunk = "x".repeat(100);
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (let index = 0; index < 12; index += 1) {
+          controller.enqueue(new TextEncoder().encode(
+            `data: {"event":"message.delta","id":"d-${index}","delta":"${chunk}"}\n\n`,
+          ));
+        }
+        controller.close();
+      },
+    });
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(body, {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    }));
+
+    const flushes: number[] = [];
+    await new HermesClient(resolver(), fetcher).events(
+      "run_external_1",
+      (event) => { if (event.delta) flushes.push(event.delta.length); },
+      new AbortController().signal,
+    );
+
+    expect(flushes).toEqual([300, 300, 300, 300]);
+    // Nothing is dropped by coalescing: every character the runtime sent is
+    // handed over exactly once.
+    expect(flushes.reduce((total, size) => total + size, 0)).toBe(1_200);
+  });
+
   it("cannot produce the marker that ends a run's event log", () => {
     /*
      * The boundary between what a runtime reports and what the control plane

@@ -5,6 +5,32 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.97.0 — 2026-08-09
+
+Streamed text now arrives in readable pieces rather than kilobyte lumps.
+
+Delta coalescing was tuned for a reader that found rows on a 350 ms poll: hold
+1,024 characters or 100 ms, whichever comes first. A reader therefore received
+the answer in kilobyte blocks about ten times a second, which reads as jumpy
+however fast delivery is. The bounds are now 256 characters and 40 ms, which is
+only affordable because ai-v1.96.0 wakes a subscriber when the row commits
+instead of leaving it to the next poll. Each flush is one AgentRunEvent row and
+one cursor, so this pair sets both how smooth the answer looks and how much the
+database is asked to do.
+
+The constant is now pinned by a test that can fail. Twelve 100-character deltas
+delivered with no delay, so only the character bound can fire: at 256 that is
+four flushes of 300, and at the old 1,024 it is `[1100, 100]` -- the exact shape
+this exists to prevent, and the mutation this test was written against. The
+interval is deliberately not asserted: it is a threshold evaluated only when a
+new delta arrives, not a latency guarantee, and a test that drove the clock past
+it would be asserting the clock. That distinction is recorded next to the
+constants, because the previous attempt at this shipped both values unconstrained
+behind three tests that had been hardened with faked timers -- which is what
+removed them from observation in the first place.
+
+This was the last piece of the refuted CHAT-R3 branch still unlanded.
+
 ## ai-v1.96.0 — 2026-08-09
 
 Push streaming, re-landed on the read path that can now carry it. The worker
