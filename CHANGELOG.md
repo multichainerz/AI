@@ -5,6 +5,43 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## v2.0.0 — 2026-08-09
+
+**Why 2.0.0 and not 1.100.0.** The minor increment after 1.99.0 is valid semver
+and breaks nothing here, but `ai-v1.100.0` sorts *before* `ai-v1.95.0` under any
+lexical sort -- including `git tag -l | sort` and the eye of anyone scanning the
+list. Nothing in this repo sorts tags today, which makes this the cheapest moment
+to leave the 1.x line rather than the moment something starts to. There is a
+substantive claim behind it too: ai-v1.95.0 through this release rebuilt the chat
+read path end to end, and `listenForAgentRunWake` changed shape while they did.
+
+A streaming answer no longer re-parses itself on every token.
+
+`MarkdownMessage` moves out of `chat-view.tsx` into `apps/web/src/chat/`, wraps
+each parsed block in `memo`, and while a turn is in flight renders the settled
+prefix and the live tail as two blocks instead of one. React reuses the prefix
+untouched, so a delta costs the paragraph it lands in rather than the whole
+document -- previously the cost of one token grew with the length of the answer,
+which by the end of a long reply is the difference between text that flows and
+text that stutters. It is the consumer ai-v1.99.0's `splitStableMarkdown` was
+built for.
+
+A finished turn takes the single-block path unconditionally. That is not an
+optimisation but a guarantee: completed content stays byte-identical to what one
+ReactMarkdown produced before any of this existed, which is what the transcript
+tests pin and what a reader is left looking at. There is one
+`.message-markdown` wrapper regardless of path, because every markdown element
+style is a descendant selector on that class.
+
+The streaming path had no coverage at all -- every message the transcript tests
+render is COMPLETED, so they only ever exercised a single block. Four new tests
+render mid-stream content carrying a heading, a table and a fenced block, and
+assert the elements survive the split, that a partially arrived table renders as
+one table and never as a paragraph of pipes, that completed output is identical
+across both paths, and that neither path emits an inline `style` attribute --
+the CSP closure script checks built output only, so a streaming-only leak would
+never reach it.
+
 ## ai-v1.99.0 — 2026-08-09
 
 The two pure units CHAT-R4's thread rebuild rests on, built and pinned before the
