@@ -5,6 +5,31 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v2.8.0 — 2026-08-09
+
+Focus mode stops leaking onto phones.
+
+v2.6.0 collapsed the navigation rail to 76px while Chat is active. Below
+760px there is no rail to collapse: `.sidebar` becomes a fixed bottom bar with
+`padding: 7px max(10px, env(safe-area-inset-right)) ... max(10px,
+env(safe-area-inset-left))`. Every focus selector is `.app-shell--focus
+.sidebar`, two classes against that layout's one, so specificity carried them
+straight through the breakpoint no matter where they sat in the file. On a phone
+in Chat the safe-area insets were replaced by a flat 8px, and the bottom bar's
+labels were hidden -- icon-only in Chat and labelled in every other view.
+
+All eight selectors now sit inside `@media (min-width: 761px)`, the same
+breakpoint the bottom-bar layout uses.
+
+Verified against the built stylesheet rather than the source, because the
+question was whether the guard survives the build: Lightning CSS rewrites it to
+`@media (width>=761px)`, and brace-matching that block finds 8 of 8 occurrences
+of `app-shell--focus` inside it and 0 outside.
+
+No test covers this and none could without a browser -- jsdom applies no
+stylesheet, so a component test cannot tell a guarded rule from an unguarded
+one. Same class of blind spot as the scroll metrics in `stick-to-bottom`.
+
 ## v2.7.0 — 2026-08-09
 
 The last bordered card leaves the chat view.
