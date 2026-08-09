@@ -5,6 +5,24 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v4.1.0 — 2026-08-09
+
+The route into OrcaSynapse and the Dashboard now speak one visual language.
+
+Sign-in is reframed around a governed agentic harness and carries a persisted
+dark/light switch. The shared static synapse field follows that contrast choice
+across sign-in, boot, recovery, and non-Dashboard workspace views, while the
+authenticated Dashboard intentionally keeps its cleaner violet control-room
+surface. The Sivali orca mark is now the application favicon.
+
+Startup now uses a branded, reduced-motion-aware entrance instead of a transient
+lone spinner. The Dashboard itself is consolidated into one 1280×720
+readiness-first war room: six operational metrics, the next repairable
+capability, and the governed runtime path stay visible without the duplicate
+lower sections, shortcut tiles, or suggested prompts. Readiness links retain
+their exact destinations and signed-out states do not disclose subordinate
+figures.
+
 ## v4.0.0 — 2026-08-09
 
 Runtime activity can now meet the assistant text at the point where it happened.

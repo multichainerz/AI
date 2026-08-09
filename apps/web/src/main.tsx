@@ -5,6 +5,7 @@ import "./theme.js";
 import { Component, StrictMode, type ErrorInfo, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./app.js";
+import { SynapseField } from "./dashboard-hero.js";
 import "./styles.css";
 
 const root = document.getElementById("root");
@@ -32,17 +33,17 @@ class ApplicationErrorBoundary extends Component<{ children: ReactNode }, Applic
    *
    * Spelled out rather than composed from `ui/`: this renders only once React
    * has already thrown, and the module that failed may well be a sibling of
-   * those primitives. An import here would risk the recovery screen failing
-   * for the same reason the workspace did, leaving a blank page and no way
-   * back. Everything it needs is a token class plus one <img>, so the copy
-   * costs nothing and cannot fail. Class names, never `style` — `style-src
+   * those primitives. The only shared rendering element is the inert synapse
+   * drawing already loaded by the application; the recovery controls remain
+   * plain elements and token classes. Class names, never `style` — `style-src
    * 'self'` blocks inline styles, and a CSP violation here would be silent.
    */
   render() {
     if (!this.state.error) return this.props.children;
     return (
-      <main className="flex min-h-screen items-center justify-center bg-bg px-6 py-12" role="alert">
-        <div className="w-full max-w-[520px] rounded-card border border-border bg-surface p-7 shadow-card sm:p-9">
+      <main className="relative isolate flex min-h-screen items-center justify-center overflow-hidden bg-bg px-6 py-12" role="alert">
+        <SynapseField className="dashboard-synapse--error" />
+        <div className="relative z-[1] w-full max-w-[520px] rounded-card border border-border bg-surface p-7 shadow-card sm:p-9">
           <div aria-hidden="true" className="grid h-[46px] w-[46px] place-items-center rounded-pill bg-soft">
             <img src="/brand/sivali-mark.svg" alt="" width={28} height={28} className="block" />
           </div>

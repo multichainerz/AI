@@ -151,6 +151,12 @@
   --warn-rgb: 201 169 97;        /* amber #C9A961 */
   --bad-rgb: 199 127 98;         /* coral #C77F62 */
   --node-rgb: 34 211 238;        /* the cyan "live node" #22D3EE */
+  /* Synapse ink follows the surface beneath it. Dark is the attribute-free
+     default, so its network is luminous; light mode replaces both inks with
+     dark violet/teal below. Dedicated variables keep decorative contrast from
+     changing the semantic `--node` token used by controls and status UI. */
+  --synapse-link-rgb: 190 175 255;
+  --synapse-node-rgb: 34 211 238;
   --brand-rgb: 43 19 100;        /* #2B1364 — sidebar and login hero, both themes */
   --backdrop-rgb: 20 8 50;       /* overlay backdrops, used with an alpha modifier */
 
@@ -219,6 +225,8 @@
   --warn-rgb: 112 87 27;         /* #70571B */
   --bad-rgb: 169 78 44;          /* #A94E2C */
   --node-rgb: 14 155 181;        /* #0E9BB5 */
+  --synapse-link-rgb: 43 19 100;
+  --synapse-node-rgb: 0 105 128;
 
   --shadow-card: 0 1px 2px rgba(16, 20, 14, 0.04), 0 8px 24px -12px rgba(16, 20, 14, 0.1);
   --shadow-overlay: 0 24px 60px -28px rgba(20, 8, 60, 0.35);
@@ -315,11 +323,7 @@ main > * { width: min(100%, 1380px); margin-left: auto; margin-right: auto; }
  * below AA on the way.
  */
 .dashboard-hero {
-  /* The panel's field never themes, so neither may a token drawn on it.
-     `--node` shifts to a darker cyan in light mode for light surfaces, and on
-     this always-dark violet that measured 4.02:1 — the same trap `--accent`
-     fell into on the hero fill. Pinned to the dark-theme value here, the way
-     `.sidebar` pins `--accent-rgb` for the rail. */
+  /* The panel never themes, so neither may its live status-node token. */
   --node-rgb: 34 211 238;
   width: auto;
   max-width: none;
@@ -332,6 +336,352 @@ main > * { width: min(100%, 1380px); margin-left: auto; margin-right: auto; }
     rgb(var(--brand-rgb));
 }
 
+/*
+ * The shared static synapse field.
+ *
+ * Sign-in, loading, recovery, and non-Dashboard workspaces reuse this one
+ * decorative SVG. The authenticated Dashboard deliberately does not mount it.
+ * It is wholly static, so no surface pays continuous repaint cost.
+ */
+.dashboard-synapse {
+  position: absolute;
+  z-index: 0;
+  inset: -3% -6% -2%;
+  width: auto;
+  height: auto;
+  overflow: visible;
+  pointer-events: none;
+  opacity: 0.6;
+}
+.dashboard-synapse__link,
+.dashboard-synapse__highlight {
+  fill: none;
+  vector-effect: non-scaling-stroke;
+  stroke-linecap: round;
+  transition: stroke 180ms ease;
+}
+.dashboard-synapse__link {
+  stroke: rgb(var(--synapse-link-rgb) / 0.34);
+  stroke-width: 1;
+}
+.dashboard-synapse__link--faint { opacity: 0.5; }
+.dashboard-synapse__highlight {
+  stroke: rgb(var(--synapse-node-rgb) / 0.28);
+  stroke-width: 1.15;
+  stroke-dasharray: 2 22;
+}
+.dashboard-synapse__node--terminal { opacity: 0.45; }
+.dashboard-synapse__node--branch { opacity: 0.7; }
+.dashboard-synapse__node--hub { opacity: 1; }
+.dashboard-synapse__node-ring {
+  fill: none;
+  stroke: rgb(var(--synapse-link-rgb) / 0.12);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  transition: stroke 180ms ease;
+}
+.dashboard-synapse__node-halo {
+  fill: rgb(var(--synapse-node-rgb) / 0.035);
+  stroke: rgb(var(--synapse-node-rgb) / 0.2);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  transition: fill 180ms ease, stroke 180ms ease;
+}
+.dashboard-synapse__node-core {
+  fill: rgb(var(--synapse-node-rgb) / 0.82);
+  transition: fill 180ms ease;
+}
+
+/*
+ * The application entrance.
+ *
+ * The network calls continue underneath this surface; the animation is only
+ * a short visual handshake while both session probes settle. Every moving
+ * property is transform or opacity so the sequence remains composited, and
+ * reduced-motion below turns the whole construction into a brief static mark.
+ */
+.app-boot-screen {
+  --node-rgb: 34 211 238;
+  --synapse-link-rgb: 190 175 255;
+  --synapse-node-rgb: 34 211 238;
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  min-height: 100vh;
+  min-height: 100dvh;
+  place-items: center;
+  overflow: hidden;
+  color: #fff;
+  background:
+    radial-gradient(80% 70% at 50% 44%, rgb(112 61 239 / 0.3), transparent 68%),
+    radial-gradient(70% 60% at 8% 100%, rgb(34 211 238 / 0.1), transparent 62%),
+    rgb(var(--brand-rgb));
+}
+.app-boot-stage {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  justify-items: center;
+  width: min(100% - 40px, 420px);
+  text-align: center;
+}
+.app-boot-orbit {
+  position: relative;
+  display: grid;
+  width: 174px;
+  height: 174px;
+  place-items: center;
+}
+.app-boot-orbit__ring,
+.app-boot-orbit__node,
+.app-boot-mark {
+  position: absolute;
+}
+.app-boot-orbit__ring {
+  border-radius: 50%;
+  pointer-events: none;
+}
+.app-boot-orbit__ring--outer {
+  inset: 2px;
+  border: 1px dashed rgb(185 165 255 / 0.34);
+  animation: boot-orbit 7s linear infinite;
+}
+.app-boot-orbit__ring--inner {
+  inset: 22px;
+  border: 1px solid rgb(34 211 238 / 0.2);
+  border-left-color: rgb(34 211 238 / 0.72);
+  border-right-color: rgb(185 165 255 / 0.52);
+  animation: boot-orbit-reverse 4.8s linear infinite;
+}
+.app-boot-orbit__node {
+  z-index: 2;
+  width: 7px;
+  height: 7px;
+  border: 1px solid rgb(255 255 255 / 0.4);
+  border-radius: 50%;
+  background: rgb(var(--node-rgb));
+  box-shadow: 0 0 18px rgb(var(--node-rgb) / 0.72);
+}
+.app-boot-orbit__node--one {
+  top: -1px;
+  left: calc(50% - 3px);
+  transform-origin: 3px 88px;
+  animation: boot-orbit 3.2s linear infinite;
+}
+.app-boot-orbit__node--two {
+  bottom: 19px;
+  left: calc(50% - 3px);
+  width: 5px;
+  height: 5px;
+  transform-origin: 2px -66px;
+  animation: boot-orbit-reverse 4.1s linear infinite;
+}
+.app-boot-mark {
+  z-index: 3;
+  display: grid;
+  width: 92px;
+  height: 92px;
+  place-items: center;
+  border: 1px solid rgb(255 255 255 / 0.18);
+  border-radius: 26px;
+  background: rgb(255 255 255 / 0.1);
+  box-shadow: 0 24px 70px -22px rgb(8 3 32 / 0.72), 0 0 44px rgb(var(--node-rgb) / 0.08);
+  backdrop-filter: blur(8px);
+  animation: boot-mark-breathe 2.2s ease-in-out infinite;
+}
+.app-boot-mark img {
+  opacity: 0.94;
+  filter: brightness(0) invert(1) drop-shadow(0 8px 18px rgb(8 3 32 / 0.32));
+}
+.app-boot-wordmark {
+  display: grid;
+  gap: 6px;
+  margin-top: 18px;
+  animation: boot-rise 0.6s 0.08s ease-out both;
+}
+.app-boot-wordmark strong {
+  font-family: var(--display);
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  line-height: 1;
+}
+.app-boot-wordmark span {
+  color: rgb(255 255 255 / 0.58);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.app-boot-status {
+  display: grid;
+  justify-items: center;
+  gap: 11px;
+  margin-top: 30px;
+  color: rgb(255 255 255 / 0.62);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  animation: boot-rise 0.6s 0.2s ease-out both;
+}
+.app-boot-progress {
+  display: block;
+  width: 176px;
+  height: 2px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.12);
+}
+.app-boot-progress > span {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, rgb(185 165 255 / 0.68), rgb(var(--node-rgb)));
+  transform: scaleX(0);
+  transform-origin: left;
+  animation: boot-progress 1.4s cubic-bezier(0.3, 0.7, 0.2, 1) infinite;
+}
+@keyframes boot-orbit { to { transform: rotate(360deg); } }
+@keyframes boot-orbit-reverse { to { transform: rotate(-360deg); } }
+@keyframes boot-mark-breathe {
+  0%, 100% { opacity: 0.9; transform: scale(0.98); }
+  50% { opacity: 1; transform: scale(1.035); }
+}
+@keyframes boot-rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes boot-progress {
+  0% { opacity: 0; transform: scaleX(0); }
+  15% { opacity: 1; }
+  78% { opacity: 1; transform: scaleX(0.88); }
+  100% { opacity: 0; transform: scaleX(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .app-boot-orbit__ring,
+  .app-boot-orbit__node,
+  .app-boot-mark,
+  .app-boot-wordmark,
+  .app-boot-status,
+  .app-boot-progress > span {
+    animation: none;
+  }
+  .app-boot-progress > span { opacity: 0.75; transform: scaleX(1); }
+}
+
+/*
+ * The same static neural drawing continues through the rest of the product.
+ * Outside the command panel it is deliberately quieter: a fixed viewport
+ * texture behind the workspace, a violet-panel texture at the front door, and
+ * a restrained full-page field during startup or fatal recovery. Reusing the
+ * one SVG keeps density and neuron hierarchy identical without adding timers,
+ * canvas work, or another image request.
+ */
+.workspace-page--synapse {
+  position: relative;
+  isolation: isolate;
+}
+.front-page {
+  background: #101014;
+  transition: background-color 180ms ease;
+}
+.front-page__frame {
+  border: 1px solid rgb(255 255 255 / 0.08);
+  background: #16161c;
+  box-shadow: 0 36px 100px -44px rgb(0 0 0 / 0.9);
+  transition: background-color 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+}
+.front-page-theme-toggle {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 9px 4px 6px;
+  color: rgb(255 255 255 / 0.72);
+  border: 1px solid rgb(255 255 255 / 0.14);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.06);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 650;
+  transition: color 150ms ease, border-color 150ms ease, background-color 150ms ease;
+}
+.front-page-theme-toggle:hover {
+  color: #fff;
+  border-color: rgb(255 255 255 / 0.28);
+  background: rgb(255 255 255 / 0.1);
+}
+.front-page-theme-toggle__track {
+  position: relative;
+  display: block;
+  width: 34px;
+  height: 18px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: rgb(8 8 12 / 0.46);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.1);
+  transition: background-color 180ms ease;
+}
+.front-page-theme-toggle__thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 7px rgb(8 3 32 / 0.42);
+  transition: transform 180ms ease;
+}
+[data-theme="light"] .front-page {
+  background: #eff0ed;
+}
+[data-theme="light"] .front-page__frame {
+  border-color: rgb(16 16 20 / 0.1);
+  background: #fff;
+  box-shadow: 0 30px 80px -40px rgb(46 16 101 / 0.35);
+}
+[data-theme="light"] .front-page-theme-toggle__track {
+  background: rgb(34 211 238 / 0.4);
+}
+[data-theme="light"] .front-page-theme-toggle__thumb {
+  transform: translateX(16px);
+}
+[data-theme="light"] .dashboard-synapse--front-page {
+  opacity: 0.2;
+}
+.dashboard-synapse--workspace {
+  position: fixed;
+  z-index: -1;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  opacity: 0.28;
+}
+.dashboard-synapse--front-page {
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0.34;
+}
+.dashboard-synapse--boot {
+  inset: -8% -4%;
+  width: auto;
+  height: auto;
+  opacity: 0.5;
+}
+.dashboard-synapse--error {
+  inset: -6%;
+  width: 112%;
+  height: 112%;
+  opacity: 0.28;
+}
+[data-theme="light"] .dashboard-synapse--workspace,
+[data-theme="light"] .dashboard-synapse--error {
+  opacity: 0.2;
+}
+
 /* The panel sits directly under the sticky band, with nothing between them.
    The band carries 26px of bottom margin for every other screen; here the two
    surfaces are meant to read as one field, so it is cancelled at the join
@@ -340,6 +690,26 @@ main > * { width: min(100%, 1380px); margin-left: auto; margin-right: auto; }
 
 @media (max-width: 760px) {
   .dashboard-hero { margin-inline: -16px; padding-inline: 16px; }
+  .dashboard-synapse { inset-inline: -52%; opacity: 0.48; }
+  .dashboard-synapse--workspace {
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    opacity: 0.17;
+  }
+  .dashboard-synapse--front-page {
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0.27;
+  }
+  .dashboard-synapse--boot { inset-inline: -55%; }
+  .dashboard-synapse--error {
+    inset: -6% -55%;
+    width: auto;
+    height: 112%;
+    opacity: 0.17;
+  }
 }
 
 .workspace-header { position: sticky; top: 0; z-index: 40; width: auto; max-width: none; margin: 0 calc(-1 * clamp(24px, 4vw, 64px)) 26px; padding: 0 clamp(24px, 4vw, 64px); border-bottom: 1px solid var(--border); background: rgb(var(--bg-rgb) / 0.92); backdrop-filter: blur(12px); }
@@ -355,6 +725,41 @@ main > * { width: min(100%, 1380px); margin-left: auto; margin-right: auto; }
 .workspace-header--immersive {
   border-bottom-color: rgba(255, 255, 255, 0.07);
   background: rgb(var(--brand-rgb) / 0.94);
+}
+
+/*
+ * At the agreed desktop baseline the Dashboard is the viewport, not a page
+ * beneath it. The header owns its natural row and the command panel receives
+ * everything left. Shorter or narrower windows deliberately miss this query
+ * and return to document flow, so accessibility zoom and small laptops scroll
+ * instead of clipping controls.
+ */
+@media (min-width: 1280px) and (min-height: 720px) {
+  .dashboard-page {
+    display: grid;
+    height: 100dvh;
+    min-height: 0;
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: hidden;
+    padding-bottom: 0;
+  }
+  .dashboard-page > .workspace-header {
+    margin-bottom: 0;
+  }
+  .dashboard-page > .workspace-header + .dashboard-hero {
+    height: 100%;
+    min-height: 0;
+    margin-top: 0;
+    margin-bottom: 0;
+  }
+  .dashboard-hero__inner,
+  .dashboard-hero__content {
+    height: 100%;
+    min-height: 0;
+  }
+  .dashboard-hero__content {
+    grid-template-rows: auto auto auto minmax(0, 1fr);
+  }
 }
 .mobile-brand { display: none; }
 h1, h2, h3 { color: var(--text); font-family: inherit; letter-spacing: -.025em; }
@@ -813,41 +1218,5 @@ strong, output, time, td, th { font-variant-numeric: tabular-nums; }
 .anim-live { animation: live-pulse 2s ease-in-out infinite; }
 .anim-shine { animation: ask-shine 5.4s ease-in-out infinite; }
 
-/*
- * The front page's network diagram. Every moving part is a class so the
- * reduced-motion rule below can still the whole drawing at once; the SVG
- * carries no inline style, per `style-src 'self'`.
- */
-@keyframes orb-dash { to { stroke-dashoffset: -340; } }
-@keyframes orb-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-9px); } }
-@keyframes orb-scan {
-  0% { transform: translateY(0); opacity: 0; }
-  12% { opacity: 1; }
-  88% { opacity: 1; }
-  100% { transform: translateY(74px); opacity: 0; }
-}
-@keyframes orb-travel {
-  0% { transform: translateX(0); opacity: 0; }
-  12% { opacity: 1; }
-  88% { opacity: 1; }
-  100% { transform: translateX(62px); opacity: 0; }
-}
-@keyframes orb-pulse {
-  0%, 100% { opacity: 0.34; transform: scale(1); }
-  50% { opacity: 0.62; transform: scale(1.09); }
-}
-@keyframes orb-core { 0%, 100% { r: 9; opacity: 0.9; } 50% { r: 11.5; opacity: 1; } }
-@keyframes orb-spin { to { transform: rotate(360deg); } }
-@keyframes orb-blink { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
-.orb-dash { animation: orb-dash 22s linear infinite; }
-.orb-float { animation: orb-float 7s ease-in-out infinite; }
-.orb-scan { animation: orb-scan 2.6s ease-in-out infinite; }
-.orb-travel { animation: orb-travel 2.8s linear infinite; }
-.orb-travel-late { animation-delay: -1.4s; }
-.orb-pulse { animation: orb-pulse 3.4s ease-in-out infinite; transform-origin: 246px 128px; }
-.orb-core { animation: orb-core 2.2s ease-in-out infinite; }
-.orb-spin { animation: orb-spin 14s linear infinite; transform-origin: 246px 128px; }
-.orb-blink { animation: orb-blink 1.8s ease-in-out infinite; }
-.orb-blink-late { animation-delay: -0.6s; }
-.orb-blink-later { animation-delay: -1.2s; }@media (prefers-reduced-motion: reduce) {.anim-live, .anim-shine, .orb-dash, .orb-float, .orb-scan, .orb-travel, .orb-pulse, .orb-core, .orb-spin, .orb-blink { animation: none; }
+@media (prefers-reduced-motion: reduce) {.anim-live, .anim-shine { animation: none; }
 }

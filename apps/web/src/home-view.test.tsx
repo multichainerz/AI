@@ -30,8 +30,8 @@ const layers: HomeLayer[] = [
 ];
 
 const readiness = (ready: boolean): HomeReadinessCheck[] => [
-  { label: "AI Inference", detail: "Approved model serving is reachable", ready: true, action: "Deployment" },
-  { label: "Isolated agent runtime", detail: "VM2 is online and Hermes is reachable", ready: true, action: "Deployment" },
+  { label: "AI Inference", detail: "Approved model serving is reachable", ready: true, action: "Deployment", deploymentTab: "journey" },
+  { label: "Isolated agent runtime", detail: "VM2 is online and Hermes is reachable", ready: true, action: "Deployment", deploymentTab: "nodes" },
   { label: "Active Agent Profile", detail: "Create and activate an Agent Profile", ready, action: "Agents" },
 ];
 
@@ -87,14 +87,18 @@ describe("Home", () => {
     // them may show a number here.
     expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(6);
     expect(screen.queryByText("Approved model serving is reachable")).toBeNull();
-    expect(screen.getAllByText("Sign in to view current readiness")).toHaveLength(3);
-    expect(screen.getByText("awaiting the first run")).toBeTruthy();
+    expect(screen.getAllByText("Sign in to inspect readiness")).toHaveLength(3);
+    expect(screen.getAllByText("sign in to view")).toHaveLength(6);
+    expect(screen.queryByText("55 indexed")).toBeNull();
+    expect(screen.queryByText("1,249 completed")).toBeNull();
+    expect(screen.queryByText("2 active")).toBeNull();
+    expect(screen.queryByText("3 grants")).toBeNull();
     // "Locked" is the layer state; the panel says "Not readable" for the same
     // condition, because a hop reports whether it can answer, not why.
     expect(screen.getAllByText("Locked").length).toBeGreaterThan(0);
     expect(screen.getByText("Not readable")).toBeTruthy();
 
-    await user.click(screen.getAllByRole("button", { name: "Sign in" })[0]!);
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
     expect(onUnlock).toHaveBeenCalled();
     expect(onSelect).not.toHaveBeenCalled();
   });
@@ -108,9 +112,23 @@ describe("Home", () => {
      * level. The blocking step is still named on the screen, in the required
      * capabilities list, which is the surface that owns it.
      */
-    expect(screen.queryByText("Next: Create and activate an Agent Profile")).toBeNull();
+    expect(screen.getByText(/Next: Create and activate an Agent Profile\./)).toBeTruthy();
     expect(screen.getAllByText("Create and activate an Agent Profile").length).toBeGreaterThan(0);
-    expect(screen.getByText("2/3")).toBeTruthy();
+    expect(screen.getByText("2/3 ready")).toBeTruthy();
+    expect(screen.getByText("Next")).toBeTruthy();
+  });
+
+  it("keeps the dashboard to one command surface without duplicate sections or shortcuts", () => {
+    render(<HomeView {...props()} />);
+
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    expect(screen.queryByRole("heading", { name: "Three operating layers" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "One governed execution path" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Add knowledge/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Agent profiles Instructions/ })).toBeNull();
+    expect(screen.queryByText("What changed in my knowledge sources this week?")).toBeNull();
+    expect(screen.getByRole("heading", { name: "Required capabilities" })).toBeTruthy();
+    expect(screen.getAllByRole("listitem")).toHaveLength(4);
   });
 
   it("sends the primary action to the blocking step, and to Session once nothing blocks", async () => {
@@ -130,18 +148,21 @@ describe("Home", () => {
     expect(ready).toHaveBeenCalledWith("Chat");
   });
 
-  it("opens the agentic layer on the nodes tab and the rest on the journey", async () => {
-    // VM2 is enrolled under Nodes; landing an operator on the journey tab when
-    // they clicked the runtime row is the difference between one click and five.
+  it("routes each readiness repair to its exact workspace", async () => {
+    // VM2 is enrolled under Nodes; landing an operator on Journey when they
+    // clicked the runtime check is the difference between one click and five.
     const user = userEvent.setup();
     const onSelect = vi.fn();
     render(<HomeView {...props({ onSelect })} />);
 
-    await user.click(screen.getByRole("button", { name: "Configure" }));
+    await user.click(screen.getByRole("button", { name: /AI Inference/ }));
     expect(onSelect).toHaveBeenLastCalledWith("Deployment", "journey");
 
-    await user.click(screen.getAllByRole("button", { name: "Review" })[1]!);
+    await user.click(screen.getByRole("button", { name: /Isolated agent runtime/ }));
     expect(onSelect).toHaveBeenLastCalledWith("Deployment", "nodes");
+
+    await user.click(screen.getByRole("button", { name: /Active Agent Profile/ }));
+    expect(onSelect).toHaveBeenLastCalledWith("Agents");
   });
 
   it("says the control plane is offline instead of showing stale figures as live", () => {
@@ -151,7 +172,7 @@ describe("Home", () => {
 
   it("offers local sign-in once bootstrap is done but the session is not an administrator one", () => {
     /*
-     * This banner used to have a second locked arm for a pending password
+     * This masthead used to have a second locked arm for a pending password
      * change. It cannot render: `app.tsx` hands a password-change session to
      * the front page instead of the shell, so Home only ever draws while that
      * flag is false. Pinning the surviving copy is what makes deleting the
@@ -162,26 +183,35 @@ describe("Home", () => {
     expect(screen.getByText("Sign in to manage encrypted endpoints, agents, and knowledge.")).toBeTruthy();
   });
 
-  it("keeps the installer banner ahead of everything else until bootstrap completes", () => {
-    render(<HomeView {...props({ bootstrapState: "REQUIRED", unlocked: false })} />);
+  it("keeps installation ahead of everything else until bootstrap completes", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    render(<HomeView {...props({ bootstrapState: "REQUIRED", unlocked: false, onSelect })} />);
     expect(screen.getByText("Installation required")).toBeTruthy();
     expect(screen.getByText("Run the protected VM1 installer before configuring services.")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Open setup" }));
+    expect(onSelect).toHaveBeenCalledWith("Deployment", "journey");
   });
 
   it("renders no inline style, which the CSP would refuse in the built container", () => {
     expect(renderToStaticMarkup(<HomeView {...props()} />)).not.toMatch(/\sstyle=/);
   });
 
+  it("leaves the authenticated Dashboard clear of the shared synapse field", () => {
+    const { container } = render(<HomeView {...props()} />);
+
+    expect(container.querySelector("svg.dashboard-synapse")).toBeNull();
+  });
+
   it("reports what the deployment has done, not what it is ready to do", () => {
     /*
-     * The banner used to restate readiness, which the callout directly above it
-     * already carries -- the same fraction twice, in the two loudest places on
-     * the screen. It reports activity now, and states the window it covers,
-     * because "342 conversations" is not a fact until you know over what.
+     * The old banner restated readiness, so activity and its time window now
+     * live together in the shallow metric strip rather than in another card:
+     * "342 conversations" is not a fact until you know over what.
      */
     render(<HomeView {...props()} />);
 
-    expect(screen.getByText("Private AI control plane")).toBeTruthy();
+    expect(screen.getByLabelText("Operational activity")).toBeTruthy();
     expect(screen.getByText("342")).toBeTruthy();
     /*
      * The window is stated, not its spelling: `toLocaleDateString` renders
