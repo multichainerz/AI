@@ -10,9 +10,8 @@ import type {
   DocumentSummary,
 } from "@orcasynapse/contracts";
 import { applyStreamEventToConversation } from "./chat-stream-reducer.js";
+import { MarkdownMessage } from "./chat/markdown-message.js";
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
-import remarkGfm from "remark-gfm";
 import {
   OrcaSynapseApiError,
   attachChatDocument,
@@ -169,25 +168,6 @@ export function chatMessageTelemetry(message: ChatMessage): ChatTelemetryMetric[
       value: message.finishReason?.replaceAll("_", " ").toLowerCase() ?? "—",
     },
   ];
-}
-
-function MarkdownMessage({ content }: { content: string }) {
-  return (
-    <div className="message-markdown">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        urlTransform={(url) => defaultUrlTransform(url)}
-        components={{
-          a: ({ children, ...properties }) => (
-            <a {...properties} target="_blank" rel="noreferrer noopener">{children}</a>
-          ),
-          img: ({ alt }) => <span className="blocked-inline-image">[External image blocked{alt ? `: ${alt}` : ""}]</span>,
-        }}
-      >
-        {content}
-      </ReactMarkdown>
-    </div>
-  );
 }
 
 export function ChatView({
@@ -1268,7 +1248,10 @@ export function ChatView({
                   </div>
                   {message.role === "USER"
                     ? <p className="my-1 whitespace-pre-wrap break-words text-body leading-[1.6] text-text">{message.content}</p>
-                    : <MarkdownMessage content={message.content || (message.status === "PENDING" ? "Thinking…" : "No content returned.")} />}
+                    : <MarkdownMessage
+                        content={message.content || (message.status === "PENDING" ? "Thinking…" : "No content returned.")}
+                        streaming={message.status === "PENDING"}
+                      />}
                   {message.role === "ASSISTANT" && message.status === "PENDING" && (
                     <div
                       className="my-2.5 flex items-center justify-between gap-3 rounded border border-border-strong bg-raised px-3 py-2"
