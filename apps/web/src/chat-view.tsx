@@ -46,7 +46,6 @@ import {
   Input,
   LockedScreen,
   MicroLabel,
-  Panel,
   Select,
   StatusText,
   cn,
@@ -925,12 +924,21 @@ export function ChatView({
             </section>
           ))}
         </div>
-        <Panel className="mt-auto grid gap-3 p-3">
+        {/*
+          * The rail's foot was a bordered Panel wrapping a kicker, a value, a
+          * name and two further bordered boxes carrying two more uppercase
+          * kickers: three cards and three kickers inside 200px, to state three
+          * facts. A hairline and a column state them.
+          *
+          * "Choose below" also stopped being true the moment the profile picker
+          * moved into the header, which is the kind of thing a caption tells
+          * you to do long after nobody can do it.
+          */}
+        <div className="mt-auto grid gap-2.5 border-t border-border pt-3.5">
           <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-2.5">
-            <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 bg-good" />
+            <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-pill bg-good" />
             <div className="min-w-0">
-              <MicroLabel className="block text-accent">Identity mode</MicroLabel>
-              <strong className="mt-1 block truncate text-caption font-semibold text-text">
+              <strong className="block truncate text-caption font-semibold text-text">
                 {identityMode === "ENTERPRISE" ? "Enterprise Access" : "Administrator preview"}
               </strong>
               <small className="mt-0.5 block truncate text-caption text-faint">
@@ -938,22 +946,24 @@ export function ChatView({
               </small>
             </div>
           </div>
-          <dl className="m-0 grid grid-cols-2 gap-2">
-            <div className="min-w-0 rounded border border-border bg-bg p-2">
-              <dt className="text-micro font-semibold uppercase tabular-nums text-faint">Agent</dt>
-              <dd className="m-0 mt-1 truncate font-mono text-caption text-muted">{active?.profileName ?? "Choose below"}</dd>
+          <dl className="m-0 grid gap-1">
+            <div className="flex min-w-0 items-baseline justify-between gap-3">
+              <dt className="shrink-0 text-caption text-faint">Agent</dt>
+              <dd className="m-0 min-w-0 truncate text-caption text-muted">
+                {active?.profileName ?? "None selected"}
+              </dd>
             </div>
-            <div className="min-w-0 rounded border border-border bg-bg p-2">
-              <dt className="text-micro font-semibold uppercase tabular-nums text-faint">Usage</dt>
+            <div className="flex min-w-0 items-baseline justify-between gap-3">
+              <dt className="shrink-0 text-caption text-faint">Usage</dt>
               <dd
-                className="m-0 mt-1 truncate font-mono text-caption text-muted"
+                className="m-0 min-w-0 truncate font-mono text-caption tabular-nums text-muted"
                 title={conversationTotalTokens === null ? "This runtime does not report token usage." : undefined}
               >
                 {conversationTotalTokens === null ? "Not reported" : `${conversationTotalTokens.toLocaleString()} tokens`}
               </dd>
             </div>
           </dl>
-        </Panel>
+        </div>
       </aside>
 
       <div className="relative grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)_auto]">
