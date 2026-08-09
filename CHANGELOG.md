@@ -5,6 +5,56 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## v3.7.0 — 2026-08-09
+
+The Dashboard is one surface, and it launches sessions.
+
+Three things merged into the command panel, and the screen lost two rows of
+chrome in the process.
+
+**The page header is gone.** Kicker, title, next step, the control-plane pill
+and the primary action were a strip on the page background above the panel, so
+the Dashboard opened with a band of chrome and only then reached the thing worth
+looking at. They are the panel's own first line now, with the field running
+behind them. The `h1` moved with them and is still the page's only level-one
+heading.
+
+**The panel meets the band.** `.workspace-header` carries 26px of bottom margin
+for every other screen; at this one join it is cancelled, so the two surfaces
+read as a single field rather than a header and a card beneath it.
+
+**The ask bar is inside.** It was a card *below* the panel, which made starting a
+session something you did after reading the console instead of the thing the
+console is for. It is still a button drawn as a field rather than a real input —
+nothing typed there could be answered there, and an input would promise
+otherwise.
+
+### The synapse field
+
+A network at rest with signals travelling along it: eighteen edges, fourteen
+junctions, five of which fire. Authored coordinates, never generated — a
+background that re-rolls on every render is one nobody can review, and this is
+meant to be the same picture every time. Stagger comes from `nth-child` rather
+than an inline `style`, which `style-src 'self'` refuses in the container.
+`prefers-reduced-motion` stops the traffic and leaves the network visible.
+
+Measured after: **0 contrast failures across 118 nodes in both themes**, worst
+4.68 dark and 4.87 light. One honest limit: the sweep composites background
+*colours*, so it cannot see an SVG stroke passing behind translucent text. The
+strokes are 1.6px at ~9% and 85% alpha behind cards that carry their own fill,
+but that is reasoning, not measurement.
+
+### Three times the artefact was not the product
+
+Worth recording together, because they are the same mistake in three costumes.
+`v3.6.0` was verified against `dist` while the dev server served a stale
+Tailwind build. This release, the light-theme sweep first reported twelve
+failures — the transitions trap again, because the preview page I rewrote had
+dropped its `transition: none` block. Then it reported the ask placeholder at
+1.30, which for white-on-violet is impossible: the markup dump was regenerated
+*before* the fix and the stylesheet *after*, so the class no longer existed and
+the colour inherited. Every one looked like a product defect and none was.
+
 ## v3.6.0 — 2026-08-09
 
 The Dashboard opens on a command panel.

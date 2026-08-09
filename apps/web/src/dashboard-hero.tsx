@@ -7,6 +7,7 @@ import type {
 } from "@orcasynapse/contracts";
 import { useEffect, useState } from "react";
 import { cn } from "./ui/index.js";
+import { NodeIcon } from "./ui/relay-icons.js";
 import type { HomeLayer } from "./home-view.js";
 import type { ActiveView } from "./workspace-navigation.js";
 
@@ -30,6 +31,13 @@ import type { ActiveView } from "./workspace-navigation.js";
 
 interface DashboardHeroProps {
   unlocked: boolean;
+  apiAvailable: boolean;
+  /** The page's own title and next step, which this panel now carries. */
+  title: string;
+  nextStep: string;
+  primaryLabel: string;
+  onPrimary: () => void;
+  onAsk: () => void;
   healthyConnections: number;
   chatMetrics: ChatMetrics | null;
   documentMetrics: DocumentMetrics | null;
@@ -106,6 +114,73 @@ function Clock() {
   );
 }
 
+/*
+ * An authored network. Fixed coordinates, never generated: a background that
+ * re-rolls on every render cannot be reviewed, and this one is meant to be the
+ * same picture every time.
+ */
+const NODES: ReadonlyArray<readonly [number, number]> = [
+  [60, 330], [165, 190], [255, 305], [340, 95], [430, 235], [525, 350], [610, 150],
+  [705, 275], [795, 70], [865, 205], [955, 335], [1045, 125], [1125, 255], [1180, 65],
+];
+const EDGES: ReadonlyArray<readonly [number, number]> = [
+  [0, 1], [1, 2], [1, 3], [2, 4], [3, 4], [4, 5], [4, 6], [5, 7], [6, 7],
+  [6, 8], [7, 9], [8, 9], [9, 10], [9, 11], [11, 12], [10, 12], [11, 13], [12, 13],
+];
+/** The junctions that fire. Not all of them, or the field reads as a strobe. */
+const FIRING = [1, 4, 7, 9, 11];
+
+/**
+ * The field behind the panel: a network at rest with signals travelling it.
+ *
+ * What this product does, drawn — a question entering a graph of governed hops
+ * and coming back. It is decoration, so it is `aria-hidden`, it carries no
+ * information a reader needs, and `prefers-reduced-motion` stops the traffic
+ * while leaving the network visible.
+ */
+function SynapseField() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-0 -z-10 h-full w-full"
+      viewBox="0 0 1200 420"
+      preserveAspectRatio="xMidYMid slice"
+      fill="none"
+    >
+      <g>
+        {EDGES.map(([from, to]) => (
+          <line
+            className="synapse-edge"
+            key={`edge-${from}-${to}`}
+            x1={NODES[from]![0]} y1={NODES[from]![1]}
+            x2={NODES[to]![0]} y2={NODES[to]![1]}
+          />
+        ))}
+      </g>
+      <g>
+        {EDGES.map(([from, to]) => (
+          <line
+            className="synapse-signal"
+            key={`signal-${from}-${to}`}
+            x1={NODES[from]![0]} y1={NODES[from]![1]}
+            x2={NODES[to]![0]} y2={NODES[to]![1]}
+          />
+        ))}
+      </g>
+      <g>
+        {FIRING.map((index) => (
+          <circle className="synapse-halo" key={`halo-${index}`} cx={NODES[index]![0]} cy={NODES[index]![1]} r={11} />
+        ))}
+      </g>
+      <g>
+        {NODES.map(([x, y], index) => (
+          <circle className="synapse-node" key={`node-${x}-${y}`} cx={x} cy={y} r={FIRING.includes(index) ? 3.4 : 2.2} />
+        ))}
+      </g>
+    </svg>
+  );
+}
+
 /** The four hops a governed answer passes through, each with its real state. */
 function topology(props: DashboardHeroProps) {
   const layerState = (key: HomeLayer["key"]) => props.layers.find((layer) => layer.key === key)?.state;
@@ -160,10 +235,95 @@ export function DashboardHero(props: DashboardHeroProps) {
 
   return (
     <section className="dashboard-hero" aria-label="Deployment command panel">
-      <div className="relative isolate overflow-hidden py-7">
+      <div className="relative isolate overflow-hidden pb-8 pt-7">
         <span aria-hidden="true" className="dashboard-hero-grid pointer-events-none absolute inset-0 -z-10" />
+        <SynapseField />
 
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,360px)_minmax(0,1fr)]">
+        {/*
+          * The masthead, absorbed.
+          *
+          * It was a separate `PageHeader` above the panel -- a strip of title
+          * and buttons on the page background, so the screen opened with a band
+          * of chrome and only then reached the thing worth looking at. Inside,
+          * it is the panel's own first line and the field runs behind it.
+          */}
+        <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-4">
+          <div className="min-w-0 max-w-[62ch]">
+            <span className="block text-micro uppercase tracking-[0.18em] text-white/55">
+              OrcaSynapse control center
+            </span>
+            <h1 className="m-0 mt-2 font-display text-[27px] font-semibold leading-[1.15] tracking-[-0.025em] text-white sm:text-[32px]">
+              {props.title}
+            </h1>
+            <p className="mb-0 mt-2 text-caption leading-relaxed text-white/65">{props.nextStep}</p>
+          </div>
+          <div className="flex shrink-0 flex-wrap items-center gap-2.5">
+            <span className="flex items-center gap-2 rounded-pill border border-white/15 bg-white/[0.06] px-3 py-1.5 text-micro uppercase tracking-[0.12em] text-white/75">
+              <span
+                aria-hidden="true"
+                className={cn("h-1.5 w-1.5 rounded-pill", props.apiAvailable ? "bg-node" : "bg-bad")}
+              />
+              {props.apiAvailable ? "Control plane online" : "Control plane offline"}
+            </span>
+            <button
+              type="button"
+              onClick={props.onPrimary}
+              className="rounded-pill bg-white px-4 py-2 text-caption font-semibold text-[#2B1364] transition-colors hover:bg-white/90"
+            >
+              {props.primaryLabel}
+            </button>
+          </div>
+        </div>
+
+        {/*
+          * The launch bar.
+          *
+          * It was a card below the panel, which made starting a session
+          * something you did *after* reading the console rather than the thing
+          * the console is for. It is a button drawn as a field, not an input:
+          * nothing typed here could be answered here, and a real input would
+          * promise otherwise.
+          */}
+        <div className="mt-6 rounded-lg border border-white/12 bg-white/[0.05] p-4 sm:p-5">
+          <div className="flex flex-wrap items-center gap-3.5">
+            <span className="flex shrink-0 items-center gap-2 text-micro font-semibold uppercase tracking-[0.14em] text-node">
+              <NodeIcon size={15} />
+              Ask
+            </span>
+            <button
+              type="button"
+              onClick={props.onAsk}
+              className="min-w-[220px] flex-1 border-b-[1.5px] border-white/20 pb-2 text-left text-[17px] tracking-[-0.01em] text-white/65 transition-colors hover:border-node hover:text-white/80"
+            >
+              Ask about your documents, agents, and operations…
+            </button>
+            <button
+              type="button"
+              onClick={props.onAsk}
+              className="shrink-0 rounded-pill bg-accent-fill px-4 py-2 text-caption font-semibold text-white transition-colors hover:bg-accent-strong hover:text-[#2B1364]"
+            >
+              Start a session
+            </button>
+          </div>
+          <div className="mt-3.5 flex flex-wrap items-center gap-2.5 sm:pl-[52px]">
+            {[
+              "What changed in my knowledge sources this week?",
+              "Which services need attention?",
+              "Summarise the latest agent runs",
+            ].map((suggestion) => (
+              <button
+                key={suggestion}
+                type="button"
+                onClick={props.onAsk}
+                className="rounded-pill border border-white/15 px-3.5 py-1.5 text-caption text-white/65 transition-colors hover:border-node hover:text-white"
+              >
+                {suggestion}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,360px)_minmax(0,1fr)]">
           {/* Identity and figures */}
           <div className="grid content-start gap-4">
             <div className="rounded-lg border border-white/10 bg-white/[0.045] p-5">

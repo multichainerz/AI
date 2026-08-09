@@ -5,9 +5,8 @@ import type {
   DocumentMetrics,
   ToolMetrics,
 } from "@orcasynapse/contracts";
-import { Button, MicroLabel, PageHeader, Panel, PanelHeading, StatusText, Tile, cn, toneFor } from "./ui/index.js";
+import { Button, MicroLabel, Panel, PanelHeading, StatusText, Tile, cn, toneFor } from "./ui/index.js";
 import { DashboardHero } from "./dashboard-hero.js";
-import { NodeIcon } from "./ui/relay-icons.js";
 import type { ActiveView } from "./workspace-navigation.js";
 
 /**
@@ -99,29 +98,6 @@ export function HomeView(props: HomeViewProps) {
 
   return (
     <>
-      <PageHeader
-        kicker="OrcaSynapse control center"
-        title={allReady && props.unlocked ? "Your agentic workspace is ready" : "Finish your private AI workspace"}
-        description={
-          next && props.unlocked
-            ? `Next: ${next.detail}`
-            : "Chat with governed Hermes agents, add durable knowledge, and operate the complete on-prem system from one place."
-        }
-        actions={
-          <>
-            <StatusText dot tone={props.apiAvailable ? "good" : "bad"} className="h-9 items-center border border-border bg-surface px-3">
-              {props.apiAvailable ? "Control plane online" : "Control plane offline"}
-            </StatusText>
-            <Button
-              variant="primary"
-              onClick={() => props.onSelect(allReady ? "Chat" : (next?.action ?? "Deployment"))}
-            >
-              {allReady ? "Open Session" : "Continue setup"}
-            </Button>
-          </>
-        }
-      />
-
       {/*
         * The command panel, full-bleed and first.
         *
@@ -132,6 +108,16 @@ export function HomeView(props: HomeViewProps) {
         */}
       <DashboardHero
         unlocked={props.unlocked}
+        apiAvailable={props.apiAvailable}
+        title={allReady && props.unlocked ? "Your agentic workspace is ready" : "Finish your private AI workspace"}
+        nextStep={
+          next && props.unlocked
+            ? `Next: ${next.detail}`
+            : "Ask governed Hermes agents, add durable knowledge, and operate the complete on-prem system from one place."
+        }
+        primaryLabel={allReady ? "Open Session" : "Continue setup"}
+        onPrimary={() => props.onSelect(allReady ? "Chat" : (next?.action ?? "Deployment"))}
+        onAsk={() => open("Chat")}
         healthyConnections={props.healthyConnections}
         chatMetrics={props.chatMetrics}
         documentMetrics={props.documentMetrics}
@@ -173,43 +159,6 @@ export function HomeView(props: HomeViewProps) {
       </Panel>
 
 
-      {/*
-        * The design's ask surface, serving as the doorway into Chat: the whole
-        * panel is one launcher, so the "input" is a button drawn in the ask
-        * style rather than a field pretending a question could be answered
-        * here. The shine sweep and suggestion chips come with it.
-        */}
-      <Panel className="relative mb-7 overflow-hidden p-5 sm:p-6">
-        <span aria-hidden="true" className="anim-shine pointer-events-none absolute inset-y-0 w-2/5 bg-gradient-to-r from-transparent via-soft to-transparent" />
-        <div className="relative flex flex-wrap items-center gap-4">
-          <span className="flex shrink-0 items-center gap-2 text-micro font-semibold uppercase tracking-[0.08em] text-accent">
-            <NodeIcon size={15} />
-            Ask
-          </span>
-          <button
-            type="button"
-            className="min-w-[220px] flex-1 border-b-[1.5px] border-border pb-2 text-left text-[17px] tracking-[-0.01em] text-faint transition-colors hover:border-accent hover:text-muted"
-            onClick={() => open("Chat")}
-          >
-            Ask about your documents, agents, and operations…
-          </button>
-          <Button variant="primary" className="shrink-0" onClick={() => open("Chat")}>
-            Start a conversation
-          </Button>
-        </div>
-        <div className="relative mt-3.5 flex flex-wrap items-center gap-2.5 sm:pl-[52px]">
-          {["What changed in my knowledge sources this week?", "Which services need attention?", "Summarise the latest agent runs"].map((suggestion) => (
-            <button
-              key={suggestion}
-              type="button"
-              className="rounded-pill border border-border px-3.5 py-1.5 text-caption text-muted transition-colors hover:border-accent hover:text-accent"
-              onClick={() => open("Chat")}
-            >
-              {suggestion}
-            </button>
-          ))}
-        </div>
-      </Panel>
 
       <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.85fr)]">
         <Panel>
