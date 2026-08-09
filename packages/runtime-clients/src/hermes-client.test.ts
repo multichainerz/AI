@@ -1,6 +1,7 @@
+import { isAgentRunEndedEventType } from "@orcasynapse/contracts";
 import { describe, expect, it, vi } from "vitest";
 import type { DrizzleRuntimeConnectionResolver } from "./connection-resolver.js";
-import { HermesClient } from "./hermes-client.js";
+import { HermesClient, SAFE_EVENT_TYPES } from "./hermes-client.js";
 
 function resolver(configuration: Record<string, unknown> = {}): DrizzleRuntimeConnectionResolver {
   return {
@@ -559,5 +560,25 @@ describe("HermesClient", () => {
     // Exactly one start for one call, whatever the runtime spelled its progress.
     expect(projected.filter(({ type }) => type === "TOOL_STARTED")).toHaveLength(1);
     expect(projected.filter(({ type }) => type === "TOOL_PROGRESS")).toHaveLength(2);
+  });
+
+  it("cannot produce the marker that ends a run's event log", () => {
+    /*
+     * The boundary between what a runtime reports and what the control plane
+     * concludes.
+     *
+     * A chat subscriber ends its turn on RUN_ENDED and on nothing else, and
+     * that marker is written in the same transaction that finalises the run --
+     * after the answer is stored. Hermes announces its own view of a run ending
+     * much earlier, while the message row is still PENDING. If any name here
+     * mapped to the marker, a reader would close on that announcement and hand
+     * the user an empty answer.
+     *
+     * Every mapping, not a sample: this is cheap to check and expensive to
+     * discover any other way.
+     */
+    for (const [name, type] of SAFE_EVENT_TYPES) {
+      expect(isAgentRunEndedEventType(type), `${name} must not map to the marker`).toBe(false);
+    }
   });
 });

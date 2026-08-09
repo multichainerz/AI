@@ -61,10 +61,47 @@ export const AGENT_RUN_EVENT_TYPES = [
   "SUBAGENT_STARTED",
   "SUBAGENT_COMPLETED",
   "APPROVAL_REQUIRED",
+  /*
+   * Reported by Hermes, and only ever advisory.
+   *
+   * Hermes announces its own view of a run ending, but it says so on its event
+   * stream while OrcaSynapse has not finalised anything yet: the message row is
+   * still PENDING and the answer is not stored. These are timeline entries, not
+   * the end of a turn -- see RUN_ENDED below for the difference.
+   */
   "RUN_COMPLETED",
   "RUN_FAILED",
   "RUN_CANCELLED",
+  /*
+   * The marker, written by whoever finalises the run, inside the same
+   * transaction that flips `AgentRun.status`.
+   *
+   * A subscriber ends its stream on this and on nothing else. That is what
+   * makes "the run ended" a fact in the log rather than something a reader has
+   * to learn from a second query it cannot order against the first -- and
+   * everything before the marker is, by construction, already delivered.
+   *
+   * It is deliberately one name rather than one per outcome, and deliberately
+   * a name Hermes has no mapping for: `AGENT_RUN_EVENT_TYPES` has to hold both
+   * what the runtime reports and what the control plane concludes, and a marker
+   * a runtime can also emit is a marker that ends turns early. Which outcome it
+   * was lives in the row's `status`.
+   */
+  "RUN_ENDED",
 ] as const;
+
+/**
+ * The one event type that ends a subscriber's stream.
+ *
+ * Guarded by a test asserting no Hermes event name maps to it. If that ever
+ * becomes false, a runtime could end a turn before the answer is stored.
+ */
+export const AGENT_RUN_ENDED_EVENT_TYPE = "RUN_ENDED";
+
+/** Whether `type` is the marker, and so ends a subscriber's stream. */
+export function isAgentRunEndedEventType(type: string): boolean {
+  return type === AGENT_RUN_ENDED_EVENT_TYPE;
+}
 export const AGENT_RUN_APPROVAL_STATUSES = [
   "PENDING",
   "APPROVED",

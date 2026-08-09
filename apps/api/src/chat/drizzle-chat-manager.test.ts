@@ -624,4 +624,76 @@ describe("DrizzleChatManager event subscription", () => {
     // Just the opening `started` frame: everything after it waits its turn.
     expect(producedWhileBlocked).toBe(1);
   });
+
+  it("delivers an event that commits between the drain and the outcome", async () => {
+    /*
+     * The loop used to drain events, then read the run row in a second
+     * statement, and close the stream on a terminal status without looking
+     * again. Nothing orders those two statements against a writer, so anything
+     * committing between them was delivered to nobody and the turn ended on top
+     * of it. It stayed rare only because the loop woke on a timer unrelated to
+     * when the worker wrote; the moment anything aligns the two -- a wake
+     * channel, a slow query, a loaded host -- it becomes the normal case.
+     *
+     * `emit` is the injection point because it runs inside the loop, at exactly
+     * the spot a concurrent commit would land.
+     */
+    const profileId = await seedActiveProfile();
+    const created = await manager().create(principal, { profileId } as never);
+    const submission = await manager().submitMessage(principal, created.id, "Race this");
+    const runId = submission.assistantMessage.agentRunId!;
+    await context.database.insert(agentRunEvent).values({ runId, type: "MESSAGE_DELTA", delta: "first" });
+
+    let injected = false;
+    const received: ChatStreamEvent[] = [];
+    await manager().subscribe(principal, created.id, submission.assistantMessage.id, null, async (event) => {
+      received.push(event);
+      if (event.type !== "delta" || injected) return;
+      injected = true;
+      // One transaction, the way the finaliser writes it: the trailing event
+      // and the outcome become visible at the same instant.
+      await context.database.transaction(async (transaction) => {
+        await transaction.insert(agentRunEvent).values({ runId, type: "MESSAGE_DELTA", delta: "second" });
+        await transaction.update(agentRun)
+          .set({ status: "COMPLETED", completedAt: new Date() })
+          .where(eq(agentRun.id, runId));
+        await transaction.insert(agentRunEvent)
+          .values({ runId, type: "RUN_ENDED", status: "COMPLETED", summary: "The run completed." });
+      });
+    }, new AbortController().signal);
+
+    expect(received.filter((event) => event.type === "delta").map((event) => event.delta)).toEqual(["first", "second"]);
+    expect(received.at(-1)?.type).toBe("completed");
+  });
+
+  it("ends the stream on the log's marker, not on the run row", async () => {
+    /*
+     * The two disagree here on purpose. The marker sits in cursor order behind
+     * every event this reader has been handed; the run row sits outside that
+     * order entirely, so it can only ever be a hint. Whichever one the loop
+     * trusts is the difference between a turn that cannot end early and one
+     * that can.
+     */
+    const profileId = await seedActiveProfile();
+    const created = await manager().create(principal, { profileId } as never);
+    const submission = await manager().submitMessage(principal, created.id, "Answer this");
+    const runId = submission.assistantMessage.agentRunId!;
+    await context.database.insert(agentRunEvent).values([
+      { runId, type: "MESSAGE_DELTA", delta: "answer" },
+      { runId, type: "RUN_ENDED", status: "COMPLETED", summary: "The run completed." },
+    ]);
+    await context.database.update(agentRun)
+      .set({ status: "FAILED", failureCode: "SHOULD_NOT_BE_READ", failureMessage: "The run row must lose." })
+      .where(eq(agentRun.id, runId));
+
+    const received: ChatStreamEvent[] = [];
+    await manager().subscribe(principal, created.id, submission.assistantMessage.id, null, (event) => {
+      received.push(event);
+    }, new AbortController().signal);
+
+    expect(received.at(-1)?.type).toBe("completed");
+    // The marker is what ends the turn, not something the timeline renders: a
+    // card reading "the run ended" directly above the answer is noise.
+    expect(received.filter((event) => event.type === "activity")).toEqual([]);
+  });
 });

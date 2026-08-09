@@ -1,4 +1,4 @@
-import { agentCapabilitySchema, DEFAULT_MEMORY_POLICY, effectiveMemoryMode, knowledgeSourceSchema, type AgentMemoryMode, type AgentRunJobPayload, type KnowledgeSource, type MemoryProfileScope } from "@orcasynapse/contracts";
+import { agentCapabilitySchema, AGENT_RUN_ENDED_EVENT_TYPE, DEFAULT_MEMORY_POLICY, effectiveMemoryMode, knowledgeSourceSchema, type AgentMemoryMode, type AgentRunJobPayload, type KnowledgeSource, type MemoryProfileScope } from "@orcasynapse/contracts";
 import { and, desc, eq, inArray, isNotNull, isNull, lt, ne, or, sql } from "drizzle-orm";
 import {
   agentProfile,
@@ -39,9 +39,19 @@ const PROFILE_CHARACTER_LIMIT = 1_200;
 const SUPERSESSION_CANDIDATES = 8;
 const SUPERSESSION_FLOOR = 0.25;
 
+/** A transaction opened from the database handle. */
+type TransactionExecutor = Parameters<Parameters<OrcaSynapseDatabase["transaction"]>[0]>[0];
+
 const ACTIVE_HERMES_STATUSES = new Set(["queued", "started", "running", "stopping"]);
 // The events that belong to one tool call and therefore need a shared key.
 const TOOL_LIFECYCLE = new Set(["TOOL_STARTED", "TOOL_PROGRESS", "TOOL_COMPLETED", "TOOL_FAILED"]);
+// How long a completing run waits for its event stream to end on its own before
+// the stream is aborted. Hermes has already reported the outcome by then, so
+// this is the tail of the activity log flushing, not new work starting -- and a
+// runtime that closes its stream promptly never spends any of it. Deliberately
+// short: it sits directly in front of the frame that ends the turn in the
+// browser, so anything generous here is latency a reader can see.
+const EVENT_STREAM_DRAIN_GRACE_MS = 250;
 const PROCESSOR_LEASE_MS = 90_000;
 const PROCESSOR_LEASE_RENEW_MS = 30_000;
 
@@ -552,6 +562,34 @@ export class DrizzleAgentProcessor {
 
     let eventController: AbortController | null = null;
     let eventStream: Promise<void> | null = null;
+    /*
+     * Ends the event stream and waits for its last write to commit.
+     *
+     * Every terminal transition below runs after this, and that ordering is the
+     * point. The stream and the finaliser are two writers to one run's event
+     * log: `cursor` is a bigserial claimed at INSERT and made visible at
+     * COMMIT, so a terminal row committing while an event row is still in
+     * flight leaves that event permanently below a cursor the reader has
+     * already passed. Draining first makes the log single-writer at the only
+     * moment it matters, which is what lets a subscriber treat cursor order as
+     * commit order -- see the same hazard documented in
+     * 0026_audit_forwarding_cursor.sql, where nothing serialises the writers
+     * and the read has to defend itself instead.
+     *
+     * `graceMs` is for the outcomes Hermes has already reported, where the
+     * stream is about to end on its own and aborting it would throw away the
+     * last few activity rows of a turn that succeeded. Cancellation, denial and
+     * timeout are aborts by nature and pass nothing.
+     */
+    const drainEvents = async (graceMs = 0): Promise<void> => {
+      if (eventStream && graceMs > 0) {
+        await Promise.race([eventStream.catch(() => undefined), sleep(graceMs)]);
+      }
+      eventController?.abort();
+      await eventStream?.catch(() => undefined);
+      eventController = null;
+      eventStream = null;
+    };
     let externalRunId = original.externalRunId;
     try {
       let run = await this.load(original.id);
@@ -670,12 +708,14 @@ export class DrizzleAgentProcessor {
         if (!run) return { skipped: true, reason: "run-removed" };
         if (run.status === "CANCEL_REQUESTED") {
           await this.hermes.stop(externalRunId).catch(() => undefined);
+          await drainEvents();
           await this.finish(run.id, "CANCELLED", "CANCELLED_BY_USER", "The run was cancelled.", workerId);
           return { runId: run.id, status: "CANCELLED" };
         }
         const revoked = await this.boundaryState(run);
         if (revoked) {
           await this.hermes.stop(externalRunId).catch(() => undefined);
+          await drainEvents();
           await this.finish(run.id, "DENIED", revoked.code, revoked.message, workerId);
           return { runId: run.id, status: "DENIED" };
         }
@@ -692,6 +732,7 @@ export class DrizzleAgentProcessor {
               ? null
               : (state.inputTokens ?? 0) + (state.outputTokens ?? 0) + (state.reasoningTokens ?? 0)
           );
+          await drainEvents(EVENT_STREAM_DRAIN_GRACE_MS);
           await this.database.transaction(async (transaction) => {
             const completedAt = new Date();
             const completed = await transaction
@@ -753,12 +794,17 @@ export class DrizzleAgentProcessor {
               outcome: "SUCCESS",
               metadata: { externalRunId, profileVersion: run!.profileVersion },
             });
+
+            await this.recordTerminalEvent(
+              transaction, run!.id, "COMPLETED", completedAt, "The run completed.", null,
+            );
           });
           await this.rememberTurn(run, completedOutput, workerId);
           return { runId: run.id, status: "COMPLETED" };
         }
         if (state.status === "failed") throw new Error(state.error ?? "Hermes reported that the run failed.");
         if (state.status === "cancelled") {
+          await drainEvents();
           await this.finish(run.id, "CANCELLED", "HERMES_CANCELLED", "Hermes cancelled the run.", workerId);
           return { runId: run.id, status: "CANCELLED" };
         }
@@ -772,6 +818,7 @@ export class DrizzleAgentProcessor {
         await sleep(pollMs);
       }
       await this.hermes.stop(externalRunId).catch(() => undefined);
+      await drainEvents();
       await this.finish(original.id, "TIMED_OUT", "RUN_TIMEOUT", "The configured agent timeout elapsed.", workerId);
       return { runId: original.id, status: "TIMED_OUT" };
     } catch (error) {
@@ -779,6 +826,7 @@ export class DrizzleAgentProcessor {
         return { skipped: true, reason: "lease-lost" };
       }
       if (externalRunId) await this.hermes.stop(externalRunId).catch(() => undefined);
+      await drainEvents();
       const message = safeFailure(error);
       await this.finish(original.id, "FAILED", "HERMES_EXECUTION_FAILED", message, workerId);
       return { runId: original.id, status: "FAILED", error: message };
@@ -1348,6 +1396,46 @@ export class DrizzleAgentProcessor {
     }
   }
 
+  /**
+   * Writes the marker that ends a subscriber's stream, inside the caller's
+   * transaction.
+   *
+   * A run's outcome used to live only in `AgentRun.status`, which a subscriber
+   * had to learn from a second statement it could not order against its event
+   * query -- so an event committing between the two reached nobody, and the
+   * stream closed on top of it. Recording the outcome as the log's last row
+   * makes that ordering the log's own: whatever a reader drained before this
+   * row is everything that happened, by construction rather than by timing.
+   *
+   * It must stay in the same transaction as the status change. Split apart,
+   * the two become visible at different instants and the gap comes straight
+   * back.
+   */
+  private async recordTerminalEvent(
+    transaction: TransactionExecutor,
+    runId: string,
+    status: "COMPLETED" | "FAILED" | "CANCELLED" | "TIMED_OUT" | "DENIED",
+    occurredAt: Date,
+    summary: string,
+    errorCode: string | null,
+  ): Promise<void> {
+    // Read back rather than passed in: on the completing path `partialOutput`
+    // was set to the final answer earlier in this same transaction, so this is
+    // the end of the text in both cases and neither caller has to know that.
+    const [streamed] = await transaction.execute<{ offset: string }>(sql`
+      SELECT char_length("partialOutput") AS "offset" FROM "AgentRun" WHERE "id" = ${runId}::uuid
+    `).then((result) => result.rows);
+    await transaction.insert(agentRunEvent).values({
+      runId,
+      type: AGENT_RUN_ENDED_EVENT_TYPE,
+      summary: summary.slice(0, 1_000),
+      status,
+      errorCode,
+      contentOffset: streamed ? Number(streamed.offset) : null,
+      occurredAt,
+    });
+  }
+
   private async finish(
     runId: string,
     status: "FAILED" | "CANCELLED" | "TIMED_OUT" | "DENIED",
@@ -1408,6 +1496,8 @@ export class DrizzleAgentProcessor {
         outcome: status === "CANCELLED" ? "SUCCESS" : "FAILURE",
         metadata: { failureCode, failureMessage: failureMessage.slice(0, 500) },
       });
+
+      await this.recordTerminalEvent(transaction, runId, status, completedAt, failureMessage, failureCode);
     });
   }
 }

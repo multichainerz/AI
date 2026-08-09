@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  isAgentRunEndedEventType,
   knowledgeSourceSchema,
   type AgentRunApproval,
   type ChatConversation,
@@ -47,6 +48,18 @@ import {
 
 const STALE_PENDING_AFTER_MS = 65 * 60 * 1_000;
 const RUN_POLL_INTERVAL_MS = 350;
+/**
+ * Floor between two reads of the run row on one stream.
+ *
+ * The run row no longer ends a stream -- the log's terminal marker does -- so
+ * this statement is now only for the intermediate states a turn passes through.
+ * Those do not need to be seen any sooner than they used to be, and holding the
+ * read to the old cadence keeps a loop that runs faster than the poll interval
+ * from multiplying it.
+ */
+const RUN_STATUS_INTERVAL_MS = 350;
+/** The statuses from which a run never leaves. */
+const TERMINAL_RUN_STATUSES = new Set(["COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT", "DENIED"]);
 
 interface StoredRunEvent {
   id: string;
@@ -764,6 +777,61 @@ export class DrizzleChatManager implements ChatManager {
     const runId = linked.agentRunId;
     let cursor = afterCursor && /^\d+$/.test(afterCursor) ? BigInt(afterCursor) : 0n;
     let previousStatus: string | null = null;
+    /*
+     * Set when the drain reaches the log's terminal marker, which is the only
+     * thing that ends this stream.
+     *
+     * The outcome used to be read from `AgentRun.status` in a second statement,
+     * which cannot be ordered against the events query above it: an event
+     * committing between the two reached nobody, and the terminal frame closed
+     * the stream on top of it. Ending on a row *in* the log makes that
+     * unrepresentable -- everything before the marker was drained by the same
+     * query that found it.
+     */
+    let terminal: typeof agentRunEvent.$inferSelect | null = null;
+    /*
+     * One extra pass for a run whose status is terminal but whose log has no
+     * marker, which is how every run finalised before the marker existed looks.
+     * The marker is written in the transaction that sets the status, so if it
+     * exists it is visible by the next drain; one pass settles it, and the flag
+     * is what stops the question being asked forever.
+     */
+    let reconciled = false;
+    let statusReadAt = 0;
+    /**
+     * The frame that ends the turn, from whichever source established it.
+     *
+     * `cursor` is the last event actually handed over -- never the run's own
+     * high-water mark. The browser stores every frame's cursor as the point it
+     * will reconnect from, and the run can be ahead of this loop, so
+     * advertising the run's mark would move a reader's resume point past deltas
+     * it never received.
+     */
+    const emitOutcome = async (
+      status: string,
+      errorCode: string | null,
+      failureMessage: string | null,
+    ): Promise<void> => {
+      const [message] = await this.loadMessages(eq(chatMessage.id, messageId));
+      if (!message) throw new ChatMessageNotFoundError();
+      const terminalCursor = cursor === 0n ? null : cursor.toString();
+      if (status === "COMPLETED") {
+        await emit({ type: "completed", conversationId, messageId, cursor: terminalCursor, message: messageDto(message) });
+        return;
+      }
+      if (status === "CANCELLED") {
+        await emit({ type: "cancelled", conversationId, messageId, cursor: terminalCursor });
+        return;
+      }
+      await emit({
+        type: "failed",
+        conversationId,
+        messageId,
+        cursor: terminalCursor,
+        error: failureMessage ?? `Hermes ended the run as ${status.toLowerCase()}.`,
+        errorCode: errorCode ?? `HERMES_${status}`,
+      });
+    };
     await emit({ type: "started", conversationId, messageId, runId, cursor: cursor === 0n ? null : cursor.toString() });
 
     while (!signal.aborted) {
@@ -780,6 +848,26 @@ export class DrizzleChatManager implements ChatManager {
         .where(and(inArray(agentRunApproval.id, approvalIds), eq(agentRunApproval.runId, runId)));
       const approvalById = new Map(approvals.map((approval) => [approval.id, approval]));
       for (const event of events) {
+        /*
+         * The marker ends the drain, and deliberately does not advance the
+         * cursor.
+         *
+         * Nothing can follow it in the log, and leaving the cursor on the last
+         * delivered event is what makes a reconnect idempotent: a browser that
+         * resumes from the terminal frame's cursor drains this marker again and
+         * is told the outcome again. Advancing past it would make that resume
+         * silent -- no events, no marker, and an open stream waiting on a run
+         * that already ended.
+         *
+         * It is not emitted as an activity frame either. The terminal frame
+         * below says the same thing in the shape the browser already handles;
+         * emitting both would put a card reading "the run ended" in the
+         * timeline directly above the answer that says so.
+         */
+        if (isAgentRunEndedEventType(event.type)) {
+          terminal = event;
+          break;
+        }
         cursor = event.cursor;
         const eventCursor = cursor.toString();
         if (event.type === "MESSAGE_DELTA" && event.delta) {
@@ -823,50 +911,59 @@ export class DrizzleChatManager implements ChatManager {
           });
         }
       }
+      if (terminal) {
+        await emitOutcome(terminal.status ?? "FAILED", terminal.errorCode, terminal.summary);
+        return;
+      }
       if (events.length === 100) continue;
 
-      const [run] = await this.database
-        .select({
-          status: agentRun.status,
-          failureCode: agentRun.failureCode,
-          failureMessage: agentRun.failureMessage,
-          lastEventCursor: agentRun.lastEventCursor,
-        })
-        .from(agentRun)
-        .where(eq(agentRun.id, runId))
-        .limit(1);
-      if (!run) throw new ChatConversationConflictError("The Hermes run is no longer available.");
-      if (run.status !== previousStatus) {
-        previousStatus = run.status;
-        await emit({
-          type: "state",
-          conversationId,
-          messageId,
-          cursor: run.lastEventCursor?.toString() ?? (cursor === 0n ? null : cursor.toString()),
-          runId,
-          status: run.status,
-        });
-      }
-      if (["COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT", "DENIED"].includes(run.status)) {
-        const [message] = await this.loadMessages(eq(chatMessage.id, messageId));
-        if (!message) throw new ChatMessageNotFoundError();
-        const dto = messageDto(message);
-        const terminalCursor = run.lastEventCursor?.toString() ?? (cursor === 0n ? null : cursor.toString());
-        if (run.status === "COMPLETED") {
-          await emit({ type: "completed", conversationId, messageId, cursor: terminalCursor, message: dto });
-        } else if (run.status === "CANCELLED") {
-          await emit({ type: "cancelled", conversationId, messageId, cursor: terminalCursor });
-        } else {
+      /*
+       * The run row, for the two things the log cannot give: the intermediate
+       * states a turn passes through, and whether a run that predates the
+       * marker has already ended.
+       *
+       * It can no longer end this stream, which is the whole point -- only the
+       * marker does. That demotion is also what lets the read be skipped while
+       * events are flowing: a state frame arriving a fraction of a second late
+       * is invisible, and a wake-driven loop would otherwise run this statement
+       * as often as it runs the drain.
+       */
+      const readAt = Date.now();
+      if (events.length === 0 || readAt - statusReadAt >= RUN_STATUS_INTERVAL_MS) {
+        statusReadAt = readAt;
+        const [run] = await this.database
+          .select({
+            status: agentRun.status,
+            failureCode: agentRun.failureCode,
+            failureMessage: agentRun.failureMessage,
+          })
+          .from(agentRun)
+          .where(eq(agentRun.id, runId))
+          .limit(1);
+        if (!run) throw new ChatConversationConflictError("The Hermes run is no longer available.");
+        if (run.status !== previousStatus) {
+          previousStatus = run.status;
           await emit({
-            type: "failed",
+            type: "state",
             conversationId,
             messageId,
-            cursor: terminalCursor,
-            error: run.failureMessage ?? `Hermes ended the run as ${run.status.toLowerCase()}.`,
-            errorCode: run.failureCode ?? `HERMES_${run.status}`,
+            cursor: cursor === 0n ? null : cursor.toString(),
+            runId,
+            status: run.status,
           });
         }
-        return;
+        if (TERMINAL_RUN_STATUSES.has(run.status)) {
+          // Terminal status, no marker drained. Either it committed after the
+          // query above -- in which case the immediate re-drain finds it and
+          // this never runs again -- or the run was finalised before markers
+          // existed and the run row is the only record of how it ended.
+          if (!reconciled) {
+            reconciled = true;
+            continue;
+          }
+          await emitOutcome(run.status, run.failureCode, run.failureMessage);
+          return;
+        }
       }
       await sleep(RUN_POLL_INTERVAL_MS, signal);
     }

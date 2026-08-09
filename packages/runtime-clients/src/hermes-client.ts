@@ -84,7 +84,13 @@ export interface HermesSafeRunEvent {
  * - `reasoning.available` was dropped. See `AGENT_RUN_EVENT_TYPES` for why the
  *   destination is named `REASONING_REPORTED` and not `THINKING`.
  */
-const SAFE_EVENT_TYPES = new Map<string, HermesSafeRunEventType>([
+/*
+ * Exported for one assertion: that nothing here maps to the marker the control
+ * plane writes to end a run's event log. A subscriber stops on that marker, so
+ * a runtime able to produce one could end a turn while the answer is still
+ * unstored. The test is in this package because contracts cannot see this map.
+ */
+export const SAFE_EVENT_TYPES = new Map<string, HermesSafeRunEventType>([
   ["run.start", "RUN_STARTED"],
   ["run.started", "RUN_STARTED"],
   ["message.delta", "MESSAGE_DELTA"],

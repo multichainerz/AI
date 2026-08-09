@@ -294,6 +294,72 @@ describe("DrizzleAgentProcessor", () => {
     expect(stored.some(({ type, key }) => type === "RUN_COMPLETED" && key !== null)).toBe(false);
   });
 
+  it("records the run's outcome as the last row of its event log", async () => {
+    /*
+     * "The run ended" used to exist only as AgentRun.status, which a subscriber
+     * had to learn from a statement it could not order against its event query
+     * -- so an event committing between the two was delivered to nobody and the
+     * turn ended on top of it. As a row it is ordered like everything else: a
+     * reader that has drained as far as this has, by definition, drained
+     * everything.
+     */
+    await healthyBoundary();
+    const id = await queuedRun();
+
+    await processor(hermes()).process({ runId: id }, await jobIdOf(id), WORKER);
+
+    const stored = await context.database
+      .select({ type: agentRunEvent.type, status: agentRunEvent.status })
+      .from(agentRunEvent)
+      .where(eq(agentRunEvent.runId, id))
+      .orderBy(asc(agentRunEvent.cursor));
+    expect(stored.at(-1)).toEqual({ type: "RUN_ENDED", status: "COMPLETED" });
+  });
+
+  it("closes the event stream before it writes the outcome", async () => {
+    /*
+     * The stream and the finaliser are two writers to one run's log, and
+     * `cursor` is a bigserial claimed at INSERT but made visible at COMMIT. An
+     * event still in flight when the marker commits therefore lands *below* a
+     * cursor the reader has already passed, and reaches nobody -- the same
+     * hazard 0026_audit_forwarding_cursor.sql documents for the forwarder.
+     * Draining first is what makes cursor order and commit order the same thing
+     * on this path, and it is why a subscriber is allowed to trust it.
+     */
+    await healthyBoundary();
+    const id = await queuedRun();
+    const runtime = hermes();
+    const event = (over: Partial<HermesSafeRunEvent>): HermesSafeRunEvent => ({
+      sourceEventId: randomUUID(), type: "MESSAGE_DELTA", delta: null, preview: null,
+      errorCode: null, summary: null, status: null, toolName: null,
+      toolCallKey: null, text: null, childSessionId: null, durationMs: null, inputTokens: null,
+      outputTokens: null, reasoningTokens: null, costUsd: null, approvalExternalId: null,
+      approvalCommand: null, approvalChoices: [], occurredAt: new Date(), ...over,
+    });
+    runtime.events = async (_external, onEvent, signal) => {
+      await onEvent(event({ delta: "early" }));
+      // Still open when Hermes reports the run finished, which is the ordinary
+      // case: the status poll and the stream are independent of each other.
+      await new Promise<void>((resolve) => {
+        if (signal?.aborted) { resolve(); return; }
+        signal?.addEventListener("abort", () => { resolve(); }, { once: true });
+      });
+      await onEvent(event({ delta: "late" }));
+    };
+
+    await processor(runtime).process({ runId: id }, await jobIdOf(id), WORKER);
+
+    const stored = await context.database
+      .select({ type: agentRunEvent.type, delta: agentRunEvent.delta })
+      .from(agentRunEvent)
+      .where(eq(agentRunEvent.runId, id))
+      .orderBy(asc(agentRunEvent.cursor));
+    // Both deltas are behind the marker, so a reader that stops at the marker
+    // has still been handed both.
+    expect(stored.map(({ delta }) => delta)).toEqual(["early", "late", null]);
+    expect(stored.at(-1)?.type).toBe("RUN_ENDED");
+  });
+
   it("finalizes the linked chat message so a lost browser stream cannot strand it", async () => {
     await healthyBoundary();
     const id = await queuedRun();

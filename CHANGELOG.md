@@ -5,6 +5,55 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.95.0 — 2026-08-09
+
+A chat turn could end on top of its own last events. It no longer can, because
+ending early is no longer something the read path is able to express.
+
+**Two writers, one log.** `hermes.events(...)` is started and never awaited, so
+the SSE consumer writing `AgentRunEvent` rows ran concurrently with the status
+poll loop that writes the run's terminal transition. `cursor` is a `bigserial`,
+claimed at INSERT and made visible at COMMIT, so an event still in flight when
+the terminal transaction committed landed *below* a cursor readers had already
+passed -- the hazard `0026_audit_forwarding_cursor.sql` documents for the audit
+forwarder, here with nothing defending the read. Every terminal transition now
+drains the event stream first, so the log has one writer at the only moment it
+matters and per-run cursor order is commit order. Completing runs get a 250 ms
+grace for the stream to close on its own, so the tail of a successful turn's
+activity is not thrown away; cancellation, denial and timeout are aborts by
+nature and take none.
+
+**The outcome is a row, not a second query.** The subscriber drained events and
+then read `AgentRun.status` in a separate statement, and nothing orders those
+two against a writer: anything committing between them was delivered to nobody,
+and the terminal frame closed the stream on top of it. Whoever finalises a run
+-- the worker's completion transaction and `finish()` -- now writes a `RUN_ENDED`
+marker inside the same transaction that flips the status. A subscriber ends on
+that marker and on nothing else, so everything before it was drained by the same
+query that found it. The marker does not advance the cursor, which makes a
+reconnect idempotent rather than silent.
+
+**The marker is a name Hermes cannot produce.** Reusing `RUN_COMPLETED` would
+have been the obvious spelling and a worse bug: Hermes emits `run.completed` on
+its own event stream while the message row is still `PENDING`, so a reader would
+have closed the turn and handed back an empty answer. `RUN_ENDED` is written
+only by the control plane, and a test walks every entry in the client's event
+name map asserting none of them reaches it.
+
+**The run row is demoted to a hint.** It can no longer end a stream, only report
+the intermediate states a turn passes through, and it is read at most every
+350 ms rather than on every pass. Runs finalised before markers existed are
+still ended, through one bounded extra drain rather than an unbounded loop. The
+`state` and terminal frames now carry the cursor of the last event actually
+delivered instead of the run's own high-water mark, which could be ahead of the
+loop and would move a reader's resume point past deltas it never received.
+
+Four mutation probes, each reverted: deleting the re-drain loses the trailing
+event (`['first']` for `['first','second']`); neutering the marker check ends
+the turn on the run row (`'failed'` for `'completed'`); removing the worker's
+drain writes the marker into the middle of the log (`['early', null, 'late']`);
+pointing the marker at `RUN_COMPLETED` trips the name-map guard.
+
 ## ai-v1.94.0 — 2026-08-09
 
 The frame that reports a broken stream was the one frame nobody checked.
