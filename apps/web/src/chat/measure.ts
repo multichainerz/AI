@@ -40,11 +40,13 @@ export const THREAD_SCROLLER =
   "min-h-0 overflow-y-auto px-4 pb-6 pt-7 sm:px-6 [scrollbar-gutter:stable]";
 
 /**
- * The band the composer sits in.
+ * The breathing room the floating composer sits in.
  *
  * Same horizontal padding and same reserved gutter as the thread above it, or
  * the message and the box it was typed into disagree about where the column
  * ends -- which is visible as a step every time the transcript starts scrolling.
+ * It deliberately has no top border or alternate fill: the composer is a
+ * control floating on the chat canvas, not a separate page section.
  */
 export const COMPOSER_ZONE =
-  "border-t border-border bg-surface px-4 pb-3.5 pt-2.5 sm:px-6 [scrollbar-gutter:stable]";
+  "bg-bg px-4 pb-3.5 pt-3 sm:px-6 [scrollbar-gutter:stable]";

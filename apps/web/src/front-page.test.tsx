@@ -72,6 +72,23 @@ describe("signing in from the front page", () => {
     expect(container.textContent).not.toMatch(/Governed agentic workflows|Plan and reason|Use governed tools|Retain context|Act with oversight/);
   });
 
+  it("keeps the sign-in card compact and removes decorative framing copy", () => {
+    render(<FrontPage {...base} {...handlers()} />);
+
+    expect(screen.queryByText("Private agentic intelligence")).toBeNull();
+    expect(screen.queryByText("Private intelligence. Governed execution. Your infrastructure.")).toBeNull();
+    expect(screen.queryByText(/Identity, policy, and execution stay within/i)).toBeNull();
+
+    const access = screen.getByRole("region", { name: "Administrator access" });
+    expect(screen.queryByText("Administrator access")).toBeNull();
+    expect(screen.queryByText("Enter the control plane")).toBeNull();
+    expect(screen.queryByText(/Sign in to operate and govern/i)).toBeNull();
+    expect(screen.getByText("Username")).toBeTruthy();
+    expect(screen.getByText("Password")).toBeTruthy();
+    expect(screen.getByLabelText("Username").classList.contains("focus-visible:outline-none")).toBe(true);
+    expect(access.querySelector(".bg-gradient-to-r")).toBeNull();
+  });
+
   it("carries the shared static synapse field behind the sign-in surface", () => {
     const { container } = render(<FrontPage {...base} {...handlers()} />);
     const page = container.querySelector(".front-page");
@@ -122,6 +139,10 @@ describe("the recovery path", () => {
     render(<FrontPage {...base} {...on} />);
 
     await user.click(screen.getByRole("button", { name: /use offline recovery key/i }));
+    expect(screen.getByRole("form", { name: "Offline recovery" })).toBeTruthy();
+    expect(screen.queryByText("Recovery access")).toBeNull();
+    expect(screen.queryByText("Offline recovery")).toBeNull();
+    expect(screen.queryByText(/Use the Installation Key from your vault/i)).toBeNull();
     await user.type(screen.getByLabelText(/installation key/i), "k".repeat(43));
     await user.click(screen.getByRole("button", { name: /continue recovery/i }));
 

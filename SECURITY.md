@@ -1,6 +1,6 @@
 # Security Policy
 
-OrcaSynapse is an on-premises control plane for private AI operations. Its
+OrcaSynapse is an on-premises control plane for agentic intelligence and governed execution. Its
 security posture depends on the enrollment cryptography between VM1 and VM2,
 envelope encryption of stored secrets, and the session model of the dashboard
 — reports touching any of those are especially valuable.
@@ -29,7 +29,7 @@ branch.
 
 ## Scope notes
 
-- **In scope:** the Fastify API, the React dashboard, the worker, the
+- **In scope:** the Fastify API, the React operator workspace, the worker, the
   installer scripts (`install.sh`, `scripts/*.sh`), the Ed25519 node
   enrollment and signed-heartbeat scheme, envelope encryption of secret
   records, session and scope enforcement, guardrail bypasses, the inference

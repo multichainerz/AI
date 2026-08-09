@@ -5,6 +5,21 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v4.3.0 — 2026-08-10
+
+The operator workspace now presents one cohesive, quieter interface from entry
+through daily operation. Sign-in and recovery were simplified, the shared
+dark/light control gained clear sun and moon states, Session received a modern
+conversation rail and composer, and the authenticated Dashboard now follows the
+same black-and-white surface system in either appearance.
+
+Navigation has been refined into a steadier application rail: the white Orca
+mark no longer sits inside a decorative box, expanded and collapsed states keep
+the mark at one size, and the compact rail is thinner with calmer icon tiles and
+more deliberate spacing. Component radii and panel boundaries are aligned
+across the application, while public documentation and repository artwork now
+use the current OrcaSynapse identity and agentic-intelligence description.
+
 ## v4.2.0 — 2026-08-09
 
 Authenticated workspaces now keep the same clean surface as the Dashboard.

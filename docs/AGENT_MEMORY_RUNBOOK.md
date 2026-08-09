@@ -103,7 +103,7 @@ the evaluation machinery.
 
 ## Answering "what does it know about me"
 
-**The person can answer it themselves.** Anyone signed in to Chat opens
+**The person can answer it themselves.** Anyone signed in to Session opens
 **Memory** in the conversation toolbar and sees every item stored about them —
 its text, which agent recorded it, and when it expires — with a *Forget* button
 on each. No administrator, and no new enterprise scope: it runs on the same
@@ -156,5 +156,5 @@ changed and why, not what it said about someone.
 6. Confirm a second policy cannot be activated while one is already active.
 7. Activate a policy with `retentionDays: 30`, capture an item, and confirm its
    `retentionUntil` in **Platform → Memory** is 30 days out — not empty.
-8. Sign in as an ordinary employee, open **Memory** from the Chat toolbar,
+8. Sign in as an ordinary employee, open **Memory** from the Session toolbar,
    confirm it shows only their own items, and forget one.

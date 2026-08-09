@@ -55,6 +55,12 @@ describe("thread measure", () => {
     }
   });
 
+  it("keeps the composer band on the chat canvas", () => {
+    expect(COMPOSER_ZONE).toContain("bg-bg");
+    expect(COMPOSER_ZONE).not.toContain("bg-surface");
+    expect(COMPOSER_ZONE).not.toContain("border-t");
+  });
+
   it("gives the chat page a dynamic viewport height, with a static fallback first", () => {
     /*
      * Order matters: `dvh` has to come second so it wins where it is understood

@@ -96,15 +96,25 @@ export default {
         display: ["40px", { lineHeight: "1.05", letterSpacing: "-0.03em" }],
       },
       borderRadius: {
-        // The OrcaNeuron radius scale: soft, and layered — outer surfaces are
-        // rounder than the controls inside them.
-        DEFAULT: "10px",
-        md: "8px",
-        lg: "14px",
-        input: "12px",
-        card: "18px",
-        modal: "20px",
-        pill: "999px",
+        /*
+         * One semi-rounded silhouette for every interactive control and
+         * container. The aliases stay because they describe component roles,
+         * but they deliberately resolve to one token so a modal, card, input,
+         * chip and button cannot drift into separate visual systems again.
+         * `rounded-full` remains Tailwind's semantic escape hatch for actual
+         * circles such as avatars, status dots and switch thumbs.
+         */
+        DEFAULT: "var(--radius-component)",
+        sm: "var(--radius-component)",
+        md: "var(--radius-component)",
+        lg: "var(--radius-component)",
+        xl: "var(--radius-component)",
+        "2xl": "var(--radius-component)",
+        "3xl": "var(--radius-component)",
+        input: "var(--radius-component)",
+        card: "var(--radius-component)",
+        modal: "var(--radius-component)",
+        pill: "var(--radius-component)",
       },
       boxShadow: {
         // Themed through variables: dark separates by border contrast and casts

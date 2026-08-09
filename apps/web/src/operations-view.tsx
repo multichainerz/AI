@@ -626,7 +626,7 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
                 </> : <p className="mb-0 mt-1.5 text-body text-faint">No external authority decision is retained.</p>}
               </Tile>;
             })}</div></Panel>
-            <Panel><PanelHeading kicker="Open gate conditions" title="Readiness blockers" actions={<strong className="font-display text-[19px] font-semibold tabular-nums text-text">{readiness?.blockers.length ?? 0}</strong>} /><ol className="m-0 grid list-none gap-1.5 p-0">{readiness?.blockers.map((blocker) => <li className="flex gap-2.5 rounded border border-border bg-raised p-2.5 text-body text-muted" key={blocker}><span aria-hidden="true" className="mt-1.5 h-[5px] w-[5px] shrink-0 rounded-pill bg-warn" />{blocker}</li>)}</ol>{readiness?.blockers.length === 0 && <p className="m-0 rounded border border-dashed border-border px-4 py-7 text-body text-muted">No derived blockers remain.</p>}</Panel>
+            <Panel><PanelHeading kicker="Open gate conditions" title="Readiness blockers" actions={<strong className="font-display text-[19px] font-semibold tabular-nums text-text">{readiness?.blockers.length ?? 0}</strong>} /><ol className="m-0 grid list-none gap-1.5 p-0">{readiness?.blockers.map((blocker) => <li className="flex gap-2.5 rounded border border-border bg-raised p-2.5 text-body text-muted" key={blocker}><span aria-hidden="true" className="mt-1.5 h-[5px] w-[5px] shrink-0 rounded-full bg-warn" />{blocker}</li>)}</ol>{readiness?.blockers.length === 0 && <p className="m-0 rounded border border-dashed border-border px-4 py-7 text-body text-muted">No derived blockers remain.</p>}</Panel>
           </aside>
         </div>
       </section>}
