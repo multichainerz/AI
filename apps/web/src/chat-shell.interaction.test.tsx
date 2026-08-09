@@ -66,6 +66,26 @@ beforeEach(() => { deleteChatConversation.mockClear(); });
 afterEach(cleanup);
 
 describe("chat overlays", () => {
+  it("groups the conversation rail under a date heading", async () => {
+    /*
+     * A flat list of forty titles gives a reader nothing to navigate by. The
+     * grouping function is tested on its own; this is the wiring, which is the
+     * part that can silently render nothing -- `groupConversationsByDate`
+     * returning correct buckets that no JSX consumes would leave every other
+     * test in this file green.
+     *
+     * This fixture has `lastMessageAt: null`, so it lands in the bucket for a
+     * conversation that was created but never sent to.
+     */
+    render(<ChatView {...props} />);
+
+    const heading = await screen.findByRole("heading", { name: "No messages" });
+    // Level 3: the sr-only h1 in this rail is the outside-click target, and a
+    // second level-1 heading would make that ambiguous.
+    expect(heading.tagName).toBe("H3");
+    expect(await screen.findByRole("button", { name: /Runbook questions/ })).toBeTruthy();
+  });
+
   it("opens Knowledge as a real modal, and Escape closes it", async () => {
     const user = userEvent.setup();
     render(<ChatView {...props} />);

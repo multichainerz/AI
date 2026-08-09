@@ -11,6 +11,7 @@ import type {
 } from "@orcasynapse/contracts";
 import { applyStreamEventToConversation } from "./chat-stream-reducer.js";
 import { MarkdownMessage } from "./chat/markdown-message.js";
+import { groupConversationsByDate } from "./chat/conversation-groups.js";
 import { shouldStickToBottom } from "./chat/stick-to-bottom.js";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
@@ -780,7 +781,17 @@ export function ChatView({
               {conversations.length === 0 ? "Your conversations will appear here." : "No conversations match this search."}
             </p>
           )}
-          {visibleConversations.map((conversation) => (
+          {groupConversationsByDate(visibleConversations, new Date()).map((group) => (
+            <section key={group.key} className="grid content-start gap-1">
+              {/*
+                * Level 3, deliberately. The sr-only h1 in this rail is what
+                * closes an open menu when clicked, and a second level-1 heading
+                * would make that target ambiguous.
+                */}
+              <h3 className="sticky top-0 z-[1] bg-surface px-3.5 pb-1 pt-3 text-micro font-semibold uppercase tracking-[0.08em] text-faint">
+                {group.label}
+              </h3>
+          {group.items.map((conversation) => (
             <button
               type="button"
               key={conversation.id}
@@ -811,6 +822,8 @@ export function ChatView({
                 </span>
               </span>
             </button>
+          ))}
+            </section>
           ))}
         </div>
         <Panel className="mt-auto grid gap-3 p-3">
