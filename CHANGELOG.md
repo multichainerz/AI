@@ -5,6 +5,15 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v3.10.0 — 2026-08-09
+
+Runtime activity can now meet the assistant text at the point where it happened.
+
+The new pure CHAT-R5 interleaving primitive groups transcript activity at
+content-offset-aware Markdown boundaries. It preserves the original entry order,
+keeps events whose offsets are unavailable, and avoids coupling placement logic
+to the rendered chat surface.
+
 ## ai-v3.9.0 — 2026-08-09
 
 Less text, more icons, and a rename that had only half happened.

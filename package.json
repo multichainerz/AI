@@ -1,6 +1,6 @@
 {
   "name": "orcasynapse",
-  "version": "3.9.0",
+  "version": "3.10.0",
   "description": "OrcaSynapse - on-premises AI operations and agentic control plane",
   "license": "BUSL-1.1",
   "private": true,
