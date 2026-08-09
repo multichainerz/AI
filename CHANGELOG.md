@@ -5,6 +5,52 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v3.2.0 — 2026-08-09
+
+The rail's width belongs to the operator.
+
+First of three releases taking the shell toward the reference dashboard.
+
+It used to be decided by the router: Chat collapsed the navigation rail and
+every other screen expanded it, so it moved underneath whoever was using it on
+every navigation and could not be set deliberately. Chat is still the screen
+where collapsing pays most -- it brings its own conversation rail, and two
+vertical lists before a word of the thread is what started this -- but that is a
+reason to collapse it, not a reason to decide for someone. One preference now,
+respected on every screen, persisted in `localStorage` by
+`shell-preferences.ts`.
+
+The collapse mechanism itself is unchanged and was already correct:
+`.app-shell--focus` takes the rail 248px -> 76px, hides labels
+*visually* rather than with `display: none` so every nav row keeps its
+accessible name, and is guarded by `@media (min-width: 761px)` because below
+that the rail is a fixed bottom bar with safe-area insets and has no width to
+collapse. Only what drives the class changed.
+
+**The mark became a tile.** Collapsed, the rail was 76px of icons with nothing
+at the top to say whose product this is -- the wordmark is the only identity
+there and it is the first thing a collapse takes away. A 44px filled tile reads
+as the application at either width, so the rail keeps an anchor instead of
+opening on a nav row.
+
+The toggle lives at the foot of the rail, `aria-expanded` and with a label that
+flips between "Collapse sidebar" and "Expand sidebar". It is hidden below 760px
+under the same guard, where there is nothing to collapse.
+
+Verified: 325 web tests including five new ones for the preference -- what is
+written comes back, the default is never written as a second falsy spelling, a
+value the module did not write is ignored, and storage being denied (private
+window, hardened profile) returns the default instead of throwing during the
+shell's first render, which would be a blank page rather than a wider sidebar.
+The collapse rules were checked against the *built* stylesheet: 10 of 10 inside
+the 761px guard, 0 outside, with the new toggle covered by both the centring and
+the label-hiding rules.
+
+Not verified by eye: `app.tsx` still has no test (task #63, deliberately
+sequenced after this work), and the shell cannot be reached in the preview
+harness without signing in. Typecheck, the preference tests and the built-CSS
+inspection are what stand behind this release.
+
 ## ai-v3.1.0 — 2026-08-09
 
 A fresh install can hold a conversation.
