@@ -5,6 +5,15 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v4.0.0 — 2026-08-09
+
+Runtime activity can now meet the assistant text at the point where it happened.
+
+The new pure CHAT-R5 interleaving primitive groups transcript activity at
+content-offset-aware Markdown boundaries. It preserves the original entry order,
+keeps events whose offsets are unavailable, and avoids coupling placement logic
+to the rendered chat surface.
+
 ## v3.9.0 — 2026-08-09
 
 Less text, more icons, and a rename that had only half happened.
