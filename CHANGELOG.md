@@ -5,6 +5,27 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## v2.2.0 — 2026-08-09
+
+The conversation rail is grouped by date.
+
+A flat list of forty titles gives a reader nothing to navigate by; the date is
+the only axis anyone actually remembers a conversation along. Rows now sit under
+Today, Yesterday, Previous 7 days, Previous 30 days, then a heading per month,
+with a trailing bucket for a conversation that was created but never sent to --
+which has no last message and would otherwise be dated by `createdAt`, filing an
+empty draft among real history.
+
+The headings are level 3, deliberately. The rail's screen-reader-only `h1` is
+what closes an open menu when clicked, and a second level-1 heading would make
+that target ambiguous.
+
+This wires up `groupConversationsByDate` from ai-v1.99.0, which until now was the
+one piece of that release nothing imported. Its buckets and boundaries were
+already tested on their own; what this adds is a test of the *wiring*, because
+correct buckets that no JSX consumes would have left every other test in the file
+green. Removing the headings while keeping the grouping fails it.
+
 ## v2.1.0 — 2026-08-09
 
 Scrolling up during a streaming answer no longer yanks you back down.
