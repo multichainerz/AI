@@ -5,6 +5,41 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.99.0 — 2026-08-09
+
+The two pure units CHAT-R4's thread rebuild rests on, built and pinned before the
+layout that will depend on them.
+
+**`splitStableMarkdown`** cuts streaming markdown into a settled prefix and a live
+tail, so a delta re-renders the paragraph it lands in instead of the whole
+document. The cost of one token currently grows with the length of the answer.
+The split is only worth anything if it never changes what the document means, so
+it declines to cut inside a fence, and declines when both sides of the cut open
+the same kind of block -- two adjacent lists rejoin into one loose list, so
+splitting there changes the item spacing mid-stream and changes it back at the
+end. When nothing qualifies it returns no split, which costs exactly today's
+behaviour and never a wrong render.
+
+A first attempt refused to cut before *any* list, which would have left most
+answers entirely in the live tail; the test caught it. The rule is about where
+the cut lands, not what follows it.
+
+**`groupConversationsByDate`** buckets the rail by the local day boundary rather
+than by elapsed hours: 00:05 today is Today though it is fourteen hours ago, and
+23:55 yesterday is Yesterday though it is fifteen minutes older. Month buckets are
+ordered by date, since `m-2026-10` sorts above `m-2026-9` lexically. A conversation
+with no messages -- or an unparseable timestamp -- gets its own trailing bucket
+rather than being dated by `createdAt`, which would file an empty draft among real
+history.
+
+Three mutation probes, each reverted: collapsing the two fence kinds cuts inside a
+```-fenced block containing a `~~~` line; dropping the lands-inside test splits a
+list in half; dating by elapsed hours breaks three bucket boundaries. A fourth
+probe found the fence test itself was vacuous -- its tilde was mid-sentence, where
+the fence pattern never matched -- so it asserted nothing until it was rewritten.
+
+Layout, pacing and stick-to-bottom follow; nothing imports these yet.
+
 ## ai-v1.98.0 — 2026-08-09
 
 `ChatManager.subscribe` declares the emit signature its implementation actually
