@@ -28,6 +28,14 @@ export const chatRuntimeEventSchema = z.object({
   status: z.string().max(80).nullable(),
   errorCode: z.string().max(80).nullable(),
   toolName: z.string().max(160).nullable(),
+  // Shared by every event of one tool call, so a reader can group them into a
+  // single step. Null on events that are not part of a tool call.
+  toolCallKey: z.string().max(200).nullable(),
+  // Longer prose than `summary` holds: reasoning text, a tool's output.
+  text: z.string().max(20_000).nullable(),
+  // Characters of the answer already streamed when this event occurred, so the
+  // timeline can interleave it with the text rather than append it after.
+  contentOffset: z.number().int().nonnegative().nullable(),
   childSessionId: z.string().max(255).nullable(),
   approvalId: z.uuid().nullable(),
   durationMs: z.number().int().nonnegative().nullable(),
@@ -189,6 +197,11 @@ export const chatStreamEventSchema = z.discriminatedUnion("type", [
     status: z.string().max(80).nullable(),
     errorCode: z.string().max(80).nullable(),
     toolName: z.string().max(160).nullable(),
+    // Carried live as well as on reload: a tool card that gained a key only
+    // after a refresh would regroup itself under the reader.
+    toolCallKey: z.string().max(200).nullable(),
+    text: z.string().max(20_000).nullable(),
+    contentOffset: z.number().int().nonnegative().nullable(),
     childSessionId: z.string().max(255).nullable(),
     approvalId: z.uuid().nullable(),
     durationMs: z.number().int().nonnegative().nullable(),

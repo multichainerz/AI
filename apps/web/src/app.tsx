@@ -52,7 +52,7 @@ import { cn } from "./ui/index.js";
 import {
   BalancerIcon,
   MonitorIcon,
-  NodeIcon,
+  RobotIcon,
   ServerIcon,
   StorageIcon,
   TerminalIcon,
@@ -94,15 +94,15 @@ const AuditView = lazy(() => import("./audit-view.js").then((module) => ({ defau
  *
  * Each drawing is the one the design reference names for that area: a monitor
  * for Home, a terminal window for Chat, a database cylinder for Knowledge, a
- * node hierarchy for Agents, stacked server racks for Platform, and a node
- * graph for Operations.
+ * robot for Agents, stacked server racks for Platform, and a node graph for
+ * Operations.
  */
 function Glyph({ name }: { name: string }) {
   const glyphs: Record<string, ReactNode> = {
     overview: <MonitorIcon size={18} />,
     chat: <TerminalIcon size={18} />,
     documents: <StorageIcon size={18} />,
-    agents: <NodeIcon size={18} />,
+    agents: <RobotIcon size={18} />,
     setup: <ServerIcon size={18} />,
     operations: <BalancerIcon size={18} />,
   };

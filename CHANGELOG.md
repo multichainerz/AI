@@ -5,6 +5,49 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.93.0 — 2026-08-09
+
+`db:generate` works again, and one tool call is one object.
+
+**Five releases of migrations had no snapshot, and nothing said so.**
+`drizzle-kit generate` diffs the schema against exactly one file — the last
+snapshot in `meta/`, via `preparePrevSnapshot` — and migrations 0022 to 0026
+were hand-authored, so none was ever written. Generate therefore believed five
+releases of changes were still pending, found 0025's dropped `hermesImage`
+beside its added `hermesCommit`, and stopped to ask a human whether that was a
+rename. With no TTY it exited, so no migration could be generated at all. The
+head snapshot is now written from the same `generatePgSnapshot` serializer
+drizzle-kit itself calls, which generate confirms by reporting no schema
+changes against it; `0027` was then generated normally and chained itself.
+
+`drizzle-kit check` could never have caught this — it validates the journal and
+looks for two snapshots claiming one parent, and a snapshot nobody wrote claims
+nothing, so it reported "Everything's fine" throughout. Three cases in
+`migrations.test.ts` replace that: the head snapshot must exist, the chain must
+link, and the head must equal what `schema.ts` serializes to today. The last is
+what makes "the Drizzle schema is the source of truth" enforceable — editing
+the schema without generating now fails in `pnpm test` rather than at the next
+person's `db:generate`. Snapshots 0022–0025 are deliberately not reconstructed:
+generate never reads them, and introspecting them back out of a database would
+invent detail rather than recover it, which this schema has been burned by
+twice.
+
+**A tool that called `knowledge.search` twice stored five unrelated rows.**
+Hermes issues no correlation identifier on most surfaces — `tool.progress`
+carries the tool's name and nothing tying it to the start it belongs to — so
+the events of one call could not be grouped, and a second call's failure was
+indistinguishable from the first call failing. `AgentRunEvent` gains
+`toolCallKey`, taken from the runtime where it is offered and otherwise
+synthesized in the worker as the newest start for that tool nothing has closed
+yet. The synthesis is positional, which is sound only because a Hermes agent
+loop runs its tools one at a time; it is therefore the fallback and never an
+override. Two more columns land with it: `text`, for prose longer than a
+summary line, and `contentOffset`, recording how much of the answer had
+streamed when an event occurred so a timeline can place tool work between the
+sentences it interrupted instead of stacking it after the finished answer.
+`RUN_COMPLETED` is excluded from `text` on purpose — its payload is the answer
+the message already stores.
+
 ## ai-v1.92.0 — 2026-08-09
 
 The navigation rail rebuilt against the design reference, and the last of the

@@ -59,6 +59,9 @@ interface StoredRunEvent {
   approvalId: string | null;
   summary: string | null;
   toolName: string | null;
+  toolCallKey: string | null;
+  text: string | null;
+  contentOffset: number | null;
   childSessionId: string | null;
   durationMs: number | null;
   inputTokens: number | null;
@@ -188,6 +191,9 @@ function messageDto(message: StoredMessage): ChatMessage {
       status: event.status,
       errorCode: event.errorCode,
       toolName: event.toolName,
+      toolCallKey: event.toolCallKey,
+      text: event.text,
+      contentOffset: event.contentOffset,
       childSessionId: event.childSessionId,
       approvalId: event.approvalId,
       durationMs: event.durationMs,
@@ -793,6 +799,9 @@ export class DrizzleChatManager implements ChatManager {
           status: event.status,
           errorCode: event.errorCode,
           toolName: event.toolName,
+          toolCallKey: event.toolCallKey,
+          text: event.text,
+          contentOffset: event.contentOffset,
           childSessionId: event.childSessionId,
           approvalId: event.approvalId,
           durationMs: event.durationMs,

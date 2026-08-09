@@ -504,4 +504,60 @@ describe("HermesClient", () => {
     });
     await expect(new HermesClient(resolver(), fetcher).decideApproval("run_external_1", "once")).resolves.toBeUndefined();
   });
+
+  it("admits the three run events that were being dropped on the floor", async () => {
+    /*
+     * `tool.failed` had no entry in the mapping table, so a failed tool
+     * produced a start with no completion — indistinguishable from a tool
+     * still running, which is why a failed run read as a hang.
+     * `reasoning.available` was dropped outright.
+     */
+    const payload = [
+      "data: {\"event\":\"tool.start\",\"id\":\"t-1\",\"tool_name\":\"knowledge.search\"}\n\n",
+      "data: {\"event\":\"tool.failed\",\"id\":\"t-2\",\"tool_name\":\"knowledge.search\",\"error_code\":\"TOOL_TIMEOUT\"}\n\n",
+      "data: {\"event\":\"reasoning.available\",\"id\":\"r-1\",\"summary\":\"Considered the retrieval scope\"}\n\n",
+    ].join("");
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(payload, {
+      status: 200,
+      headers: { "content-type": "text/event-stream; charset=utf-8" },
+    }));
+    const projected: Array<{ type: string; errorCode: string | null }> = [];
+    await new HermesClient(resolver(), fetcher).events(
+      "run_external_1",
+      (event) => { projected.push(event as { type: string; errorCode: string | null }); },
+      new AbortController().signal,
+    );
+    expect(projected.map(({ type }) => type)).toEqual(["TOOL_STARTED", "TOOL_FAILED", "REASONING_REPORTED"]);
+    expect(projected[1]?.errorCode).toBe("TOOL_TIMEOUT");
+  });
+
+  it("does not let tool progress masquerade as another tool starting", async () => {
+    /*
+     * `hermes.tool.progress` mapped to TOOL_STARTED, so one tool call emitted
+     * several starts against a single completion. No consumer could pair them,
+     * which is the whole reason a tool call renders as loose rows instead of
+     * one object with a lifecycle. Both spellings are checked because Hermes'
+     * own surfaces disagree: chat-completions emits the prefixed name and
+     * /v1/runs the bare one.
+     */
+    const payload = [
+      "data: {\"event\":\"tool.start\",\"id\":\"p-1\",\"tool_name\":\"shell.exec\"}\n\n",
+      "data: {\"event\":\"tool.progress\",\"id\":\"p-2\",\"tool_name\":\"shell.exec\",\"preview\":\"scanning\"}\n\n",
+      "data: {\"event\":\"hermes.tool.progress\",\"id\":\"p-3\",\"tool_name\":\"shell.exec\",\"preview\":\"still scanning\"}\n\n",
+      "data: {\"event\":\"tool.complete\",\"id\":\"p-4\",\"tool_name\":\"shell.exec\",\"status\":\"completed\"}\n\n",
+    ].join("");
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(payload, {
+      status: 200,
+      headers: { "content-type": "text/event-stream; charset=utf-8" },
+    }));
+    const projected: Array<{ type: string }> = [];
+    await new HermesClient(resolver(), fetcher).events(
+      "run_external_1",
+      (event) => { projected.push(event as { type: string }); },
+      new AbortController().signal,
+    );
+    // Exactly one start for one call, whatever the runtime spelled its progress.
+    expect(projected.filter(({ type }) => type === "TOOL_STARTED")).toHaveLength(1);
+    expect(projected.filter(({ type }) => type === "TOOL_PROGRESS")).toHaveLength(2);
+  });
 });

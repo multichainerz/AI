@@ -40,6 +40,8 @@ const SUPERSESSION_CANDIDATES = 8;
 const SUPERSESSION_FLOOR = 0.25;
 
 const ACTIVE_HERMES_STATUSES = new Set(["queued", "started", "running", "stopping"]);
+// The events that belong to one tool call and therefore need a shared key.
+const TOOL_LIFECYCLE = new Set(["TOOL_STARTED", "TOOL_PROGRESS", "TOOL_COMPLETED", "TOOL_FAILED"]);
 const PROCESSOR_LEASE_MS = 90_000;
 const PROCESSOR_LEASE_RENEW_MS = 30_000;
 
@@ -919,12 +921,79 @@ export class DrizzleAgentProcessor {
         }
       }
 
+      /*
+       * One key per tool call, so start, progress and outcome collapse into a
+       * single object instead of four unrelated rows.
+       *
+       * Hermes reports a call identifier on some surfaces and not others, so
+       * the reported one is preferred and a key is synthesised only when none
+       * arrives. The synthesis is positional -- the newest start for this tool
+       * that nothing has closed yet -- which is sound because a Hermes agent
+       * loop runs its tools one at a time. If that ever stops being true, two
+       * concurrent calls to the same tool would merge, so this is deliberately
+       * the fallback and never an override.
+       */
+      let toolCallKey: string | null = event.toolCallKey;
+      if (!toolCallKey && TOOL_LIFECYCLE.has(event.type)) {
+        const toolName = event.toolName ?? "tool";
+        if (event.type !== "TOOL_STARTED") {
+          const [open] = await transaction.execute<{ toolCallKey: string }>(sql`
+            SELECT s."toolCallKey"
+            FROM "AgentRunEvent" s
+            WHERE s."runId" = ${runId}::uuid
+              AND s."type" = 'TOOL_STARTED'
+              AND s."toolName" IS NOT DISTINCT FROM ${event.toolName}
+              AND s."toolCallKey" IS NOT NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM "AgentRunEvent" t
+                WHERE t."runId" = s."runId"
+                  AND t."toolCallKey" = s."toolCallKey"
+                  AND t."type" IN ('TOOL_COMPLETED', 'TOOL_FAILED')
+              )
+            ORDER BY s."cursor" DESC
+            LIMIT 1
+          `).then((result) => result.rows);
+          toolCallKey = open?.toolCallKey ?? null;
+        }
+        if (!toolCallKey) {
+          // Either a start, or an outcome whose start never arrived. Both open
+          // a call: an unpaired completion is still one tool call that ran, and
+          // dropping it would lose the only record that it did.
+          const [prior] = await transaction.execute<{ started: string }>(sql`
+            SELECT count(*) AS "started"
+            FROM "AgentRunEvent"
+            WHERE "runId" = ${runId}::uuid
+              AND "toolName" IS NOT DISTINCT FROM ${event.toolName}
+              AND "toolCallKey" IS NOT NULL
+              AND "type" IN ('TOOL_STARTED', 'TOOL_COMPLETED', 'TOOL_FAILED')
+          `).then((result) => result.rows);
+          toolCallKey = `${toolName}#${Number(prior?.started ?? 0) + 1}`.slice(0, 200);
+        }
+      }
+
+      /*
+       * Where in the answer this event happened. Deltas are the content, so
+       * they carry no offset; everything else records how much had been
+       * streamed when it occurred, which is what lets a timeline show a tool
+       * running between the sentences it interrupted rather than after them.
+       */
+      let contentOffset: number | null = null;
+      if (event.type !== "MESSAGE_DELTA") {
+        const [streamed] = await transaction.execute<{ offset: string }>(sql`
+          SELECT char_length("partialOutput") AS "offset" FROM "AgentRun" WHERE "id" = ${runId}::uuid
+        `).then((result) => result.rows);
+        contentOffset = streamed ? Number(streamed.offset) : null;
+      }
+
       const [storedEvent] = await transaction
         .insert(agentRunEvent)
         .values({
           runId,
           sourceEventId: event.sourceEventId,
           type: event.type,
+          toolCallKey,
+          text: event.text,
+          contentOffset,
           delta: event.delta,
           preview: event.preview,
           errorCode: event.errorCode,

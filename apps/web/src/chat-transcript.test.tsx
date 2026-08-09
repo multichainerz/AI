@@ -95,13 +95,18 @@ const conversation = {
           costUsd: null, occurredAt: "2026-08-07T09:14:01.000Z",
         },
         {
-          id: "e2", type: "TOOL_CALLED", toolName: "knowledge.search", status: "completed",
+          // `TOOL_CALLED` and `SUBAGENT_FINISHED` stood here for months. Neither
+          // is a member of AGENT_RUN_EVENT_TYPES, so this fixture described a
+          // transcript the runtime cannot produce — and the cast below is what
+          // let it compile. `chat-stream-reducer.test.ts` now pins the real
+          // vocabulary; these two are the types the runtime actually emits.
+          id: "e2", type: "TOOL_COMPLETED", toolName: "knowledge.search", status: "completed",
           summary: "Retrieved 6 chunks", preview: "query: promotion checklist", durationMs: 412,
           inputTokens: 120, outputTokens: 48, reasoningTokens: null, costUsd: 0.0012,
           occurredAt: "2026-08-07T09:14:02.000Z",
         },
         {
-          id: "e3", type: "SUBAGENT_FINISHED", toolName: null, status: "completed",
+          id: "e3", type: "SUBAGENT_COMPLETED", toolName: null, status: "completed",
           summary: "Summarised retrieval", preview: null, durationMs: 1_902, inputTokens: 880,
           outputTokens: 260, reasoningTokens: 140, costUsd: 0.0041, occurredAt: "2026-08-07T09:14:04.000Z",
         },

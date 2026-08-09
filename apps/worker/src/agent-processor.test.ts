@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
+import type { HermesSafeRunEvent } from "@orcasynapse/runtime-clients";
 import {
   agentProfile,
   agentProfileVersion,
   agentRun,
+  agentRunEvent,
   agentRuntimeControl,
   memoryPolicy,
   chatMessage,
@@ -242,6 +244,54 @@ describe("DrizzleAgentProcessor", () => {
     // The lease is surrendered on completion so no worker keeps the row locked.
     expect(stored?.lease).toBeNull();
     expect(stored?.totalTokens).toBe(16);
+  });
+
+  it("gathers one tool call's events under a single key and keeps the next call apart", async () => {
+    /*
+     * The correlation Hermes does not provide. `tool.progress` arrives carrying
+     * the tool's name and nothing tying it to the start it belongs to, so
+     * before this a run that called one tool twice stored five unrelated rows
+     * and no reader could tell which progress belonged to which call -- or that
+     * the second call had failed rather than the first.
+     */
+    await healthyBoundary();
+    const id = await queuedRun();
+    const runtime = hermes();
+    const event = (over: Partial<HermesSafeRunEvent>): HermesSafeRunEvent => ({
+      sourceEventId: randomUUID(), type: "TOOL_STARTED", delta: null, preview: null,
+      errorCode: null, summary: null, status: null, toolName: "knowledge.search",
+      toolCallKey: null, text: null, childSessionId: null, durationMs: null, inputTokens: null,
+      outputTokens: null, reasoningTokens: null, costUsd: null, approvalExternalId: null,
+      approvalCommand: null, approvalChoices: [], occurredAt: new Date(), ...over,
+    });
+    runtime.events = async (_external, onEvent) => {
+      for (const frame of [
+        event({ type: "TOOL_STARTED" }),
+        event({ type: "TOOL_PROGRESS", preview: "scanning" }),
+        event({ type: "TOOL_COMPLETED", status: "completed" }),
+        event({ type: "TOOL_STARTED" }),
+        event({ type: "TOOL_FAILED", errorCode: "TOOL_TIMEOUT" }),
+      ]) await onEvent(frame);
+    };
+
+    await processor(runtime).process({ runId: id }, await jobIdOf(id), WORKER);
+
+    const stored = await context.database
+      .select({ type: agentRunEvent.type, key: agentRunEvent.toolCallKey })
+      .from(agentRunEvent)
+      .where(eq(agentRunEvent.runId, id))
+      .orderBy(asc(agentRunEvent.cursor));
+    const calls = stored.filter(({ key }) => key !== null);
+    expect(calls.map(({ type }) => type)).toEqual([
+      "TOOL_STARTED", "TOOL_PROGRESS", "TOOL_COMPLETED", "TOOL_STARTED", "TOOL_FAILED",
+    ]);
+    // Start, progress and outcome of the first call are one object.
+    expect(new Set(calls.slice(0, 3).map(({ key }) => key)).size).toBe(1);
+    // The retry is a second object, not more rows on the first.
+    expect(new Set(calls.slice(3).map(({ key }) => key)).size).toBe(1);
+    expect(calls[0]?.key).not.toBe(calls[3]?.key);
+    // Nothing outside a tool call is given a key it cannot justify.
+    expect(stored.some(({ type, key }) => type === "RUN_COMPLETED" && key !== null)).toBe(false);
   });
 
   it("finalizes the linked chat message so a lost browser stream cannot strand it", async () => {
