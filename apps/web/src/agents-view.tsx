@@ -1,3 +1,4 @@
+import { DEFAULT_AGENT_PROFILE } from "@orcasynapse/contracts";
 import type { AgentMetrics, AgentProfile, AgentRun, AgentRunEvent, AgentRuntimeControl, AgentSkillReference, CreateAgentProfile } from "@orcasynapse/contracts";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { groupRuntimeEvents } from "./chat/timeline.js";
@@ -48,21 +49,19 @@ function memoryModeNote(mode: CreateAgentProfile["memoryMode"]): string {
 const runningStatuses = new Set(["QUEUED", "RUNNING", "CANCEL_REQUESTED"]);
 const terminalGood = new Set(["COMPLETED"]);
 
-const blankProfile: CreateAgentProfile = {
-  slug: "hermes-analyst",
-  displayName: "Hermes Analyst",
-  purpose: "A bounded on-premise assistant for internal analysis and document-grounded answers.",
-  instructions: "Provide concise, evidence-based answers. Clearly distinguish retrieved facts from analysis and state uncertainty.",
-  soulMd: "You are a careful OrcaSynapse analyst. Be calm, precise, evidence-led, and candid about uncertainty.",
-  skills: [],
-  modelAlias: "hermes-agent",
-  maxTurns: 1,
-  timeoutSeconds: 600,
-  maxConcurrentRuns: 2,
-  allowPrivateKnowledge: true,
-  memoryMode: "DOCUMENTS_ONLY",
-  safeMode: true,
-};
+/*
+ * The create form opens on the same profile a fresh install is seeded with.
+ *
+ * What was here before was two sentences of "be concise and evidence-based" --
+ * enough to satisfy the 10-character minimum and not enough to govern anything.
+ * An operator who accepted it got an assistant with no instruction to prefer
+ * retrieved material over its own recall, which is the one thing a
+ * document-grounded deployment needs it to do.
+ *
+ * Written once, in `@orcasynapse/contracts`, so the form and migration 0028
+ * cannot drift.
+ */
+const blankProfile: CreateAgentProfile = DEFAULT_AGENT_PROFILE;
 
 function skillManifestText(skills: AgentSkillReference[]): string {
   return skills.map((skill) => `${skill.name}@${skill.version} ${skill.digest}`).join("\n");
