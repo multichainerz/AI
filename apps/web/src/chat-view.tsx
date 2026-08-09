@@ -11,6 +11,7 @@ import type {
 } from "@orcasynapse/contracts";
 import { applyStreamEventToConversation } from "./chat-stream-reducer.js";
 import { MarkdownMessage } from "./chat/markdown-message.js";
+import { shouldStickToBottom } from "./chat/stick-to-bottom.js";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   OrcaSynapseApiError,
@@ -211,7 +212,7 @@ export function ChatView({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [approvalBusy, setApprovalBusy] = useState<string | null>(null);
   const abortController = useRef<AbortController | null>(null);
-  const messageEnd = useRef<HTMLDivElement>(null);
+  const messageScroller = useRef<HTMLDivElement>(null);
   const moreMenu = useRef<HTMLDivElement>(null);
 
   /*
@@ -278,8 +279,24 @@ export function ChatView({
     };
   }, [unlocked]);
 
+  /*
+   * Follow the answer only while the reader is already at the bottom.
+   *
+   * This used to scroll unconditionally on every message change, which during a
+   * streaming turn is several times a second: scrolling up to re-read something
+   * yanked the view back down before the sentence was finished. Scrolling away
+   * is the reader saying they want to be somewhere else, and the only correct
+   * response is to stop following until they come back.
+   *
+   * `scrollTop` on the container rather than `scrollIntoView` on a sentinel,
+   * because scrollIntoView cannot ask the question -- it moves whatever ancestor
+   * happens to scroll, and gives no way to know where the reader was first.
+   */
   useEffect(() => {
-    messageEnd.current?.scrollIntoView({ behavior: busy ? "auto" : "smooth" });
+    const scroller = messageScroller.current;
+    if (!scroller) return;
+    if (!shouldStickToBottom(scroller)) return;
+    scroller.scrollTop = scroller.scrollHeight;
   }, [active?.messages, busy]);
 
   useEffect(() => {
@@ -1108,7 +1125,7 @@ export function ChatView({
           </p>
         </Dialog>
 
-        <div className="chat-messages" aria-live="polite">
+        <div className="chat-messages" aria-live="polite" ref={messageScroller}>
           {!active || active.messages.length === 0 ? (
             <div className="mx-auto w-full max-w-[720px] pt-[min(10vh,90px)]">
               <div
@@ -1485,7 +1502,6 @@ export function ChatView({
               </article>
             ))
           )}
-          <div ref={messageEnd}/>
         </div>
 
         {/* Same horizontal padding and reserved scrollbar gutter as the
