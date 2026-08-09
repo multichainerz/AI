@@ -5,6 +5,45 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## v2.9.0 — 2026-08-09
+
+The first release of the chat revamp that was actually looked at.
+
+Everything from v2.6.0 onward was built blind, by agreement. This one put a
+populated transcript in a browser -- via the static-preview harness, no sign-in --
+and measured it. Three things that reading the source had not found:
+
+**Nineteen uppercase nodes on one screen, not four.** The "kicker purge" in
+v2.6.0 was counted by grepping for the `MicroLabel` component; fourteen of the
+nineteen do not use it. The eight telemetry `<dt>`s under an answer were the
+densest strip on the screen, the source classification called `.toLowerCase()` in
+JavaScript and was then uppercased again by its class -- two opposite intentions
+with the CSS winning -- and the footer set two sentences in capitals by reaching
+for `StatusText`, which is uppercase by construction and right only for a status
+chip. Now 7, and the survivors earn it: a date heading, three block labels and
+two genuine failure states.
+
+**`--faint` failed WCAG AA everywhere, in both themes.** 42 of 112 text nodes in
+dark and 41 in light, and every single failure was that one token -- timestamps,
+model aliases, counts, conversation previews, date headings. Raised to `#85858B`
+in dark and `#6B6C72` in light, both solved for rather than guessed: worst case
+4.61 and 4.52 against every surface each lands on. It is still the quietest step
+in the ramp; it is no longer quieter than a reader can follow. Dark now fails 6,
+light 3, and the remainder is the warn-toned approval card (warn text on a
+warn/10 fill is inherently tight) plus hover-revealed metadata that is invisible
+at rest anyway.
+
+This is a whole-product change, not a chat one: every view gets more legible
+secondary text.
+
+**The measurement was wrong the first three times.** Nav rows and buttons carry
+`transition-colors`, so `getComputedStyle` after flipping `data-theme` returns
+interpolated values -- and it stayed wrong across separate round trips. The
+unguarded sweep reported impossibilities: a plainly legible row at 1.09, a button
+whose colour was correct reading as the other theme's foreground. Both numbers
+were discarded. Injecting `transition:none!important` and forcing a reflow gives
+stable, reproducible figures, and that is what the numbers above come from.
+
 ## v2.8.0 — 2026-08-09
 
 Focus mode stops leaking onto phones.
