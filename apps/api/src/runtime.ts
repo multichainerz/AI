@@ -1,7 +1,9 @@
 import {
+  createChatRunWakeHub,
   createDrizzleClient,
   hasBootstrapSecret,
   readBootstrapSecret,
+  type ChatRunWakeHub,
   type OrcaSynapseDatabase,
 } from "@orcasynapse/database";
 import { decodeMasterKey, EnvelopeEncryption } from "@orcasynapse/security";
@@ -110,9 +112,13 @@ export function createRuntimeServices(): RuntimeServices {
   const bootstrapState = getBootstrapState();
   if (bootstrapState !== "READY") return { bootstrapState };
 
+  // Held outside the try so a failure further down can release it. The pool
+  // itself is a pre-existing leak on this path and is left alone; this is only
+  // about not making it two connections instead of one.
+  let chatWake: ChatRunWakeHub | null = null;
   try {
     const databaseUrl = readBootstrapSecret("orcasynapse_database_url");
-    const { database, close: closeDatabase } = createDrizzleClient(databaseUrl);
+    const { database, close: closePool } = createDrizzleClient(databaseUrl);
     const masterKey = decodeMasterKey(readBootstrapSecret("orcasynapse_master_key"));
     const encryption = new EnvelopeEncryption({ masterKey });
     const authenticator = new InstallationKeyAuthenticator(
@@ -146,7 +152,18 @@ export function createRuntimeServices(): RuntimeServices {
     );
     const hermesClient = new HermesClient(documentResolver);
     const agentManager = new DrizzleAgentManager(database, hermesClient);
-    const chatManager = new DrizzleChatManager(database, agentManager);
+    /*
+     * Accelerates every chat stream this process serves, from one connection.
+     *
+     * Constructed late so a failure anywhere above it cannot leave a listen
+     * connection open beside the pool. Connecting happens in the background:
+     * until it is up, and again if it drops, subscribers fall back to their own
+     * poll interval and are told nothing, because there is nothing they would
+     * do differently.
+     */
+    chatWake = createChatRunWakeHub(databaseUrl, (error) =>
+      console.error("OrcaSynapse chat wake channel error.", error));
+    const chatManager = new DrizzleChatManager(database, agentManager, chatWake);
     const toolingManager = new DrizzleToolingManager(database, hermesClient);
     const aiOpsManager = new DrizzleAiOpsManager(database, {
       connections: connectionManager,
@@ -165,7 +182,13 @@ export function createRuntimeServices(): RuntimeServices {
     return {
       bootstrapState,
       database,
-      closeDatabase,
+      // Composed rather than exposed separately, so both existing shutdown
+      // paths close the listen connection before the pool by construction, and
+      // no future edit can get that sequence wrong.
+      closeDatabase: async () => {
+        await chatWake?.stop();
+        await closePool();
+      },
       sessionManager,
       connectionManager,
       connectionTestService,
@@ -201,6 +224,7 @@ export function createRuntimeServices(): RuntimeServices {
       errorName: typeof failure.name === "string" ? failure.name.slice(0, 80) : "UnknownError",
       errorCode: typeof failure.code === "string" ? failure.code.slice(0, 80) : undefined,
     });
+    void chatWake?.stop().catch(() => undefined);
     return { bootstrapState: "LOCKED" };
   }
 }

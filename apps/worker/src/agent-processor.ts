@@ -10,6 +10,7 @@ import {
   agentToolGrant,
   auditEvent,
   chatMessage,
+  chatRunWakeStatement,
   governedTool,
   hermesRuntimeNode,
   memoryPolicy,
@@ -798,6 +799,7 @@ export class DrizzleAgentProcessor {
             await this.recordTerminalEvent(
               transaction, run!.id, "COMPLETED", completedAt, "The run completed.", null,
             );
+            await transaction.execute(chatRunWakeStatement(run!.id));
           });
           await this.rememberTurn(run, completedOutput, workerId);
           return { runId: run.id, status: "COMPLETED" };
@@ -1085,6 +1087,17 @@ export class DrizzleAgentProcessor {
             .where(and(eq(chatMessage.agentRunId, runId), eq(chatMessage.status, "PENDING")));
         }
       }
+
+      /*
+       * Inside the transaction, which is the only place it means anything.
+       *
+       * PostgreSQL holds NOTIFY until commit, so a subscriber can never be woken
+       * for a row it cannot yet read. Moved outside -- to just after this
+       * closure, say -- the wake would race its own event and a reader could
+       * drain, find nothing, and go back to waiting out the poll interval on a
+       * row that was already there.
+       */
+      await transaction.execute(chatRunWakeStatement(runId));
     });
   }
 
@@ -1498,6 +1511,7 @@ export class DrizzleAgentProcessor {
       });
 
       await this.recordTerminalEvent(transaction, runId, status, completedAt, failureMessage, failureCode);
+      await transaction.execute(chatRunWakeStatement(runId));
     });
   }
 }

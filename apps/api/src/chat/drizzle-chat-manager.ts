@@ -30,6 +30,8 @@ import {
   chatMessage,
   document,
   guardrailPolicy,
+  type ChatRunWakeHub,
+  type ChatRunWatch,
   type OrcaSynapseDatabase,
 } from "@orcasynapse/database";
 import { and, asc, count, desc, eq, gt, gte, inArray, isNotNull, isNull, ne, sql, type SQL } from "drizzle-orm";
@@ -58,6 +60,15 @@ const RUN_POLL_INTERVAL_MS = 350;
  * from multiplying it.
  */
 const RUN_STATUS_INTERVAL_MS = 350;
+/**
+ * Floor between two cursor queries on one stream.
+ *
+ * With a wake the read rate follows the write rate rather than a timer, so this
+ * is a ceiling of about forty passes a second against a producer faster than
+ * that. The worker flushes roughly twenty-five times a second, so it does not
+ * bind in normal operation -- it exists for the case that is not normal.
+ */
+const RUN_WAKE_MIN_INTERVAL_MS = 25;
 /** The statuses from which a run never leaves. */
 const TERMINAL_RUN_STATUSES = new Set(["COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT", "DENIED"]);
 
@@ -300,6 +311,23 @@ function sleep(milliseconds: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
+/**
+ * The poll interval, cut short by a wake but never below the floor.
+ *
+ * The timer is what guarantees the loop looks again; the wake only removes the
+ * waiting. The floor is the ceiling on read rate: without it a producer faster
+ * than the flush threshold drives one drain per notification, against a pool
+ * shared by the entire control plane. It is applied inside the wait rather than
+ * added to it, so a stream that already waited out the poll interval adds
+ * nothing.
+ */
+async function waitForNextPass(watch: ChatRunWatch, signal: AbortSignal): Promise<void> {
+  const startedAt = Date.now();
+  await watch.wait(RUN_POLL_INTERVAL_MS);
+  const remaining = RUN_WAKE_MIN_INTERVAL_MS - (Date.now() - startedAt);
+  if (remaining > 0) await sleep(remaining, signal);
+}
+
 /** The database handle or a transaction opened from it. */
 type Executor = OrcaSynapseDatabase | Parameters<Parameters<OrcaSynapseDatabase["transaction"]>[0]>[0];
 
@@ -314,6 +342,16 @@ export class DrizzleChatManager implements ChatManager {
   constructor(
     private readonly database: OrcaSynapseDatabase,
     private readonly agents: AgentManager,
+    /**
+     * Required, and pass `NO_CHAT_RUN_WAKE` where there is no channel.
+     *
+     * It was optional once. Deleting the argument at the single place this is
+     * constructed for real then left all 577 API tests green, so the entire
+     * accelerator could ship inert behind a fully passing suite. A default is
+     * exactly the wrong shape for a dependency whose absence is invisible:
+     * making it explicit turns that deletion into a compile error.
+     */
+    private readonly wake: ChatRunWakeHub,
   ) {}
 
   /**
@@ -832,6 +870,22 @@ export class DrizzleChatManager implements ChatManager {
         errorCode: errorCode ?? `HERMES_${status}`,
       });
     };
+    /*
+     * Registered before the first query, and inside the `try` that closes it.
+     *
+     * Before the query, because a notification arriving while nothing is
+     * registered has nothing to latch onto and costs the first frame a whole
+     * poll interval. After that, ordering stops mattering: a notification either
+     * lands in a query that has not run yet, or latches and forces the next wait
+     * to return at once.
+     *
+     * Inside the `try`, because the `started` emit below can throw -- an SSE
+     * socket that closed between the route accepting the request and this line
+     * is enough -- and a watcher registered outside it would then be leaked for
+     * the life of the process.
+     */
+    const watch = this.wake.watch(runId, signal);
+    try {
     await emit({ type: "started", conversationId, messageId, runId, cursor: cursor === 0n ? null : cursor.toString() });
 
     while (!signal.aborted) {
@@ -965,7 +1019,12 @@ export class DrizzleChatManager implements ChatManager {
           return;
         }
       }
-      await sleep(RUN_POLL_INTERVAL_MS, signal);
+      await waitForNextPass(watch, signal);
+    }
+    } finally {
+      // Every exit passes through here: the terminal returns, the abort that
+      // ends the while, and anything thrown from inside it.
+      watch.close();
     }
   }
 

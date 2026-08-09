@@ -17,6 +17,10 @@ import {
   document,
   evaluationRun,
   guardrailPolicy,
+  chatRunWakeStatement,
+  createChatRunWakeHub,
+  NO_CHAT_RUN_WAKE,
+  type ChatRunWakeHub,
   type TestDatabase,
 } from "@orcasynapse/database";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -72,8 +76,25 @@ function agents(overrides: Partial<AgentManager> = {}) {
   } as unknown as AgentManager;
 }
 
-function manager(agentManager: AgentManager = agents()) {
-  return new DrizzleChatManager(context.database, agentManager);
+function manager(agentManager: AgentManager = agents(), wake: ChatRunWakeHub = NO_CHAT_RUN_WAKE) {
+  return new DrizzleChatManager(context.database, agentManager, wake);
+}
+
+/**
+ * A hub whose `wait` returns the instant it is called, and counts the passes.
+ *
+ * Stands in for a producer writing faster than any real worker does, which is
+ * the only condition under which the read-rate floor is load-bearing.
+ */
+function relentlessWake(): ChatRunWakeHub & { passes: () => number } {
+  let passes = 0;
+  return {
+    connected: true,
+    size: 0,
+    passes: () => passes,
+    watch: () => ({ wait: async () => { passes += 1; }, close: () => undefined }),
+    stop: async () => undefined,
+  };
 }
 
 /** An ACTIVE profile is the precondition for every conversation. */
@@ -695,5 +716,107 @@ describe("DrizzleChatManager event subscription", () => {
     // The marker is what ends the turn, not something the timeline renders: a
     // card reading "the run ended" directly above the answer is noise.
     expect(received.filter((event) => event.type === "activity")).toEqual([]);
+  });
+
+  it("holds the read rate to the floor when every wake returns at once", async () => {
+    /*
+     * The wake makes the read rate follow the write rate rather than a timer,
+     * which is the point -- and is also unbounded. This is the one constant
+     * standing between a runaway producer and one cursor query per notification,
+     * against a pool of ten shared by the whole control plane. It was previously
+     * removable with every chat-manager test still green.
+     *
+     * The margin is deliberately wide: the assertion is "bounded", not "exactly
+     * forty a second". Without the floor this figure is in the hundreds.
+     */
+    const profileId = await seedActiveProfile();
+    const created = await manager().create(principal, { profileId } as never);
+    const submission = await manager().submitMessage(principal, created.id, "Never ends");
+    const wake = relentlessWake();
+    const controller = new AbortController();
+
+    const subscription = manager(agents(), wake)
+      .subscribe(principal, created.id, submission.assistantMessage.id, null, () => undefined, controller.signal)
+      .catch(() => undefined);
+    await delay(300);
+    controller.abort();
+    await subscription;
+
+    expect(wake.passes()).toBeGreaterThan(0);
+    expect(wake.passes()).toBeLessThanOrEqual(25);
+  });
+
+  it("delivers a frame the worker commits sooner than the poll interval", async () => {
+    /*
+     * The one test that proves the accelerator is not inert. Everything else
+     * about the wake can be green while nothing is ever woken -- which is how
+     * the first attempt at this shipped, with the hub optional and its single
+     * wiring point uncovered.
+     *
+     * Timed from the commit, not from subscribe: the loop drains once
+     * immediately, so what is being measured is the wait that follows it. Under
+     * the poll interval alone this is up to 350 ms; woken, it is the read-rate
+     * floor plus a query.
+     */
+    const profileId = await seedActiveProfile();
+    const created = await manager().create(principal, { profileId } as never);
+    const submission = await manager().submitMessage(principal, created.id, "Wake me");
+    const runId = submission.assistantMessage.agentRunId!;
+    const wake = createChatRunWakeHub(context.connectionString);
+    const controller = new AbortController();
+    try {
+      for (let attempt = 0; attempt < 200 && !wake.connected; attempt += 1) await delay(10);
+      expect(wake.connected).toBe(true);
+
+      let arrivedAt = 0;
+      const subscription = manager(agents(), wake)
+        .subscribe(principal, created.id, submission.assistantMessage.id, null, (event) => {
+          if (event.type === "delta" && arrivedAt === 0) arrivedAt = Date.now();
+        }, controller.signal)
+        .catch(() => undefined);
+      // Long enough for the first drain to have finished and the loop to be
+      // waiting, so the wake is what ends that wait.
+      await delay(60);
+
+      const committedAt = Date.now();
+      await context.database.transaction(async (transaction) => {
+        await transaction.insert(agentRunEvent).values({ runId, type: "MESSAGE_DELTA", delta: "woken" });
+        await transaction.execute(chatRunWakeStatement(runId));
+      });
+      for (let attempt = 0; attempt < 100 && arrivedAt === 0; attempt += 1) await delay(5);
+      controller.abort();
+      await subscription;
+
+      expect(arrivedAt).toBeGreaterThan(0);
+      expect(arrivedAt - committedAt).toBeLessThan(200);
+    } finally {
+      controller.abort();
+      await wake.stop();
+    }
+  });
+
+  it("releases its wake registration even when the first frame throws", async () => {
+    /*
+     * The registration is acquired before the first query -- a notification with
+     * nothing registered has nothing to latch onto -- which puts it in front of
+     * an awaited `emit` that can throw. An SSE socket closing between the route
+     * accepting the request and the first write is enough. Registered outside
+     * the `try` that closes it, that leaks a watcher for the life of the
+     * process, and it leaks one per attempt.
+     */
+    const profileId = await seedActiveProfile();
+    const created = await manager().create(principal, { profileId } as never);
+    const submission = await manager().submitMessage(principal, created.id, "Dies on the first frame");
+    const wake = createChatRunWakeHub(context.connectionString);
+    try {
+      await expect(manager(agents(), wake).subscribe(
+        principal, created.id, submission.assistantMessage.id, null,
+        () => { throw new Error("the socket went away"); },
+        new AbortController().signal,
+      )).rejects.toThrow("the socket went away");
+      expect(wake.size).toBe(0);
+    } finally {
+      await wake.stop();
+    }
   });
 });

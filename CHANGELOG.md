@@ -5,6 +5,59 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v1.96.0 — 2026-08-09
+
+Push streaming, re-landed on the read path that can now carry it. The worker
+says "there is something now" the moment its transaction commits, instead of
+every reader waiting out a 350 ms timer that knows nothing about when anything
+was written.
+
+This shipped once before as a branch and was refuted by four independent
+verifiers. The design was right; the seams were not. What changed:
+
+**The hub is a required constructor argument.** It was optional, so deleting it
+at `runtime.ts` -- the only place it is constructed for real -- left all 577 API
+tests green, and the whole accelerator could ship inert behind a fully passing
+suite. Making it explicit turns that deletion into a compile error, and callers
+with no channel pass `NO_CHAT_RUN_WAKE`, which is a supported mode rather than a
+test double: every subscriber falls back to its poll interval, the same path a
+dropped connection takes.
+
+**A first connect that fails is no longer terminal.** `openChannelListener` armed
+its retry only after one success, so a channel that lost its first connect to
+`max_connections`, `pg_hba` or a host still starting was dead for the life of the
+process, with nothing to ask about it. It is now synchronous, never throws,
+retries from the first attempt, and exposes `connected`. There is no readiness
+promise at all -- the earlier one rejected with nothing attached, which is an
+unhandled rejection during startup from the code path whose entire job is to be
+survivable. The same defect was live in the *worker's* wake channel, whose
+comment has claimed since it was written that a failed connect is survivable; it
+now is. A `LISTEN` that fails after `connect()` succeeded also ends its client
+instead of leaking a backend per retry, against the very limit most likely to be
+the reason for retrying.
+
+**The watcher is registered inside the `try` that closes it.** It has to be
+acquired before the first query -- a notification with nothing registered has
+nothing to latch onto -- which puts it in front of an awaited `emit` that can
+throw when a socket closes early. Outside the `try`, that leaked one watcher per
+attempt, forever.
+
+**Only three notify sites, all inside their transaction.** PostgreSQL holds
+NOTIFY until commit, so a wake can never point at a row a reader cannot see. The
+three status-change wakes from the refuted version are gone rather than fixed:
+they were the untested ones, and since ai-v1.95.0 demoted the run row to a
+throttled hint they bought at most one late `state` frame.
+
+Four mutation probes, each reverted: bypassing the wake pushes delivery back to
+the poll interval (299 ms observed, ceiling 200 ms) and drives the pass counter
+to zero; removing the read-rate floor takes one stream from 25 passes to 189;
+registering the watcher outside the `try` leaks it on a throwing first frame.
+
+The end-to-end test is the one that matters, and it caught a real inertness on
+its first run: the hub was listening on the base database while the suite wrote
+to the per-test one, and `NOTIFY` is per-database. `TestDatabase` now exposes the
+`connectionString` it provisioned.
+
 ## ai-v1.95.0 — 2026-08-09
 
 A chat turn could end on top of its own last events. It no longer can, because

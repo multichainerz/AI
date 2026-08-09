@@ -38,7 +38,8 @@ function nextWake(timeoutMs = 5_000): { promise: Promise<void>; onWake: () => vo
 describe("the agent-run wake channel", () => {
   it("wakes a listener when a transaction commits", async () => {
     const { promise, onWake } = nextWake();
-    const listener = await listenForAgentRunWake(url, onWake);
+    const listener = listenForAgentRunWake(url, onWake);
+    await listener.whenConnected();
     try {
       await context.database.transaction(async (transaction) => {
         await transaction.execute(sql.raw(agentRunWakeStatement()));
@@ -54,7 +55,8 @@ describe("the agent-run wake channel", () => {
     // inside the same transaction as the insert: the worker can never be woken
     // for a run that is not yet visible to it.
     let woke = false;
-    const listener = await listenForAgentRunWake(url, () => { woke = true; });
+    const listener = listenForAgentRunWake(url, () => { woke = true; });
+    await listener.whenConnected();
     try {
       await context.database.transaction(async (transaction) => {
         await transaction.execute(sql.raw(agentRunWakeStatement()));
@@ -69,7 +71,8 @@ describe("the agent-run wake channel", () => {
 
   it("stops delivering once stopped, so shutdown cannot be woken", async () => {
     let woke = false;
-    const listener = await listenForAgentRunWake(url, () => { woke = true; });
+    const listener = listenForAgentRunWake(url, () => { woke = true; });
+    await listener.whenConnected();
     await listener.stop();
     await context.database.transaction(async (transaction) => {
       await transaction.execute(sql.raw(agentRunWakeStatement()));
@@ -78,11 +81,41 @@ describe("the agent-run wake channel", () => {
     expect(woke).toBe(false);
   });
 
-  it("reports a connection it cannot open instead of throwing into the worker", async () => {
-    // The worker treats this as non-fatal and keeps running on its timer, so
-    // the failure has to be a rejected promise it can catch, not a crash.
+  it("retries a first connection it cannot open instead of dying on it", async () => {
+    /*
+     * This used to reject, and the retry only armed after one success -- so a
+     * channel that lost its very first connect to `max_connections`, `pg_hba` or
+     * a host that was still starting was dead for the entire life of the
+     * process. The caller could not tell, either: it caught the rejection, wrote
+     * a log line and carried on with a channel that would never come back.
+     *
+     * Since the channel is only ever an accelerator, "not up yet" and "dropped
+     * just now" are the same state. Neither is fatal, both are retried, and
+     * `connected` is how anyone asks.
+     */
     const unreachable = new URL(testDatabaseUrl());
     unreachable.port = "1";
-    await expect(listenForAgentRunWake(unreachable.toString(), () => undefined)).rejects.toThrow();
+    const failures: unknown[] = [];
+    const listener = listenForAgentRunWake(
+      unreachable.toString(), () => undefined, (error) => failures.push(error),
+    );
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(listener.connected).toBe(false);
+      expect(failures.length).toBeGreaterThan(0);
+    } finally {
+      await listener.stop();
+    }
+  });
+
+  it("resolves whenConnected for a channel that is stopped before it connects", async () => {
+    // Otherwise shutdown hangs on a promise this process has decided never to
+    // settle, which is the failure mode a "never rejects" contract invites.
+    const unreachable = new URL(testDatabaseUrl());
+    unreachable.port = "1";
+    const listener = listenForAgentRunWake(unreachable.toString(), () => undefined);
+    const waiting = listener.whenConnected();
+    await listener.stop();
+    await expect(waiting).resolves.toBeUndefined();
   });
 });
