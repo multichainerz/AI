@@ -1,6 +1,6 @@
 {
   "name": "@orcasynapse/web",
-  "version": "3.13.0",
+  "version": "3.14.0",
   "description": "OrcaSynapse operator workspace for governed sessions, knowledge, agents, platform, and operations",
   "license": "BUSL-1.1",
   "private": true,

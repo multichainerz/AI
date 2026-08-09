@@ -1419,7 +1419,7 @@ export function ChatView({
                                   </strong>
                                   <StatusText
                                     className="shrink-0"
-                                    tone={entry.status === "failed" ? "bad" : entry.status === "completed" ? "good" : "accent"}
+                                    tone={entry.status === "failed" || entry.status === "cancelled" ? "bad" : entry.status === "completed" ? "good" : "accent"}
                                     dot={entry.status === "running"}
                                   >
                                     {/* The call's own state, not the last

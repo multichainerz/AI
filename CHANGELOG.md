@@ -5,6 +5,22 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v3.14.0 — 2026-08-10
+
+VM2 installation and recovery now keep the Hermes runtime inside its managed
+state root instead of relying on `/home/orcasynapse-hermes`, so the hardened
+service can start and execute runs without crossing its `ProtectHome` boundary.
+Completed nodes can be repaired in place with `--repair`; the installer stops
+an active managed runtime before reconciling its account, home, workspace,
+policy, and unit, then restores service health.
+
+Enrollment-provided heartbeat and desired-state paths are validated, persisted,
+and consumed by runtime helpers, while legacy nodes retain compatible fallback
+paths. VM2 smoke coverage now proves fresh installation, non-default control
+plane routes, legacy-home migration, a completed real run, resume, and clean
+decommission. The Session timeline also reports terminal run events as failed,
+completed, or cancelled instead of leaving ended failures marked as running.
+
 ## ai-v3.13.0 — 2026-08-10
 
 The operator workspace now presents one cohesive, quieter interface from entry

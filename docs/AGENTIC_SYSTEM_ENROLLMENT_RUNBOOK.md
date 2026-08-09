@@ -60,7 +60,7 @@ OrcaSynapse has no standing SSH credential or remote execution path on VM2, so h
 
 After the claim is consumed, the installer writes a root-only `${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}/enrollment-state.json` recovery journal before applying managed policy. If a later step fails, rerun the same command: the installer reuses the node identity and scoped configuration, repeats idempotent steps, and removes the recovery journal only after the heartbeat timer starts.
 
-The node reports `ONLINE` once its Hermes API port answers. VM2 runs a single plane, so there is no longer a window in which the runtime is healthy but a second service is not.
+The node reports `ONLINE` once its Hermes API port answers. Treat that as transport health, not proof of generation: installation acceptance also submits a governed `/v1/runs` request because the agent can fail after the gateway has started. VM2 runs a single plane, so there is no longer a window in which the runtime is healthy but a second service is not.
 
 The inference bootstrap never contains the upstream serving credential. Revoking a node disables its generated Hermes connection.
 
@@ -82,7 +82,7 @@ Deny VM2 access to OrcaSynapse PostgreSQL, enterprise storage administration, hy
 
 ## Secrets and state
 
-- `${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}` contains node identity (root-only, mode 0700) and the Hermes data directory at `data/`, owned by the `orcasynapse-hermes` service account. The state root itself is mode 0711: the service account must traverse it to reach `data/`, but must not be able to list or read the identity beside it.
+- `${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}` contains node identity (root-only, mode 0700), the Hermes application state at `data/`, and its OS home/runtime workspace at `home/`. Both runtime directories are owned by the `orcasynapse-hermes` service account. The systemd unit explicitly binds `HOME` and `WorkingDirectory` to `home/`, while root-owned managed policy pins Hermes's `terminal.cwd` there; this keeps runtime work inside the writable state root while `ProtectHome=yes` continues to hide the host's conventional home directories. The state root itself is mode 0711: the service account must traverse it to reach its directories, but must not be able to list or read the identity beside them.
 - Managed policy is a root-owned `/etc/hermes/config.yaml`. The unit's `ReadOnlyPaths=` makes it unwritable to the running service, which is what the read-only bind mount used to provide.
 - OrcaSynapse stores encrypted Hermes and inference-gateway secrets in PostgreSQL.
 - The invitation token is single-use, bound to the OrcaSynapse control-plane origin, and expires even if never consumed.
@@ -107,3 +107,14 @@ Preferred host-loss procedure:
 Do not use an invitation as a generic remote administrator. Upgrade with pinned artifacts under customer change control: an upgrade is a new invitation naming a new Hermes commit, followed by a re-enrollment. Before promotion, test the exact Hermes commit, API contracts, state migration, backup, rollback, and agent cancellation in a non-production environment.
 
 Hermes's own installer ignores `--commit` when the existing checkout is already newer, which would leave a host running a revision the control plane never approved. OrcaSynapse passes `--force-commit` so the approved pin always wins, including a deliberate downgrade to an earlier approved commit, and then reads the commit back out of the finished checkout rather than trusting the value it asked for.
+
+### Repair the runtime boundary without re-enrollment
+
+An already-enrolled node whose Hermes gateway is healthy but whose runs fail against `/home/orcasynapse-hermes` can reconcile the service account and hardened unit without rotating identity or credentials:
+
+```bash
+curl -fsSL https://orcasynapse.example.internal/install/agentic-node.sh \
+  | sudo bash -s -- --repair
+```
+
+The repair mode requires an intact completed enrollment and an OrcaSynapse-owned systemd unit. It changes only the service account home, managed runtime directories, and runtime unit, then restarts Hermes and verifies `/health`. It refuses incomplete state and units it cannot prove OrcaSynapse owns.

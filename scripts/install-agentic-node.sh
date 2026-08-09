@@ -3,8 +3,9 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="ai-v3.13.0"
+INSTALLER_VERSION="ai-v3.14.0"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
+HERMES_HOME_DIR="${STATE_ROOT}/home"
 RUNTIME_SERVICE="orcasynapse-hermes"
 HEARTBEAT_SERVICE="orcasynapse-hermes-heartbeat"
 DESIRED_STATE_SERVICE="orcasynapse-hermes-desired-state"
@@ -22,6 +23,8 @@ ENROLLMENT_STATE="${STATE_ROOT}/enrollment-state.json"
 TEMPORARY_FILES=()
 RESOLVED_BUNDLE=""
 INSTALLATION_COMPLETED=0
+REPAIR_RUNTIME_WAS_ACTIVE=0
+REPAIR_COMPLETED=0
 
 # >>> ORCASYNAPSE-INSTALLER-UI v1 - generated from scripts/lib/installer-ui.sh; edit the library, then run: bash scripts/sync-installer-ui.sh >>>
 # shellcheck shell=bash
@@ -518,6 +521,10 @@ cleanup() {
     printf '\n%b[RECOVERY]%b Protected enrollment state was retained. Rerun the same installer command to resume safely.\n' \
       "${UI_AMBER}${UI_BOLD}" "${UI_RESET}" >&2
   fi
+  if (( status != 0 && REPAIR_RUNTIME_WAS_ACTIVE == 1 && REPAIR_COMPLETED == 0 )); then
+    systemctl start "${RUNTIME_SERVICE}" >/dev/null 2>&1 \
+      || printf '%s\n' "[RECOVERY] The Hermes service was active before repair but could not be restarted automatically." >&2
+  fi
   return "${status}"
 }
 trap cleanup EXIT
@@ -566,14 +573,26 @@ install_hermes_directory() {
   chown "${HERMES_USER}:${HERMES_USER}" "${destination}"
 }
 
-# A system account with no login shell and no home of its own: it exists to own
-# ${STATE_ROOT} and to be the User= of one unit, nothing else.
+# A system account with no login shell. Its passwd home is an intentionally
+# small, writable directory inside ${STATE_ROOT}: upstream Hermes uses the OS
+# home as the fallback terminal working directory, while ProtectHome makes the
+# conventional /home tree inaccessible inside the service sandbox.
 create_service_account() {
   if id -u "${HERMES_USER}" >/dev/null 2>&1; then
-    info "Reusing the existing ${HERMES_USER} service account."
+    local current_home
+    current_home="$(getent passwd "${HERMES_USER}" | cut -d: -f6)"
+    if [[ "${current_home}" != "${HERMES_HOME_DIR}" ]]; then
+      usermod --home "${HERMES_HOME_DIR}" --shell /usr/sbin/nologin "${HERMES_USER}" \
+        || fail "could not reconcile the ${HERMES_USER} service account home"
+      info "Reconciled the existing ${HERMES_USER} service account home."
+    else
+      info "Reusing the existing ${HERMES_USER} service account."
+    fi
     return 0
   fi
-  useradd --system --no-create-home --shell /usr/sbin/nologin "${HERMES_USER}"     || fail "could not create the ${HERMES_USER} service account"
+  useradd --system --no-create-home --home-dir "${HERMES_HOME_DIR}" \
+    --shell /usr/sbin/nologin "${HERMES_USER}" \
+    || fail "could not create the ${HERMES_USER} service account"
 }
 
 write_file_from_stdin() {
@@ -605,6 +624,10 @@ model:
   default: ${model_alias_json}
   base_url: ${model_base_url_json}
   api_key: \${OPENAI_API_KEY}
+terminal:
+  # Keep Hermes work inside the service account's managed, writable home. This
+  # is the canonical replacement for the deprecated MESSAGING_CWD environment.
+  cwd: ${HERMES_HOME_DIR}
 # Hermes otherwise falls back to its broad api_server platform preset. Keep
 # the production baseline tool-free (including dynamically configured MCP
 # servers) until OrcaSynapse explicitly distributes and verifies a governed toolset.
@@ -620,6 +643,58 @@ tool_loop_guardrails:
     exact_failure: 5
     idempotent_no_progress: 5
 EOF
+}
+
+# Adds or replaces only terminal.cwd in an existing OrcaSynapse-managed policy.
+# Repair mode must preserve its enrolled model route and guardrails rather than
+# regenerate them from secrets, but older completed nodes have no terminal
+# block. The line-oriented edit is safe for the known root-owned YAML shape and
+# leaves every other setting byte-for-byte in its original order.
+reconcile_managed_terminal_cwd() {
+  local config="${HERMES_MANAGED_DIR}/config.yaml" rendered
+  [[ -s "${config}" ]] || fail "the OrcaSynapse-managed Hermes policy is missing"
+  rendered="$(python3 - "${config}" "${HERMES_HOME_DIR}" <<'PYTHON'
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+cwd = sys.argv[2]
+lines = path.read_text().splitlines()
+output = []
+inside_terminal = False
+terminal_seen = False
+cwd_written = False
+
+for line in lines:
+    if re.fullmatch(r"terminal:\s*", line):
+        terminal_seen = True
+        inside_terminal = True
+        cwd_written = False
+        output.append(line)
+        continue
+    if inside_terminal and line and not line[0].isspace() and not line.startswith("#"):
+        if not cwd_written:
+            output.append(f"  cwd: {cwd}")
+        inside_terminal = False
+    if inside_terminal and re.match(r"^\s+cwd\s*:", line):
+        if not cwd_written:
+            output.append(f"  cwd: {cwd}")
+            cwd_written = True
+        continue
+    output.append(line)
+
+if inside_terminal and not cwd_written:
+    output.append(f"  cwd: {cwd}")
+if not terminal_seen:
+    if output and output[-1] != "":
+        output.append("")
+    output.extend(["terminal:", f"  cwd: {cwd}"])
+
+sys.stdout.write("\n".join(output) + "\n")
+PYTHON
+)" || fail "the managed Hermes terminal workspace could not be reconciled"
+  write_file_from_stdin 0644 root root "${config}" <<<"${rendered}"
 }
 
 # Installs Hermes from its own installer, pinned to a commit.
@@ -671,11 +746,13 @@ X-OrcaSynapse-Managed=true
 Type=simple
 User=${HERMES_USER}
 Group=${HERMES_USER}
+WorkingDirectory=${HERMES_HOME_DIR}
 ExecStart=${HERMES_BINARY} gateway run
 Restart=always
 RestartSec=5s
 
 Environment=HERMES_HOME=${STATE_ROOT}/data
+Environment=HOME=${HERMES_HOME_DIR}
 Environment=HERMES_MANAGED_DIR=${HERMES_MANAGED_DIR}
 Environment=API_SERVER_ENABLED=true
 Environment=API_SERVER_HOST=0.0.0.0
@@ -699,7 +776,7 @@ AmbientCapabilities=
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=true
-ReadWritePaths=${STATE_ROOT}/data
+ReadWritePaths=${STATE_ROOT}/data ${HERMES_HOME_DIR}
 ReadOnlyPaths=${HERMES_MANAGED_DIR}
 ProtectKernelTunables=yes
 ProtectControlGroups=yes
@@ -768,10 +845,24 @@ validate_resume_state() {
     (.hostname | type == "string" and length > 0) and
     (.apiKey | type == "string" and length >= 32) and
     ((.identityFingerprint == null) or (.identityFingerprint | test("^[a-f0-9]{64}$"))) and
+    ((.heartbeatPath == null) or (((.heartbeatPath | type) == "string") and (.heartbeatPath | startswith("/")) and ((.heartbeatPath | startswith("//")) | not))) and
+    ((.desiredStatePath == null) or (((.desiredStatePath | type) == "string") and (.desiredStatePath | startswith("/")) and ((.desiredStatePath | startswith("//")) | not))) and
     (.modelBootstrap.baseUrl | test("^https?://")) and
     (.modelBootstrap.modelAlias | type == "string" and length > 0) and
     (.modelBootstrap.apiKey | type == "string" and length > 0)
   ' "${state_file}" >/dev/null
+}
+
+# Enrollment returns control-plane-relative paths so VM2 does not have to know
+# the API's routing layout. Older receipts predate those fields, hence the
+# explicit compatibility fallback; any path that is supplied must still be a
+# single-origin URL path rather than a second authority or a fragment.
+resolve_control_plane_path() {
+  local supplied="$1" fallback="$2" label="$3" path
+  path="${supplied:-${fallback}}"
+  [[ "${path}" =~ ^/[^[:space:]#]*$ && "${path}" != //* ]] \
+    || fail "OrcaSynapse returned an invalid ${label} path"
+  printf '%s' "${path}"
 }
 
 resolve_bundle_from_orcasynapse() {
@@ -846,7 +937,7 @@ private_identity_fingerprint() {
 }
 
 verify_enrolled_identity() {
-  local node_id="$1" control_plane_url="$2" hermes_commit="$3" node_fingerprint="$4"
+  local node_id="$1" control_plane_url="$2" hermes_commit="$3" node_fingerprint="$4" heartbeat_path="$5"
   local observed_at node_status payload nonce signature response_file http_status response_error
   node_status="DEGRADED"
   if curl --fail --silent --max-time 5 http://127.0.0.1:8642/health >/dev/null; then
@@ -868,7 +959,7 @@ verify_enrolled_identity() {
     -H "X-OrcaSynapse-Node-Nonce: ${nonce}" \
     -H "X-OrcaSynapse-Node-Signature: ${signature}" \
     --data-binary "${payload}" \
-    "${control_plane_url}/api/v1/runtime-nodes/${node_id}/heartbeat")"
+    "${control_plane_url}${heartbeat_path}")"
   if [[ "${http_status}" == "200" ]]; then
     return 0
   fi
@@ -931,6 +1022,13 @@ RUNTIME_SERVICE="${ORCASYNAPSE_HERMES_SERVICE:-orcasynapse-hermes}"
 
 CONTROL_PLANE_URL="$(<"${STATE_ROOT}/control-plane-url")"
 NODE_ID="$(<"${STATE_ROOT}/node-id")"
+if [[ -s "${STATE_ROOT}/desired-state-path" ]]; then
+  DESIRED_STATE_PATH="$(<"${STATE_ROOT}/desired-state-path")"
+else
+  # Compatibility with receipts created before the control plane distributed
+  # endpoint paths. New installations always persist the enrolled value.
+  DESIRED_STATE_PATH="/api/v1/runtime-nodes/${NODE_ID}/desired-state"
+fi
 PRIVATE_KEY="${STATE_ROOT}/identity/node.key"
 
 WORK="$(mktemp -d /tmp/orcasynapse-desired-state.XXXXXX)"
@@ -954,7 +1052,7 @@ http_status="$(curl --silent --show-error --max-time 20 \
   -H "X-OrcaSynapse-Node-Timestamp: ${timestamp}" \
   -H "X-OrcaSynapse-Node-Nonce: ${nonce}" \
   -H "X-OrcaSynapse-Node-Signature: ${signature}" \
-  "${CONTROL_PLANE_URL}/api/v1/runtime-nodes/${NODE_ID}/desired-state")" || exit 0
+  "${CONTROL_PLANE_URL}${DESIRED_STATE_PATH}")" || exit 0
 
 # A control plane that does not serve desired state yet is not an error.
 [[ "${http_status}" == "200" ]] || exit 0
@@ -1144,6 +1242,12 @@ set -Eeuo pipefail
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 CONTROL_PLANE_URL="$(<"${STATE_ROOT}/control-plane-url")"
 NODE_ID="$(<"${STATE_ROOT}/node-id")"
+if [[ -s "${STATE_ROOT}/heartbeat-path" ]]; then
+  HEARTBEAT_PATH="$(<"${STATE_ROOT}/heartbeat-path")"
+else
+  # Compatibility with nodes enrolled before endpoint paths were returned.
+  HEARTBEAT_PATH="/api/v1/runtime-nodes/${NODE_ID}/heartbeat"
+fi
 PRIVATE_KEY="${STATE_ROOT}/identity/node.key"
 COMMIT_PIN="$(<"${STATE_ROOT}/commit-pin")"
 
@@ -1189,7 +1293,7 @@ curl --fail --silent --show-error --max-time 15 \
   -H "X-OrcaSynapse-Node-Nonce: ${nonce}" \
   -H "X-OrcaSynapse-Node-Signature: ${signature}" \
   --data-binary "${payload}" \
-  "${CONTROL_PLANE_URL}/api/v1/runtime-nodes/${NODE_ID}/heartbeat" >/dev/null
+  "${CONTROL_PLANE_URL}${HEARTBEAT_PATH}" >/dev/null
 HEARTBEAT
 
   write_file_from_stdin 0644 root root "/etc/systemd/system/${HEARTBEAT_SERVICE}.service" <<EOF
@@ -1226,8 +1330,64 @@ WantedBy=timers.target
 EOF
 }
 
+# Repairs the runtime boundary of an already-enrolled node in place. This is
+# deliberately narrower than enrollment: identity, API keys, model policy and
+# control-plane trust remain untouched. It exists because nodes installed by an
+# older release cannot enter the enrollment-resume path once their receipt has
+# been cleared, yet still need their service account and unit reconciled.
+repair_runtime_installation() {
+  step 1 2 "Validate the enrolled Hermes runtime"
+  require_root
+  validate_state_root "${STATE_ROOT}"
+  [[ -s "${STATE_ROOT}/node-id" ]] \
+    || fail "no completed OrcaSynapse enrollment exists under ${STATE_ROOT}"
+  [[ -s "${STATE_ROOT}/data/.env" && -x "${HERMES_BINARY}" ]] \
+    || fail "the enrolled Hermes runtime is incomplete; decommission and re-enroll this node"
+  [[ -r "/etc/systemd/system/${RUNTIME_SERVICE}.service" ]] \
+    || fail "the managed ${RUNTIME_SERVICE} unit is missing"
+  grep -Fqx 'X-OrcaSynapse-Managed=true' "/etc/systemd/system/${RUNTIME_SERVICE}.service" \
+    || fail "refusing to replace a ${RUNTIME_SERVICE} unit not owned by OrcaSynapse"
+  success "The existing enrollment and managed runtime are intact."
+
+  step 2 2 "Reconcile the runtime filesystem boundary"
+  # usermod refuses to change the home of an account with a live process. Stop
+  # only the unit whose ownership marker was verified above; restart it after
+  # the account and sandbox paths agree.
+  if systemctl is-active "${RUNTIME_SERVICE}" >/dev/null 2>&1; then
+    REPAIR_RUNTIME_WAS_ACTIVE=1
+  fi
+  systemctl stop "${RUNTIME_SERVICE}" \
+    || fail "the managed Hermes service could not be stopped for repair"
+  install -d -m 0711 "${STATE_ROOT}"
+  create_service_account
+  install_hermes_directory 0750 "${STATE_ROOT}/data"
+  install_hermes_directory 0750 "${HERMES_HOME_DIR}"
+  reconcile_managed_terminal_cwd
+  write_hermes_runtime_unit
+  systemctl enable "${RUNTIME_SERVICE}" >/dev/null
+  systemctl restart "${RUNTIME_SERVICE}" \
+    || fail "the repaired Hermes service could not restart"
+  wait_for_hermes 0 \
+    || fail "the repaired Hermes service did not become healthy within three minutes"
+  REPAIR_COMPLETED=1
+
+  ui_complete "AGENTIC SYSTEM RUNTIME REPAIRED"
+  ui_panel_kv "Service account home" "${HERMES_HOME_DIR}"
+  ui_panel_kv "Runtime workspace" "${HERMES_HOME_DIR}"
+  ui_next "Retry the failed Session run in OrcaSynapse."
+}
+
 main() {
+  if [[ "$#" -eq 1 && "$1" == "--repair" ]]; then
+    UI_BANNER_TAGLINE="AGENTIC SYSTEM  /  VM2 RUNTIME REPAIR"
+    UI_BANNER_ACTIVITY="Reconciling the managed runtime boundary"
+  fi
   banner
+
+  if [[ "$#" -eq 1 && "$1" == "--repair" ]]; then
+    repair_runtime_installation
+    return 0
+  fi
 
   step 1 7 "Validate the isolated host"
   require_root
@@ -1265,7 +1425,7 @@ main() {
       resolve_bundle_from_orcasynapse "$2"
       bundle="${RESOLVED_BUNDLE}"
     else
-      fail "usage: install-agentic-node.sh <enrollment-bundle.json> | install-agentic-node.sh --connect <OrcaSynapse-origin>"
+      fail "usage: install-agentic-node.sh <enrollment-bundle.json> | install-agentic-node.sh --connect <OrcaSynapse-origin> | install-agentic-node.sh --repair"
     fi
     validate_bundle "${bundle}"
     node_id="$(jq -r '.nodeId' "${bundle}")"
@@ -1291,6 +1451,7 @@ main() {
   install -d -m 0711 "${STATE_ROOT}"
   install -d -m 0700 "${STATE_ROOT}/identity"
   create_service_account
+  install_hermes_directory 0750 "${HERMES_HOME_DIR}"
   # The managed scope is a root-owned policy layer at ${HERMES_MANAGED_DIR}.
   # Hermes reads it through HERMES_MANAGED_DIR and it outranks anything the
   # service account can write, so the pinned model route and the baseline
@@ -1382,7 +1543,7 @@ EOF
   # That is what made a resumed install unrecoverable -- it died with a raw bash
   # error after Hermes was already installed and enrolled, so the node never got
   # a heartbeat client and never came back online.
-  local control_plane_key="" desired_state_path=""
+  local control_plane_key="" heartbeat_path="" desired_state_path=""
   if (( resuming )); then
     model_base_url_json="$(jq -c '.modelBootstrap.baseUrl' "${ENROLLMENT_STATE}")"
     model_alias_json="$(jq -c '.modelBootstrap.modelAlias' "${ENROLLMENT_STATE}")"
@@ -1394,7 +1555,10 @@ EOF
     # a resumed node would pin no control-plane key, and its desired-state
     # client would exit early forever rather than apply a toolset allowlist.
     control_plane_key="$(jq -r '.controlPlanePublicKeyPem // empty' "${ENROLLMENT_STATE}")"
+    heartbeat_path="$(jq -r '.heartbeatPath // empty' "${ENROLLMENT_STATE}")"
     desired_state_path="$(jq -r '.desiredStatePath // empty' "${ENROLLMENT_STATE}")"
+    heartbeat_path="$(resolve_control_plane_path "${heartbeat_path}" "/api/v1/runtime-nodes/${node_id}/heartbeat" "heartbeat")"
+    desired_state_path="$(resolve_control_plane_path "${desired_state_path}" "/api/v1/runtime-nodes/${node_id}/desired-state" "desired-state")"
     success "Enrollment is already complete; recovered its scoped inference configuration."
   else
     info "Registering the public node identity and requesting the approved inference route."
@@ -1437,7 +1601,10 @@ EOF
     # Absent on a control plane older than ai-v1.41.0. A node with no pinned
     # key applies no desired state rather than trusting an unsigned document.
     control_plane_key="$(jq -r '.controlPlanePublicKeyPem // empty' "${response_file}")"
+    heartbeat_path="$(jq -r '.heartbeatPath // empty' "${response_file}")"
     desired_state_path="$(jq -r '.desiredStatePath // empty' "${response_file}")"
+    heartbeat_path="$(resolve_control_plane_path "${heartbeat_path}" "/api/v1/runtime-nodes/${node_id}/heartbeat" "heartbeat")"
+    desired_state_path="$(resolve_control_plane_path "${desired_state_path}" "/api/v1/runtime-nodes/${node_id}/desired-state" "desired-state")"
     enrolled_fingerprint="$(jq -r '.node.identityFingerprint // empty' "${response_file}")"
     [[ "${enrolled_fingerprint}" == "${node_fingerprint}" ]] \
       || fail "OrcaSynapse enrolled identity '${enrolled_fingerprint:-missing}' instead of the VM2 identity '${node_fingerprint}'"
@@ -1447,15 +1614,16 @@ EOF
       --arg hostname "${hostname_value}" --arg apiKey "${api_key}" \
       --arg identityFingerprint "${node_fingerprint}" \
       --arg controlPlanePublicKeyPem "${control_plane_key}" \
+      --arg heartbeatPath "${heartbeat_path}" \
       --arg desiredStatePath "${desired_state_path}" \
       --argjson modelBootstrap "$(jq -c '.modelBootstrap' "${response_file}")" \
-      '{format:"orcasynapse-hermes-resume/v1",nodeId:$nodeId,controlPlaneUrl:$controlPlaneUrl,hermesBaseUrl:$hermesBaseUrl,hermesCommit:$hermesCommit,hostname:$hostname,apiKey:$apiKey,identityFingerprint:$identityFingerprint,controlPlanePublicKeyPem:$controlPlanePublicKeyPem,desiredStatePath:$desiredStatePath,modelBootstrap:$modelBootstrap}' \
+      '{format:"orcasynapse-hermes-resume/v1",nodeId:$nodeId,controlPlaneUrl:$controlPlaneUrl,hermesBaseUrl:$hermesBaseUrl,hermesCommit:$hermesCommit,hostname:$hostname,apiKey:$apiKey,identityFingerprint:$identityFingerprint,controlPlanePublicKeyPem:$controlPlanePublicKeyPem,heartbeatPath:$heartbeatPath,desiredStatePath:$desiredStatePath,modelBootstrap:$modelBootstrap}' \
       > "${resume_file}"
     install -m 0600 -o root -g root "${resume_file}" "${ENROLLMENT_STATE}"
     success "Node enrolled; protected recovery state was saved before continuing."
   fi
 
-  verify_enrolled_identity "${node_id}" "${control_plane_url}" "${hermes_commit}" "${node_fingerprint}"
+  verify_enrolled_identity "${node_id}" "${control_plane_url}" "${hermes_commit}" "${node_fingerprint}" "${heartbeat_path}"
   success "VM1 accepted the signed VM2 trust handshake."
 
   step 6 7 "Apply the managed runtime policy"
@@ -1479,11 +1647,14 @@ EOF
   printf '%s' "${control_plane_url}" > "${STATE_ROOT}/control-plane-url"
   printf '%s' "${hermes_base_url}" > "${STATE_ROOT}/hermes-base-url"
   printf '%s' "${hermes_commit}" > "${STATE_ROOT}/commit-pin"
+  printf '%s' "${heartbeat_path}" > "${STATE_ROOT}/heartbeat-path"
+  printf '%s' "${desired_state_path}" > "${STATE_ROOT}/desired-state-path"
   if [[ -n "${control_plane_key}" ]]; then
     printf '%s' "${control_plane_key}" > "${STATE_ROOT}/control-plane-key.pem"
     chmod 0644 "${STATE_ROOT}/control-plane-key.pem"
   fi
-  chmod 0600 "${STATE_ROOT}/node-id" "${STATE_ROOT}/control-plane-url" "${STATE_ROOT}/hermes-base-url" "${STATE_ROOT}/commit-pin"
+  chmod 0600 "${STATE_ROOT}/node-id" "${STATE_ROOT}/control-plane-url" "${STATE_ROOT}/hermes-base-url" \
+    "${STATE_ROOT}/commit-pin" "${STATE_ROOT}/heartbeat-path" "${STATE_ROOT}/desired-state-path"
 
   write_heartbeat_client
   write_desired_state_client

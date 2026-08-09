@@ -72,13 +72,26 @@ jq -n \
     hostname:"hermes-01.internal",
     apiKey:$apiKey,
     identityFingerprint:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    heartbeatPath:"/runtime-control/nodes/node-1/heartbeat",
+    desiredStatePath:"/runtime-control/nodes/node-1/desired-state",
     modelBootstrap:{baseUrl:"https://orcasynapse.internal/internal/v1",modelAlias:"hermes-agent",apiKey:$gatewayKey}
   }' > "${valid_state}"
 
 validate_resume_state "${valid_state}"
+# Legacy receipts remain resumable and take the historical routes, but current
+# endpoint paths must be validated and consumed rather than ignored.
+jq 'del(.heartbeatPath, .desiredStatePath)' "${valid_state}" > "${TEST_ROOT}/legacy.json"
+validate_resume_state "${TEST_ROOT}/legacy.json"
+[[ "$(resolve_control_plane_path "" "/api/v1/runtime-nodes/node-1/heartbeat" "heartbeat")" == "/api/v1/runtime-nodes/node-1/heartbeat" ]]
+[[ "$(resolve_control_plane_path "/runtime-control/nodes/node-1/heartbeat" "/unused" "heartbeat")" == "/runtime-control/nodes/node-1/heartbeat" ]]
 jq 'del(.modelBootstrap.apiKey)' "${valid_state}" > "${TEST_ROOT}/invalid.json"
 if validate_resume_state "${TEST_ROOT}/invalid.json"; then
   printf 'invalid recovery state was accepted\n' >&2
+  exit 1
+fi
+jq '.heartbeatPath = "//different-authority.invalid/heartbeat"' "${valid_state}" > "${TEST_ROOT}/invalid-path.json"
+if validate_resume_state "${TEST_ROOT}/invalid-path.json"; then
+  printf 'cross-authority recovery path was accepted\n' >&2
   exit 1
 fi
 
@@ -107,6 +120,16 @@ grep -Fq -- '--force-commit' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh
 # Hermes is code, not a secret: installed under a relaxed umask or systemd
 # cannot execute it as the unprivileged service account.
 grep -Fq 'umask 022' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq 'Environment=HOME=${HERMES_HOME_DIR}' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq 'WorkingDirectory=${HERMES_HOME_DIR}' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq 'cwd: ${HERMES_HOME_DIR}' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+if grep -Eq '^Environment=(MESSAGING_CWD|TERMINAL_CWD)=' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"; then
+  printf 'deprecated Hermes cwd environment configuration reappeared\n' >&2
+  exit 1
+fi
+grep -Fq 'repair_runtime_installation()' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq '${CONTROL_PLANE_URL}${HEARTBEAT_PATH}' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq '${CONTROL_PLANE_URL}${DESIRED_STATE_PATH}' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 if grep -Eq 'OPENAI_(BASE_URL|API_KEY)=\$\{model_(base_url|api_key)_json\}' \
   "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"; then
   printf 'Hermes .env values must be raw, not JSON-quoted\n' >&2
@@ -148,6 +171,25 @@ if [[ "${EUID}" -eq 0 ]] && id -u "${HERMES_USER}" >/dev/null 2>&1; then
   printf 'protected=true\n' | install_hermes_file_from_stdin 0600 "${ownership_root}/runtime.env"
   [[ "$(stat -c '%U:%G:%a' "${ownership_root}")" == "${HERMES_USER}:${HERMES_USER}:750" ]]
   [[ "$(stat -c '%U:%G:%a' "${ownership_root}/runtime.env")" == "${HERMES_USER}:${HERMES_USER}:600" ]]
+fi
+
+if [[ "${EUID}" -eq 0 ]]; then
+  # Repair must preserve the enrolled policy and replace only terminal.cwd.
+  # Exercise the atomic renderer as root because the real managed file is
+  # root-owned; a Python/render failure must occur before the original moves.
+  (
+    HERMES_MANAGED_DIR="${TEST_ROOT}/managed-policy"
+    HERMES_HOME_DIR="${TEST_ROOT}/runtime-home"
+    mkdir -p "${HERMES_MANAGED_DIR}"
+    printf 'model:\n  default: smoke-model\nsecurity:\n  redact_secrets: true\n' \
+      > "${HERMES_MANAGED_DIR}/config.yaml"
+    reconcile_managed_terminal_cwd
+    grep -Fqx '  default: smoke-model' "${HERMES_MANAGED_DIR}/config.yaml"
+    grep -Fqx '  redact_secrets: true' "${HERMES_MANAGED_DIR}/config.yaml"
+    grep -Fqx "  cwd: ${HERMES_HOME_DIR}" "${HERMES_MANAGED_DIR}/config.yaml"
+    reconcile_managed_terminal_cwd
+    [[ "$(grep -Fc '  cwd:' "${HERMES_MANAGED_DIR}/config.yaml")" == "1" ]]
+  )
 fi
 
 piped_output="$(

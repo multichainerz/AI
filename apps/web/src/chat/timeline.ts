@@ -33,7 +33,7 @@ export type TimelineKind = "tool" | "subagent" | "approval" | "reasoning" | "lif
  * arrived, including one whose run died mid-flight. Nothing here invents a
  * failure the log does not record.
  */
-export type TimelineStatus = "running" | "completed" | "failed";
+export type TimelineStatus = "running" | "completed" | "failed" | "cancelled";
 
 export interface TimelineEntry<E extends TimelineEvent = TimelineEvent> {
   /** Stable across re-renders: the call key where there is one, else the id. */
@@ -87,9 +87,16 @@ function kindOf(type: string): TimelineKind {
   return "lifecycle";
 }
 
-function statusOf(type: string, previous: TimelineStatus): TimelineStatus {
-  if (type === "TOOL_FAILED" || type === "SUBAGENT_FAILED") return "failed";
-  if (type === "TOOL_COMPLETED" || type === "SUBAGENT_COMPLETED") return "completed";
+function statusOf(type: string, reported: string | null, previous: TimelineStatus): TimelineStatus {
+  if (type === "TOOL_FAILED" || type === "SUBAGENT_FAILED" || type === "RUN_FAILED") return "failed";
+  if (type === "TOOL_COMPLETED" || type === "SUBAGENT_COMPLETED" || type === "RUN_COMPLETED") return "completed";
+  if (type === "RUN_CANCELLED") return "cancelled";
+  if (type === "RUN_ENDED") {
+    const terminal = reported?.toUpperCase();
+    if (terminal === "FAILED") return "failed";
+    if (terminal === "COMPLETED") return "completed";
+    if (terminal === "CANCELLED") return "cancelled";
+  }
   return previous;
 }
 
@@ -112,7 +119,7 @@ export function groupRuntimeEvents<E extends TimelineEvent>(events: readonly E[]
 
     if (existing) {
       existing.events.push(event);
-      existing.status = statusOf(event.type, existing.status);
+      existing.status = statusOf(event.type, event.status, existing.status);
       // The runtime reports duration on the event that ends the call, so a
       // later value always supersedes an earlier one.
       if (event.durationMs !== null) existing.durationMs = event.durationMs;
@@ -125,7 +132,7 @@ export function groupRuntimeEvents<E extends TimelineEvent>(events: readonly E[]
       key,
       kind,
       label: event.toolName ?? (kind === "tool" ? "tool" : event.type),
-      status: statusOf(event.type, "running"),
+      status: statusOf(event.type, event.status, "running"),
       events: [event],
       durationMs: event.durationMs,
     };
