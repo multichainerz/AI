@@ -5,6 +5,30 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## v2.7.0 — 2026-08-09
+
+The last bordered card leaves the chat view.
+
+The conversation rail's foot was a `Panel` wrapping a kicker, a value, a name and
+two further bordered boxes carrying two more uppercase kickers -- three cards and
+three kickers inside 200px, to state three facts: who you are signed in as, which
+agent is bound, and what the conversation has cost. A hairline and a column state
+them. `Panel` is now unused in `chat-view.tsx` entirely, which is the "eight
+bordered surfaces, all the same weight" complaint closed rather than reduced.
+
+It also carried a caption that had stopped being true. The agent row read
+"Choose below" -- correct until v2.6.0 moved the profile picker up into the
+header, after which it pointed at nothing. It reads "None selected" now. Copy
+that instructs is copy that goes stale silently; there was nothing to catch it,
+because no test asserts on it and it renders identically either way.
+
+Filed rather than fixed: `app.tsx` still has no test of any kind (task #63, with
+the mocks a first one needs). Typecheck is the gate, and it is a real one -- it
+caught the JSX error that broke the shell during v2.6.0 -- but it cannot catch
+a runtime render fault or a focus-mode regression. A pure-function test of
+`activeView === "Chat"` would have been ceremony that cannot fail, so there isn't
+one.
+
 ## v2.6.0 — 2026-08-09
 
 Chat stops reading like an admin console.
