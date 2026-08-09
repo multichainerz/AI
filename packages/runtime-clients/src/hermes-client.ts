@@ -1,3 +1,4 @@
+import { AGENT_RUN_EVENT_TYPES } from "@orcasynapse/contracts";
 import type { DrizzleRuntimeConnectionResolver, RuntimeConnection } from "./connection-resolver.js";
 
 const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
@@ -17,17 +18,39 @@ const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
  */
 const MAX_SSE_EVENT_CHARACTERS = 512 * 1024;
 
-export type HermesSafeRunEventType =
-  | "RUN_STARTED"
-  | "MESSAGE_DELTA"
-  | "TOOL_STARTED"
-  | "TOOL_COMPLETED"
-  | "SUBAGENT_STARTED"
-  | "SUBAGENT_COMPLETED"
-  | "APPROVAL_REQUIRED"
-  | "RUN_COMPLETED"
-  | "RUN_FAILED"
-  | "RUN_CANCELLED";
+/*
+ * How much of an answer may pool before it is handed over.
+ *
+ * Each flush becomes one AgentRunEvent row and one cursor, so this pair sets
+ * both how smooth the answer looks and how much the database is asked to do. At
+ * 1,024 characters a reader received the answer in kilobyte lumps about ten
+ * times a second, which reads as jumpy however fast delivery is. These values
+ * are only affordable because a subscriber is now woken when the row commits
+ * rather than finding it on its next poll (v1.9.0).
+ *
+ * The interval is a THRESHOLD, not a latency guarantee: it is evaluated only
+ * when a new delta arrives. If Hermes goes quiet mid-buffer nothing flushes
+ * until the next delta, the next non-delta event, or the end of the stream --
+ * exactly as before. The character bound is the one that binds on a fast
+ * producer, so it is both the dial to turn if the write rate proves too
+ * expensive and the one the test pins; the interval is deliberately not
+ * asserted, because a test that drives the clock past it would be asserting the
+ * clock rather than this.
+ */
+const DELTA_FLUSH_CHARACTERS = 256;
+const DELTA_FLUSH_INTERVAL_MS = 40;
+
+/**
+ * Derived from the contract rather than restated.
+ *
+ * This was a hand-maintained union listing the same ten names as
+ * `AGENT_RUN_EVENT_TYPES`, which is two sources of truth for one vocabulary
+ * and the reason adding an event type here failed to reach the dashboard.
+ * Deriving it means a type the contract does not admit cannot be written to
+ * the run ledger, and a type added to the contract is available here without
+ * anyone remembering to copy it.
+ */
+export type HermesSafeRunEventType = (typeof AGENT_RUN_EVENT_TYPES)[number];
 
 export interface HermesSafeRunEvent {
   sourceEventId: string | null;
@@ -38,6 +61,20 @@ export interface HermesSafeRunEvent {
   summary: string | null;
   status: string | null;
   toolName: string | null;
+  /*
+   * The runtime's own identifier for a tool call, when it offers one. Most
+   * Hermes surfaces do not: `tool.progress` carries the tool's name and nothing
+   * that ties it to the start it belongs to. Null here means "not reported",
+   * and the worker synthesises a key rather than the client inventing one,
+   * because correlation has to survive a reconnect that resets this client.
+   */
+  toolCallKey: string | null;
+  /*
+   * The event's own prose where it runs longer than a summary line -- reasoning
+   * text, a tool's returned output. Capped, because a tool that returns a file
+   * should not be able to write that file into the run's history.
+   */
+  text: string | null;
   childSessionId: string | null;
   durationMs: number | null;
   inputTokens: number | null;
@@ -50,15 +87,44 @@ export interface HermesSafeRunEvent {
   occurredAt: Date;
 }
 
-const SAFE_EVENT_TYPES = new Map<string, HermesSafeRunEventType>([
+/**
+ * Hermes wire names to the vocabulary this control plane stores.
+ *
+ * Hermes' own surfaces disagree with each other about these names — the
+ * OpenAI-compatible chat-completions route emits `hermes.tool.progress` while
+ * `/v1/runs` emits `tool.progress` — so both spellings are listed rather than
+ * one being assumed canonical. Anything absent from this map is dropped, which
+ * is a deliberate admission boundary and also how three real events came to be
+ * invisible in the product:
+ *
+ * - `tool.failed` had no entry at all. A tool that failed produced a start with
+ *   no completion, which reads to an operator exactly like a tool still
+ *   running: the run appeared to hang rather than to have failed.
+ * - `tool.progress` was mapped onto `TOOL_STARTED`, so a single tool call
+ *   emitted N "started" rows against one completion. That is why a tool call
+ *   could never be rendered as one object with a lifecycle.
+ * - `reasoning.available` was dropped. See `AGENT_RUN_EVENT_TYPES` for why the
+ *   destination is named `REASONING_REPORTED` and not `THINKING`.
+ */
+/*
+ * Exported for one assertion: that nothing here maps to the marker the control
+ * plane writes to end a run's event log. A subscriber stops on that marker, so
+ * a runtime able to produce one could end a turn while the answer is still
+ * unstored. The test is in this package because contracts cannot see this map.
+ */
+export const SAFE_EVENT_TYPES = new Map<string, HermesSafeRunEventType>([
   ["run.start", "RUN_STARTED"],
   ["run.started", "RUN_STARTED"],
   ["message.delta", "MESSAGE_DELTA"],
   ["tool.start", "TOOL_STARTED"],
   ["tool.started", "TOOL_STARTED"],
-  ["hermes.tool.progress", "TOOL_STARTED"],
+  ["tool.progress", "TOOL_PROGRESS"],
+  ["hermes.tool.progress", "TOOL_PROGRESS"],
   ["tool.complete", "TOOL_COMPLETED"],
   ["tool.completed", "TOOL_COMPLETED"],
+  ["tool.failed", "TOOL_FAILED"],
+  ["tool.error", "TOOL_FAILED"],
+  ["reasoning.available", "REASONING_REPORTED"],
   ["subagent.start", "SUBAGENT_STARTED"],
   ["subagent.complete", "SUBAGENT_COMPLETED"],
   ["approval.required", "APPROVAL_REQUIRED"],
@@ -135,6 +201,16 @@ function safeApprovalChoices(value: unknown): Array<"ALLOW_ONCE" | "DENY"> {
   return [...normalized];
 }
 
+/*
+ * The events whose payload carries prose worth keeping beyond a summary line.
+ *
+ * `RUN_COMPLETED` is absent on purpose: its `output` is the finished answer,
+ * which the message already stores, and copying it here would have the
+ * transcript hold the same text twice and the timeline able to show it as
+ * though it were a separate step.
+ */
+const TEXT_BEARING = new Set<HermesSafeRunEventType>(["REASONING_REPORTED", "TOOL_COMPLETED", "TOOL_FAILED"]);
+
 function safeRunEvent(eventName: string, sourceEventId: string | null, data: unknown): HermesSafeRunEvent | null {
   if (!data || typeof data !== "object" || Array.isArray(data)) return null;
   const value = data as Record<string, unknown>;
@@ -165,6 +241,14 @@ function safeRunEvent(eventName: string, sourceEventId: string | null, data: unk
     summary: safeEventText(value.summary ?? value.preview ?? value.goal ?? value.task, 1_000),
     status: safeEventText(value.status, 80),
     toolName: safeEventText(value.tool ?? value.tool_name ?? value.name, 160),
+    // Deliberately not falling back to `value.id`: on a tool event that is the
+    // event's identifier, already claimed above as sourceEventId, and reusing
+    // it would give every event in one call a different "call" key -- the exact
+    // failure this column exists to end.
+    toolCallKey: safeEventText(value.tool_call_id ?? value.call_id ?? value.invocation_id, 200),
+    text: TEXT_BEARING.has(type)
+      ? safeEventText(value.reasoning ?? value.reasoning_content ?? value.result ?? value.text, 20_000)
+      : null,
     childSessionId: safeEventText(value.child_session_id ?? value.subagent_id ?? value.task_id, 255),
     durationMs,
     inputTokens: tokens.inputTokens,
@@ -673,7 +757,8 @@ export class HermesClient {
           if (event.type === "MESSAGE_DELTA" && event.delta) {
             pendingDeltaEvent = event;
             pendingDelta += event.delta;
-            if (pendingDelta.length >= 1_024 || Date.now() - lastDeltaFlushAt >= 100) {
+            if (pendingDelta.length >= DELTA_FLUSH_CHARACTERS
+              || Date.now() - lastDeltaFlushAt >= DELTA_FLUSH_INTERVAL_MS) {
               await flushDelta();
             }
             continue;

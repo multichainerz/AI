@@ -5,6 +5,44 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v1.9.0 — 2026-08-09
+
+The chat read path rebuilt end to end, so a turn can no longer end on top of its
+own last events.
+
+- **One writer at the moment it matters.** The SSE consumer writing
+  `AgentRunEvent` rows ran concurrently with the poll loop that writes a run's
+  terminal transition, and `cursor` is a `bigserial` claimed at INSERT and made
+  visible at COMMIT — so an event still in flight landed *below* a cursor readers
+  had already passed. Every terminal transition now drains the event stream
+  first, and per-run cursor order is commit order.
+- **The outcome is a row, not a second query.** Whoever finalises a run writes a
+  `RUN_ENDED` marker inside the same transaction that flips the status, and a
+  subscriber ends on that marker and on nothing else. The name is deliberately
+  one Hermes cannot produce: it emits `run.completed` while the message row is
+  still `PENDING`, so reusing that spelling would have closed the turn on an
+  empty answer.
+- **`stream_error` joins the event union.** The one frame whose job is to report
+  a broken stream had bypassed the schema on both ends, typed by assertion and
+  described by neither. Reconnects also drop from three seconds to one and
+  resume from the cursor already held.
+- **Push streaming, re-landed on a read path that can carry it.** The worker says
+  "there is something now" the moment its transaction commits instead of every
+  reader waiting out a 350 ms timer. The wake hub is a required constructor
+  argument rather than an optional one that could ship inert behind a green
+  suite; a failed first connect is no longer terminal; and there are three notify
+  sites, all inside their transaction.
+- **Delta coalescing tuned to 256 characters / 40 ms**, down from 1,024 / 100 ms,
+  which is only affordable because a subscriber is now woken on commit. Pinned by
+  a test that fails against the old bounds.
+- `db:generate` works again. Migrations 0022–0026 were hand-authored and left no
+  Drizzle snapshot, so generate diffed against 0021, found a dropped column
+  beside an added one, and stopped to ask a human about a rename with no TTY.
+  `AgentRunEvent` also gains `toolCallKey`, `text` and `contentOffset`, so a tool
+  called twice in one run no longer stores unrelated events as one group.
+- `splitStableMarkdown` and `groupConversationsByDate` land as pure units, built
+  and pinned before the layout that depends on them.
+
 ## v1.8.0 — 2026-08-09
 
 An audit of the design arc, and the navigation rail rebuilt against the design

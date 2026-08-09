@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  AGENT_RUN_ENDED_EVENT_TYPE,
+  AGENT_RUN_EVENT_TYPES,
+  AGENT_RUN_STATUSES,
   agentRunSchema,
   createAgentProfileSchema,
+  isAgentRunEndedEventType,
   updateAgentRuntimeControlSchema,
 } from "./agents.js";
 
@@ -66,5 +70,41 @@ describe("agent contracts", () => {
     };
     expect(agentRunSchema.parse(base).status).toBe("COMPLETED");
     expect(agentRunSchema.safeParse({ ...base, effectiveCapabilities: ["terminal:write"] }).success).toBe(false);
+  });
+});
+
+describe("the marker that ends a run's event log", () => {
+  it("is a declared event type, and the only one that ends a stream", () => {
+    expect(AGENT_RUN_EVENT_TYPES).toContain(AGENT_RUN_ENDED_EVENT_TYPE);
+    expect(AGENT_RUN_EVENT_TYPES.filter(isAgentRunEndedEventType)).toEqual([AGENT_RUN_ENDED_EVENT_TYPE]);
+  });
+
+  it("is not a name Hermes reports", () => {
+    /*
+     * The reason the marker is not called RUN_COMPLETED. Hermes announces its
+     * own view of a run ending on the event stream, and the worker stores that
+     * announcement like any other event -- while the message row is still
+     * PENDING and the answer is not stored yet. If a reader ended its turn on
+     * one of those it would deliver an empty answer and stop, which is a worse
+     * failure than the one ending-on-a-marker exists to fix.
+     *
+     * So: every name the runtime can produce, checked against the one name only
+     * the control plane may write.
+     */
+    const reportedByHermes = ["RUN_STARTED", "RUN_COMPLETED", "RUN_FAILED", "RUN_CANCELLED"];
+    for (const type of reportedByHermes) expect(isAgentRunEndedEventType(type)).toBe(false);
+    expect(reportedByHermes).not.toContain(AGENT_RUN_ENDED_EVENT_TYPE);
+  });
+
+  it("does not mistake an ordinary event for the end of a run", () => {
+    expect(isAgentRunEndedEventType("MESSAGE_DELTA")).toBe(false);
+    expect(isAgentRunEndedEventType("TOOL_COMPLETED")).toBe(false);
+    expect(isAgentRunEndedEventType("APPROVAL_REQUIRED")).toBe(false);
+  });
+
+  it("leaves exactly the four statuses a run can still move out of", () => {
+    const terminal = new Set(["COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT", "DENIED"]);
+    expect(AGENT_RUN_STATUSES.filter((status) => !terminal.has(status)))
+      .toEqual(["QUEUED", "RUNNING", "WAITING_FOR_APPROVAL", "CANCEL_REQUESTED"]);
   });
 });

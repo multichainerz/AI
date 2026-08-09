@@ -17,6 +17,15 @@ export function testDatabaseUrl(): string {
 
 export interface TestDatabase {
   database: OrcaSynapseDatabase;
+  /**
+   * Addresses the uniquely named database this provisioned.
+   *
+   * A suite that opens a second connection of its own — a LISTEN client, which
+   * cannot come from a pool — has to reach the same database the rest of the
+   * file writes to, and the name is generated per file. Without this every such
+   * suite repeats a `SELECT current_database()` and rebuilds the URL by hand.
+   */
+  connectionString: string;
   /** Empties every table without re-running migrations. */
   reset(): Promise<void>;
   /**
@@ -90,6 +99,7 @@ export async function createTestDatabase(): Promise<TestDatabase> {
 
   return {
     database,
+    connectionString,
     async reset() {
       if (quoted) await database.execute(sql.raw(`TRUNCATE ${quoted} RESTART IDENTITY CASCADE`));
     },

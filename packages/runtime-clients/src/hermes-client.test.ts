@@ -1,6 +1,7 @@
+import { isAgentRunEndedEventType } from "@orcasynapse/contracts";
 import { describe, expect, it, vi } from "vitest";
 import type { DrizzleRuntimeConnectionResolver } from "./connection-resolver.js";
-import { HermesClient } from "./hermes-client.js";
+import { HermesClient, SAFE_EVENT_TYPES } from "./hermes-client.js";
 
 function resolver(configuration: Record<string, unknown> = {}): DrizzleRuntimeConnectionResolver {
   return {
@@ -503,5 +504,125 @@ describe("HermesClient", () => {
       return new Response(JSON.stringify({ ok: true }), { status: 200 });
     });
     await expect(new HermesClient(resolver(), fetcher).decideApproval("run_external_1", "once")).resolves.toBeUndefined();
+  });
+
+  it("admits the three run events that were being dropped on the floor", async () => {
+    /*
+     * `tool.failed` had no entry in the mapping table, so a failed tool
+     * produced a start with no completion — indistinguishable from a tool
+     * still running, which is why a failed run read as a hang.
+     * `reasoning.available` was dropped outright.
+     */
+    const payload = [
+      "data: {\"event\":\"tool.start\",\"id\":\"t-1\",\"tool_name\":\"knowledge.search\"}\n\n",
+      "data: {\"event\":\"tool.failed\",\"id\":\"t-2\",\"tool_name\":\"knowledge.search\",\"error_code\":\"TOOL_TIMEOUT\"}\n\n",
+      "data: {\"event\":\"reasoning.available\",\"id\":\"r-1\",\"summary\":\"Considered the retrieval scope\"}\n\n",
+    ].join("");
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(payload, {
+      status: 200,
+      headers: { "content-type": "text/event-stream; charset=utf-8" },
+    }));
+    const projected: Array<{ type: string; errorCode: string | null }> = [];
+    await new HermesClient(resolver(), fetcher).events(
+      "run_external_1",
+      (event) => { projected.push(event as { type: string; errorCode: string | null }); },
+      new AbortController().signal,
+    );
+    expect(projected.map(({ type }) => type)).toEqual(["TOOL_STARTED", "TOOL_FAILED", "REASONING_REPORTED"]);
+    expect(projected[1]?.errorCode).toBe("TOOL_TIMEOUT");
+  });
+
+  it("does not let tool progress masquerade as another tool starting", async () => {
+    /*
+     * `hermes.tool.progress` mapped to TOOL_STARTED, so one tool call emitted
+     * several starts against a single completion. No consumer could pair them,
+     * which is the whole reason a tool call renders as loose rows instead of
+     * one object with a lifecycle. Both spellings are checked because Hermes'
+     * own surfaces disagree: chat-completions emits the prefixed name and
+     * /v1/runs the bare one.
+     */
+    const payload = [
+      "data: {\"event\":\"tool.start\",\"id\":\"p-1\",\"tool_name\":\"shell.exec\"}\n\n",
+      "data: {\"event\":\"tool.progress\",\"id\":\"p-2\",\"tool_name\":\"shell.exec\",\"preview\":\"scanning\"}\n\n",
+      "data: {\"event\":\"hermes.tool.progress\",\"id\":\"p-3\",\"tool_name\":\"shell.exec\",\"preview\":\"still scanning\"}\n\n",
+      "data: {\"event\":\"tool.complete\",\"id\":\"p-4\",\"tool_name\":\"shell.exec\",\"status\":\"completed\"}\n\n",
+    ].join("");
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(payload, {
+      status: 200,
+      headers: { "content-type": "text/event-stream; charset=utf-8" },
+    }));
+    const projected: Array<{ type: string }> = [];
+    await new HermesClient(resolver(), fetcher).events(
+      "run_external_1",
+      (event) => { projected.push(event as { type: string }); },
+      new AbortController().signal,
+    );
+    // Exactly one start for one call, whatever the runtime spelled its progress.
+    expect(projected.filter(({ type }) => type === "TOOL_STARTED")).toHaveLength(1);
+    expect(projected.filter(({ type }) => type === "TOOL_PROGRESS")).toHaveLength(2);
+  });
+
+  it("hands the answer over in readable pieces rather than kilobyte lumps", async () => {
+    /*
+     * The character bound on delta coalescing, which is what makes streamed text
+     * look like typing instead of paste. It is asserted and the time threshold
+     * is not, deliberately: the character bound is the one that binds on a
+     * producer fast enough to matter, and a test that drove the clock past the
+     * interval would be asserting the clock.
+     *
+     * Twelve 100-character deltas, delivered with no delay, so only the
+     * character bound can fire. At 256 the buffer crosses on every third delta:
+     * four full flushes of 300 and nothing left over. At the old 1,024 the whole
+     * 1,200 characters arrive as one flush of 1,024 and a remainder -- which is
+     * the shape this exists to prevent, and what this test fails on if the
+     * constant drifts back up.
+     */
+    const chunk = "x".repeat(100);
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (let index = 0; index < 12; index += 1) {
+          controller.enqueue(new TextEncoder().encode(
+            `data: {"event":"message.delta","id":"d-${index}","delta":"${chunk}"}\n\n`,
+          ));
+        }
+        controller.close();
+      },
+    });
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(body, {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    }));
+
+    const flushes: number[] = [];
+    await new HermesClient(resolver(), fetcher).events(
+      "run_external_1",
+      (event) => { if (event.delta) flushes.push(event.delta.length); },
+      new AbortController().signal,
+    );
+
+    expect(flushes).toEqual([300, 300, 300, 300]);
+    // Nothing is dropped by coalescing: every character the runtime sent is
+    // handed over exactly once.
+    expect(flushes.reduce((total, size) => total + size, 0)).toBe(1_200);
+  });
+
+  it("cannot produce the marker that ends a run's event log", () => {
+    /*
+     * The boundary between what a runtime reports and what the control plane
+     * concludes.
+     *
+     * A chat subscriber ends its turn on RUN_ENDED and on nothing else, and
+     * that marker is written in the same transaction that finalises the run --
+     * after the answer is stored. Hermes announces its own view of a run ending
+     * much earlier, while the message row is still PENDING. If any name here
+     * mapped to the marker, a reader would close on that announcement and hand
+     * the user an empty answer.
+     *
+     * Every mapping, not a sample: this is cheap to check and expensive to
+     * discover any other way.
+     */
+    for (const [name, type] of SAFE_EVENT_TYPES) {
+      expect(isAgentRunEndedEventType(type), `${name} must not map to the marker`).toBe(false);
+    }
   });
 });

@@ -9,6 +9,7 @@ import type {
   ChatStreamEvent,
   DocumentSummary,
 } from "@orcasynapse/contracts";
+import { applyStreamEventToConversation } from "./chat-stream-reducer.js";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -111,40 +112,6 @@ export function createClientMessageId(
   bytes[8] = (bytes[8]! & 0x3f) | 0x80;
   const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
-
-function emptyMessage(
-  conversationId: string,
-  id: string,
-  role: "USER" | "ASSISTANT",
-  content: string,
-  status: ChatMessage["status"],
-): ChatMessage {
-  return {
-    id,
-    conversationId,
-    role,
-    status,
-    content,
-    modelAlias: null,
-    inputTokens: null,
-    outputTokens: null,
-    totalTokens: null,
-    reasoningTokens: null,
-    latencyMs: null,
-    firstTokenLatencyMs: null,
-    finishReason: null,
-    errorCode: null,
-    agentRunId: null,
-    runStatus: null,
-    lastEventCursor: null,
-    runtimeEvents: [],
-    approvals: [],
-    sources: [],
-    feedback: null,
-    createdAt: new Date().toISOString(),
-    completedAt: null,
-  };
 }
 
 function formatConversationTime(value: string | null): string {
@@ -443,113 +410,7 @@ export function ChatView({
     if (event.type === "completed" || event.type === "failed" || event.type === "cancelled") {
       setCurrentActivity(null);
     }
-    setActive((current) => {
-      if (!current || current.id !== event.conversationId) return current;
-      if (event.type === "started") {
-        if (current.messages.some(({ id }) => id === event.messageId)) {
-          return {
-            ...current,
-            messages: current.messages.map((message) => message.id === event.messageId
-              ? { ...message, agentRunId: event.runId, runStatus: message.runStatus ?? "QUEUED", lastEventCursor: event.cursor ?? message.lastEventCursor }
-              : message),
-          };
-        }
-        return {
-          ...current,
-          messages: [
-            ...current.messages,
-            { ...emptyMessage(current.id, event.messageId, "ASSISTANT", "", "PENDING"), agentRunId: event.runId, runStatus: "QUEUED", lastEventCursor: event.cursor },
-          ],
-        };
-      }
-      if (event.type === "state") {
-        return {
-          ...current,
-          messages: current.messages.map((message) => message.id === event.messageId
-            ? { ...message, runStatus: event.status, lastEventCursor: event.cursor ?? message.lastEventCursor }
-            : message),
-        };
-      }
-      if (event.type === "activity") {
-        return {
-          ...current,
-          messages: current.messages.map((message) => message.id === event.messageId
-            ? {
-                ...message,
-                lastEventCursor: event.cursor ?? message.lastEventCursor,
-                runtimeEvents: message.runtimeEvents.some(({ id }) => id === event.eventId)
-                  ? message.runtimeEvents
-                  : [...message.runtimeEvents, {
-                      id: event.eventId,
-                      cursor: event.cursor!,
-                      type: event.activity,
-                      summary: event.summary,
-                      preview: event.preview,
-                      status: event.status,
-                      errorCode: event.errorCode,
-                      toolName: event.toolName,
-                      childSessionId: event.childSessionId,
-                      approvalId: event.approvalId,
-                      durationMs: event.durationMs,
-                      inputTokens: event.inputTokens,
-                      outputTokens: event.outputTokens,
-                      reasoningTokens: event.reasoningTokens,
-                      costUsd: event.costUsd,
-                      occurredAt: event.occurredAt,
-                    }],
-              }
-            : message),
-        };
-      }
-      if (event.type === "approval") {
-        return {
-          ...current,
-          messages: current.messages.map((message) => message.id === event.messageId
-            ? {
-                ...message,
-                runStatus: "WAITING_FOR_APPROVAL",
-                lastEventCursor: event.cursor ?? message.lastEventCursor,
-                approvals: [
-                  ...message.approvals.filter(({ id }) => id !== event.approval.id),
-                  event.approval,
-                ],
-              }
-            : message),
-        };
-      }
-      if (event.type === "delta") {
-        return {
-          ...current,
-          messages: current.messages.map((message) =>
-            message.id === event.messageId
-              ? { ...message, content: message.content + event.delta, lastEventCursor: event.cursor ?? message.lastEventCursor }
-              : message,
-          ),
-        };
-      }
-      if (event.type === "completed") {
-        return {
-          ...current,
-          messages: current.messages.map((message) =>
-            message.id === event.messageId ? event.message : message,
-          ),
-        };
-      }
-      return {
-        ...current,
-        messages: current.messages.map((message) =>
-          message.id === event.messageId
-            ? {
-                ...message,
-                status: event.type === "cancelled" ? "CANCELLED" : "FAILED",
-                runStatus: event.type === "cancelled" ? "CANCELLED" : "FAILED",
-                lastEventCursor: event.cursor ?? message.lastEventCursor,
-                errorCode: event.type === "failed" ? event.errorCode : "INFERENCE_CANCELLED",
-              }
-            : message,
-        ),
-      };
-    });
+    setActive((current) => applyStreamEventToConversation(current, event, new Date().toISOString()));
     if (event.type === "failed") setError(event.error);
   }
 

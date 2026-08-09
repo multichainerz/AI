@@ -24,18 +24,84 @@ export const AGENT_CAPABILITIES = ["knowledge:private:read", "memory:agent:read"
  */
 export const AGENT_MEMORY_MODES = ["DOCUMENTS_ONLY", "RECALL_ONLY", "LEARN_USER", "LEARN_EXCHANGE"] as const;
 export const agentMemoryModeSchema = z.enum(AGENT_MEMORY_MODES);
+/**
+ * The runtime events a governed Hermes run can produce.
+ *
+ * Three of these existed on the Hermes wire and were being thrown away. The
+ * runtime emits `tool.failed`, which had no entry in the client's mapping table
+ * at all — so a tool that failed was indistinguishable from one still running,
+ * and the run simply appeared to stall. It emits `tool.progress`, which was
+ * mapped onto `TOOL_STARTED`, so one tool call produced several "started" rows
+ * against a single completion and could never be drawn as one thing. And on the
+ * `/v1/runs` transport it emits `reasoning.available`, which was dropped
+ * entirely.
+ *
+ * `REASONING_REPORTED` is named for what it is rather than for what a chat UI
+ * would like it to be. Verified against upstream at the pinned commit: that
+ * event's text is derived from the assistant's own visible output with
+ * reasoning tags stripped and truncated — it is *not* the provider's reasoning
+ * field, which reaches only Hermes' internal JSON-RPC gateway. Calling it
+ * `THINKING` would licence a UI that replays the answer back at the reader and
+ * captions it as the model's private thought.
+ *
+ * Stored in a `varchar(80)`, not a database enum, so widening this list needs
+ * no migration — and readers must tolerate a value they do not recognise,
+ * because an older dashboard can meet a newer worker.
+ */
 export const AGENT_RUN_EVENT_TYPES = [
   "RUN_STARTED",
   "MESSAGE_DELTA",
   "TOOL_STARTED",
+  "TOOL_PROGRESS",
   "TOOL_COMPLETED",
+  "TOOL_FAILED",
+  "REASONING_REPORTED",
+  "RETRIEVAL_STARTED",
+  "RETRIEVAL_COMPLETED",
   "SUBAGENT_STARTED",
   "SUBAGENT_COMPLETED",
   "APPROVAL_REQUIRED",
+  /*
+   * Reported by Hermes, and only ever advisory.
+   *
+   * Hermes announces its own view of a run ending, but it says so on its event
+   * stream while OrcaSynapse has not finalised anything yet: the message row is
+   * still PENDING and the answer is not stored. These are timeline entries, not
+   * the end of a turn -- see RUN_ENDED below for the difference.
+   */
   "RUN_COMPLETED",
   "RUN_FAILED",
   "RUN_CANCELLED",
+  /*
+   * The marker, written by whoever finalises the run, inside the same
+   * transaction that flips `AgentRun.status`.
+   *
+   * A subscriber ends its stream on this and on nothing else. That is what
+   * makes "the run ended" a fact in the log rather than something a reader has
+   * to learn from a second query it cannot order against the first -- and
+   * everything before the marker is, by construction, already delivered.
+   *
+   * It is deliberately one name rather than one per outcome, and deliberately
+   * a name Hermes has no mapping for: `AGENT_RUN_EVENT_TYPES` has to hold both
+   * what the runtime reports and what the control plane concludes, and a marker
+   * a runtime can also emit is a marker that ends turns early. Which outcome it
+   * was lives in the row's `status`.
+   */
+  "RUN_ENDED",
 ] as const;
+
+/**
+ * The one event type that ends a subscriber's stream.
+ *
+ * Guarded by a test asserting no Hermes event name maps to it. If that ever
+ * becomes false, a runtime could end a turn before the answer is stored.
+ */
+export const AGENT_RUN_ENDED_EVENT_TYPE = "RUN_ENDED";
+
+/** Whether `type` is the marker, and so ends a subscriber's stream. */
+export function isAgentRunEndedEventType(type: string): boolean {
+  return type === AGENT_RUN_ENDED_EVENT_TYPE;
+}
 export const AGENT_RUN_APPROVAL_STATUSES = [
   "PENDING",
   "APPROVED",

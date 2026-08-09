@@ -80,18 +80,16 @@ const runtime = new WorkerRuntime(
  * full second before any work began, which was pure latency on every single
  * chat turn.
  *
- * Failure here is deliberately not fatal. If PostgreSQL will not hold a second
- * connection, or the listener drops and cannot reconnect, the worker keeps
- * running exactly as it did before -- a second slower, never broken.
+ * Failure here is deliberately not fatal, and now actually is. The channel
+ * connects in the background and retries on its own, including on its first
+ * attempt -- which used to reject and leave the wake dead for the life of the
+ * process, exactly the case this comment already claimed was survivable.
  */
-const wake = await listenForAgentRunWake(
+const wake = listenForAgentRunWake(
   databaseUrl,
   () => void runtime.dispatchNow(),
   (error) => console.error("OrcaSynapse worker wake channel error.", error),
-).catch((error: unknown) => {
-  console.error("OrcaSynapse worker could not open the wake channel; falling back to the reconcile timer.", error);
-  return null;
-});
+);
 
 let shuttingDown = false;
 const shutdown = async () => {

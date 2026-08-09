@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
+import type { HermesSafeRunEvent } from "@orcasynapse/runtime-clients";
 import {
   agentProfile,
   agentProfileVersion,
   agentRun,
+  agentRunEvent,
   agentRuntimeControl,
   memoryPolicy,
   chatMessage,
@@ -242,6 +244,120 @@ describe("DrizzleAgentProcessor", () => {
     // The lease is surrendered on completion so no worker keeps the row locked.
     expect(stored?.lease).toBeNull();
     expect(stored?.totalTokens).toBe(16);
+  });
+
+  it("gathers one tool call's events under a single key and keeps the next call apart", async () => {
+    /*
+     * The correlation Hermes does not provide. `tool.progress` arrives carrying
+     * the tool's name and nothing tying it to the start it belongs to, so
+     * before this a run that called one tool twice stored five unrelated rows
+     * and no reader could tell which progress belonged to which call -- or that
+     * the second call had failed rather than the first.
+     */
+    await healthyBoundary();
+    const id = await queuedRun();
+    const runtime = hermes();
+    const event = (over: Partial<HermesSafeRunEvent>): HermesSafeRunEvent => ({
+      sourceEventId: randomUUID(), type: "TOOL_STARTED", delta: null, preview: null,
+      errorCode: null, summary: null, status: null, toolName: "knowledge.search",
+      toolCallKey: null, text: null, childSessionId: null, durationMs: null, inputTokens: null,
+      outputTokens: null, reasoningTokens: null, costUsd: null, approvalExternalId: null,
+      approvalCommand: null, approvalChoices: [], occurredAt: new Date(), ...over,
+    });
+    runtime.events = async (_external, onEvent) => {
+      for (const frame of [
+        event({ type: "TOOL_STARTED" }),
+        event({ type: "TOOL_PROGRESS", preview: "scanning" }),
+        event({ type: "TOOL_COMPLETED", status: "completed" }),
+        event({ type: "TOOL_STARTED" }),
+        event({ type: "TOOL_FAILED", errorCode: "TOOL_TIMEOUT" }),
+      ]) await onEvent(frame);
+    };
+
+    await processor(runtime).process({ runId: id }, await jobIdOf(id), WORKER);
+
+    const stored = await context.database
+      .select({ type: agentRunEvent.type, key: agentRunEvent.toolCallKey })
+      .from(agentRunEvent)
+      .where(eq(agentRunEvent.runId, id))
+      .orderBy(asc(agentRunEvent.cursor));
+    const calls = stored.filter(({ key }) => key !== null);
+    expect(calls.map(({ type }) => type)).toEqual([
+      "TOOL_STARTED", "TOOL_PROGRESS", "TOOL_COMPLETED", "TOOL_STARTED", "TOOL_FAILED",
+    ]);
+    // Start, progress and outcome of the first call are one object.
+    expect(new Set(calls.slice(0, 3).map(({ key }) => key)).size).toBe(1);
+    // The retry is a second object, not more rows on the first.
+    expect(new Set(calls.slice(3).map(({ key }) => key)).size).toBe(1);
+    expect(calls[0]?.key).not.toBe(calls[3]?.key);
+    // Nothing outside a tool call is given a key it cannot justify.
+    expect(stored.some(({ type, key }) => type === "RUN_COMPLETED" && key !== null)).toBe(false);
+  });
+
+  it("records the run's outcome as the last row of its event log", async () => {
+    /*
+     * "The run ended" used to exist only as AgentRun.status, which a subscriber
+     * had to learn from a statement it could not order against its event query
+     * -- so an event committing between the two was delivered to nobody and the
+     * turn ended on top of it. As a row it is ordered like everything else: a
+     * reader that has drained as far as this has, by definition, drained
+     * everything.
+     */
+    await healthyBoundary();
+    const id = await queuedRun();
+
+    await processor(hermes()).process({ runId: id }, await jobIdOf(id), WORKER);
+
+    const stored = await context.database
+      .select({ type: agentRunEvent.type, status: agentRunEvent.status })
+      .from(agentRunEvent)
+      .where(eq(agentRunEvent.runId, id))
+      .orderBy(asc(agentRunEvent.cursor));
+    expect(stored.at(-1)).toEqual({ type: "RUN_ENDED", status: "COMPLETED" });
+  });
+
+  it("closes the event stream before it writes the outcome", async () => {
+    /*
+     * The stream and the finaliser are two writers to one run's log, and
+     * `cursor` is a bigserial claimed at INSERT but made visible at COMMIT. An
+     * event still in flight when the marker commits therefore lands *below* a
+     * cursor the reader has already passed, and reaches nobody -- the same
+     * hazard 0026_audit_forwarding_cursor.sql documents for the forwarder.
+     * Draining first is what makes cursor order and commit order the same thing
+     * on this path, and it is why a subscriber is allowed to trust it.
+     */
+    await healthyBoundary();
+    const id = await queuedRun();
+    const runtime = hermes();
+    const event = (over: Partial<HermesSafeRunEvent>): HermesSafeRunEvent => ({
+      sourceEventId: randomUUID(), type: "MESSAGE_DELTA", delta: null, preview: null,
+      errorCode: null, summary: null, status: null, toolName: null,
+      toolCallKey: null, text: null, childSessionId: null, durationMs: null, inputTokens: null,
+      outputTokens: null, reasoningTokens: null, costUsd: null, approvalExternalId: null,
+      approvalCommand: null, approvalChoices: [], occurredAt: new Date(), ...over,
+    });
+    runtime.events = async (_external, onEvent, signal) => {
+      await onEvent(event({ delta: "early" }));
+      // Still open when Hermes reports the run finished, which is the ordinary
+      // case: the status poll and the stream are independent of each other.
+      await new Promise<void>((resolve) => {
+        if (signal?.aborted) { resolve(); return; }
+        signal?.addEventListener("abort", () => { resolve(); }, { once: true });
+      });
+      await onEvent(event({ delta: "late" }));
+    };
+
+    await processor(runtime).process({ runId: id }, await jobIdOf(id), WORKER);
+
+    const stored = await context.database
+      .select({ type: agentRunEvent.type, delta: agentRunEvent.delta })
+      .from(agentRunEvent)
+      .where(eq(agentRunEvent.runId, id))
+      .orderBy(asc(agentRunEvent.cursor));
+    // Both deltas are behind the marker, so a reader that stops at the marker
+    // has still been handed both.
+    expect(stored.map(({ delta }) => delta)).toEqual(["early", "late", null]);
+    expect(stored.at(-1)?.type).toBe("RUN_ENDED");
   });
 
   it("finalizes the linked chat message so a lost browser stream cannot strand it", async () => {

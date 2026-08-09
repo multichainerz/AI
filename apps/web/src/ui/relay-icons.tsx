@@ -310,6 +310,28 @@ export function AlertIcon(props: IconProps) {
   );
 }
 
+/**
+ * The agents robot, drawn here rather than taken from the design project — the
+ * Relay set has no bot glyph — but in the set's voice: tinted body under the
+ * line work, and the accent on the eyes rather than a spare dot, so the "live"
+ * part of the drawing is the part that looks alive.
+ *
+ * Deliberately coarse. It renders at 18px in the navigation rail, where the
+ * 24-unit grid is scaled to 0.75, so anything finer than the eyes and the mouth
+ * closes up: no seams, no ear stubs, no grille.
+ */
+export function RobotIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <rect x="4" y="8" width="16" height="12" rx="3.6" fill="currentColor" fillOpacity={0.14} />
+      <path d="M12 4.2V8" />
+      <path d="M9.6 16.6h4.8" />
+      <circle cx="9.2" cy="12.6" r="1.6" {...NODE} />
+      <circle cx="14.8" cy="12.6" r="1.6" {...NODE} />
+    </Svg>
+  );
+}
+
 /** The settings gear from the design's header, in the same duotone voice. */
 export function GearIcon(props: IconProps) {
   return (

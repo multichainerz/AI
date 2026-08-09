@@ -272,6 +272,14 @@ export async function registerChatRoutes(
       connection: "keep-alive",
       "x-accel-buffering": "no",
     });
+    /*
+     * The browser's own reconnect delay, which otherwise defaults to three
+     * seconds of a dead transcript. A run resumes from `lastEventCursor`, so
+     * reconnecting costs one indexed query and replays nothing the reader has
+     * already seen -- the cost of trying sooner is small, and the cost of
+     * waiting is the answer appearing to stop mid-sentence.
+     */
+    reply.raw.write("retry: 1000\n\n");
     reply.raw.write(": OrcaSynapse Hermes event stream\n\n");
     const heartbeat = setInterval(() => {
       if (!reply.raw.destroyed) reply.raw.write(`: heartbeat ${Date.now()}\n\n`);
@@ -317,7 +325,15 @@ export async function registerChatRoutes(
       );
     } catch (error) {
       if (!reply.raw.destroyed) {
-        reply.raw.write(`event: stream_error\ndata: ${JSON.stringify({ message: safeStreamError(error) })}\n\n`);
+        // Through `emit`, so this frame is validated like every other one
+        // rather than being the single hand-written exception.
+        await emit({
+          type: "stream_error",
+          conversationId: conversation,
+          messageId: message,
+          cursor: queryCursor ?? headerCursor ?? null,
+          error: safeStreamError(error),
+        });
       }
     } finally {
       clearInterval(heartbeat);

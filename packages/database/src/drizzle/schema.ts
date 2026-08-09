@@ -883,8 +883,22 @@ export const agentRunEvent = pgTable("AgentRunEvent", {
 	errorCode: varchar({ length: 80 }),
 	approvalId: uuid(),
 	reasoningTokens: integer(),
+	// Correlates the start, progress and terminal events of one tool call.
+	// Hermes does not issue a call identifier of its own on most surfaces, so
+	// this is the runtime's id where one is offered and a synthesised key where
+	// none is -- see toolCallKeyFor in the worker for how the difference is kept
+	// visible rather than papered over.
+	toolCallKey: varchar({ length: 200 }),
+	// The event's own prose, where it is longer than a summary line: reasoning
+	// text, a tool's returned output. `summary` stays the one-line label.
+	text: text(),
+	// How much of the answer had been streamed when this event occurred, so a
+	// timeline can place tool work between the words it interrupted instead of
+	// stacking every event after the finished answer.
+	contentOffset: integer(),
 }, (table) => [
 	uniqueIndex("AgentRunEvent_cursor_key").using("btree", table.cursor.asc().nullsLast()),
+	index("AgentRunEvent_runId_toolCallKey_idx").using("btree", table.runId.asc().nullsLast(), table.toolCallKey.asc().nullsLast()),
 	index("AgentRunEvent_runId_cursor_idx").using("btree", table.runId.asc().nullsLast(), table.cursor.asc().nullsLast()),
 	index("AgentRunEvent_runId_occurredAt_id_idx").using("btree", table.runId.asc().nullsLast(), table.occurredAt.asc().nullsLast(), table.id.asc().nullsLast()),
 	uniqueIndex("AgentRunEvent_runId_sourceEventId_key").using("btree", table.runId.asc().nullsLast(), table.sourceEventId.asc().nullsLast()),
