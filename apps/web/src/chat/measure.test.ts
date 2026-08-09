@@ -67,11 +67,29 @@ describe("thread measure", () => {
     expect(rule.indexOf("100vh")).toBeLessThan(rule.indexOf("100dvh"));
   });
 
-  it("keeps the two rules that hide the workspace band inside chat", () => {
-    // Chat owns its full height; the sticky band would push the composer off
-    // the bottom of the screen, and its negative margins have nothing to cancel
-    // against here.
-    expect(stylesheet).toContain(".chat-page > .workspace-header { display: none; }");
+  it("gives the band a row of its own rather than hiding it", () => {
+    /*
+     * The band used to be hidden here, because on a single fixed-height block
+     * it would have pushed the composer off the bottom of the screen. It
+     * carries the account menu now -- the only way to sign out -- so hiding it
+     * would strand that control on the product's most-used screen.
+     *
+     * Two rows solve what hiding solved: `auto` for the band, the rest for the
+     * thread. `minmax(0, 1fr)` and not `1fr`, because a grid row's default
+     * minimum is its content and a long transcript would grow past the
+     * viewport, which is the same overflow the composer was being pushed out of.
+     */
+    const rule = /\.chat-page \{[^}]*\}/.exec(stylesheet)?.[0] ?? "";
+    expect(rule).toContain("display: grid");
+    expect(rule).toContain("grid-template-rows: auto minmax(0, 1fr)");
+    expect(stylesheet).not.toContain(".chat-page > .workspace-header { display: none; }");
     expect(stylesheet).toContain(".chat-page > .mobile-brand { display: none; }");
+  });
+
+  it("cancels the band's bleed margins on a page that has no padding", () => {
+    // `.workspace-header` pulls itself outward by `clamp(24px, 4vw, 64px)` so
+    // its border reaches the edge of a padded page. Chat has no padding, so
+    // uncancelled those margins hang the header off both sides.
+    expect(stylesheet).toContain(".chat-page > .workspace-header { margin: 0;");
   });
 });
