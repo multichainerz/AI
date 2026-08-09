@@ -68,6 +68,21 @@ describe("groupRuntimeEvents", () => {
     expect(entries[0]?.status).toBe("running");
   });
 
+  it("renders Hermes and control-plane run endings as terminal states", () => {
+    const entries = groupRuntimeEvents([
+      event({ type: "RUN_FAILED" }),
+      event({ type: "RUN_COMPLETED" }),
+      event({ type: "RUN_CANCELLED" }),
+      event({ type: "RUN_ENDED", status: "FAILED" }),
+      event({ type: "RUN_ENDED", status: "COMPLETED" }),
+      event({ type: "RUN_ENDED", status: "CANCELLED" }),
+    ]);
+
+    expect(entries.map(({ status }) => status)).toEqual([
+      "failed", "completed", "cancelled", "failed", "completed", "cancelled",
+    ]);
+  });
+
   it("gives everything without a call key an entry of its own", () => {
     const entries = groupRuntimeEvents([
       event({ type: "RUN_STARTED" }),

@@ -28,6 +28,7 @@ RUNTIME_SERVICE="orcasynapse-hermes"
 CONTROL_PLANE_PORT=8099
 NODE_ID="6cf6ce1b-a8c6-49d7-b6aa-019d35888acb"
 failures=0
+SMOKE_OWNS_RUNTIME=0
 
 pass() { printf '  [PASS] %s\n' "$1"; }
 bad()  { printf '  [FAIL] %s\n' "$1" >&2; failures=$((failures + 1)); }
@@ -42,12 +43,27 @@ cleanup() {
   systemctl daemon-reload >/dev/null 2>&1 || true
   [[ -n "${STUB_PID:-}" ]] && kill "${STUB_PID}" 2>/dev/null || true
   rm -rf -- "${WORK}" "${STATE_ROOT}" /usr/local/lib/orcasynapse
+  if [[ "${SMOKE_OWNS_RUNTIME}" == "1" ]]; then
+    rm -rf -- /usr/local/lib/hermes-agent
+    rm -f -- /usr/local/bin/hermes /usr/local/bin/hermes-agent /usr/local/bin/hermes-acp
+    id -u orcasynapse-hermes >/dev/null 2>&1 && userdel orcasynapse-hermes >/dev/null 2>&1 || true
+  fi
 }
 trap cleanup EXIT
 
 [[ "${EUID}" -eq 0 ]] || { echo "run as root: sudo bash scripts/test-agentic-installer-smoke.sh" >&2; exit 2; }
 [[ -d /run/systemd/system ]] || { echo "this test needs a systemd host" >&2; exit 2; }
 command -v systemctl >/dev/null 2>&1 || { echo "this test needs systemd" >&2; exit 2; }
+# The smoke owns and destroys these global names. Refuse to run over a real or
+# manually installed runtime, then clean partial artifacts on every exit.
+[[ ! -e /usr/local/lib/hermes-agent ]] || { echo "refusing to replace an existing Hermes checkout" >&2; exit 2; }
+[[ ! -e /usr/local/bin/hermes && ! -e /usr/local/bin/hermes-agent && ! -e /usr/local/bin/hermes-acp ]] \
+  || { echo "refusing to replace existing Hermes launchers" >&2; exit 2; }
+systemctl list-unit-files "${RUNTIME_SERVICE}.service" --no-legend 2>/dev/null | grep -q . \
+  && { echo "refusing to replace an existing ${RUNTIME_SERVICE} unit" >&2; exit 2; }
+id -u orcasynapse-hermes >/dev/null 2>&1 \
+  && { echo "refusing to replace an existing orcasynapse-hermes account" >&2; exit 2; }
+SMOKE_OWNS_RUNTIME=1
 
 printf '
 === pinning the runtime ===
@@ -69,6 +85,8 @@ openssl pkeyutl -sign -rawin -inkey "${WORK}/cp.key" -in "${WORK}/desired.json" 
 cat > "${WORK}/controlplane.py" <<'CONTROLPLANE'
 import hashlib, json, os, subprocess, sys, http.server
 NODE = os.environ["NODE_ID"]
+HEARTBEAT_PATH = f"/runtime-control/nodes/{NODE}/heartbeat"
+DESIRED_STATE_PATH = f"/runtime-control/nodes/{NODE}/desired-state"
 
 
 def fingerprint(raw):
@@ -86,13 +104,24 @@ class H(http.server.BaseHTTPRequestHandler):
         self.send_header("content-length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+    def _sse(self, events):
+        body = b"".join(f"data: {json.dumps(event)}\n\n".encode() for event in events)
+        body += b"data: [DONE]\n\n"
+        self.send_response(200)
+        self.send_header("content-type", "text/event-stream")
+        self.send_header("cache-control", "no-cache")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
     def do_POST(self):
         raw = self.rfile.read(int(self.headers.get("content-length") or 0))
         if self.path.endswith("/enroll"):
             return self._json({
                 "node": {"id": NODE, "identityFingerprint": fingerprint(raw)},
-                "heartbeatPath": f"/api/v1/runtime-nodes/{NODE}/heartbeat",
-                "desiredStatePath": f"/api/v1/runtime-nodes/{NODE}/desired-state",
+                # Deliberately not the historical hard-coded routes: the smoke
+                # test proves VM2 consumes the enrollment contract.
+                "heartbeatPath": HEARTBEAT_PATH,
+                "desiredStatePath": DESIRED_STATE_PATH,
                 "controlPlanePublicKeyPem": os.environ["CP_PUB"],
                 "modelBootstrap": {
                     "provider": "custom",
@@ -101,15 +130,46 @@ class H(http.server.BaseHTTPRequestHandler):
                     "apiKey": "smoke-inference-key",
                 },
             })
-        return self._json({"accepted": True})
+        if self.path == HEARTBEAT_PATH:
+            return self._json({"accepted": True})
+        if self.path.endswith("/chat/completions"):
+            request = json.loads(raw or b"{}")
+            if request.get("stream"):
+                return self._sse([{
+                    "id": "chatcmpl-smoke",
+                    "object": "chat.completion.chunk",
+                    "created": 1786057200,
+                    "model": "smoke-model",
+                    "choices": [{
+                        "index": 0,
+                        "delta": {"role": "assistant", "content": "SMOKE_RUN_OK"},
+                        "finish_reason": "stop",
+                    }],
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 3, "total_tokens": 7},
+                }])
+            return self._json({
+                "id": "chatcmpl-smoke",
+                "object": "chat.completion",
+                "created": 1786057200,
+                "model": "smoke-model",
+                "choices": [{
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "SMOKE_RUN_OK"},
+                    "finish_reason": "stop",
+                }],
+                "usage": {"prompt_tokens": 4, "completion_tokens": 3, "total_tokens": 7},
+            })
+        return self._json({"error": "unexpected POST path", "path": self.path}, 404)
     def do_GET(self):
-        if self.path.endswith("/desired-state"):
+        if self.path == DESIRED_STATE_PATH:
             return self._json({
                 "documentBase64": os.environ["DOC_B64"],
                 "signature": os.environ["SIG_B64"],
                 "publicKeyFingerprint": "smoke",
             })
-        return self._json({"status": "ok"})
+        if self.path == "/health":
+            return self._json({"status": "ok"})
+        return self._json({"error": "unexpected GET path", "path": self.path}, 404)
     def log_message(self, *_): pass
 http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
 CONTROLPLANE
@@ -165,6 +225,22 @@ fi
 [[ "$(stat -c '%a' "${STATE_ROOT}/data/.env" 2>/dev/null)" == "600" ]] \
   && pass "gateway key file is owner-only" || bad "gateway key file is not mode 0600"
 
+expected_home="${STATE_ROOT}/home"
+[[ "$(getent passwd orcasynapse-hermes | cut -d: -f6)" == "${expected_home}" ]] \
+  && pass "service account home is inside the managed state root" || bad "service account home was not reconciled"
+[[ "$(stat -c '%U:%G:%a' "${expected_home}" 2>/dev/null)" == "orcasynapse-hermes:orcasynapse-hermes:750" ]] \
+  && pass "runtime workspace is writable only by the service account" || bad "runtime workspace ownership or mode is wrong"
+grep -Fqx "WorkingDirectory=${expected_home}" "${runtime_unit}" \
+  && pass "runtime starts in its managed workspace" || bad "runtime has no managed working directory"
+grep -Fqx "Environment=HOME=${expected_home}" "${runtime_unit}" \
+  && pass "runtime has an explicit OS home" || bad "runtime HOME is not explicit"
+grep -Fqx "  cwd: ${expected_home}" /etc/hermes/config.yaml \
+  && pass "Hermes terminal cwd is pinned in managed policy" || bad "Hermes terminal cwd is not pinned"
+[[ "$(<"${STATE_ROOT}/heartbeat-path")" == "/runtime-control/nodes/${NODE_ID}/heartbeat" ]] \
+  && pass "enrolled heartbeat path was persisted" || bad "heartbeat path fell back to installer routing"
+[[ "$(<"${STATE_ROOT}/desired-state-path")" == "/runtime-control/nodes/${NODE_ID}/desired-state" ]] \
+  && pass "enrolled desired-state path was persisted" || bad "desired-state path fell back to installer routing"
+
 systemctl is-enabled orcasynapse-hermes-heartbeat.timer >/dev/null 2>&1 \
   && pass "heartbeat timer enabled" || bad "heartbeat timer not enabled"
 systemctl is-enabled orcasynapse-hermes-desired-state.timer >/dev/null 2>&1 \
@@ -204,6 +280,46 @@ grep -q 'disabled_toolsets' /etc/hermes/config.yaml 2>/dev/null \
   && pass "resume state cleared after success" || bad "resume state survived a successful install"
 [[ -s "${STATE_ROOT}/runtime-owned" ]]   && pass "installer recorded that it owns the runtime" || bad "runtime-owned marker was not written"
 
+printf '\n=== repairing an older completed runtime in place ===\n'
+# Reproduce the pre-fix account state, after enrollment has cleared its recovery
+# receipt. --repair must not require a new claim or touch identity/model secrets.
+systemctl stop "${RUNTIME_SERVICE}"
+usermod --home /home/orcasynapse-hermes orcasynapse-hermes
+set +e
+ORCASYNAPSE_HERMES_STATE_ROOT="${STATE_ROOT}" \
+  bash "${ROOT}/scripts/install-agentic-node.sh" --repair
+repair_status=$?
+set -e
+[[ "${repair_status}" -eq 0 ]] \
+  && pass "completed runtime repaired without re-enrollment" || bad "runtime repair exited ${repair_status}"
+[[ "$(getent passwd orcasynapse-hermes | cut -d: -f6)" == "${expected_home}" ]] \
+  && pass "repair reconciled the legacy passwd home" || bad "repair left the legacy passwd home in place"
+
+printf '\n=== submitting a governed Hermes run ===\n'
+run_response="$(curl --fail --silent --show-error --max-time 10 \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer ${gateway_key}" \
+  --data-binary '{"input":"Return the smoke marker and do not call tools.","model":"smoke-model"}' \
+  http://127.0.0.1:8642/v1/runs 2>/dev/null || true)"
+run_id="$(jq -r '.run_id // empty' <<<"${run_response}" 2>/dev/null || true)"
+run_status=""
+run_status_response=""
+if [[ -n "${run_id}" ]]; then
+  for _ in $(seq 1 60); do
+    run_status_response="$(curl --fail --silent --show-error --max-time 5 \
+      -H "Authorization: Bearer ${gateway_key}" \
+      "http://127.0.0.1:8642/v1/runs/${run_id}" 2>/dev/null || true)"
+    run_status="$(jq -r '.status // empty' <<<"${run_status_response}" 2>/dev/null || true)"
+    [[ "${run_status}" == "completed" || "${run_status}" == "failed" || "${run_status}" == "cancelled" ]] && break
+    sleep 1
+  done
+fi
+if [[ "${run_status}" == "completed" ]]; then
+  pass "real /v1/runs execution completed inside the hardened service"
+else
+  bad "real /v1/runs execution did not complete (create=${run_response:-empty}; status=${run_status_response:-empty})"
+fi
+
 printf '\n=== resuming from a protected enrollment receipt ===\n'
 # The recovery journal's whole purpose is that an install interrupted after
 # enrolment can be re-run. That path had never been executed: both smoke runs
@@ -224,7 +340,8 @@ jq -n \
   '{format:"orcasynapse-hermes-resume/v1",nodeId:$nodeId,controlPlaneUrl:$cp,
     hermesBaseUrl:"http://127.0.0.1:8642",hermesCommit:$commit,hostname:"smoke.internal",
     apiKey:$apiKey,identityFingerprint:$fingerprint,controlPlanePublicKeyPem:$key,
-    desiredStatePath:("/api/v1/runtime-nodes/" + $nodeId + "/desired-state"),
+    heartbeatPath:("/runtime-control/nodes/" + $nodeId + "/heartbeat"),
+    desiredStatePath:("/runtime-control/nodes/" + $nodeId + "/desired-state"),
     modelBootstrap:{baseUrl:($cp + "/internal/v1"),modelAlias:"smoke-model",apiKey:$apiKey}}' \
   > "${STATE_ROOT}/enrollment-state.json"
 chmod 0600 "${STATE_ROOT}/enrollment-state.json"
