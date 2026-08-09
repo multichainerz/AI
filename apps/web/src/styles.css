@@ -244,9 +244,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .app-shell--focus { grid-template-columns: 76px minmax(0, 1fr); }
   .app-shell--focus .sidebar { padding-left: 8px; padding-right: 8px; }
   .app-shell--focus .sidebar > div:first-child { justify-content: center; padding: 0; }
-  .app-shell--focus .sidebar nav button { justify-content: center; gap: 0; padding-left: 0; padding-right: 0; }
+  .app-shell--focus .sidebar nav button,
+  .app-shell--focus .sidebar-bottom > button { justify-content: center; gap: 0; padding-left: 0; padding-right: 0; }
   .app-shell--focus .operator { flex-direction: column; gap: 8px; padding-left: 0; padding-right: 0; }
   .app-shell--focus .sidebar nav button > span + span,
+  .app-shell--focus .sidebar-bottom > button > span + span,
   .app-shell--focus .sidebar > div:first-child > strong,
   .app-shell--focus .operator > div:nth-child(2) {
     position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
