@@ -146,10 +146,19 @@ function WorkspaceHeader({
   area,
   operator,
   onSignOut,
+  immersive,
 }: {
   area: string;
   operator: { initials: string; name: string; detail: string };
   onSignOut: () => void;
+  /*
+   * The Dashboard's command panel begins directly beneath this band, and a
+   * page-coloured bar across the top of a violet field reads as a lid on it.
+   * Immersive takes the panel's own colour and its white foregrounds, so the
+   * two surfaces are one. It is not transparency: the band is sticky, so it has
+   * to stay legible once the panel has scrolled out from under it.
+   */
+  immersive: boolean;
 }) {
   const [theme, setTheme] = useState<Theme>(() => currentTheme());
   const [accountOpen, setAccountOpen] = useState(false);
@@ -178,13 +187,18 @@ function WorkspaceHeader({
   }, [accountOpen]);
 
   return (
-    <header className="workspace-header">
+    <header className={cn("workspace-header", immersive && "workspace-header--immersive")}>
       <div className="flex h-12 items-center gap-4">
-        <span className="font-display text-[15px] font-semibold tracking-[-0.01em] text-text">{area}</span>
+        <span className={cn("font-display text-[15px] font-semibold tracking-[-0.01em]", immersive ? "text-white" : "text-text")}>{area}</span>
         <span className="flex-1" />
         <button
           type="button"
-          className="flex items-center gap-2 rounded-md border border-border-strong px-2.5 py-1.5 text-caption font-medium text-muted transition-colors hover:border-faint hover:text-text"
+          className={cn(
+            "flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-caption font-medium transition-colors",
+            immersive
+              ? "border-white/20 text-white/75 hover:border-white/40 hover:text-white"
+              : "border-border-strong text-muted hover:border-faint hover:text-text",
+          )}
           onClick={() => setTheme(toggleTheme())}
           title={theme === "light" ? "Switch to the dark theme" : "Switch to the light theme"}
         >
@@ -212,26 +226,32 @@ function WorkspaceHeader({
         <div className="relative flex items-center" ref={account}>
           <button
             type="button"
-            className="flex items-center gap-2.5 rounded-pill border border-border-strong py-1 pl-1 pr-2.5 text-left transition-colors hover:border-faint"
+            className={cn(
+              "flex items-center gap-2.5 rounded-pill border py-1 pl-1 pr-2.5 text-left transition-colors",
+              immersive ? "border-white/20 hover:border-white/40" : "border-border-strong hover:border-faint",
+            )}
             aria-haspopup="menu"
             aria-expanded={accountOpen}
             onClick={() => setAccountOpen((open) => !open)}
           >
             <span
               aria-hidden="true"
-              className="grid h-7 w-7 shrink-0 place-items-center rounded-pill bg-soft font-display text-micro font-semibold text-accent"
+              className={cn(
+                "grid h-7 w-7 shrink-0 place-items-center rounded-pill font-display text-micro font-semibold",
+                immersive ? "bg-white/15 text-white" : "bg-soft text-accent",
+              )}
             >
               {operator.initials}
             </span>
             <span className="hidden min-w-0 sm:block">
-              <span className="block max-w-[150px] truncate text-caption font-semibold leading-tight text-text">
+              <span className={cn("block max-w-[150px] truncate text-caption font-semibold leading-tight", immersive ? "text-white" : "text-text")}>
                 {operator.name}
               </span>
-              <span className="block max-w-[150px] truncate text-micro capitalize leading-tight text-faint">
+              <span className={cn("block max-w-[150px] truncate text-micro capitalize leading-tight", immersive ? "text-white/65" : "text-faint")}>
                 {operator.detail}
               </span>
             </span>
-            <span aria-hidden="true" className="shrink-0 text-faint">
+            <span aria-hidden="true" className={cn("shrink-0", immersive ? "text-white/60" : "text-faint")}>
               <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M3 4.6 6 7.6l3-3" />
               </svg>
@@ -1109,7 +1129,7 @@ function App() {
 
       <main className={activeView === "Chat" ? "chat-page" : undefined}>
         <div className="mobile-brand"><BrandMark size={26} /><strong>OrcaSynapse</strong></div>
-        <WorkspaceHeader area={activeArea} operator={operator} onSignOut={() => void signOut()} />
+        <WorkspaceHeader area={activeArea} operator={operator} onSignOut={() => void signOut()} immersive={activeView === "Overview"} />
         {activeView !== "Chat" && activeView !== "Overview" && (
           <WorkspaceContextBar area={activeArea} activeView={activeView} onSelect={selectView} />
         )}

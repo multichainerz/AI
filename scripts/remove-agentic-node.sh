@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="ai-v3.7.0"
+INSTALLER_VERSION="ai-v3.8.0"
 # Honor the same state-root overrides the installer accepts, so a non-default
 # layout installed with ORCASYNAPSE_*_STATE_ROOT can be removed the same way.
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
