@@ -238,7 +238,9 @@ function WorkspaceHeader({
               aria-hidden="true"
               className={cn(
                 "grid h-7 w-7 shrink-0 place-items-center rounded-pill font-display text-micro font-semibold",
-                immersive ? "bg-white/15 text-white" : "bg-soft text-accent",
+                // `text-accent` on `bg-soft` measures 4.13 in dark. The strong
+                // step is the same identity and clears AA.
+                immersive ? "bg-white/15 text-white" : "bg-soft text-accent-strong",
               )}
             >
               {operator.initials}
@@ -852,7 +854,16 @@ function App() {
     if (view === "Deployment") setDeploymentInitialTab(deploymentTab);
     setActiveView(view);
 
-    const target = view === "Overview" ? `${window.location.pathname}#home` : pathForView(view);
+    /*
+     * `pathForView` for every view, including Overview.
+     *
+     * Overview was special-cased to a literal `#home` so it could carry the
+     * pathname and drop a stale query string. That made it the one route the
+     * navigation table did not own — so when ai-v3.5.0 renamed it to
+     * `#dashboard`, the table changed and the address bar did not. Tests passed:
+     * they exercise `pathForView`, which was right all along.
+     */
+    const target = `${window.location.pathname}${pathForView(view)}`;
     // pushState, not replaceState: replacing left no history entry, so Back from
     // anywhere in the dashboard exited the application entirely rather than
     // returning to the previous screen. The existing hashchange listener picks

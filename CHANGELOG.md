@@ -5,6 +5,65 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v3.9.0 — 2026-08-09
+
+Less text, more icons, and a rename that had only half happened.
+
+Seven changes from a live review, all in one release because they are the same
+edit repeated: say the high-level thing once, and let an icon carry what a
+caption was carrying.
+
+**Dashboard.** Three sub-texts removed — the next step under the title, the
+"every answer is a governed run" line, and the paragraph explaining the governed
+path. The panel states what a thing is and what it counts; the prose belonged to
+a page, not a console. The blocking step is still named on screen, in the
+required-capabilities list that owns it.
+
+The four launch tiles and all six figures gained icons from the Relay set — the
+same drawings the navigation rail uses for the same destinations, so a tile and
+a nav row that lead to one place are not illustrated two different ways. The ask
+row leads with Session's own icon instead of a generic node glyph beside the
+word "ASK": the placeholder already says what the row is for, so the label was a
+caption on a caption.
+
+**Session.** The status strip under the composer is gone: a readiness chip
+repeating the empty state's own heading, an identity the rail's foot already
+carries, and a sentence about the architecture. The live case is not lost with
+it — the pending row reports elapsed time while a run is in flight, which is
+where a reader is already looking.
+
+In its place, one standing line: *answers are generated and can be wrong or
+incomplete; check the cited sources before you rely on one.* A governed run is
+not a correct one, and the policy line said where the answer came from and
+nothing about whether it is right.
+
+The header's runtime cluster went from four elements across ~400px to two. Two
+of the four said nothing alone — "Active default" and "—" are only legible if
+you already know which is the model and which is the usage — and the token
+figure is the same one the rail's foot states under a label.
+
+The operator pane was set entirely in `text-caption`: 11px, the step for a dense
+grid header and two below anything in the thread beside it. Four facts about who
+you are and what you are pointed at were the tightest type on the screen, in the
+corner an operator looks at to confirm exactly that.
+
+### The Dashboard route never actually changed
+
+`ai-v3.5.0` renamed `#home` to `#dashboard` and the address bar kept saying
+`#home`. `selectView` special-cased Overview to a literal string so it could
+carry the pathname, which made it the one route the navigation table did not
+own: the table was renamed, the literal was not, and the tests passed because
+they exercise `pathForView` — which was right the whole time. Every view now
+goes through it.
+
+**0 contrast failures in both themes on both screens**, measured on the running
+application.
+
+Not fixed: the two stacked bars above the thread are still 98px. Slimming the
+chat header from 68px to 52px bought nothing, because its content was already
+about 50px tall and the minimum was never binding. Reducing it needs the two
+bars merged, not tightened.
+
 ## ai-v3.8.0 — 2026-08-09
 
 The band joins the panel, and the field stops shouting.

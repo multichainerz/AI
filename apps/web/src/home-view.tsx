@@ -110,11 +110,6 @@ export function HomeView(props: HomeViewProps) {
         unlocked={props.unlocked}
         apiAvailable={props.apiAvailable}
         title={allReady && props.unlocked ? "Your agentic workspace is ready" : "Finish your private AI workspace"}
-        nextStep={
-          next && props.unlocked
-            ? `Next: ${next.detail}`
-            : "Ask governed Hermes agents, add durable knowledge, and operate the complete on-prem system from one place."
-        }
         primaryLabel={allReady ? "Open Session" : "Continue setup"}
         onPrimary={() => props.onSelect(allReady ? "Chat" : (next?.action ?? "Deployment"))}
         onAsk={() => open("Chat")}
