@@ -33,12 +33,18 @@ branch.
   installer scripts (`install.sh`, `scripts/*.sh`), the Ed25519 node
   enrollment and signed-heartbeat scheme, envelope encryption of secret
   records, session and scope enforcement, guardrail bypasses, the inference
-  gateway, the pgvector knowledge and agent-memory planes and their owner
-  scoping, and the audit trail / SIEM forwarding path.
+  gateway, the pgvector document-knowledge plane and owner scoping,
+  Hermes-native session/memory boundary, and audit trail / SIEM forwarding path.
 - **Out of scope:** vulnerabilities in Hermes or your inference server itself
   (report those upstream), denial of service against your own
   deployment, and findings that require an already-compromised root account on
   VM1 or VM2.
+
+The pinned vanilla Hermes runtime keeps per-session transcripts but shares its
+file-backed `MEMORY.md` and `USER.md` across sessions in the active home/profile.
+The current pre-production deployment is one trust boundary; it must not be
+treated as multi-user memory isolation. OrcaSynapse does not read or mirror
+those files and records only sanitized lifecycle evidence.
 
 ## Handling expectations
 

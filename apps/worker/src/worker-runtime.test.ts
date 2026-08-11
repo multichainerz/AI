@@ -181,7 +181,7 @@ describe("WorkerRuntime", () => {
     };
     const runtime = new WorkerRuntime(
       source([]), registry(), identity, logger(), 60_000,
-      undefined, 1_000, 5, undefined, undefined, 60_000, benchmarks,
+      undefined, 1_000, 5, undefined, benchmarks,
     );
 
     await runtime.start();
@@ -199,7 +199,7 @@ describe("WorkerRuntime", () => {
     const benchmarks = { runNext: vi.fn(async () => { throw new Error("Hermes is unreachable."); }) };
     const runtime = new WorkerRuntime(
       source([]), registry(), identity, logs, 60_000,
-      undefined, 1_000, 5, undefined, undefined, 60_000, benchmarks,
+      undefined, 1_000, 5, undefined, benchmarks,
     );
 
     await runtime.start();

@@ -85,16 +85,17 @@ These are customer deployment gates, not missing dashboard architecture:
 - PostgreSQL and Hermes backup/restore drills against the customer RPO/RTO.
 - GPU capacity, concurrency, cancellation, and soak tests with the selected model.
 - OIDC/Microsoft Entra ID group mapping and deprovisioning acceptance.
-- Owner-scope isolation testing between users inside the organization. Tenancy is achieved per deployment: one installation serves one organization, so there is no in-installation tenant boundary to certify.
+- Owner-scope isolation testing for PostgreSQL knowledge, plus an approved Hermes home/profile isolation design before mutually untrusted users are admitted. Tenancy remains per deployment, but one organization can still contain users who must not share agent memory.
 - Security, infrastructure, product, and business Production sign-off.
 
 ## Architecture invariants
 
 1. OrcaSynapse owns enterprise identity, authorization, policy, orchestration, and audit.
 2. Hermes is the only normal Chat and agent-execution path.
-3. VM2 runs the agent runtime and holds no durable store; knowledge lives in OrcaSynapse's local pgvector index and never transits VM2.
-4. PostgreSQL owns control state, metadata, extracted knowledge chunks, and their embeddings — never original source files.
-5. Original files remain authoritative in enterprise systems; failed ephemeral ingestion requires re-upload.
-6. Inference servers serve models but do not own enterprise policy or credentials.
-7. No Redis, Valkey, pg-boss, LiteLLM, object store, external vector database service, or OCR stack is required; pgvector ships inside the bundled PostgreSQL image.
-8. Customer-environment controls remain visibly unproven until real evidence is recorded.
+3. VM2 runs Hermes and durably owns native sessions, Skills, `MEMORY.md`, and `USER.md`; document knowledge lives in OrcaSynapse's local pgvector index on VM1.
+4. PostgreSQL owns control state, sanitized run projections, audit, extracted document knowledge chunks, and their embeddings — never original source files or Hermes memory content.
+5. Hermes transcripts are session-specific; vanilla file-backed memory is shared by sessions in the active Hermes home/profile. The current pre-production topology is one trust boundary until a future design isolates Hermes homes/profiles.
+6. Original files remain authoritative in enterprise systems; failed ephemeral ingestion requires re-upload.
+7. Inference servers serve models but do not own enterprise policy or credentials.
+8. No Redis, Valkey, pg-boss, LiteLLM, object store, external vector database service, or OCR stack is required; pgvector ships inside the bundled PostgreSQL image.
+9. Customer-environment controls remain visibly unproven until real evidence is recorded.

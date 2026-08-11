@@ -123,6 +123,8 @@ grep -Fq 'umask 022' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 grep -Fq 'Environment=HOME=${HERMES_HOME_DIR}' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 grep -Fq 'WorkingDirectory=${HERMES_HOME_DIR}' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 grep -Fq 'cwd: ${HERMES_HOME_DIR}' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq 'memory_enabled: true' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq 'user_profile_enabled: true' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 if grep -Eq '^Environment=(MESSAGING_CWD|TERMINAL_CWD)=' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"; then
   printf 'deprecated Hermes cwd environment configuration reappeared\n' >&2
   exit 1
@@ -144,8 +146,8 @@ if grep -Eq 'install .*-[og] (10000|"?\$\{HERMES_(UID|GID)\})' "${REPOSITORY_ROO
   exit 1
 fi
 
-# VM2 runs exactly one plane. Agent memory and knowledge are served by the
-# control plane, so no second service may reappear in this installer.
+# VM2 runs exactly one service plane. Built-in memory lives inside Hermes, so
+# no external memory service may reappear in this installer.
 if grep -qi 'supermemory' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"; then
   printf 'the Agentic System installer reintroduced an external memory service\n' >&2
   exit 1
@@ -174,21 +176,27 @@ if [[ "${EUID}" -eq 0 ]] && id -u "${HERMES_USER}" >/dev/null 2>&1; then
 fi
 
 if [[ "${EUID}" -eq 0 ]]; then
-  # Repair must preserve the enrolled policy and replace only terminal.cwd.
+  # Repair must preserve the enrolled policy, reconcile terminal.cwd, and add
+  # the native memory block once for nodes installed before the transition.
   # Exercise the atomic renderer as root because the real managed file is
   # root-owned; a Python/render failure must occur before the original moves.
   (
     HERMES_MANAGED_DIR="${TEST_ROOT}/managed-policy"
     HERMES_HOME_DIR="${TEST_ROOT}/runtime-home"
     mkdir -p "${HERMES_MANAGED_DIR}"
-    printf 'model:\n  default: smoke-model\nsecurity:\n  redact_secrets: true\n' \
+    printf 'model:\n  default: smoke-model\nmemory:\n  provider: stale-external\n  memory_enabled: false\nsecurity:\n  redact_secrets: true\n' \
       > "${HERMES_MANAGED_DIR}/config.yaml"
-    reconcile_managed_terminal_cwd
+    reconcile_managed_runtime_policy
     grep -Fqx '  default: smoke-model' "${HERMES_MANAGED_DIR}/config.yaml"
     grep -Fqx '  redact_secrets: true' "${HERMES_MANAGED_DIR}/config.yaml"
     grep -Fqx "  cwd: ${HERMES_HOME_DIR}" "${HERMES_MANAGED_DIR}/config.yaml"
-    reconcile_managed_terminal_cwd
+    grep -Fqx '  memory_enabled: true' "${HERMES_MANAGED_DIR}/config.yaml"
+    grep -Fqx '  user_profile_enabled: true' "${HERMES_MANAGED_DIR}/config.yaml"
+    ! grep -Fq 'stale-external' "${HERMES_MANAGED_DIR}/config.yaml"
+    ! grep -Eq '^  provider:' "${HERMES_MANAGED_DIR}/config.yaml"
+    reconcile_managed_runtime_policy
     [[ "$(grep -Fc '  cwd:' "${HERMES_MANAGED_DIR}/config.yaml")" == "1" ]]
+    [[ "$(grep -Fc 'memory:' "${HERMES_MANAGED_DIR}/config.yaml")" == "1" ]]
   )
 fi
 

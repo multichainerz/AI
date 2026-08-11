@@ -25,7 +25,11 @@ import {
 } from "@orcasynapse/database";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentManager } from "../agents/agent-manager.js";
-import { boundedConversationHistory, DrizzleChatManager } from "./drizzle-chat-manager.js";
+import {
+  boundedConversationHistory,
+  DrizzleChatManager,
+  type HermesSessionLifecycle,
+} from "./drizzle-chat-manager.js";
 import {
   ChatConfigurationError,
   ChatConversationNotFoundError,
@@ -76,8 +80,20 @@ function agents(overrides: Partial<AgentManager> = {}) {
   } as unknown as AgentManager;
 }
 
-function manager(agentManager: AgentManager = agents(), wake: ChatRunWakeHub = NO_CHAT_RUN_WAKE) {
-  return new DrizzleChatManager(context.database, agentManager, wake);
+function nativeSessions(overrides: Partial<HermesSessionLifecycle> = {}): HermesSessionLifecycle {
+  return {
+    forkSession: vi.fn(async () => "forked" as const),
+    deleteSession: vi.fn(async () => undefined),
+    ...overrides,
+  };
+}
+
+function manager(
+  agentManager: AgentManager = agents(),
+  wake: ChatRunWakeHub = NO_CHAT_RUN_WAKE,
+  sessions: HermesSessionLifecycle = nativeSessions(),
+) {
+  return new DrizzleChatManager(context.database, agentManager, wake, sessions);
 }
 
 /**
@@ -361,8 +377,9 @@ describe("DrizzleChatManager forking, deletion and feedback", () => {
 
   it("forks completed turns into a new conversation", async () => {
     const conversationId = await completedExchange();
+    const sessions = nativeSessions();
 
-    const fork = await manager().fork(principal, conversationId, {} as never);
+    const fork = await manager(agents(), NO_CHAT_RUN_WAKE, sessions).fork(principal, conversationId, {} as never);
 
     expect(fork.title).toMatch(/\(fork\)$/);
     expect(fork.messageCount).toBe(2);
@@ -370,17 +387,15 @@ describe("DrizzleChatManager forking, deletion and feedback", () => {
     expect(forked.messages.map(({ content }) => content)).toEqual(["Question", "Answer"]);
     // Forking must not disturb the source.
     expect((await manager().get(principal, conversationId)).messages).toHaveLength(2);
+    expect(sessions.forkSession).toHaveBeenCalledWith(conversationId, fork.id);
   });
 
-  it("forks only through the named message", async () => {
+  it("rejects a historical fork point that Hermes cannot represent faithfully", async () => {
     const conversationId = await completedExchange();
     const source = await manager().get(principal, conversationId);
 
-    const fork = await manager().fork(principal, conversationId, {
-      throughMessageId: source.messages[0]!.id,
-    } as never);
-
-    expect((await manager().get(principal, fork.id)).messages.map(({ content }) => content)).toEqual(["Question"]);
+    await expect(manager().fork(principal, conversationId, { throughMessageId: source.messages[0]!.id } as never))
+      .rejects.toThrow(/latest completed message/);
     await expect(manager().fork(principal, conversationId, { throughMessageId: randomUUID() } as never))
       .rejects.toBeInstanceOf(ChatMessageNotFoundError);
   });
@@ -389,7 +404,7 @@ describe("DrizzleChatManager forking, deletion and feedback", () => {
     const profileId = await seedActiveProfile();
     const created = await manager().create(principal, { profileId } as never);
     // Six ordinals at generation three: the assistant turn at 2 failed and the
-    // one at 6 is still running. The fork therefore copies 1, 3, 4 and 5 - four
+    // one at 6 failed. The fork therefore copies 1, 3, 4 and 5 - four
     // rows whose highest ordinal is five, not four.
     await context.database
       .update(chatConversation).set({ generation: 3 }).where(eq(chatConversation.id, created.id));
@@ -399,7 +414,7 @@ describe("DrizzleChatManager forking, deletion and feedback", () => {
       { conversationId: created.id, ordinal: 3, role: "USER", status: "COMPLETED", content: "Q2", completedAt: new Date() },
       { conversationId: created.id, ordinal: 4, role: "ASSISTANT", status: "COMPLETED", content: "A2", completedAt: new Date() },
       { conversationId: created.id, ordinal: 5, role: "USER", status: "COMPLETED", content: "Q3", completedAt: new Date() },
-      { conversationId: created.id, ordinal: 6, role: "ASSISTANT", status: "PENDING", content: "" },
+      { conversationId: created.id, ordinal: 6, role: "ASSISTANT", status: "FAILED", content: "", errorCode: "HERMES_EXECUTION_FAILED", completedAt: new Date() },
     ]);
 
     const fork = await manager().fork(principal, created.id, {} as never);
@@ -426,6 +441,17 @@ describe("DrizzleChatManager forking, deletion and feedback", () => {
     await expect(manager().submitMessage(principal, fork.id, "Q5")).resolves.toBeDefined();
   });
 
+  it("refuses to fork while Hermes is still producing the current turn", async () => {
+    const profileId = await seedActiveProfile();
+    const created = await manager().create(principal, { profileId } as never);
+    await manager().submitMessage(principal, created.id, "Hello");
+    const sessions = nativeSessions();
+
+    await expect(manager(agents(), NO_CHAT_RUN_WAKE, sessions).fork(principal, created.id, {} as never))
+      .rejects.toThrow(/Stop the active Hermes run/);
+    expect(sessions.forkSession).not.toHaveBeenCalled();
+  });
+
   it("refuses to delete a conversation with a live run", async () => {
     const profileId = await seedActiveProfile();
     const created = await manager().create(principal, { profileId } as never);
@@ -437,12 +463,25 @@ describe("DrizzleChatManager forking, deletion and feedback", () => {
 
   it("deletes a settled conversation and its messages", async () => {
     const conversationId = await completedExchange();
+    const sessions = nativeSessions();
 
-    await manager().delete(principal, conversationId);
+    await manager(agents(), NO_CHAT_RUN_WAKE, sessions).delete(principal, conversationId);
 
     expect(await context.database.select().from(chatConversation)).toHaveLength(0);
     expect(await context.database.select().from(chatMessage)).toHaveLength(0);
+    expect(sessions.deleteSession).toHaveBeenCalledWith(conversationId);
     await expect(manager().delete(principal, conversationId)).rejects.toBeInstanceOf(ChatConversationNotFoundError);
+  });
+
+  it("keeps the local projection when Hermes cannot confirm transcript deletion", async () => {
+    const conversationId = await completedExchange();
+    const sessions = nativeSessions({ deleteSession: vi.fn(async () => { throw new Error("Hermes offline"); }) });
+
+    await expect(manager(agents(), NO_CHAT_RUN_WAKE, sessions).delete(principal, conversationId))
+      .rejects.toThrow("Hermes offline");
+
+    expect(await context.database.select().from(chatConversation)).toHaveLength(1);
+    expect(await context.database.select().from(chatMessage)).toHaveLength(2);
   });
 
   it("replaces feedback on the same message rather than adding a second row", async () => {

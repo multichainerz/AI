@@ -5,6 +5,27 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v4.5.0 — 2026-08-12
+
+Agent continuity is now Hermes-first. Session turns use Hermes' native session
+stream without replaying the PostgreSQL chat projection, while vanilla
+`MEMORY.md` and `USER.md` are the sole active agent-memory store. OrcaSynapse
+continues to own document knowledge in pgvector and retains sanitized run,
+metric, audit, and SIEM evidence without mirroring memory contents.
+
+Native session lifecycle is preserved end to end: current-state forks use
+Hermes' own branch API, deletion removes the authoritative transcript before
+its local projection, and unsafe historical or missing-source forks fail
+closed. The worker owns the upstream stream independently of the browser and
+redacts native memory-tool content from operational events.
+
+Fresh and repaired VM2 nodes now enforce built-in-only native memory alongside
+the pinned runtime guardrails. Public documentation records the important
+vanilla scope: transcripts are per session, but file-backed memory is shared by
+sessions in the active Hermes home/profile, so this pre-production mode remains
+one trust boundary. The prior pgvector-memory product state is preserved on
+`backup/pgvector`.
+
 ## v4.4.0 — 2026-08-10
 
 VM2 installation and recovery now keep the Hermes runtime inside its managed

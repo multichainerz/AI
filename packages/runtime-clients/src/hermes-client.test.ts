@@ -1,7 +1,7 @@
 import { isAgentRunEndedEventType } from "@orcasynapse/contracts";
 import { describe, expect, it, vi } from "vitest";
 import type { DrizzleRuntimeConnectionResolver } from "./connection-resolver.js";
-import { HermesClient, SAFE_EVENT_TYPES } from "./hermes-client.js";
+import { HermesClient, SAFE_EVENT_TYPES, type HermesSafeRunEvent } from "./hermes-client.js";
 
 function resolver(configuration: Record<string, unknown> = {}): DrizzleRuntimeConnectionResolver {
   return {
@@ -9,7 +9,7 @@ function resolver(configuration: Record<string, unknown> = {}): DrizzleRuntimeCo
       id: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb",
       kind: "HERMES",
       baseUrl: "https://hermes.orcasynapse.internal/",
-      configuration,
+      configuration: { executionMode: "legacy_runs", ...configuration },
       secrets: { apiKey: "strong-hermes-key" },
     })),
   } as unknown as DrizzleRuntimeConnectionResolver;
@@ -53,6 +53,18 @@ describe("HermesClient", () => {
         : { object: "list", platform: "api_server", data: [{ name: "terminal", enabled: true, tools: ["terminal"] }] },
     ), { status: 200 }));
     await expect(new HermesClient(resolver(), fetcher).assertAdmittedToolBoundary()).rejects.toThrow("enabled toolset");
+  });
+
+  it("admits only Hermes built-in memory in native-session mode", async () => {
+    const fetcher = vi.fn<typeof fetch>(async (input) => new Response(JSON.stringify(
+      input.toString().endsWith("/v1/capabilities")
+        ? capabilities
+        : { object: "list", platform: "api_server", data: [{ name: "memory", enabled: true, tools: ["memory"] }] },
+    ), { status: 200 }));
+    await expect(new HermesClient(resolver({ executionMode: "native_sessions" }), fetcher).assertAdmittedToolBoundary())
+      .resolves.toBeUndefined();
+    await expect(new HermesClient(resolver({ executionMode: "legacy_runs" }), fetcher).assertAdmittedToolBoundary())
+      .rejects.toThrow("enabled toolset");
   });
 
   it("accepts an enabled toolset once an operator has admitted it", async () => {
@@ -202,6 +214,105 @@ describe("HermesClient", () => {
     await expect(client.status(id)).resolves.toMatchObject({ id, status: "completed", output: "Result", error: null });
   });
 
+  it("uses Hermes native sessions as the transcript source without replaying Orca history", async () => {
+    const stream = [
+      `event: run.started\ndata: ${JSON.stringify({ run_id: "native-upstream-1", session_id: "session-1", seq: 1, ts: 1_800_000_000 })}\n\n`,
+      `event: assistant.delta\ndata: ${JSON.stringify({ run_id: "native-upstream-1", seq: 2, delta: "Native " })}\n\n`,
+      `event: assistant.delta\ndata: ${JSON.stringify({ run_id: "native-upstream-1", seq: 3, delta: "answer" })}\n\n`,
+      `event: assistant.completed\ndata: ${JSON.stringify({ run_id: "native-upstream-1", seq: 4, content: "Native answer" })}\n\n`,
+      `event: run.completed\ndata: ${JSON.stringify({ run_id: "native-upstream-1", seq: 5, usage: { input_tokens: 12, output_tokens: 2 } })}\n\n`,
+      `event: done\ndata: {}\n\n`,
+    ];
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      const url = input.toString();
+      if (url.endsWith("/v1/capabilities")) return new Response(JSON.stringify(capabilities), { status: 200 });
+      if (url.endsWith("/v1/toolsets")) {
+        return new Response(JSON.stringify({ object: "list", platform: "api_server", data: [] }), { status: 200 });
+      }
+      if (url.endsWith("/api/sessions/session-1") && init?.method === "GET") {
+        return new Response(JSON.stringify({ error: "not found" }), { status: 404 });
+      }
+      if (url.endsWith("/api/sessions") && init?.method === "POST") {
+        expect(JSON.parse(String(init.body))).toEqual({ id: "session-1", model: "hermes-agent", source: "api_server" });
+        return new Response(JSON.stringify({ object: "hermes.session" }), { status: 201 });
+      }
+      if (url.endsWith("/api/sessions/session-1/chat/stream")) {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        expect(body).toEqual({ message: "New question", instructions: "Stay bounded", model: "hermes-agent" });
+        expect(body).not.toHaveProperty("conversation_history");
+        return new Response(sseStream(stream), { status: 200, headers: { "content-type": "text/event-stream" } });
+      }
+      throw new Error(`Unexpected Hermes request: ${url}`);
+    });
+    const client = new HermesClient(resolver({ executionMode: "native_sessions" }), fetcher);
+    const id = await client.start({
+      input: "New question",
+      instructions: "Stay bounded",
+      sessionId: "session-1",
+      idempotencyKey: "native-request-1",
+      modelAlias: "hermes-agent",
+      conversationHistory: [{ role: "user", content: "This projection must not be replayed" }],
+      memorySessionKey: "native-memory-1",
+    });
+    const events: string[] = [];
+    await client.events(id, (event) => {
+      events.push(event.type);
+    }, new AbortController().signal);
+    await expect(client.status(id)).resolves.toMatchObject({
+      id,
+      status: "completed",
+      output: "Native answer",
+      inputTokens: 12,
+      outputTokens: 2,
+      totalTokens: 14,
+    });
+    expect(events).toEqual(["RUN_STARTED", "MESSAGE_DELTA", "RUN_COMPLETED"]);
+  });
+
+  it("forks and deletes authoritative Hermes sessions without exposing their contents", async () => {
+    const requests: Array<{ url: string; method: string; body: unknown }> = [];
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      const url = input.toString();
+      requests.push({
+        url,
+        method: init?.method ?? "GET",
+        body: init?.body ? JSON.parse(String(init.body)) : null,
+      });
+      if (url.endsWith("/api/sessions/source-session/fork")) {
+        return new Response(JSON.stringify({ object: "hermes.session", session: { id: "target-session" } }), { status: 201 });
+      }
+      if (url.endsWith("/api/sessions/target-session")) {
+        return new Response(JSON.stringify({ object: "hermes.session.deleted", deleted: true }), { status: 200 });
+      }
+      throw new Error(`Unexpected Hermes request: ${url}`);
+    });
+    const client = new HermesClient(resolver({ executionMode: "native_sessions" }), fetcher);
+
+    await expect(client.forkSession("source-session", "target-session")).resolves.toBe("forked");
+    await expect(client.deleteSession("target-session")).resolves.toBeUndefined();
+
+    expect(requests).toEqual([
+      {
+        url: "https://hermes.orcasynapse.internal/api/sessions/source-session/fork",
+        method: "POST",
+        body: { id: "target-session" },
+      },
+      {
+        url: "https://hermes.orcasynapse.internal/api/sessions/target-session",
+        method: "DELETE",
+        body: null,
+      },
+    ]);
+  });
+
+  it("reports a missing native fork source and treats an absent delete as success", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ error: "not found" }), { status: 404 }));
+    const client = new HermesClient(resolver({ executionMode: "native_sessions" }), fetcher);
+
+    await expect(client.forkSession("missing", "target")).resolves.toBe("source_absent");
+    await expect(client.deleteSession("missing")).resolves.toBeUndefined();
+  });
+
   it("reports unmeasured token usage as unknown rather than as zero", async () => {
     // llama.cpp behind an OpenAI-compatible gateway returns no usage, and Hermes
     // forwards {0,0,0}. Recording that verbatim tells an operator the run was
@@ -348,6 +459,34 @@ describe("HermesClient", () => {
     });
     expect(projected[3]).not.toHaveProperty("hidden_prompt");
     expect(projected[3]).not.toHaveProperty("tool_arguments");
+  });
+
+  it("records native memory activity without mirroring the remembered content", async () => {
+    const secretFact = "The user lives at a private address.";
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(
+      `event: tool.completed\ndata: ${JSON.stringify({
+        run_id: "run-1",
+        seq: 4,
+        tool_name: "memory",
+        preview: secretFact,
+        result: secretFact,
+      })}\n\n`,
+      { status: 200, headers: { "content-type": "text/event-stream" } },
+    ));
+    const projected: HermesSafeRunEvent[] = [];
+    await new HermesClient(resolver(), fetcher).events(
+      "run_external_1",
+      (event) => { projected.push(event); },
+      new AbortController().signal,
+    );
+    expect(projected).toEqual([expect.objectContaining({
+      type: "TOOL_COMPLETED",
+      toolName: "memory",
+      preview: null,
+      text: null,
+      summary: "Hermes native memory activity.",
+    })]);
+    expect(JSON.stringify(projected)).not.toContain(secretFact);
   });
 
   it("delivers a 70 KB tool preview instead of ending the run stream over it", async () => {
