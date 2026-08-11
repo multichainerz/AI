@@ -2,15 +2,11 @@ import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 import { ORCASYNAPSE_VERSION } from "@orcasynapse/contracts";
 import { createDrizzleClient, listenForAgentRunWake, readBootstrapSecret } from "@orcasynapse/database";
-import { decodeMasterKey, EnvelopeEncryption, RunCapabilityIssuer } from "@orcasynapse/security";
-import { APPROVED_EMBEDDING_MODEL, DocumentVectorStore, LocalBgeM3Embedder } from "@orcasynapse/knowledge";
+import { decodeMasterKey, EnvelopeEncryption } from "@orcasynapse/security";
 import { DrizzleRuntimeConnectionResolver, HermesClient } from "@orcasynapse/runtime-clients";
 import { WorkerRuntime } from "./worker-runtime.js";
-import { DocumentIngestor } from "./document-ingestor.js";
 import { DrizzlePendingRunSource, DrizzleWorkerRegistry } from "./worker-registry.js";
-import { DrizzleAgentProcessor, WorkerAgentKnowledgeRetriever } from "./agent-processor.js";
-import { BenchmarkRunner } from "./benchmark-runner.js";
-import { LiveBenchmarkExecutor } from "./benchmark-executor.js";
+import { DrizzleAgentProcessor } from "./agent-processor.js";
 
 const databaseUrl = readBootstrapSecret("orcasynapse_database_url");
 const { database, close: closeDatabase } = createDrizzleClient(databaseUrl);
@@ -18,13 +14,6 @@ const workerId = randomUUID();
 const masterKey = decodeMasterKey(readBootstrapSecret("orcasynapse_master_key"));
 const encryption = new EnvelopeEncryption({ masterKey });
 const connectionResolver = new DrizzleRuntimeConnectionResolver(database, encryption);
-const embedder = new LocalBgeM3Embedder();
-// Shared with the benchmark executor so a retrieval suite searches through
-// exactly the path a conversation searches through.
-const knowledgeRetriever = new WorkerAgentKnowledgeRetriever(
-  new DocumentVectorStore(database, APPROVED_EMBEDDING_MODEL),
-  embedder,
-);
 
 const runtime = new WorkerRuntime(
   new DrizzlePendingRunSource(database),
@@ -33,30 +22,16 @@ const runtime = new WorkerRuntime(
     id: workerId,
     name: hostname(),
     version: ORCASYNAPSE_VERSION,
-    workloads: ["hermes-runs", "knowledge-ingestion", "benchmarks"],
+    workloads: ["hermes-runs"],
   },
   {
     info: (message) => console.info(message),
     error: (message, error) => console.error(message, error),
   },
   15_000,
-  new DrizzleAgentProcessor(
-    database,
-    new HermesClient(connectionResolver),
-    knowledgeRetriever,
-    new RunCapabilityIssuer(masterKey),
-  ),
+  new DrizzleAgentProcessor(database, new HermesClient(connectionResolver)),
   1_000,
   5,
-  new DocumentIngestor(
-    database,
-    new DocumentVectorStore(database, APPROVED_EMBEDDING_MODEL),
-    embedder,
-  ),
-  new BenchmarkRunner(
-    database,
-    new LiveBenchmarkExecutor(database, knowledgeRetriever),
-  ),
 );
 
 /*
@@ -107,14 +82,6 @@ process.once("SIGINT", () => void shutdown());
 
 try {
   await runtime.start();
-  // Loads the embedding weights now rather than inside the first chat message.
-  // The pipeline resolves lazily, so before this the first person to type
-  // anything after a restart waited for ~2 GB of weights to load before their
-  // question even reached Hermes.
-  void embedder.embed(["orcasynapse embedder warmup"]).then(
-    () => console.info("OrcaSynapse worker embedding model is warm."),
-    (error: unknown) => console.error("OrcaSynapse worker could not warm the embedding model.", error),
-  );
 } catch (error) {
   console.error("OrcaSynapse worker failed to start.", error);
   await closeDatabase().catch((closeError) =>

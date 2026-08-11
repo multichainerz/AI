@@ -20,10 +20,10 @@ describe("CSP safety", () => {
         <Button variant="primary">Go</Button>
         <Panel>
           <PanelHeading kicker="Kicker" title="Title" description="Description" />
-          <Metric label="Queue" value="7" caption="documents" tone="warn" />
+          <Metric label="Queue" value="7" caption="runs" tone="warn" />
           <StatusText tone="good">ready</StatusText>
           <Alert tone="error" onDismiss={vi.fn()}>Something failed</Alert>
-          <EmptyState title="Nothing stored">No memory yet.</EmptyState>
+          <EmptyState title="Nothing stored">No runs yet.</EmptyState>
           <Field label="Owner"><Input defaultValue="user:ada" /></Field>
           <Field label="Scope"><Select><option>STATIC</option></Select></Field>
         </Panel>
@@ -77,31 +77,31 @@ describe("Button", () => {
 describe("LockedScreen", () => {
   it("names the area so governance screens stay distinguishable", () => {
     const html = markup(
-      <LockedScreen title="Memory" mark="M" actionLabel="Open platform settings" onAction={vi.fn()} />,
+      <LockedScreen title="Prompts" mark="P" actionLabel="Open platform settings" onAction={vi.fn()} />,
     );
     expect(html).toContain("<h1");
-    expect(html).toContain("Memory");
+    expect(html).toContain("Prompts");
     expect(html).toContain("Administrator session required");
     expect(html).toContain("Open platform settings");
   });
 
   it("says what it actually needs, which is not always an administrator", () => {
-    // Chat, Knowledge and Agents also serve enterprise identities. Telling an
+    // Session and Agents also serve enterprise identities. Telling an
     // employee an administrator session is required sends them to a person
     // instead of to the sign-in they are entitled to use.
     const html = markup(
       <LockedScreen
-        title="Knowledge"
-        mark="KN"
-        kicker="Enterprise knowledge"
-        headline="Sign in to use Knowledge"
+        title="Session"
+        mark="SE"
+        kicker="Enterprise session"
+        headline="Sign in to use Session"
         actionLabel="Sign in with OrcaSynapse"
         onAction={vi.fn()}
       />,
     );
-    expect(html).toContain("Sign in to use Knowledge");
+    expect(html).toContain("Sign in to use Session");
     expect(html).not.toContain("Administrator session required");
-    expect(html).toContain("Enterprise knowledge");
+    expect(html).toContain("Enterprise session");
   });
 
   it("shows the second route only when there is one", () => {
@@ -139,9 +139,9 @@ describe("LockedScreen", () => {
       // `]`, which is not a word character, so there is no boundary to match.
       /\btext-(\[[^\]]+\]|xs|sm|base|lg|[2-9]?xl)(?![\w-])/.exec(/<h1[^>]*class="([^"]*)"/.exec(html)?.[1] ?? "")?.[1];
 
-    const locked = markup(<LockedScreen title="Memory" mark="M" actionLabel="Open" onAction={vi.fn()} />);
+    const locked = markup(<LockedScreen title="Prompts" mark="P" actionLabel="Open" onAction={vi.fn()} />);
     expect(titleSize(locked)).toBeDefined();
-    expect(titleSize(locked)).toBe(titleSize(markup(<PageHeader title="Memory" />)));
+    expect(titleSize(locked)).toBe(titleSize(markup(<PageHeader title="Prompts" />)));
   });
 });
 

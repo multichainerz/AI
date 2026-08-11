@@ -113,7 +113,7 @@ describe("OnboardingView", () => {
     expect(html).toContain("AI Inference");
     expect(html).toContain("Agentic System");
     expect(html).toContain("Enterprise Access");
-    expect(html).toContain("Open Knowledge");
+    expect(html).toContain("Finish the Agentic System");
     expect(html).toContain("Installation recovery");
     expect(html).not.toContain("Guided journey");
   });
@@ -129,11 +129,8 @@ describe("OnboardingView", () => {
 
     // Chat runs on VM2, so it stays gated on the inference route that feeds it.
     expect(html).toContain("Set up inference first");
-    // Knowledge does not: extraction, embedding, and retrieval are local to the
-    // control plane, so it must never wait on the agent runtime.
-    expect(html).toContain("Open Knowledge");
+    expect(html).toContain("Governed Chat");
     expect(html).not.toContain("Enroll Agentic System first");
-    expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>Open Knowledge<\/button>/);
   });
 
   it("opens Agentic System configuration on the VM2 installer rather than connector fields", () => {

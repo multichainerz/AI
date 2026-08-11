@@ -49,46 +49,30 @@ describe("committed Drizzle migrations", () => {
   it("creates the whole control plane, not a partial schema", () => {
     const statements = sql();
     for (const table of [
-      "AgentRun", "AgentProfile", "ChatConversation", "ChatMessage", "Document",
+      "SchemaMetadata", "AgentRun", "AgentProfile", "ChatConversation", "ChatMessage",
       "ServiceConnection", "SecretRecord", "AuditEvent", "HermesRuntimeNode",
       "GuardrailPolicy", "ModelDeployment", "EnterpriseUser", "WorkerNode",
     ]) {
       expect(statements, table).toContain(`CREATE TABLE "${table}"`);
     }
+    expect(statements).toContain(
+      `INSERT INTO "SchemaMetadata" ("id", "epoch") VALUES ('current', 'hermes-native-v1')`,
+    );
   });
 
-  it("pins retrieval to the approved embedding width and index", () => {
+  it("contains no retired vector, document, memory, or benchmark plane", () => {
     const statements = sql();
-    // The column width is the contract: a substituted model of a different
-    // dimension cannot be written at all.
-    expect(statements).toContain('"embedding" vector(1024) NOT NULL');
-    expect(statements).toContain("USING hnsw");
-    expect(statements).toContain("vector_cosine_ops");
-  });
-
-  it("indexes chunk text without language-specific stemming", () => {
-    // 'simple' keeps Indonesian and English terms indexed literally, so lexical
-    // recall does not quietly degrade for non-English content.
-    expect(sql()).toContain("to_tsvector('simple'::regconfig, content)");
-  });
-
-  it("carries no operator class beyond the one the vector index requires", () => {
-    // drizzle-kit misassigned operator classes across multi-column indexes
-    // during introspection, producing SQL PostgreSQL rejects outright.
-    const explicit = sql().match(/_ops[,)]/g) ?? [];
-    const cosine = sql().match(/vector_cosine_ops/g) ?? [];
-    expect(explicit.length).toBe(cosine.length);
+    expect(statements).not.toMatch(/CREATE EXTENSION[^;]*vector/i);
+    for (const table of ["Document", "DocumentChunk", "AgentMemory", "MemoryPolicy", "BenchmarkRun", "BenchmarkSuite"]) {
+      expect(statements, table).not.toContain(`CREATE TABLE "${table}"`);
+    }
+    expect(statements).not.toContain("vector_cosine_ops");
   });
 
   it("stores administrator role grants as an enum array rather than an opaque fallback", () => {
     const statements = sql();
-    // Introspection could not parse AdministratorRole[] and fell back to
-    // bytea[], so the baseline created a column no role value can be written to.
-    // PostgreSQL has no bytea-to-enum cast, so the column is replaced outright.
-    expect(statements).toContain('ADD COLUMN "allowedAdminRoles" "public"."AdministratorRole"[]');
-    expect(statements).toContain('DROP COLUMN "allowedAdminRoles"');
-    // The baseline's mistake is the only bytea array the schema may contain.
-    expect(statements.match(/"bytea"\[\]/g) ?? []).toHaveLength(1);
+    expect(statements).toContain('"allowedAdminRoles" "AdministratorRole"[] NOT NULL');
+    expect(statements).not.toContain('"allowedAdminRoles" "bytea"[]');
   });
 
   it("defaults array columns to empty rather than a parsed fragment", () => {
@@ -143,14 +127,6 @@ describe("drizzle snapshots", () => {
   });
 
   it("chains every snapshot to the one committed before it", () => {
-    /*
-     * Snapshots 0022-0025 were never written and are not reconstructed here:
-     * the states they held are gone, and introspecting them back out of a
-     * database would invent detail rather than recover it -- this schema has
-     * been burned by introspection twice already, once on operator classes and
-     * once on enum arrays. Generate never reads them. So the chain is checked
-     * over what exists, which is what would catch a fork or a stale head.
-     */
     for (const [index, name] of snapshotFiles.entries()) {
       if (index === 0) continue;
       const previous = snapshotFiles[index - 1]!;

@@ -1,6 +1,6 @@
 {
   "name": "orcasynapse",
-  "version": "4.5.0",
+  "version": "4.6.0",
   "description": "OrcaSynapse - on-premises agentic intelligence and governed execution control plane",
   "license": "BUSL-1.1",
   "private": true,
@@ -21,17 +21,14 @@
   "pnpm": {
     "overrides": {
       "@types/node": "24.13.3",
-      "fast-uri": ">=4.1.2",
-      "adm-zip": ">=0.6.0",
-      "sharp": ">=0.35.3",
-      "pdfjs-dist": ">=6.2.108"
+      "fast-uri": ">=4.1.2"
     }
   },
   "scripts": {
     "build": "pnpm -r --if-present build",
     "dev": "concurrently --kill-others --names api,web \"pnpm --filter @orcasynapse/api dev\" \"pnpm --filter @orcasynapse/web dev\"",
     "dev:worker": "pnpm --filter @orcasynapse/worker dev",
-    "pretypecheck": "pnpm --filter @orcasynapse/contracts --filter @orcasynapse/database --filter @orcasynapse/security --filter @orcasynapse/runtime-clients --filter @orcasynapse/knowledge build",
+    "pretypecheck": "pnpm --filter @orcasynapse/contracts --filter @orcasynapse/database --filter @orcasynapse/security --filter @orcasynapse/runtime-clients build",
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",
     "verify": "pnpm build && pnpm typecheck && pnpm test && pnpm db:validate",

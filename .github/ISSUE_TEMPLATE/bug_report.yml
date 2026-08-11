@@ -21,7 +21,7 @@ body:
         - VM1 installer (install.sh / install-orcasynapse.sh)
         - VM2 installer (install-agentic-node.sh)
         - Enrollment / heartbeat
-        - Knowledge / documents
+        - Hermes sessions / agents
         - Audit trail / SIEM forwarding
         - Other
     validations:

@@ -30,7 +30,6 @@ const conversation = {
   createdAt: "2026-08-07T09:00:00.000Z",
   updatedAt: "2026-08-07T09:15:00.000Z",
   lastMessageAt: "2026-08-07T09:15:00.000Z",
-  knowledgeDocuments: [],
   messages: [{
     id: "m1",
     role: "ASSISTANT",
@@ -47,7 +46,6 @@ const conversation = {
     finishReason: "STOP",
     errorCode: null,
     agentRunId: null,
-    sources: [],
     approvals: [],
     runtimeEvents: [],
     feedback: null,
@@ -61,7 +59,6 @@ vi.mock("./api.js", async () => {
     getChatConversations: vi.fn(async () => ({ items: [{ ...conversation, messages: undefined }] })),
     getChatConversation: vi.fn(async () => conversation),
     getAgentProfiles: vi.fn(async () => ({ items: [] })),
-    getDocuments: vi.fn(async () => ({ items: [] })),
   };
 });
 
@@ -164,7 +161,8 @@ describe("chat thread layout", () => {
     scrollUpBy(scroller, 900);
     await screen.findByRole("button", { name: "Jump to latest" });
 
-    await user.click(screen.getByRole("button", { name: /knowledge/i }));
+    await user.click(screen.getByRole("button", { name: /more/i }));
+    await user.click(screen.getByRole("menuitem", { name: "Delete" }));
 
     await screen.findByRole("dialog");
     expect(screen.queryByRole("button", { name: "Jump to latest" })).toBeNull();
@@ -180,7 +178,8 @@ describe("chat thread layout", () => {
     const user = userEvent.setup();
     const scroller = await thread();
 
-    await user.click(screen.getByRole("button", { name: /knowledge/i }));
+    await user.click(screen.getByRole("button", { name: /more/i }));
+    await user.click(screen.getByRole("menuitem", { name: "Delete" }));
     const dialog = await screen.findByRole("dialog");
 
     expect(scroller.compareDocumentPosition(dialog) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();

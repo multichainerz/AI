@@ -55,13 +55,6 @@ import {
   type CreateChatConversation,
   type UpdateChatConversation,
   type UpdateServiceConnection,
-  documentListSchema,
-  documentDetailSchema,
-  documentMetricsSchema,
-  type DocumentList,
-  type DocumentDetail,
-  type DocumentMetrics,
-  type DocumentClassification,
   agentProfileListSchema,
   agentProfileSchema,
   agentRunListSchema,
@@ -108,18 +101,6 @@ import {
   operationalIncidentSchema,
   evaluationRunListSchema,
   evaluationRunSchema,
-  benchmarkSuiteListSchema,
-  benchmarkSuiteSchema,
-  benchmarkRunListSchema,
-  benchmarkRunSchema,
-  type BenchmarkSuite,
-  type BenchmarkSuiteList,
-  type BenchmarkRun,
-  type BenchmarkRunList,
-  type CreateBenchmarkSuite,
-  type UpdateBenchmarkSuite,
-  type StartBenchmarkRun,
-  type AttachBenchmarkEvidence,
   productionReadinessSchema,
   productionReadinessControlSchema,
   productionReadinessApprovalSchema,
@@ -152,21 +133,10 @@ import {
   type UpdateGuardrailPolicy,
   type ChangeGuardrailPolicyState,
   promptTemplateListSchema,
-  memoryPolicySchema,
-  memoryPolicyListSchema,
-  agentMemoryRecordListSchema,
-  forgetMatchingResultSchema,
-  type ForgetMatchingResult,
   hermesRuntimeCatalogueSchema,
   promptTemplateSchema,
   type PromptTemplate,
   type PromptTemplateList,
-  type MemoryPolicy,
-  type MemoryPolicyList,
-  type CreateMemoryPolicy,
-  type UpdateMemoryPolicy,
-  type ChangeMemoryPolicyState,
-  type AgentMemoryRecordList,
   type HermesRuntimeCatalogue,
   type CreatePromptTemplate,
   type UpdatePromptTemplate,
@@ -533,21 +503,6 @@ export async function streamChatEvents(
   if (streamError) throw new OrcaSynapseApiError(502, streamError);
 }
 
-export async function attachChatDocument(conversationId: string, documentId: string): Promise<ChatConversation> {
-  const response = await fetch(`/api/v1/chat/conversations/${encodeURIComponent(conversationId)}/documents`, {
-    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify({ documentId }),
-  });
-  return chatConversationSchema.parse(await parsedResponse(response));
-}
-
-export async function detachChatDocument(conversationId: string, documentId: string): Promise<ChatConversation> {
-  const response = await fetch(
-    `/api/v1/chat/conversations/${encodeURIComponent(conversationId)}/documents/${encodeURIComponent(documentId)}`,
-    { method: "DELETE", credentials: "same-origin" },
-  );
-  return chatConversationSchema.parse(await parsedResponse(response));
-}
-
 export async function forkChatConversation(
   conversationId: string,
   input: ForkChatConversation = {},
@@ -603,55 +558,6 @@ export async function getChatMetrics(): Promise<ChatMetrics> {
     credentials: "same-origin",
   });
   return chatMetricsSchema.parse(await parsedResponse(response));
-}
-
-export async function getDocuments(): Promise<DocumentList> {
-  const response = await fetch("/api/v1/documents", { credentials: "same-origin" });
-  return documentListSchema.parse(await parsedResponse(response));
-}
-
-export async function getDocument(id: string): Promise<DocumentDetail> {
-  const response = await fetch(`/api/v1/documents/${encodeURIComponent(id)}`, {
-    credentials: "same-origin",
-  });
-  return documentDetailSchema.parse(await parsedResponse(response));
-}
-
-export async function uploadDocument(
-  file: File,
-  classification: DocumentClassification,
-  retentionDays: number,
-): Promise<DocumentDetail> {
-  const body = new FormData();
-  body.append("file", file, file.name);
-  const query = new URLSearchParams({ classification, retentionDays: String(retentionDays) });
-  const response = await fetch(`/api/v1/documents?${query}`, {
-    method: "POST",
-    credentials: "same-origin",
-    body,
-  });
-  return documentDetailSchema.parse(await parsedResponse(response));
-}
-
-export async function deleteDocument(
-  id: string,
-  force = false,
-  reason?: string,
-): Promise<void> {
-  const query = new URLSearchParams({
-    ...(force ? { force: "true" } : {}),
-    ...(reason ? { reason } : {}),
-  });
-  const response = await fetch(
-    `/api/v1/documents/${encodeURIComponent(id)}${query.size ? `?${query}` : ""}`,
-    { method: "DELETE", credentials: "same-origin" },
-  );
-  if (!response.ok) await parsedResponse(response);
-}
-
-export async function getDocumentMetrics(): Promise<DocumentMetrics> {
-  const response = await fetch("/api/v1/documents/metrics", { credentials: "same-origin" });
-  return documentMetricsSchema.parse(await parsedResponse(response));
 }
 
 export async function getAgentProfiles(administrator: boolean): Promise<AgentProfileList> {
@@ -951,62 +857,6 @@ export async function promoteEvaluationRun(id: string, reason: string): Promise<
   return evaluationRunSchema.parse(await parsedResponse(response));
 }
 
-export async function getBenchmarkSuites(): Promise<BenchmarkSuiteList> {
-  const response = await fetch("/api/v1/admin/benchmarks/suites", { credentials: "same-origin" });
-  return benchmarkSuiteListSchema.parse(await parsedResponse(response));
-}
-
-export async function createBenchmarkSuite(input: CreateBenchmarkSuite): Promise<BenchmarkSuite> {
-  const response = await fetch("/api/v1/admin/benchmarks/suites", {
-    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
-  });
-  return benchmarkSuiteSchema.parse(await parsedResponse(response));
-}
-
-export async function updateBenchmarkSuite(id: string, input: UpdateBenchmarkSuite): Promise<BenchmarkSuite> {
-  const response = await fetch(`/api/v1/admin/benchmarks/suites/${encodeURIComponent(id)}`, {
-    method: "PATCH", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
-  });
-  return benchmarkSuiteSchema.parse(await parsedResponse(response));
-}
-
-export async function deleteBenchmarkSuite(id: string): Promise<void> {
-  const response = await fetch(`/api/v1/admin/benchmarks/suites/${encodeURIComponent(id)}`, {
-    method: "DELETE", headers: adminHeaders(), credentials: "same-origin",
-  });
-  await parsedResponse(response);
-}
-
-export async function getBenchmarkRuns(suiteId?: string): Promise<BenchmarkRunList> {
-  const query = suiteId ? `?suiteId=${encodeURIComponent(suiteId)}` : "";
-  const response = await fetch(`/api/v1/admin/benchmarks/runs${query}`, { credentials: "same-origin" });
-  return benchmarkRunListSchema.parse(await parsedResponse(response));
-}
-
-export async function startBenchmarkRun(input: StartBenchmarkRun): Promise<BenchmarkRun> {
-  const response = await fetch("/api/v1/admin/benchmarks/runs", {
-    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
-  });
-  return benchmarkRunSchema.parse(await parsedResponse(response));
-}
-
-export async function cancelBenchmarkRun(id: string): Promise<BenchmarkRun> {
-  const response = await fetch(`/api/v1/admin/benchmarks/runs/${encodeURIComponent(id)}/cancel`, {
-    method: "POST", headers: adminHeaders(), credentials: "same-origin",
-  });
-  return benchmarkRunSchema.parse(await parsedResponse(response));
-}
-
-export async function attachBenchmarkEvidence(
-  id: string,
-  input: AttachBenchmarkEvidence,
-): Promise<EvaluationRun> {
-  const response = await fetch(`/api/v1/admin/benchmarks/runs/${encodeURIComponent(id)}/evaluation`, {
-    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
-  });
-  return evaluationRunSchema.parse(await parsedResponse(response));
-}
-
 export async function getProductionReadiness(): Promise<ProductionReadiness> {
   const response = await fetch("/api/v1/admin/operations/readiness", { credentials: "same-origin" });
   return productionReadinessSchema.parse(await parsedResponse(response));
@@ -1119,61 +969,6 @@ export async function removeHermesRuntimeNode(
   await parsedResponse(response);
 }
 
-export async function getMemoryPolicies(): Promise<MemoryPolicyList> {
-  const response = await fetch("/api/v1/admin/memory/policies", { credentials: "same-origin" });
-  return memoryPolicyListSchema.parse(await parsedResponse(response));
-}
-
-export async function createMemoryPolicy(input: CreateMemoryPolicy): Promise<MemoryPolicy> {
-  const response = await fetch("/api/v1/admin/memory/policies", {
-    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
-  });
-  return memoryPolicySchema.parse(await parsedResponse(response));
-}
-
-export async function updateMemoryPolicy(id: string, input: UpdateMemoryPolicy): Promise<MemoryPolicy> {
-  const response = await fetch(`/api/v1/admin/memory/policies/${encodeURIComponent(id)}`, {
-    method: "PATCH", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
-  });
-  return memoryPolicySchema.parse(await parsedResponse(response));
-}
-
-export async function changeMemoryPolicyState(
-  id: string,
-  action: "activate" | "suspend",
-  input: ChangeMemoryPolicyState,
-): Promise<MemoryPolicy> {
-  const response = await fetch(`/api/v1/admin/memory/policies/${encodeURIComponent(id)}/${action}`, {
-    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
-  });
-  return memoryPolicySchema.parse(await parsedResponse(response));
-}
-
-export async function getAgentMemoryRecords(
-  query: { ownerSubject?: string; limit?: number; includeHistory?: boolean } = {},
-): Promise<AgentMemoryRecordList> {
-  const search = new URLSearchParams();
-  if (query.ownerSubject) search.set("ownerSubject", query.ownerSubject);
-  if (query.limit) search.set("limit", String(query.limit));
-  // One flag on this side: an operator asking to see history wants both the
-  // corrected and the forgotten, and splitting them would only produce a state
-  // where half the past is visible.
-  if (query.includeHistory) {
-    search.set("includeSuperseded", "true");
-    search.set("includeForgotten", "true");
-  }
-  const suffix = search.toString();
-  const response = await fetch(`/api/v1/admin/memory/records${suffix ? `?${suffix}` : ""}`, { credentials: "same-origin" });
-  return agentMemoryRecordListSchema.parse(await parsedResponse(response));
-}
-
-export async function deleteAgentMemoryRecord(id: string, reason: string): Promise<void> {
-  const response = await fetch(`/api/v1/admin/memory/records/${encodeURIComponent(id)}`, {
-    method: "DELETE", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify({ reason }),
-  });
-  await parsedResponse(response);
-}
-
 /**
  * What agents have learned about the signed-in person.
  *
@@ -1209,36 +1004,9 @@ export async function getRuntimeCatalogue(): Promise<HermesRuntimeCatalogue> {
   return hermesRuntimeCatalogueSchema.parse(await parsedResponse(response));
 }
 
-export async function getOwnAgentMemory(): Promise<AgentMemoryRecordList> {
-  const response = await fetch("/api/v1/chat/memory", { credentials: "same-origin" });
-  return agentMemoryRecordListSchema.parse(await parsedResponse(response));
-}
-
-export async function forgetOwnAgentMemory(id: string): Promise<void> {
-  const response = await fetch(`/api/v1/chat/memory/${encodeURIComponent(id)}`, {
-    method: "DELETE", headers: adminHeaders(), credentials: "same-origin",
-  });
-  await parsedResponse(response);
-}
-
 /**
  * "Forget everything about X" — previewed by default.
  *
  * `dryRun` is the caller's decision because the preview and the commit are the
  * same request; the server defaults it to true, so an omitted flag previews.
  */
-export async function forgetMatchingAgentMemory(
-  input: { ownerSubject: string; target: string; reason: string; dryRun: boolean; maximumForget?: number },
-): Promise<ForgetMatchingResult> {
-  const response = await fetch("/api/v1/admin/memory/records/forget-matching", {
-    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
-  });
-  return forgetMatchingResultSchema.parse(await parsedResponse(response));
-}
-
-export async function purgeAgentMemory(ownerSubject: string, reason: string): Promise<{ removed: number }> {
-  const response = await fetch("/api/v1/admin/memory/records/purge", {
-    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify({ ownerSubject, reason }),
-  });
-  return await parsedResponse(response) as { removed: number };
-}

@@ -12,7 +12,7 @@ import {
 const configuration = {
   slug: "hermes-analyst",
   displayName: "Hermes Analyst",
-  purpose: "Analyze private operational documents.",
+  purpose: "Analyze private operational state.",
   instructions: "Answer using authorized evidence and state uncertainty.",
   soulMd: "You are a careful analyst who is precise and candid about uncertainty.",
   skills: [],
@@ -20,17 +20,12 @@ const configuration = {
   maxTurns: 1,
   timeoutSeconds: 600,
   maxConcurrentRuns: 2,
-  allowPrivateKnowledge: true,
   safeMode: true,
 } as const;
 
 describe("agent contracts", () => {
   it("accepts only the single-turn safe-mode boundary", () => {
-    // memoryMode is absent from the fixture on purpose: a profile that does not
-    // ask for memory must come back storing nothing about anyone.
-    expect(createAgentProfileSchema.parse(configuration)).toEqual({ ...configuration, memoryMode: "DOCUMENTS_ONLY" });
-    expect(createAgentProfileSchema.parse({ ...configuration, memoryMode: "LEARN_USER" }).memoryMode).toBe("LEARN_USER");
-    expect(createAgentProfileSchema.safeParse({ ...configuration, memoryMode: "LEARN_EVERYTHING" }).success).toBe(false);
+    expect(createAgentProfileSchema.parse(configuration)).toEqual(configuration);
     expect(createAgentProfileSchema.safeParse({ ...configuration, maxTurns: 2 }).success).toBe(false);
     expect(createAgentProfileSchema.safeParse({ ...configuration, safeMode: false }).success).toBe(false);
   });
@@ -40,7 +35,7 @@ describe("agent contracts", () => {
     expect(updateAgentRuntimeControlSchema.safeParse({ enabled: false, reason: "x" }).success).toBe(false);
   });
 
-  it("bounds run provenance to recognized capabilities and sources", () => {
+  it("accepts native Hermes run provenance", () => {
     const base = {
       id: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d",
       profileId: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb",
@@ -58,8 +53,6 @@ describe("agent contracts", () => {
       reasoningTokens: 0,
       totalTokens: 15,
       finishReason: "stop",
-      effectiveCapabilities: ["knowledge:private:read"],
-      sources: [],
       failureCode: null,
       failureMessage: null,
       queuedAt: "2026-07-30T00:00:00.000Z",
@@ -69,7 +62,6 @@ describe("agent contracts", () => {
       updatedAt: "2026-07-30T00:00:02.000Z",
     };
     expect(agentRunSchema.parse(base).status).toBe("COMPLETED");
-    expect(agentRunSchema.safeParse({ ...base, effectiveCapabilities: ["terminal:write"] }).success).toBe(false);
   });
 });
 

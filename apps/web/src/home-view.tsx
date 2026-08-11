@@ -2,7 +2,6 @@ import type {
   AgentMetrics,
   ChatMetrics,
   ConnectionMonitoringControl,
-  DocumentMetrics,
   ToolMetrics,
 } from "@orcasynapse/contracts";
 import { DashboardHero } from "./dashboard-hero.js";
@@ -34,7 +33,6 @@ interface HomeViewProps {
   healthyConnections: number;
   monitoring: ConnectionMonitoringControl | null;
   chatMetrics: ChatMetrics | null;
-  documentMetrics: DocumentMetrics | null;
   agentMetrics: AgentMetrics | null;
   toolMetrics: ToolMetrics | null;
   layers: HomeLayer[];
@@ -61,7 +59,7 @@ export function HomeView(props: HomeViewProps) {
   const detail = setupIncomplete
     ? "Run the protected VM1 installer before configuring services."
     : !props.unlocked
-      ? "Sign in to manage encrypted endpoints, agents, and knowledge."
+      ? "Sign in to manage encrypted endpoints, agents, and policy."
       : allReady
         ? "Every required capability is ready for governed sessions."
         : `${readyCount} of ${props.readiness.length} required capabilities are ready${next ? `. Next: ${next.detail}.` : "."}`;
@@ -97,7 +95,6 @@ export function HomeView(props: HomeViewProps) {
       onUnlock={props.onUnlock}
       healthyConnections={props.healthyConnections}
       chatMetrics={props.chatMetrics}
-      documentMetrics={props.documentMetrics}
       agentMetrics={props.agentMetrics}
       toolMetrics={props.toolMetrics}
       monitoring={props.monitoring}

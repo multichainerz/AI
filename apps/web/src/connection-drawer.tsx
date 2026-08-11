@@ -11,7 +11,7 @@ import type {
   ServiceKind,
 } from "@orcasynapse/contracts";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { slugAsTyped, slugify } from "./benchmark-suite-editor.js";
+import { slugAsTyped, slugify } from "./slug.js";
 import { connectionDefinitions, inferenceEndpointPresets } from "./connection-definitions.js";
 import { Button, Drawer } from "./ui/index.js";
 

@@ -17,15 +17,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const version = {
   version: 3,
   displayName: "Support analyst",
-  purpose: "Answers from the runbooks the person already owns.",
-  instructions: "Be precise and cite the source.",
+  purpose: "Helps operators reason about their controlled environment.",
+  instructions: "Be precise and state uncertainty.",
   soulMd: "Careful, evidence-led, candid about uncertainty.",
   skills: [],
   modelAlias: "hermes-agent",
   timeoutSeconds: 600,
   maxConcurrentRuns: 2,
-  allowPrivateKnowledge: true,
-  memoryMode: "LEARN_USER",
   distributionDigest: "9f2c4a1b7e5d3086f4a2b1c0d9e8f7a6",
 };
 
@@ -44,7 +42,6 @@ const runs = [
     createdAt: "2026-08-07T09:00:00.000Z", queuedAt: "2026-08-07T09:00:00.000Z",
     startedAt: "2026-08-07T09:00:01.000Z", completedAt: "2026-08-07T09:00:06.000Z",
     profileDistributionDigest: "9f2c4a1b7e5d3086f4a2b1c0d9e8f7a6", failureCode: null, failureMessage: null,
-    sources: [{ documentId: "d1", fileName: "runbook.pdf", classification: "INTERNAL", score: 0.82, excerpt: "Confirm migrations before promotion." }],
   },
 ] as unknown as AgentRun[];
 

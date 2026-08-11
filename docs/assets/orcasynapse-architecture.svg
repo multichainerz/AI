@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="560" viewBox="0 0 1200 560" role="img" aria-labelledby="title description" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif">
   <title id="title">OrcaSynapse production baseline</title>
-  <desc id="description">Two virtual machines plus an inference server. VM1 runs the OrcaSynapse control plane with PostgreSQL and pgvector holding control-plane state, document knowledge, sanitized run projections, and the append-only audit trail. VM2 runs the isolated Hermes agent runtime and owns native sessions, MEMORY.md, and USER.md. VM1 calls an OpenAI-compatible inference server and can optionally forward audit batches to a customer SIEM.</desc>
+  <desc id="description">Two virtual machines plus an inference server. VM1 runs the OrcaSynapse control plane with PostgreSQL holding control-plane state, sanitized run projections, evaluations, and the append-only audit trail. VM2 runs the isolated Hermes agent runtime and owns native sessions, MEMORY.md, and USER.md. VM1 calls an OpenAI-compatible inference server and can optionally forward audit batches to a customer SIEM.</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#0b1016"/>
@@ -37,11 +37,11 @@
   <text x="264" y="191" fill="#9aa9bc" font-size="13">identity · policy · orchestration · guardrails</text>
 
   <rect x="244" y="222" width="312" height="150" rx="12" fill="#121820" stroke="#27313c"/>
-  <text x="264" y="252" fill="#f2f5fb" font-size="17" font-weight="600">PostgreSQL 17 <tspan fill="#b9f5ff">+ pgvector</tspan></text>
+  <text x="264" y="252" fill="#f2f5fb" font-size="17" font-weight="600">PostgreSQL 17</text>
   <text x="264" y="283" fill="#9aa9bc" font-size="13">control-plane state · encrypted secrets</text>
-  <text x="264" y="309" fill="#9aa9bc" font-size="13">document knowledge + run projections</text>
+  <text x="264" y="309" fill="#9aa9bc" font-size="13">run projections · evaluations · incidents</text>
   <text x="264" y="335" fill="#9aa9bc" font-size="13">append-only audit trail</text>
-  <text x="264" y="358" fill="#54c995" font-size="12">original files are never stored</text>
+  <text x="264" y="358" fill="#54c995" font-size="12">no agent memory or runtime transcripts</text>
 
   <rect x="244" y="388" width="312" height="62" rx="12" fill="#121820" stroke="#27313c"/>
   <text x="264" y="415" fill="#f2f5fb" font-size="16" font-weight="600">Inference gateway</text>
@@ -53,7 +53,7 @@
   <rect x="724" y="140" width="412" height="98" rx="12" fill="#121820" stroke="#27313c"/>
   <text x="744" y="171" fill="#f2f5fb" font-size="17" font-weight="600">Hermes runtime</text>
   <text x="744" y="196" fill="#9aa9bc" font-size="13">sessions · skills · tools · subagents</text>
-  <text x="744" y="218" fill="#54c995" font-size="12">one plane, no local data store</text>
+  <text x="744" y="218" fill="#54c995" font-size="12">native session and memory state only</text>
 
   <!-- AI Inference -->
   <rect x="700" y="302" width="460" height="94" rx="18" fill="#141b26" stroke="#3c4a63"/>
@@ -68,7 +68,7 @@
 
   <!-- VM1 <-> VM2 -->
   <line x1="582" y1="152" x2="696" y2="152" stroke="#7f9cff" stroke-width="2" marker-end="url(#head)"/>
-  <text x="639" y="142" fill="#9aa9bc" font-size="12.5" text-anchor="middle">governed runs</text>
+  <text x="639" y="142" fill="#9aa9bc" font-size="12.5" text-anchor="middle">native sessions</text>
   <line x1="696" y1="212" x2="582" y2="212" stroke="#7f9cff" stroke-width="2" marker-end="url(#head)"/>
   <text x="639" y="202" fill="#9aa9bc" font-size="12.5" text-anchor="middle">signed heartbeats</text>
   <text x="639" y="234" fill="#9aa9bc" font-size="12.5" text-anchor="middle">model access</text>

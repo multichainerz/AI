@@ -70,8 +70,8 @@ const activityFrame = (overrides: Record<string, unknown> = {}) => frame({
   preview: null,
   status: null,
   errorCode: null,
-  toolName: "knowledge.search",
-  toolCallKey: "knowledge.search#1",
+  toolName: "system.status",
+  toolCallKey: "system.status#1",
   text: null,
   contentOffset: 0,
   childSessionId: null,
@@ -143,7 +143,7 @@ describe("streamed run events", () => {
     const once = applyStreamEventToConversation(conversation([pending()]), activityFrame(), NOW);
     const twice = applyStreamEventToConversation(once, activityFrame(), NOW);
     expect(twice?.messages[0]?.runtimeEvents).toHaveLength(1);
-    expect(twice?.messages[0]?.runtimeEvents[0]).toMatchObject({ type: "TOOL_STARTED", toolName: "knowledge.search" });
+    expect(twice?.messages[0]?.runtimeEvents[0]).toMatchObject({ type: "TOOL_STARTED", toolName: "system.status" });
   });
 
   it("replaces an approval when it is decided instead of listing it twice", () => {

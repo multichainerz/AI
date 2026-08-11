@@ -34,7 +34,7 @@ interface OnboardingViewProps {
   runtimeNodes: HermesRuntimeNode[];
   initialTab?: "journey" | "nodes" | "readiness";
   onConfigure: (kind?: ServiceKind) => void;
-  onOpenWorkspace: (workspace: "Chat" | "Documents" | "Agents") => void;
+  onOpenWorkspace: (workspace: "Chat" | "Agents") => void;
   onOpenOperations: () => void;
   onRuntimeNodesChange: (nodes: HermesRuntimeNode[]) => void;
   onSignIn: () => void;
@@ -358,7 +358,7 @@ export function OnboardingView({
       </Panel>)}
     </section>
 
-    <section className="grid gap-4 lg:grid-cols-2" aria-label="Available workspaces">
+    <section className="grid gap-4" aria-label="Available workspaces">
       <Panel>
         <MicroLabel className="block">Employee workspace</MicroLabel>
         <h2 className="m-0 mt-1.5 font-display text-[15px] font-semibold tracking-[-0.01em] text-text">Governed Chat</h2>
@@ -368,15 +368,6 @@ export function OnboardingView({
         <Button variant="primary" disabled={!readiness.chatReady} onClick={() => onOpenWorkspace("Chat")}>
           {readiness.chatReady ? "Open Chat" : readiness.nextChatStep?.title ?? "Finish setup first"}
         </Button>
-      </Panel>
-      <Panel>
-        <MicroLabel className="block">Enterprise knowledge</MicroLabel>
-        <h2 className="m-0 mt-1.5 font-display text-[15px] font-semibold tracking-[-0.01em] text-text">Knowledge</h2>
-        <p className="mb-4 mt-1.5 text-body leading-relaxed text-muted">
-          Extract and index approved source files into the control plane's own knowledge index without retaining a copy
-          of the file.
-        </p>
-        <Button variant="primary" onClick={() => onOpenWorkspace("Documents")}>Open Knowledge</Button>
       </Panel>
     </section>
 

@@ -46,7 +46,7 @@ export interface EnterprisePrincipal {
   identityMode: "ENTERPRISE";
   displayName: string;
   email: string | null;
-  scopes: ["chat:use", "documents:use", "agents:use"];
+  scopes: ["chat:use", "agents:use"];
   session: EnterpriseSession;
 }
 
@@ -207,7 +207,7 @@ function principalFromRecord(record: {
       displayName: record.user.displayName,
       email: record.user.email,
     },
-    scopes: ["chat:use", "documents:use", "agents:use"],
+    scopes: ["chat:use", "agents:use"],
     createdAt: record.createdAt.toISOString(),
     idleExpiresAt: record.idleExpiresAt.toISOString(),
     absoluteExpiresAt: record.absoluteExpiresAt.toISOString(),
@@ -218,7 +218,7 @@ function principalFromRecord(record: {
     identityMode: "ENTERPRISE",
     displayName: record.user.displayName,
     email: record.user.email,
-    scopes: ["chat:use", "documents:use", "agents:use"],
+    scopes: ["chat:use", "agents:use"],
     session,
   };
 }

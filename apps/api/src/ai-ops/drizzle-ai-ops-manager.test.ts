@@ -36,7 +36,6 @@ function dependencies(overrides: Partial<AiOpsDependencies> = {}): AiOpsDependen
     models: { list: vi.fn(async () => ({ items: [] })) },
     runtime: { snapshot: vi.fn(async () => ({ status: "ONLINE", statusReasons: [], capturedAt: new Date().toISOString() })) },
     chat: { metrics: vi.fn(async () => null) },
-    documents: { metrics: vi.fn(async () => null) },
     agents: { metrics: vi.fn(async () => null) },
     tools: { metrics: vi.fn(async () => null) },
     audit: { forwarding: vi.fn(async () => forwarding("HEALTHY")) },

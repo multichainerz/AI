@@ -2,8 +2,8 @@
 # Static guard: every workspace package that a containerized app depends on
 # (transitively) must have its package.json copied into the image before
 # `pnpm install --frozen-lockfile`, or the install fails on the missing
-# workspace link. This is the drift class that broke fresh VM1 installs when
-# packages/knowledge was introduced without a Dockerfile update.
+# workspace link. This prevents a fresh VM1 image from omitting an internal
+# package that is present only in the developer workspace.
 set -Eeuo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"

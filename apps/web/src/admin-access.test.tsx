@@ -3,7 +3,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { adminAccess } from "./admin-access.js";
 import { GuardrailsView } from "./guardrails-view.js";
-import { MemoryView } from "./memory-view.js";
 import { ModelsView } from "./models-view.js";
 import { PromptsView } from "./prompts-view.js";
 
@@ -27,13 +26,13 @@ describe("adminAccess", () => {
     const access = adminAccess(pendingPasswordChange);
     expect(access.unlocked).toBe(false);
     expect(access.scopes).toEqual([]);
-    expect(access.can("memory:manage")).toBe(false);
+    expect(access.can("models:manage")).toBe(false);
   });
 
   it("grants exactly the session's scopes once the password is settled", () => {
     const access = adminAccess(session);
     expect(access.unlocked).toBe(true);
-    expect(access.can("memory:manage")).toBe(true);
+    expect(access.can("models:manage")).toBe(true);
     expect(access.can("chat:use")).toBe(true);
   });
 
@@ -44,7 +43,6 @@ describe("adminAccess", () => {
 
 describe("platform governance views", () => {
   const views = [
-    ["Memory", (s: AdministratorSession) => <MemoryView session={s} onOpenSettings={vi.fn()} onSessionExpired={vi.fn()} />],
     ["Models", (s: AdministratorSession) => <ModelsView session={s} connections={[]} onConfigureConnections={vi.fn()} onOpenOperations={vi.fn()} onSessionExpired={vi.fn()} />],
     ["Prompts", (s: AdministratorSession) => <PromptsView session={s} onOpenOperations={vi.fn()} onOpenSettings={vi.fn()} onSessionExpired={vi.fn()} />],
     ["Guardrails", (s: AdministratorSession) => <GuardrailsView session={s} onConfigureInference={vi.fn()} onOpenOperations={vi.fn()} onSessionExpired={vi.fn()} />],

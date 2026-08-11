@@ -114,7 +114,7 @@ const overview: AiOpsOverview = {
     source: "LIVE", observedAt: timestamp, latencyMs: null, affectedWorkflows: ["CHAT"],
   }],
   runtime: null,
-  metrics: { chat: null, documents: null, agents: null, tools: null },
+  metrics: { chat: null, agents: null, tools: null },
   guardrails: [],
   incidents: { open: 1, critical: 1, items: [incident] },
   evaluations: { drafts: 1, passed: 0, failed: 0, promoted: 0 },

@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { agentMetricsSchema } from "./agents.js";
 import { chatMetricsSchema } from "./chat.js";
-import { documentMetricsSchema } from "./documents.js";
 import { runtimeOperationsSnapshotSchema } from "./runtime-operations.js";
 import { toolMetricsSchema } from "./tooling.js";
 
@@ -16,7 +15,6 @@ export const aiOpsComponentStatusSchema = z.enum(AI_OPS_COMPONENT_STATUSES);
 
 export const aiOpsWorkflowSchema = z.enum([
   "CHAT",
-  "KNOWLEDGE",
   "AGENTS",
   "TOOLS",
 ]);
@@ -266,7 +264,6 @@ export const aiOpsOverviewSchema = z.object({
   runtime: runtimeOperationsSnapshotSchema.nullable(),
   metrics: z.object({
     chat: chatMetricsSchema.nullable(),
-    documents: documentMetricsSchema.nullable(),
     agents: agentMetricsSchema.nullable(),
     tools: toolMetricsSchema.nullable(),
   }),

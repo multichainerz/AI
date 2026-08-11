@@ -50,9 +50,9 @@ interface FrontPageProps {
 
 /**
  * The product in one picture: intent enters a governed agentic harness, which
- * coordinates models, knowledge, memory, policy, and tools before an action
- * leaves the controlled environment. The return path makes the operational
- * loop explicit without implying that a document pipeline is the product.
+ * coordinates models, Hermes sessions, native memory, policy, and tools before
+ * an action leaves the controlled environment. The return path makes the
+ * operational loop explicit.
  * Static by design, like the synapse field behind it.
  */
 function AgenticHarnessDiagram() {
@@ -100,7 +100,7 @@ function AgenticHarnessDiagram() {
 
       {[
         [166, 49, 76, "MODELS"],
-        [286, 49, 94, "KNOWLEDGE"],
+        [286, 49, 94, "SESSIONS"],
         [160, 176, 84, "MEMORY"],
         [286, 176, 76, "POLICY"],
       ].map(([x, y, width, label]) => (
@@ -226,8 +226,8 @@ export function FrontPage(props: FrontPageProps) {
                 Dynamic intelligence, orchestrated into action.
               </h1>
               <p className="mb-0 mt-3.5 max-w-[470px] text-[15px] leading-[1.62] text-white/[0.68]">
-                OrcaSynapse is the agentic harness that coordinates models, knowledge, memory,
-                policy, and tools into adaptive workflows—all inside infrastructure you control.
+                OrcaSynapse is the control plane for Hermes-native sessions, agent profiles, models,
+                policy, and tools—all inside infrastructure you control.
               </p>
               <div className="mt-5 hidden sm:block">
                 <AgenticHarnessDiagram />

@@ -1,7 +1,5 @@
 import type {
   HermesRuntimeCatalogue,
-  AgentCapability,
-  AgentMemoryMode,
   AgentMetrics,
   AgentProfile,
   AgentProfileList,
@@ -11,12 +9,11 @@ import type {
   AgentRunList,
   AgentRuntimeControl,
   CreateAgentProfile,
-  KnowledgeSource,
   SubmitAgentRun,
   UpdateAgentProfile,
   UpdateAgentRuntimeControl,
 } from "@orcasynapse/contracts";
-import { agentCapabilitySchema, agentSkillReferenceSchema, knowledgeSourceSchema } from "@orcasynapse/contracts";
+import { agentSkillReferenceSchema } from "@orcasynapse/contracts";
 import {
   agentProfile,
   agentProfileVersion,
@@ -31,7 +28,6 @@ import {
   platformArchitectureDecision,
   runtimeToolsetAdmission,
   serviceConnection,
-  toolRuntimeControl,
   type OrcaSynapseDatabase,
   agentRunWakeStatement,
 } from "@orcasynapse/database";
@@ -60,8 +56,6 @@ interface StoredVersion {
   maxTurns: number;
   timeoutSeconds: number;
   maxConcurrentRuns: number;
-  allowPrivateKnowledge: boolean;
-  memoryMode: AgentMemoryMode;
   safeMode: boolean;
   createdBy: string | null;
   createdAt: Date;
@@ -93,8 +87,6 @@ interface StoredRun {
   reasoningTokens: number | null;
   totalTokens: number | null;
   finishReason: string | null;
-  effectiveCapabilities: unknown;
-  sources: unknown;
   failureCode: string | null;
   failureMessage: string | null;
   queuedAt: Date;
@@ -181,8 +173,6 @@ function distributionDigest(configuration: {
   maxTurns: number;
   timeoutSeconds: number;
   maxConcurrentRuns: number;
-  allowPrivateKnowledge: boolean;
-  memoryMode: AgentMemoryMode;
   safeMode: boolean;
 }): string {
   const canonical = {
@@ -196,23 +186,9 @@ function distributionDigest(configuration: {
     maxTurns: configuration.maxTurns,
     timeoutSeconds: configuration.timeoutSeconds,
     maxConcurrentRuns: configuration.maxConcurrentRuns,
-    allowPrivateKnowledge: configuration.allowPrivateKnowledge,
-    memoryMode: configuration.memoryMode,
     safeMode: configuration.safeMode,
   };
   return createHash("sha256").update(JSON.stringify(canonical), "utf8").digest("hex");
-}
-
-/**
- * Agent memory is owned by Hermes' native MEMORY.md / USER.md lifecycle.
- *
- * OrcaSynapse still materializes document-retrieval authority here, but it no
- * longer grants either side of the legacy pgvector agent-memory plane. The
- * stored memoryMode field is retained only so the backup branch and existing
- * rows remain reversible during this pre-production transition.
- */
-function executionCapabilities(_mode: AgentMemoryMode, allowPrivateKnowledge: boolean): AgentCapability[] {
-  return allowPrivateKnowledge ? ["knowledge:private:read"] : [];
 }
 
 function versionDto(version: StoredVersion) {
@@ -225,7 +201,7 @@ function versionDto(version: StoredVersion) {
     displayName: version.displayName, purpose: version.purpose, instructions: version.instructions,
     soulMd, skills, modelAlias: version.modelAlias, maxTurns: version.maxTurns,
     timeoutSeconds: version.timeoutSeconds, maxConcurrentRuns: version.maxConcurrentRuns,
-    allowPrivateKnowledge: version.allowPrivateKnowledge, memoryMode: version.memoryMode, safeMode: version.safeMode,
+    safeMode: version.safeMode,
   });
   return {
     id: version.id,
@@ -239,8 +215,6 @@ function versionDto(version: StoredVersion) {
     maxTurns: 1 as const,
     timeoutSeconds: version.timeoutSeconds,
     maxConcurrentRuns: version.maxConcurrentRuns,
-    allowPrivateKnowledge: version.allowPrivateKnowledge,
-    memoryMode: version.memoryMode,
     safeMode: true as const,
     createdBy: version.createdBy,
     distributionDigest: digest,
@@ -271,22 +245,6 @@ function profileDto(profile: StoredProfile, preferCurrent = false): AgentProfile
   };
 }
 
-function parseCapabilities(value: unknown): AgentCapability[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((item) => {
-    const parsed = agentCapabilitySchema.safeParse(item);
-    return parsed.success ? [parsed.data] : [];
-  });
-}
-
-function parseSources(value: unknown): KnowledgeSource[] {
-  if (!Array.isArray(value)) return [];
-  return value.slice(0, 10).flatMap((item) => {
-    const parsed = knowledgeSourceSchema.safeParse(item);
-    return parsed.success ? [parsed.data] : [];
-  });
-}
-
 function runDto(run: StoredRun): AgentRun {
   return {
     id: run.id,
@@ -305,8 +263,6 @@ function runDto(run: StoredRun): AgentRun {
     reasoningTokens: run.reasoningTokens,
     totalTokens: run.totalTokens,
     finishReason: run.finishReason,
-    effectiveCapabilities: parseCapabilities(run.effectiveCapabilities),
-    sources: parseSources(run.sources),
     failureCode: run.failureCode,
     failureMessage: run.failureMessage,
     queuedAt: run.queuedAt.toISOString(),
@@ -388,8 +344,6 @@ export class DrizzleAgentManager implements AgentManager {
             maxTurns: input.maxTurns,
             timeoutSeconds: input.timeoutSeconds,
             maxConcurrentRuns: input.maxConcurrentRuns,
-            allowPrivateKnowledge: input.allowPrivateKnowledge,
-            memoryMode: input.memoryMode,
             safeMode: input.safeMode,
             createdBy: principal.id,
           })
@@ -440,8 +394,6 @@ export class DrizzleAgentManager implements AgentManager {
         maxTurns: input.maxTurns ?? current.maxTurns,
         timeoutSeconds: input.timeoutSeconds ?? current.timeoutSeconds,
         maxConcurrentRuns: input.maxConcurrentRuns ?? current.maxConcurrentRuns,
-        allowPrivateKnowledge: input.allowPrivateKnowledge ?? current.allowPrivateKnowledge,
-        memoryMode: input.memoryMode ?? current.memoryMode,
         safeMode: input.safeMode ?? current.safeMode,
       };
       await transaction.insert(agentProfileVersion).values({
@@ -535,24 +487,10 @@ export class DrizzleAgentManager implements AgentManager {
     input: SubmitAgentRun,
     options: {
       sessionId?: string;
-      memorySessionKey?: string;
-      conversationHistory?: Array<{ role: "user" | "assistant"; content: string }>;
       outputCharacterLimit?: number;
-      knowledgeDocumentIds?: readonly string[];
     } = {},
   ): Promise<AgentRun> {
     const runId = randomUUID();
-    const conversationHistory = (options.conversationHistory ?? []).slice(-40);
-    if (conversationHistory.some(({ role, content }) =>
-      !["user", "assistant"].includes(role) || typeof content !== "string" || content.length > 32_000)) {
-      throw new AgentConflictError("The supplied conversation history is invalid.");
-    }
-    const historyCharacters = conversationHistory.reduce((total, message) => total + message.content.length, 0);
-    if (historyCharacters > 64_000) throw new AgentConflictError("The supplied conversation history is too large.");
-    const memorySessionKey = options.memorySessionKey ?? options.sessionId ?? runId;
-    if (memorySessionKey.length < 1 || memorySessionKey.length > 200) {
-      throw new AgentConflictError("The Hermes memory session key is invalid.");
-    }
     const outputCharacterLimit = Math.min(200_000, Math.max(1_000, options.outputCharacterLimit ?? 200_000));
     const run = await this.database.transaction(async (transaction) => {
       await transaction.execute(advisoryLock(`orcasynapse-agent-submit:${input.profileId}`));
@@ -629,15 +567,10 @@ export class DrizzleAgentManager implements AgentManager {
           ownerSubject: principal.subject,
           requestedBy: principal.id,
           sessionId: options.sessionId ?? runId,
-          memorySessionKey,
           input: input.input,
-          conversationHistory,
           outputCharacterLimit,
           modelAlias: version.modelAlias,
           jobId: randomUUID(),
-          effectiveCapabilities: executionCapabilities(version.memoryMode, version.allowPrivateKnowledge),
-          // Absent means owner-wide retrieval; present narrows it for this run.
-          ...(options.knowledgeDocumentIds ? { knowledgeDocumentIds: [...options.knowledgeDocumentIds] } : {}),
         })
         .returning();
       if (!created) throw new AgentConflictError("The agent run could not be queued.");
@@ -719,13 +652,7 @@ export class DrizzleAgentManager implements AgentManager {
         throw new AgentRuntimeDisabledError("Hermes boundary verification is unavailable; execution remains disabled.");
       }
       try {
-        const [toolControl] = await this.database
-          .select({ enabled: toolRuntimeControl.enabled })
-          .from(toolRuntimeControl)
-          .where(eq(toolRuntimeControl.id, "global"))
-          .limit(1);
-        if (toolControl?.enabled) await this.boundaryVerifier.assertGovernedToolBoundary();
-        else await this.boundaryVerifier.assertAdmittedToolBoundary(await this.admittedToolsets());
+        await this.boundaryVerifier.assertAdmittedToolBoundary(await this.admittedToolsets());
       } catch {
         await this.database.insert(auditEvent).values({
           actorType: "USER", actorId: principal.id, action: "agent.runtime_enable_denied",

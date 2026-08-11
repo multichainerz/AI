@@ -6,13 +6,10 @@ export type ActiveView =
   | "Chat"
   | "Models"
   | "Prompts"
-  | "Memory"
   | "Agents"
-  | "Documents"
   | "Integrations"
   | "Guardrails"
   | "Operations"
-  | "Benchmarks"
   | "Audit";
 
 /*
@@ -20,7 +17,7 @@ export type ActiveView =
  * internal routing names and deliberately did not follow: renaming those would
  * churn every view module, test fixture and CSS class for no reader's benefit.
  */
-export type ProductArea = "Dashboard" | "Session" | "Knowledge" | "Agents" | "Platform" | "Operations";
+export type ProductArea = "Dashboard" | "Session" | "Agents" | "Platform" | "Operations";
 
 export interface PrimaryNavigationItem {
   area: ProductArea;
@@ -43,7 +40,6 @@ export const primaryNavigationGroups: ReadonlyArray<{
     items: [
       { area: "Dashboard", icon: "overview", target: "Overview", description: "Activity, readiness and next actions" },
       { area: "Session", icon: "chat", target: "Chat", description: "Governed conversations" },
-      { area: "Knowledge", icon: "documents", target: "Documents", description: "Documents and durable context" },
       { area: "Agents", icon: "agents", target: "Agents", description: "Profiles, runs and tools" },
     ],
   },
@@ -63,7 +59,6 @@ const sectionNavigation: Partial<Record<ProductArea, ReadonlyArray<SectionNaviga
   ],
   Operations: [
     { label: "Health & evidence", view: "Operations" },
-    { label: "Benchmarks", view: "Benchmarks" },
     { label: "Audit trail", view: "Audit" },
   ],
   Platform: [
@@ -77,32 +72,26 @@ const sectionNavigation: Partial<Record<ProductArea, ReadonlyArray<SectionNaviga
 const areaByView: Record<ActiveView, ProductArea> = {
   Overview: "Dashboard",
   Chat: "Session",
-  Documents: "Knowledge",
   Agents: "Agents",
   Integrations: "Agents",
   Deployment: "Platform",
   Models: "Platform",
   Prompts: "Platform",
-  Memory: "Platform",
   Guardrails: "Platform",
   Operations: "Operations",
-  Benchmarks: "Operations",
   Audit: "Operations",
 };
 
 const pathByView: Record<ActiveView, string> = {
   Overview: "#dashboard",
   Chat: "#session",
-  Documents: "#knowledge/documents",
   Agents: "#agents/profiles",
   Integrations: "#agents/tools",
   Deployment: "#platform/setup",
   Models: "#platform/models",
   Prompts: "#platform/prompts",
-  Memory: "#platform/memory",
   Guardrails: "#platform/guardrails",
   Operations: "#operations",
-  Benchmarks: "#operations/benchmarks",
   Audit: "#operations/audit",
 };
 
@@ -128,12 +117,6 @@ export function viewFromHash(hash: string): ActiveView {
     case "#operations/audit":
     case "#audit":
       return "Audit";
-    case "#knowledge":
-    case "#knowledge/documents":
-    case "#documents":
-      return "Documents";
-    case "#memory":
-      return "Documents";
     case "#agents":
     case "#agents/profiles":
       return "Agents";
@@ -151,14 +134,9 @@ export function viewFromHash(hash: string): ActiveView {
     case "#platform/prompts":
     case "#prompts":
       return "Prompts";
-    case "#platform/memory":
-      return "Deployment";
     case "#platform/guardrails":
     case "#guardrails":
       return "Guardrails";
-    case "#operations/benchmarks":
-    case "#benchmarks":
-      return "Benchmarks";
     case "#operations":
       return "Operations";
     default:

@@ -88,9 +88,7 @@ const { services } = JSON.parse(resolvedConfiguration);
 
 const problems = [];
 for (const [name, service] of Object.entries(services).sort()) {
-  // mem_limit is the ceiling that matters: unbounded, the worker's ~2 GB of
-  // BGE-M3 weights hand the kernel OOM killer a choice and it picks PostgreSQL
-  // by RSS. pids_limit bounds a fork storm the same way.
+  // mem_limit bounds an unexpected allocation; pids_limit bounds a fork storm.
   for (const field of ['mem_limit', 'pids_limit', 'cpu_shares']) {
     if (!service[field]) problems.push(`${name}: no ${field}`);
   }
@@ -103,8 +101,8 @@ for (const [name, service] of Object.entries(services).sort()) {
   // slower install on a 2 vCPU host, it is no install. Below that line nothing
   // refuses, which is why rejecting the rest is a policy call and not a range
   // rule: a sub-core cap creates fine on every host and then throttles the
-  // large VM1 the host floor asks operators to buy, holding embedding down
-  // while cores sit idle. cpu_shares carries the intent that actually mattered
+  // large VM1 the host floor asks operators to buy while cores sit idle.
+  // cpu_shares carries the intent that actually mattered
   // -- who yields under contention -- and can be neither out of range nor a
   // throttle at any host size.
   if (service.cpus) {
@@ -125,10 +123,10 @@ for (const [name, service] of Object.entries(services).sort()) {
 }
 
 // The point of the weights, not just their presence: under contention the
-// worker's embedding burst must yield to the database everything else waits on.
+// background reconciliation must yield to the database everything else waits on.
 if (services.worker?.cpu_shares > services.postgres?.cpu_shares) {
   problems.push(
-    `worker outweighs postgres on CPU (${services.worker.cpu_shares} > ${services.postgres.cpu_shares}); the embedding burst would starve the database it depends on`,
+    `worker outweighs postgres on CPU (${services.worker.cpu_shares} > ${services.postgres.cpu_shares}); background work would starve the database it depends on`,
   );
 }
 

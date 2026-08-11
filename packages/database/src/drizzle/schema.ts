@@ -8,26 +8,22 @@
  *   - temporal columns use date mode, so they carry Date values;
  *   - bytea columns are typed through a customType, because drizzle-kit cannot
  *     introspect them;
- *   - every updatedAt column is stamped client-side, and so is
- *     ChatConversation.hermesMemoryKey, because these were client defaults in
- *     the ORM that came before - without the stamping, inserts fail NOT NULL;
+ *   - every updatedAt column is stamped client-side, because these were client
+ *     defaults in the ORM that came before - without the stamping, inserts fail
+ *     NOT NULL;
  *   - AgentToolGrant.allowedAdminRoles is an enum array that introspection once
  *     rendered as bytea[], a type no role value can be written to.
  *
  * migrations.test.ts asserts on the emitted SQL and guards these decisions.
  */
 
-import { pgTable, index, uniqueIndex, uuid, varchar, text, boolean, timestamp, foreignKey, inet, jsonb, integer, check, doublePrecision, bigint, numeric, bigserial, vector, pgEnum } from "drizzle-orm/pg-core"
+import { pgTable, index, uniqueIndex, uuid, varchar, text, boolean, timestamp, foreignKey, inet, jsonb, integer, check, doublePrecision, bigint, numeric, bigserial, pgEnum } from "drizzle-orm/pg-core"
 import { sql } from "drizzle-orm"
-import { randomUUID } from "node:crypto"
 import { bytea } from "./bytea.js"
 
 export const administratorAuthenticationMethod = pgEnum("AdministratorAuthenticationMethod", ['LOCAL_PASSWORD', 'INSTALLATION_KEY_RECOVERY', 'OIDC'])
 export const administratorRole = pgEnum("AdministratorRole", ['PLATFORM_ADMIN', 'SECURITY_ADMIN', 'OPERATIONS_ADMIN', 'AUDITOR'])
 export const agentProfileStatus = pgEnum("AgentProfileStatus", ['DRAFT', 'ACTIVE', 'SUSPENDED', 'STANDBY'])
-export const agentMemoryMode = pgEnum("AgentMemoryMode", ['DOCUMENTS_ONLY', 'RECALL_ONLY', 'LEARN_USER', 'LEARN_EXCHANGE'])
-export const memoryProfileScope = pgEnum("MemoryProfileScope", ['STATIC', 'DYNAMIC', 'EPISODIC'])
-export const memoryPolicyStatus = pgEnum("MemoryPolicyStatus", ['DRAFT', 'ACTIVE', 'SUSPENDED'])
 export const agentRunApprovalStatus = pgEnum("AgentRunApprovalStatus", ['PENDING', 'APPROVED', 'DENIED', 'EXPIRED', 'CANCELLED'])
 export const agentRunStatus = pgEnum("AgentRunStatus", ['QUEUED', 'RUNNING', 'WAITING_FOR_APPROVAL', 'CANCEL_REQUESTED', 'COMPLETED', 'FAILED', 'CANCELLED', 'TIMED_OUT', 'DENIED'])
 export const auditActorType = pgEnum("AuditActorType", ['USER', 'SERVICE', 'SYSTEM'])
@@ -39,8 +35,6 @@ export const componentCompatibilityStatus = pgEnum("ComponentCompatibilityStatus
 export const connectionStatus = pgEnum("ConnectionStatus", ['NOT_TESTED', 'HEALTHY', 'DEGRADED', 'UNREACHABLE', 'DISABLED'])
 export const deploymentEnvironment = pgEnum("DeploymentEnvironment", ['DEVELOPMENT', 'STAGING', 'PRODUCTION'])
 export const deploymentTopologyMode = pgEnum("DeploymentTopologyMode", ['COMPACT', 'CONTROL_PLANE', 'SEGMENTED_PRODUCTION'])
-export const documentClassification = pgEnum("DocumentClassification", ['INTERNAL', 'CONFIDENTIAL', 'RESTRICTED'])
-export const documentStatus = pgEnum("DocumentStatus", ['QUARANTINED', 'QUEUED', 'CONVERTING', 'READY', 'FAILED', 'REJECTED', 'DELETING', 'DELETED'])
 export const evaluationRunStatus = pgEnum("EvaluationRunStatus", ['DRAFT', 'PASSED', 'FAILED', 'PROMOTED'])
 export const evaluationTargetType = pgEnum("EvaluationTargetType", ['MODEL', 'PROMPT', 'POLICY', 'AGENT'])
 export const guardrailPolicyStatus = pgEnum("GuardrailPolicyStatus", ['DRAFT', 'ACTIVE', 'SUSPENDED'])
@@ -69,6 +63,12 @@ export const toolRisk = pgEnum("ToolRisk", ['READ_ONLY', 'CONSEQUENTIAL'])
 export const toolStatus = pgEnum("ToolStatus", ['ACTIVE', 'SUSPENDED'])
 export const workerLifecycleStatus = pgEnum("WorkerLifecycleStatus", ['ONLINE', 'STOPPED'])
 
+/** Identifies the intentionally incompatible greenfield schema generation. */
+export const schemaMetadata = pgTable("SchemaMetadata", {
+	id: varchar({ length: 32 }).default('current').primaryKey().notNull(),
+	epoch: varchar({ length: 64 }).notNull(),
+	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
 
 export const enterpriseUser = pgTable("EnterpriseUser", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
@@ -241,7 +241,6 @@ export const agentRuntimeControl = pgTable("AgentRuntimeControl", {
 	updatedBy: uuid(),
 	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
 });
-
 export const agentProfileVersion = pgTable("AgentProfileVersion", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	profileId: uuid().notNull(),
@@ -253,8 +252,6 @@ export const agentProfileVersion = pgTable("AgentProfileVersion", {
 	maxTurns: integer().notNull(),
 	timeoutSeconds: integer().notNull(),
 	maxConcurrentRuns: integer().notNull(),
-	allowPrivateKnowledge: boolean().default(false).notNull(),
-	memoryMode: agentMemoryMode().default('DOCUMENTS_ONLY').notNull(),
 	safeMode: boolean().default(true).notNull(),
 	createdBy: uuid(),
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
@@ -285,21 +282,8 @@ export const chatConversation = pgTable("ChatConversation", {
 	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
 	profileId: uuid(),
 	profileName: varchar({ length: 120 }),
-	// Adaptation: Prisma defaulted this client-side with @default(uuid()), so the
-	// column carries no database default and needs the same stamping here.
-	hermesMemoryKey: varchar({ length: 200 }).notNull().$defaultFn(() => randomUUID()),
-	// How far memory extraction has read this conversation. Null means never;
-	// older than lastMessageAt means there is new material to distil. Capture
-	// runs once the conversation goes quiet rather than once per turn, so the
-	// model sees the whole arc and is called once instead of per message.
-	memoryDistilledAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
 }, (table) => [
 	index("ChatConversation_lastMessageAt_idx").using("btree", table.lastMessageAt.asc().nullsLast()),
-	// Drives the idle sweep: the partial predicate keeps the index to the
-	// conversations that could still owe a distillation.
-	index("ChatConversation_memoryPending_idx")
-		.using("btree", table.lastMessageAt.asc().nullsLast())
-		.where(sql`"memoryDistilledAt" IS NULL OR "memoryDistilledAt" < "lastMessageAt"`),
 	index("ChatConversation_ownerSubject_status_updatedAt_idx").using("btree", table.ownerSubject.asc().nullsLast(), table.status.asc().nullsLast(), table.updatedAt.asc().nullsLast()),
 ]);
 
@@ -320,7 +304,6 @@ export const chatMessage = pgTable("ChatMessage", {
 	errorCode: varchar({ length: 80 }),
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	completedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
-	sources: jsonb().default([]).notNull(),
 	agentRunId: uuid(),
 	reasoningTokens: integer(),
 	firstTokenLatencyMs: integer(),
@@ -790,39 +773,6 @@ export const componentCompatibility = pgTable("ComponentCompatibility", {
 	index("ComponentCompatibility_required_status_idx").using("btree", table.required.asc().nullsLast(), table.status.asc().nullsLast()),
 ]);
 
-export const document = pgTable("Document", {
-	id: uuid().defaultRandom().primaryKey().notNull(),
-	ownerSubject: varchar({ length: 200 }).notNull(),
-	fileName: varchar({ length: 255 }).notNull(),
-	mediaType: varchar({ length: 160 }).notNull(),
-	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
-	sizeBytes: bigint({ mode: "number" }).notNull(),
-	sha256: varchar({ length: 64 }).notNull(),
-	classification: documentClassification().notNull(),
-	status: documentStatus().default('QUEUED').notNull(),
-	failureCode: varchar({ length: 80 }),
-	failureMessage: varchar({ length: 500 }),
-	// Extracted text awaiting embedding. The API extracts synchronously because
-	// that is fast and needs no model, then hands the text to the worker, which
-	// owns the slow part. Cleared once the chunks are written, so this is a
-	// queue payload rather than storage: no source bytes are ever retained.
-	pendingText: text(),
-	ingestionAttempts: integer().default(0).notNull(),
-	ingestionLeaseOwner: uuid(),
-	ingestionLeaseExpiresAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
-	retentionUntil: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull(),
-	completedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
-	deletedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
-	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
-}, (table) => [
-	index("Document_ownerSubject_status_updatedAt_idx").using("btree", table.ownerSubject.asc().nullsLast(), table.status.asc().nullsLast(), table.updatedAt.asc().nullsLast()),
-	index("Document_retentionUntil_status_idx").using("btree", table.retentionUntil.asc().nullsLast(), table.status.asc().nullsLast()),
-	index("Document_sha256_idx").using("btree", table.sha256.asc().nullsLast()),
-	index("Document_status_createdAt_idx").using("btree", table.status.asc().nullsLast(), table.createdAt.asc().nullsLast()),
-	index("Document_ingestionLease_idx").using("btree", table.status.asc().nullsLast(), table.ingestionLeaseExpiresAt.asc().nullsLast()),
-]);
-
 export const installationCredential = pgTable("InstallationCredential", {
 	id: varchar({ length: 32 }).default('initial').primaryKey().notNull(),
 	keyHash: bytea("keyHash").notNull(),
@@ -1102,9 +1052,6 @@ export const localAdministrator = pgTable("LocalAdministrator", {
 
 export const agentRun = pgTable("AgentRun", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
-	// NULL means retrieval spans everything the owner holds; a non-null array
-	// restricts it to exactly these documents.
-	knowledgeDocumentIds: uuid().array(),
 	profileId: uuid().notNull(),
 	profileVersionId: uuid().notNull(),
 	profileVersion: integer().notNull(),
@@ -1113,8 +1060,6 @@ export const agentRun = pgTable("AgentRun", {
 	status: agentRunStatus().default('QUEUED').notNull(),
 	input: text().notNull(),
 	output: text(),
-	effectiveCapabilities: jsonb().default([]).notNull(),
-	sources: jsonb().default([]).notNull(),
 	externalRunId: varchar({ length: 255 }),
 	jobId: uuid(),
 	failureCode: varchar({ length: 80 }),
@@ -1130,8 +1075,6 @@ export const agentRun = pgTable("AgentRun", {
 	sessionId: varchar({ length: 200 }).notNull(),
 	processorLeaseOwner: varchar({ length: 160 }),
 	processorLeaseExpiresAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
-	memorySessionKey: varchar({ length: 200 }).notNull(),
-	conversationHistory: jsonb().default([]).notNull(),
 	partialOutput: text().default("").notNull(),
 	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
 	lastEventCursor: bigint({ mode: "number" }),
@@ -1187,29 +1130,6 @@ export const agentRunApproval = pgTable("AgentRunApproval", {
 		}).onUpdate("cascade").onDelete("cascade"),
 ]);
 
-export const documentChunk = pgTable("DocumentChunk", {
-	id: uuid().defaultRandom().primaryKey().notNull(),
-	documentId: uuid().notNull(),
-	ownerSubject: varchar({ length: 200 }).notNull(),
-	ordinal: integer().notNull(),
-	content: text().notNull(),
-	characterCount: integer().notNull(),
-	embeddingModel: varchar({ length: 120 }).notNull(),
-	embedding: vector({ dimensions: 1024 }).notNull(),
-	contentSearch: text(),
-	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-}, (table) => [
-	index("DocumentChunk_content_fts_idx").using("gin", sql`to_tsvector('simple'::regconfig, content)`),
-	uniqueIndex("DocumentChunk_documentId_ordinal_key").using("btree", table.documentId.asc().nullsLast(), table.ordinal.asc().nullsLast()),
-	index("DocumentChunk_embedding_idx").using("hnsw", table.embedding.asc().nullsLast().op("vector_cosine_ops")),
-	index("DocumentChunk_ownerSubject_idx").using("btree", table.ownerSubject.asc().nullsLast()),
-	foreignKey({
-			columns: [table.documentId],
-			foreignColumns: [document.id],
-			name: "DocumentChunk_documentId_fkey"
-		}).onUpdate("cascade").onDelete("cascade"),
-]);
-
 /**
  * A bounded counter for the Hermes inference gateway's per-minute limit.
  *
@@ -1229,34 +1149,6 @@ export const inferenceGatewayRequest = pgTable("InferenceGatewayRequest", {
 			columns: [table.connectionId],
 			foreignColumns: [serviceConnection.id],
 			name: "InferenceGatewayRequest_connectionId_fkey"
-		}).onUpdate("cascade").onDelete("cascade"),
-]);
-
-/**
- * Documents pinned to a conversation.
- *
- * Retrieval defaults to everything the owner holds, which is right for an
- * open-ended question and wrong when the operator already knows which sources
- * matter. Pinning narrows a conversation's runs to exactly these documents.
- */
-export const chatConversationDocument = pgTable("ChatConversationDocument", {
-	id: uuid().defaultRandom().primaryKey().notNull(),
-	conversationId: uuid().notNull(),
-	documentId: uuid().notNull(),
-	ownerSubject: varchar({ length: 200 }).notNull(),
-	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-}, (table) => [
-	uniqueIndex("ChatConversationDocument_conversationId_documentId_key").using("btree", table.conversationId.asc().nullsLast(), table.documentId.asc().nullsLast()),
-	index("ChatConversationDocument_documentId_idx").using("btree", table.documentId.asc().nullsLast()),
-	foreignKey({
-			columns: [table.conversationId],
-			foreignColumns: [chatConversation.id],
-			name: "ChatConversationDocument_conversationId_fkey"
-		}).onUpdate("cascade").onDelete("cascade"),
-	foreignKey({
-			columns: [table.documentId],
-			foreignColumns: [document.id],
-			name: "ChatConversationDocument_documentId_fkey"
 		}).onUpdate("cascade").onDelete("cascade"),
 ]);
 
@@ -1281,173 +1173,3 @@ export const auditForwardingState = pgTable("AuditForwardingState", {
 	deliveredCount: integer().default(0).notNull(),
 	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
 });
-
-/**
- * What an agent has learned about the person it serves.
- *
- * This is the plane that replaced the external memory service on VM2. Keeping
- * it here rather than beside the runtime means a runtime host can be destroyed
- * and re-enrolled without losing what an agent knows, the same backup covers
- * it as the rest of the control plane, and an administrator can read and
- * delete it - none of which was true of a store that lived on the agent VM.
- *
- * Scope is (ownerSubject, agentProfileId): an agent recalls only what it
- * learned, about the identity that is asking. Both halves are predicates
- * inside the retrieval query, so nothing a caller supplies can widen them.
- */
-export const agentMemory = pgTable("AgentMemory", {
-	id: uuid().defaultRandom().primaryKey().notNull(),
-	ownerSubject: varchar({ length: 200 }).notNull(),
-	agentProfileId: uuid().notNull(),
-	content: text().notNull(),
-	characterCount: integer().notNull(),
-	embeddingModel: varchar({ length: 120 }).notNull(),
-	embedding: vector({ dimensions: 1024 }).notNull(),
-	profileScope: memoryProfileScope().default('EPISODIC').notNull(),
-	// A fact is never edited or deleted when it changes; a new row supersedes it
-	// and the old one stays as history. `isLatest` is what recall filters on, so
-	// the current answer is one indexed predicate rather than a chain walk.
-	version: integer().default(1).notNull(),
-	parentMemoryId: uuid(),
-	rootMemoryId: uuid(),
-	isLatest: boolean().default(true).notNull(),
-	supersededAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
-	supersededReason: varchar({ length: 300 }),
-	sourceRunId: uuid(),
-	sourceConversationId: uuid(),
-	// Bulk forgetting is a soft delete: a person asking for a topic to be
-	// forgotten is answered by the fact ceasing to be recalled, and the trail of
-	// what was forgotten, by whom and why has to outlive the rows themselves.
-	// The batch id ties one operator decision to every row it touched.
-	forgottenAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
-	forgetReason: varchar({ length: 300 }),
-	forgetBatchId: uuid(),
-	retentionUntil: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
-	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-}, (table) => [
-	index("AgentMemory_content_fts_idx").using("gin", sql`to_tsvector('simple'::regconfig, content)`),
-	index("AgentMemory_forgetBatchId_idx").using("btree", table.forgetBatchId.asc().nullsLast()),
-	index("AgentMemory_embedding_idx").using("hnsw", table.embedding.asc().nullsLast().op("vector_cosine_ops")),
-	index("AgentMemory_owner_profile_idx").using("btree", table.ownerSubject.asc().nullsLast(), table.agentProfileId.asc().nullsLast()),
-	index("AgentMemory_latest_idx").using("btree", table.ownerSubject.asc().nullsLast(), table.agentProfileId.asc().nullsLast()).where(sql`"isLatest" AND "forgottenAt" IS NULL`),
-	index("AgentMemory_profile_idx").using("btree", table.ownerSubject.asc().nullsLast(), table.agentProfileId.asc().nullsLast(), table.profileScope.asc().nullsLast()),
-	index("AgentMemory_retentionUntil_idx").using("btree", table.retentionUntil.asc().nullsLast()),
-	foreignKey({
-			columns: [table.agentProfileId],
-			foreignColumns: [agentProfile.id],
-			name: "AgentMemory_agentProfileId_fkey"
-		}).onUpdate("cascade").onDelete("cascade"),
-	check("AgentMemory_content_check", sql`(char_length(btrim(content)) >= 3) AND ("characterCount" > 0)`),
-]);
-
-/**
- * The installation-wide ceiling on agent memory.
- *
- * A profile picks its own mode; this bounds every profile at once. Exactly one
- * policy may be ACTIVE, enforced by a partial unique index rather than by
- * application code, so two administrators cannot race two ceilings into effect.
- */
-export const memoryPolicy = pgTable("MemoryPolicy", {
-	id: uuid().defaultRandom().primaryKey().notNull(),
-	slug: varchar({ length: 64 }).notNull(),
-	displayName: varchar({ length: 120 }).notNull(),
-	description: varchar({ length: 500 }).notNull(),
-	status: memoryPolicyStatus().default('DRAFT').notNull(),
-	maximumCaptureMode: agentMemoryMode().default('LEARN_EXCHANGE').notNull(),
-	retentionDays: integer(),
-	maximumItemsPerOwner: integer().default(500).notNull(),
-	recallLimit: integer().default(6).notNull(),
-	recallMinimumScore: doublePrecision().default(0.4).notNull(),
-	knowledgeRecallLimit: integer().default(18).notNull(),
-	knowledgeMinimumScore: doublePrecision().default(0.35).notNull(),
-	distillCapture: boolean().default(true).notNull(),
-	revision: integer().default(1).notNull(),
-	firstActivatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
-	createdBy: uuid(),
-	updatedBy: uuid(),
-	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
-}, (table) => [
-	uniqueIndex("MemoryPolicy_slug_key").using("btree", table.slug.asc().nullsLast()),
-	uniqueIndex("MemoryPolicy_single_active_key").on(sql`(true)`).where(sql`status = 'ACTIVE'`),
-	check("MemoryPolicy_bounds_check", sql`("maximumItemsPerOwner" >= 10) AND ("recallLimit" >= 1) AND ("recallMinimumScore" >= 0) AND ("recallMinimumScore" <= 1) AND ("knowledgeRecallLimit" >= 1) AND ("knowledgeMinimumScore" >= 0) AND ("knowledgeMinimumScore" <= 1) AND ("retentionDays" IS NULL OR "retentionDays" >= 1) AND (revision > 0)`),
-	check("MemoryPolicy_activation_check", sql`(status <> 'ACTIVE') OR ("firstActivatedAt" IS NOT NULL)`),
-]);
-
-export const benchmarkKind = pgEnum("BenchmarkKind", ['CHAT_QUALITY', 'RETRIEVAL', 'MEMORY'])
-export const benchmarkRunStatus = pgEnum("BenchmarkRunStatus", ['QUEUED', 'RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED'])
-
-/**
- * A suite of deterministic checks against this installation.
- *
- * Cases live in JSONB rather than their own table on purpose: they are authored
- * and read as one document, never queried across suites, and a run pins the
- * revision it executed so an edit cannot rewrite what a past result meant.
- */
-export const benchmarkSuite = pgTable("BenchmarkSuite", {
-	id: uuid().defaultRandom().primaryKey().notNull(),
-	slug: varchar({ length: 64 }).notNull(),
-	displayName: varchar({ length: 160 }).notNull(),
-	description: varchar({ length: 1000 }).notNull(),
-	kind: benchmarkKind().notNull(),
-	cases: jsonb().notNull(),
-	passThreshold: doublePrecision().default(0.9).notNull(),
-	revision: integer().default(1).notNull(),
-	createdBy: uuid(),
-	updatedBy: uuid(),
-	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
-}, (table) => [
-	uniqueIndex("BenchmarkSuite_slug_key").using("btree", table.slug.asc().nullsLast()),
-	check("BenchmarkSuite_bounds_check", sql`("passThreshold" >= 0) AND ("passThreshold" <= 1) AND (revision > 0) AND (jsonb_array_length(cases) > 0)`),
-]);
-
-/**
- * One execution, with what it was pointed at denormalised onto it.
- *
- * The target columns are copies rather than references so a historical run
- * keeps reading true after the profile it used is edited or deleted — a score
- * whose subject has silently changed is worse than no score.
- */
-export const benchmarkRun = pgTable("BenchmarkRun", {
-	id: uuid().defaultRandom().primaryKey().notNull(),
-	suiteId: uuid().notNull(),
-	suiteSlug: varchar({ length: 64 }).notNull(),
-	suiteRevision: integer().notNull(),
-	kind: benchmarkKind().notNull(),
-	status: benchmarkRunStatus().default('QUEUED').notNull(),
-	agentProfileId: uuid(),
-	agentProfileSlug: varchar({ length: 64 }),
-	agentProfileVersion: integer(),
-	// As wide as AgentProfileVersion.modelAlias, the column it copies.
-	modelAlias: varchar({ length: 200 }),
-	// Retrieval and recall are owner-scoped, so a score is only comparable to
-	// another run over the same corpus.
-	ownerSubject: varchar({ length: 200 }).notNull(),
-	totalCases: integer().default(0).notNull(),
-	passedCases: integer().default(0).notNull(),
-	passRate: doublePrecision(),
-	medianLatencyMs: integer(),
-	results: jsonb().default(sql`'[]'::jsonb`).notNull(),
-	failureMessage: varchar({ length: 1000 }),
-	evaluationRunId: uuid(),
-	requestedBy: uuid(),
-	// Held while a worker executes the run and heartbeated between cases, so a
-	// process that dies mid-suite leaves work that lapses rather than work that
-	// looks permanently in progress.
-	leaseOwner: varchar({ length: 160 }),
-	leaseExpiresAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
-	queuedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-	startedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
-	completedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
-}, (table) => [
-	index("BenchmarkRun_suite_idx").using("btree", table.suiteId.asc().nullsLast(), table.queuedAt.desc().nullsFirst()),
-	index("BenchmarkRun_claim_idx").using("btree", table.status.asc().nullsLast(), table.leaseExpiresAt.asc().nullsLast()),
-	// The worker's claim query: oldest queued run first.
-	index("BenchmarkRun_pending_idx").using("btree", table.queuedAt.asc().nullsLast()).where(sql`status = 'QUEUED'`),
-	foreignKey({ columns: [table.suiteId], foreignColumns: [benchmarkSuite.id], name: "BenchmarkRun_suiteId_fkey" }).onDelete("cascade"),
-	check("BenchmarkRun_counts_check", sql`("passedCases" >= 0) AND ("passedCases" <= "totalCases") AND ("passRate" IS NULL OR ("passRate" >= 0 AND "passRate" <= 1))`),
-	// A score before the run finishes would be read as a final one.
-	check("BenchmarkRun_progress_check", sql`(status NOT IN ('QUEUED', 'RUNNING')) OR ("passRate" IS NULL)`),
-	check("BenchmarkRun_completion_check", sql`(status <> 'COMPLETED') OR ("completedAt" IS NOT NULL)`),
-]);

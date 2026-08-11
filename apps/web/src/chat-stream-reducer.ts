@@ -48,7 +48,6 @@ export function emptyMessage(
     lastEventCursor: null,
     runtimeEvents: [],
     approvals: [],
-    sources: [],
     feedback: null,
     createdAt,
     completedAt: null,
