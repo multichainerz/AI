@@ -42,7 +42,6 @@ import type { AdminPrincipal } from "../auth/admin-session.js";
 import type { ChatManager } from "../chat/chat-manager.js";
 import type { ConnectionManager } from "../connections/connection-manager.js";
 import type { ConnectionMonitoringManager } from "../connections/connection-monitor.js";
-import type { DocumentManager } from "../documents/document-manager.js";
 import type { OperationsManager } from "../operations/operations-manager.js";
 import type { ToolingManager } from "../tooling/tooling-manager.js";
 import type { ModelManager } from "../models/model-manager.js";
@@ -58,7 +57,6 @@ export interface AiOpsDependencies {
   models?: ModelManager;
   runtime: OperationsManager;
   chat: ChatManager;
-  documents: DocumentManager;
   agents: AgentManager;
   tools: ToolingManager;
   audit?: AuditManager;
@@ -132,7 +130,7 @@ const serviceMetadata: Record<ServiceKind, { label: string; workflows: AiOpsWork
   INFERENCE: { label: "Inference server", workflows: ["CHAT", "AGENTS"] },
   HERMES: { label: "Hermes runtime", workflows: ["AGENTS", "TOOLS"] },
   MCP: { label: "MCP gateway", workflows: ["AGENTS", "TOOLS"] },
-  OIDC: { label: "Enterprise identity", workflows: ["CHAT", "KNOWLEDGE", "AGENTS", "TOOLS"] },
+  OIDC: { label: "Enterprise identity", workflows: ["CHAT", "AGENTS", "TOOLS"] },
   SIEM: { label: "SIEM forwarding", workflows: [] },
   NOTIFICATION: { label: "Operator notifications", workflows: [] },
   OTHER: { label: "Other service", workflows: [] },
@@ -172,7 +170,7 @@ function guardrailPosture(active: ActiveGuardrailPolicy | null): GuardrailContro
       : "Schema, size, identity, and rate constraints are enforced; no evaluated OrcaSynapse guardrail policy is active.",
     evidence: active
       ? `Policy ${active.id} is evaluation-gated in PostgreSQL; semantic safety classification remains outside this deterministic baseline.`
-      : "API contracts and identity-scoped request limits are enforced in the chat, document, agent, and tool routes.",
+      : "API contracts and identity-scoped request limits are enforced in the chat, agent, and tool routes.",
   },
   {
     layer: "OUTPUT",
@@ -184,13 +182,6 @@ function guardrailPosture(active: ActiveGuardrailPolicy | null): GuardrailContro
     evidence: active
       ? "Streaming failures and response-limit rejections are retained as sanitized audit events; representative model safety still requires deployment evidence."
       : "Streaming state and persistence are validated locally; safety-model evidence has not been recorded.",
-  },
-  {
-    layer: "RETRIEVAL",
-    label: "Retrieval authorization",
-    status: "ENFORCED",
-    summary: "Retrieval is a PostgreSQL query whose owner predicate is part of the statement, so no caller can widen its scope.",
-    evidence: "Private-scope retrieval performs local ownership and lifecycle rechecks before a source reaches chat or Hermes.",
   },
   {
     layer: "MODEL_ACCESS",
@@ -449,13 +440,12 @@ export class DrizzleAiOpsManager implements AiOpsManager {
 
   async overview(): Promise<AiOpsOverview> {
     const generatedAt = new Date();
-    const [connections, monitoring, models, runtime, chat, documents, agents, tools, forwarding, activeGuardrail, activePrompt] = await Promise.all([
+    const [connections, monitoring, models, runtime, chat, agents, tools, forwarding, activeGuardrail, activePrompt] = await Promise.all([
       settled(this.dependencies.connections.list()),
       this.dependencies.connectionMonitoring ? settled(this.dependencies.connectionMonitoring.getControl()) : Promise.resolve(null),
       this.dependencies.models ? settled(this.dependencies.models.list()) : Promise.resolve(null),
       settled(this.dependencies.runtime.snapshot()),
       settled(this.dependencies.chat.metrics()),
-      settled(this.dependencies.documents.metrics()),
       settled(this.dependencies.agents.metrics()),
       settled(this.dependencies.tools.metrics()),
       this.dependencies.audit ? settled(this.dependencies.audit.forwarding()) : Promise.resolve(null),
@@ -498,7 +488,7 @@ export class DrizzleAiOpsManager implements AiOpsManager {
         source: "LIVE",
         observedAt: generatedAt.toISOString(),
         latencyMs: null,
-        affectedWorkflows: ["CHAT", "KNOWLEDGE", "AGENTS", "TOOLS"],
+        affectedWorkflows: ["CHAT", "AGENTS", "TOOLS"],
       },
       {
         id: "hermes-run-reconciler",
@@ -525,7 +515,7 @@ export class DrizzleAiOpsManager implements AiOpsManager {
         source: "LIVE",
         observedAt: generatedAt.toISOString(),
         latencyMs: null,
-        affectedWorkflows: ["CHAT", "KNOWLEDGE", "AGENTS", "TOOLS"],
+        affectedWorkflows: ["CHAT", "AGENTS", "TOOLS"],
       });
     }
     if (forwarding) {
@@ -607,7 +597,7 @@ export class DrizzleAiOpsManager implements AiOpsManager {
       status,
       components,
       runtime,
-      metrics: { chat, documents, agents, tools },
+      metrics: { chat, agents, tools },
       guardrails: guardrailPosture(activeGuardrail),
       incidents: {
         open: openIncidentCount,

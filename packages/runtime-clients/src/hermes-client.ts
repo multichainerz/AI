@@ -91,12 +91,9 @@ export interface HermesSafeRunEvent {
 /**
  * Hermes wire names to the vocabulary this control plane stores.
  *
- * Hermes' own surfaces disagree with each other about these names — the
- * OpenAI-compatible chat-completions route emits `hermes.tool.progress` while
- * `/v1/runs` emits `tool.progress` — so both spellings are listed rather than
- * one being assumed canonical. Anything absent from this map is dropped, which
- * is a deliberate admission boundary and also how three real events came to be
- * invisible in the product:
+ * Hermes-native session streams have used both prefixed and unprefixed event
+ * names, so both spellings are listed rather than one being assumed canonical.
+ * Anything absent from this map is dropped at the projection boundary.
  *
  * - `tool.failed` had no entry at all. A tool that failed produced a start with
  *   no completion, which reads to an operator exactly like a tool still
@@ -332,14 +329,8 @@ export interface HermesRunSubmission {
   sessionId: string;
   idempotencyKey: string;
   modelAlias: string;
-  conversationHistory: Array<{ role: "user" | "assistant"; content: string }>;
-  memorySessionKey: string;
   /** Toolsets an operator has admitted. Anything else enabled fails the run. */
   admittedToolsets?: readonly string[];
-  governedMcp?: {
-    authorization: string;
-    expiresAt: Date;
-  };
 }
 
 export interface HermesRunState {
@@ -394,9 +385,6 @@ export class HermesClient {
    */
   async forkSession(sourceSessionId: string, targetSessionId: string): Promise<"forked" | "source_absent"> {
     const connection = await this.resolver.resolveOne("HERMES");
-    if (stringSetting(connection, "executionMode", "native_sessions") !== "native_sessions") {
-      throw new Error("Hermes session forking requires native-session execution mode.");
-    }
     const sessionsPath = stringSetting(connection, "sessionsPath", "/api/sessions").replace(/\/+$/, "");
     const response = await this.nativeSessionJson(
       connection,
@@ -410,7 +398,6 @@ export class HermesClient {
   /** Ensure Hermes removes the native transcript; an already-absent session is success. */
   async deleteSession(sessionId: string): Promise<void> {
     const connection = await this.resolver.resolveOne("HERMES");
-    if (stringSetting(connection, "executionMode", "native_sessions") !== "native_sessions") return;
     const sessionsPath = stringSetting(connection, "sessionsPath", "/api/sessions").replace(/\/+$/, "");
     await this.nativeSessionJson(
       connection,
@@ -446,9 +433,7 @@ export class HermesClient {
     // The built-in memory tool is the one intentional native capability in
     // Hermes-session mode. It writes only Hermes-owned MEMORY.md / USER.md;
     // OrcaSynapse neither receives nor mirrors that content.
-    if (stringSetting(connection, "executionMode", "native_sessions") === "native_sessions") {
-      permitted.add("memory");
-    }
+    permitted.add("memory");
     const unadmitted = toolsets
       .filter((toolset) => toolset.enabled && !permitted.has(toolset.name))
       .map((toolset) => toolset.name);
@@ -458,35 +443,6 @@ export class HermesClient {
         ? "Hermes has an enabled toolset; OrcaSynapse requires a zero-tool boundary for this run."
         : `Hermes has enabled toolsets this installation has not admitted: ${unadmitted.slice(0, 5).join(", ")}.`,
     );
-  }
-
-  async assertGovernedToolBoundary(): Promise<void> {
-    const connection = await this.resolver.resolveOne("HERMES");
-    await this.assertGovernedToolBoundaryFor(connection);
-  }
-
-  private async assertGovernedToolBoundaryFor(connection: RuntimeConnection): Promise<void> {
-    const { capabilities, toolsets } = await this.assertBaseBoundary(connection);
-    const features = capabilities.features as Record<string, unknown>;
-    const runtime = capabilities.runtime as Record<string, unknown>;
-    if (
-      features.private_run_context !== "orcasynapse_mcp_headers_v1" ||
-      runtime.private_context_redacted !== true ||
-      runtime.private_context_prompt_visible !== false
-    ) {
-      throw new Error("Hermes does not advertise OrcaSynapse's private, redacted per-run MCP handoff contract.");
-    }
-    const governedMcpUrl = stringSetting(connection, "governedMcpUrl", "");
-    const governedToolsetName = stringSetting(connection, "governedToolsetName", "orcasynapse-governed-tools");
-    const gatewayToken = connection.secrets.mcpGatewayToken;
-    if (!governedMcpUrl || !gatewayToken?.startsWith("orcasynapse_mcp_")) {
-      throw new Error("Hermes governed MCP endpoint or gateway credential is not configured.");
-    }
-    const enabled = toolsets.filter((toolset) => toolset.enabled && toolset.name !== "memory");
-    if (enabled.length !== 1 || enabled[0]?.name !== governedToolsetName) {
-      throw new Error("Hermes must enable exactly the configured OrcaSynapse governed toolset and no other toolset.");
-    }
-    await this.assertGovernedGateway(connection, governedMcpUrl, gatewayToken);
   }
 
   private async assertBaseBoundary(connection: RuntimeConnection): Promise<{
@@ -592,39 +548,8 @@ export class HermesClient {
 
   async start(input: HermesRunSubmission): Promise<string> {
     const connection = await this.resolver.resolveOne("HERMES");
-    if (input.governedMcp) await this.assertGovernedToolBoundaryFor(connection);
-    else await this.assertAdmittedToolBoundaryFor(connection, input.admittedToolsets ?? []);
-    const executionMode = stringSetting(connection, "executionMode", "native_sessions");
-    if (executionMode === "native_sessions" && !input.governedMcp) {
-      return this.startNativeSession(connection, input);
-    }
-    if (executionMode !== "native_sessions" && executionMode !== "legacy_runs") {
-      throw new Error(`Hermes execution mode ${executionMode} is not supported.`);
-    }
-    const runsPath = stringSetting(connection, "runsPath", "/v1/runs");
-    const privateContext = input.governedMcp
-      ? this.privateMcpContext(connection, input.governedMcp)
-      : undefined;
-    const body = await this.request(connection, endpoint(connection, runsPath), {
-      method: "POST",
-      body: JSON.stringify({
-        input: input.input,
-        instructions: input.instructions,
-        session_id: input.sessionId,
-        model: input.modelAlias,
-        conversation_history: input.conversationHistory,
-        ...(privateContext ? { private_context: privateContext } : {}),
-      }),
-      headers: {
-        "idempotency-key": input.idempotencyKey,
-        "x-hermes-session-key": input.memorySessionKey,
-      },
-    });
-    const id = body && typeof body === "object" && typeof (body as { run_id?: unknown }).run_id === "string"
-      ? (body as { run_id: string }).run_id
-      : null;
-    if (!id || id.length > 255) throw new Error("Hermes did not return a valid run ID.");
-    return id;
+    await this.assertAdmittedToolBoundaryFor(connection, input.admittedToolsets ?? []);
+    return this.startNativeSession(connection, input);
   }
 
   /**
@@ -764,7 +689,6 @@ export class HermesClient {
           accept: "text/event-stream",
           "content-type": "application/json",
           ...(connection.secrets.apiKey ? { authorization: `Bearer ${connection.secrets.apiKey}` } : {}),
-          "x-hermes-session-key": input.memorySessionKey,
         },
         body: JSON.stringify({
           message: input.input,
@@ -838,126 +762,19 @@ export class HermesClient {
     }
   }
 
-  private privateMcpContext(
-    connection: RuntimeConnection,
-    governedMcp: NonNullable<HermesRunSubmission["governedMcp"]>,
-  ): Record<string, unknown> {
-    const url = stringSetting(connection, "governedMcpUrl", "");
-    const toolset = stringSetting(connection, "governedToolsetName", "orcasynapse-governed-tools");
-    const gatewayToken = connection.secrets.mcpGatewayToken;
-    if (!url || !gatewayToken?.startsWith("orcasynapse_mcp_")) {
-      throw new Error("Hermes governed MCP endpoint or gateway credential is not configured.");
-    }
-    const parsedUrl = new URL(url);
-    if (!["http:", "https:"].includes(parsedUrl.protocol) || parsedUrl.username || parsedUrl.password) {
-      throw new Error("Hermes governed MCP endpoint is invalid.");
-    }
-    return {
-      protocol: "orcasynapse_mcp_headers_v1",
-      expires_at: governedMcp.expiresAt.toISOString(),
-      mcp: {
-        name: toolset,
-        url: parsedUrl.toString(),
-        headers: {
-          authorization: `Bearer ${gatewayToken}`,
-          "orcasynapse-run-authorization": governedMcp.authorization,
-        },
-      },
-    };
-  }
-
-  private async assertGovernedGateway(
-    connection: RuntimeConnection,
-    url: string,
-    gatewayToken: string,
-  ): Promise<void> {
-    const parsedUrl = new URL(url);
-    if (!["http:", "https:"].includes(parsedUrl.protocol) || parsedUrl.username || parsedUrl.password) {
-      throw new Error("Hermes governed MCP endpoint is invalid.");
-    }
-    const timeoutMs = Math.min(30_000, Math.max(1_000, numberSetting(connection, "timeoutMs", 8_000)));
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const response = await this.fetcher(parsedUrl, {
-        method: "POST",
-        redirect: "error",
-        signal: controller.signal,
-        headers: {
-          accept: "application/json",
-          "content-type": "application/json",
-          authorization: `Bearer ${gatewayToken}`,
-        },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: "orcasynapse-hermes-preflight",
-          method: "initialize",
-          params: {
-            protocolVersion: "2025-11-25",
-            capabilities: {},
-            clientInfo: { name: "orcasynapse-hermes-preflight", version: "1" },
-          },
-        }),
-      });
-      const body = await boundedJson(response);
-      if (!response.ok) throw new Error("OrcaSynapse governed MCP gateway rejected the configured Hermes credential.");
-      const result = body && typeof body === "object" && !Array.isArray(body)
-        ? (body as Record<string, unknown>).result
-        : null;
-      const serverInfo = result && typeof result === "object" && !Array.isArray(result)
-        ? (result as Record<string, unknown>).serverInfo
-        : null;
-      if (
-        !serverInfo || typeof serverInfo !== "object" || Array.isArray(serverInfo) ||
-        (serverInfo as Record<string, unknown>).name !== "orcasynapse-governed-tools"
-      ) {
-        throw new Error("Configured governed MCP endpoint is not the OrcaSynapse tool gateway.");
-      }
-    } finally {
-      clearTimeout(timeout);
-    }
-  }
-
   async status(runId: string): Promise<HermesRunState> {
     const native = this.nativeRuns.get(runId);
     if (native) return { ...native.state };
     if (runId.startsWith(NATIVE_RUN_PREFIX)) {
       throw new Error("Hermes native session run is no longer attached to this worker; its transcript remains in Hermes.");
     }
-    const connection = await this.resolver.resolveOne("HERMES");
-    const runsPath = stringSetting(connection, "runsPath", "/v1/runs").replace(/\/+$/, "");
-    const body = await this.request(connection, endpoint(connection, `${runsPath}/${encodeURIComponent(runId)}`), {
-      method: "GET",
-    });
-    if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("Hermes run status is invalid.");
-    const value = body as Record<string, unknown>;
-    const usage = value.usage && typeof value.usage === "object" && !Array.isArray(value.usage)
-      ? value.usage as Record<string, unknown>
-      : {};
-    const id = typeof value.run_id === "string" ? value.run_id : runId;
-    if (id !== runId || typeof value.status !== "string") throw new Error("Hermes run status did not match the requested run.");
-    return {
-      id,
-      status: value.status.toLowerCase(),
-      output: typeof value.output === "string" ? value.output.slice(0, 2_000_000) : null,
-      error: typeof value.error === "string" ? value.error.slice(0, 500) : null,
-      modelAlias: safeEventText(value.model, 200),
-      sessionId: safeEventText(value.session_id, 200),
-      ...reportedUsage(value, usage, typeof value.output === "string" ? value.output : null),
-      finishReason: safeEventText(value.finish_reason, 120),
-    };
+    throw new Error("Hermes native session run is no longer attached to this worker; its transcript remains in Hermes.");
   }
 
   async decideApproval(runId: string, choice: "once" | "deny"): Promise<void> {
-    if (this.nativeRuns.has(runId) || runId.startsWith(NATIVE_RUN_PREFIX)) {
-      throw new Error("Hermes native sessions do not expose the governed approval protocol.");
-    }
-    const connection = await this.resolver.resolveOne("HERMES");
-    const runsPath = stringSetting(connection, "runsPath", "/v1/runs").replace(/\/+$/, "");
-    await this.request(connection, endpoint(connection, `${runsPath}/${encodeURIComponent(runId)}/approval`), {
-      method: "POST",
-      body: JSON.stringify({ choice }),
-    });
+    void runId;
+    void choice;
+    throw new Error("Hermes native sessions do not expose the governed approval protocol.");
   }
 
   async stop(runId: string): Promise<void> {
@@ -991,13 +808,7 @@ export class HermesClient {
       }
       return;
     }
-    if (runId.startsWith(NATIVE_RUN_PREFIX)) return;
-    const connection = await this.resolver.resolveOne("HERMES");
-    const runsPath = stringSetting(connection, "runsPath", "/v1/runs").replace(/\/+$/, "");
-    await this.request(connection, endpoint(connection, `${runsPath}/${encodeURIComponent(runId)}/stop`), {
-      method: "POST",
-      body: "{}",
-    });
+    return;
   }
 
   async events(
@@ -1014,20 +825,7 @@ export class HermesClient {
     if (runId.startsWith(NATIVE_RUN_PREFIX)) {
       throw new Error("Hermes native session event stream is no longer attached to this worker.");
     }
-    const connection = await this.resolver.resolveOne("HERMES");
-    const runsPath = stringSetting(connection, "runsPath", "/v1/runs").replace(/\/+$/, "");
-    const response = await this.fetcher(endpoint(connection, `${runsPath}/${encodeURIComponent(runId)}/events`), {
-      method: "GET",
-      redirect: "error",
-      signal,
-      headers: {
-        accept: "text/event-stream",
-        ...(connection.secrets.apiKey ? { authorization: `Bearer ${connection.secrets.apiKey}` } : {}),
-        ...(lastEventId ? { "last-event-id": lastEventId } : {}),
-      },
-    });
-    if (!response.ok) throw new Error(`Hermes rejected the event stream with status ${response.status}.`);
-    await this.consumeSafeEventStream(response, onEvent);
+    throw new Error("Hermes native session event stream is no longer attached to this worker.");
   }
 
   private async consumeNativeEvents(

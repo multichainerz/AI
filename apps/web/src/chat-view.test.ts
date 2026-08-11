@@ -23,7 +23,6 @@ function message(overrides: Partial<ChatMessage> = {}): ChatMessage {
     lastEventCursor: "42",
     runtimeEvents: [],
     approvals: [],
-    sources: [],
     feedback: null,
     createdAt: "2026-07-31T00:00:00.000Z",
     completedAt: "2026-07-31T00:00:04.000Z",

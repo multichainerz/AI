@@ -1,6 +1,4 @@
 import {
-  attachChatDocumentSchema,
-  agentMemoryRecordListSchema,
   chatConversationSchema,
   chatConversationListSchema,
   chatConversationSummarySchema,
@@ -41,13 +39,11 @@ import {
   type ChatPrincipal,
   type ChatManager,
 } from "./chat-manager.js";
-import type { MemoryManager } from "../memory/memory-manager.js";
 
 export interface ChatRouteOptions {
   sessionManager?: AdminSessionManager;
   identityManager?: EnterpriseIdentityManager;
   manager?: ChatManager;
-  memoryManager?: MemoryManager;
 }
 
 async function requireChatPrincipal(
@@ -338,74 +334,6 @@ export async function registerChatRoutes(
     } finally {
       clearInterval(heartbeat);
       if (!reply.raw.destroyed) reply.raw.end();
-    }
-  });
-
-  app.get("/memory", async (request, reply) => {
-    const principal = await requireChatPrincipal(request, reply, options);
-    if (!principal) return;
-    if (!options.memoryManager) {
-      return reply.code(423).send({ error: "PLATFORM_LOCKED", message: "Chat services are not ready." });
-    }
-    void reply.header("cache-control", "no-store");
-    // Scoped to the caller's own subject inside the manager, so this can only
-    // ever return what an agent learned about the person asking.
-    return agentMemoryRecordListSchema.parse(await options.memoryManager.recordsForOwner(principal.subject));
-  });
-
-  app.delete("/memory/:memoryId", async (request, reply) => {
-    const principal = await requireChatPrincipal(request, reply, options);
-    if (!principal) return;
-    if (!options.memoryManager) {
-      return reply.code(423).send({ error: "PLATFORM_LOCKED", message: "Chat services are not ready." });
-    }
-    const memoryId = uuidParam((request.params as Record<string, unknown>).memoryId);
-    if (!memoryId) return reply.code(400).send({ error: "INVALID_REQUEST", message: "Memory ID is invalid." });
-    try {
-      await options.memoryManager.forget(
-        { id: principal.id, ownerSubject: principal.subject },
-        memoryId,
-        "The person this memory is about asked for it to be forgotten.",
-      );
-      return reply.code(204).send();
-    } catch {
-      // A memory outside the caller's scope is indistinguishable from one that
-      // does not exist, which is the point.
-      return reply.code(404).send({ error: "NOT_FOUND", message: "That memory does not exist within your scope." });
-    }
-  });
-
-  app.post("/conversations/:conversationId/documents", async (request, reply) => {
-    const principal = await requireChatPrincipal(request, reply, options);
-    if (!principal) return;
-    if (!options.manager) {
-      return reply.code(423).send({ error: "PLATFORM_LOCKED", message: "Chat services are not ready." });
-    }
-    const id = uuidParam((request.params as Record<string, unknown>).conversationId);
-    if (!id) return reply.code(400).send({ error: "INVALID_REQUEST", message: "Conversation ID is invalid." });
-    const input = attachChatDocumentSchema.safeParse(request.body);
-    if (!input.success) return reply.code(400).send({ error: "INVALID_REQUEST", message: input.error.issues[0]?.message });
-    try {
-      return chatConversationSchema.parse(await options.manager.attachDocument(principal, id, input.data.documentId));
-    } catch (error) {
-      await sendChatError(reply, error);
-    }
-  });
-
-  app.delete("/conversations/:conversationId/documents/:documentId", async (request, reply) => {
-    const principal = await requireChatPrincipal(request, reply, options);
-    if (!principal) return;
-    if (!options.manager) {
-      return reply.code(423).send({ error: "PLATFORM_LOCKED", message: "Chat services are not ready." });
-    }
-    const params = request.params as Record<string, unknown>;
-    const id = uuidParam(params.conversationId);
-    const documentId = uuidParam(params.documentId);
-    if (!id || !documentId) return reply.code(400).send({ error: "INVALID_REQUEST", message: "Conversation or document ID is invalid." });
-    try {
-      return chatConversationSchema.parse(await options.manager.detachDocument(principal, id, documentId));
-    } catch (error) {
-      await sendChatError(reply, error);
     }
   });
 

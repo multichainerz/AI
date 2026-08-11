@@ -10,36 +10,12 @@ export interface AgentWorkerHandler {
   process(payload: AgentRunJobPayload, jobId: string, workerId: string): Promise<object>;
 }
 
-export interface DocumentIngestionHandler {
-  processNext(workerId: string): Promise<{ documentId: string; status: string } | null>;
-}
-
-export interface BenchmarkHandler {
-  runNext(workerId: string): Promise<{
-    runId: string;
-    suiteSlug: string;
-    status: string;
-    passedCases: number;
-    totalCases: number;
-  } | null>;
-}
-
-/**
- * PostgreSQL remains the durable source of truth for asynchronous work.
- *
- * Both Hermes runs and knowledge ingestion are queued here. Ingestion moved off
- * the upload request because embedding loads ~2 GB of weights and outlived the
- * proxy timeout, and a crash mid-embed stranded the document with nothing to
- * recover it.
- */
+/** PostgreSQL is the durable queue and audit source for asynchronous Hermes runs. */
 export class WorkerRuntime {
   private heartbeatTimer?: NodeJS.Timeout;
   private reconcileTimer?: NodeJS.Timeout;
   private readonly inFlight = new Map<string, Promise<void>>();
   private dispatching: Promise<void> | undefined;
-  private benchmarkTimer?: NodeJS.Timeout;
-  private ingesting = false;
-  private benchmarking = false;
   private started = false;
 
   constructor(
@@ -51,11 +27,6 @@ export class WorkerRuntime {
     private readonly agentHandler?: AgentWorkerHandler,
     private readonly reconcileIntervalMs = 1_000,
     private readonly maxConcurrentAgentRuns = 5,
-    private readonly ingestionHandler?: DocumentIngestionHandler,
-    private readonly benchmarkHandler?: BenchmarkHandler,
-    // An operator who starts a run is watching for it, so this is the fastest
-    // of the slow ticks. It only ever finds work someone just asked for.
-    private readonly benchmarkIntervalMs = 5_000,
   ) {}
 
   async start(): Promise<void> {
@@ -67,10 +38,6 @@ export class WorkerRuntime {
     this.reconcileTimer.unref();
     this.heartbeatTimer = setInterval(() => void this.heartbeat(), this.heartbeatIntervalMs);
     this.heartbeatTimer.unref();
-    if (this.benchmarkHandler) {
-      this.benchmarkTimer = setInterval(() => void this.dispatchBenchmarks(), this.benchmarkIntervalMs);
-      this.benchmarkTimer.unref();
-    }
     this.logger.info(`PostgreSQL runtime '${this.identity.name}' is online.`);
   }
 
@@ -78,23 +45,12 @@ export class WorkerRuntime {
     if (!this.started) return;
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     if (this.reconcileTimer) clearInterval(this.reconcileTimer);
-    if (this.benchmarkTimer) clearInterval(this.benchmarkTimer);
-    // Clear the flag before draining so an in-flight tick cannot admit new work
-    // behind the shutdown.
     this.started = false;
     await this.dispatching?.catch(() => undefined);
     await Promise.allSettled([...this.inFlight.values()]);
     await this.registry.markStopped(this.identity.id);
   }
 
-  /**
-   * Dispatches immediately, for the wake channel.
-   *
-   * Separate from `reconcile` because a notification means one specific thing —
-   * a run was just queued — and there is no reason to also sweep the ingestion
-   * queue for it. `dispatchAgents` already collapses concurrent callers, so a
-   * burst of notifications costs one pass.
-   */
   async dispatchNow(): Promise<void> {
     if (!this.started) return;
     try {
@@ -106,54 +62,6 @@ export class WorkerRuntime {
 
   private async reconcile(): Promise<void> {
     await this.dispatchAgents();
-    await this.dispatchIngestion();
-  }
-
-  /**
-   * Executes one benchmark suite per tick.
-   *
-   * Serialised like the others, and for a sharper reason: a suite drives the
-   * same inference host the installation answers people on. Two at once would
-   * make a benchmark's own load part of what it measures.
-   */
-  private async dispatchBenchmarks(): Promise<void> {
-    if (!this.benchmarkHandler || this.benchmarking) return;
-    this.benchmarking = true;
-    try {
-      const outcome = await this.benchmarkHandler.runNext(this.identity.id);
-      if (outcome) {
-        this.logger.info(
-          `Benchmark '${outcome.suiteSlug}' finished as ${outcome.status}: ${outcome.passedCases}/${outcome.totalCases} cases passed.`,
-        );
-      }
-    } catch (error) {
-      this.logger.error("Benchmark execution failed.", error);
-    } finally {
-      this.benchmarking = false;
-    }
-  }
-
-  /**
-   * Embeds one queued document per tick.
-   *
-   * Serialised deliberately: the embedder holds the model in this process, so
-   * running several at once would multiply peak memory on the host that is
-   * already the tightest part of the deployment. The guard also stops a slow
-   * document from being started twice by overlapping ticks.
-   */
-  private async dispatchIngestion(): Promise<void> {
-    if (!this.ingestionHandler || this.ingesting) return;
-    this.ingesting = true;
-    try {
-      const outcome = await this.ingestionHandler.processNext(this.identity.id);
-      if (outcome) {
-        this.logger.info(`Document ${outcome.documentId} indexing finished as ${outcome.status}.`);
-      }
-    } catch (error) {
-      this.logger.error("Document ingestion failed.", error);
-    } finally {
-      this.ingesting = false;
-    }
   }
 
   private async heartbeat(): Promise<void> {
@@ -164,14 +72,9 @@ export class WorkerRuntime {
     }
   }
 
-  /**
-   * Fills free execution slots and returns as soon as the new work is handed
-   * off. Awaiting a whole batch here would hold every free slot hostage to the
-   * slowest run in it, so a queued conversation could wait out an unrelated
-   * long-running agent before starting.
-   */
   private async dispatchAgents(): Promise<void> {
-    if (!this.agentHandler || this.dispatching) return this.dispatching;
+    const handler = this.agentHandler;
+    if (!handler || this.dispatching) return this.dispatching;
     const dispatch = (async () => {
       try {
         const capacity = this.maxConcurrentAgentRuns - this.inFlight.size;
@@ -179,12 +82,10 @@ export class WorkerRuntime {
         const work = await this.runs.claimable(capacity, [...this.inFlight.keys()]);
         for (const item of work) {
           if (this.inFlight.has(item.id)) continue;
-          const execution = this.agentHandler!
+          const execution = handler
             .process({ runId: item.id }, item.jobId, this.identity.id)
             .then(() => undefined)
-            .catch((error: unknown) => {
-              this.logger.error("A durable Hermes run failed to process.", error);
-            })
+            .catch((error: unknown) => this.logger.error("A durable Hermes run failed to process.", error))
             .finally(() => { this.inFlight.delete(item.id); });
           this.inFlight.set(item.id, execution);
         }
@@ -193,6 +94,10 @@ export class WorkerRuntime {
       }
     })();
     this.dispatching = dispatch;
-    try { await dispatch; } finally { if (this.dispatching === dispatch) this.dispatching = undefined; }
+    try {
+      await dispatch;
+    } finally {
+      if (this.dispatching === dispatch) this.dispatching = undefined;
+    }
   }
 }

@@ -3,7 +3,7 @@
  *
  * Chat's four overlays were bare divs carrying `role="dialog"` and nothing else:
  * no `aria-modal`, no focus trap, no Escape, no scroll lock. A keyboard user
- * could tab out of the memory panel into the transcript behind it while a
+ * could tab out of a modal into the transcript behind it while a
  * screen reader kept describing the page as if nothing had opened. These cases
  * hold the replacement shut, along with the conversation menu that had no way
  * to dismiss it at all.
@@ -26,7 +26,6 @@ const conversation: ChatConversation = {
   updatedAt: "2026-08-01T00:00:00.000Z",
   lastMessageAt: null,
   messages: [],
-  knowledgeDocuments: [],
 } as ChatConversation;
 
 const deleteChatConversation = vi.fn(async () => undefined);
@@ -38,8 +37,6 @@ vi.mock("./api.js", async () => {
     getChatConversations: vi.fn(async () => ({ items: [{ ...conversation, messages: undefined }] })),
     getChatConversation: vi.fn(async () => conversation),
     getAgentProfiles: vi.fn(async () => ({ items: [] })),
-    getDocuments: vi.fn(async () => ({ items: [] })),
-    getOwnAgentMemory: vi.fn(async () => ({ items: [] })),
     deleteChatConversation,
   };
 });
@@ -86,29 +83,13 @@ describe("chat overlays", () => {
     expect(await screen.findByRole("button", { name: /Runbook questions/ })).toBeTruthy();
   });
 
-  it("opens Knowledge as a real modal, and Escape closes it", async () => {
-    const user = userEvent.setup();
-    render(<ChatView {...props} />);
-
-    await user.click(await screen.findByRole("button", { name: /knowledge/i }));
-
-    const dialog = await screen.findByRole("dialog");
-    expect(dialog.getAttribute("aria-modal")).toBe("true");
-    // Scroll lock: the transcript behind must not move while a modal is open.
-    expect(document.body.style.overflow).toBe("hidden");
-
-    await user.keyboard("{Escape}");
-
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(document.body.style.overflow).not.toBe("hidden");
-  });
-
   it("keeps Tab inside the open dialog", async () => {
     // The failure this replaces was silent: focus simply walked out of the
     // panel and into the conversation behind it.
     const user = userEvent.setup();
     render(<ChatView {...props} />);
-    await user.click(await screen.findByRole("button", { name: /knowledge/i }));
+    await user.click(await screen.findByRole("button", { name: /more/i }));
+    await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
     const dialog = await screen.findByRole("dialog");
 
     for (let press = 0; press < 6; press += 1) await user.tab();

@@ -14,7 +14,6 @@ export const ONBOARDING_STEP_KEYS = [
   "system-topology",
   "identity-recovery",
   "ai-services",
-  "knowledge-workflow",
   "hermes-profiles",
   "guardrails-tools",
   "validate-activate",

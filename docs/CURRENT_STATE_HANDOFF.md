@@ -1,212 +1,71 @@
-# OrcaSynapse Current-State Handoff
+# Current State Handoff — ai-v3.16.0
 
-Last verified: 2026-08-12 (Asia/Jakarta)
+## Product state
 
-This document is the sanitized transfer context for continuing OrcaSynapse work in another session. Read it before changing code. It records the repository state, decisions already made, verified behavior, and the pending work. It intentionally contains no passwords, installation keys, API keys, enrollment claims, or private-key material.
+This release is the greenfield Hermes-native baseline. OrcaSynapse controls identity, profiles, inference routes, prompts, guardrails, native toolset admission, evaluations, incidents, operational projections, and audit. Hermes alone owns session context and built-in memory on VM2.
 
-## Start here
+The earlier product generation is preserved on the `backup/pgvector` branch. Do not merge that branch into this schema generation.
 
-- Repository: <https://github.com/multichainerz/AI>
-- Local workspace: `C:\Users\Veros\Documents\GitHub\MPM`
-- Branch: `main`.
-- Baseline release: **ai-v3.15.0** (this file ships in that release commit; `git log -1` gives the hash). Releases are tagged starting at `ai-v1.25.0`.
-- Baseline verification: `pnpm verify` passes the repository test suites, typecheck, production build, and `drizzle-kit check`. `pnpm verify:postgres` passes against a pgvector server; `pnpm security:audit` reports no known vulnerabilities; and the four static guards (`sync-installer-ui.sh --check`, `test-release-consistency.sh`, `test-docker-build-closure.sh`, `test-csp-closure.sh`) pass. Avoid recording a fixed aggregate test count here because it changes as package suites evolve.
-- Both installers are covered end to end by lifecycle tests that execute `main()`: `scripts/test-orcasynapse-installer-smoke.sh` (VM1) and `scripts/test-agentic-installer-smoke.sh` (VM2, including decommission). Both need root and a systemd host — a WSL Ubuntu 24.04 instance with `[boot] systemd=true` is enough.
-
-**Check what is actually on the remote before assuming a deployment tests your
-work.** `install.sh` defaults to `ORCASYNAPSE_REF=main` and builds the images
-from a GitHub tarball of that ref, so an unpushed release is invisible to every
-install. `git log --oneline origin/main..main` should be empty; nineteen
-releases once accumulated locally while the pilot could only ever have fetched
-`ai-v1.55.1`.
-
-Do not copy credentials from terminals, VM environment files, Docker secrets, PostgreSQL, or service logs into issues, commits, or future handoff documents.
-
-## Product definition
-
-OrcaSynapse is an on-premises identity, policy, orchestration, inference-gateway, and observability plane for an isolated Hermes agent runtime. It is not another agent framework, model server, source-file repository, OCR product, or external vector database service.
-
-The operator journey:
-
-1. Install VM1 with the public one-line installer.
-2. Sign in with the generated temporary local administrator and change the password.
-3. Connect and validate one OpenAI-compatible AI Inference endpoint.
-4. Generate the VM2 installer and one-time enrollment claim.
-5. Install the Agentic System on VM2; the installer provisions Hermes, managed policy, node identity, and signed monitoring.
-6. Create and activate the first Hermes Profile.
-7. Use Dashboard, Session, Knowledge, Agents, Platform, and Operations from one operator workspace.
-8. Add OIDC or Microsoft Entra ID later for enterprise access and RBAC.
-
-## Architectural invariants
-
-1. OrcaSynapse owns enterprise identity, authorization, policy, encrypted configuration, orchestration, audit, and inference mediation.
-2. Hermes is the only normal Chat and agent-execution path. Chat must never call the model directly.
-3. VM2 runs Hermes and durably owns Hermes-native sessions, Skills, `MEMORY.md`, and `USER.md`. Knowledge lives in OrcaSynapse's local pgvector index on VM1. OrcaSynapse does not read, mirror, or edit Hermes memory.
-4. PostgreSQL stores control-plane state, sanitized session/run projections, audit, extracted knowledge chunks, and their embeddings — never original enterprise files, Hermes memory files, or model weights.
-5. Source files are never persisted in OrcaSynapse: extraction happens in flight, and a failed ingestion requires re-upload.
-6. AI Inference serves models but does not own policy or durable memory.
-7. Hermes receives a node-scoped OrcaSynapse inference credential; the inference server credential stays on VM1.
-8. Hermes runs alone on isolated VM2; its native memory and session database are the agent-continuity source and must be backed up separately from PostgreSQL.
-9. No Redis, Valkey, pg-boss, LiteLLM, object store, external vector database service, or OCR stack. pgvector is required and ships inside the bundled `pgvector/pgvector:pg17` PostgreSQL image.
-10. Tenancy is per deployment. PostgreSQL document knowledge remains `ownerSubject`-scoped, but vanilla Hermes file memory is shared across sessions in the active home/profile. Treat the current pre-production installation as one trust boundary and do not admit mutually untrusted users until Hermes homes/profiles are isolated deliberately.
-
-## Runtime topology
-
-```mermaid
-flowchart LR
-  Browser["Browser"] --> VM1["VM1: OrcaSynapse"]
-  VM1 <--> PostgreSQL["PostgreSQL 17 + pgvector<br/>(control state, knowledge chunks,<br/>embeddings, audit trail)"]
-  VM1 --> Inference["OpenAI-compatible AI Inference"]
-  VM1 <-->|"governed runs, policy, telemetry"| Hermes["VM2: Hermes"]
-  VM1 -.->|"optional audit forwarding"| SIEM["Customer SIEM"]
-```
-
-## Technology and repository map
-
-- Node.js 24+, pnpm 10, TypeScript 7 (strict: `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `verbatimModuleSyntax`)
-- React 19 and Vite 8 for the dashboard; Fastify 5 API; Vitest 4
-- PostgreSQL 17 with pgvector, Drizzle ORM 0.45 (migrations under `packages/database/drizzle/migrations`, currently 0000–0025, applied by the runtime migrator)
-- Docker Compose for VM1; Hermes installed natively under systemd on VM2 (`orcasynapse-hermes.service`), pinned to an approved git commit
+## Repository map
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/web` | Dashboard and operator workflows |
-| `apps/api` | Authentication, connections, inference gateway, Chat, Agents, Knowledge, Operations, onboarding, audit, and runtime-node APIs |
-| `apps/worker` | Durable Hermes Agent Run reconciliation and lifecycle processing |
-| `packages/contracts` | Shared validated API contracts and `ORCASYNAPSE_VERSION` |
-| `packages/database` | Drizzle schema (`src/drizzle/schema.ts` is the source of truth), migrations, testing harness |
-| `packages/knowledge` | Local document pipeline: extraction (unpdf/officeparser), chunking, BGE-M3 embedding, pgvector retrieval |
-| `packages/runtime-clients` | Hermes server-side client and connection resolver |
-| `packages/security` | Password hashing, envelope encryption, capability checks, recovery-kit primitives |
-| `install.sh` | Public VM1 bootstrap (self-contained; embeds the UI library) |
-| `scripts/install-orcasynapse.sh` | VM1 installer (sources `scripts/lib/installer-ui.sh`; seven steps incl. preflight and embedding-model seed) |
-| `scripts/install-agentic-node.sh` | VM2 enrollment installer (self-contained; served by the VM1 API) |
-| `scripts/remove-agentic-node.sh` | VM2 destructive uninstall (self-contained; served by the VM1 API) |
-| `scripts/lib/installer-ui.sh` | Canonical installer terminal UI; `scripts/sync-installer-ui.sh` syncs the embedded copies |
-| `scripts/lib/public-scheme.sh` | The `--public-scheme` declaration: parsed from the command line (sudo strips the environment), recorded in `.local/state/public-scheme`, read back by install and rotation |
-| `scripts/test-*.sh` | CI-run conformance and recovery tests |
-| `compose.yaml` | VM1 postgres (pgvector image), migrate, api, worker, web services |
+| `apps/web` | operator workspace: Dashboard, Session, Agents, Platform, Operations |
+| `apps/api` | authenticated control-plane API, enrollment, inference gateway, audit |
+| `apps/worker` | run claiming, Hermes-native execution, lifecycle projection, SIEM forwarding |
+| `packages/contracts` | shared API and runtime schemas |
+| `packages/database` | Drizzle schema, greenfield migration, test database helpers |
+| `packages/runtime-clients` | inference and Hermes-native session clients |
+| `packages/security` | secret encryption and security primitives |
+| `scripts/install-orcasynapse.sh` | VM1 installer |
+| `scripts/install-agentic-node.sh` | VM2 Hermes installer/enroller/repair path |
 
-## Release convention
+## Invariants
 
-One commit per release on `main`: subject `ai-vX.Y.Z`, body = summary sentence plus lowercase verb-first bullets. The version is bumped in the same commit across **12 surfaces** (root + 8 workspace `package.json`, `packages/contracts/src/version.ts`, `INSTALLER_VERSION` in `scripts/install-agentic-node.sh` and `scripts/remove-agentic-node.sh`) — `scripts/test-release-consistency.sh` enforces the set. Add the CHANGELOG.md entry in the same commit, then tag `ai-vX.Y.Z` and push the tag. License: BUSL-1.1.
+1. A conversation UUID is the Hermes native session ID.
+2. OrcaSynapse never supplies PostgreSQL transcript history as model context.
+3. OrcaSynapse never reads or writes Hermes `MEMORY.md`, `USER.md`, or native session storage.
+4. PostgreSQL holds sanitized execution evidence and the append-only audit trail.
+5. Native toolsets are default-deny except built-in memory and explicit operator admissions.
+6. The upstream inference credential remains on VM1.
+7. VM2 has no database access or standing remote-administration channel.
+8. Schema epoch `hermes-native-v1` is greenfield-only and rejects older populated databases.
+9. Stock `postgres:17-bookworm` is the only database image required.
 
-## What is implemented
+## Install and recovery
 
-- **VM1 installation**: public tarball bootstrap with upgrade/erase recovery; seven-step branded installer with preflight, persistent secret-free log, versioned banner/summary, completion marker, and a one-time reindex guard for pre-pgvector data volumes.
-- **AI Inference**: guided discovery/validation for vLLM, llama.cpp, SGLang, Ollama, TGI and compatible servers; node-scoped gateway at `/internal/v1` with request limits counted in `InferenceGatewayRequest`.
-- **Agentic System**: one-time claims, Ed25519 identity, signed replay-protected enrollment and heartbeats, commit-pinned native Hermes under systemd, resumable recovery journal, drain/suspend/revoke/remove lifecycle. VM2 runs a single plane, so a node is ONLINE exactly when its Hermes API port answers. The installer refuses to adopt a Hermes it did not install, and passes `--force-commit` so the control plane's approved revision always wins over whatever the host already had.
-- **Chat**: governed runs executed through Hermes-native sessions. OrcaSynapse sends only the new turn, holds the upstream SSE independently of the browser, and keeps a sanitized durable projection for cancellation, telemetry, feedback, fork/archive/export, and **conversation-scoped knowledge pinning** (`ChatConversationDocument`, `AgentRun.knowledgeDocumentIds`).
-- **Knowledge**: local pipeline — supported formats bound to `SUPPORTED_DOCUMENT_TYPES` (txt, md, html, csv, json, pdf, docx, pptx, xlsx; images 415-rejected), in-flight extraction, 1024-dim BGE-M3 embeddings, HNSW cosine retrieval, owner-scoped predicate, originals never stored.
-- **Audit**: append-only trail readable at `GET /api/v1/admin/audit/events` (`audit:read`, keyset paging) with a dashboard view under Operations; SIEM forwarding with at-least-once delivery and health (`NOT_CONFIGURED`/`HEALTHY`/`BEHIND`/`FAILING`) observed by AI Ops incidents. See `docs/AUDIT_TRAIL_RUNBOOK.md`.
-- **Onboarding**: completable from the dashboard — architecture decision, component attestation, step updates, activation control with named blockers.
-- **Operations**: topology, incidents, workflow metrics, release evidence, timer-driven stale-executor reaping, audit-forwarding component.
-- **Agent memory**: Hermes-native `MEMORY.md`, `USER.md`, and session history on VM2. Transcripts are per session; the vanilla files are shared by sessions in the active Hermes home/profile. The legacy pgvector memory code and schema remain rollback-compatible but are not wired into active worker capabilities, session distillation, benchmarks, or workspace navigation. See `docs/AGENT_MEMORY_RUNBOOK.md`.
-- **Benchmarks**: deterministic suites executed against the live stack — `CHAT_QUALITY` through a real agent run and `RETRIEVAL` through the document vector plane. Legacy `MEMORY` suites explicitly report unavailable because Hermes-native memory is opaque to OrcaSynapse. A completed run files itself into the evaluation ledger as promotion evidence. See `docs/BENCHMARK_RUNBOOK.md`.
-- **Runtime desired state**: VM2 consumes the signed document
-  (`GET /api/v1/runtime-nodes/:nodeId/desired-state`, ai-v1.41.0/1.42.0),
-  verifies the signature against its pinned control-plane key, and applies the
-  admitted toolset allowlist. Since ai-v1.76.0 the installer reconciles once
-  before it finishes, so a node is governed on arrival rather than after the
-  first five-minute tick, and reports what was admitted in its completion panel.
-- **Design system**: Tailwind 3 with `cva`, no Radix — the container's `style-src 'self'` forbids the inline styles and injected `<style>` elements its overlays need. Primitives live in `apps/web/src/ui/`; Inter and JetBrains Mono are self-hosted under `apps/web/public/fonts/`.
-- **Enterprise access**: local administrator + Installation-Key break-glass recovery (rotatable via `scripts/rotate-installation-key.sh`), optional OIDC/Microsoft Entra ID.
+- Use clean VM1 and VM2 hosts for `ai-v3.16.0`.
+- Re-running an interrupted installer is supported when its protected completion or enrollment state is intact.
+- Do not point this release at an older OrcaSynapse database; the migrator refuses it before mutation.
+- Back up VM1 PostgreSQL for control/audit state and VM2's Hermes state root for native sessions and memory.
+- A clean VM2 replacement without restored Hermes state intentionally starts with no prior native context.
 
-Client-side only (do not describe as API capabilities): conversation search, export, and retry — `GET /conversations` accepts no query parameter.
+## Verification
 
-## Removed dependency: the VM2 memory service
-
-Removed in ai-v1.29.0. The external memory service that previously ran on VM2 silently substituted a narrower embedding model than it was configured with (upstream issue #1336), which was one reason to stop depending on it. OrcaSynapse's own embeddings run locally on VM1 through `LocalBgeM3Embedder`, which asserts the vector width per batch and is backed by a `vector(1024)` column that rejects anything else.
-
-## Pending work
-
-**Phase 4 — the Hermes experience.** The original plan was written before the
-runtime was reachable. Driving the live Hermes replaced most of its assumptions:
-
-| Item | State |
-| --- | --- |
-| 4a slash-command passthrough | **Not buildable.** Hermes has no command channel, and the heartbeat is push-only — its response is discarded. |
-| 4b multi-turn | **Reframed.** Conversational continuity is Hermes-native. OrcaSynapse sends only the new user turn to `/api/sessions/:id/chat/stream`; its PostgreSQL projection is never replayed as context. |
-| 4c governed tool calling | **Split.** The active native-session path admits only Hermes' built-in memory tool. The legacy Runs approval records remain migration-compatible, while the OrcaSynapse MCP path is inert — see below. |
-
-**The governed MCP plane is inert, and the blocker is owner scoping.**
-`assertGovernedToolBoundaryFor` requires `private_run_context:
-"orcasynapse_mcp_headers_v1"`, a contract that exists only in this repository;
-no shipped Hermes advertises it. Declaring the server in VM2's managed config
-would remove the prompt-leak risk that requirement guarded, but it does not make
-the path usable: Hermes invokes a tool as `session.call_tool(name, arguments)`
-with no session, run, or user forwarded, over a connection shared by every run
-and every person. OrcaSynapse therefore cannot scope a call to its requester,
-and owner scope is a SQL predicate that needs exactly that. Tools exposed this
-way could only be ones safe for *any* user of a given profile. Settle which
-tools those are — or obtain per-run credentials from Hermes — before building.
-
-**Other open items:** a node enrolled before ai-v1.41.0 has no pinned
-control-plane key and must be re-enrolled to receive one — without it the node
-applies no desired state rather than trusting an unsigned document. Existing
-nodes should rerun the current VM2 installer once so repair mode adds the
-Hermes-native memory block and allowlist entry without consuming a new claim.
-Interaction-test coverage exists only for chat; other views are render-level.
-
-## Deployment estate
-
-The pilot runs on a bare-metal LXD host reached over its HTTPS API with a client
-certificate. Instances are on a private `10.0.0.0/20` network:
-
-| Instance | Role |
-| --- | --- |
-| `mpm-vm1` | control plane — API, dashboard, worker, PostgreSQL/pgvector |
-| `mpm-vm2` | Hermes runtime, native sessions, Skills, `MEMORY.md`, `USER.md` |
-| `mpm-llm` | llama.cpp serving the chat model |
-
-The inference connection points at `mpm-llm` over the private network, so the
-estate has no dependency on any developer workstation. Addresses are dynamic;
-list them through the LXD API rather than assuming.
-
-A development workstation may also run PostgreSQL for the test suite. On WSL the
-localhost port relay goes stale when idle — restart the cluster immediately
-before a database-backed suite if connections are refused.
-
-**How a deployment gets its code.** `install.sh` reads
-`ORCASYNAPSE_GITHUB_REPOSITORY` (default `multichainerz/AI`) and
-`ORCASYNAPSE_REF` (default `main`), resolves the ref to a commit through the
-GitHub API, downloads that commit's tarball, and `compose.yaml` builds every
-image from it. There is no registry and no published artifact, so what is on
-`main` *is* what deploys. Migrations need no manual step: compose runs a
-dedicated `migrate` service, and both `api` and `worker` wait on
-`service_completed_successfully`.
-
-## Useful verification commands
-
-```powershell
-git status -sb
-pnpm verify                    # ORCASYNAPSE_TEST_DATABASE_URL must point at a pgvector server
-pnpm verify:postgres           # ORCASYNAPSE_INTEGRATION_DATABASE_URL, full-migration proof
-pnpm security:audit           # blocking in CI: a high in a production dependency
+```bash
+pnpm install
+pnpm verify
+pnpm security:audit
 bash scripts/sync-installer-ui.sh --check
 bash scripts/test-release-consistency.sh
 bash scripts/test-docker-build-closure.sh
-bash scripts/test-csp-closure.sh   # reads apps/web/dist; builds it if absent
-git log --oneline origin/main..main   # must be empty before a deployment test
 ```
 
-On Windows the three installer shell tests (`test-public-installer-recovery.sh`,
-`test-agentic-installer-recovery.sh`, `test-installer-secret-permissions.sh`) do
-not run: Git Bash hands a POSIX temp path to Windows `curl.exe`, which cannot
-open it, and the secret test needs Linux `sudo`. CI runs all three on
-`ubuntu-latest`. `bash -n install.sh scripts/*.sh scripts/lib/*.sh` does work
-locally and catches syntax breakage.
+For the live migration proof, run stock PostgreSQL 17 and export the integration URL:
 
-Local test database convention: `docker run -d --name orca-base -p 15432:5432 -e POSTGRES_USER=orca -e POSTGRES_PASSWORD=orca -e POSTGRES_DB=postgres pgvector/pgvector:pg17`, then `ORCASYNAPSE_TEST_DATABASE_URL=postgresql://orca:orca@127.0.0.1:15432/postgres`.
+```bash
+docker run -d --name orca-base -p 15432:5432 \
+  -e POSTGRES_USER=orca -e POSTGRES_PASSWORD=orca -e POSTGRES_DB=postgres \
+  postgres:17-bookworm
+export ORCASYNAPSE_INTEGRATION_DATABASE_URL=postgresql://orca:orca@127.0.0.1:15432/postgres
+pnpm verify:postgres
+```
 
-Avoid dumping complete environment files or unredacted logs because they may contain credentials.
+The integration proof applies the production migrator twice, verifies the epoch/default profile, and asserts that retired vector and state-duplication structures are absent.
 
-## Production gates still outside code-only acceptance
+## Known limitations
 
-- Customer-approved TLS/mTLS and firewall evidence.
-- Signed, immutable image and binary policy.
-- PostgreSQL and Hermes backup/restore drills against defined RPO/RTO.
-- GPU concurrency, cancellation, and soak testing with the chosen model.
-- OIDC/Microsoft Entra ID group mapping and deprovisioning acceptance.
-- Owner-scope isolation testing between users inside the organization.
-- Infrastructure, security, product, and business approval.
+- Active native turns are attached to the worker process; worker loss can interrupt the control-plane projection even though Hermes retains the transcript.
+- Vanilla Hermes file-backed memory is shared within its active home/profile. The current installation is one trust boundary, not per-user memory isolation.
+- Native tool execution occurs inside Hermes; OrcaSynapse governs toolset admission and audits safe lifecycle metadata rather than intercepting every tool payload.
+- Full dependency reproducibility for the native Hermes installer requires customer-controlled mirrors beyond the pinned Hermes commit.

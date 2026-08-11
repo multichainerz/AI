@@ -41,7 +41,6 @@ describe("ConnectionDrawer inference endpoint", () => {
     expect(html).not.toContain("Serving implementation");
     expect(html).toContain("Agentic System");
     expect(html).not.toContain(">Hermes<");
-    expect(html).not.toContain(">Supermemory<");
     expect(html).not.toContain("Configuration history");
   });
 });

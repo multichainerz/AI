@@ -306,29 +306,26 @@ set -e
 [[ "$(getent passwd orcasynapse-hermes | cut -d: -f6)" == "${expected_home}" ]] \
   && pass "repair reconciled the legacy passwd home" || bad "repair left the legacy passwd home in place"
 
-printf '\n=== submitting a governed Hermes run ===\n'
-run_response="$(curl --fail --silent --show-error --max-time 10 \
+printf '\n=== submitting a Hermes-native session turn ===\n'
+session_id="smoke-$(date +%s)"
+session_response="$(curl --fail --silent --show-error --max-time 10 \
   -H 'Content-Type: application/json' \
   -H "Authorization: Bearer ${gateway_key}" \
-  --data-binary '{"input":"Return the smoke marker and do not call tools.","model":"smoke-model"}' \
-  http://127.0.0.1:8642/v1/runs 2>/dev/null || true)"
-run_id="$(jq -r '.run_id // empty' <<<"${run_response}" 2>/dev/null || true)"
-run_status=""
-run_status_response=""
-if [[ -n "${run_id}" ]]; then
-  for _ in $(seq 1 60); do
-    run_status_response="$(curl --fail --silent --show-error --max-time 5 \
-      -H "Authorization: Bearer ${gateway_key}" \
-      "http://127.0.0.1:8642/v1/runs/${run_id}" 2>/dev/null || true)"
-    run_status="$(jq -r '.status // empty' <<<"${run_status_response}" 2>/dev/null || true)"
-    [[ "${run_status}" == "completed" || "${run_status}" == "failed" || "${run_status}" == "cancelled" ]] && break
-    sleep 1
-  done
+  --data-binary "{\"id\":\"${session_id}\",\"model\":\"smoke-model\",\"source\":\"api_server\"}" \
+  http://127.0.0.1:8642/api/sessions 2>/dev/null || true)"
+stream_response=""
+if [[ -n "${session_response}" ]]; then
+  stream_response="$(curl --fail --silent --show-error --max-time 90 --no-buffer \
+    -H 'Accept: text/event-stream' \
+    -H 'Content-Type: application/json' \
+    -H "Authorization: Bearer ${gateway_key}" \
+    --data-binary '{"message":"Return the smoke marker and do not call tools.","instructions":"Reply concisely.","model":"smoke-model"}' \
+    "http://127.0.0.1:8642/api/sessions/${session_id}/chat/stream" 2>/dev/null || true)"
 fi
-if [[ "${run_status}" == "completed" ]]; then
-  pass "real /v1/runs execution completed inside the hardened service"
+if grep -q '^event: run.completed' <<<"${stream_response}"; then
+  pass "real Hermes-native session execution completed inside the hardened service"
 else
-  bad "real /v1/runs execution did not complete (create=${run_response:-empty}; status=${run_status_response:-empty})"
+  bad "Hermes-native session execution did not complete (create=${session_response:-empty})"
 fi
 
 printf '\n=== resuming from a protected enrollment receipt ===\n'

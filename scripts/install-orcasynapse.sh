@@ -22,7 +22,7 @@ export ORCASYNAPSE_HTTP_PORT
 
 UI_BANNER_TAGLINE="PRIVATE AI CONTROL PLANE  /  VM1 PROVISIONING"
 UI_BANNER_ACTIVITY="Establishing secure installation context"
-TOTAL_STEPS=7
+TOTAL_STEPS=6
 
 # Restore the cursor if an animated section is interrupted, and close the log.
 #
@@ -153,31 +153,6 @@ migrate_legacy_installation_secret() {
   fi
 }
 
-seed_embedding_model() {
-  # Pull the approved embedding weights into the shared model cache now, rather
-  # than on the first upload.
-  #
-  # Two reasons this is not optional. An air-gapped installation has no way to
-  # fetch them later, and the code has always assumed they were "seeded at
-  # install time"; and a cold first upload otherwise downloads ~2 GB inside an
-  # HTTP request, which outlives any sane proxy timeout.
-  #
-  # Non-fatal: an installation that cannot reach the model host is still usable
-  # for everything except retrieval, and saying so beats refusing to install.
-  # Imported by built path, not by package name: `node -e` resolves from
-  # "[eval1]" rather than a file in the workspace, so the bare specifier
-  # "@orcasynapse/knowledge" is not found even though the worker's own entry
-  # point imports it happily.
-  if docker compose run --rm --no-deps \
-       -e ORCASYNAPSE_MODEL_CACHE_DIR=/var/lib/orcasynapse/models \
-       worker node -e '
-         const { LocalBgeM3Embedder } = await import("/app/packages/knowledge/dist/index.js");
-         await new LocalBgeM3Embedder().embed(["installation warm-up"]);
-       ' >/dev/null 2>&1; then
-    return 0
-  fi
-  return 1
-}
 
 start_stack() {
   if run_with_progress "Start PostgreSQL and application services" docker compose up -d --no-build; then
@@ -205,25 +180,6 @@ wait_for_orcasynapse() {
   done
 }
 
-# The postgres service moved from postgres:17-alpine (musl) to
-# pgvector/pgvector:pg17 (glibc). Locale collation differs between the two
-# libcs, so text btree indexes built under the old image can be mis-ordered
-# under the new one. Reindex once for data volumes that predate the switch,
-# then record completion so subsequent runs skip it.
-reindex_after_libc_migration() {
-  local volume_preexisted="$1"
-  local state_dir="${ORCASYNAPSE_ROOT}/.local/state"
-  local marker="${state_dir}/postgres-libc-reindexed"
-  [[ -f "${marker}" ]] && return 0
-  if (( volume_preexisted )); then
-    run_with_progress "Reindex PostgreSQL after the base-image migration" \
-      docker compose exec -T postgres reindexdb --username orcasynapse --dbname orcasynapse --quiet \
-      || fail "could not reindex PostgreSQL after the base-image migration"
-  fi
-  install -d -m 0700 "${state_dir}"
-  : > "${marker}"
-  chmod 0600 "${marker}"
-}
 
 # The host CPU count, or 0 when it cannot be determined. getconf is the fallback
 # for a minimal image without coreutils, and 0 means "unknown" -- better to say
@@ -249,7 +205,7 @@ check_cpu_capacity() {
   local cpu_count
   cpu_count="$(host_cpu_count)"
   if (( cpu_count > 0 && cpu_count < ORCASYNAPSE_MINIMUM_VCPUS )); then
-    warning "this host has ${cpu_count} vCPU; OrcaSynapse expects at least ${ORCASYNAPSE_MINIMUM_VCPUS}, and document embedding stays slow below 4"
+    warning "this host has ${cpu_count} vCPU; OrcaSynapse expects at least ${ORCASYNAPSE_MINIMUM_VCPUS}"
   fi
 }
 
@@ -338,6 +294,8 @@ write_completion_marker() {
     "${version}" "${commit}" "${completed_at}" "${ORCASYNAPSE_PUBLIC_SCHEME}" \
     > "${ORCASYNAPSE_ROOT}/.local/state/install-complete.json"
   chmod 0600 "${ORCASYNAPSE_ROOT}/.local/state/install-complete.json"
+  printf '%s\n' 'hermes-native-v1' > "${ORCASYNAPSE_ROOT}/.local/state/schema-epoch"
+  chmod 0600 "${ORCASYNAPSE_ROOT}/.local/state/schema-epoch"
 }
 
 provision_local_administrator() {
@@ -425,25 +383,12 @@ main() {
   protect_secret_files
   success "Secrets are host-protected and readable only by their intended container identities."
 
-  step 5 "${TOTAL_STEPS}" "Seed the local embedding model"
-  if run_with_progress "Download approved embedding weights" seed_embedding_model; then
-    success "Embedding weights are cached locally; retrieval works without internet access."
-  else
-    warning "The embedding model could not be downloaded now."
-    info "Knowledge upload and retrieval stay unavailable until this host can reach the model source once."
-  fi
-
-  step 6 "${TOTAL_STEPS}" "Migrate PostgreSQL and start services"
-  local postgres_volume_preexisted=0
-  if docker volume inspect orcasynapse_postgres_data >/dev/null 2>&1; then
-    postgres_volume_preexisted=1
-  fi
+  step 5 "${TOTAL_STEPS}" "Migrate PostgreSQL and start services"
   start_stack
   run_with_progress "Wait for control-plane readiness" wait_for_orcasynapse \
     || fail "control-plane readiness checks failed"
-  reindex_after_libc_migration "${postgres_volume_preexisted}"
 
-  step 7 "${TOTAL_STEPS}" "Provision administrator access"
+  step 6 "${TOTAL_STEPS}" "Provision administrator access"
   provision_local_administrator
 
   local host_ip installation_key

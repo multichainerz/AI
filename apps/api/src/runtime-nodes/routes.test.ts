@@ -128,9 +128,7 @@ describe("Hermes runtime-node routes", () => {
     expect(ready.body).toContain("#!/usr/bin/env bash");
     expect(ready.body).toContain("write_file_from_stdin()");
     expect(ready.body).toContain("allow_lazy_installs: false");
-    // The memory provider bootstrap is gone with Supermemory; agent memory is
-    // served by the control plane, so VM2 installs exactly one plane.
-    expect(ready.body).not.toContain("supermemory");
+    expect(ready.body).toContain("native-sessions");
     expect(ready.body).toContain("-in \"${message_file}\"");
     // A trust mismatch must still name the identity this VM2 actually holds,
     // so an operator can compare it against the dashboard record.

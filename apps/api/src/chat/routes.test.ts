@@ -14,7 +14,6 @@ import {
   AgentRuntimeDisabledError,
 } from "../agents/agent-manager.js";
 import { ChatConfigurationError, type ChatManager } from "./chat-manager.js";
-import { AgentMemoryNotFoundError, type MemoryManager } from "../memory/memory-manager.js";
 
 const SESSION_TOKEN = "s".repeat(43);
 const SESSION_ID = "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb";
@@ -63,7 +62,6 @@ const completedMessage: ChatMessage = {
   lastEventCursor: "2",
   runtimeEvents: [],
   approvals: [],
-  sources: [],
   feedback: null,
   createdAt: "2026-07-30T00:00:01.000Z",
   completedAt: "2026-07-30T00:00:01.150Z",
@@ -86,7 +84,7 @@ const enterpriseIdentity: EnterpriseIdentityManager = {
       identityMode: "ENTERPRISE",
       displayName: "Pilot User",
       email: "pilot@orcasynapse.example",
-      scopes: ["chat:use", "documents:use", "agents:use"],
+      scopes: ["chat:use", "agents:use"],
       session: {
         id: SESSION_ID,
         identityMode: "ENTERPRISE",
@@ -95,7 +93,7 @@ const enterpriseIdentity: EnterpriseIdentityManager = {
           displayName: "Pilot User",
           email: "pilot@orcasynapse.example",
         },
-        scopes: ["chat:use", "documents:use", "agents:use"],
+        scopes: ["chat:use", "agents:use"],
         createdAt: "2026-07-30T00:00:00.000Z",
         idleExpiresAt: "2026-07-30T08:00:00.000Z",
         absoluteExpiresAt: "2026-07-30T12:00:00.000Z",
@@ -138,11 +136,9 @@ function memoryChatManager(): ChatManager {
   return {
     list: vi.fn(async () => ({ items: [summary] })),
     create: vi.fn(async () => summary),
-    get: vi.fn(async () => ({ ...summary, messages: [], knowledgeDocuments: [] })),
+    get: vi.fn(async () => ({ ...summary, messages: [] })),
     update: vi.fn(async () => summary),
-    cancelActiveRun: vi.fn(async () => ({ ...summary, messages: [], knowledgeDocuments: [] })),
-    attachDocument: vi.fn(async () => ({ ...summary, messages: [], knowledgeDocuments: [] })),
-    detachDocument: vi.fn(async () => ({ ...summary, messages: [], knowledgeDocuments: [] })),
+    cancelActiveRun: vi.fn(async () => ({ ...summary, messages: [] })),
     submitMessage: vi.fn(async () => ({
       conversationId: CONVERSATION_ID,
       userMessage,
@@ -188,7 +184,6 @@ afterEach(async () => Promise.all(apps.splice(0).map((app) => app.close())));
 async function chatApp(
   manager: ChatManager = memoryChatManager(),
   identityManager?: EnterpriseIdentityManager,
-  memoryManager?: MemoryManager,
 ) {
   const app = await createApp({
     logger: false,
@@ -197,7 +192,6 @@ async function chatApp(
       sessionManager: new SessionManager(),
       chatManager: manager,
       ...(identityManager ? { identityManager } : {}),
-      ...(memoryManager ? { memoryManager } : {}),
     },
   });
   apps.push(app);
@@ -311,7 +305,7 @@ describe("controlled chat routes", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ ...summary, messages: [], knowledgeDocuments: [] });
+    expect(response.json()).toEqual({ ...summary, messages: [] });
     expect(manager.cancelActiveRun).toHaveBeenCalledWith(
       expect.objectContaining({ identityMode: "ADMINISTRATOR_PREVIEW" }),
       CONVERSATION_ID,
@@ -365,7 +359,6 @@ describe("controlled chat routes", () => {
     expect(response.json()).toEqual({ error: "CHAT_NOT_CONFIGURED", message: "Test vLLM first." });
   });
 });
-
 describe("SSE write backpressure", () => {
   const FRAMES = 200;
   const FRAME_CONTENT = "x".repeat(128 * 1_024);
@@ -426,119 +419,5 @@ describe("SSE write backpressure", () => {
 
     expect(producedWhileStalled).toBeLessThan(FRAMES);
     expect(bufferedWhileStalled).toBeLessThan(2 * 1_024 * 1_024);
-  });
-});
-
-const PILOT_SUBJECT = "user:fb8c1e58-10d6-4ac7-aafe-e259763a6f63";
-const OWN_MEMORY_ID = "5b2d9c14-0e6a-4f38-9c71-2a8d3e5f6071";
-
-function selfServiceMemory(): MemoryManager {
-  return {
-    list: vi.fn(async () => ({ items: [] })),
-    create: vi.fn(async () => { throw new Error("Not used"); }),
-    update: vi.fn(async () => { throw new Error("Not used"); }),
-    activate: vi.fn(async () => { throw new Error("Not used"); }),
-    suspend: vi.fn(async () => { throw new Error("Not used"); }),
-    records: vi.fn(async () => { throw new Error("Not used"); }),
-    recordsForOwner: vi.fn(async (ownerSubject: string) => ({
-      items: [{
-        id: OWN_MEMORY_ID,
-        ownerSubject,
-        agentProfileId: "3e5f7a91-2c4d-4e6f-8a0b-1c2d3e4f5a6b",
-        agentProfileSlug: "assistant",
-        content: "Prefers concise answers.",
-        profileScope: "EPISODIC" as const,
-        sourceRunId: null,
-        retentionUntil: null,
-        createdAt: "2026-08-01T00:00:00.000Z",
-        version: 1,
-        parentMemoryId: null,
-        rootMemoryId: null,
-        isLatest: true,
-        supersededAt: null,
-        supersededReason: null,
-        forgottenAt: null,
-        forgetReason: null,
-        forgetBatchId: null,
-      }],
-    })),
-    forget: vi.fn(async () => undefined),
-    forgetMatching: vi.fn(async () => ({
-      dryRun: true,
-      forgetBatchId: null,
-      candidates: [],
-      matched: 0,
-      forgotten: 0,
-      truncated: false,
-      capped: false,
-    })),
-    purge: vi.fn(async () => 0),
-  };
-}
-
-describe("self-service memory", () => {
-  const enterpriseHeaders = { cookie: `${ENTERPRISE_SESSION_COOKIE}=${ENTERPRISE_TOKEN}` };
-
-  it("shows a person only what agents learned about them", async () => {
-    const memory = selfServiceMemory();
-    const app = await chatApp(memoryChatManager(), enterpriseIdentity, memory);
-
-    const response = await app.inject({ method: "GET", url: "/api/v1/chat/memory", headers: enterpriseHeaders });
-
-    expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({ items: [{ ownerSubject: PILOT_SUBJECT }] });
-    // The scope comes from the authenticated session, never from the request.
-    expect(memory.recordsForOwner).toHaveBeenCalledWith(PILOT_SUBJECT);
-    expect(response.headers["cache-control"]).toBe("no-store");
-  });
-
-  it("scopes a self-service deletion to the caller's own subject", async () => {
-    const memory = selfServiceMemory();
-    const app = await chatApp(memoryChatManager(), enterpriseIdentity, memory);
-
-    const response = await app.inject({
-      method: "DELETE",
-      url: `/api/v1/chat/memory/${OWN_MEMORY_ID}`,
-      headers: enterpriseHeaders,
-    });
-
-    expect(response.statusCode).toBe(204);
-    expect(memory.forget).toHaveBeenCalledWith(
-      expect.objectContaining({ ownerSubject: PILOT_SUBJECT }),
-      OWN_MEMORY_ID,
-      expect.stringContaining("forgotten"),
-    );
-  });
-
-  it("cannot confirm another person's memory even exists", async () => {
-    const memory = selfServiceMemory();
-    memory.forget = vi.fn(async () => {
-      throw new AgentMemoryNotFoundError("Out of scope.");
-    });
-    const app = await chatApp(memoryChatManager(), enterpriseIdentity, memory);
-
-    const response = await app.inject({
-      method: "DELETE",
-      url: "/api/v1/chat/memory/9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d",
-      headers: enterpriseHeaders,
-    });
-
-    expect(response.statusCode).toBe(404);
-  });
-
-  it("refuses an unauthenticated caller and a malformed identifier", async () => {
-    const memory = selfServiceMemory();
-    const app = await chatApp(memoryChatManager(), enterpriseIdentity, memory);
-
-    expect((await app.inject({ method: "GET", url: "/api/v1/chat/memory" })).statusCode).toBe(401);
-    expect((await app.inject({ method: "DELETE", url: "/api/v1/chat/memory/not-a-uuid", headers: enterpriseHeaders })).statusCode).toBe(400);
-    expect(memory.recordsForOwner).not.toHaveBeenCalled();
-    expect(memory.forget).not.toHaveBeenCalled();
-  });
-
-  it("reports the surface as locked rather than empty when memory is unavailable", async () => {
-    const app = await chatApp(memoryChatManager(), enterpriseIdentity);
-    const response = await app.inject({ method: "GET", url: "/api/v1/chat/memory", headers: enterpriseHeaders });
-    expect(response.statusCode).toBe(423);
   });
 });

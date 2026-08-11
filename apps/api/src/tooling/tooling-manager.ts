@@ -21,7 +21,7 @@ export interface ToolingPrincipal {
 }
 
 export interface ToolBoundaryVerifier {
-  assertGovernedToolBoundary(): Promise<void>;
+  assertAdmittedToolBoundary(admitted?: Iterable<string>): Promise<void>;
 }
 
 export interface GovernedToolInvocation {

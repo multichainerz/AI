@@ -26,12 +26,6 @@ import {
   type EnterpriseIdentityManager,
 } from "./identity/enterprise-session.js";
 import { DrizzleRuntimeConnectionResolver, HermesClient } from "@orcasynapse/runtime-clients";
-import {
-  APPROVED_EMBEDDING_MODEL,
-  DocumentVectorStore,
-} from "@orcasynapse/knowledge";
-import type { DocumentManager } from "./documents/document-manager.js";
-import { DrizzleDocumentManager } from "./documents/drizzle-document-manager.js";
 import type { AgentManager } from "./agents/agent-manager.js";
 import { DrizzleAgentManager } from "./agents/drizzle-agent-manager.js";
 import type { ToolingManager } from "./tooling/tooling-manager.js";
@@ -45,11 +39,6 @@ import { DrizzleGuardrailManager } from "./guardrails/drizzle-guardrail-manager.
 import { DrizzleAuditManager, type AuditManager } from "./audit/audit-manager.js";
 import { SiemForwarder } from "./audit/siem-forwarder.js";
 import type { PromptManager } from "./prompts/prompt-manager.js";
-import { DrizzleMemoryManager } from "./memory/drizzle-memory-manager.js";
-import { ForgetMatcher } from "./memory/forget-matcher.js";
-import type { MemoryManager } from "./memory/memory-manager.js";
-import type { BenchmarkManager } from "./benchmarks/benchmark-manager.js";
-import { DrizzleBenchmarkManager } from "./benchmarks/drizzle-benchmark-manager.js";
 import { DrizzlePromptManager } from "./prompts/drizzle-prompt-manager.js";
 import type { OnboardingManager } from "./onboarding/onboarding-manager.js";
 import { DrizzleOnboardingManager } from "./onboarding/drizzle-onboarding-manager.js";
@@ -69,12 +58,9 @@ export interface RuntimeServices {
   operationsManager?: OperationsManager;
   chatManager?: ChatManager;
   identityManager?: EnterpriseIdentityManager;
-  documentManager?: DocumentManager;
   modelManager?: ModelManager;
   guardrailManager?: GuardrailManager;
   promptManager?: PromptManager;
-  memoryManager?: MemoryManager;
-  benchmarkManager?: BenchmarkManager;
   auditManager?: AuditManager;
   siemForwarder?: SiemForwarder;
   agentManager?: AgentManager;
@@ -135,22 +121,15 @@ export function createRuntimeServices(): RuntimeServices {
     );
     const sessionManager = new DrizzleAdminSessionManager(database, authenticator);
     const operationsManager = new DrizzleOperationsManager(database);
-    const documentResolver = new DrizzleRuntimeConnectionResolver(database, encryption);
+    const connectionResolver = new DrizzleRuntimeConnectionResolver(database, encryption);
     const modelManager = new DrizzleModelManager(database);
     const guardrailManager = new DrizzleGuardrailManager(database);
     const promptManager = new DrizzlePromptManager(database);
-    // The matcher only speaks HTTP to the inference route, so it carries no
-    // model weights into the API process; see forget-matcher.ts.
-    const memoryManager = new DrizzleMemoryManager(database, new ForgetMatcher(documentResolver));
     const auditManager = new DrizzleAuditManager(database);
     const siemForwarder = new SiemForwarder(database, connectionManager, {
       error: (message, error) => console.error(message, error),
     });
-    const documentManager = new DrizzleDocumentManager(
-      database,
-      new DocumentVectorStore(database, APPROVED_EMBEDDING_MODEL),
-    );
-    const hermesClient = new HermesClient(documentResolver);
+    const hermesClient = new HermesClient(connectionResolver);
     const agentManager = new DrizzleAgentManager(database, hermesClient);
     /*
      * Accelerates every chat stream this process serves, from one connection.
@@ -171,7 +150,6 @@ export function createRuntimeServices(): RuntimeServices {
       models: modelManager,
       runtime: operationsManager,
       chat: chatManager,
-      documents: documentManager,
       agents: agentManager,
       tools: toolingManager,
       audit: auditManager,
@@ -203,17 +181,14 @@ export function createRuntimeServices(): RuntimeServices {
         fetch,
         sessionManager,
       ),
-      documentManager,
       modelManager,
       guardrailManager,
       promptManager,
-      memoryManager,
       auditManager,
       siemForwarder,
       agentManager,
       toolingManager,
       aiOpsManager,
-      benchmarkManager: new DrizzleBenchmarkManager(database, aiOpsManager),
       onboardingManager,
       runtimeNodeManager,
       inferenceGateway,

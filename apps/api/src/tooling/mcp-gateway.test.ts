@@ -5,13 +5,13 @@ import { ToolingDeniedError, type ToolingManager } from "./tooling-manager.js";
 
 const tool: GovernedTool = {
   id: "d160a1a0-7218-48a4-8a9f-7e1681280fe4",
-  slug: "document_metadata_read",
-  displayName: "Read document metadata",
-  description: "Read metadata in owner-only scope.",
+  slug: "system_status",
+  displayName: "Read system status",
+  description: "Read status in owner-only scope.",
   risk: "READ_ONLY",
   status: "ACTIVE",
-  handlerKey: "builtin.document_metadata_read",
-  inputSchema: { type: "object", properties: { documentId: { type: "string", format: "uuid" } }, required: ["documentId"], additionalProperties: false },
+  handlerKey: "hermes.system_status",
+  inputSchema: { type: "object", properties: { service: { type: "string" } }, required: ["service"], additionalProperties: false },
   createdAt: "2026-07-30T00:00:00.000Z",
   updatedAt: "2026-07-30T00:00:00.000Z",
 };
@@ -22,7 +22,7 @@ function manager(): ToolingManager {
     listToolsForRun: vi.fn(async () => ({ items: [tool] })),
     setToolStatus: vi.fn(), listGrants: vi.fn(), upsertGrant: vi.fn(), listCredentials: vi.fn(),
     issueCredential: vi.fn(), revokeCredential: vi.fn(), authenticateGateway: vi.fn(async () => true),
-    invoke: vi.fn(async () => ({ callId: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d", status: "COMPLETED", data: { fileName: "policy.pdf" }, isError: false })),
+    invoke: vi.fn(async () => ({ callId: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d", status: "COMPLETED", data: { service: "inference", healthy: true }, isError: false })),
     recordDeniedInvocation: vi.fn(async () => undefined), listCalls: vi.fn(),
     getRuntimeControl: vi.fn(), updateRuntimeControl: vi.fn(), metrics: vi.fn(),
   } as unknown as ToolingManager;
@@ -36,7 +36,7 @@ describe("McpGateway", () => {
     const initialized = await gateway.handle({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25" } });
     const listed = await gateway.handle({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }, "legacy", authorization);
     expect(initialized.body).toMatchObject({ result: { protocolVersion: "2025-11-25", capabilities: { tools: { listChanged: false } } } });
-    expect(listed.body).toMatchObject({ result: { tools: [{ name: "document_metadata_read", annotations: { readOnlyHint: true } }] } });
+    expect(listed.body).toMatchObject({ result: { tools: [{ name: "system_status", annotations: { readOnlyHint: true } }] } });
     expect(JSON.stringify(listed.body)).not.toContain("_orcasynapseAuthorization");
   });
 
@@ -80,13 +80,13 @@ describe("McpGateway", () => {
     const gateway = new McpGateway(tooling);
     const response = await gateway.handle({
       jsonrpc: "2.0", id: 3, method: "tools/call",
-      params: { name: "document_metadata_read", arguments: {
+      params: { name: "system_status", arguments: {
         requestId: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb",
-        documentId: "b41d3534-658b-4cf0-a046-2b20b15f44e5",
+        service: "inference",
       } },
     }, "legacy", authorization);
-    expect(tooling.invoke).toHaveBeenCalledWith("document_metadata_read", expect.objectContaining({
-      arguments: { documentId: "b41d3534-658b-4cf0-a046-2b20b15f44e5" },
+    expect(tooling.invoke).toHaveBeenCalledWith("system_status", expect.objectContaining({
+      arguments: { service: "inference" },
     }));
     expect(response.body).toMatchObject({ result: { isError: false, structuredContent: { status: "COMPLETED" } } });
   });
@@ -97,9 +97,9 @@ describe("McpGateway", () => {
     const gateway = new McpGateway(tooling);
     const response = await gateway.handle({
       jsonrpc: "2.0", id: 4, method: "tools/call",
-      params: { name: "document_metadata_read", arguments: {
+      params: { name: "system_status", arguments: {
         requestId: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb",
-        documentId: "b41d3534-658b-4cf0-a046-2b20b15f44e5",
+        service: "inference",
       } },
     }, "legacy", authorization);
     expect(response.body).toMatchObject({ result: { isError: true, structuredContent: { status: "DENIED", message: "Grant revoked." } } });

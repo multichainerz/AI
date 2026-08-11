@@ -22,7 +22,6 @@ export interface AgentPrincipal {
 
 export interface AgentBoundaryVerifier {
   assertAdmittedToolBoundary(admitted?: Iterable<string>): Promise<void>;
-  assertGovernedToolBoundary(): Promise<void>;
   /** Read-only description of the runtime; never a gate on execution. */
   catalogue(): Promise<{
     toolsets: Array<{ name: string; label: string | null; enabled: boolean; toolCount: number }>;
@@ -45,10 +44,7 @@ export interface AgentManager {
     input: SubmitAgentRun,
     options?: {
       sessionId?: string;
-      memorySessionKey?: string;
-      conversationHistory?: Array<{ role: "user" | "assistant"; content: string }>;
       outputCharacterLimit?: number;
-      knowledgeDocumentIds?: readonly string[];
     },
   ): Promise<AgentRun>;
   cancelRun(principal: AgentPrincipal, runId: string, includeAll: boolean): Promise<AgentRun>;

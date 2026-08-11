@@ -190,7 +190,7 @@ export function RuntimeNodesPanel({
 
   return <div className="runtime-nodes-layout">
     <section className="panel runtime-nodes-overview">
-      <div className="document-section-heading">
+      <div className="runtime-section-heading">
         <div><p className="text-micro font-semibold uppercase tabular-nums text-faint">Isolated VM2</p><h2>Agentic System</h2></div>
         <div className="runtime-node-heading-actions"><button className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-pill border border-border-strong bg-transparent px-4 text-body font-semibold text-text transition-colors hover:border-faint disabled:cursor-not-allowed disabled:opacity-40" type="button" disabled={busy !== null} onClick={() => void load()}>Refresh</button><Button variant="primary" type="button" disabled={activeRuntimeExists || !inferenceReady} title={!inferenceReady ? "Configure and test AI Inference before enrolling the Agentic System." : activeRuntimeExists ? "Revoke the active execution boundary before enrolling its replacement." : undefined} onClick={() => { setInvitation(null); setEditorOpen(true); }}>Generate installer</Button></div>
       </div>
@@ -201,10 +201,10 @@ export function RuntimeNodesPanel({
         <div><strong>No standing SSH trust</strong><span>Enrollment is single-use. Agent Profiles remain versioned in OrcaSynapse and are injected per governed Run.</span></div>
         <div><strong>One runtime at a time</strong><span>{nodes.length === 0 ? "An installation holds exactly one Hermes execution boundary. Enrolling a second is refused." : "This installation already holds its Hermes execution boundary. Revoke and remove this node before enrolling a replacement."}</span></div>
       </div>
-      {error && <div className="documents-alert" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
+      {error && <div className="runtime-alert" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
       {nodes.length === 0 && !inferenceReady ? <EmptyState title="AI Inference must be ready first" action={<Button onClick={onConfigureInference}>Configure AI Inference</Button>}>Connect and activate one served model. OrcaSynapse will then prepare the VM2 installer with the approved route.</EmptyState> : nodes.length === 0 ? <EmptyState title="Install the Agentic System on VM2" action={<Button variant="primary" onClick={() => setEditorOpen(true)}>Generate VM2 installer</Button>}>Generate one secure command, run it on the isolated VM, and paste the one-time claim when prompted. Hermes is installed, registered, and bound to the approved inference route.</EmptyState> : <div className="runtime-node-list">{nodes.map((node) => <article key={node.id}>
         <div className={`runtime-node-state ${nodeTone(node.status)}`}><span /></div>
-        <div className="runtime-node-copy"><div><strong>{node.displayName}</strong><span className={`document-status ${nodeTone(node.status)}`}>{humanize(node.status)}</span></div><p>{node.baseUrl}</p><small>{node.hostname ?? node.expectedHostname ?? "Awaiting hostname"} · {node.hermesVersion ?? "Version pending"}</small></div>
+        <div className="runtime-node-copy"><div><strong>{node.displayName}</strong><span className={`runtime-status ${nodeTone(node.status)}`}>{humanize(node.status)}</span></div><p>{node.baseUrl}</p><small>{node.hostname ?? node.expectedHostname ?? "Awaiting hostname"} · {node.hermesVersion ?? "Version pending"}</small></div>
         <dl><div><dt>Last heartbeat</dt><dd>{node.lastSeenAt ? new Date(node.lastSeenAt).toLocaleString() : "Never"}</dd></div><div><dt>OrcaSynapse → Hermes</dt><dd>{node.serviceConnectionStatus ? humanize(node.serviceConnectionStatus) : "Pending"}</dd></div><div><dt>Identity</dt><dd>{node.identityFingerprint ? `${node.identityFingerprint.slice(0, 12)}…` : "Not enrolled"}</dd></div></dl>
         <div className="runtime-node-actions">
           {node.status === "DRAINING" || node.status === "SUSPENDED" ? <button className="inline-flex h-7 items-center justify-center whitespace-nowrap rounded-pill border border-transparent px-2.5 text-[10px] font-medium text-muted transition-colors hover:bg-raised hover:text-text disabled:cursor-not-allowed disabled:opacity-40" type="button" disabled={busy !== null} onClick={() => void act(node, "RESUME")}>Resume</button> : <button className="inline-flex h-7 items-center justify-center whitespace-nowrap rounded-pill border border-transparent px-2.5 text-[10px] font-medium text-muted transition-colors hover:bg-raised hover:text-text disabled:cursor-not-allowed disabled:opacity-40" type="button" disabled={busy !== null || node.status === "PENDING" || node.status === "OFFLINE"} onClick={() => void act(node, "DRAIN")}>Drain</button>}
@@ -284,7 +284,7 @@ export function RuntimeNodesPanel({
         <li><span>2</span><div><strong>Confirm the host-side result</strong><small>OrcaSynapse deliberately has no standing SSH access or remote execution channel on VM2, so this confirmation is your administrative attestation.</small><label className="runtime-removal-attestation"><input type="checkbox" checked={hostDestructionConfirmed} onChange={(event) => setHostDestructionConfirmed(event.target.checked)} /><span>The remover reported “Agentic System removed from this VM,” or the VM was destroyed.</span></label></div></li>
       </ol> : <div className="runtime-development-note">This record never completed enrollment, so there is no managed VM2 installation to purge.</div>}
       <label><span>Type {removalNode.slug} to remove it permanently</span><input autoComplete="off" spellCheck={false} value={removalConfirmation} onChange={(event) => setRemovalConfirmation(event.target.value)} /></label>
-      {error && <div className="documents-alert" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
+      {error && <div className="runtime-alert" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
     </Dialog>}
   </div>;
 }

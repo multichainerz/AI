@@ -28,8 +28,6 @@ export interface ChatManager {
     input: CreateChatConversation,
   ): Promise<ChatConversationSummary>;
   get(principal: ChatPrincipal, conversationId: string): Promise<ChatConversation>;
-  attachDocument(principal: ChatPrincipal, conversationId: string, documentId: string): Promise<ChatConversation>;
-  detachDocument(principal: ChatPrincipal, conversationId: string, documentId: string): Promise<ChatConversation>;
   update(
     principal: ChatPrincipal,
     conversationId: string,

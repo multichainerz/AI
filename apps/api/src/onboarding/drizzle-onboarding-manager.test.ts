@@ -1,12 +1,10 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import {
   agentProfile,
   agentProfileVersion,
   componentCompatibility,
   createTestDatabase,
-  document,
-  documentChunk,
   evaluationRun,
   guardrailPolicy,
   localAdministrator,
@@ -41,32 +39,6 @@ async function provisionAdministrator() {
   });
 }
 
-async function publishKnowledgeSource() {
-  const [stored] = await context.database
-    .insert(document)
-    .values({
-      ownerSubject: "local-admin:operator",
-      fileName: "runbook.pdf",
-      mediaType: "application/pdf",
-      sizeBytes: 4_096,
-      sha256: createHash("sha256").update("runbook").digest("hex"),
-      classification: "INTERNAL",
-      status: "READY",
-      completedAt: new Date(),
-      retentionUntil: new Date(Date.now() + 30 * 24 * 60 * 60 * 1_000),
-    })
-    .returning({ id: document.id });
-  await context.database.insert(documentChunk).values({
-    documentId: stored!.id,
-    ownerSubject: "local-admin:operator",
-    ordinal: 0,
-    content: "Restart Hermes with the runbook procedure.",
-    characterCount: 41,
-    embeddingModel: "Xenova/bge-m3",
-    embedding: Array.from({ length: 1024 }, () => 0.01),
-  });
-  return stored!.id;
-}
 
 describe("DrizzleOnboardingManager state seeding", () => {
   it("seeds the component and stage catalogue idempotently", async () => {
@@ -77,7 +49,7 @@ describe("DrizzleOnboardingManager state seeding", () => {
     expect(second.components.length).toBe(first.components.length);
     expect(second.steps.map(({ key }) => key)).toEqual([
       "activate-installation", "system-topology", "identity-recovery", "ai-services",
-      "knowledge-workflow", "hermes-profiles", "guardrails-tools", "validate-activate",
+      "hermes-profiles", "guardrails-tools", "validate-activate",
     ]);
     expect(second.journey.currentStepKey).toBe("activate-installation");
   });
@@ -85,14 +57,12 @@ describe("DrizzleOnboardingManager state seeding", () => {
   it("prunes contracts that were withdrawn or renamed", async () => {
     await manager().snapshot();
     await context.database.insert(componentCompatibility).values([
-      { key: "qwen3-embedding", displayName: "Withdrawn", category: "Memory", expectedContract: "gone" },
       { key: "legacy-installer", displayName: "Renamed", category: "Deployment", expectedContract: "gone" },
     ]);
 
     const snapshot = await manager().snapshot();
 
     const keys = snapshot.components.map(({ key }) => key);
-    expect(keys).not.toContain("qwen3-embedding");
     expect(keys).not.toContain("legacy-installer");
     expect(keys).toContain("signed-installer");
     // The ORM contract carries the ORM actually in use.
@@ -222,23 +192,6 @@ describe("DrizzleOnboardingManager validation", () => {
     });
   });
 
-  it("passes the knowledge round trip from a published document", async () => {
-    const blocked = await manager().runValidation(principal, { stageKey: "knowledge-workflow" } as never);
-    expect(blocked.steps.find(({ key }) => key === "knowledge-workflow")?.status).toBe("BLOCKED");
-
-    const documentId = await publishKnowledgeSource();
-    const passed = await manager().runValidation(principal, { stageKey: "knowledge-workflow" } as never);
-
-    expect(passed.steps.find(({ key }) => key === "knowledge-workflow")?.status).toBe("COMPLETED");
-    const evidence = await context.database.select().from(onboardingEvidence);
-    // The blocked first run also left evidence, so select the passing attempt.
-    const roundTrip = evidence.find(({ code, outcome }) => code === "knowledge-roundtrip" && outcome === "PASSED");
-    expect(roundTrip?.details).toMatchObject({ documentId });
-    // The stage must attest a contract that is actually seeded, or it throws.
-    expect(roundTrip?.componentKey).toBe("knowledge-index");
-    expect(roundTrip?.details).toMatchObject({ chunks: 1, embeddingModel: "Xenova/bge-m3" });
-    expect(passed.components.find(({ key }) => key === "knowledge-index")?.status).toBe("PASSED");
-  });
 
   it("passes the Hermes profile stage from a checksummed distribution", async () => {
     const [profile] = await context.database
@@ -247,7 +200,7 @@ describe("DrizzleOnboardingManager validation", () => {
       .returning({ id: agentProfile.id });
     await context.database.insert(agentProfileVersion).values({
       profileId: profile!.id, version: 1, displayName: "Support", purpose: "Answer questions.",
-      instructions: "Answer only from approved knowledge.", soulMd: "Careful assistant.", skills: [],
+      instructions: "Answer only the authorized request.", soulMd: "Careful assistant.", skills: [],
       modelAlias: "hermes-agent", maxTurns: 1, timeoutSeconds: 120, maxConcurrentRuns: 1,
       distributionDigest: "a".repeat(64),
     });

@@ -646,9 +646,18 @@ existing_install_is_verified() {
     && -f "${ORCASYNAPSE_INSTALL_DIR}/scripts/install-orcasynapse.sh" ]] || return 1
 }
 
+existing_install_has_current_schema_epoch() {
+  local marker="${ORCASYNAPSE_INSTALL_DIR}/.local/state/schema-epoch"
+  [[ -f "${marker}" && ! -L "${marker}" && -r "${marker}" ]] || return 1
+  [[ "$(<"${marker}")" == "hermes-native-v1" ]]
+}
+
 choose_existing_install_action() {
   local verified="$1" requested_commit="$2"
-  local configured_action="${ORCASYNAPSE_EXISTING_INSTALL_ACTION:-}" choice=""
+  local configured_action="${ORCASYNAPSE_EXISTING_INSTALL_ACTION:-}" choice="" epoch_compatible=0
+  if [[ "${verified}" == "1" ]] && existing_install_has_current_schema_epoch; then
+    epoch_compatible=1
+  fi
 
   existing_install_action=""
 
@@ -656,6 +665,7 @@ choose_existing_install_action() {
     case "${configured_action}" in
       upgrade)
         [[ "${verified}" == "1" ]] || fail "cannot upgrade an unverified directory; use an empty path or explicitly choose erase"
+        [[ "${epoch_compatible}" == "1" ]] || fail "this greenfield release cannot preserve a pre-v3.16 database; choose erase on clean VM1 and restore only through the preserved prior release"
         existing_install_action="upgrade"
         return
         ;;
@@ -681,7 +691,7 @@ choose_existing_install_action() {
     printf '%b|  %-68s|%b\n' "${UI_AMBER}${UI_BOLD}" "EXISTING INSTALLATION DETECTED" "${UI_RESET}"
     printf '%b+======================================================================+%b\n' "${UI_AMBER}${UI_BOLD}" "${UI_RESET}"
     printf '   Location:  %s\n' "${ORCASYNAPSE_INSTALL_DIR}"
-    if [[ "${verified}" == "1" ]]; then
+    if [[ "${verified}" == "1" && "${epoch_compatible}" == "1" ]]; then
       printf '   Installed: %.12s\n' "$(<"${ORCASYNAPSE_INSTALL_DIR}/.orcasynapse-source-commit")"
       printf '   Requested: %.12s\n\n' "${requested_commit}"
       printf '   %b1%b  Update application source; preserve PostgreSQL and secrets %b[recommended]%b\n' \
@@ -692,7 +702,12 @@ choose_existing_install_action() {
       printf '\n   Enter 1, 2, or 3 and press Enter. Pressing Enter alone selects 1.\n'
       printf '   Awaiting selection on the next line:\n\n'
     else
-      printf '   This directory is not a verified OrcaSynapse source tree.\n\n'
+      if [[ "${verified}" == "1" ]]; then
+        printf '   This installation predates the hermes-native schema epoch.\n'
+        printf '   Its database cannot be preserved by this greenfield release.\n\n'
+      else
+        printf '   This directory is not a verified OrcaSynapse source tree.\n\n'
+      fi
       printf '   %b1%b  Clean the directory and install from scratch\n' "${UI_RED}${UI_BOLD}" "${UI_RESET}"
       printf '   %b2%b  Exit without changes\n' "${UI_DIM}" "${UI_RESET}"
       printf '\n   Enter 1 or 2 and press Enter. Pressing Enter alone selects 2.\n'
@@ -703,7 +718,7 @@ choose_existing_install_action() {
   if ! IFS= read -r choice < /dev/tty; then
     fail "the terminal closed before an installation action was received"
   fi
-  if [[ "${verified}" == "1" ]]; then
+  if [[ "${verified}" == "1" && "${epoch_compatible}" == "1" ]]; then
     case "${choice:-1}" in
       1)
         printf '   Selection received: update and preserve data.\n\n' > /dev/tty

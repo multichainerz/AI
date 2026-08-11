@@ -1,5 +1,5 @@
 {
-  "id": "6d38e026-c6e8-43c3-903f-dfd226b116cd",
+  "id": "dc63a667-8888-4019-aef8-ba4c9db52c75",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -336,13 +336,6 @@
           "primaryKey": false,
           "notNull": true
         },
-        "allowPrivateKnowledge": {
-          "name": "allowPrivateKnowledge",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
         "safeMode": {
           "name": "safeMode",
           "type": "boolean",
@@ -515,20 +508,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "effectiveCapabilities": {
-          "name": "effectiveCapabilities",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'[]'::jsonb"
-        },
-        "sources": {
-          "name": "sources",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'[]'::jsonb"
-        },
         "externalRunId": {
           "name": "externalRunId",
           "type": "varchar(255)",
@@ -620,19 +599,6 @@
           "type": "timestamp (6) with time zone",
           "primaryKey": false,
           "notNull": false
-        },
-        "memorySessionKey": {
-          "name": "memorySessionKey",
-          "type": "varchar(200)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "conversationHistory": {
-          "name": "conversationHistory",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'[]'::jsonb"
         },
         "partialOutput": {
           "name": "partialOutput",
@@ -1126,6 +1092,24 @@
           "type": "integer",
           "primaryKey": false,
           "notNull": false
+        },
+        "toolCallKey": {
+          "name": "toolCallKey",
+          "type": "varchar(200)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "text": {
+          "name": "text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "contentOffset": {
+          "name": "contentOffset",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {
@@ -1140,6 +1124,27 @@
             }
           ],
           "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "AgentRunEvent_runId_toolCallKey_idx": {
+          "name": "AgentRunEvent_runId_toolCallKey_idx",
+          "columns": [
+            {
+              "expression": "runId",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "toolCallKey",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -1318,7 +1323,8 @@
         },
         "allowedAdminRoles": {
           "name": "allowedAdminRoles",
-          "type": "bytea[]",
+          "type": "AdministratorRole[]",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true
         },
@@ -1506,6 +1512,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": "'{}'::jsonb"
+        },
+        "cursor": {
+          "name": "cursor",
+          "type": "bigserial",
+          "primaryKey": false,
+          "notNull": true
         }
       },
       "indexes": {
@@ -1541,6 +1553,21 @@
             }
           ],
           "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "AuditEvent_cursor_key": {
+          "name": "AuditEvent_cursor_key",
+          "columns": [
+            {
+              "expression": "cursor",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -1582,6 +1609,69 @@
           "with": {}
         }
       },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.AuditForwardingState": {
+      "name": "AuditForwardingState",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "varchar(32)",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "'global'"
+        },
+        "lastForwardedCursor": {
+          "name": "lastForwardedCursor",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "lastForwardedAt": {
+          "name": "lastForwardedAt",
+          "type": "timestamp (6) with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "lastForwardedId": {
+          "name": "lastForwardedId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "lastAttemptAt": {
+          "name": "lastAttemptAt",
+          "type": "timestamp (6) with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "lastError": {
+          "name": "lastError",
+          "type": "varchar(500)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "deliveredCount": {
+          "name": "deliveredCount",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp (6) with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
@@ -1663,12 +1753,6 @@
           "type": "varchar(120)",
           "primaryKey": false,
           "notNull": false
-        },
-        "hermesMemoryKey": {
-          "name": "hermesMemoryKey",
-          "type": "varchar(200)",
-          "primaryKey": false,
-          "notNull": true
         }
       },
       "indexes": {
@@ -1955,13 +2039,6 @@
           "type": "timestamp (6) with time zone",
           "primaryKey": false,
           "notNull": false
-        },
-        "sources": {
-          "name": "sources",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'[]'::jsonb"
         },
         "agentRunId": {
           "name": "agentRunId",
@@ -2418,6 +2495,100 @@
       },
       "isRLSEnabled": false
     },
+    "public.ControlPlaneSigningKey": {
+      "name": "ControlPlaneSigningKey",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "varchar(32)",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "'primary'"
+        },
+        "publicKeyPem": {
+          "name": "publicKeyPem",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "publicKeyFingerprint": {
+          "name": "publicKeyFingerprint",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "encryptedValue": {
+          "name": "encryptedValue",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "valueNonce": {
+          "name": "valueNonce",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "valueAuthTag": {
+          "name": "valueAuthTag",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "wrappedDataKey": {
+          "name": "wrappedDataKey",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "keyNonce": {
+          "name": "keyNonce",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "keyAuthTag": {
+          "name": "keyAuthTag",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "encryptionVersion": {
+          "name": "encryptionVersion",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "masterKeyVersion": {
+          "name": "masterKeyVersion",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp (6) with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp (6) with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.CredentialRecoveryControl": {
       "name": "CredentialRecoveryControl",
       "schema": "",
@@ -2494,550 +2665,6 @@
       },
       "indexes": {},
       "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.Document": {
-      "name": "Document",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "ownerSubject": {
-          "name": "ownerSubject",
-          "type": "varchar(200)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "fileName": {
-          "name": "fileName",
-          "type": "varchar(255)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "mediaType": {
-          "name": "mediaType",
-          "type": "varchar(160)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "sizeBytes": {
-          "name": "sizeBytes",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "sha256": {
-          "name": "sha256",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "classification": {
-          "name": "classification",
-          "type": "DocumentClassification",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "status": {
-          "name": "status",
-          "type": "DocumentStatus",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'QUEUED'"
-        },
-        "failureCode": {
-          "name": "failureCode",
-          "type": "varchar(80)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "failureMessage": {
-          "name": "failureMessage",
-          "type": "varchar(500)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "retentionUntil": {
-          "name": "retentionUntil",
-          "type": "timestamp (6) with time zone",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "completedAt": {
-          "name": "completedAt",
-          "type": "timestamp (6) with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "deletedAt": {
-          "name": "deletedAt",
-          "type": "timestamp (6) with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "createdAt": {
-          "name": "createdAt",
-          "type": "timestamp (6) with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "CURRENT_TIMESTAMP"
-        },
-        "updatedAt": {
-          "name": "updatedAt",
-          "type": "timestamp (6) with time zone",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {
-        "Document_ownerSubject_status_updatedAt_idx": {
-          "name": "Document_ownerSubject_status_updatedAt_idx",
-          "columns": [
-            {
-              "expression": "ownerSubject",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "updatedAt",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "Document_retentionUntil_status_idx": {
-          "name": "Document_retentionUntil_status_idx",
-          "columns": [
-            {
-              "expression": "retentionUntil",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "Document_sha256_idx": {
-          "name": "Document_sha256_idx",
-          "columns": [
-            {
-              "expression": "sha256",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "Document_status_createdAt_idx": {
-          "name": "Document_status_createdAt_idx",
-          "columns": [
-            {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "createdAt",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.DocumentChunk": {
-      "name": "DocumentChunk",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "documentId": {
-          "name": "documentId",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "ownerSubject": {
-          "name": "ownerSubject",
-          "type": "varchar(200)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "ordinal": {
-          "name": "ordinal",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "content": {
-          "name": "content",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "characterCount": {
-          "name": "characterCount",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "embeddingModel": {
-          "name": "embeddingModel",
-          "type": "varchar(120)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "embedding": {
-          "name": "embedding",
-          "type": "vector(1024)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "contentSearch": {
-          "name": "contentSearch",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "createdAt": {
-          "name": "createdAt",
-          "type": "timestamp (6) with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "CURRENT_TIMESTAMP"
-        }
-      },
-      "indexes": {
-        "DocumentChunk_content_fts_idx": {
-          "name": "DocumentChunk_content_fts_idx",
-          "columns": [
-            {
-              "expression": "to_tsvector('simple'::regconfig, content)",
-              "asc": true,
-              "isExpression": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "gin",
-          "with": {}
-        },
-        "DocumentChunk_documentId_ordinal_key": {
-          "name": "DocumentChunk_documentId_ordinal_key",
-          "columns": [
-            {
-              "expression": "documentId",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "ordinal",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "DocumentChunk_embedding_idx": {
-          "name": "DocumentChunk_embedding_idx",
-          "columns": [
-            {
-              "expression": "embedding",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last",
-              "opclass": "vector_cosine_ops"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "hnsw",
-          "with": {}
-        },
-        "DocumentChunk_ownerSubject_idx": {
-          "name": "DocumentChunk_ownerSubject_idx",
-          "columns": [
-            {
-              "expression": "ownerSubject",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "DocumentChunk_documentId_fkey": {
-          "name": "DocumentChunk_documentId_fkey",
-          "tableFrom": "DocumentChunk",
-          "tableTo": "Document",
-          "columnsFrom": [
-            "documentId"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "cascade"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.DocumentMemoryPublication": {
-      "name": "DocumentMemoryPublication",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "documentId": {
-          "name": "documentId",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "ownerSubject": {
-          "name": "ownerSubject",
-          "type": "varchar(200)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "scopeTag": {
-          "name": "scopeTag",
-          "type": "varchar(100)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "status": {
-          "name": "status",
-          "type": "MemorySyncStatus",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'NOT_INDEXED'"
-        },
-        "externalDocumentId": {
-          "name": "externalDocumentId",
-          "type": "varchar(255)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "failureCode": {
-          "name": "failureCode",
-          "type": "varchar(80)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "failureMessage": {
-          "name": "failureMessage",
-          "type": "varchar(500)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "queuedAt": {
-          "name": "queuedAt",
-          "type": "timestamp (6) with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "syncedAt": {
-          "name": "syncedAt",
-          "type": "timestamp (6) with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "deletedAt": {
-          "name": "deletedAt",
-          "type": "timestamp (6) with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "createdAt": {
-          "name": "createdAt",
-          "type": "timestamp (6) with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "CURRENT_TIMESTAMP"
-        },
-        "updatedAt": {
-          "name": "updatedAt",
-          "type": "timestamp (6) with time zone",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {
-        "DocumentMemoryPublication_documentId_key": {
-          "name": "DocumentMemoryPublication_documentId_key",
-          "columns": [
-            {
-              "expression": "documentId",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "DocumentMemoryPublication_ownerSubject_status_updatedAt_idx": {
-          "name": "DocumentMemoryPublication_ownerSubject_status_updatedAt_idx",
-          "columns": [
-            {
-              "expression": "ownerSubject",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "updatedAt",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "DocumentMemoryPublication_scopeTag_status_idx": {
-          "name": "DocumentMemoryPublication_scopeTag_status_idx",
-          "columns": [
-            {
-              "expression": "scopeTag",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "DocumentMemoryPublication_status_queuedAt_idx": {
-          "name": "DocumentMemoryPublication_status_queuedAt_idx",
-          "columns": [
-            {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "queuedAt",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "DocumentMemoryPublication_documentId_fkey": {
-          "name": "DocumentMemoryPublication_documentId_fkey",
-          "tableFrom": "DocumentMemoryPublication",
-          "tableTo": "Document",
-          "columnsFrom": [
-            "documentId"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "cascade"
-        }
-      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
@@ -4199,18 +3826,11 @@
           "primaryKey": false,
           "notNull": false
         },
-        "hermesImage": {
-          "name": "hermesImage",
+        "hermesCommit": {
+          "name": "hermesCommit",
           "type": "text",
           "primaryKey": false,
           "notNull": false
-        },
-        "supermemoryVersion": {
-          "name": "supermemoryVersion",
-          "type": "varchar(120)",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'0.0.7-rc.2'"
         }
       },
       "indexes": {
@@ -4446,13 +4066,13 @@
         },
         "hermesVersion": {
           "name": "hermesVersion",
-          "type": "varchar(120)",
+          "type": "varchar(256)",
           "primaryKey": false,
           "notNull": false
         },
         "installerVersion": {
           "name": "installerVersion",
-          "type": "varchar(120)",
+          "type": "varchar(256)",
           "primaryKey": false,
           "notNull": false
         },
@@ -4609,6 +4229,75 @@
             "id"
           ],
           "onDelete": "set null",
+          "onUpdate": "cascade"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.InferenceGatewayRequest": {
+      "name": "InferenceGatewayRequest",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "connectionId": {
+          "name": "connectionId",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "occurredAt": {
+          "name": "occurredAt",
+          "type": "timestamp (6) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "indexes": {
+        "InferenceGatewayRequest_connectionId_occurredAt_idx": {
+          "name": "InferenceGatewayRequest_connectionId_occurredAt_idx",
+          "columns": [
+            {
+              "expression": "connectionId",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "occurredAt",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "InferenceGatewayRequest_connectionId_fkey": {
+          "name": "InferenceGatewayRequest_connectionId_fkey",
+          "tableFrom": "InferenceGatewayRequest",
+          "tableTo": "ServiceConnection",
+          "columnsFrom": [
+            "connectionId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
           "onUpdate": "cascade"
         }
       },
@@ -6624,6 +6313,112 @@
       },
       "isRLSEnabled": false
     },
+    "public.RuntimeToolsetAdmission": {
+      "name": "RuntimeToolsetAdmission",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "toolsetName": {
+          "name": "toolsetName",
+          "type": "varchar(120)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "admitted": {
+          "name": "admitted",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "reason": {
+          "name": "reason",
+          "type": "varchar(500)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "admittedBy": {
+          "name": "admittedBy",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp (6) with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp (6) with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "RuntimeToolsetAdmission_toolsetName_key": {
+          "name": "RuntimeToolsetAdmission_toolsetName_key",
+          "columns": [
+            {
+              "expression": "toolsetName",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.SchemaMetadata": {
+      "name": "SchemaMetadata",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "varchar(32)",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "'current'"
+        },
+        "epoch": {
+          "name": "epoch",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp (6) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.SecretRecord": {
       "name": "SecretRecord",
       "schema": "",
@@ -6987,182 +6782,6 @@
         "ServiceConnection_monitoringClaim_check": {
           "name": "ServiceConnection_monitoringClaim_check",
           "value": "((\"monitoringClaimedAt\" IS NULL) AND (\"monitoringClaimedBy\" IS NULL) AND (\"monitoringClaimToken\" IS NULL)) OR ((\"monitoringClaimedAt\" IS NOT NULL) AND (\"monitoringClaimedBy\" IS NOT NULL) AND (\"monitoringClaimToken\" IS NOT NULL))"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "public.ToolActionDispatch": {
-      "name": "ToolActionDispatch",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "callId": {
-          "name": "callId",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "status": {
-          "name": "status",
-          "type": "ToolActionDispatchStatus",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'PENDING'"
-        },
-        "attemptCount": {
-          "name": "attemptCount",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "nextAttemptAt": {
-          "name": "nextAttemptAt",
-          "type": "timestamp (6) with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "CURRENT_TIMESTAMP"
-        },
-        "claimedAt": {
-          "name": "claimedAt",
-          "type": "timestamp (6) with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "claimedBy": {
-          "name": "claimedBy",
-          "type": "varchar(200)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "claimToken": {
-          "name": "claimToken",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "submittedJobId": {
-          "name": "submittedJobId",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "lastError": {
-          "name": "lastError",
-          "type": "varchar(500)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "completedAt": {
-          "name": "completedAt",
-          "type": "timestamp (6) with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "createdAt": {
-          "name": "createdAt",
-          "type": "timestamp (6) with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "CURRENT_TIMESTAMP"
-        },
-        "updatedAt": {
-          "name": "updatedAt",
-          "type": "timestamp (6) with time zone",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {
-        "ToolActionDispatch_callId_key": {
-          "name": "ToolActionDispatch_callId_key",
-          "columns": [
-            {
-              "expression": "callId",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "ToolActionDispatch_claimedAt_idx": {
-          "name": "ToolActionDispatch_claimedAt_idx",
-          "columns": [
-            {
-              "expression": "claimedAt",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "ToolActionDispatch_status_nextAttemptAt_idx": {
-          "name": "ToolActionDispatch_status_nextAttemptAt_idx",
-          "columns": [
-            {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "nextAttemptAt",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "ToolActionDispatch_callId_fkey": {
-          "name": "ToolActionDispatch_callId_fkey",
-          "tableFrom": "ToolActionDispatch",
-          "tableTo": "GovernedToolCall",
-          "columnsFrom": [
-            "callId"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "cascade"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "ToolActionDispatch_attemptCount_check": {
-          "name": "ToolActionDispatch_attemptCount_check",
-          "value": "\"attemptCount\" >= 0"
-        },
-        "ToolActionDispatch_claim_check": {
-          "name": "ToolActionDispatch_claim_check",
-          "value": "((status = 'PROCESSING'::\"ToolActionDispatchStatus\") AND (\"claimedAt\" IS NOT NULL) AND (\"claimedBy\" IS NOT NULL) AND (\"claimToken\" IS NOT NULL)) OR ((status <> 'PROCESSING'::\"ToolActionDispatchStatus\") AND (\"claimedAt\" IS NULL) AND (\"claimedBy\" IS NULL) AND (\"claimToken\" IS NULL))"
-        },
-        "ToolActionDispatch_completion_check": {
-          "name": "ToolActionDispatch_completion_check",
-          "value": "((status = ANY (ARRAY['COMPLETED'::\"ToolActionDispatchStatus\", 'FAILED'::\"ToolActionDispatchStatus\", 'CANCELLED'::\"ToolActionDispatchStatus\"])) AND (\"completedAt\" IS NOT NULL)) OR ((status = ANY (ARRAY['PENDING'::\"ToolActionDispatchStatus\", 'PROCESSING'::\"ToolActionDispatchStatus\"])) AND (\"completedAt\" IS NULL))"
         }
       },
       "isRLSEnabled": false
@@ -7606,29 +7225,6 @@
         "SEGMENTED_PRODUCTION"
       ]
     },
-    "public.DocumentClassification": {
-      "name": "DocumentClassification",
-      "schema": "public",
-      "values": [
-        "INTERNAL",
-        "CONFIDENTIAL",
-        "RESTRICTED"
-      ]
-    },
-    "public.DocumentStatus": {
-      "name": "DocumentStatus",
-      "schema": "public",
-      "values": [
-        "QUARANTINED",
-        "QUEUED",
-        "CONVERTING",
-        "READY",
-        "FAILED",
-        "REJECTED",
-        "DELETING",
-        "DELETED"
-      ]
-    },
     "public.EvaluationRunStatus": {
       "name": "EvaluationRunStatus",
       "schema": "public",
@@ -7679,19 +7275,6 @@
         "SUSPENDED",
         "REVOKED",
         "OFFLINE"
-      ]
-    },
-    "public.MemorySyncStatus": {
-      "name": "MemorySyncStatus",
-      "schema": "public",
-      "values": [
-        "NOT_INDEXED",
-        "QUEUED",
-        "PROCESSING",
-        "READY",
-        "FAILED",
-        "DELETE_PENDING",
-        "DELETED"
       ]
     },
     "public.ModelDeploymentStatus": {
@@ -7837,23 +7420,11 @@
       "values": [
         "INFERENCE",
         "HERMES",
-        "SUPERMEMORY",
         "MCP",
         "OIDC",
         "SIEM",
         "NOTIFICATION",
         "OTHER"
-      ]
-    },
-    "public.ToolActionDispatchStatus": {
-      "name": "ToolActionDispatchStatus",
-      "schema": "public",
-      "values": [
-        "PENDING",
-        "PROCESSING",
-        "COMPLETED",
-        "FAILED",
-        "CANCELLED"
       ]
     },
     "public.ToolApprovalStatus": {

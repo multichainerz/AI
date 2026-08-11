@@ -87,15 +87,9 @@ export const serviceConnectionConfigurationSchema = z
     /** How many audit events one forwarded batch may carry. */
     forwardBatchSize: z.number().int().min(1).max(500).optional(),
     capabilitiesPath: relativeHealthPathSchema.optional(),
-    runsPath: relativeHealthPathSchema.optional(),
     sessionsPath: relativeHealthPathSchema.optional(),
-    executionMode: z.enum(["native_sessions", "legacy_runs"]).optional(),
     toolsetsPath: relativeHealthPathSchema.optional(),
     runPollIntervalMs: z.number().int().min(500).max(10_000).optional(),
-    governedMcpUrl: serviceEndpointSchema.optional(),
-    governedToolsetName: z.string().trim().min(2).max(120)
-      .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/, "Governed toolset name contains unsupported characters.")
-      .optional(),
     clientId: z.string().trim().min(1).max(256).optional(),
     redirectUri: serviceEndpointSchema.optional(),
     scopes: z.array(z.string().trim().min(1).max(120)).min(1).max(20).optional(),
@@ -129,13 +123,9 @@ const connectionConfigurationSchemas = {
     timeoutMs: true,
     healthPath: true,
     capabilitiesPath: true,
-    runsPath: true,
     sessionsPath: true,
-    executionMode: true,
     toolsetsPath: true,
     runPollIntervalMs: true,
-    governedMcpUrl: true,
-    governedToolsetName: true,
   }),
   MCP: serviceConnectionConfigurationSchema.pick({ timeoutMs: true, healthPath: true }),
   OIDC: serviceConnectionConfigurationSchema.pick({

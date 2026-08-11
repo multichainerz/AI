@@ -84,10 +84,17 @@ curl --fail --silent --max-time 10 "http://127.0.0.1:${HTTP_PORT}/api/v1/platfor
 # Migrations are the gate api and worker wait on, so a running api already
 # implies they applied -- this proves the schema is really there.
 if compose exec -T postgres psql -U orcasynapse -d orcasynapse -tAc \
-     "select count(*) from information_schema.tables where table_name = 'BenchmarkRun'" 2>/dev/null | grep -qx '1'; then
-  pass "migrations applied through the newest table"
+     "select \"epoch\" from \"SchemaMetadata\" where \"id\" = 'current'" 2>/dev/null | grep -qx 'hermes-native-v1'; then
+  pass "greenfield schema epoch applied"
 else
-  bad "the newest migration's table is missing"
+  bad "the greenfield schema epoch is missing"
+fi
+
+if compose exec -T postgres psql -U orcasynapse -d orcasynapse -tAc \
+     "select count(*) from pg_extension where extname = 'vector'" 2>/dev/null | grep -qx '0'; then
+  pass "stock PostgreSQL has no vector extension"
+else
+  bad "retired vector extension is present"
 fi
 
 # postgres_password is read by the postgres image as root, so it stays 0600.
@@ -114,32 +121,11 @@ else
 fi
 
 
-# The embedding weights, and the upload path that needs them. Neither was
-# asserted, which is why two first-install defects survived every green run:
-# the seed ran before the secrets its container mounts (so it failed on every
-# fresh install and was swallowed into a warning), and nginx's 1m default
-# capped a documented 50MB limit, so the product's core feature returned 413
-# behind the container while working under the dev proxy.
-if docker run --rm -v orcasynapse_model_cache:/c alpine:3 sh -c 'ls /c 2>/dev/null | head -1' | grep -q .; then
-  pass "embedding weights seeded into the model cache"
-else
-  bad "model cache is empty -- the embedding seed did not succeed"
-fi
-
-# `head -c` on a pipe closes it early and SIGPIPEs the producer, which under
-# pipefail killed this script before the assertion ran. Write the file directly.
-dd if=/dev/zero of="${WORK}/large.txt" bs=1024 count=2048 status=none
-upload_status="$(curl -s -o /dev/null -w '%{http_code}' --max-time 30   -F "file=@${WORK}/large.txt;type=text/plain"   "http://127.0.0.1:${HTTP_PORT}/api/v1/documents" || true)"
-# 401/403 is fine here: the point is that the proxy carried a >1MB body to the
-# API instead of refusing it itself with 413.
-if [[ "${upload_status}" == "413" ]]; then
-  bad "a 2MB upload was refused by the reverse proxy (413); client_max_body_size is below the API limit"
-else
-  pass "reverse proxy carries an upload larger than its default limit (HTTP ${upload_status})"
-fi
 
 [[ -s "${RELEASE}/.local/state/install-complete.json" ]] \
   && pass "completion marker written" || bad "completion marker missing"
+[[ "$(<"${RELEASE}/.local/state/schema-epoch")" == "hermes-native-v1" ]] \
+  && pass "schema epoch marker written" || bad "schema epoch marker missing"
 # Structural check only: the surrounding panel holds the Installation Key.
 grep -q 'ORCASYNAPSE IS READY' "${WORK}/install.out" \
   && pass "completion panel rendered" || bad "completion panel did not render"

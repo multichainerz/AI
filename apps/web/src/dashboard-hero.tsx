@@ -2,12 +2,11 @@ import type {
   AgentMetrics,
   ChatMetrics,
   ConnectionMonitoringControl,
-  DocumentMetrics,
   ToolMetrics,
 } from "@orcasynapse/contracts";
 import { useEffect, useState, type ReactNode } from "react";
 import { cn } from "./ui/index.js";
-import { GearIcon, MonitorIcon, RobotIcon, StorageIcon, SyncIcon, TerminalIcon } from "./ui/relay-icons.js";
+import { GearIcon, MonitorIcon, RobotIcon, SyncIcon, TerminalIcon } from "./ui/relay-icons.js";
 import type { HomeLayer, HomeReadinessCheck } from "./home-view.js";
 import type { ActiveView } from "./workspace-navigation.js";
 
@@ -40,7 +39,6 @@ interface DashboardHeroProps {
   onUnlock: () => void;
   healthyConnections: number;
   chatMetrics: ChatMetrics | null;
-  documentMetrics: DocumentMetrics | null;
   agentMetrics: AgentMetrics | null;
   toolMetrics: ToolMetrics | null;
   monitoring: ConnectionMonitoringControl | null;
@@ -135,7 +133,6 @@ function topology(props: DashboardHeroProps) {
   const layerState = (key: HomeLayer["key"]) => props.layers.find((layer) => layer.key === key)?.state;
   const inference = layerState("inference");
   const agentic = layerState("agentic");
-  const documentsReady = props.documentMetrics?.ready ?? 0;
 
   return [
     {
@@ -151,16 +148,6 @@ function topology(props: DashboardHeroProps) {
       role: "Isolated agent session",
       state: agentic?.label ?? "Unknown",
       live: agentic?.tone === "ready",
-    },
-    {
-      name: "Knowledge",
-      role: "Owner-scoped retrieval",
-      // A state, not a count. The Documents figure above already reports how
-      // many are indexed; repeating it here says the same thing twice and stops
-      // the hop from answering the question this row asks, which is whether
-      // retrieval can serve anything at all.
-      state: props.unlocked ? (documentsReady > 0 ? "Searchable" : "Empty index") : "Not readable",
-      live: props.unlocked && documentsReady > 0,
     },
     {
       name: "AI Inference",
@@ -313,16 +300,6 @@ export function DashboardHero(props: DashboardHeroProps) {
       detail: since(props.chatMetrics?.windowStartedAt, props.unlocked),
     },
     {
-      label: "Documents",
-      icon: <StorageIcon size={14} />,
-      value: count(props.documentMetrics?.total, props.unlocked),
-      detail: protectedDetail(
-        props.unlocked,
-        props.documentMetrics ? `${props.documentMetrics.ready.toLocaleString()} indexed` : undefined,
-        "none uploaded",
-      ),
-    },
-    {
       label: "Responses",
       icon: <SyncIcon size={14} />,
       value: count(props.chatMetrics?.responses, props.unlocked),
@@ -439,7 +416,7 @@ export function DashboardHero(props: DashboardHeroProps) {
               onClick={props.onAsk}
               className="min-w-[220px] flex-1 border-b-[1.5px] border-border-strong pb-2 text-left text-[17px] tracking-[-0.01em] text-muted transition-colors hover:border-accent hover:text-text"
             >
-              Ask about your documents, agents, and operations…
+              Ask your Hermes agent anything…
             </button>
             <button
               type="button"

@@ -300,7 +300,7 @@ describe("OrcaSynapse browser API", () => {
         displayName: "Pilot User",
         email: "pilot@orcasynapse.example",
       },
-      scopes: ["chat:use", "documents:use", "agents:use"],
+      scopes: ["chat:use", "agents:use"],
       createdAt: "2026-07-30T00:00:00.000Z",
       idleExpiresAt: "2026-07-30T08:00:00.000Z",
       absoluteExpiresAt: "2026-07-30T12:00:00.000Z",

@@ -61,11 +61,11 @@ describe("signing in from the front page", () => {
     expect(window.localStorage.getItem("orcasynapse.theme")).toBe("light");
   });
 
-  it("presents OrcaSynapse as a governed agentic harness rather than an OCR pipeline", () => {
+  it("presents OrcaSynapse as a Hermes-native governed control plane", () => {
     const { container } = render(<FrontPage {...base} {...handlers()} />);
 
     expect(screen.getByRole("heading", { name: "Dynamic intelligence, orchestrated into action." })).toBeTruthy();
-    expect(screen.getByText(/coordinates models, knowledge, memory, policy, and tools/i)).toBeTruthy();
+    expect(screen.getByText(/Hermes-native sessions, agent profiles, models, policy, and tools/i)).toBeTruthy();
     expect(screen.getByLabelText(/agentic workflow coordinates intelligence and action/i)).toBeTruthy();
     expect(container.textContent).toContain("AGENTIC HARNESS");
     expect(container.textContent).not.toContain("OCR + RETRIEVAL");

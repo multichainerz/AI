@@ -9,7 +9,7 @@ OrcaSynapse's Models workspace is the approved workload catalogue. It does not d
 | Chat | Inference Server | default route for direct OrcaSynapse Chat |
 | Agent | Inference Server | alias pinned by the internal gateway for Hermes |
 
-Chat and Agent routes must use an approved OpenAI-compatible Inference Server connection. OrcaSynapse's knowledge embeddings (BGE-M3, 1024 dimensions, pgvector) run locally on VM1 in the API and worker processes and are deliberately not a model route: they are a control-plane capability, not an approved workload alias.
+Chat and Agent routes must use an approved OpenAI-compatible Inference Server connection. OrcaSynapse does not run a separate embedding model or inference sidecar on VM1.
 
 ## Lifecycle
 

@@ -9,7 +9,6 @@ import type {
   EnterpriseSession,
   OidcStatus,
   ChatMetrics,
-  DocumentMetrics,
   AgentMetrics,
   ToolMetrics,
   InferenceDiscoveryRequest,
@@ -32,7 +31,6 @@ import {
   getChatMetrics,
   getAgentMetrics,
   getAgentProfiles,
-  getDocumentMetrics,
   getToolMetrics,
   getAgentRuntime,
   getHermesRuntimeNodes,
@@ -61,7 +59,6 @@ import {
   MonitorIcon,
   RobotIcon,
   ServerIcon,
-  StorageIcon,
   TerminalIcon,
 } from "./ui/relay-icons.js";
 import { ThemeToggle } from "./ui/theme-toggle.js";
@@ -77,15 +74,12 @@ import {
 } from "./workspace-navigation.js";
 
 const OperationsView = lazy(() => import("./operations-view.js").then((module) => ({ default: module.OperationsView })));
-const BenchmarksView = lazy(() => import("./benchmarks-view.js").then((module) => ({ default: module.BenchmarksView })));
 const ChatView = lazy(() => import("./chat-view.js").then((module) => ({ default: module.ChatView })));
-const DocumentsView = lazy(() => import("./documents-view.js").then((module) => ({ default: module.DocumentsView })));
 const AgentsView = lazy(() => import("./agents-view.js").then((module) => ({ default: module.AgentsView })));
 const ToolingView = lazy(() => import("./tooling-view.js").then((module) => ({ default: module.ToolingView })));
 const ModelsView = lazy(() => import("./models-view.js").then((module) => ({ default: module.ModelsView })));
 const GuardrailsView = lazy(() => import("./guardrails-view.js").then((module) => ({ default: module.GuardrailsView })));
 const PromptsView = lazy(() => import("./prompts-view.js").then((module) => ({ default: module.PromptsView })));
-const MemoryView = lazy(() => import("./memory-view.js").then((module) => ({ default: module.MemoryView })));
 const OnboardingView = lazy(() => import("./onboarding-view.js").then((module) => ({ default: module.OnboardingView })));
 const AuditView = lazy(() => import("./audit-view.js").then((module) => ({ default: module.AuditView })));
 
@@ -101,15 +95,13 @@ const AuditView = lazy(() => import("./audit-view.js").then((module) => ({ defau
  * held open for a dispatch that never happened.
  *
  * Each drawing is the one the design reference names for that area: a monitor
- * for Home, a terminal window for Chat, a database cylinder for Knowledge, a
- * robot for Agents, stacked server racks for Platform, and a node graph for
- * Operations.
+ * for Home, a terminal window for Chat, a robot for Agents, stacked server
+ * racks for Platform, and a node graph for Operations.
  */
 function Glyph({ name }: { name: string }) {
   const glyphs: Record<string, ReactNode> = {
     overview: <MonitorIcon size={22} />,
     chat: <TerminalIcon size={22} />,
-    documents: <StorageIcon size={22} />,
     agents: <RobotIcon size={22} />,
     setup: <ServerIcon size={22} />,
     operations: <BalancerIcon size={22} />,
@@ -295,7 +287,6 @@ function App() {
   // needs the three counts that live outside chat. Fetched beside the chat
   // figures and failing the same way: a metric that cannot be read is absent,
   // never zero.
-  const [documentMetrics, setDocumentMetrics] = useState<DocumentMetrics | null>(null);
   const [agentMetrics, setAgentMetrics] = useState<AgentMetrics | null>(null);
   const [toolMetrics, setToolMetrics] = useState<ToolMetrics | null>(null);
   const [agentRuntime, setAgentRuntime] = useState<AgentRuntimeControl | null>(null);
@@ -413,9 +404,6 @@ function App() {
             void getChatMetrics().then((metrics) => {
               if (active && sessionGeneration.current === generation) setChatMetrics(metrics);
             }).catch(() => undefined);
-            void getDocumentMetrics().then((metrics) => {
-              if (active && sessionGeneration.current === generation) setDocumentMetrics(metrics);
-            }).catch(() => undefined);
             void getAgentMetrics().then((metrics) => {
               if (active && sessionGeneration.current === generation) setAgentMetrics(metrics);
             }).catch(() => undefined);
@@ -465,7 +453,7 @@ function App() {
     setSettingsError(null);
     setAdminSession(null);
   };
-  // Chat, Knowledge and Agents also serve enterprise identities, so an expiry
+  // Chat and Agents also serve enterprise identities, so an expiry
   // there has to drop both sessions rather than only the administrator one.
   const forgetAnySession = () => {
     forgetAdminSession();
@@ -487,7 +475,6 @@ function App() {
    * disagreeing, which is exactly what they should do.
    */
   const chatUnlocked = unlocked || enterpriseSession?.scopes.includes("chat:use") === true;
-  const documentsUnlocked = unlocked || enterpriseSession?.scopes.includes("documents:use") === true;
   const agentsUnlocked = unlocked || enterpriseSession?.scopes.includes("agents:use") === true;
 
   const refreshWorkspaceState = useCallback(async () => {
@@ -940,8 +927,8 @@ function App() {
    * Sidebar counts, drawn only where the shell already holds the number.
    *
    * Chat has one: the conversation count from the same metrics window the Home
-   * screen reports its Hermes responses from. Knowledge and Operations do not —
-   * nothing in this component loads a document or an incident total — so those
+   * screen reports its Hermes responses from. Operations does not — nothing in
+   * this component loads an incident total — so that
    * rows carry no badge at all rather than a plausible-looking figure. A badge
    * is read as a fact about the workspace, and an invented one is worse than an
    * absent one.
@@ -1182,13 +1169,6 @@ function App() {
               onSessionExpired={forgetAdminSession}
             />
           ),
-          Memory: () => (
-            <MemoryView
-              session={adminSession}
-              onOpenSettings={() => openConnectionSettings()}
-              onSessionExpired={forgetAdminSession}
-            />
-          ),
           Prompts: () => (
             <PromptsView
               session={adminSession}
@@ -1211,16 +1191,6 @@ function App() {
                 selectView("Chat");
               }}
               onOpenReadiness={() => selectView("Deployment", "nodes")}
-              onSessionExpired={forgetAnySession}
-            />
-          ),
-          Documents: () => (
-            <DocumentsView
-              unlocked={documentsUnlocked}
-              administrator={adminSession !== null}
-              oidcConfigured={oidcStatus?.configured === true}
-              onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23knowledge%2Fdocuments")}
-              onConfigure={() => openConnectionSettings("HERMES")}
               onSessionExpired={forgetAnySession}
             />
           ),
@@ -1275,17 +1245,6 @@ function App() {
               onSessionExpired={forgetAdminSession}
             />
           ),
-          Benchmarks: () => (
-            <BenchmarksView
-              session={adminSession}
-              onOpenOperations={() => selectView("Operations")}
-              // Locked, the screen asks for an administrator sign-in;
-              // `openConnectionSettings` answers with the elevation dialog
-              // whenever the session is not unlocked.
-              onOpenSettings={() => openConnectionSettings()}
-              onSessionExpired={forgetAdminSession}
-            />
-          ),
           Overview: () => (
             <HomeView
               apiAvailable={apiAvailable}
@@ -1294,7 +1253,6 @@ function App() {
               healthyConnections={healthyConnections}
               monitoring={connectionMonitoring}
               chatMetrics={chatMetrics}
-              documentMetrics={documentMetrics}
               agentMetrics={agentMetrics}
               toolMetrics={toolMetrics}
               layers={platformLayers}

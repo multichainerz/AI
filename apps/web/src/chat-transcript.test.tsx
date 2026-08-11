@@ -3,7 +3,7 @@
  *
  * The transcript, which had no test at all while being the thing the product
  * exists to render. One conversation carrying every block it can produce:
- * markdown, agent activity, a pending approval, knowledge sources, response
+ * markdown, agent activity, a pending approval, response
  * telemetry, and a failed turn.
  *
  * It doubles as the only way to *look* at a populated transcript without a
@@ -34,7 +34,6 @@ const message = (over: Record<string, unknown>) => ({
   finishReason: "STOP",
   errorCode: null,
   agentRunId: null,
-  sources: [],
   approvals: [],
   runtimeEvents: [],
   feedback: null,
@@ -53,7 +52,6 @@ const conversation = {
   createdAt: "2026-08-07T09:00:00.000Z",
   updatedAt: "2026-08-07T09:15:00.000Z",
   lastMessageAt: "2026-08-07T09:15:00.000Z",
-  knowledgeDocuments: [{ id: "doc-ready", fileName: "runbook.pdf", classification: "INTERNAL", status: "READY" }],
   messages: [
     message({
       id: "m1",
@@ -84,10 +82,6 @@ const conversation = {
         "| contracts | yes |",
         "| installer | yes |",
       ].join("\n"),
-      sources: [
-        { documentId: "doc-ready", fileName: "runbook.pdf", classification: "INTERNAL", score: 0.82 },
-        { documentId: "doc-two", fileName: "release-policy.md", classification: "CONFIDENTIAL", score: 0.64 },
-      ],
       runtimeEvents: [
         {
           id: "e1", type: "RUN_STARTED", toolName: null, status: "started", summary: "Agent run accepted",
@@ -101,9 +95,9 @@ const conversation = {
            * rows -- the fixture had no key at all, so the grouping this asserts
            * was invisible to every test.
            */
-          id: "e1b", type: "TOOL_STARTED", toolName: "knowledge.search", status: "started",
+          id: "e1b", type: "TOOL_STARTED", toolName: "system.status", status: "started",
           summary: null, preview: null, durationMs: null, inputTokens: null, outputTokens: null,
-          reasoningTokens: null, costUsd: null, toolCallKey: "knowledge.search#1",
+          reasoningTokens: null, costUsd: null, toolCallKey: "system.status#1",
           occurredAt: "2026-08-07T09:14:01.500Z",
         },
         {
@@ -112,9 +106,9 @@ const conversation = {
           // transcript the runtime cannot produce — and the cast below is what
           // let it compile. `chat-stream-reducer.test.ts` now pins the real
           // vocabulary; these two are the types the runtime actually emits.
-          id: "e2", type: "TOOL_COMPLETED", toolName: "knowledge.search", status: "completed",
-          toolCallKey: "knowledge.search#1",
-          summary: "Retrieved 6 chunks", preview: "query: promotion checklist", durationMs: 412,
+          id: "e2", type: "TOOL_COMPLETED", toolName: "system.status", status: "completed",
+          toolCallKey: "system.status#1",
+          summary: "Checked service status", preview: "control plane healthy", durationMs: 412,
           inputTokens: 120, outputTokens: 48, reasoningTokens: null, costUsd: 0.0012,
           occurredAt: "2026-08-07T09:14:02.000Z",
         },
@@ -145,7 +139,6 @@ vi.mock("./api.js", async () => {
     getChatConversations: vi.fn(async () => ({ items: [{ ...conversation, messages: undefined }] })),
     getChatConversation: vi.fn(async () => conversation),
     getAgentProfiles: vi.fn(async () => ({ items: [] })),
-    getDocuments: vi.fn(async () => ({ items: [] })),
   };
 });
 
@@ -223,7 +216,7 @@ describe("chat transcript", () => {
      * twice rather than passing quietly.
      */
     expect(within(activity).getAllByRole("listitem")).toHaveLength(3);
-    expect(within(activity).getByText("knowledge.search")).toBeTruthy();
+    expect(within(activity).getByText("system.status")).toBeTruthy();
     expect(within(activity).getByText(/412 ms · 120 in · 48 out · \$0\.0012/)).toBeTruthy();
     expect(within(activity).getByText("Hermes subagent")).toBeTruthy();
   });
@@ -249,14 +242,6 @@ describe("chat transcript", () => {
     const activity = screen.getByLabelText("Hermes agent activity");
 
     expect(within(activity).getByText(/^Worked for /)).toBeTruthy();
-  });
-
-  it("attributes the answer to the documents it retrieved", async () => {
-    await transcript();
-    const sources = screen.getByLabelText("Enterprise knowledge sources");
-
-    expect(within(sources).getByText("runbook.pdf")).toBeTruthy();
-    expect(within(sources).getByText(/internal · 82% match/)).toBeTruthy();
   });
 
   it("says why a turn failed and offers the way back", async () => {

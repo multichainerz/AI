@@ -35,7 +35,6 @@ const otherPrincipal: AgentPrincipal = { id: randomUUID(), subject: "local-admin
 
 const passingBoundary: AgentBoundaryVerifier = {
   assertAdmittedToolBoundary: vi.fn(async () => undefined),
-  assertGovernedToolBoundary: vi.fn(async () => undefined),
       catalogue: vi.fn(async () => ({ toolsets: [], skills: [] })),
 };
 
@@ -47,15 +46,14 @@ function profileInput(overrides: Partial<CreateAgentProfile> = {}): CreateAgentP
   return {
     slug: `agent-${randomUUID().slice(0, 8)}`,
     displayName: "Support agent",
-    purpose: "Answer operator questions from approved knowledge.",
-    instructions: "Answer only from the supplied knowledge sources.",
+    purpose: "Help operators reason about their controlled environment.",
+    instructions: "Answer precisely and state uncertainty.",
     soulMd: "You are a careful operations assistant.",
     skills: [],
     modelAlias: "hermes-agent",
     maxTurns: 1,
     timeoutSeconds: 120,
     maxConcurrentRuns: 1,
-    allowPrivateKnowledge: false,
     safeMode: true,
     ...overrides,
   } as CreateAgentProfile;
@@ -387,7 +385,6 @@ describe("DrizzleAgentManager runtime control", () => {
   it("records a denial when Hermes fails the boundary check", async () => {
     const failing: AgentBoundaryVerifier = {
       assertAdmittedToolBoundary: vi.fn(async () => { throw new Error("boundary breached"); }),
-      assertGovernedToolBoundary: vi.fn(async () => undefined),
       catalogue: vi.fn(async () => ({ toolsets: [], skills: [] })),
     };
 

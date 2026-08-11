@@ -15,15 +15,15 @@ describe("groupRuntimeEvents", () => {
      * which progress belonged to which call.
      */
     const entries = groupRuntimeEvents([
-      event({ type: "TOOL_STARTED", toolCallKey: "search#1", toolName: "knowledge.search" }),
-      event({ type: "TOOL_PROGRESS", toolCallKey: "search#1", toolName: "knowledge.search" }),
-      event({ type: "TOOL_PROGRESS", toolCallKey: "search#1", toolName: "knowledge.search" }),
-      event({ type: "TOOL_COMPLETED", toolCallKey: "search#1", toolName: "knowledge.search", durationMs: 812 }),
+      event({ type: "TOOL_STARTED", toolCallKey: "status#1", toolName: "system.status" }),
+      event({ type: "TOOL_PROGRESS", toolCallKey: "status#1", toolName: "system.status" }),
+      event({ type: "TOOL_PROGRESS", toolCallKey: "status#1", toolName: "system.status" }),
+      event({ type: "TOOL_COMPLETED", toolCallKey: "status#1", toolName: "system.status", durationMs: 812 }),
     ]);
 
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({
-      key: "search#1", kind: "tool", label: "knowledge.search", status: "completed", durationMs: 812,
+      key: "status#1", kind: "tool", label: "system.status", status: "completed", durationMs: 812,
     });
     expect(entries[0]?.events).toHaveLength(4);
   });

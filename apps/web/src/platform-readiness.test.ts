@@ -46,8 +46,6 @@ describe("deriveWorkspaceReadiness", () => {
   });
 
   it("treats a usable Chat path as a ready agentic workspace", () => {
-    // Document knowledge is served by the control plane itself, so there is no
-    // second plane whose health could hold the workspace back.
     const readiness = deriveWorkspaceReadiness({
       connections: [connection("INFERENCE"), connection("HERMES")],
       runtimeNodes: [onlineNode],

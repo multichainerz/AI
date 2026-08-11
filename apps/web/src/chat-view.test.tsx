@@ -5,8 +5,8 @@
  * do: both are about what Chat shows an operator after a request fails, which
  * only a rendered view can answer.
  */
-import type { AgentProfile, ChatConversation, DocumentList, DocumentSummary } from "@orcasynapse/contracts";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import type { AgentProfile, ChatConversation } from "@orcasynapse/contracts";
+import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -23,7 +23,6 @@ const conversation = {
   updatedAt: "2026-08-01T00:00:00.000Z",
   lastMessageAt: null,
   messages: [],
-  knowledgeDocuments: [],
 } as unknown as ChatConversation;
 
 const profile = {
@@ -35,7 +34,6 @@ const profile = {
 } as unknown as AgentProfile;
 
 const mocks = vi.hoisted(() => ({
-  getDocuments: vi.fn(),
   getChatConversations: vi.fn(),
   submitChatMessage: vi.fn(),
 }));
@@ -47,7 +45,6 @@ vi.mock("./api.js", async () => {
     getChatConversations: mocks.getChatConversations,
     getChatConversation: vi.fn(async () => conversation),
     getAgentProfiles: vi.fn(async () => ({ items: [profile] })),
-    getDocuments: mocks.getDocuments,
     submitChatMessage: mocks.submitChatMessage,
   };
 });
@@ -55,42 +52,7 @@ vi.mock("./api.js", async () => {
 // jsdom implements no layout, so the transcript's scroll-into-view is a no-op.
 Element.prototype.scrollIntoView = () => undefined;
 
-const { OrcaSynapseApiError } = await import("./api.js");
-const { ChatView, createClientMessageId, knowledgeScopeSummary, pinnableDocuments } = await import("./chat-view.js");
-
-function summary(fileName: string, status: DocumentSummary["status"]): DocumentSummary {
-  return { id: `${fileName}-id`, fileName, status, classification: "INTERNAL" } as DocumentSummary;
-}
-
-describe("pinnableDocuments", () => {
-  it("offers only documents that are actually indexed", () => {
-    const offered = pinnableDocuments([
-      summary("ready.pdf", "READY"),
-      summary("queued.pdf", "QUEUED"),
-      summary("failed.pdf", "FAILED"),
-    ]);
-
-    expect(offered.map(({ fileName }) => fileName)).toEqual(["ready.pdf"]);
-  });
-
-  it("offers nothing when the library is empty or entirely unindexed", () => {
-    expect(pinnableDocuments([])).toEqual([]);
-    expect(pinnableDocuments([summary("queued.pdf", "QUEUED")])).toEqual([]);
-  });
-});
-
-describe("knowledgeScopeSummary", () => {
-  it("says retrieval is unrestricted when nothing is pinned", () => {
-    // An unpinned conversation retrieves across everything the owner holds,
-    // which is a materially different answer than a pinned one.
-    expect(knowledgeScopeSummary(0)).toContain("every document you own");
-  });
-
-  it("names the restriction and agrees with itself on plurals", () => {
-    expect(knowledgeScopeSummary(1)).toBe("Answers are restricted to 1 pinned document.");
-    expect(knowledgeScopeSummary(3)).toBe("Answers are restricted to 3 pinned documents.");
-  });
-});
+const { ChatView, createClientMessageId } = await import("./chat-view.js");
 
 describe("createClientMessageId", () => {
   it("prefers the platform UUID when one is available", () => {
@@ -121,8 +83,6 @@ const props = {
 };
 
 beforeEach(() => {
-  mocks.getDocuments.mockReset();
-  mocks.getDocuments.mockResolvedValue({ items: [] } as unknown as DocumentList);
   mocks.getChatConversations.mockReset();
   mocks.getChatConversations.mockResolvedValue({ items: [{ ...conversation, messages: undefined }] });
   mocks.submitChatMessage.mockReset();
@@ -132,34 +92,6 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-describe("chat knowledge picker failure", () => {
-  it("does not present a failed load as an empty library", async () => {
-    // "No indexed documents yet" over a load that never returned tells the
-    // operator they have nothing indexed, and hides the real cause behind the
-    // modal backdrop.
-    mocks.getDocuments.mockRejectedValueOnce(new Error("The knowledge index is unreachable."));
-    const user = userEvent.setup();
-    render(<ChatView {...props} />);
-
-    await user.click(await screen.findByRole("button", { name: /knowledge/i }));
-
-    expect(await screen.findByText("The knowledge index is unreachable.")).toBeTruthy();
-    expect(screen.queryByText("No indexed documents yet")).toBeNull();
-    expect(screen.queryByRole("dialog")).toBeNull();
-  });
-
-  it("treats a 401 on the document load as the expired session it is", async () => {
-    // Every other failure path in Chat hands a 401 to the session handler; this
-    // one printed it as an error message under a signed-out session.
-    mocks.getDocuments.mockRejectedValueOnce(new OrcaSynapseApiError(401, "Session expired."));
-    const user = userEvent.setup();
-    render(<ChatView {...props} />);
-
-    await user.click(await screen.findByRole("button", { name: /knowledge/i }));
-
-    await waitFor(() => expect(props.onSessionExpired).toHaveBeenCalled());
-  });
-});
 
 describe("chat composer", () => {
   it("keeps the conversation header on the chat canvas", async () => {
