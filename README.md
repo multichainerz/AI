@@ -5,7 +5,7 @@
 <h3 align="center">Dynamic intelligence, orchestrated into action.</h3>
 
 <p align="center">
-  An on-premises agentic harness that coordinates models, private knowledge, memory, policy, and governed tools<br />
+  An on-premises control plane for Hermes-native sessions and memory, private knowledge, policy, and governed execution<br />
   around an isolated Hermes runtime — with identity, secrets, audit, and oversight inside infrastructure you control.
 </p>
 
@@ -74,11 +74,15 @@ VM2 generates its own identity, consumes the claim once, receives a scoped infer
 
 **A readiness command center** — the full-screen Dashboard compresses platform readiness, the next required capability, live service state, existing activity metrics, and the governed execution path into one responsive, theme-aware control surface.
 
-**Governed Sessions** — durable conversations backed by Hermes Agent Runs. Closing the browser doesn't cancel execution: streams resume, cancellation is explicit, and every run carries tool and subagent activity, telemetry, feedback, fork, archive, and export.
+**Governed Sessions** — durable conversations executed through Hermes' native session API. Hermes owns transcript continuity and its built-in memory; OrcaSynapse keeps a sanitized run projection for streaming, cancellation, telemetry, feedback, archive, export, and audit. Closing the browser does not cancel the worker-owned Hermes stream.
 
 **Private document knowledge** — upload TXT, Markdown, HTML, CSV, JSON, PDF, DOCX, PPTX, or XLSX. Text is extracted in flight, embedded locally with BGE-M3, and retrieved from pgvector. Original files are never stored. Pin documents to a conversation to scope exactly what an agent may consult.
 
-**Agents that remember, on your terms** — memory lives in the same pgvector plane as your documents, scoped to one person and one agent. Each agent's profile chooses what it stores: nothing at all (the default), recall without writing, learn from what the person says, or learn from the whole exchange. What is stored are facts extracted after the answer, not the messages themselves — a turn is mostly questions and greetings, and storing it verbatim makes recall match old questions instead of useful facts. One installation-wide policy caps every agent at once, and any stored memory can be read and deleted from the workspace.
+**Hermes-first memory** — the agent uses Hermes' native `MEMORY.md`, `USER.md`, and persisted session history exactly where Hermes expects them. OrcaSynapse does not read, mirror, edit, embed, or expose those files. Document knowledge remains a separate, owner-scoped pgvector index on VM1.
+
+Vanilla Hermes keeps transcripts per session but shares `MEMORY.md` and
+`USER.md` across sessions in its active home/profile. This pre-production mode
+is one trust boundary; it is not multi-user memory isolation.
 
 **An audit trail you can actually read** — every governed action lands in an append-only trail with a filterable Operations view. An optional forwarder ships it to your SIEM with at-least-once delivery, and reports its own health when the destination falls behind or starts rejecting batches.
 
@@ -91,9 +95,9 @@ VM2 generates its own identity, consumes the claim once, receives a scoped infer
 ## Trust boundaries that stay understandable
 
 - **OrcaSynapse** owns identity, authorization, policy, encrypted configuration, audit, and inference access.
-- **PostgreSQL** owns control-plane state plus extracted knowledge chunks and their embeddings — never original files, never model weights.
-- **Hermes** runs isolated, with only approved model, memory, and tool capabilities. It runs as an unprivileged service account under a hardened systemd unit — no new privileges, a read-only system tree, a capability bounding set, a restricted set of address families, and write access limited to its managed data and workspace directories. It never reaches PostgreSQL, host service control, or the open network.
-- **VM2** runs the agent runtime and nothing else. It holds no durable store: knowledge and agent memory are served and governed entirely by OrcaSynapse, and never transit VM2.
+- **PostgreSQL** owns control-plane state, sanitized run/audit projections, and extracted knowledge chunks plus embeddings — never original files, Hermes memory files, or model weights.
+- **Hermes** owns native sessions, `MEMORY.md`, `USER.md`, Skills, and execution. It runs as an unprivileged service account under a hardened systemd unit — no new privileges, a read-only system tree, a capability bounding set, restricted address families, and write access limited to managed data and workspace directories. It never reaches PostgreSQL or host service control.
+- **VM2** runs Hermes and therefore holds its durable native session and memory state. Back it up when that continuity must survive node replacement; document knowledge remains on VM1.
 - **Inference credentials** stay on VM1. Agent nodes get a bounded, node-scoped gateway credential.
 
 Production acceptance still requires your own TLS/PKI, firewall policy, artifact pins, backup and restore testing, identity acceptance, GPU capacity testing, and security approval.
@@ -121,7 +125,7 @@ The test database must run a **pgvector** image — the migrator creates the `ve
 | [Installation and recovery](deploy/BOOTSTRAP.md) | Bootstrap, pinning, upgrade and erase paths, key rotation |
 | [Agentic System enrollment](docs/AGENTIC_SYSTEM_ENROLLMENT_RUNBOOK.md) | VM2 enrollment, allowlist, decommission |
 | [Audit trail and SIEM forwarding](docs/AUDIT_TRAIL_RUNBOOK.md) | Reading the trail, forwarding, health states |
-| [Agent memory](docs/AGENT_MEMORY_RUNBOOK.md) | What agents store, the installation ceiling, retention, deletion |
+| [Hermes-native memory](docs/AGENT_MEMORY_RUNBOOK.md) | Ownership, backup, privacy, and operational verification |
 | [Benchmarks](docs/BENCHMARK_RUNBOOK.md) | Writing a suite, running it, filing the result as evaluation evidence |
 | [Product requirements](docs/ORCASYNAPSE_PRD.md) · [Delivery plan](docs/ORCASYNAPSE_PHASED_PLAN.md) | Scope, roles, acceptance tiers |
 | [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [License](LICENSE) | Project meta |

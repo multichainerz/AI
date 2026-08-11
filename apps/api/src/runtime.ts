@@ -163,7 +163,7 @@ export function createRuntimeServices(): RuntimeServices {
      */
     chatWake = createChatRunWakeHub(databaseUrl, (error) =>
       console.error("OrcaSynapse chat wake channel error.", error));
-    const chatManager = new DrizzleChatManager(database, agentManager, chatWake);
+    const chatManager = new DrizzleChatManager(database, agentManager, chatWake, hermesClient);
     const toolingManager = new DrizzleToolingManager(database, hermesClient);
     const aiOpsManager = new DrizzleAiOpsManager(database, {
       connections: connectionManager,

@@ -1,160 +1,136 @@
-# Agent Memory Runbook
+# Hermes-Native Memory Runbook
 
-Agent memory lives in OrcaSynapse's own pgvector plane, beside document
-knowledge. Nothing about it runs on VM2, and no external service holds it.
+OrcaSynapse delegates agent memory and conversational continuity to Hermes. The
+active runtime owns `MEMORY.md`, `USER.md`, and its native session database on
+VM2. OrcaSynapse does not read, mirror, edit, embed, search, or expose those
+contents.
 
-**Nothing is stored about anyone by default.** A new installation, and every
-existing profile after an upgrade, sits at `DOCUMENTS_ONLY`.
+Document knowledge is a separate subsystem. Extracted document chunks and
+BGE-M3 embeddings remain owner-scoped in PostgreSQL/pgvector on VM1 and may be
+retrieved before a turn. They are references for the current answer, not agent
+memory.
 
-## What each mode stores
+## Active boundary
 
-Set per agent, in **Agents → profile editor → Memory**.
-
-| Mode | Recalls | Captures | Use it when |
+| State | Owner | Location | Visible in OrcaSynapse |
 | --- | --- | --- | --- |
-| `DOCUMENTS_ONLY` *(default)* | documents only | nothing | The agent should answer from sources and forget the person entirely. |
-| `RECALL_ONLY` | documents + memory | nothing | Memory an operator seeded should be usable, but the agent must not add to it. |
-| `LEARN_USER` | documents + memory | facts from what the person says | A personal assistant that accumulates someone's stable facts and preferences. |
-| `LEARN_EXCHANGE` | documents + memory | facts from either side of the turn | Richest recall, accepting that something the model asserted can become a durable fact. |
+| Native session transcript | Hermes | VM2 Hermes state database | Sanitized message/run projection only |
+| `MEMORY.md` | Hermes | Active VM2 Hermes home/profile | No |
+| `USER.md` | Hermes | Active VM2 Hermes home/profile | No |
+| Document chunks and embeddings | OrcaSynapse | VM1 PostgreSQL/pgvector | Yes, subject to authorization |
+| Run lifecycle and audit evidence | OrcaSynapse | VM1 PostgreSQL | Yes; memory contents are excluded |
 
-**`LEARN_USER` never stores model output.** That is the point of the split: an
-answer the model got wrong once would otherwise be retrieved by later runs and
-treated as an established fact about the person. `LEARN_EXCHANGE` opts into that
-trade deliberately.
+The VM2 managed policy explicitly enables `memory.memory_enabled` and
+`memory.user_profile_enabled` with Hermes' native character limits. The runtime
+allowlist admits the built-in `memory` tool and `no_mcp`; every other toolset is
+still denied unless an operator has explicitly admitted it.
 
-## What a capture actually stores
+Vanilla Hermes does **not** create a separate `MEMORY.md` and `USER.md` pair for
+each session. Session transcripts are separate, while those two memory files are
+shared by every session using the active Hermes home/profile. That is acceptable
+for the current single-trust-boundary, pre-production installation. It is not a
+multi-user isolation boundary; separate Hermes profiles/homes or a deliberately
+scoped future design are required before mutually untrusted users are admitted.
+The managed installer removes any external `memory.provider` setting so there is
+only this built-in owner.
 
-Since `ai-v1.46.0`, capture stores **extracted facts, not the turn itself**, and
-the mode above decides only whether capture happens at all.
+The legacy OrcaSynapse `AgentMemory` tables, policy schemas, and migrations are
+kept for rollback compatibility with `backup/pgvector`. They are not wired into
+the worker, are not granted as run capabilities, and are not exposed in current
+workspace navigation.
 
-Storing turns verbatim does not produce memory. On the pilot it produced 21 rows
-that were entirely questions (`what is your name?`), commands, greetings, the
-model describing itself (`I am LFM…`), and in one case the operator's own system
-prompt. Recall then embeds a new question and matches previous *questions*, so
-the highest-scoring hits were the least useful rows in the store. That is not a
-tuning problem — no `recallMinimumScore` rescues it, because the capture step is
-what is wrong.
+## What the audit trail records
 
-After the answer is delivered, one model call extracts durable facts about the
-person and returns an empty list when the turn taught nothing, which is the
-common case. Nothing is stored when it returns nothing, and **nothing is stored
-when the model cannot be reached** — falling back to raw turns would quietly
-reinstate the behaviour this replaced.
+OrcaSynapse records session creation, run submission, safe lifecycle events,
+terminal status, timing, token counts when Hermes reports them, cancellation,
+profile/version identity, and administrative actions. It does not record memory
+file contents or infer which facts Hermes added, changed, or removed. A memory
+change is observable only if Hermes emits a safe operational event for it.
 
-Turn this off with `distillCapture: false` in the policy only if you want the
-old verbatim behaviour back and understand what it stores.
+This separation is intentional: the audit trail proves who ran what and how it
+ended without becoming a second memory store.
 
-## The installation ceiling
+## Session lifecycle
 
-**Platform → Memory** holds one policy that bounds every agent at once. A
-profile can be narrower than the ceiling but never wider, so
-`maximumCaptureMode: RECALL_ONLY` stops all capture fleet-wide without editing a
-single profile — the action you need when the answer to "stop storing things
-about people" has to take effect now.
+- A conversation ID is also its Hermes native session ID. OrcaSynapse sends
+  only the new user turn; it does not replay its message projection.
+- Forking uses Hermes' native session-fork endpoint and is allowed only from
+  the latest completed message. A historical point cannot be represented by
+  the pinned Hermes API, so OrcaSynapse refuses it instead of presenting an
+  inaccurate branch.
+- A legacy conversation whose Hermes-native source session is absent cannot be
+  forked with context. Start a new conversation or retain the legacy deployment
+  on `backup/pgvector` for that workflow.
+- Conversation deletion removes the authoritative Hermes session before the
+  OrcaSynapse projection. If Hermes cannot confirm deletion, the local record is
+  retained and the operation fails closed, preventing an invisible orphaned
+  transcript.
 
-The ceiling is read **at capture time**, not at submission, so suspending it
-also applies to runs already in flight.
+## Backup and restore
 
-| Field | Meaning | Default with no policy |
-| --- | --- | --- |
-| `maximumCaptureMode` | The most any agent may store. | the profile's own mode |
-| `retentionDays` | How long a captured item survives. Null keeps it until deleted. | 365 |
-| `maximumItemsPerOwner` | Cap per person per agent; the oldest beyond it are trimmed. | 500 |
-| `recallLimit` | How many memories one run may recall. | 6 |
-| `recallMinimumScore` | The similarity floor below which a hit is noise. | 0.4 |
-| `knowledgeRecallLimit` | How many document excerpts one run may retrieve. | 18 |
-| `knowledgeMinimumScore` | The similarity floor for document retrieval. | 0.35 |
+Back up both machines when agent continuity matters:
 
-Every field is enforced at the moment of use, not merely recorded. The right
-column is what applies on an installation that has never written a policy —
-capture is still bounded and still expires, so "nobody configured it" never
-means "kept forever".
+1. Back up VM1 PostgreSQL for control-plane state, document knowledge, run
+   projections, and audit evidence.
+2. Back up `${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}` on
+   VM2 for Hermes sessions, native memory, Skills, identity, and managed runtime
+   state.
+3. Protect backups with the organization's encryption, retention, and access
+   controls. Native memory may contain personal or sensitive facts.
+4. Restore VM2 state only onto an approved Hermes revision, then verify file
+   ownership remains `orcasynapse-hermes:orcasynapse-hermes` and the service
+   account home is the managed state root.
+5. Run a two-turn session after restore and verify the second turn sees the
+   first through Hermes without OrcaSynapse replaying conversation history.
 
-The last two govern **document** retrieval, not memory. They were constants in
-the worker while their memory equivalents were administrable, so an operator
-could tune what an agent remembered but not what it retrieved. The floor is the
-one worth understanding: a question phrased unlike the source text scores lower,
-so a schedule asked about as "what must X do" can land just under a floor that
-"list the sessions" clears comfortably. Lower it when your people ask in their
-own words; raise it if answers drift onto irrelevant passages.
+A clean VM2 reinstall without restoring its state starts with empty Hermes
+sessions and memory. Restoring only PostgreSQL does not restore native memory.
 
-`retentionDays` is stamped onto each item **as it is captured**, from the policy
-in force at that moment. Lengthening retention later cannot retroactively extend
-items already stored under a shorter promise; shortening it applies to
-everything captured from then on.
+## Operational verification
 
-Lifecycle matches prompts and guardrails: `DRAFT → ACTIVE → SUSPENDED`, one
-active policy enforced by a partial unique index, `expectedRevision` on every
-mutation, and a reason of at least three characters recorded in the audit trail.
-An active policy cannot be edited in place — suspend it first, because runs are
-being measured against it.
+On VM2:
 
-Unlike guardrails and prompts, activation requires **no promoted evaluation
-evidence**. Those gate on evidence because they change how the model behaves;
-this is a data-retention control, so it gets the lifecycle and the trail without
-the evaluation machinery.
+```bash
+sudo systemctl is-active orcasynapse-hermes
+sudo grep -A7 '^memory:' /etc/hermes/config.yaml
+sudo grep -A5 '^platform_toolsets:' /etc/hermes/config.yaml
+sudo journalctl -u orcasynapse-hermes --since '15 minutes ago'
+```
 
-## Scopes
+Expected managed settings include:
 
-| Scope | Grants | Held by |
-| --- | --- | --- |
-| `memory:read` | See the policy and everything stored | PLATFORM_ADMIN, SECURITY_ADMIN, OPERATIONS_ADMIN, AUDITOR |
-| `memory:manage` | Edit the policy, delete and purge memory | PLATFORM_ADMIN, SECURITY_ADMIN |
+```yaml
+memory:
+  memory_enabled: true
+  user_profile_enabled: true
+  memory_char_limit: 2200
+  user_char_limit: 1375
 
-## Answering "what does it know about me"
+platform_toolsets:
+  api_server:
+    - no_mcp
+    - memory
+```
 
-**The person can answer it themselves.** Anyone signed in to Session opens
-**Memory** in the conversation toolbar and sees every item stored about them —
-its text, which agent recorded it, and when it expires — with a *Forget* button
-on each. No administrator, and no new enterprise scope: it runs on the same
-`chat:use` principal as the conversation itself.
+Do not open or copy `MEMORY.md` or `USER.md` merely to prove they exist. Verify
+ownership and behavior, not their contents.
 
-Both the listing and the deletion are scoped server-side to the caller's own
-subject, taken from the authenticated session and never from the request. The
-scope is the same SQL conjunct retrieval uses, so a stray identifier reaches
-nothing: another person's memory returns `404`, indistinguishable from one that
-does not exist.
+## Failure handling
 
-An administrator answers the same question from **Platform → Memory**, filtered
-by the person's subject. Deleting one item, or purging everything for a person,
-requires a reason and is audited. Self-service deletions are audited too, and
-marked as such.
+- If a turn fails before Hermes accepts the native session stream, OrcaSynapse
+  records a failed run and does not synthesize memory.
+- If the worker loses its connection mid-turn, Hermes cancels that turn. The
+  persisted transcript up to Hermes' committed boundary remains on VM2.
+- If VM2 state is lost, re-enrollment restores execution but not prior native
+  memory. Restore the VM2 backup if continuity is required.
+- If the managed config lacks native memory after an upgrade, rerun the same
+  VM2 installer. Repair mode preserves enrollment and adds the missing managed
+  memory block idempotently.
 
-## Retention
+## Rollback
 
-Pruning happens on write, not on a timer: each capture drops expired items and
-trims the oldest beyond the cap. This matches how the rest of the codebase keeps
-append-only tables bounded without adding another moving part — see the same
-rationale in `admin-session.ts` for session pruning.
-
-## Audit actions
-
-| Action | Recorded when |
-| --- | --- |
-| `memory.captured` | A run stored items. Metadata carries the count and effective mode, never the content. |
-| `memory.deleted` | One item removed, with the reason and whether it was self-service. |
-| `memory.purged` | Everything for one person removed, with the count. |
-| `memory.policy_created` / `_updated` / `_activated` / `_suspended` | Policy lifecycle, with the decision reason. |
-
-No audit event contains remembered content. The trail records that memory
-changed and why, not what it said about someone.
-
-## Acceptance checks
-
-1. With no policy and a `DOCUMENTS_ONLY` profile, run a chat turn and confirm
-   nothing appears under **Platform → Memory**.
-2. Set a profile to `LEARN_USER` and run a turn that states something durable
-   ("I lead the platform team, and I prefer answers in Indonesian"). Confirm a
-   *fact* is stored rather than the message, and that the model's answer is not.
-   Then run a turn that asks a question and confirm nothing is stored at all.
-3. Activate a policy with `maximumCaptureMode: RECALL_ONLY` and confirm that the
-   same profile stops capturing while still recalling.
-4. Confirm an expired item stops being recalled, and disappears on the next
-   capture for that person.
-5. Delete one item and purge one person; confirm both appear in the audit trail
-   with their reasons and neither carries the content.
-6. Confirm a second policy cannot be activated while one is already active.
-7. Activate a policy with `retentionDays: 30`, capture an item, and confirm its
-   `retentionUntil` in **Platform → Memory** is 30 days out — not empty.
-8. Sign in as an ordinary employee, open **Memory** from the Session toolbar,
-   confirm it shows only their own items, and forget one.
+The pre-transition product state is preserved at `backup/pgvector`. Rolling
+back is a product decision, not a database toggle: deploy that branch and its
+matching artifacts together. Do not simultaneously enable Hermes-native memory
+and the old pgvector recall/capture worker, because two independent memory
+owners will diverge.

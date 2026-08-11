@@ -9,7 +9,7 @@ import {
 } from "@orcasynapse/database";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentKnowledgeRetriever, AgentMemoryPort } from "./agent-processor.js";
+import type { AgentKnowledgeRetriever } from "./agent-processor.js";
 import { LiveBenchmarkExecutor } from "./benchmark-executor.js";
 import type { ClaimedBenchmarkRun } from "./benchmark-runner.js";
 
@@ -36,21 +36,6 @@ function knowledge(sources: Array<{ fileName: string; excerpt: string }> = []): 
       score: 0.8,
       ...source,
     }))),
-  };
-}
-
-function memory(
-  recalled: string[] = [],
-  profileFacts: string[] = [],
-): AgentMemoryPort {
-  return {
-    recall: vi.fn(async () => recalled.map((content) => ({ id: randomUUID(), content }))),
-    profile: vi.fn(async () => profileFacts.map((content) => ({
-      id: randomUUID(),
-      content,
-      scope: "STATIC" as const,
-    }))),
-    capture: vi.fn(async () => 0),
   };
 }
 
@@ -127,7 +112,7 @@ async function answerQueuedRun(answer: {
 describe("chat cases", () => {
   it("asks through the real agent path and scores what comes back", async () => {
     const profileId = await seedAgent();
-    const executor = new LiveBenchmarkExecutor(context.database, knowledge(), memory(), 10_000, 10);
+    const executor = new LiveBenchmarkExecutor(context.database, knowledge(), 10_000, 10);
 
     const [output] = await Promise.all([
       executor.execute(claimed({ agentProfileId: profileId }), benchmarkCase),
@@ -147,7 +132,7 @@ describe("chat cases", () => {
     // A benchmark that captured facts would change the thing it measures, and
     // the second run of a suite would score differently because of the first.
     const profileId = await seedAgent("LEARN_EXCHANGE");
-    const executor = new LiveBenchmarkExecutor(context.database, knowledge(), memory(), 10_000, 10);
+    const executor = new LiveBenchmarkExecutor(context.database, knowledge(), 10_000, 10);
 
     await Promise.all([
       executor.execute(claimed({ agentProfileId: profileId }), benchmarkCase),
@@ -156,7 +141,7 @@ describe("chat cases", () => {
 
     const [queued] = await context.database.select().from(agentRun);
     const capabilities = queued?.effectiveCapabilities as string[];
-    expect(capabilities).toContain("memory:agent:read");
+    expect(capabilities).not.toContain("memory:agent:read");
     expect(capabilities).toContain("knowledge:private:read");
     expect(capabilities).not.toContain("memory:agent:write");
   });
@@ -164,7 +149,7 @@ describe("chat cases", () => {
   it("gives each case its own session and no history", async () => {
     // Otherwise a suite silently measures whether case 7 primed case 8.
     const profileId = await seedAgent();
-    const executor = new LiveBenchmarkExecutor(context.database, knowledge(), memory(), 10_000, 10);
+    const executor = new LiveBenchmarkExecutor(context.database, knowledge(), 10_000, 10);
 
     await Promise.all([
       executor.execute(claimed({ agentProfileId: profileId }), benchmarkCase),
@@ -179,7 +164,7 @@ describe("chat cases", () => {
 
   it("reports a run that did not complete as unanswered, with the reason", async () => {
     const profileId = await seedAgent();
-    const executor = new LiveBenchmarkExecutor(context.database, knowledge(), memory(), 10_000, 10);
+    const executor = new LiveBenchmarkExecutor(context.database, knowledge(), 10_000, 10);
 
     const [output] = await Promise.all([
       executor.execute(claimed({ agentProfileId: profileId }), benchmarkCase),
@@ -193,7 +178,7 @@ describe("chat cases", () => {
   it("gives up on a case nothing ever answers", async () => {
     // Nothing picks the run up, so the deadline is the only thing that ends it.
     const profileId = await seedAgent();
-    const executor = new LiveBenchmarkExecutor(context.database, knowledge(), memory(), 60, 10);
+    const executor = new LiveBenchmarkExecutor(context.database, knowledge(), 60, 10);
     const output = await executor.execute(claimed({ agentProfileId: profileId }), benchmarkCase);
     expect(output.failureReason).toContain("No answer within");
   });
@@ -201,7 +186,7 @@ describe("chat cases", () => {
   it("refuses a chat case whose agent version is gone", async () => {
     const profileId = await seedAgent();
     await context.database.delete(agentProfileVersion).where(eq(agentProfileVersion.profileId, profileId));
-    const executor = new LiveBenchmarkExecutor(context.database, knowledge(), memory(), 10_000, 10);
+    const executor = new LiveBenchmarkExecutor(context.database, knowledge(), 10_000, 10);
 
     const output = await executor.execute(claimed({ agentProfileId: profileId }), benchmarkCase);
     expect(output.failureReason).toContain("no longer exists");
@@ -217,7 +202,7 @@ describe("retrieval cases", () => {
       { fileName: "runbook.pdf", excerpt: "Check migrations before promoting." },
       { fileName: "policy.md", excerpt: "Two approvals are required." },
     ]);
-    const executor = new LiveBenchmarkExecutor(context.database, retriever, memory());
+    const executor = new LiveBenchmarkExecutor(context.database, retriever);
 
     const output = await executor.execute(claimed({ kind: "RETRIEVAL" }), benchmarkCase);
     expect(output.text).toContain("Check migrations");
@@ -228,24 +213,21 @@ describe("retrieval cases", () => {
 });
 
 describe("memory cases", () => {
-  it("reads what the agent knows, including the facts shown on every message", async () => {
-    const store = memory(["The rollback window is 30 minutes."], ["The user works in Jakarta."]);
-    const executor = new LiveBenchmarkExecutor(context.database, knowledge(), store);
+  it("reports that Hermes-native memory is intentionally opaque", async () => {
+    const executor = new LiveBenchmarkExecutor(context.database, knowledge());
 
     const output = await executor.execute(
       claimed({ kind: "MEMORY", agentProfileId: randomUUID() }),
       benchmarkCase,
     );
 
-    expect(output.text).toContain("Jakarta");
-    expect(output.text).toContain("rollback window");
-    // Recall is measured; capture never is.
-    expect(store.capture).not.toHaveBeenCalled();
+    expect(output.text).toBe("");
+    expect(output.failureReason).toContain("managed internally by Hermes");
   });
 
-  it("reports a memory case with no agent as unanswered", async () => {
-    const executor = new LiveBenchmarkExecutor(context.database, knowledge(), memory());
+  it("keeps the same opaque boundary when a suite has no agent", async () => {
+    const executor = new LiveBenchmarkExecutor(context.database, knowledge());
     const output = await executor.execute(claimed({ kind: "MEMORY" }), benchmarkCase);
-    expect(output.failureReason).toContain("no agent");
+    expect(output.failureReason).toContain("managed internally by Hermes");
   });
 });

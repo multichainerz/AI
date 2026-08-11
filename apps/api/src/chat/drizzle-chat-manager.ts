@@ -331,6 +331,11 @@ async function waitForNextPass(watch: ChatRunWatch, signal: AbortSignal): Promis
 /** The database handle or a transaction opened from it. */
 type Executor = OrcaSynapseDatabase | Parameters<Parameters<OrcaSynapseDatabase["transaction"]>[0]>[0];
 
+export interface HermesSessionLifecycle {
+  forkSession(sourceSessionId: string, targetSessionId: string): Promise<"forked" | "source_absent">;
+  deleteSession(sessionId: string): Promise<void>;
+}
+
 async function acquireChatRateLimitLock(
   transaction: Pick<Executor, "execute">,
   subject: string,
@@ -352,6 +357,8 @@ export class DrizzleChatManager implements ChatManager {
      * making it explicit turns that deletion into a compile error.
      */
     private readonly wake: ChatRunWakeHub,
+    /** Native transcript lifecycle; OrcaSynapse never copies Hermes memory. */
+    private readonly hermesSessions: HermesSessionLifecycle,
   ) {}
 
   /**
@@ -1089,95 +1096,126 @@ export class DrizzleChatManager implements ChatManager {
     conversationId: string,
     input: ForkChatConversation,
   ): Promise<ChatConversationSummary> {
-    const [sourceRow] = await this.database
-      .select()
-      .from(chatConversation)
-      .where(and(
-        eq(chatConversation.id, conversationId),
-        eq(chatConversation.ownerSubject, principal.subject),
-      ))
-      .limit(1);
-    const source = sourceRow ? {
-      ...sourceRow,
-      messages: await this.database
-        .select()
-        .from(chatMessage)
-        .where(and(eq(chatMessage.conversationId, conversationId), eq(chatMessage.status, "COMPLETED")))
-        .orderBy(asc(chatMessage.ordinal)),
-    } : undefined;
-    if (!source) throw new ChatConversationNotFoundError();
-    if (!source.profileId) throw new ChatConfigurationError("The source conversation has no Agent Profile.");
-    await this.activeProfile(source.profileId);
-    const through = input.throughMessageId
-      ? source.messages.find(({ id }) => id === input.throughMessageId)
-      : source.messages.at(-1);
-    if (input.throughMessageId && !through) throw new ChatMessageNotFoundError();
-    const messages = through ? source.messages.filter(({ ordinal }) => ordinal <= through.ordinal) : [];
-    // Ordinals are copied verbatim, so the generation has to be derived from the
-    // highest of them rather than from the row count. A turn skipped *below* the
-    // fork point - a failed or still-running assistant reply - leaves the copied
-    // set sparse, and a count-derived generation would then place the next
-    // submission's `generation * 2 - 1` back onto an ordinal that was already
-    // copied, violating ChatMessage_conversationId_ordinal_key. That rolls the
-    // submission back, so the generation never advances and the fork stays
-    // permanently unusable. (A gap *above* the fork point is harmless: those rows
-    // are never copied.) Renumbering densely on copy would close the gap too, but
-    // it repoints every ordinal away from the source's, so a `throughMessageId`
-    // read can no longer be lined up against the conversation it was forked from,
-    // and it breaks the odd-USER/even-ASSISTANT pairing that `generation * 2`
-    // encodes. Keeping the numbering and moving the generation is the cheaper
-    // trade. `messages` is ordered by ordinal, so the last row carries the max.
-    const highestOrdinal = messages.at(-1)?.ordinal ?? 0;
-    const created = await this.database.transaction(async (transaction) => {
-      const [conversation] = await transaction
-        .insert(chatConversation)
-        .values({
-          ownerSubject: principal.subject,
-          title: `${source.title.replace(/ \(fork\)$/i, "")} (fork)`.slice(0, 160),
-          modelAlias: source.modelAlias,
-          profileId: source.profileId,
-          profileName: source.profileName,
-          generation: Math.ceil(highestOrdinal / 2),
-          lastMessageAt: messages.at(-1)?.createdAt ?? null,
-        })
-        .returning();
-      if (!conversation) throw new ChatConfigurationError("The forked conversation could not be created.");
-      if (messages.length > 0) {
-        // The fork copies completed turns only; runs and feedback stay with the source.
-        await transaction.insert(chatMessage).values(messages.map((message) => ({
-          conversationId: conversation.id,
-          ordinal: message.ordinal,
-          role: message.role,
-          status: "COMPLETED" as const,
-          content: message.content,
-          modelAlias: message.modelAlias,
-          inputTokens: message.inputTokens,
-          outputTokens: message.outputTokens,
-          reasoningTokens: message.reasoningTokens,
-          totalTokens: message.totalTokens,
-          latencyMs: message.latencyMs,
-          firstTokenLatencyMs: message.firstTokenLatencyMs,
-          finishReason: message.finishReason,
-          sources: message.sources,
-          completedAt: message.completedAt,
-        })));
-      }
-      await transaction.insert(auditEvent).values({
-        actorType: "USER",
-        actorId: principal.id,
-        action: "chat.conversation_forked",
-        resourceType: "ChatConversation",
-        resourceId: conversation.id,
-        outcome: "SUCCESS",
-        metadata: { sourceConversationId: source.id, throughMessageId: through?.id ?? null },
+    let nativeForkId: string | null = null;
+    try {
+      const result = await this.database.transaction(async (transaction) => {
+        // This is the same subject lock used by submission, so the Hermes and
+        // Orca snapshots cannot diverge while a concurrent turn is being added.
+        await acquireChatRateLimitLock(transaction, principal.subject);
+        const [sourceRow] = await transaction
+          .select()
+          .from(chatConversation)
+          .where(and(
+            eq(chatConversation.id, conversationId),
+            eq(chatConversation.ownerSubject, principal.subject),
+          ))
+          .limit(1);
+        const source = sourceRow ? {
+          ...sourceRow,
+          messages: await transaction
+            .select()
+            .from(chatMessage)
+            .where(and(eq(chatMessage.conversationId, conversationId), eq(chatMessage.status, "COMPLETED")))
+            .orderBy(asc(chatMessage.ordinal)),
+        } : undefined;
+        if (!source) throw new ChatConversationNotFoundError();
+        if (!source.profileId) throw new ChatConfigurationError("The source conversation has no Agent Profile.");
+        const active = await transaction
+          .select({ id: chatMessage.id })
+          .from(chatMessage)
+          .where(and(eq(chatMessage.conversationId, conversationId), eq(chatMessage.status, "PENDING")))
+          .limit(1);
+        if (active.length > 0) {
+          throw new ChatConversationConflictError("Stop the active Hermes run before forking this conversation.");
+        }
+        await this.activeProfile(source.profileId);
+        const through = input.throughMessageId
+          ? source.messages.find(({ id }) => id === input.throughMessageId)
+          : source.messages.at(-1);
+        if (input.throughMessageId && !through) throw new ChatMessageNotFoundError();
+        if (input.throughMessageId && through?.id !== source.messages.at(-1)?.id) {
+          throw new ChatConfigurationError(
+            "Hermes-native forks branch from the latest completed message. Start the fork there instead.",
+          );
+        }
+        const messages = through ? source.messages.filter(({ ordinal }) => ordinal <= through.ordinal) : [];
+        // Ordinals are copied verbatim, so the generation has to be derived from
+        // the highest one rather than the row count when failed turns left gaps.
+        const highestOrdinal = messages.at(-1)?.ordinal ?? 0;
+        const targetSessionId = randomUUID();
+        if (messages.length > 0) {
+          const forked = await this.hermesSessions.forkSession(source.id, targetSessionId);
+          if (forked === "source_absent") {
+            throw new ChatConfigurationError(
+              "The Hermes-native source session is unavailable, so its context cannot be forked safely.",
+            );
+          }
+          nativeForkId = targetSessionId;
+        }
+        const [conversation] = await transaction
+          .insert(chatConversation)
+          .values({
+            id: targetSessionId,
+            ownerSubject: principal.subject,
+            title: `${source.title.replace(/ \(fork\)$/i, "")} (fork)`.slice(0, 160),
+            modelAlias: source.modelAlias,
+            profileId: source.profileId,
+            profileName: source.profileName,
+            generation: Math.ceil(highestOrdinal / 2),
+            lastMessageAt: messages.at(-1)?.createdAt ?? null,
+          })
+          .returning();
+        if (!conversation) throw new ChatConfigurationError("The forked conversation could not be created.");
+        if (messages.length > 0) {
+          // The fork copies completed turns only; runs and feedback stay with the source.
+          await transaction.insert(chatMessage).values(messages.map((message) => ({
+            conversationId: conversation.id,
+            ordinal: message.ordinal,
+            role: message.role,
+            status: "COMPLETED" as const,
+            content: message.content,
+            modelAlias: message.modelAlias,
+            inputTokens: message.inputTokens,
+            outputTokens: message.outputTokens,
+            reasoningTokens: message.reasoningTokens,
+            totalTokens: message.totalTokens,
+            latencyMs: message.latencyMs,
+            firstTokenLatencyMs: message.firstTokenLatencyMs,
+            finishReason: message.finishReason,
+            sources: message.sources,
+            completedAt: message.completedAt,
+          })));
+        }
+        await transaction.insert(auditEvent).values({
+          actorType: "USER",
+          actorId: principal.id,
+          action: "chat.conversation_forked",
+          resourceType: "ChatConversation",
+          resourceId: conversation.id,
+          outcome: "SUCCESS",
+          metadata: { sourceConversationId: source.id, throughMessageId: through?.id ?? null },
+        });
+        return { conversation, messageCount: messages.length };
       });
-      return conversation;
-    });
-    return summaryDto({ ...created, _count: { messages: messages.length } } as StoredConversation);
+      return summaryDto({ ...result.conversation, _count: { messages: result.messageCount } } as StoredConversation);
+    } catch (error) {
+      if (nativeForkId) {
+        try {
+          await this.hermesSessions.deleteSession(nativeForkId);
+        } catch (cleanupError) {
+          throw new AggregateError(
+            [error, cleanupError],
+            "The conversation fork failed and its Hermes-native session could not be cleaned up.",
+          );
+        }
+      }
+      throw error;
+    }
   }
 
   async delete(principal: ChatPrincipal, conversationId: string): Promise<void> {
     await this.database.transaction(async (transaction) => {
+      await acquireChatRateLimitLock(transaction, principal.subject);
       const [conversation] = await transaction
         .select({ id: chatConversation.id })
         .from(chatConversation)
@@ -1195,6 +1233,9 @@ export class DrizzleChatManager implements ChatManager {
       if (active.length > 0) {
         throw new ChatConversationConflictError("Stop the active Hermes run before deleting this conversation.");
       }
+      // Delete the authoritative transcript before deleting its projection. If
+      // Hermes is unavailable, fail closed so no private session is orphaned.
+      await this.hermesSessions.deleteSession(conversationId);
       await transaction.insert(auditEvent).values({
         actorType: "USER",
         actorId: principal.id,

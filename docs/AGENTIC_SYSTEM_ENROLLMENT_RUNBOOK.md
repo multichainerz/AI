@@ -4,7 +4,7 @@
 
 This workflow turns a clean Ubuntu systemd VM into the isolated OrcaSynapse Agentic System. It installs the Hermes Agent runtime, configures it to use OrcaSynapse's authenticated inference gateway, and establishes a signed node identity without retaining SSH credentials.
 
-VM2 runs exactly one plane: the Hermes gateway/API server, installed natively from Hermes's own installer and supervised by systemd as `orcasynapse-hermes.service`. It holds no durable data store - knowledge, and any future agent memory, are served by OrcaSynapse from its own pgvector plane, so a runtime host can be destroyed and re-enrolled without data loss. The installer uses Hermes's root-owned managed scope to pin the approved model route, secret redaction, unattended loop circuit breakers, and an explicit `platform_toolsets.api_server: [no_mcp]` baseline so the stock runtime does not inherit its broad default tool surface.
+VM2 runs exactly one plane: the Hermes gateway/API server, installed natively from Hermes's own installer and supervised by systemd as `orcasynapse-hermes.service`. It durably owns Hermes-native sessions, Skills, `MEMORY.md`, and `USER.md` under `/var/lib/orcasynapse-hermes`; document knowledge remains in OrcaSynapse's pgvector plane on VM1. Destroying or cleanly re-enrolling VM2 without restoring that state loses native session and memory continuity. The installer uses Hermes's root-owned managed scope to pin the approved model route, enable built-in memory, apply secret redaction and unattended loop circuit breakers, and set an explicit `platform_toolsets.api_server: [no_mcp, memory]` baseline so the stock runtime does not inherit its broad default tool surface.
 
 ## Prerequisites
 
@@ -55,12 +55,12 @@ OrcaSynapse has no standing SSH credential or remote execution path on VM2, so h
 4. installs Hermes at the approved commit, creates the unprivileged `orcasynapse-hermes` service account, and starts `orcasynapse-hermes.service` with persistent state under the OrcaSynapse state root and a read-only `/etc/hermes` managed scope;
 5. enrolls with the single-use claim;
 6. receives the OrcaSynapse `/internal/v1` URL, dashboard-selected model alias, and a node-scoped bearer key;
-7. pins the model route and baseline guardrails in managed scope, disabling native API-server toolsets and default MCP discovery until an OrcaSynapse-reviewed distribution enables them;
+7. pins the model route, Hermes-native memory, and baseline guardrails in managed scope, admitting only the built-in `memory` tool and disabling default MCP discovery and every other unapproved native toolset;
 8. starts a systemd timer that sends signed replay-protected heartbeats every minute.
 
 After the claim is consumed, the installer writes a root-only `${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}/enrollment-state.json` recovery journal before applying managed policy. If a later step fails, rerun the same command: the installer reuses the node identity and scoped configuration, repeats idempotent steps, and removes the recovery journal only after the heartbeat timer starts.
 
-The node reports `ONLINE` once its Hermes API port answers. Treat that as transport health, not proof of generation: installation acceptance also submits a governed `/v1/runs` request because the agent can fail after the gateway has started. VM2 runs a single plane, so there is no longer a window in which the runtime is healthy but a second service is not.
+The node reports `ONLINE` once its Hermes API port answers. Treat that as transport health, not proof of generation: installation acceptance must also create a native session and stream a turn because the agent can fail after the gateway has started. VM2 runs a single service plane, so there is no separate memory daemon to reconcile.
 
 The inference bootstrap never contains the upstream serving credential. Revoking a node disables its generated Hermes connection.
 

@@ -64,7 +64,7 @@ const kindLabel: Record<BenchmarkKind, string> = {
 const kindDescription: Record<BenchmarkKind, string> = {
   CHAT_QUALITY: "Asks the agent, through the same path a person's message takes.",
   RETRIEVAL: "Searches the document plane and scores the passages that come back.",
-  MEMORY: "Reads what the agent already knows about this owner.",
+  MEMORY: "Legacy suite kind; Hermes-native memory is intentionally opaque to OrcaSynapse.",
 };
 
 function inFlight(run: BenchmarkRun): boolean {
@@ -287,8 +287,8 @@ export function BenchmarksView({ session, onOpenOperations, onOpenSettings, onSe
           Every check is a plain string or latency comparison. No model judges an answer.
         </strong>
         <p className="mb-0 mt-1 text-body text-muted">
-          A run reads memory and never writes to it, so running a suite twice measures the same installation both
-          times. A completed run can be cited as the evidence for an evaluation.
+          Chat and retrieval suites use the live stack without reading or writing Hermes-native memory. A completed
+          run can be cited as the evidence for an evaluation.
         </p>
       </div>
     </Panel>

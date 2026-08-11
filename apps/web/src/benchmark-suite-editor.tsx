@@ -29,8 +29,10 @@ interface SuiteEditorProps {
 const kindLabel: Record<BenchmarkKind, string> = {
   CHAT_QUALITY: "Chat quality — ask the agent",
   RETRIEVAL: "Retrieval — search the documents",
-  MEMORY: "Memory — read what the agent knows",
+  MEMORY: "Memory — legacy (Hermes-native memory is opaque)",
 };
+
+const activeBenchmarkKinds = BENCHMARK_KINDS.filter((kind) => kind !== "MEMORY");
 
 const assertionLabel: Record<BenchmarkAssertionKind, string> = {
   MUST_INCLUDE: "must include",
@@ -198,14 +200,15 @@ export function BenchmarkSuiteEditor({ suite, onSaved, onClose }: SuiteEditorPro
           className="sm:col-span-2"
           hint={suite
             ? "Fixed: changing it would redefine what past runs measured."
-            : "The three planes fail for different reasons, so each is measured on its own."}
+            : "Chat and document retrieval fail for different reasons, so each is measured on its own."}
         >
           <Select
             value={draft.kind}
             disabled={Boolean(suite)}
             onChange={(event) => setDraft({ ...draft, kind: event.target.value as BenchmarkKind })}
           >
-            {BENCHMARK_KINDS.map((kind) => <option key={kind} value={kind}>{kindLabel[kind]}</option>)}
+            {draft.kind === "MEMORY" && <option value="MEMORY" disabled>{kindLabel.MEMORY}</option>}
+            {activeBenchmarkKinds.map((kind) => <option key={kind} value={kind}>{kindLabel[kind]}</option>)}
           </Select>
         </Field>
         <Field label="Description" className="sm:col-span-2">

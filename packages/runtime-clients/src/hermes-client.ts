@@ -1,4 +1,5 @@
 import { AGENT_RUN_EVENT_TYPES } from "@orcasynapse/contracts";
+import { createHash } from "node:crypto";
 import type { DrizzleRuntimeConnectionResolver, RuntimeConnection } from "./connection-resolver.js";
 
 const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
@@ -116,6 +117,7 @@ export const SAFE_EVENT_TYPES = new Map<string, HermesSafeRunEventType>([
   ["run.start", "RUN_STARTED"],
   ["run.started", "RUN_STARTED"],
   ["message.delta", "MESSAGE_DELTA"],
+  ["assistant.delta", "MESSAGE_DELTA"],
   ["tool.start", "TOOL_STARTED"],
   ["tool.started", "TOOL_STARTED"],
   ["tool.progress", "TOOL_PROGRESS"],
@@ -133,6 +135,7 @@ export const SAFE_EVENT_TYPES = new Map<string, HermesSafeRunEventType>([
   ["run.complete", "RUN_COMPLETED"],
   ["run.completed", "RUN_COMPLETED"],
   ["run.failed", "RUN_FAILED"],
+  ["error", "RUN_FAILED"],
   ["run.cancelled", "RUN_CANCELLED"],
 ]);
 
@@ -220,7 +223,7 @@ function safeRunEvent(eventName: string, sourceEventId: string | null, data: unk
   const usage = value.usage && typeof value.usage === "object" && !Array.isArray(value.usage)
     ? value.usage as Record<string, unknown>
     : {};
-  const rawTime = value.timestamp ?? value.occurred_at;
+  const rawTime = value.timestamp ?? value.occurred_at ?? value.ts;
   const parsedTime = typeof rawTime === "number"
     ? new Date(rawTime > 10_000_000_000 ? rawTime : rawTime * 1_000)
     : typeof rawTime === "string" ? new Date(rawTime) : new Date();
@@ -232,21 +235,28 @@ function safeRunEvent(eventName: string, sourceEventId: string | null, data: unk
   // is the only event that also carries output — so it is the only one where
   // zeroes can be read as silence rather than as a measurement.
   const tokens = reportedUsage(value, usage, typeof value.output === "string" ? value.output : null);
+  const toolName = safeEventText(value.tool ?? value.tool_name ?? value.name, 160);
+  const nativeMemoryEvent = toolName?.toLowerCase() === "memory";
   return {
     sourceEventId: safeEventText(sourceEventId ?? value.event_id ?? value.id, 255),
     type,
     delta: type === "MESSAGE_DELTA" ? safeDelta(value.delta) : null,
-    preview: safeEventText(value.preview, 1_000),
-    errorCode: safeEventText(value.error_code, 80),
-    summary: safeEventText(value.summary ?? value.preview ?? value.goal ?? value.task, 1_000),
+    // Hermes' memory tool can include the fact it wrote in preview/result
+    // fields. The control plane records that native memory activity happened,
+    // never the content, so the audit projection cannot become a mirror.
+    preview: nativeMemoryEvent ? null : safeEventText(value.preview, 1_000),
+    errorCode: safeEventText(value.error_code ?? value.code, 80),
+    summary: nativeMemoryEvent
+      ? "Hermes native memory activity."
+      : safeEventText(value.summary ?? value.preview ?? value.goal ?? value.task ?? value.message ?? value.error, 1_000),
     status: safeEventText(value.status, 80),
-    toolName: safeEventText(value.tool ?? value.tool_name ?? value.name, 160),
+    toolName,
     // Deliberately not falling back to `value.id`: on a tool event that is the
     // event's identifier, already claimed above as sourceEventId, and reusing
     // it would give every event in one call a different "call" key -- the exact
     // failure this column exists to end.
     toolCallKey: safeEventText(value.tool_call_id ?? value.call_id ?? value.invocation_id, 200),
-    text: TEXT_BEARING.has(type)
+    text: !nativeMemoryEvent && TEXT_BEARING.has(type)
       ? safeEventText(value.reasoning ?? value.reasoning_content ?? value.result ?? value.text, 20_000)
       : null,
     childSessionId: safeEventText(value.child_session_id ?? value.subagent_id ?? value.task_id, 255),
@@ -346,11 +356,69 @@ export interface HermesRunState {
   finishReason: string | null;
 }
 
+interface NativeSessionRun {
+  id: string;
+  state: HermesRunState;
+  events: HermesSafeRunEvent[];
+  controller: AbortController;
+  version: number;
+  waiters: Set<() => void>;
+  cleanupTimer?: NodeJS.Timeout;
+}
+
+const NATIVE_RUN_PREFIX = "hermes-native-";
+
+function nativeRunId(idempotencyKey: string): string {
+  return `${NATIVE_RUN_PREFIX}${createHash("sha256").update(idempotencyKey).digest("hex")}`;
+}
+
+function isTerminalStatus(status: string): boolean {
+  return ["completed", "failed", "cancelled", "canceled"].includes(status.toLowerCase());
+}
+
 export class HermesClient {
+  private readonly nativeRuns = new Map<string, NativeSessionRun>();
+
   constructor(
     private readonly resolver: DrizzleRuntimeConnectionResolver,
     private readonly fetcher: typeof fetch = fetch,
   ) {}
+
+  /**
+   * Fork the persisted Hermes transcript into a caller-selected session ID.
+   *
+   * OrcaSynapse keeps only its operational chat projection; this native API is
+   * therefore the only valid way to preserve conversational state across a
+   * fork. A missing source is reported explicitly so callers never present a
+   * copied Orca transcript as though Hermes had inherited it.
+   */
+  async forkSession(sourceSessionId: string, targetSessionId: string): Promise<"forked" | "source_absent"> {
+    const connection = await this.resolver.resolveOne("HERMES");
+    if (stringSetting(connection, "executionMode", "native_sessions") !== "native_sessions") {
+      throw new Error("Hermes session forking requires native-session execution mode.");
+    }
+    const sessionsPath = stringSetting(connection, "sessionsPath", "/api/sessions").replace(/\/+$/, "");
+    const response = await this.nativeSessionJson(
+      connection,
+      endpoint(connection, `${sessionsPath}/${encodeURIComponent(sourceSessionId)}/fork`),
+      { method: "POST", body: JSON.stringify({ id: targetSessionId }) },
+      [404],
+    );
+    return response.status === 404 ? "source_absent" : "forked";
+  }
+
+  /** Ensure Hermes removes the native transcript; an already-absent session is success. */
+  async deleteSession(sessionId: string): Promise<void> {
+    const connection = await this.resolver.resolveOne("HERMES");
+    if (stringSetting(connection, "executionMode", "native_sessions") !== "native_sessions") return;
+    const sessionsPath = stringSetting(connection, "sessionsPath", "/api/sessions").replace(/\/+$/, "");
+    await this.nativeSessionJson(
+      connection,
+      endpoint(connection, `${sessionsPath}/${encodeURIComponent(sessionId)}`),
+      { method: "DELETE" },
+      [404],
+    );
+  }
 
   async assertAdmittedToolBoundary(admitted: Iterable<string> = []): Promise<void> {
     const connection = await this.resolver.resolveOne("HERMES");
@@ -375,6 +443,12 @@ export class HermesClient {
   ): Promise<void> {
     const { toolsets } = await this.assertBaseBoundary(connection);
     const permitted = new Set(admitted);
+    // The built-in memory tool is the one intentional native capability in
+    // Hermes-session mode. It writes only Hermes-owned MEMORY.md / USER.md;
+    // OrcaSynapse neither receives nor mirrors that content.
+    if (stringSetting(connection, "executionMode", "native_sessions") === "native_sessions") {
+      permitted.add("memory");
+    }
     const unadmitted = toolsets
       .filter((toolset) => toolset.enabled && !permitted.has(toolset.name))
       .map((toolset) => toolset.name);
@@ -408,7 +482,7 @@ export class HermesClient {
     if (!governedMcpUrl || !gatewayToken?.startsWith("orcasynapse_mcp_")) {
       throw new Error("Hermes governed MCP endpoint or gateway credential is not configured.");
     }
-    const enabled = toolsets.filter((toolset) => toolset.enabled);
+    const enabled = toolsets.filter((toolset) => toolset.enabled && toolset.name !== "memory");
     if (enabled.length !== 1 || enabled[0]?.name !== governedToolsetName) {
       throw new Error("Hermes must enable exactly the configured OrcaSynapse governed toolset and no other toolset.");
     }
@@ -520,6 +594,13 @@ export class HermesClient {
     const connection = await this.resolver.resolveOne("HERMES");
     if (input.governedMcp) await this.assertGovernedToolBoundaryFor(connection);
     else await this.assertAdmittedToolBoundaryFor(connection, input.admittedToolsets ?? []);
+    const executionMode = stringSetting(connection, "executionMode", "native_sessions");
+    if (executionMode === "native_sessions" && !input.governedMcp) {
+      return this.startNativeSession(connection, input);
+    }
+    if (executionMode !== "native_sessions" && executionMode !== "legacy_runs") {
+      throw new Error(`Hermes execution mode ${executionMode} is not supported.`);
+    }
     const runsPath = stringSetting(connection, "runsPath", "/v1/runs");
     const privateContext = input.governedMcp
       ? this.privateMcpContext(connection, input.governedMcp)
@@ -544,6 +625,217 @@ export class HermesClient {
       : null;
     if (!id || id.length > 255) throw new Error("Hermes did not return a valid run ID.");
     return id;
+  }
+
+  /**
+   * Start one turn through Hermes' native session surface.
+   *
+   * The stream is owned by this worker rather than by the browser. Hermes can
+   * therefore persist the transcript in its own state database and apply its
+   * built-in MEMORY.md / USER.md lifecycle, while OrcaSynapse consumes only a
+   * bounded operational projection for the run ledger. Conversation history
+   * is intentionally absent from the request: Hermes is the source of truth.
+   */
+  private async startNativeSession(connection: RuntimeConnection, input: HermesRunSubmission): Promise<string> {
+    const id = nativeRunId(input.idempotencyKey);
+    if (this.nativeRuns.has(id)) return id;
+    await this.ensureNativeSession(connection, input.sessionId, input.modelAlias);
+    const run: NativeSessionRun = {
+      id,
+      state: {
+        id,
+        status: "queued",
+        output: null,
+        error: null,
+        modelAlias: input.modelAlias,
+        sessionId: input.sessionId,
+        inputTokens: null,
+        outputTokens: null,
+        reasoningTokens: null,
+        totalTokens: null,
+        finishReason: null,
+      },
+      events: [],
+      controller: new AbortController(),
+      version: 0,
+      waiters: new Set(),
+    };
+    this.nativeRuns.set(id, run);
+    void this.consumeNativeSession(connection, input, run).catch((error: unknown) => {
+      if (isTerminalStatus(run.state.status)) return;
+      const message = error instanceof Error ? error.message : "Hermes native session execution failed.";
+      run.state = { ...run.state, status: "failed", error: message.slice(0, 500), finishReason: "error" };
+      this.appendNativeEvent(run, {
+        sourceEventId: `${id}:client-failed`,
+        type: "RUN_FAILED",
+        delta: null,
+        preview: null,
+        errorCode: "HERMES_NATIVE_SESSION_FAILED",
+        summary: message.slice(0, 1_000),
+        status: "failed",
+        toolName: null,
+        toolCallKey: null,
+        text: null,
+        childSessionId: null,
+        durationMs: null,
+        inputTokens: null,
+        outputTokens: null,
+        reasoningTokens: null,
+        costUsd: null,
+        approvalExternalId: null,
+        approvalCommand: null,
+        approvalChoices: [],
+        occurredAt: new Date(),
+      });
+    });
+    return id;
+  }
+
+  private async ensureNativeSession(
+    connection: RuntimeConnection,
+    sessionId: string,
+    modelAlias: string,
+  ): Promise<void> {
+    const sessionsPath = stringSetting(connection, "sessionsPath", "/api/sessions").replace(/\/+$/, "");
+    const sessionUrl = endpoint(connection, `${sessionsPath}/${encodeURIComponent(sessionId)}`);
+    const existing = await this.nativeSessionJson(connection, sessionUrl, { method: "GET" }, [404]);
+    if (existing.status !== 404) return;
+    const created = await this.nativeSessionJson(connection, endpoint(connection, sessionsPath), {
+      method: "POST",
+      body: JSON.stringify({
+        id: sessionId,
+        model: modelAlias,
+        source: "api_server",
+      }),
+    }, [409]);
+    if (created.status !== 409 && created.status !== 201 && created.status !== 200) {
+      throw new Error(`Hermes rejected native session creation with status ${created.status}.`);
+    }
+  }
+
+  private async nativeSessionJson(
+    connection: RuntimeConnection,
+    url: URL,
+    init: RequestInit,
+    permittedStatuses: number[] = [],
+  ): Promise<{ status: number; body: unknown }> {
+    const timeoutMs = Math.min(30_000, Math.max(1_000, numberSetting(connection, "timeoutMs", 8_000)));
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await this.fetcher(url, {
+        ...init,
+        redirect: "error",
+        signal: controller.signal,
+        headers: {
+          accept: "application/json",
+          "content-type": "application/json",
+          ...(connection.secrets.apiKey ? { authorization: `Bearer ${connection.secrets.apiKey}` } : {}),
+          ...init.headers,
+        },
+      });
+      const body = await boundedJson(response);
+      if (!response.ok && !permittedStatuses.includes(response.status)) {
+        const detail = body && typeof body === "object" && !Array.isArray(body)
+          ? safeEventText((body as Record<string, unknown>).message ?? (body as Record<string, unknown>).error, 300)
+          : null;
+        throw new Error(`Hermes rejected the request with status ${response.status}${detail ? `: ${detail}` : ""}.`);
+      }
+      return { status: response.status, body };
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  private async consumeNativeSession(
+    connection: RuntimeConnection,
+    input: HermesRunSubmission,
+    run: NativeSessionRun,
+  ): Promise<void> {
+    let authoritativeOutputSeen = false;
+    const sessionsPath = stringSetting(connection, "sessionsPath", "/api/sessions").replace(/\/+$/, "");
+    const response = await this.fetcher(
+      endpoint(connection, `${sessionsPath}/${encodeURIComponent(input.sessionId)}/chat/stream`),
+      {
+        method: "POST",
+        redirect: "error",
+        signal: run.controller.signal,
+        headers: {
+          accept: "text/event-stream",
+          "content-type": "application/json",
+          ...(connection.secrets.apiKey ? { authorization: `Bearer ${connection.secrets.apiKey}` } : {}),
+          "x-hermes-session-key": input.memorySessionKey,
+        },
+        body: JSON.stringify({
+          message: input.input,
+          instructions: input.instructions,
+          model: input.modelAlias,
+        }),
+      },
+    );
+    if (!response.ok) throw new Error(`Hermes rejected the native session stream with status ${response.status}.`);
+    if (!response.headers.get("content-type")?.toLowerCase().includes("text/event-stream")) {
+      throw new Error("Hermes returned an invalid native session stream content type.");
+    }
+    await this.consumeSafeEventStream(response, async (event) => {
+      if (event.type === "RUN_STARTED") {
+        run.state = { ...run.state, status: "running" };
+      } else if (event.type === "MESSAGE_DELTA" && event.delta && !authoritativeOutputSeen) {
+        run.state = {
+          ...run.state,
+          output: `${run.state.output ?? ""}${event.delta}`.slice(0, 2_000_000),
+        };
+      } else if (event.type === "RUN_COMPLETED") {
+        run.state = {
+          ...run.state,
+          status: "completed",
+          error: null,
+          inputTokens: event.inputTokens,
+          outputTokens: event.outputTokens,
+          reasoningTokens: event.reasoningTokens,
+          totalTokens: event.inputTokens !== null && event.outputTokens !== null
+            ? event.inputTokens + event.outputTokens + (event.reasoningTokens ?? 0)
+            : null,
+          finishReason: "stop",
+        };
+      } else if (event.type === "RUN_FAILED") {
+        run.state = {
+          ...run.state,
+          status: "failed",
+          error: event.summary ?? event.errorCode ?? "Hermes native session failed.",
+          finishReason: "error",
+        };
+      } else if (event.type === "RUN_CANCELLED") {
+        run.state = { ...run.state, status: "cancelled", finishReason: "cancelled" };
+      }
+      this.appendNativeEvent(run, event);
+    }, (eventName, data) => {
+      if (eventName.toLowerCase() !== "assistant.completed" || !data || typeof data !== "object" || Array.isArray(data)) {
+        return;
+      }
+      const content = (data as Record<string, unknown>).content;
+      if (typeof content === "string") {
+        authoritativeOutputSeen = true;
+        run.state = { ...run.state, output: content.slice(0, 2_000_000) };
+      }
+    });
+    if (!isTerminalStatus(run.state.status)) {
+      throw new Error("Hermes native session stream ended without a terminal event.");
+    }
+  }
+
+  private appendNativeEvent(run: NativeSessionRun, event: HermesSafeRunEvent): void {
+    run.events.push(event);
+    run.version += 1;
+    const waiters = [...run.waiters];
+    run.waiters.clear();
+    for (const waiter of waiters) waiter();
+    if (isTerminalStatus(run.state.status) && !run.cleanupTimer) {
+      run.cleanupTimer = setTimeout(() => {
+        if (this.nativeRuns.get(run.id) === run) this.nativeRuns.delete(run.id);
+      }, 15 * 60_000);
+      run.cleanupTimer.unref();
+    }
   }
 
   private privateMcpContext(
@@ -627,6 +919,11 @@ export class HermesClient {
   }
 
   async status(runId: string): Promise<HermesRunState> {
+    const native = this.nativeRuns.get(runId);
+    if (native) return { ...native.state };
+    if (runId.startsWith(NATIVE_RUN_PREFIX)) {
+      throw new Error("Hermes native session run is no longer attached to this worker; its transcript remains in Hermes.");
+    }
     const connection = await this.resolver.resolveOne("HERMES");
     const runsPath = stringSetting(connection, "runsPath", "/v1/runs").replace(/\/+$/, "");
     const body = await this.request(connection, endpoint(connection, `${runsPath}/${encodeURIComponent(runId)}`), {
@@ -652,6 +949,9 @@ export class HermesClient {
   }
 
   async decideApproval(runId: string, choice: "once" | "deny"): Promise<void> {
+    if (this.nativeRuns.has(runId) || runId.startsWith(NATIVE_RUN_PREFIX)) {
+      throw new Error("Hermes native sessions do not expose the governed approval protocol.");
+    }
     const connection = await this.resolver.resolveOne("HERMES");
     const runsPath = stringSetting(connection, "runsPath", "/v1/runs").replace(/\/+$/, "");
     await this.request(connection, endpoint(connection, `${runsPath}/${encodeURIComponent(runId)}/approval`), {
@@ -661,6 +961,37 @@ export class HermesClient {
   }
 
   async stop(runId: string): Promise<void> {
+    const native = this.nativeRuns.get(runId);
+    if (native) {
+      if (!isTerminalStatus(native.state.status)) {
+        native.state = { ...native.state, status: "cancelled", finishReason: "cancelled" };
+        native.controller.abort();
+        this.appendNativeEvent(native, {
+          sourceEventId: `${runId}:client-cancelled`,
+          type: "RUN_CANCELLED",
+          delta: null,
+          preview: null,
+          errorCode: null,
+          summary: "Run cancelled by OrcaSynapse.",
+          status: "cancelled",
+          toolName: null,
+          toolCallKey: null,
+          text: null,
+          childSessionId: null,
+          durationMs: null,
+          inputTokens: null,
+          outputTokens: null,
+          reasoningTokens: null,
+          costUsd: null,
+          approvalExternalId: null,
+          approvalCommand: null,
+          approvalChoices: [],
+          occurredAt: new Date(),
+        });
+      }
+      return;
+    }
+    if (runId.startsWith(NATIVE_RUN_PREFIX)) return;
     const connection = await this.resolver.resolveOne("HERMES");
     const runsPath = stringSetting(connection, "runsPath", "/v1/runs").replace(/\/+$/, "");
     await this.request(connection, endpoint(connection, `${runsPath}/${encodeURIComponent(runId)}/stop`), {
@@ -675,6 +1006,14 @@ export class HermesClient {
     signal: AbortSignal,
     lastEventId?: string,
   ): Promise<void> {
+    const native = this.nativeRuns.get(runId);
+    if (native) {
+      await this.consumeNativeEvents(native, onEvent, signal, lastEventId);
+      return;
+    }
+    if (runId.startsWith(NATIVE_RUN_PREFIX)) {
+      throw new Error("Hermes native session event stream is no longer attached to this worker.");
+    }
     const connection = await this.resolver.resolveOne("HERMES");
     const runsPath = stringSetting(connection, "runsPath", "/v1/runs").replace(/\/+$/, "");
     const response = await this.fetcher(endpoint(connection, `${runsPath}/${encodeURIComponent(runId)}/events`), {
@@ -688,6 +1027,45 @@ export class HermesClient {
       },
     });
     if (!response.ok) throw new Error(`Hermes rejected the event stream with status ${response.status}.`);
+    await this.consumeSafeEventStream(response, onEvent);
+  }
+
+  private async consumeNativeEvents(
+    run: NativeSessionRun,
+    onEvent: (event: HermesSafeRunEvent) => Promise<void> | void,
+    signal: AbortSignal,
+    lastEventId?: string,
+  ): Promise<void> {
+    let cursor = 0;
+    if (lastEventId) {
+      const index = run.events.findIndex((event) => event.sourceEventId === lastEventId);
+      if (index >= 0) cursor = index + 1;
+    }
+    while (!signal.aborted) {
+      while (cursor < run.events.length) {
+        await onEvent(run.events[cursor]!);
+        cursor += 1;
+      }
+      if (isTerminalStatus(run.state.status)) return;
+      const version = run.version;
+      await new Promise<void>((resolve) => {
+        const wake = () => {
+          signal.removeEventListener("abort", wake);
+          run.waiters.delete(wake);
+          resolve();
+        };
+        run.waiters.add(wake);
+        signal.addEventListener("abort", wake, { once: true });
+        if (run.version !== version || isTerminalStatus(run.state.status)) wake();
+      });
+    }
+  }
+
+  private async consumeSafeEventStream(
+    response: Response,
+    onEvent: (event: HermesSafeRunEvent) => Promise<void> | void,
+    onRawEvent?: (eventName: string, data: unknown) => Promise<void> | void,
+  ): Promise<void> {
     if (!response.headers.get("content-type")?.toLowerCase().includes("text/event-stream")) {
       throw new Error("Hermes returned an invalid run event stream content type.");
     }
@@ -751,6 +1129,13 @@ export class HermesClient {
             data = JSON.parse(dataLines.join("\n")) as unknown;
           } catch {
             continue;
+          }
+          await onRawEvent?.(eventName, data);
+          if (!sourceEventId && data && typeof data === "object" && !Array.isArray(data)) {
+            const value = data as Record<string, unknown>;
+            const runId = safeEventText(value.run_id, 200);
+            const sequence = safeNonnegativeInteger(value.seq);
+            if (runId && sequence !== null) sourceEventId = `${runId}:${sequence}`;
           }
           const event = safeRunEvent(eventName, sourceEventId, data);
           if (!event) continue;

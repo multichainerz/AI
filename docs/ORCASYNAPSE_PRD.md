@@ -2,7 +2,7 @@
 
 ## Product outcome
 
-OrcaSynapse gives an organization one on-premises agentic intelligence harness for governed Sessions, document knowledge, durable agent memory, Hermes execution, model routes, policies, integrations, and operational evidence without turning the agent runtime into an infrastructure administrator.
+OrcaSynapse gives an organization one on-premises agentic intelligence harness for governed Sessions, private document knowledge, Hermes-native memory and execution, model routes, policies, integrations, and operational evidence without turning the agent runtime into an infrastructure administrator.
 
 The product should feel usable after two actions: install OrcaSynapse on the control-plane host, then use the dashboard to connect an OpenAI-compatible inference server and enroll the isolated Hermes host.
 
@@ -22,7 +22,7 @@ The responsive React application provides six product areas: Dashboard, Session,
 
 ### Session
 
-A normal Session always uses an active Hermes Profile and stable Hermes runtime session. Each message creates one governed Agent Run; OrcaSynapse persists the conversation, final response, usage and latency where Hermes reports them, cancellation/failure state, feedback, and sanitized audit data in PostgreSQL. The browser never receives the upstream serving credential.
+A normal Session always uses an active Hermes Profile and stable Hermes-native runtime session. Each message creates one governed run projection; OrcaSynapse sends only the new turn, while Hermes loads and persists its own transcript. OrcaSynapse persists the workspace projection, final response, usage and latency where Hermes reports them, cancellation/failure state, feedback, and sanitized audit data in PostgreSQL. The browser never receives the upstream serving credential.
 
 OrcaSynapse shows run status, projected tool/subagent activity, sources, cancellation, and final output without storing hidden reasoning, raw tool secrets, or unrestricted event payloads. Direct model testing belongs only in the Platform inference playground.
 
@@ -40,7 +40,7 @@ OrcaSynapse owns document knowledge end to end on the control plane. It is an ex
 
 ### Hermes agents
 
-OrcaSynapse manages immutable Profile Distributions: behavior instruction, selected model alias, Skill references, limits, memory policy, tool grants, and guardrails. In Development, creating the first Profile performs the live Hermes check, activates that immutable version, and enables Session in one action. Pilot and Production activation additionally require promoted exact-version evaluation evidence; standby remains available for pre-release validation.
+OrcaSynapse manages immutable Profile Distributions: behavior instruction, selected model alias, Skill references, limits, document access, tool grants, and guardrails. Hermes itself owns memory behavior. In Development, creating the first Profile performs the live Hermes check, activates that immutable version, and enables Session in one action. Pilot and Production activation additionally require promoted exact-version evaluation evidence; standby remains available for pre-release validation.
 
 Hermes runs in an isolated environment and can reach only:
 
@@ -52,7 +52,14 @@ OrcaSynapse does not give Hermes PostgreSQL credentials, host service control, h
 
 ### Memory
 
-VM2 holds no durable memory plane. Cross-conversation agent memory is not part of this release; a governed replacement served from OrcaSynapse's own pgvector plane is the next planned change. Hermes's small native runtime files (`MEMORY.md`, `USER.md`) remain, and within a conversation OrcaSynapse replays bounded complete-turn history on every run.
+Hermes is the sole active owner of agent memory and conversational continuity. VM2 persists Hermes' native session database, `MEMORY.md`, and `USER.md` under the managed runtime state root. OrcaSynapse never reads, mirrors, edits, embeds, or exposes their contents and never replays its PostgreSQL message projection as model context. The audit plane records who initiated a run, safe lifecycle events, and how it ended without becoming a second memory store.
+
+Native transcripts are session-specific. Vanilla `MEMORY.md` and `USER.md` are
+shared across sessions in the active Hermes home/profile, so this pre-production
+mode is a single trust boundary and is not accepted as multi-user memory
+isolation.
+
+Document knowledge remains a separate owner-scoped pgvector plane on VM1. Legacy OrcaSynapse memory schemas remain only for migration and rollback compatibility and are not granted to active runs.
 
 ### Inference and guardrails
 
@@ -87,7 +94,7 @@ The dashboard creates a short-lived one-use enrollment claim. The customer downl
 2. installs Hermes at the approved commit and starts it as a constrained systemd service;
 3. enrolls it with OrcaSynapse;
 4. receives an OrcaSynapse inference-gateway route, alias, and node key;
-5. applies the OrcaSynapse-managed policy and guardrail baseline;
+5. applies the OrcaSynapse-managed native-memory policy and guardrail baseline;
 6. enables signed heartbeats.
 
 The node persists a root-only recovery journal immediately after enrollment so all subsequent provisioning steps can be resumed without issuing another claim. Production invitations require a commit-pinned Hermes runtime and an HTTPS OrcaSynapse origin.

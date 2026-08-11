@@ -204,17 +204,15 @@ function distributionDigest(configuration: {
 }
 
 /**
- * Materializes a profile's memory choice into run capabilities.
+ * Agent memory is owned by Hermes' native MEMORY.md / USER.md lifecycle.
  *
- * Recall and capture are separate capabilities so a run can be permitted to
- * read what an agent already knows without being permitted to write more.
+ * OrcaSynapse still materializes document-retrieval authority here, but it no
+ * longer grants either side of the legacy pgvector agent-memory plane. The
+ * stored memoryMode field is retained only so the backup branch and existing
+ * rows remain reversible during this pre-production transition.
  */
-function memoryCapabilities(mode: AgentMemoryMode, allowPrivateKnowledge: boolean): AgentCapability[] {
-  const capabilities: AgentCapability[] = allowPrivateKnowledge ? ["knowledge:private:read"] : [];
-  if (mode === "DOCUMENTS_ONLY") return capabilities;
-  capabilities.push("memory:agent:read");
-  if (mode === "LEARN_USER" || mode === "LEARN_EXCHANGE") capabilities.push("memory:agent:write");
-  return capabilities;
+function executionCapabilities(_mode: AgentMemoryMode, allowPrivateKnowledge: boolean): AgentCapability[] {
+  return allowPrivateKnowledge ? ["knowledge:private:read"] : [];
 }
 
 function versionDto(version: StoredVersion) {
@@ -637,7 +635,7 @@ export class DrizzleAgentManager implements AgentManager {
           outputCharacterLimit,
           modelAlias: version.modelAlias,
           jobId: randomUUID(),
-          effectiveCapabilities: memoryCapabilities(version.memoryMode, version.allowPrivateKnowledge),
+          effectiveCapabilities: executionCapabilities(version.memoryMode, version.allowPrivateKnowledge),
           // Absent means owner-wide retrieval; present narrows it for this run.
           ...(options.knowledgeDocumentIds ? { knowledgeDocumentIds: [...options.knowledgeDocumentIds] } : {}),
         })
