@@ -80,6 +80,8 @@ describe("service connection configuration", () => {
       capabilitiesPath: "/v1/capabilities",
       toolsetsPath: "/v1/toolsets",
       runsPath: "/v1/runs",
+      sessionsPath: "/api/sessions",
+      executionMode: "native_sessions",
       governedMcpUrl: "https://orcasynapse.internal/api/v1/mcp/",
       governedToolsetName: "orcasynapse-governed-tools",
       runPollIntervalMs: 1_000,
@@ -87,6 +89,8 @@ describe("service connection configuration", () => {
     })).toMatchObject({
       toolsetsPath: "/v1/toolsets",
       runsPath: "/v1/runs",
+      sessionsPath: "/api/sessions",
+      executionMode: "native_sessions",
       governedMcpUrl: "https://orcasynapse.internal/api/v1/mcp/",
       governedToolsetName: "orcasynapse-governed-tools",
     });

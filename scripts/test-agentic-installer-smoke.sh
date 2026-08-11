@@ -210,6 +210,17 @@ grep -q 'smoke-model' /etc/hermes/config.yaml 2>/dev/null \
   && pass "managed policy pins the enrolled model route" || bad "managed policy is missing the model route"
 grep -q 'allow_lazy_installs: false' /etc/hermes/config.yaml 2>/dev/null \
   && pass "managed policy keeps the hardened baseline" || bad "managed policy lost its baseline"
+grep -Fqx '  memory_enabled: true' /etc/hermes/config.yaml \
+  && pass "Hermes native memory is enabled" || bad "Hermes native memory is not enabled"
+grep -Fqx '  user_profile_enabled: true' /etc/hermes/config.yaml \
+  && pass "Hermes native user profile is enabled" || bad "Hermes native user profile is not enabled"
+if grep -Eq '^  provider:' /etc/hermes/config.yaml; then
+  bad "managed policy enables an external memory provider"
+else
+  pass "managed policy keeps memory built-in only"
+fi
+grep -Fqx '    - memory' /etc/hermes/config.yaml \
+  && pass "native memory is admitted by the platform allowlist" || bad "native memory is absent from the platform allowlist"
 # A unit file is world-readable by convention, so the gateway key must not be in
 # it. It authenticates every governed call to 8642; publishing it to any local
 # reader would undo the point of running the runtime as an unprivileged account.

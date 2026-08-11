@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import {
-  agentCapabilitySchema,
   DEFAULT_MEMORY_POLICY,
   type AgentCapability,
   type BenchmarkCase,
@@ -12,7 +11,7 @@ import {
   type OrcaSynapseDatabase,
 } from "@orcasynapse/database";
 import { and, eq } from "drizzle-orm";
-import type { AgentKnowledgeRetriever, AgentMemoryPort } from "./agent-processor.js";
+import type { AgentKnowledgeRetriever } from "./agent-processor.js";
 import type {
   BenchmarkCaseExecutor,
   BenchmarkCaseOutput,
@@ -48,14 +47,12 @@ function citedNames(sources: unknown): string[] {
 /**
  * The capabilities a benchmark run may hold.
  *
- * The profile's own choice, minus `memory:agent:write` always. A benchmark that
- * captured facts would change the thing it is measuring, and the second run of
- * a suite would then score differently because of the first.
+ * Agent memory is native to Hermes and deliberately opaque to this projection.
+ * Chat benchmarks may still receive document retrieval, but never legacy
+ * pgvector memory capabilities.
  */
-function benchmarkCapabilities(memoryMode: string, allowPrivateKnowledge: boolean): AgentCapability[] {
-  const capabilities: AgentCapability[] = allowPrivateKnowledge ? ["knowledge:private:read"] : [];
-  if (memoryMode !== "DOCUMENTS_ONLY") capabilities.push("memory:agent:read");
-  return capabilities.filter((capability) => agentCapabilitySchema.safeParse(capability).success);
+function benchmarkCapabilities(allowPrivateKnowledge: boolean): AgentCapability[] {
+  return allowPrivateKnowledge ? ["knowledge:private:read"] : [];
 }
 
 function unanswered(reason: string): BenchmarkCaseOutput {
@@ -66,7 +63,6 @@ export class LiveBenchmarkExecutor implements BenchmarkCaseExecutor {
   constructor(
     private readonly database: OrcaSynapseDatabase,
     private readonly knowledge: AgentKnowledgeRetriever,
-    private readonly memory: AgentMemoryPort,
     private readonly caseTimeoutMs = CASE_TIMEOUT_MS,
     private readonly pollMs = POLL_MS,
   ) {}
@@ -122,7 +118,7 @@ export class LiveBenchmarkExecutor implements BenchmarkCaseExecutor {
       conversationHistory: [],
       modelAlias: version.modelAlias,
       jobId: randomUUID(),
-      effectiveCapabilities: benchmarkCapabilities(version.memoryMode, version.allowPrivateKnowledge),
+      effectiveCapabilities: benchmarkCapabilities(version.allowPrivateKnowledge),
     });
 
     const finished = await this.waitFor(runId);
@@ -203,24 +199,9 @@ export class LiveBenchmarkExecutor implements BenchmarkCaseExecutor {
    * it measures, and every later run would read what the earlier ones left.
    */
   private async recall(run: ClaimedBenchmarkRun, benchmarkCase: BenchmarkCase): Promise<BenchmarkCaseOutput> {
-    if (!run.agentProfileId) return unanswered("This run has no agent whose memory to read.");
-    const limits = await this.memoryLimits();
-    const startedAt = Date.now();
-    const [recalled, profile] = await Promise.all([
-      this.memory.recall(run.ownerSubject, run.agentProfileId, benchmarkCase.prompt, limits),
-      // Profile facts are injected on every message, so a suite asserting what
-      // the agent knows must see them too.
-      this.memory.profile(run.ownerSubject, run.agentProfileId),
-    ]);
-    const latencyMs = Date.now() - startedAt;
-    const facts = [...profile.map(({ content }) => content), ...recalled.map(({ content }) => content)];
-    return {
-      text: facts.join("\n"),
-      citedDocuments: [],
-      latencyMs,
-      outputTokens: null,
-      failureReason: null,
-    };
+    void run;
+    void benchmarkCase;
+    return unanswered("Memory is managed internally by Hermes and is not exposed to OrcaSynapse benchmarks.");
   }
 
   /** The active policy's retrieval bounds, or the shipped defaults. */
@@ -239,22 +220,4 @@ export class LiveBenchmarkExecutor implements BenchmarkCaseExecutor {
     };
   }
 
-  private async memoryLimits() {
-    const [policy] = await this.database
-      .select({
-        recallLimit: memoryPolicy.recallLimit,
-        recallMinimumScore: memoryPolicy.recallMinimumScore,
-        retentionDays: memoryPolicy.retentionDays,
-        maximumItemsPerOwner: memoryPolicy.maximumItemsPerOwner,
-      })
-      .from(memoryPolicy)
-      .where(eq(memoryPolicy.status, "ACTIVE"))
-      .limit(1);
-    return {
-      recallLimit: policy?.recallLimit ?? DEFAULT_MEMORY_POLICY.recallLimit,
-      recallMinimumScore: policy?.recallMinimumScore ?? DEFAULT_MEMORY_POLICY.recallMinimumScore,
-      retentionDays: policy?.retentionDays ?? DEFAULT_MEMORY_POLICY.retentionDays,
-      maximumItemsPerOwner: policy?.maximumItemsPerOwner ?? DEFAULT_MEMORY_POLICY.maximumItemsPerOwner,
-    };
-  }
 }

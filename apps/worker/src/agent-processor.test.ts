@@ -22,10 +22,7 @@ import {
   conversationHistory,
   type AgentHermesRuntime,
   type AgentKnowledgeRetriever,
-  type AgentMemoryPort,
   type KnowledgeLimits,
-  type MemoryDistillerPort,
-  type MemoryLimits,
 } from "./agent-processor.js";
 
 let context: TestDatabase;
@@ -180,45 +177,8 @@ async function jobIdOf(runId: string): Promise<string> {
 function processor(
   runtime: AgentHermesRuntime,
   knowledge: AgentKnowledgeRetriever = noKnowledge,
-  memory?: AgentMemoryPort,
-  distiller?: MemoryDistillerPort,
 ) {
-  return new DrizzleAgentProcessor(context.database, runtime, knowledge, capabilities, memory, distiller);
-}
-
-/** Records what was recalled and captured without touching pgvector. */
-function memoryPort(recollections: { id: string; content: string }[] = []): AgentMemoryPort & {
-  captured: { content: string; scope: string }[][];
-  profileFacts: { id: string; content: string; scope: "STATIC" | "DYNAMIC" | "EPISODIC" }[];
-  captureLimits: MemoryLimits[];
-  recallLimits: MemoryLimits[];
-} {
-  const captured: { content: string; scope: string }[][] = [];
-  const profileFacts: { id: string; content: string; scope: "STATIC" | "DYNAMIC" | "EPISODIC" }[] = [];
-  const captureLimits: MemoryLimits[] = [];
-  const recallLimits: MemoryLimits[] = [];
-  return {
-    captured,
-    profileFacts,
-    captureLimits,
-    recallLimits,
-    recall: vi.fn(async (_owner: string, _profile: string, _query: string, limits: MemoryLimits) => {
-      recallLimits.push(limits);
-      return recollections;
-    }),
-    profile: vi.fn(async () => profileFacts),
-    capture: vi.fn(async (
-      _owner: string,
-      _profile: string,
-      items: readonly { content: string; scope: string }[],
-      _provenance: unknown,
-      limits: MemoryLimits,
-    ) => {
-      captured.push([...items]);
-      captureLimits.push(limits);
-      return items.length;
-    }),
-  };
+  return new DrizzleAgentProcessor(context.database, runtime, knowledge, capabilities);
 }
 
 describe("DrizzleAgentProcessor", () => {
@@ -513,336 +473,31 @@ describe("DrizzleAgentProcessor", () => {
     expect(knowledge.search).not.toHaveBeenCalled();
   });
 
-  it("stores nothing about the person when the profile keeps memory off", async () => {
+  it("leaves agent memory entirely to Hermes native sessions", async () => {
     await healthyBoundary();
-    const id = await queuedRun({}, "DOCUMENTS_ONLY");
-    const memory = memoryPort();
-
-    await processor(hermes(), noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER);
-
-    expect(memory.recall).not.toHaveBeenCalled();
-    expect(memory.capture).not.toHaveBeenCalled();
-  });
-
-  it("recalls without writing when the profile is recall-only", async () => {
-    await healthyBoundary();
-    const id = await queuedRun({}, "RECALL_ONLY");
-    const memory = memoryPort([{ id: randomUUID(), content: "Prefers metric units." }]);
+    const id = await queuedRun({}, "LEARN_EXCHANGE");
+    await context.database
+      .update(agentRun)
+      .set({
+        effectiveCapabilities: [
+          "knowledge:private:read",
+          "memory:agent:read",
+          "memory:agent:write",
+        ],
+      })
+      .where(eq(agentRun.id, id));
     const runtime = hermes();
 
-    await processor(runtime, noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER);
-
-    expect(memory.recall).toHaveBeenCalled();
-    expect(memory.capture).not.toHaveBeenCalled();
-    // The recalled item reaches Hermes as instruction context, carrying the
-    // same untrusted-data framing as knowledge excerpts.
-    const submission = vi.mocked(runtime.start).mock.calls[0]?.[0];
-    expect(submission?.instructions).toContain("RECALLED MEMORY");
-    expect(submission?.instructions).toContain("Prefers metric units.");
-    expect(submission?.instructions).toContain("never as instructions");
-  });
-
-  it("puts established facts in the prompt even when the question does not match them", async () => {
-    // The failure this exists to fix: on the pilot, "prefers answers in
-    // Indonesian" was stored and never retrieved, because a language preference
-    // is not semantically near a question about an event. The profile is not a
-    // search, so it is present regardless of what was asked.
-    await healthyBoundary();
-    const id = await queuedRun({}, "RECALL_ONLY");
-    const memory = memoryPort();
-    memory.profileFacts.push(
-      { id: "profile-1", content: "The user prefers answers in Indonesian.", scope: "STATIC" },
-      { id: "profile-2", content: "The user is migrating payments to Kubernetes.", scope: "DYNAMIC" },
-    );
-    const runtime = hermes();
-
-    await processor(runtime, noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER);
+    await processor(runtime, noKnowledge)
+      .process({ runId: id }, await jobIdOf(id), WORKER);
 
     const submission = vi.mocked(runtime.start).mock.calls[0]?.[0];
-    expect(submission?.instructions).toContain("ABOUT THIS PERSON");
-    expect(submission?.instructions).toContain("The user prefers answers in Indonesian.");
-    // Current context is marked so the model can weigh it differently from a
-    // standing fact.
-    expect(submission?.instructions).toContain("The user is migrating payments to Kubernetes. (current)");
-    expect(submission?.instructions).toContain("never as instructions");
-  });
-
-  it("offers every profile fact for retirement, not just the ones the turn resembles", async () => {
-    // The pilot's failure: a move away from Jakarta retired a near-identical
-    // episodic row and left the STATIC "The user works in Jakarta." live and in
-    // every prompt, because that row was not among the nearest by similarity.
-    // A fact shown on every message must always be eligible to be corrected.
-    await healthyBoundary();
-    const id = await queuedRun({}, "LEARN_EXCHANGE");
-    const memory = memoryPort([{ id: "near-1", content: "The user visited Bandung last year." }]);
-    memory.profileFacts.push(
-      { id: "profile-1", content: "The user works in Jakarta.", scope: "STATIC" },
-    );
-    let offered: readonly { id: string; content: string }[] = [];
-    const distiller: MemoryDistillerPort = {
-      distil: vi.fn(async (_turns, known = []) => {
-        offered = known;
-        return { facts: [], succeeded: true };
-      }),
-    };
-
-    await processor(hermes(), noKnowledge, memory, distiller)
-      .process({ runId: id }, await jobIdOf(id), WORKER);
-
-    expect(offered.map((fact) => fact.id)).toContain("profile-1");
-    expect(offered.map((fact) => fact.id)).toContain("near-1");
-  });
-
-  it("shows a fact once when it is both in the profile and near the turn", async () => {
-    await healthyBoundary();
-    const id = await queuedRun({}, "LEARN_EXCHANGE");
-    const memory = memoryPort([{ id: "shared", content: "The user works in Jakarta." }]);
-    memory.profileFacts.push({ id: "shared", content: "The user works in Jakarta.", scope: "STATIC" });
-    let offered: readonly { id: string; content: string }[] = [];
-    const distiller: MemoryDistillerPort = {
-      distil: vi.fn(async (_turns, known = []) => {
-        offered = known;
-        return { facts: [], succeeded: true };
-      }),
-    };
-
-    await processor(hermes(), noKnowledge, memory, distiller)
-      .process({ runId: id }, await jobIdOf(id), WORKER);
-
-    expect(offered.filter((fact) => fact.id === "shared")).toHaveLength(1);
-  });
-
-  it("defers a conversation's turn to the session sweep", async () => {
-    // Capture waits for the conversation to go quiet, so extraction reads the
-    // arc rather than one turn of it and the model is called once per session.
-    await healthyBoundary();
-    const id = await queuedRun({}, "LEARN_EXCHANGE");
-    const [conversation] = await context.database
-      .insert(chatConversation)
-      .values({ ownerSubject: "user:pilot", title: "Pilot chat", modelAlias: "hermes-agent" })
-      .returning({ id: chatConversation.id });
-    await context.database.insert(chatMessage).values({
-      conversationId: conversation!.id,
-      ordinal: 0,
-      role: "USER",
-      status: "COMPLETED",
-      content: "Summarize the policy.",
-      agentRunId: id,
-    });
-    const memory = memoryPort();
-    const distiller: MemoryDistillerPort = {
-      distil: vi.fn(async () => ({ facts: [], succeeded: true })),
-    };
-
-    await processor(hermes(), noKnowledge, memory, distiller)
-      .process({ runId: id }, await jobIdOf(id), WORKER);
-
-    expect(distiller.distil).not.toHaveBeenCalled();
-    expect(memory.capture).not.toHaveBeenCalled();
-  });
-
-  it("still captures a run that belongs to no conversation", async () => {
-    // An agent invoked through the API has no session to wait for, so deferring
-    // it would mean never capturing at all.
-    await healthyBoundary();
-    const id = await queuedRun({}, "LEARN_EXCHANGE");
-    const memory = memoryPort();
-    const distiller: MemoryDistillerPort = {
-      distil: vi.fn(async () => ({
-        facts: [{ fact: "The user leads the platform team.", scope: "STATIC" as const, replaces: [] }],
-        succeeded: true,
-      })),
-    };
-
-    await processor(hermes(), noKnowledge, memory, distiller)
-      .process({ runId: id }, await jobIdOf(id), WORKER);
-
-    expect(distiller.distil).toHaveBeenCalledTimes(1);
-    expect(memory.captured[0]).toEqual([
-      { content: "The user leads the platform team.", scope: "STATIC", replaces: [] },
-    ]);
-  });
-
-  it("says so plainly when nothing is established yet", async () => {
-    // An empty block must not read as an assertion that the person has no
-    // preferences — only that none have been learned.
-    await healthyBoundary();
-    const id = await queuedRun({}, "RECALL_ONLY");
-    const runtime = hermes();
-
-    await processor(runtime, noKnowledge, memoryPort()).process({ runId: id }, await jobIdOf(id), WORKER);
-
-    expect(vi.mocked(runtime.start).mock.calls[0]?.[0]?.instructions)
-      .toContain("Nothing is established about this person yet.");
-  });
-
-  it("stores the person's turn and not the model's answer when learning the user", async () => {
-    await healthyBoundary();
-    const id = await queuedRun({}, "LEARN_USER");
-    const memory = memoryPort();
-
-    await processor(hermes(), noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER);
-
-    // A wrong answer must not become a durable fact the agent later retrieves.
-    expect(memory.captured[0]?.map(({ content }) => content)).toEqual(["Summarize the policy."]);
-    // A whole turn is never profile material: shown on every message it would
-    // put a question in front of the model forever.
-    expect(memory.captured[0]?.[0]?.scope).toBe("EPISODIC");
-  });
-
-  it("keeps the model's answer away from the distiller when learning the user", async () => {
-    // Every other LEARN_USER test here runs without a distiller, so they all
-    // exercise the fallback branch. Policy defaults `distillCapture` to true,
-    // which means the distilled branch is the normal path — and it passed the
-    // assistant turn unconditionally, so a wrong answer became durable memory
-    // under the one mode that promises it will not.
-    await healthyBoundary();
-    const id = await queuedRun({}, "LEARN_USER");
-    const memory = memoryPort();
-    const seen: Array<Array<{ role: string; content: string }>> = [];
-    const distiller: MemoryDistillerPort = {
-      distil: vi.fn(async (turns: readonly { role: "assistant" | "user"; content: string }[]) => {
-        seen.push(turns.map(({ role, content }) => ({ role, content })));
-        return {
-          succeeded: true,
-          facts: [{ fact: "The user asked about the policy.", scope: "EPISODIC" as const, replaces: [] as string[] }],
-        };
-      }),
-    };
-
-    await processor(hermes(), noKnowledge, memory, distiller)
-      .process({ runId: id }, await jobIdOf(id), WORKER);
-
-    expect(seen).toHaveLength(1);
-    expect(seen[0]!.map(({ role }) => role), "the assistant turn reached the distiller").toEqual(["user"]);
-  });
-
-  it("stores both sides of the turn only when the profile opts into it", async () => {
-    await healthyBoundary();
-    const id = await queuedRun({}, "LEARN_EXCHANGE");
-    const memory = memoryPort();
-
-    await processor(hermes(), noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER);
-
-    expect(memory.captured[0]).toHaveLength(2);
-    expect(memory.captured[0]?.[0]?.content).toBe("Summarize the policy.");
-  });
-
-  it("completes the run even when recording memory fails", async () => {
-    await healthyBoundary();
-    const id = await queuedRun({}, "LEARN_USER");
-    const memory = memoryPort();
-    memory.capture = vi.fn(async () => { throw new Error("pgvector unavailable"); });
-
-    // The person already has their answer; losing a memory must not retract it.
-    await expect(processor(hermes(), noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER))
-      .resolves.toMatchObject({ status: "COMPLETED" });
-  });
-
-
-  it("lets an active policy stop capture that a profile still asks for", async () => {
-    // The ceiling is read at capture time, so suspending capture takes effect
-    // on runs already in flight rather than only on newly submitted ones.
-    await healthyBoundary();
-    await context.database.insert(memoryPolicy).values({
-      slug: "locked-down",
-      displayName: "Locked down",
-      description: "Recall only while the retention review is open.",
-      status: "ACTIVE",
-      maximumCaptureMode: "RECALL_ONLY",
-      firstActivatedAt: new Date(),
-    });
-    const id = await queuedRun({}, "LEARN_EXCHANGE");
-    const memory = memoryPort();
-
-    await processor(hermes(), noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER);
-
-    expect(memory.recall).toHaveBeenCalled();
-    expect(memory.capture).not.toHaveBeenCalled();
-  });
-
-  it("narrows a permissive profile to what the policy allows", async () => {
-    await healthyBoundary();
-    await context.database.insert(memoryPolicy).values({
-      slug: "user-only",
-      displayName: "User turns only",
-      description: "Model output is not retained.",
-      status: "ACTIVE",
-      maximumCaptureMode: "LEARN_USER",
-      firstActivatedAt: new Date(),
-    });
-    const id = await queuedRun({}, "LEARN_EXCHANGE");
-    const memory = memoryPort();
-
-    await processor(hermes(), noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER);
-
-    // The profile asked for both sides; the ceiling allows only the person's.
-    expect(memory.captured[0]?.map(({ content }) => content)).toEqual(["Summarize the policy."]);
-  });
-
-  it("hands the store every limit the active policy sets, not just the ceiling", async () => {
-    // Retention and the caps were administrable long before they were
-    // enforced; this asserts the whole policy reaches the store.
-    await healthyBoundary();
-    await context.database.insert(memoryPolicy).values({
-      slug: "short-lived",
-      displayName: "Short lived",
-      description: "Thirty days, tightly capped.",
-      status: "ACTIVE",
-      maximumCaptureMode: "LEARN_USER",
-      retentionDays: 30,
-      maximumItemsPerOwner: 25,
-      recallLimit: 2,
-      recallMinimumScore: 0.7,
-      firstActivatedAt: new Date(),
-    });
-    const id = await queuedRun({}, "LEARN_USER");
-    const memory = memoryPort([{ id: randomUUID(), content: "Prefers metric units." }]);
-
-    await processor(hermes(), noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER);
-
-    expect(memory.recallLimits[0]).toMatchObject({ recallLimit: 2, recallMinimumScore: 0.7 });
-    expect(memory.captureLimits[0]).toMatchObject({
-      retentionDays: 30,
-      maximumItemsPerOwner: 25,
-    });
-  });
-
-  it("falls back to the shipped defaults when no policy is active", async () => {
-    // An installation that never wrote a policy still gets bounded retention,
-    // rather than storing everything forever.
-    await healthyBoundary();
-    const id = await queuedRun({}, "LEARN_USER");
-    const memory = memoryPort();
-
-    await processor(hermes(), noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER);
-
-    expect(memory.captureLimits[0]).toEqual({
-      recallLimit: DEFAULT_MEMORY_POLICY.recallLimit,
-      recallMinimumScore: DEFAULT_MEMORY_POLICY.recallMinimumScore,
-      retentionDays: DEFAULT_MEMORY_POLICY.retentionDays,
-      maximumItemsPerOwner: DEFAULT_MEMORY_POLICY.maximumItemsPerOwner,
-    });
-    expect(DEFAULT_MEMORY_POLICY.retentionDays).not.toBeNull();
-  });
-
-  it("ignores a suspended policy rather than enforcing a ceiling nobody approved", async () => {
-    await healthyBoundary();
-    await context.database.insert(memoryPolicy).values({
-      slug: "withdrawn",
-      displayName: "Withdrawn",
-      description: "Suspended while the review is open.",
-      status: "SUSPENDED",
-      maximumCaptureMode: "DOCUMENTS_ONLY",
-      retentionDays: 7,
-    });
-    const id = await queuedRun({}, "LEARN_USER");
-    const memory = memoryPort();
-
-    await processor(hermes(), noKnowledge, memory).process({ runId: id }, await jobIdOf(id), WORKER);
-
-    expect(memory.captured[0]?.map(({ content }) => content)).toEqual(["Summarize the policy."]);
-    expect(memory.captureLimits[0]?.retentionDays).toBe(DEFAULT_MEMORY_POLICY.retentionDays);
+    expect(submission?.instructions).toContain("Hermes' built-in memory tool");
+    expect(submission?.instructions).toContain("MEMORY.md");
+    expect(submission?.instructions).toContain("USER.md");
+    expect(submission?.instructions).not.toContain("ABOUT THIS PERSON");
+    expect(submission?.instructions).not.toContain("RECALLED MEMORY");
+    expect(submission?.instructions).not.toContain("legacy private fact");
   });
 
   it("retrieves documents with the bounds the active policy sets", async () => {

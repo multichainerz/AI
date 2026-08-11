@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="ai-v3.14.0"
+INSTALLER_VERSION="ai-v3.15.0"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 HERMES_HOME_DIR="${STATE_ROOT}/home"
 RUNTIME_SERVICE="orcasynapse-hermes"
@@ -628,12 +628,23 @@ terminal:
   # Keep Hermes work inside the service account's managed, writable home. This
   # is the canonical replacement for the deprecated MESSAGING_CWD environment.
   cwd: ${HERMES_HOME_DIR}
+# Hermes owns agent memory and session continuity. These files remain inside
+# HERMES_HOME and are never read, mirrored, or edited by OrcaSynapse.
+memory:
+  memory_enabled: true
+  user_profile_enabled: true
+  memory_char_limit: 2200
+  user_char_limit: 1375
+  nudge_interval: 10
+  flush_min_turns: 6
 # Hermes otherwise falls back to its broad api_server platform preset. Keep
-# the production baseline tool-free (including dynamically configured MCP
-# servers) until OrcaSynapse explicitly distributes and verifies a governed toolset.
+# the production baseline limited to native memory (and no dynamically
+# configured MCP servers) until OrcaSynapse explicitly distributes and verifies
+# another governed toolset.
 platform_toolsets:
   api_server:
     - no_mcp
+    - memory
 security:
   redact_secrets: true
   allow_lazy_installs: false
@@ -645,12 +656,10 @@ tool_loop_guardrails:
 EOF
 }
 
-# Adds or replaces only terminal.cwd in an existing OrcaSynapse-managed policy.
-# Repair mode must preserve its enrolled model route and guardrails rather than
-# regenerate them from secrets, but older completed nodes have no terminal
-# block. The line-oriented edit is safe for the known root-owned YAML shape and
-# leaves every other setting byte-for-byte in its original order.
-reconcile_managed_terminal_cwd() {
+# Reconciles the workspace and introduces Hermes-native memory on an existing
+# OrcaSynapse-managed policy. Repair mode must preserve the enrolled model route
+# and guardrails rather than regenerate them from secrets.
+reconcile_managed_runtime_policy() {
   local config="${HERMES_MANAGED_DIR}/config.yaml" rendered
   [[ -s "${config}" ]] || fail "the OrcaSynapse-managed Hermes policy is missing"
   rendered="$(python3 - "${config}" "${HERMES_HOME_DIR}" <<'PYTHON'
@@ -691,9 +700,35 @@ if not terminal_seen:
         output.append("")
     output.extend(["terminal:", f"  cwd: {cwd}"])
 
+managed_memory = [
+    "memory:",
+    "  memory_enabled: true",
+    "  user_profile_enabled: true",
+    "  memory_char_limit: 2200",
+    "  user_char_limit: 1375",
+    "  nudge_interval: 10",
+    "  flush_min_turns: 6",
+]
+memory_index = next((index for index, line in enumerate(output) if re.fullmatch(r"memory:\s*", line)), None)
+if memory_index is None:
+    if output and output[-1] != "":
+        output.append("")
+    output.append("# Hermes owns MEMORY.md and USER.md inside its isolated home.")
+    output.extend(managed_memory)
+else:
+    # Replace the whole root memory block. In particular, remove any external
+    # provider left by manual drift: this product mode is vanilla built-in
+    # MEMORY.md / USER.md only, not built-in plus a second memory owner.
+    memory_end = memory_index + 1
+    while memory_end < len(output) and (
+        output[memory_end] == "" or output[memory_end][0].isspace()
+    ):
+        memory_end += 1
+    output[memory_index:memory_end] = managed_memory
+
 sys.stdout.write("\n".join(output) + "\n")
 PYTHON
-)" || fail "the managed Hermes terminal workspace could not be reconciled"
+)" || fail "the managed Hermes runtime policy could not be reconciled"
   write_file_from_stdin 0644 root root "${config}" <<<"${rendered}"
 }
 
@@ -1147,7 +1182,7 @@ text = open(config_path).read()
 # Drop any block a previous pass wrote, so this stays idempotent.
 text = re.sub(r"\nagent:\n  disabled_toolsets:\n(?:    - .*\n)*", "\n", text)
 
-allowlist = ["no_mcp"] + admitted
+allowlist = list(dict.fromkeys(["no_mcp", "memory"] + admitted))
 text = re.sub(
     r"(platform_toolsets:\n  api_server:\n)(?:    - .*\n)+",
     lambda m: m.group(1) + "".join(f"    - {name}\n" for name in allowlist),
@@ -1155,7 +1190,7 @@ text = re.sub(
     count=1,
 )
 
-disabled = [name for name in every if name not in admitted]
+disabled = [name for name in every if name not in admitted and name != "memory"]
 if disabled:
     block = "agent:\n  disabled_toolsets:\n" + "".join(f"    - {name}\n" for name in disabled)
     text = text.rstrip("\n") + "\n" + block
@@ -1270,9 +1305,9 @@ sign_request() {
   printf '%s' "${signature}"
 }
 
-# Agent memory is served by OrcaSynapse from its own pgvector plane, so this
-# node runs exactly one plane: the Hermes runtime. Its API port answering is
-# the whole of what this host can attest to.
+# Agent memory and session history are native to Hermes on this node.
+# OrcaSynapse attests runtime health and keeps only operational audit evidence;
+# it never reads or mirrors the runtime's MEMORY.md / USER.md content.
 hermes_status="DEGRADED"
 if curl --fail --silent --max-time 5 http://127.0.0.1:8642/health >/dev/null; then
   hermes_status="ONLINE"
@@ -1282,7 +1317,7 @@ payload="$(jq -cS -n \
   --arg observedAt "${observed_at}" \
   --arg status "${hermes_status}" \
   --arg version "${COMMIT_PIN}" \
-  '{observedAt:$observedAt,status:$status,hermesVersion:$version,capabilities:["gateway-api","signed-heartbeat"]}')"
+  '{observedAt:$observedAt,status:$status,hermesVersion:$version,capabilities:["gateway-api","native-sessions","native-memory","signed-heartbeat"]}')"
 timestamp="${observed_at}"
 nonce="$(cat /proc/sys/kernel/random/uuid)"
 signature="$(sign_request "${timestamp}" "${nonce}" "${payload}")"
@@ -1362,7 +1397,7 @@ repair_runtime_installation() {
   create_service_account
   install_hermes_directory 0750 "${STATE_ROOT}/data"
   install_hermes_directory 0750 "${HERMES_HOME_DIR}"
-  reconcile_managed_terminal_cwd
+  reconcile_managed_runtime_policy
   write_hermes_runtime_unit
   systemctl enable "${RUNTIME_SERVICE}" >/dev/null
   systemctl restart "${RUNTIME_SERVICE}" \

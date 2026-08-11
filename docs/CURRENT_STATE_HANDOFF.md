@@ -1,6 +1,6 @@
 # OrcaSynapse Current-State Handoff
 
-Last verified: 2026-08-10 (Asia/Jakarta)
+Last verified: 2026-08-12 (Asia/Jakarta)
 
 This document is the sanitized transfer context for continuing OrcaSynapse work in another session. Read it before changing code. It records the repository state, decisions already made, verified behavior, and the pending work. It intentionally contains no passwords, installation keys, API keys, enrollment claims, or private-key material.
 
@@ -9,7 +9,7 @@ This document is the sanitized transfer context for continuing OrcaSynapse work 
 - Repository: <https://github.com/multichainerz/AI>
 - Local workspace: `C:\Users\Veros\Documents\GitHub\MPM`
 - Branch: `main`.
-- Baseline release: **ai-v3.14.0** (this file ships in that release commit; `git log -1` gives the hash). Releases are tagged starting at `ai-v1.25.0`.
+- Baseline release: **ai-v3.15.0** (this file ships in that release commit; `git log -1` gives the hash). Releases are tagged starting at `ai-v1.25.0`.
 - Baseline verification: `pnpm verify` passes the repository test suites, typecheck, production build, and `drizzle-kit check`. `pnpm verify:postgres` passes against a pgvector server; `pnpm security:audit` reports no known vulnerabilities; and the four static guards (`sync-installer-ui.sh --check`, `test-release-consistency.sh`, `test-docker-build-closure.sh`, `test-csp-closure.sh`) pass. Avoid recording a fixed aggregate test count here because it changes as package suites evolve.
 - Both installers are covered end to end by lifecycle tests that execute `main()`: `scripts/test-orcasynapse-installer-smoke.sh` (VM1) and `scripts/test-agentic-installer-smoke.sh` (VM2, including decommission). Both need root and a systemd host — a WSL Ubuntu 24.04 instance with `[boot] systemd=true` is enough.
 
@@ -41,14 +41,14 @@ The operator journey:
 
 1. OrcaSynapse owns enterprise identity, authorization, policy, encrypted configuration, orchestration, audit, and inference mediation.
 2. Hermes is the only normal Chat and agent-execution path. Chat must never call the model directly.
-3. VM2 runs the agent runtime and holds no durable store. Knowledge lives in OrcaSynapse's local pgvector index and never transits VM2. Cross-conversation agent memory ships as a governed pgvector-backed store, scoped to one person and one agent, with an installation-wide policy cap. See the agent-memory entry under What is implemented.
-4. PostgreSQL stores control-plane state, metadata, sessions, audit, durable run state, extracted knowledge chunks, and their embeddings — never original enterprise files or model weights.
+3. VM2 runs Hermes and durably owns Hermes-native sessions, Skills, `MEMORY.md`, and `USER.md`. Knowledge lives in OrcaSynapse's local pgvector index on VM1. OrcaSynapse does not read, mirror, or edit Hermes memory.
+4. PostgreSQL stores control-plane state, sanitized session/run projections, audit, extracted knowledge chunks, and their embeddings — never original enterprise files, Hermes memory files, or model weights.
 5. Source files are never persisted in OrcaSynapse: extraction happens in flight, and a failed ingestion requires re-upload.
 6. AI Inference serves models but does not own policy or durable memory.
 7. Hermes receives a node-scoped OrcaSynapse inference credential; the inference server credential stays on VM1.
-8. Hermes runs alone on isolated VM2; small native Hermes files such as `MEMORY.md` and `USER.md` remain additive runtime state.
+8. Hermes runs alone on isolated VM2; its native memory and session database are the agent-continuity source and must be backed up separately from PostgreSQL.
 9. No Redis, Valkey, pg-boss, LiteLLM, object store, external vector database service, or OCR stack. pgvector is required and ships inside the bundled `pgvector/pgvector:pg17` PostgreSQL image.
-10. Tenancy is per deployment: one installation serves one organization; `ownerSubject` scopes user data inside it. Do not reintroduce multi-tenancy as pending work.
+10. Tenancy is per deployment. PostgreSQL document knowledge remains `ownerSubject`-scoped, but vanilla Hermes file memory is shared across sessions in the active home/profile. Treat the current pre-production installation as one trust boundary and do not admit mutually untrusted users until Hermes homes/profiles are isolated deliberately.
 
 ## Runtime topology
 
@@ -96,13 +96,13 @@ One commit per release on `main`: subject `ai-vX.Y.Z`, body = summary sentence p
 - **VM1 installation**: public tarball bootstrap with upgrade/erase recovery; seven-step branded installer with preflight, persistent secret-free log, versioned banner/summary, completion marker, and a one-time reindex guard for pre-pgvector data volumes.
 - **AI Inference**: guided discovery/validation for vLLM, llama.cpp, SGLang, Ollama, TGI and compatible servers; node-scoped gateway at `/internal/v1` with request limits counted in `InferenceGatewayRequest`.
 - **Agentic System**: one-time claims, Ed25519 identity, signed replay-protected enrollment and heartbeats, commit-pinned native Hermes under systemd, resumable recovery journal, drain/suspend/revoke/remove lifecycle. VM2 runs a single plane, so a node is ONLINE exactly when its Hermes API port answers. The installer refuses to adopt a Hermes it did not install, and passes `--force-commit` so the control plane's approved revision always wins over whatever the host already had.
-- **Chat**: governed Hermes Agent Runs with durable leases, resumable streams, cancellation, telemetry, feedback, fork/archive/export, and **conversation-scoped knowledge pinning** (`ChatConversationDocument`, `AgentRun.knowledgeDocumentIds`).
+- **Chat**: governed runs executed through Hermes-native sessions. OrcaSynapse sends only the new turn, holds the upstream SSE independently of the browser, and keeps a sanitized durable projection for cancellation, telemetry, feedback, fork/archive/export, and **conversation-scoped knowledge pinning** (`ChatConversationDocument`, `AgentRun.knowledgeDocumentIds`).
 - **Knowledge**: local pipeline — supported formats bound to `SUPPORTED_DOCUMENT_TYPES` (txt, md, html, csv, json, pdf, docx, pptx, xlsx; images 415-rejected), in-flight extraction, 1024-dim BGE-M3 embeddings, HNSW cosine retrieval, owner-scoped predicate, originals never stored.
 - **Audit**: append-only trail readable at `GET /api/v1/admin/audit/events` (`audit:read`, keyset paging) with a dashboard view under Operations; SIEM forwarding with at-least-once delivery and health (`NOT_CONFIGURED`/`HEALTHY`/`BEHIND`/`FAILING`) observed by AI Ops incidents. See `docs/AUDIT_TRAIL_RUNBOOK.md`.
 - **Onboarding**: completable from the dashboard — architecture decision, component attestation, step updates, activation control with named blockers.
 - **Operations**: topology, incidents, workflow metrics, release evidence, timer-driven stale-executor reaping, audit-forwarding component.
-- **Agent memory**: pgvector recall scoped to (owner, profile), version chains with model-judged supersession, an always-injected profile of static and dynamic facts, session-end distillation, forget batches with `dryRun`, and a quality metric. See `docs/AGENT_MEMORY_RUNBOOK.md`.
-- **Benchmarks**: deterministic suites executed against the live stack — `CHAT_QUALITY` through a real agent run, `RETRIEVAL` through the document vector plane, `MEMORY` through recall. Nothing is judged by a model. A completed run files itself into the evaluation ledger as the evidence a promotion is gated on. See `docs/BENCHMARK_RUNBOOK.md`.
+- **Agent memory**: Hermes-native `MEMORY.md`, `USER.md`, and session history on VM2. Transcripts are per session; the vanilla files are shared by sessions in the active Hermes home/profile. The legacy pgvector memory code and schema remain rollback-compatible but are not wired into active worker capabilities, session distillation, benchmarks, or workspace navigation. See `docs/AGENT_MEMORY_RUNBOOK.md`.
+- **Benchmarks**: deterministic suites executed against the live stack — `CHAT_QUALITY` through a real agent run and `RETRIEVAL` through the document vector plane. Legacy `MEMORY` suites explicitly report unavailable because Hermes-native memory is opaque to OrcaSynapse. A completed run files itself into the evaluation ledger as promotion evidence. See `docs/BENCHMARK_RUNBOOK.md`.
 - **Runtime desired state**: VM2 consumes the signed document
   (`GET /api/v1/runtime-nodes/:nodeId/desired-state`, ai-v1.41.0/1.42.0),
   verifies the signature against its pinned control-plane key, and applies the
@@ -126,8 +126,8 @@ runtime was reachable. Driving the live Hermes replaced most of its assumptions:
 | Item | State |
 | --- | --- |
 | 4a slash-command passthrough | **Not buildable.** Hermes has no command channel, and the heartbeat is push-only — its response is discarded. |
-| 4b multi-turn | **Reframed.** `maxTurns = 1` is declared at five points but never transmitted: the run submission carries no turn field and Hermes exposes no turn control. Conversational multi-turn already works via `conversationHistory`. What actually keeps a run single-step is that no toolset is admitted. |
-| 4c governed tool calling | **Split.** Hermes-native approvals work end to end (`AgentRunApproval`). The OrcaSynapse MCP path is inert — see below. Toolset admission shipped in ai-v1.40.0–1.42.0. |
+| 4b multi-turn | **Reframed.** Conversational continuity is Hermes-native. OrcaSynapse sends only the new user turn to `/api/sessions/:id/chat/stream`; its PostgreSQL projection is never replayed as context. |
+| 4c governed tool calling | **Split.** The active native-session path admits only Hermes' built-in memory tool. The legacy Runs approval records remain migration-compatible, while the OrcaSynapse MCP path is inert — see below. |
 
 **The governed MCP plane is inert, and the blocker is owner scoping.**
 `assertGovernedToolBoundaryFor` requires `private_run_context:
@@ -143,9 +143,9 @@ tools those are — or obtain per-run credentials from Hermes — before buildin
 
 **Other open items:** a node enrolled before ai-v1.41.0 has no pinned
 control-plane key and must be re-enrolled to receive one — without it the node
-applies no desired state rather than trusting an unsigned document. Agent memory is retrieval over stored turns rather
-than a memory layer — Hermes ships a `MemoryProvider` ABC (`on_session_end`
-fact extraction, `prefetch`, tool-shaped recall) that is the principled fix.
+applies no desired state rather than trusting an unsigned document. Existing
+nodes should rerun the current VM2 installer once so repair mode adds the
+Hermes-native memory block and allowlist entry without consuming a new claim.
 Interaction-test coverage exists only for chat; other views are render-level.
 
 ## Deployment estate
@@ -156,7 +156,7 @@ certificate. Instances are on a private `10.0.0.0/20` network:
 | Instance | Role |
 | --- | --- |
 | `mpm-vm1` | control plane — API, dashboard, worker, PostgreSQL/pgvector |
-| `mpm-vm2` | Hermes runtime, no durable store |
+| `mpm-vm2` | Hermes runtime, native sessions, Skills, `MEMORY.md`, `USER.md` |
 | `mpm-llm` | llama.cpp serving the chat model |
 
 The inference connection points at `mpm-llm` over the private network, so the

@@ -15,11 +15,9 @@ import { auditEvent, benchmarkRun, benchmarkSuite, type OrcaSynapseDatabase } fr
  * an operator cannot re-derive by hand is not evidence a release is safe — and
  * the whole point of a benchmark run is to be the evidence an evaluation cites.
  *
- * A run never writes to agent memory. Recall is measured; capture is not, and a
- * benchmark that wrote facts would change the system it is measuring, so the
- * second run of a suite would score differently because of the first. The
- * capability list on the agent runs this queues carries `memory:agent:read`
- * when the profile allows it and never `memory:agent:write`.
+ * A run never receives OrcaSynapse pgvector agent-memory capabilities. Hermes
+ * owns built-in memory in native-session mode, while MEMORY benchmark suites
+ * remain unavailable during this Hermes-first phase.
  */
 
 /** How long a claim is held before another worker may take the run. */

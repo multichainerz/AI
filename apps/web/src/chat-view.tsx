@@ -1,5 +1,4 @@
 import type {
-  AgentMemoryRecord,
   HermesRuntimeCatalogue,
   AgentRunApproval,
   AgentProfile,
@@ -28,9 +27,7 @@ import {
   forkChatConversation,
   getChatConversation,
   getDocuments,
-  getOwnAgentMemory,
   getRuntimeCatalogue,
-  forgetOwnAgentMemory,
   getChatConversations,
   getAgentProfiles,
   streamChatEvents,
@@ -190,11 +187,9 @@ export function ChatView({
   // `null` is "not loaded", distinct from the empty array that means "nothing
   // indexed". Collapsing the two let a failed load render as an empty library.
   const [library, setLibrary] = useState<DocumentSummary[] | null>(null);
-  const [memoryOpen, setMemoryOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [skillsOpen, setSkillsOpen] = useState(false);
   const [catalogue, setCatalogue] = useState<HermesRuntimeCatalogue | null>(null);
-  const [memories, setMemories] = useState<AgentMemoryRecord[] | null>(null);
   const [conversations, setConversations] = useState<ChatConversationSummary[]>([]);
   const [active, setActive] = useState<ChatConversation | null>(null);
   const [draft, setDraft] = useState("");
@@ -604,28 +599,6 @@ export function ChatView({
     }
   };
 
-  // "What does it know about me" has to be answerable by the person it is
-  // about, not only by an administrator reading Platform → Memory.
-  const openMemory = async () => {
-    setMemoryOpen(true);
-    setMemories(null);
-    try {
-      setMemories((await getOwnAgentMemory()).items);
-    } catch (cause) {
-      setMemoryOpen(false);
-      setError(cause instanceof Error ? cause.message : "Unable to load what agents remember about you.");
-    }
-  };
-
-  const forgetMemory = async (id: string) => {
-    try {
-      await forgetOwnAgentMemory(id);
-      setMemories((current) => current?.filter((item) => item.id !== id) ?? null);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to delete that memory.");
-    }
-  };
-
   const openKnowledge = async () => {
     setKnowledgeOpen(true);
     setLibrary(null);
@@ -838,7 +811,7 @@ export function ChatView({
     ? "Create your first Agent Profile"
     : administratorReadiness?.title ?? "Hermes is ready";
   const readinessDetail = !profileAvailable
-    ? "A Profile defines Hermes behavior, model selection, memory access, and governed Skills."
+    ? "A Profile defines Hermes behavior, model selection, document access, and governed Skills."
     : administratorReadiness?.detail ?? "The governed Hermes route is ready.";
   const openReadiness = !profileAvailable || administratorReadiness?.target === "Agents"
     ? onOpenAgents
@@ -851,7 +824,6 @@ export function ChatView({
    */
   const dialogOpen = (knowledgeOpen && active !== null)
     || skillsOpen
-    || memoryOpen
     || (confirmDelete && active !== null);
 
   return (
@@ -1125,7 +1097,6 @@ export function ChatView({
                 >
                   {[
                     { label: "Rename", run: () => { setTitleDraft(active.title); setRenaming(true); } },
-                    { label: "What it remembers", run: () => void openMemory() },
                     { label: "Fork", run: () => void forkConversation() },
                     { label: "Export", run: () => exportConversation() },
                     {
@@ -1194,8 +1165,8 @@ export function ChatView({
                   your workspace.
                 </h2>
                 <p className="mb-6 mt-3 max-w-[460px] text-body leading-relaxed text-muted">
-                  Every response is a governed Hermes Agent Run. Your selected profile controls behavior, skills, memory
-                  access, and tool policy.
+                  Every response is a governed Hermes Agent Run. Your selected profile controls behavior, Skills,
+                  document access, and tool policy; Hermes owns session memory internally.
                 </p>
                 {/*
                   * Two bordered cards used to stand between the greeting and the
@@ -1576,9 +1547,6 @@ export function ChatView({
                             <Button variant="ghost" size="sm" onClick={() => void navigator.clipboard?.writeText(message.content)}>
                               Copy
                             </Button>
-                            <Button variant="ghost" size="sm" disabled={working} onClick={() => void forkConversation(message.id)}>
-                              Fork here
-                            </Button>
                           </div>
                           <div className="flex items-center gap-1.5" aria-label="Response feedback">
                             <Button
@@ -1855,44 +1823,6 @@ export function ChatView({
               </div>
             </div>
           </div>
-        )}
-      </Dialog>
-
-      <Dialog
-        open={memoryOpen}
-        onClose={() => setMemoryOpen(false)}
-        kicker="Your data"
-        title="What agents remember about you"
-        description="Stored in this installation only. Deleting an item removes it for every agent immediately."
-      >
-        {memories === null ? (
-          <p className="m-0 text-body text-faint">Loading…</p>
-        ) : memories.length === 0 ? (
-          <EmptyState title="Nothing is stored about you">
-            Agents answer from documents and the current conversation only.
-          </EmptyState>
-        ) : (
-          <ul className="m-0 grid list-none gap-1 p-0">
-            {memories.map((item) => (
-              <li
-                className="flex items-start gap-3 rounded border border-border bg-raised px-3 py-2.5"
-                key={item.id}
-              >
-                <div className="min-w-0 flex-1">
-                  <span className="block text-body text-text">{item.content}</span>
-                  <small className="mt-1 block text-micro font-semibold uppercase tabular-nums text-faint">
-                    {item.agentProfileSlug} · {new Date(item.createdAt).toLocaleDateString()}
-                    {item.retentionUntil
-                      ? ` · expires ${new Date(item.retentionUntil).toLocaleDateString()}`
-                      : " · kept until deleted"}
-                  </small>
-                </div>
-                <Button variant="ghost" size="sm" onClick={() => void forgetMemory(item.id)}>
-                  Forget
-                </Button>
-              </li>
-            ))}
-          </ul>
         )}
       </Dialog>
 

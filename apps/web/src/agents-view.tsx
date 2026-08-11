@@ -19,7 +19,7 @@ import {
 } from "./api.js";
 import {
   Alert, Button, Dialog, EmptyState, Field, HeroBanner, Input, LockedScreen, MicroLabel,
-  PageHeader, Panel, PanelHeading, Select, StatusText, Textarea, Tile, cn, toneFor,
+  PageHeader, Panel, PanelHeading, StatusText, Textarea, Tile, cn, toneFor,
 } from "./ui/index.js";
 
 interface AgentsViewProps {
@@ -33,17 +33,6 @@ interface AgentsViewProps {
   onOpenChat: () => void;
   onOpenReadiness: () => void;
   onSessionExpired: () => void;
-}
-
-/**
- * Says plainly what each mode stores, because the difference between them is a
- * privacy decision an administrator is making on someone else's behalf.
- */
-function memoryModeNote(mode: CreateAgentProfile["memoryMode"]): string {
-  if (mode === "DOCUMENTS_ONLY") return "Nothing about the person is stored. Answers draw only on documents they own.";
-  if (mode === "RECALL_ONLY") return "Reads memory this agent already holds, and writes none of its own.";
-  if (mode === "LEARN_USER") return "Stores what the person says, so the agent accumulates their stable facts and preferences. The model's own replies are never stored.";
-  return "Stores both sides of each turn. Richer recall, but the model's own output becomes durable memory an error can persist into.";
 }
 
 const runningStatuses = new Set(["QUEUED", "RUNNING", "CANCEL_REQUESTED"]);
@@ -111,7 +100,9 @@ function draftFromProfile(profile: AgentProfile): CreateAgentProfile {
     timeoutSeconds: profile.version.timeoutSeconds,
     maxConcurrentRuns: profile.version.maxConcurrentRuns,
     allowPrivateKnowledge: profile.version.allowPrivateKnowledge,
-    memoryMode: profile.version.memoryMode,
+    // Retained by the API schema for rollback compatibility; active memory is
+    // now Hermes-native and has no OrcaSynapse capture mode.
+    memoryMode: "DOCUMENTS_ONLY",
     safeMode: true,
   };
 }
@@ -655,13 +646,10 @@ export function AgentsView({ unlocked, administrator, activationReady, activatio
               Searches only the requesting identity’s documents in the private knowledge index.
             </small>
           </label>
-          <Field label="Memory" hint={memoryModeNote(profileDraft.memoryMode)}>
-            <Select value={profileDraft.memoryMode} onChange={(event) => setProfileDraft({ ...profileDraft, memoryMode: event.target.value as CreateAgentProfile["memoryMode"] })}>
-              <option value="DOCUMENTS_ONLY">Documents only — remembers nothing about the person</option>
-              <option value="RECALL_ONLY">Recall only — uses existing memory, never adds to it</option>
-              <option value="LEARN_USER">Learn the user — remembers what the person says</option>
-              <option value="LEARN_EXCHANGE">Learn the exchange — remembers both sides of the turn</option>
-            </Select>
+          <Field label="Memory" hint="Hermes manages its native MEMORY.md and USER.md lifecycle inside the isolated runtime.">
+            <div className="rounded border border-border bg-raised p-3 text-body text-muted">
+              Hermes-native memory is active. OrcaSynapse does not read, mirror, edit, or expose its contents.
+            </div>
           </Field>
           <div className={cn(
             "rounded border border-l-2 border-border p-3",

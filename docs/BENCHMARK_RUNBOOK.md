@@ -10,11 +10,11 @@ Find it under **Operations → Benchmarks** (`#operations/benchmarks`). It is ga
 | --- | --- | --- |
 | `CHAT_QUALITY` | queues a real `AgentRun` — the same queue, profile version, retrieval, boundary and capability checks a person's message goes through | no ACTIVE agent profile, or several without one named |
 | `RETRIEVAL` | embeds the prompt and searches the document vector plane, scoring the passages themselves | no document in `READY` state |
-| `MEMORY` | recalls against agent memory for the run's owner and profile, including the always-injected profile facts | no ACTIVE agent profile |
+| `MEMORY` | reserved legacy kind; reports unavailable while memory is opaque and Hermes-native | always unavailable in this release |
 
 The three are separate because the planes fail independently. Retrieval degrades when an embedding model or relevance floor changes; chat when a prompt, profile or model route changes; memory when distillation or supersession misbehaves. One "is the AI good" number would hide which broke.
 
-**A run never writes to agent memory.** Recall is measured, capture is not — the runs it queues carry `memory:agent:read` when the profile allows it and never `memory:agent:write`. A benchmark that captured facts would change the system it measures, and the second run of a suite would score differently because of the first. A `MEMORY` suite therefore tests recall of what is already stored; on a fresh installation it will score zero, and that is an honest reading rather than a fault.
+**A benchmark never reads or writes Hermes-native memory.** OrcaSynapse deliberately has no content-level access to Hermes' `MEMORY.md`, `USER.md`, or session search. Chat and retrieval suites remain live-stack tests; the legacy `MEMORY` kind returns an explicit unavailable result instead of silently measuring the dormant pgvector store.
 
 ## Writing a suite
 

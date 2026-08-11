@@ -3,14 +3,12 @@ import { hostname } from "node:os";
 import { ORCASYNAPSE_VERSION } from "@orcasynapse/contracts";
 import { createDrizzleClient, listenForAgentRunWake, readBootstrapSecret } from "@orcasynapse/database";
 import { decodeMasterKey, EnvelopeEncryption, RunCapabilityIssuer } from "@orcasynapse/security";
-import { AgentMemoryStore, APPROVED_EMBEDDING_MODEL, DocumentVectorStore, LocalBgeM3Embedder } from "@orcasynapse/knowledge";
+import { APPROVED_EMBEDDING_MODEL, DocumentVectorStore, LocalBgeM3Embedder } from "@orcasynapse/knowledge";
 import { DrizzleRuntimeConnectionResolver, HermesClient } from "@orcasynapse/runtime-clients";
-import { SessionMemoryDistiller } from "./session-distiller.js";
 import { WorkerRuntime } from "./worker-runtime.js";
 import { DocumentIngestor } from "./document-ingestor.js";
 import { DrizzlePendingRunSource, DrizzleWorkerRegistry } from "./worker-registry.js";
-import { DrizzleAgentProcessor, WorkerAgentKnowledgeRetriever, WorkerAgentMemory } from "./agent-processor.js";
-import { MemoryDistiller } from "./memory-distiller.js";
+import { DrizzleAgentProcessor, WorkerAgentKnowledgeRetriever } from "./agent-processor.js";
 import { BenchmarkRunner } from "./benchmark-runner.js";
 import { LiveBenchmarkExecutor } from "./benchmark-executor.js";
 
@@ -21,13 +19,6 @@ const masterKey = decodeMasterKey(readBootstrapSecret("orcasynapse_master_key"))
 const encryption = new EnvelopeEncryption({ masterKey });
 const connectionResolver = new DrizzleRuntimeConnectionResolver(database, encryption);
 const embedder = new LocalBgeM3Embedder();
-// Shared by the per-run path and the session sweep so both apply the same
-// store, the same embedder, and the same policy.
-const agentMemory = new WorkerAgentMemory(
-  new AgentMemoryStore(database, APPROVED_EMBEDDING_MODEL),
-  embedder,
-);
-const distiller = new MemoryDistiller(connectionResolver);
 // Shared with the benchmark executor so a retrieval suite searches through
 // exactly the path a conversation searches through.
 const knowledgeRetriever = new WorkerAgentKnowledgeRetriever(
@@ -42,7 +33,7 @@ const runtime = new WorkerRuntime(
     id: workerId,
     name: hostname(),
     version: ORCASYNAPSE_VERSION,
-    workloads: ["hermes-runs", "knowledge-ingestion", "session-memory", "benchmarks"],
+    workloads: ["hermes-runs", "knowledge-ingestion", "benchmarks"],
   },
   {
     info: (message) => console.info(message),
@@ -54,8 +45,6 @@ const runtime = new WorkerRuntime(
     new HermesClient(connectionResolver),
     knowledgeRetriever,
     new RunCapabilityIssuer(masterKey),
-    agentMemory,
-    distiller,
   ),
   1_000,
   5,
@@ -64,11 +53,9 @@ const runtime = new WorkerRuntime(
     new DocumentVectorStore(database, APPROVED_EMBEDDING_MODEL),
     embedder,
   ),
-  new SessionMemoryDistiller(database, agentMemory, distiller),
-  60_000,
   new BenchmarkRunner(
     database,
-    new LiveBenchmarkExecutor(database, knowledgeRetriever, agentMemory),
+    new LiveBenchmarkExecutor(database, knowledgeRetriever),
   ),
 );
 

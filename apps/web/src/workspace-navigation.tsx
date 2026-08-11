@@ -70,7 +70,6 @@ const sectionNavigation: Partial<Record<ProductArea, ReadonlyArray<SectionNaviga
     { label: "Setup", view: "Deployment" },
     { label: "Models", view: "Models" },
     { label: "Prompts", view: "Prompts" },
-    { label: "Memory", view: "Memory" },
     { label: "Guardrails", view: "Guardrails" },
   ],
 };
@@ -153,7 +152,7 @@ export function viewFromHash(hash: string): ActiveView {
     case "#prompts":
       return "Prompts";
     case "#platform/memory":
-      return "Memory";
+      return "Deployment";
     case "#platform/guardrails":
     case "#guardrails":
       return "Guardrails";
