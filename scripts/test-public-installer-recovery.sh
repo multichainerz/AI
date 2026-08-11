@@ -48,6 +48,11 @@ printf 'old-source\n' > "${ORCASYNAPSE_INSTALL_DIR}/obsolete-marker"
 
 export ORCASYNAPSE_EXISTING_INSTALL_ACTION=upgrade
 unset ORCASYNAPSE_CONFIRM_ERASE || true
+if (choose_existing_install_action 1 "${new_commit}"); then
+  printf 'pre-epoch installation unexpectedly accepted a preserving upgrade\n' >&2
+  exit 1
+fi
+printf 'hermes-native-v1\n' > "${ORCASYNAPSE_INSTALL_DIR}/.local/state/schema-epoch"
 install_source_tree "${new_commit}" "${source_dir}"
 
 [[ "$(<"${ORCASYNAPSE_INSTALL_DIR}/.orcasynapse-source-commit")" == "${new_commit}" ]]
@@ -57,6 +62,7 @@ install_source_tree "${new_commit}" "${source_dir}"
 # return a TLS deployment to the http default on its next run, without saying
 # so -- the same silent downgrade the declaration exists to prevent.
 [[ "$(<"${ORCASYNAPSE_INSTALL_DIR}/.local/state/public-scheme")" == "https" ]]
+[[ "$(<"${ORCASYNAPSE_INSTALL_DIR}/.local/state/schema-epoch")" == "hermes-native-v1" ]]
 [[ -f "${ORCASYNAPSE_INSTALL_DIR}/release-marker" ]]
 [[ ! -e "${ORCASYNAPSE_INSTALL_DIR}/obsolete-marker" ]]
 

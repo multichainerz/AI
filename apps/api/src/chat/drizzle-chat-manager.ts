@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
   isAgentRunEndedEventType,
-  knowledgeSourceSchema,
   type AgentRunApproval,
   type ChatConversation,
   type ChatConversationList,
@@ -25,16 +24,14 @@ import {
   agentRunEvent,
   auditEvent,
   chatConversation,
-  chatConversationDocument,
   chatFeedback,
   chatMessage,
-  document,
   guardrailPolicy,
   type ChatRunWakeHub,
   type ChatRunWatch,
   type OrcaSynapseDatabase,
 } from "@orcasynapse/database";
-import { and, asc, count, desc, eq, gt, gte, inArray, isNotNull, isNull, ne, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, gte, inArray, isNotNull, ne, sql, type SQL } from "drizzle-orm";
 import type { AgentManager, AgentPrincipal } from "../agents/agent-manager.js";
 import { inspectInputText } from "../guardrails/runtime-policy.js";
 import {
@@ -125,7 +122,6 @@ interface StoredMessage {
   finishReason: string | null;
   errorCode: string | null;
   agentRunId: string | null;
-  sources: unknown;
   createdAt: Date;
   completedAt: Date | null;
   feedback?: {
@@ -149,7 +145,6 @@ interface StoredConversation {
   profileId: string | null;
   profileName: string | null;
   status: "ACTIVE" | "ARCHIVED";
-  hermesMemoryKey?: string;
   createdAt: Date;
   updatedAt: Date;
   lastMessageAt: Date | null;
@@ -186,7 +181,6 @@ function approvalDto(approval: StoredApproval): AgentRunApproval {
 }
 
 function messageDto(message: StoredMessage): ChatMessage {
-  const sources = knowledgeSourceSchema.array().max(10).safeParse(message.sources);
   const allEvents = message.agentRun?.events ?? [];
   return {
     id: message.id,
@@ -228,7 +222,6 @@ function messageDto(message: StoredMessage): ChatMessage {
       occurredAt: event.occurredAt.toISOString(),
     })),
     approvals: (message.agentRun?.approvals ?? []).map(approvalDto),
-    sources: sources.success ? sources.data : [],
     feedback: message.feedback ? {
       rating: message.feedback.rating,
       comment: message.feedback.comment,
@@ -260,33 +253,6 @@ function summaryDto(conversation: StoredConversation): ChatConversationSummary {
 function safeTitle(content: string): string {
   const normalized = content.replace(/\s+/g, " ").trim();
   return normalized.length <= 72 ? normalized : `${normalized.slice(0, 69).trimEnd()}…`;
-}
-
-export function boundedConversationHistory(
-  messages: Array<{ role: "USER" | "ASSISTANT"; status: string; content: string; ordinal: number }>,
-): Array<{ role: "user" | "assistant"; content: string }> {
-  let characters = 0;
-  const ordered = [...messages].sort((left, right) => left.ordinal - right.ordinal);
-  const pairs: Array<Array<{ role: "user" | "assistant"; content: string }>> = [];
-  for (let index = 0; index < ordered.length - 1; index += 1) {
-    const user = ordered[index];
-    const assistant = ordered[index + 1];
-    if (
-      user?.role === "USER" && user.status === "COMPLETED" && user.content.trim() &&
-      assistant?.role === "ASSISTANT" && assistant.status === "COMPLETED" && assistant.content.trim()
-    ) {
-      pairs.push([{ role: "user", content: user.content }, { role: "assistant", content: assistant.content }]);
-      index += 1;
-    }
-  }
-  const selected: Array<{ role: "user" | "assistant"; content: string }> = [];
-  for (const pair of pairs.reverse()) {
-    const pairCharacters = pair.reduce((total, message) => total + message.content.length, 0);
-    if (selected.length + pair.length > 40 || characters + pairCharacters > 64_000) break;
-    selected.unshift(...pair);
-    characters += pairCharacters;
-  }
-  return selected;
 }
 
 function asAgentPrincipal(principal: ChatPrincipal): AgentPrincipal {
@@ -419,77 +385,6 @@ export class DrizzleChatManager implements ChatManager {
     return new Map(rows.map(({ conversationId, total }) => [conversationId, total]));
   }
 
-  /** The documents pinned to a conversation, newest pin first. */
-  private async pinnedDocuments(conversationId: string) {
-    return this.database
-      .select({
-        id: document.id,
-        fileName: document.fileName,
-        classification: document.classification,
-        status: document.status,
-      })
-      .from(chatConversationDocument)
-      .innerJoin(document, eq(chatConversationDocument.documentId, document.id))
-      .where(eq(chatConversationDocument.conversationId, conversationId))
-      .orderBy(desc(chatConversationDocument.createdAt));
-  }
-
-  async attachDocument(principal: ChatPrincipal, conversationId: string, documentId: string): Promise<ChatConversation> {
-    const [conversation] = await this.database
-      .select({ id: chatConversation.id })
-      .from(chatConversation)
-      .where(and(eq(chatConversation.id, conversationId), eq(chatConversation.ownerSubject, principal.subject)))
-      .limit(1);
-    if (!conversation) throw new ChatConversationNotFoundError();
-    // The document must be the caller's own and actually retrievable, or the
-    // pin would silently narrow retrieval to nothing.
-    const [source] = await this.database
-      .select({ id: document.id })
-      .from(document)
-      .where(and(
-        eq(document.id, documentId),
-        eq(document.ownerSubject, principal.subject),
-        eq(document.status, "READY"),
-        isNull(document.deletedAt),
-      ))
-      .limit(1);
-    if (!source) throw new ChatMessageNotFoundError();
-    await this.database
-      .insert(chatConversationDocument)
-      .values({ conversationId, documentId, ownerSubject: principal.subject })
-      .onConflictDoNothing();
-    await this.database.insert(auditEvent).values({
-      actorType: "USER", actorId: principal.id, action: "chat.knowledge_pinned",
-      resourceType: "ChatConversation", resourceId: conversationId, outcome: "SUCCESS",
-      metadata: { documentId },
-    });
-    return this.get(principal, conversationId);
-  }
-
-  async detachDocument(principal: ChatPrincipal, conversationId: string, documentId: string): Promise<ChatConversation> {
-    const [conversation] = await this.database
-      .select({ id: chatConversation.id })
-      .from(chatConversation)
-      .where(and(eq(chatConversation.id, conversationId), eq(chatConversation.ownerSubject, principal.subject)))
-      .limit(1);
-    if (!conversation) throw new ChatConversationNotFoundError();
-    const removed = await this.database
-      .delete(chatConversationDocument)
-      .where(and(
-        eq(chatConversationDocument.conversationId, conversationId),
-        eq(chatConversationDocument.documentId, documentId),
-      ))
-      .returning({ id: chatConversationDocument.id });
-    if (removed.length === 1) {
-      await this.database.insert(auditEvent).values({
-        actorType: "USER", actorId: principal.id, action: "chat.knowledge_unpinned",
-        resourceType: "ChatConversation", resourceId: conversationId, outcome: "SUCCESS",
-        metadata: { documentId },
-      });
-    }
-    return this.get(principal, conversationId);
-  }
-
   async list(principal: ChatPrincipal): Promise<ChatConversationList> {
     const conversations = await this.database
       .select()
@@ -559,16 +454,9 @@ export class DrizzleChatManager implements ChatManager {
     if (!conversation) throw new ChatConversationNotFoundError();
     const messages = await this.loadMessages(eq(chatMessage.conversationId, conversationId));
     const stored = { ...conversation, _count: { messages: messages.length }, messages } as StoredConversation;
-    const pinned = await this.pinnedDocuments(conversationId);
     return {
       ...summaryDto(stored),
       messages: messages.map(messageDto),
-      knowledgeDocuments: pinned.map((source) => ({
-        id: source.id,
-        fileName: source.fileName,
-        classification: source.classification,
-        status: source.status,
-      })),
     };
   }
 
@@ -726,16 +614,9 @@ export class DrizzleChatManager implements ChatManager {
         { id: userMessageId, conversationId, ordinal: generation * 2 - 1, role: "USER", status: "COMPLETED", content, completedAt: now },
         { id: assistantMessageId, conversationId, ordinal: generation * 2, role: "ASSISTANT", status: "PENDING", content: "", modelAlias: stored.modelAlias },
       ]);
-      const pinned = await transaction
-        .select({ documentId: chatConversationDocument.documentId })
-        .from(chatConversationDocument)
-        .where(eq(chatConversationDocument.conversationId, conversationId));
       return {
         profileId: stored.profileId,
         modelAlias: stored.modelAlias,
-        hermesMemoryKey: stored.hermesMemoryKey,
-        history: boundedConversationHistory(history),
-        knowledgeDocumentIds: pinned.map(({ documentId }) => documentId),
       };
     });
 
@@ -746,12 +627,7 @@ export class DrizzleChatManager implements ChatManager {
         { profileId: conversation.profileId!, input: content },
         {
           sessionId: conversationId,
-          memorySessionKey: conversation.hermesMemoryKey,
-          conversationHistory: conversation.history,
           outputCharacterLimit: policy.maxOutputCharacters,
-          ...(conversation.knowledgeDocumentIds.length > 0
-            ? { knowledgeDocumentIds: conversation.knowledgeDocumentIds }
-            : {}),
         },
       );
       const linked = await this.database
@@ -1182,7 +1058,6 @@ export class DrizzleChatManager implements ChatManager {
             latencyMs: message.latencyMs,
             firstTokenLatencyMs: message.firstTokenLatencyMs,
             finishReason: message.finishReason,
-            sources: message.sources,
             completedAt: message.completedAt,
           })));
         }

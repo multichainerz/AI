@@ -41,14 +41,13 @@ const overview = {
   evaluations: { drafts: 1, passed: 2, failed: 0, promoted: 1 },
   metrics: {
     chat: { responses: 1_284, failureRate: 0.012, averageLatencyMs: 4_120 },
-    documents: { processing: 0, ready: 12, failed: 1, retainedSourceBytes: 0 },
     agents: { runningRuns: 1, queuedRuns: 0, failedRuns: 2 },
     tools: { executingCalls: 0, pendingApprovals: 1, deniedCalls: 3 },
   },
   runtime: {
     capturedAt: "2026-08-07T11:00:00.000Z",
-    workloads: [{ name: "document-index", displayName: "Document indexing", pendingCount: 0, activeCount: 1, failedCount: 2, totalCount: 40 }],
-    executors: [{ id: "w1", name: "worker-1", status: "HEALTHY", version: "1.64.0", workloads: ["document-index"], lastSeenAt: "2026-08-07T10:59:50.000Z" }],
+    workloads: [{ name: "agent-run", displayName: "Hermes runs", pendingCount: 0, activeCount: 1, failedCount: 2, totalCount: 40 }],
+    executors: [{ id: "w1", name: "worker-1", status: "HEALTHY", version: "3.16.0", workloads: ["agent-run"], lastSeenAt: "2026-08-07T10:59:50.000Z" }],
   },
 };
 

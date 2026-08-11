@@ -78,7 +78,7 @@ export async function createTestDatabase(): Promise<TestDatabase> {
   } catch (error) {
     await adminPool.end();
     throw new Error(
-      `Could not create a test database at ${new URL(admin).host}. Start PostgreSQL with pgvector, or set ORCASYNAPSE_TEST_DATABASE_URL. Cause: ${
+      `Could not create a test database at ${new URL(admin).host}. Start PostgreSQL 17, or set ORCASYNAPSE_TEST_DATABASE_URL. Cause: ${
         error instanceof Error ? error.message : String(error)
       }`,
     );

@@ -6,7 +6,6 @@ import type {
   ChatConversationSummary,
   ChatMessage,
   ChatStreamEvent,
-  DocumentSummary,
 } from "@orcasynapse/contracts";
 import { applyStreamEventToConversation } from "./chat-stream-reducer.js";
 import { MarkdownMessage } from "./chat/markdown-message.js";
@@ -18,15 +17,12 @@ import { usePacedStream } from "./chat/use-paced-stream.js";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   OrcaSynapseApiError,
-  attachChatDocument,
   cancelChatRun,
   createChatConversation,
   decideChatApproval,
   deleteChatConversation,
-  detachChatDocument,
   forkChatConversation,
   getChatConversation,
-  getDocuments,
   getRuntimeCatalogue,
   getChatConversations,
   getAgentProfiles,
@@ -39,7 +35,6 @@ import {
   Alert,
   Button,
   Dialog,
-  EmptyState,
   Input,
   LockedScreen,
   MicroLabel,
@@ -73,24 +68,6 @@ interface ClientCrypto {
 }
 
 let fallbackMessageSequence = 0;
-
-/**
- * Only an indexed document can be pinned. Pinning one that has not finished
- * embedding narrows retrieval to a source with no chunks, which surfaces as the
- * agent having no answer rather than as the document not being ready.
- */
-export function pinnableDocuments(documents: readonly DocumentSummary[]): DocumentSummary[] {
-  return documents.filter((item) => item.status === "READY");
-}
-
-/**
- * States which knowledge an answer may draw on. The distinction changes what an
- * answer means, so it is spelled out rather than implied by a count alone.
- */
-export function knowledgeScopeSummary(pinnedCount: number): string {
-  if (pinnedCount === 0) return "Nothing pinned. Answers may draw on every document you own.";
-  return `Answers are restricted to ${pinnedCount} pinned document${pinnedCount === 1 ? "" : "s"}.`;
-}
 
 export function createClientMessageId(
   cryptoApi: ClientCrypto | null | undefined = globalThis.crypto as ClientCrypto | undefined,
@@ -183,10 +160,8 @@ export function ChatView({
   onOpenPlatform,
   onSessionExpired,
 }: ChatViewProps) {
-  const [knowledgeOpen, setKnowledgeOpen] = useState(false);
   // `null` is "not loaded", distinct from the empty array that means "nothing
   // indexed". Collapsing the two let a failed load render as an empty library.
-  const [library, setLibrary] = useState<DocumentSummary[] | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
   const [skillsOpen, setSkillsOpen] = useState(false);
   const [catalogue, setCatalogue] = useState<HermesRuntimeCatalogue | null>(null);
@@ -599,36 +574,6 @@ export function ChatView({
     }
   };
 
-  const openKnowledge = async () => {
-    setKnowledgeOpen(true);
-    setLibrary(null);
-    try {
-      // Only READY documents can be pinned; anything else would narrow
-      // retrieval to a source that has no embedded chunks yet.
-      setLibrary(pinnableDocuments((await getDocuments()).items));
-    } catch (cause) {
-      // Left open, the picker answers a failed load with "No indexed documents
-      // yet" while the real cause renders behind the backdrop — so the operator
-      // concludes the library is empty rather than unreachable. Skills and
-      // Memory already close on failure; `handleError` also routes a 401 to the
-      // session handler instead of printing it as a message.
-      setKnowledgeOpen(false);
-      handleError(cause, "Unable to load your documents.");
-    }
-  };
-
-  const togglePinned = async (documentId: string, pinned: boolean) => {
-    if (!active) return;
-    try {
-      setActive(pinned
-        ? await detachChatDocument(active.id, documentId)
-        : await attachChatDocument(active.id, documentId));
-      setError(null);
-    } catch (cause) {
-      if (cause instanceof OrcaSynapseApiError && cause.status === 401) onSessionExpired();
-      else setError(cause instanceof Error ? cause.message : "Unable to change pinned knowledge.");
-    }
-  };
 
   const exportConversation = () => {
     if (!active) return;
@@ -811,19 +756,18 @@ export function ChatView({
     ? "Create your first Agent Profile"
     : administratorReadiness?.title ?? "Hermes is ready";
   const readinessDetail = !profileAvailable
-    ? "A Profile defines Hermes behavior, model selection, document access, and governed Skills."
+    ? "A Profile defines Hermes behavior, model selection, and admitted Skills."
     : administratorReadiness?.detail ?? "The governed Hermes route is ready.";
   const openReadiness = !profileAvailable || administratorReadiness?.target === "Agents"
     ? onOpenAgents
     : onOpenPlatform;
   /*
    * Each condition is the one the matching `Dialog` is rendered with, not a
-   * paraphrase: Knowledge and Delete both need an active conversation, and a
-   * flag that said "open" while the dialog was not would hide the jump control
+   * paraphrase: Delete needs an active conversation, and a flag that said
+   * "open" while the dialog was not would hide the jump control
    * for no reason a reader could see.
    */
-  const dialogOpen = (knowledgeOpen && active !== null)
-    || skillsOpen
+  const dialogOpen = skillsOpen
     || (confirmDelete && active !== null);
 
   return (
@@ -1075,9 +1019,6 @@ export function ChatView({
 
           {active && !renaming && (
             <div className="relative flex items-center gap-1.5" ref={moreMenu}>
-              <Button size="sm" disabled={working || loading} onClick={() => void openKnowledge()}>
-                Knowledge{active.knowledgeDocuments.length > 0 ? ` · ${active.knowledgeDocuments.length}` : ""}
-              </Button>
               <Button size="sm" disabled={working || loading} onClick={() => void openSkills()}>
                 Skills
               </Button>
@@ -1166,7 +1107,7 @@ export function ChatView({
                 </h2>
                 <p className="mb-6 mt-3 max-w-[460px] text-body leading-relaxed text-muted">
                   Every response is a governed Hermes Agent Run. Your selected profile controls behavior, Skills,
-                  document access, and tool policy; Hermes owns session memory internally.
+                  model selection, and tool policy; Hermes owns session continuity and memory internally.
                 </p>
                 {/*
                   * Two bordered cards used to stand between the greeting and the
@@ -1470,23 +1411,6 @@ export function ChatView({
                         )}
                       </section>
                     ))}
-                    {message.sources.length > 0 && (
-                      <div className="my-2.5 grid gap-2 rounded border border-border bg-surface p-3" aria-label="Enterprise knowledge sources">
-                        <MicroLabel>Sources</MicroLabel>
-                        <div className="flex flex-wrap gap-1.5">{message.sources.map((source) => (
-                          <article className="grid min-w-[170px] gap-1 rounded border border-border bg-raised px-2.5 py-2" key={source.documentId}>
-                            <span className="truncate text-caption font-semibold text-text">{source.fileName}</span>
-                            {/* The value was lowercased in JavaScript and then
-                                uppercased again by the class -- two opposite
-                                intentions, the CSS winning. Lowercase was the
-                                one someone meant. */}
-                            <small className="text-caption tabular-nums text-faint">
-                              {source.classification.toLowerCase()} · {Math.round(source.score * 100)}% match
-                            </small>
-                          </article>
-                        ))}</div>
-                      </div>
-                    )}
                     {message.role === "ASSISTANT" && message.status === "COMPLETED" && (
                       <>
                         <section className="mt-3.5 overflow-hidden rounded border border-border bg-surface" aria-label="Response performance">
@@ -1497,11 +1421,6 @@ export function ChatView({
                                 Reported by Hermes lifecycle events and measured by OrcaSynapse
                               </small>
                             </div>
-                            {message.sources.length > 0 && (
-                              <StatusText className="shrink-0">
-                                {message.sources.length} knowledge source{message.sources.length === 1 ? "" : "s"}
-                              </StatusText>
-                            )}
                           </header>
                           {/*
                             * Hairlines come from the gap showing the container
@@ -1713,23 +1632,10 @@ export function ChatView({
             * reason to check the sources, not a reason to skip it.
             */}
           <p className={cn(THREAD_MEASURE, "mb-0 mt-1.5 text-center text-micro leading-relaxed text-faint")}>
-            Answers are generated and can be wrong or incomplete. Check the cited sources before you rely on one.
+            Answers are generated and can be wrong or incomplete. Verify important results before you rely on them.
           </p>
         </div>
       </div>
-
-      {/*
-        * The context rail is gone, not moved.
-        *
-        * It was a fourth vertical zone holding a read-only copy of the pinned
-        * sources, a button that opened the knowledge dialog, and a card of
-        * marketing copy -- 264px of permanent width, most often showing "Open a
-        * conversation to see its knowledge scope". The header already carries
-        * `Knowledge · N`, which is the count plus the way in; the dialog it
-        * opens is where the pins actually live and the only place scope
-        * changes. A panel that restates a button next to the button is width
-        * spent on nothing.
-        */}
 
       {/*
         * All four of these were bare divs carrying role="dialog" and nothing
@@ -1739,43 +1645,6 @@ export function ChatView({
         * announcing the page as if no dialog were open. `Dialog` supplies all
         * of it once.
         */}
-      <Dialog
-        open={knowledgeOpen && active !== null}
-        onClose={() => setKnowledgeOpen(false)}
-        kicker="Conversation scope"
-        title="Knowledge for this conversation"
-        description={active ? knowledgeScopeSummary(active.knowledgeDocuments.length) : undefined}
-      >
-        {library === null ? (
-          <p className="m-0 text-body text-faint">Loading…</p>
-        ) : library.length === 0 ? (
-          <EmptyState title="No indexed documents yet">
-            Upload one in Knowledge and it becomes pinnable once indexing completes.
-          </EmptyState>
-        ) : (
-          <ul className="m-0 grid list-none gap-1 p-0">
-            {library.map((item) => {
-              const pinned = active?.knowledgeDocuments.some((pin) => pin.id === item.id) ?? false;
-              return (
-                <li key={item.id}>
-                  <label className="flex cursor-pointer items-center gap-3 rounded border border-border bg-raised px-3 py-2.5">
-                    <input
-                      type="checkbox"
-                      checked={pinned}
-                      disabled={working}
-                      onChange={() => void togglePinned(item.id, pinned)}
-                    />
-                    <span className="min-w-0 flex-1 truncate text-body text-text">{item.fileName}</span>
-                    <small className="shrink-0 text-micro font-semibold uppercase tabular-nums text-faint">
-                      {item.classification.toLowerCase()}
-                    </small>
-                  </label>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </Dialog>
 
       <Dialog
         open={skillsOpen}
@@ -1790,7 +1659,7 @@ export function ChatView({
           <div className="grid gap-4">
             <StatusText tone={catalogue.enabledToolsets === 0 ? "warn" : "good"} className="normal-case">
               {catalogue.enabledToolsets === 0
-                ? `All ${catalogue.toolsets.length} toolsets are disabled by the managed runtime policy. Agents answer from your documents and this conversation only.`
+                ? `All ${catalogue.toolsets.length} toolsets are disabled by the managed runtime policy. Agents answer from the native Hermes session only.`
                 : `${catalogue.enabledToolsets} of ${catalogue.toolsets.length} toolsets are enabled by the managed runtime policy.`}
             </StatusText>
             <div className="grid gap-2">

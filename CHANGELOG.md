@@ -5,6 +5,26 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v4.6.0 — 2026-08-12
+
+OrcaSynapse now has one agent-state authority: vanilla Hermes. Conversations
+create and stream Hermes-native sessions, Hermes owns its transcript and
+file-backed memory, and the control plane retains only the user-visible chat
+projection plus sanitized lifecycle, tool, failure, evaluation, audit, and SIEM
+evidence.
+
+The duplicate retrieval, embedding, file-ingestion, control-plane memory, and
+synthetic benchmark subsystems have been removed from contracts, API, worker,
+web workspace, database, containers, installers, and dependencies. VM1 now uses
+stock PostgreSQL 17 with a new `hermes-native-v1` schema epoch and refuses an
+older populated database before mutation.
+
+VM2 enrollment installs only the approved native Hermes runtime and validates a
+real native-session turn. The public architecture, product requirements,
+security guidance, installation runbooks, repository artwork, and handoff now
+describe the same state ownership and clean-install boundary. The preceding
+product generation remains preserved on `backup/pgvector`.
+
 ## v4.5.0 — 2026-08-12
 
 Agent continuity is now Hermes-first. Session turns use Hermes' native session

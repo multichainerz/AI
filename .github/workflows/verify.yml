@@ -14,10 +14,7 @@ jobs:
     timeout-minutes: 30
     services:
       postgres:
-        # pgvector, not stock postgres: the migrator creates the vector
-        # extension and the baseline declares a vector column, so a plain image
-        # cannot apply migrations at all.
-        image: pgvector/pgvector:pg17
+        image: postgres:17-bookworm
         env:
           POSTGRES_DB: orcasynapse_test
           POSTGRES_USER: orcasynapse_test

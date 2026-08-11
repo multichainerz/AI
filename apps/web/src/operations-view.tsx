@@ -64,13 +64,6 @@ function percentage(value: number | null): string {
   return value === null ? "--" : `${Math.round(value * 1000) / 10}%`;
 }
 
-function bytes(value: number): string {
-  if (value < 1_024) return `${value} B`;
-  if (value < 1_048_576) return `${Math.round(value / 1_024)} KB`;
-  if (value < 1_073_741_824) return `${Math.round(value / 1_048_576)} MB`;
-  return `${Math.round(value / 1_073_741_824 * 10) / 10} GB`;
-}
-
 function humanLabel(value: string): string {
   const special: Partial<Record<string, string>> = { MCP: "MCP", OIDC: "OIDC", SIEM: "SIEM", TOOL_USE: "Tool use", MODEL_ACCESS: "Model access", DATA_EGRESS: "Data egress" };
   return special[value] ?? value.replaceAll("_", " ").toLowerCase().replace(/^./, (letter) => letter.toUpperCase());
@@ -460,12 +453,10 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
             title="24-hour and retained workload signals"
             description="Counts retain their domain meaning; all-time values are not presented as live error rates."
           />
-          <MetricRow className="border-b-0 pb-0 lg:grid-cols-5">
+          <MetricRow className="border-b-0 pb-0 lg:grid-cols-3">
             <Metric label="Chat responses / 24h" value={metrics?.chat?.responses ?? "--"} caption={`${percentage(metrics?.chat?.failureRate ?? null)} failed / ${metrics?.chat?.averageLatencyMs ?? "--"} ms average`} />
-            <Metric label="Knowledge indexing" value={metrics?.documents?.processing ?? "--"} caption={`${metrics?.documents?.ready ?? 0} ready / ${metrics?.documents?.failed ?? 0} need attention`} />
             <Metric label="Hermes runs" value={metrics?.agents?.runningRuns ?? "--"} caption={`${metrics?.agents?.queuedRuns ?? 0} queued / ${metrics?.agents?.failedRuns ?? 0} retained failures`} />
             <Metric label="Governed tools" value={metrics?.tools?.executingCalls ?? "--"} caption={`${metrics?.tools?.pendingApprovals ?? 0} pending review / ${metrics?.tools?.deniedCalls ?? 0} denied`} />
-            <Metric label="Source bytes retained" value={metrics?.documents ? bytes(metrics.documents.retainedSourceBytes) : "--"} caption="Chunks and embeddings, never originals" />
           </MetricRow>
         </Panel>
 

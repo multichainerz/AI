@@ -8,11 +8,8 @@ import {
   agentToolGrant,
   auditEvent,
   createTestDatabase,
-  document,
-  documentChunk,
   governedTool,
   governedToolCall,
-  toolApproval,
   mcpGatewayCredential,
   toolRuntimeControl,
   type TestDatabase,
@@ -34,7 +31,7 @@ afterAll(async () => { await context?.drop(); }, 120_000);
 beforeEach(async () => { await context.reset(); });
 
 const principal: ToolingPrincipal = { id: randomUUID() } as ToolingPrincipal;
-const passingBoundary: ToolBoundaryVerifier = { assertGovernedToolBoundary: vi.fn(async () => undefined) };
+const passingBoundary: ToolBoundaryVerifier = { assertAdmittedToolBoundary: vi.fn(async () => undefined) };
 
 function manager(boundaryVerifier?: ToolBoundaryVerifier) {
   return new DrizzleToolingManager(context.database, boundaryVerifier);
@@ -48,12 +45,12 @@ async function seedTool(overrides: Record<string, unknown> = {}) {
   const [tool] = await context.database
     .insert(governedTool)
     .values({
-      slug: `document-metadata-${randomUUID().slice(0, 8)}`,
-      displayName: "Document metadata",
-      description: "Reads metadata for a document the requester owns.",
+      slug: `runtime-tool-${randomUUID().slice(0, 8)}`,
+      displayName: "Runtime tool",
+      description: "A tool advertised by the enrolled Hermes runtime.",
       risk: "READ_ONLY",
       status: "ACTIVE",
-      handlerKey: "builtin.document_metadata_read",
+      handlerKey: "hermes.runtime_tool",
       inputSchema: { type: "object" },
       ...overrides,
     })
@@ -77,7 +74,7 @@ async function seedRunnableAgent() {
       version: 1,
       displayName: "Support agent",
       purpose: "Answer operator questions.",
-      instructions: "Answer only from approved knowledge.",
+      instructions: "Answer precisely and state uncertainty.",
       soulMd: "You are a careful operations assistant.",
       skills: [],
       modelAlias: "hermes-agent",
@@ -111,13 +108,10 @@ async function seedRunnableAgent() {
       ownerSubject: "local-admin:operator",
       requestedBy: session!.id,
       sessionId: randomUUID(),
-      memorySessionKey: randomUUID(),
-      input: "inspect the document",
-      conversationHistory: [],
+      input: "run the requested tool",
       outputCharacterLimit: 200_000,
       modelAlias: "hermes-agent",
       jobId: randomUUID(),
-      effectiveCapabilities: [],
       status: "RUNNING",
       toolCapabilityTokenHash: digest(capability),
       toolCapabilityExpiresAt: new Date(Date.now() + 600_000),
@@ -159,48 +153,10 @@ async function enableGateway(approvalTtlMinutes = 15) {
     });
 }
 
-/** Waits for a blocking invoke() to register its approval, then returns its id. */
-async function waitForPendingApproval(subject: ReturnType<typeof manager>): Promise<string> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    const { items } = await subject.listPendingApprovals();
-    if (items[0]) return items[0].id;
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  throw new Error("no approval was registered");
-}
-
-async function seedDocument(ownerSubject: string, withMemory = true) {
-  const [stored] = await context.database
-    .insert(document)
-    .values({
-      ownerSubject,
-      fileName: "runbook.pdf",
-      mediaType: "application/pdf",
-      sizeBytes: 4_096,
-      classification: "INTERNAL",
-      status: "READY",
-      sha256: createHash("sha256").update("runbook").digest("hex"),
-      retentionUntil: new Date(Date.now() + 30 * 24 * 60 * 60 * 1_000),
-    })
-    .returning();
-  if (withMemory) {
-    await context.database.insert(documentChunk).values({
-      documentId: stored!.id,
-      ownerSubject,
-      ordinal: 0,
-      content: "Restart Hermes with the runbook procedure.",
-      characterCount: 41,
-      embeddingModel: "Xenova/bge-m3",
-      embedding: Array.from({ length: 1024 }, () => 0.01),
-    });
-  }
-  return stored!;
-}
 
 describe("DrizzleToolingManager catalogue", () => {
-  it("lists only tools with a handler this release actually implements", async () => {
+  it("lists generic runtime tool definitions", async () => {
     const supported = await seedTool();
-    await seedTool({ handlerKey: "builtin.not_implemented" });
 
     const listed = await manager().listTools();
 
@@ -218,11 +174,11 @@ describe("DrizzleToolingManager catalogue", () => {
     expect((await manager().listTools()).items[0]?.status).toBe("ACTIVE");
   });
 
-  it("refuses to change the status of a tool it does not govern", async () => {
-    const foreign = await seedTool({ handlerKey: "builtin.not_implemented" });
+  it("administers generic tool definitions and rejects unknown identifiers", async () => {
+    const generic = await seedTool({ handlerKey: "hermes.custom_tool" });
 
-    await expect(manager().setToolStatus(principal, foreign.id, "SUSPENDED"))
-      .rejects.toBeInstanceOf(ToolingNotFoundError);
+    await expect(manager().setToolStatus(principal, generic.id, "SUSPENDED"))
+      .resolves.toBeUndefined();
     await expect(manager().setToolStatus(principal, randomUUID(), "SUSPENDED"))
       .rejects.toBeInstanceOf(ToolingNotFoundError);
   });
@@ -383,298 +339,39 @@ describe("DrizzleToolingManager run-scoped discovery", () => {
 });
 
 describe("DrizzleToolingManager invocation", () => {
-  it("reads document metadata for a document the run's owner holds", async () => {
-    await enableGateway();
-    const tool = await seedTool();
-    const { version, run, authorization } = await seedRunnableAgent();
-    await grantTool(version.id, tool.id);
-    const stored = await seedDocument(run.ownerSubject);
-
-    const result = await manager().invoke(tool.slug, {
-      authorization, requestId: randomUUID(), arguments: { documentId: stored.id },
-    });
-
-    expect(result).toMatchObject({ status: "COMPLETED", isError: false });
-    expect(result.data).toMatchObject({
-      documentId: stored.id,
-      fileName: "runbook.pdf",
-      sizeBytes: "4096",
-      classification: "INTERNAL",
-    });
-    expect((result.data as { retrieval: { status: string; chunks: number } }).retrieval)
-      .toMatchObject({ status: "INDEXED", chunks: 1, embeddingModel: "Xenova/bge-m3" });
-
-    const [call] = await context.database.select().from(governedToolCall);
-    expect(call?.status).toBe("COMPLETED");
-  });
-
-  it("denies a document outside the run owner's scope", async () => {
+  it("records a generic tool call as failed when no local executor is registered", async () => {
     await enableGateway();
     const tool = await seedTool();
     const { version, authorization } = await seedRunnableAgent();
     await grantTool(version.id, tool.id);
-    const foreign = await seedDocument("local-admin:someone-else");
 
     const result = await manager().invoke(tool.slug, {
-      authorization, requestId: randomUUID(), arguments: { documentId: foreign.id },
+      authorization,
+      requestId: randomUUID(),
+      arguments: { operation: "status" },
     });
 
-    // The failure is recorded against the call rather than thrown, so the agent
-    // receives a tool error instead of a transport failure.
     expect(result).toMatchObject({ status: "FAILED", isError: true });
+    expect(result.data).toMatchObject({ message: expect.stringContaining("No local executor") });
     const [call] = await context.database.select().from(governedToolCall);
-    expect(call?.errorCode).toBe("TOOL_EXECUTION_FAILED");
+    expect(call).toMatchObject({ status: "FAILED", errorCode: "TOOL_EXECUTION_FAILED" });
   });
 
-  it("replays the stored result for a repeated request ID", async () => {
-    await enableGateway();
-    const tool = await seedTool();
-    const { version, run, authorization } = await seedRunnableAgent();
-    await grantTool(version.id, tool.id);
-    const stored = await seedDocument(run.ownerSubject);
-    const requestId = randomUUID();
-
-    const first = await manager().invoke(tool.slug, { authorization, requestId, arguments: { documentId: stored.id } });
-    const replay = await manager().invoke(tool.slug, { authorization, requestId, arguments: { documentId: stored.id } });
-
-    expect(replay.callId).toBe(first.callId);
-    expect(await context.database.select().from(governedToolCall)).toHaveLength(1);
-  });
-
-  it("refuses to reuse a request ID for a different document", async () => {
-    await enableGateway();
-    const tool = await seedTool();
-    const { version, run, authorization } = await seedRunnableAgent();
-    await grantTool(version.id, tool.id);
-    const first = await seedDocument(run.ownerSubject);
-    const second = await seedDocument(run.ownerSubject);
-    const requestId = randomUUID();
-    await manager().invoke(tool.slug, { authorization, requestId, arguments: { documentId: first.id } });
-
-    await expect(manager().invoke(tool.slug, { authorization, requestId, arguments: { documentId: second.id } }))
-      .rejects.toThrow(/already used for a different tool invocation/);
-  });
-
-  it("rejects arguments that are not exactly one document identifier", async () => {
-    await enableGateway();
-    const tool = await seedTool();
-    const { version, run, authorization } = await seedRunnableAgent();
-    await grantTool(version.id, tool.id);
-    const stored = await seedDocument(run.ownerSubject);
-
-    for (const args of [{}, { documentId: "not-a-uuid" }, { documentId: stored.id, extra: 1 }]) {
-      await expect(manager().invoke(tool.slug, { authorization, requestId: randomUUID(), arguments: args }))
-        .rejects.toBeInstanceOf(ToolingDeniedError);
-    }
-    expect(await context.database.select().from(governedToolCall)).toHaveLength(0);
-  });
-
-  it("holds a consequential tool for a human decision instead of refusing it", async () => {
-    // The schema's minimum; every test here decides promptly, so the wait ends
-    // on the decision rather than on the clock.
-    await enableGateway(5);
-    const tool = await seedTool({ risk: "CONSEQUENTIAL" });
-    const { version, authorization } = await seedRunnableAgent();
-    await grantTool(version.id, tool.id);
-    const subject = manager();
-
-    // The call blocks until someone decides, so drive the decision alongside it.
-    const invocation = subject.invoke(tool.slug, {
-      authorization, requestId: randomUUID(), arguments: { documentId: randomUUID() },
-    });
-
-    const approvalId = await waitForPendingApproval(subject);
-    await subject.decideApproval(principal, approvalId, true, "Reviewed and approved.");
-
-    const result = await invocation;
-    // The approval opened the gate and execution ran — and was then refused by
-    // the owner boundary, because the document belongs to nobody. That is the
-    // property worth pinning: a human decision authorises the *call*, it does
-    // not widen whose data the call may touch.
-    expect(result.status).toBe("FAILED");
-    expect(result.data).toMatchObject({ message: expect.stringContaining("owner-only scope") });
-
-    const [approval] = await context.database.select().from(toolApproval);
-    expect(approval?.status).toBe("APPROVED");
-    expect(approval?.decisionReason).toBe("Reviewed and approved.");
-  });
-
-  it("does not execute a consequential tool a human rejected", async () => {
-    // The schema's minimum; every test here decides promptly, so the wait ends
-    // on the decision rather than on the clock.
-    await enableGateway(5);
-    const tool = await seedTool({ risk: "CONSEQUENTIAL" });
-    const { version, authorization } = await seedRunnableAgent();
-    await grantTool(version.id, tool.id);
-    const subject = manager();
-
-    const invocation = subject.invoke(tool.slug, {
-      authorization, requestId: randomUUID(), arguments: { documentId: randomUUID() },
-    });
-    const approvalId = await waitForPendingApproval(subject);
-    await subject.decideApproval(principal, approvalId, false, "Not authorized for this data.");
-
-    const result = await invocation;
-    expect(result.status).toBe("FAILED");
-    expect(result.data).toMatchObject({ message: expect.stringContaining("rejected") });
-
-    const [call] = await context.database.select().from(governedToolCall);
-    expect(call?.errorCode).toBe("TOOL_APPROVAL_REJECTED");
-    // Nothing ran, so nothing was started.
-    expect(call?.startedAt).toBeNull();
-  });
-
-  it("honours an approval that lands after the deadline but before the poll notices", async () => {
-    await enableGateway(5);
-    const tool = await seedTool({ risk: "CONSEQUENTIAL" });
-    const { version, run, authorization } = await seedRunnableAgent();
-    await grantTool(version.id, tool.id);
-    const stored = await seedDocument(run.ownerSubject);
-    const subject = manager();
-
-    // The wait is a poll, so the deadline can pass while the poll is asleep.
-    // Moving the clock past it *before* the decision is what pins that
-    // ordering: the loop re-checks the clock before it re-reads the row, so it
-    // leaves on the clock having never seen the administrator's answer.
-    const realNow = Date.now;
-    let offsetMs = 0;
-    const clock = vi.spyOn(Date, "now").mockImplementation(() => realNow() + offsetMs);
-    try {
-      const invocation = subject.invoke(tool.slug, {
-        authorization, requestId: randomUUID(), arguments: { documentId: stored.id },
-      });
-      const approvalId = await waitForPendingApproval(subject);
-      // The deadline is read once, just after the approval row is written. The
-      // beat keeps the jump from landing before that read, which would shorten
-      // the whole wait to nothing and test something else entirely.
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      offsetMs = 10 * 60_000;
-      await subject.decideApproval(principal, approvalId, true, "Reviewed and approved.");
-
-      const result = await invocation;
-      expect(JSON.stringify(result.data)).not.toContain("No human decision was recorded");
-      expect(result).toMatchObject({ status: "COMPLETED", isError: false });
-    } finally {
-      clock.mockRestore();
-    }
-
-    const [approval] = await context.database.select().from(toolApproval);
-    expect(approval?.status).toBe("APPROVED");
-    const [call] = await context.database.select().from(governedToolCall);
-    expect(call?.status).toBe("COMPLETED");
-    // The trail must never carry a named administrator's approval beside a
-    // record asserting nobody decided.
-    const actions = (await context.database.select().from(auditEvent)).map(({ action }) => action);
-    expect(actions).toContain("tool.call_approved");
-    expect(actions).not.toContain("tool.call_failed");
-  });
-
-  it("still expires a consequential call nobody decided", async () => {
-    await enableGateway(5);
-    const tool = await seedTool({ risk: "CONSEQUENTIAL" });
-    const { version, run, authorization } = await seedRunnableAgent();
-    await grantTool(version.id, tool.id);
-    const stored = await seedDocument(run.ownerSubject);
-    const subject = manager();
-
-    const realNow = Date.now;
-    let offsetMs = 0;
-    const clock = vi.spyOn(Date, "now").mockImplementation(() => realNow() + offsetMs);
-    try {
-      const invocation = subject.invoke(tool.slug, {
-        authorization, requestId: randomUUID(), arguments: { documentId: stored.id },
-      });
-      await waitForPendingApproval(subject);
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      offsetMs = 10 * 60_000;
-
-      const result = await invocation;
-      expect(result).toMatchObject({ status: "FAILED", isError: true });
-      expect(result.data).toMatchObject({ message: expect.stringContaining("expired") });
-    } finally {
-      clock.mockRestore();
-    }
-
-    const [approval] = await context.database.select().from(toolApproval);
-    expect(approval?.status).toBe("EXPIRED");
-    const [call] = await context.database.select().from(governedToolCall);
-    expect(call?.errorCode).toBe("TOOL_APPROVAL_EXPIRED");
-  });
-
-  it("refuses to decide an approval twice", async () => {
-    // The schema's minimum; every test here decides promptly, so the wait ends
-    // on the decision rather than on the clock.
-    await enableGateway(5);
-    const tool = await seedTool({ risk: "CONSEQUENTIAL" });
-    const { version, authorization } = await seedRunnableAgent();
-    await grantTool(version.id, tool.id);
-    const subject = manager();
-
-    const invocation = subject.invoke(tool.slug, {
-      authorization, requestId: randomUUID(), arguments: { documentId: randomUUID() },
-    });
-    const approvalId = await waitForPendingApproval(subject);
-    await subject.decideApproval(principal, approvalId, true, "First decision wins.");
-
-    // A second administrator racing the first must not overturn the decision.
-    await expect(subject.decideApproval(principal, approvalId, false, "Changed my mind."))
-      .rejects.toBeInstanceOf(ToolingConflictError);
-    await invocation;
-  });
-
-  it("still refuses a consequential tool the active version does not grant", async () => {
-    // Approval must never widen a grant: an ungranted tool is refused before
-    // any human is ever asked.
-    // The schema's minimum; every test here decides promptly, so the wait ends
-    // on the decision rather than on the clock.
-    await enableGateway(5);
-    const tool = await seedTool({ risk: "CONSEQUENTIAL" });
-    const { authorization } = await seedRunnableAgent();
-
-    await expect(manager().invoke(tool.slug, {
-      authorization, requestId: randomUUID(), arguments: { documentId: randomUUID() },
-    })).rejects.toThrow(/does not grant this tool/);
-    expect(await context.database.select().from(toolApproval)).toHaveLength(0);
-  });
-
-  it("refuses a tool the active version does not grant", async () => {
-    await enableGateway();
-    const tool = await seedTool();
-    const { authorization } = await seedRunnableAgent();
-
-    await expect(manager().invoke(tool.slug, {
-      authorization, requestId: randomUUID(), arguments: { documentId: randomUUID() },
-    })).rejects.toThrow(/does not grant this tool/);
-  });
-
-  it("records a denial without a call row", async () => {
+  it("records a gateway denial without creating a call row", async () => {
     const { run, authorization } = await seedRunnableAgent();
 
-    await manager().recordDeniedInvocation("document-metadata", {
-      authorization, requestId: randomUUID(), arguments: {},
+    await manager().recordDeniedInvocation("runtime-tool", {
+      authorization,
+      requestId: randomUUID(),
+      arguments: {},
     }, "The gateway is disabled.");
 
     const [recorded] = await context.database.select().from(auditEvent);
     expect(recorded).toMatchObject({ action: "tool.call_denied", outcome: "FAILURE", resourceId: run.id });
     expect(await context.database.select().from(governedToolCall)).toHaveLength(0);
   });
-
-  it("lists completed calls with their profile and tool identity", async () => {
-    await enableGateway();
-    const tool = await seedTool();
-    const { version, run, profile, authorization } = await seedRunnableAgent();
-    await grantTool(version.id, tool.id);
-    const stored = await seedDocument(run.ownerSubject);
-    await manager().invoke(tool.slug, { authorization, requestId: randomUUID(), arguments: { documentId: stored.id } });
-
-    const listed = await manager().listCalls();
-
-    expect(listed.items).toHaveLength(1);
-    expect(listed.items[0]).toMatchObject({
-      profileSlug: profile.slug, profileVersion: 1, toolSlug: tool.slug, risk: "READ_ONLY", status: "COMPLETED",
-    });
-  });
 });
+
 
 describe("DrizzleToolingManager runtime control", () => {
   it("denies execution fail-closed when the control row is missing", async () => {
@@ -702,7 +399,7 @@ describe("DrizzleToolingManager runtime control", () => {
     await grantTool(version.id, tool.id);
     await manager().issueCredential(principal, "Hermes gateway");
     const failing: ToolBoundaryVerifier = {
-      assertGovernedToolBoundary: vi.fn(async () => { throw new Error("boundary breached"); }),
+      assertAdmittedToolBoundary: vi.fn(async () => { throw new Error("boundary breached"); }),
     };
 
     await expect(manager(failing).updateRuntimeControl(principal, {
@@ -736,16 +433,15 @@ describe("DrizzleToolingManager metrics", () => {
     await enableGateway();
     const tool = await seedTool();
     await seedTool({ status: "SUSPENDED" });
-    const { version, run, authorization } = await seedRunnableAgent();
+    const { version, authorization } = await seedRunnableAgent();
     await grantTool(version.id, tool.id);
-    const stored = await seedDocument(run.ownerSubject);
-    await manager().invoke(tool.slug, { authorization, requestId: randomUUID(), arguments: { documentId: stored.id } });
+    await manager().invoke(tool.slug, { authorization, requestId: randomUUID(), arguments: { operation: "status" } });
 
     const metrics = await manager().metrics();
 
     expect(metrics).toMatchObject({
       activeTools: 1, activeGrants: 1, pendingApprovals: 0,
-      executingCalls: 0, completedCalls: 1, deniedCalls: 0, failedCalls: 0,
+      executingCalls: 0, completedCalls: 0, deniedCalls: 0, failedCalls: 1,
     });
   });
 

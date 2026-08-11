@@ -12,7 +12,7 @@ import {
   updateGuardrailPolicy,
 } from "./api.js";
 import { adminAccess } from "./admin-access.js";
-import { slugAsTyped, slugify } from "./benchmark-suite-editor.js";
+import { slugAsTyped, slugify } from "./slug.js";
 import {
   Alert, Button, EmptyState, Field, Input, LockedScreen, Metric, MetricRow, MicroLabel,
   PageHeader, Panel, StatusText, Textarea, cn, toneFor,

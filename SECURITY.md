@@ -33,8 +33,8 @@ branch.
   installer scripts (`install.sh`, `scripts/*.sh`), the Ed25519 node
   enrollment and signed-heartbeat scheme, envelope encryption of secret
   records, session and scope enforcement, guardrail bypasses, the inference
-  gateway, the pgvector document-knowledge plane and owner scoping,
-  Hermes-native session/memory boundary, and audit trail / SIEM forwarding path.
+  gateway, Hermes-native session/memory boundary, runtime toolset admission,
+  and audit trail / SIEM forwarding path.
 - **Out of scope:** vulnerabilities in Hermes or your inference server itself
   (report those upstream), denial of service against your own
   deployment, and findings that require an already-compromised root account on

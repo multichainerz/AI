@@ -12,15 +12,12 @@ import { registerOperationsRoutes } from "./operations/routes.js";
 import { registerAdminSessionRoutes } from "./auth/routes.js";
 import { registerChatMetricsRoutes, registerChatRoutes } from "./chat/routes.js";
 import { registerIdentityRoutes } from "./identity/routes.js";
-import { registerDocumentRoutes } from "./documents/routes.js";
 import { registerAdminAgentRoutes, registerAgentRoutes } from "./agents/routes.js";
 import { registerAdminToolingRoutes, registerMcpGatewayRoutes } from "./tooling/routes.js";
 import { registerAiOpsRoutes } from "./ai-ops/routes.js";
 import { registerModelRoutes } from "./models/routes.js";
 import { registerGuardrailRoutes } from "./guardrails/routes.js";
 import { registerPromptRoutes } from "./prompts/routes.js";
-import { registerMemoryRoutes } from "./memory/routes.js";
-import { registerBenchmarkRoutes } from "./benchmarks/routes.js";
 import { registerAuditRoutes } from "./audit/routes.js";
 import { registerOnboardingRoutes } from "./onboarding/routes.js";
 import {
@@ -78,8 +75,7 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
       request.url.startsWith("/api/v1/chat/") ||
       request.url.startsWith("/api/v1/session") ||
       request.url.startsWith("/api/v1/auth/oidc/") ||
-      request.url.startsWith("/api/v1/documents")
-      || request.url.startsWith("/api/v1/agents")
+      request.url.startsWith("/api/v1/agents")
       || request.url.startsWith("/api/v1/mcp")
       || request.url.startsWith("/api/v1/runtime-nodes")
       || request.url.startsWith("/internal/v1/")
@@ -209,22 +205,6 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
   );
 
   await app.register(
-    async (memory) => registerMemoryRoutes(memory, {
-      ...(runtime.sessionManager ? { sessionManager: runtime.sessionManager } : {}),
-      ...(runtime.memoryManager ? { manager: runtime.memoryManager } : {}),
-    }),
-    { prefix: "/api/v1/admin/memory" },
-  );
-
-  await app.register(
-    async (benchmarks) => registerBenchmarkRoutes(benchmarks, {
-      ...(runtime.sessionManager ? { sessionManager: runtime.sessionManager } : {}),
-      ...(runtime.benchmarkManager ? { manager: runtime.benchmarkManager } : {}),
-    }),
-    { prefix: "/api/v1/admin/benchmarks" },
-  );
-
-  await app.register(
     async (audit) => registerAuditRoutes(audit, {
       ...(runtime.sessionManager ? { sessionManager: runtime.sessionManager } : {}),
       ...(runtime.auditManager ? { manager: runtime.auditManager } : {}),
@@ -238,19 +218,8 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
         ...(runtime.sessionManager ? { sessionManager: runtime.sessionManager } : {}),
         ...(runtime.identityManager ? { identityManager: runtime.identityManager } : {}),
         ...(runtime.chatManager ? { manager: runtime.chatManager } : {}),
-        ...(runtime.memoryManager ? { memoryManager: runtime.memoryManager } : {}),
       }),
     { prefix: "/api/v1/chat" },
-  );
-
-  await app.register(
-    async (documents) =>
-      registerDocumentRoutes(documents, {
-        ...(runtime.sessionManager ? { sessionManager: runtime.sessionManager } : {}),
-        ...(runtime.identityManager ? { identityManager: runtime.identityManager } : {}),
-        ...(runtime.documentManager ? { manager: runtime.documentManager } : {}),
-      }),
-    { prefix: "/api/v1/documents" },
   );
 
   await app.register(

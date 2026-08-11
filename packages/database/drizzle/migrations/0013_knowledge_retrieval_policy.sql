@@ -1,4 +1,0 @@
-ALTER TABLE "MemoryPolicy" DROP CONSTRAINT "MemoryPolicy_bounds_check";--> statement-breakpoint
-ALTER TABLE "MemoryPolicy" ADD COLUMN "knowledgeRecallLimit" integer DEFAULT 18 NOT NULL;--> statement-breakpoint
-ALTER TABLE "MemoryPolicy" ADD COLUMN "knowledgeMinimumScore" double precision DEFAULT 0.35 NOT NULL;--> statement-breakpoint
-ALTER TABLE "MemoryPolicy" ADD CONSTRAINT "MemoryPolicy_bounds_check" CHECK (("maximumItemsPerOwner" >= 10) AND ("recallLimit" >= 1) AND ("recallMinimumScore" >= 0) AND ("recallMinimumScore" <= 1) AND ("knowledgeRecallLimit" >= 1) AND ("knowledgeMinimumScore" >= 0) AND ("knowledgeMinimumScore" <= 1) AND ("retentionDays" IS NULL OR "retentionDays" >= 1) AND (revision > 0));

@@ -20,8 +20,6 @@ import {
   agentRun,
   agentToolGrant,
   auditEvent,
-  document,
-  documentChunk,
   enterpriseUser,
   enterpriseUserSession,
   governedTool,
@@ -32,7 +30,7 @@ import {
   toolRuntimeControl,
   type OrcaSynapseDatabase,
 } from "@orcasynapse/database";
-import { and, asc, count, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, isNull } from "drizzle-orm";
 import {
   ToolingConflictError,
   ToolingDeniedError,
@@ -59,8 +57,6 @@ const APPROVAL_POLL_MS = 1_000;
  * pending on a call that already failed.
  */
 const MAXIMUM_INLINE_WAIT_MS = 5 * 60_000;
-
-const SUPPORTED_TOOL_HANDLERS = ["builtin.document_metadata_read"] as const;
 
 /** The database handle or a transaction opened from it. */
 type Executor = OrcaSynapseDatabase | Parameters<Parameters<OrcaSynapseDatabase["transaction"]>[0]>[0];
@@ -211,7 +207,6 @@ export class DrizzleToolingManager implements ToolingManager {
     const items = await this.database
       .select()
       .from(governedTool)
-      .where(inArray(governedTool.handlerKey, [...SUPPORTED_TOOL_HANDLERS]))
       .orderBy(asc(governedTool.risk), asc(governedTool.displayName));
     return { items: items.map(toolDto) };
   }
@@ -242,10 +237,7 @@ export class DrizzleToolingManager implements ToolingManager {
       const changed = await transaction
         .update(governedTool)
         .set({ status })
-        .where(and(
-          eq(governedTool.id, toolId),
-          inArray(governedTool.handlerKey, [...SUPPORTED_TOOL_HANDLERS]),
-        ))
+        .where(eq(governedTool.id, toolId))
         .returning({ id: governedTool.id });
       if (changed.length !== 1) throw new ToolingNotFoundError();
       await transaction.insert(auditEvent).values({
@@ -270,10 +262,7 @@ export class DrizzleToolingManager implements ToolingManager {
       this.database
         .select({ id: governedTool.id })
         .from(governedTool)
-        .where(and(
-          eq(governedTool.id, input.toolId),
-          inArray(governedTool.handlerKey, [...SUPPORTED_TOOL_HANDLERS]),
-        ))
+        .where(eq(governedTool.id, input.toolId))
         .limit(1),
     ]);
     if (version.length === 0 || tool.length === 0) {
@@ -397,9 +386,8 @@ export class DrizzleToolingManager implements ToolingManager {
     if (!(await this.requesterMatchesGrant(run!.requestedBy, grant.allowedGroups, grant.allowedAdminRoles))) {
       throw new ToolingDeniedError("The requesting identity no longer satisfies the tool grant.");
     }
-    const documentId = this.documentId(invocation.arguments);
-    const sanitizedArguments = { documentId };
-    const existing = await this.findExistingResult(runId, invocation.requestId, toolSlug, documentId);
+    const sanitizedArguments = jsonObject(invocation.arguments);
+    const existing = await this.findExistingResult(runId, invocation.requestId, toolSlug, sanitizedArguments);
     if (existing) return existing;
 
     let callId: string;
@@ -416,7 +404,7 @@ export class DrizzleToolingManager implements ToolingManager {
       if (!created) throw new ToolingConflictError("The tool call could not be recorded.");
       callId = created.id;
     } catch (cause) {
-      const raced = await this.findExistingResult(runId, invocation.requestId, toolSlug, documentId);
+      const raced = await this.findExistingResult(runId, invocation.requestId, toolSlug, sanitizedArguments);
       if (raced) return raced;
       throw cause;
     }
@@ -436,7 +424,7 @@ export class DrizzleToolingManager implements ToolingManager {
     }
 
     try {
-      const data = await this.executeRead(tool.handlerKey, run!.ownerSubject, documentId);
+      const data = await this.executeHandler(tool.handlerKey, sanitizedArguments);
       await this.completeCall(callId, data);
       return { callId, status: "COMPLETED", data, isError: false };
     } catch (error) {
@@ -714,7 +702,7 @@ export class DrizzleToolingManager implements ToolingManager {
         throw new ToolingConflictError("Hermes governed-tool boundary verification is unavailable; the gateway remains disabled.");
       }
       try {
-        await this.boundaryVerifier.assertGovernedToolBoundary();
+        await this.boundaryVerifier.assertAdmittedToolBoundary(await this.admittedToolsetNames());
       } catch {
         await this.database.insert(auditEvent).values({
           actorType: "USER", actorId: principal.id, action: "tool.runtime_enable_denied",
@@ -856,14 +844,6 @@ export class DrizzleToolingManager implements ToolingManager {
     return rows;
   }
 
-  private documentId(args: Record<string, unknown>): string {
-    const keys = Object.keys(args);
-    if (keys.length !== 1 || keys[0] !== "documentId" || typeof args.documentId !== "string" || !UUID.test(args.documentId)) {
-      throw new ToolingDeniedError("Tool arguments must contain exactly one valid documentId.");
-    }
-    return args.documentId;
-  }
-
   private async requesterMatchesGrant(
     requestedBy: string,
     groups: string[],
@@ -897,48 +877,8 @@ export class DrizzleToolingManager implements ToolingManager {
     return (enterprise?.groups ?? []).some((group) => groups.includes(group));
   }
 
-  private async executeRead(handlerKey: string, ownerSubject: string, documentId: string): Promise<Record<string, unknown>> {
-    if (handlerKey !== "builtin.document_metadata_read") throw new ToolingConflictError("The read-only tool handler is not implemented.");
-    const [found] = await this.database
-      .select({
-        id: document.id,
-        fileName: document.fileName,
-        mediaType: document.mediaType,
-        sizeBytes: document.sizeBytes,
-        classification: document.classification,
-        status: document.status,
-        createdAt: document.createdAt,
-        updatedAt: document.updatedAt,
-        chunkCount: count(documentChunk.id),
-        embeddingModel: sql<string | null>`max(${documentChunk.embeddingModel})`,
-      })
-      .from(document)
-      .leftJoin(documentChunk, eq(documentChunk.documentId, document.id))
-      .where(and(
-        eq(document.id, documentId),
-        eq(document.ownerSubject, ownerSubject),
-        isNull(document.deletedAt),
-      ))
-      .groupBy(document.id)
-      .limit(1);
-    if (!found) throw new ToolingDeniedError("The document is unavailable within the requesting user's owner-only scope.");
-    return {
-      documentId: found.id,
-      fileName: found.fileName,
-      mediaType: found.mediaType,
-      sizeBytes: found.sizeBytes.toString(),
-      classification: found.classification,
-      status: found.status,
-      // Retrieval state comes from the pgvector index the document was embedded
-      // into, which replaced the external memory projection.
-      retrieval: found.chunkCount > 0 ? {
-        status: "INDEXED",
-        chunks: found.chunkCount,
-        embeddingModel: found.embeddingModel,
-      } : { status: "NOT_INDEXED", chunks: 0, embeddingModel: null },
-      createdAt: found.createdAt.toISOString(),
-      updatedAt: found.updatedAt.toISOString(),
-    };
+  private async executeHandler(handlerKey: string, _arguments: Record<string, unknown>): Promise<Record<string, unknown>> {
+    throw new ToolingConflictError(`No local executor is registered for handler '${handlerKey}'.`);
   }
 
   private async completeCall(callId: string, data: Record<string, unknown>): Promise<void> {
@@ -981,14 +921,14 @@ export class DrizzleToolingManager implements ToolingManager {
     runId: string,
     requestId: string,
     toolSlug: string,
-    documentId: string,
+    arguments_: Record<string, unknown>,
   ): Promise<GovernedToolResult | null> {
     const [existing] = await this.callQuery(this.database)
       .where(and(eq(governedToolCall.runId, runId), eq(governedToolCall.requestId, requestId)))
       .limit(1);
     if (!existing) return null;
-    const arguments_ = jsonObject(existing.arguments);
-    if (existing.toolSlug !== toolSlug || arguments_.documentId !== documentId) {
+    const storedArguments = jsonObject(existing.arguments);
+    if (existing.toolSlug !== toolSlug || JSON.stringify(storedArguments) !== JSON.stringify(arguments_)) {
       throw new ToolingDeniedError("The request ID was already used for a different tool invocation.");
     }
     return this.existingResult(existing);

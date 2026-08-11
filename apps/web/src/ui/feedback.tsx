@@ -132,8 +132,8 @@ export function LockedScreen(props: {
   actionLabel: string;
   onAction: () => void;
   /**
-   * Not every locked area wants an administrator. Chat, Knowledge and Agents
-   * also serve enterprise identities, so they state what they actually need
+   * Not every locked area wants an administrator. Chat and Agents also serve
+   * enterprise identities, so they state what they actually need
    * and offer the enterprise route as a second action.
    */
   headline?: string;

@@ -12,14 +12,11 @@ CREATE TYPE "public"."ComponentCompatibilityStatus" AS ENUM('NOT_TESTED', 'IN_PR
 CREATE TYPE "public"."ConnectionStatus" AS ENUM('NOT_TESTED', 'HEALTHY', 'DEGRADED', 'UNREACHABLE', 'DISABLED');--> statement-breakpoint
 CREATE TYPE "public"."DeploymentEnvironment" AS ENUM('DEVELOPMENT', 'STAGING', 'PRODUCTION');--> statement-breakpoint
 CREATE TYPE "public"."DeploymentTopologyMode" AS ENUM('COMPACT', 'CONTROL_PLANE', 'SEGMENTED_PRODUCTION');--> statement-breakpoint
-CREATE TYPE "public"."DocumentClassification" AS ENUM('INTERNAL', 'CONFIDENTIAL', 'RESTRICTED');--> statement-breakpoint
-CREATE TYPE "public"."DocumentStatus" AS ENUM('QUARANTINED', 'QUEUED', 'CONVERTING', 'READY', 'FAILED', 'REJECTED', 'DELETING', 'DELETED');--> statement-breakpoint
 CREATE TYPE "public"."EvaluationRunStatus" AS ENUM('DRAFT', 'PASSED', 'FAILED', 'PROMOTED');--> statement-breakpoint
 CREATE TYPE "public"."EvaluationTargetType" AS ENUM('MODEL', 'PROMPT', 'POLICY', 'AGENT');--> statement-breakpoint
 CREATE TYPE "public"."GuardrailPolicyStatus" AS ENUM('DRAFT', 'ACTIVE', 'SUSPENDED');--> statement-breakpoint
 CREATE TYPE "public"."HermesNodeEnrollmentStatus" AS ENUM('ISSUED', 'CONSUMED', 'REVOKED', 'EXPIRED');--> statement-breakpoint
 CREATE TYPE "public"."HermesRuntimeNodeStatus" AS ENUM('PENDING', 'ONLINE', 'DEGRADED', 'DRAINING', 'SUSPENDED', 'REVOKED', 'OFFLINE');--> statement-breakpoint
-CREATE TYPE "public"."MemorySyncStatus" AS ENUM('NOT_INDEXED', 'QUEUED', 'PROCESSING', 'READY', 'FAILED', 'DELETE_PENDING', 'DELETED');--> statement-breakpoint
 CREATE TYPE "public"."ModelDeploymentStatus" AS ENUM('DRAFT', 'ACTIVE', 'SUSPENDED');--> statement-breakpoint
 CREATE TYPE "public"."ModelWorkload" AS ENUM('CHAT', 'AGENT');--> statement-breakpoint
 CREATE TYPE "public"."OnboardingEvidenceOutcome" AS ENUM('PASSED', 'FAILED', 'WARNING');--> statement-breakpoint
@@ -35,8 +32,7 @@ CREATE TYPE "public"."ProductionReadinessControlStatus" AS ENUM('NOT_STARTED', '
 CREATE TYPE "public"."ProductionReadinessDomain" AS ENUM('SECURITY', 'INFRASTRUCTURE', 'RECOVERY', 'OPERATIONS', 'TRAINING', 'BUSINESS');--> statement-breakpoint
 CREATE TYPE "public"."PromptPurpose" AS ENUM('CHAT_SYSTEM');--> statement-breakpoint
 CREATE TYPE "public"."PromptTemplateStatus" AS ENUM('DRAFT', 'ACTIVE', 'SUSPENDED');--> statement-breakpoint
-CREATE TYPE "public"."ServiceKind" AS ENUM('INFERENCE', 'HERMES', 'SUPERMEMORY', 'MCP', 'OIDC', 'SIEM', 'NOTIFICATION', 'OTHER');--> statement-breakpoint
-CREATE TYPE "public"."ToolActionDispatchStatus" AS ENUM('PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'CANCELLED');--> statement-breakpoint
+CREATE TYPE "public"."ServiceKind" AS ENUM('INFERENCE', 'HERMES', 'MCP', 'OIDC', 'SIEM', 'NOTIFICATION', 'OTHER');--> statement-breakpoint
 CREATE TYPE "public"."ToolApprovalStatus" AS ENUM('PENDING', 'APPROVED', 'REJECTED', 'EXPIRED', 'CANCELLED');--> statement-breakpoint
 CREATE TYPE "public"."ToolCallStatus" AS ENUM('REQUESTED', 'APPROVAL_PENDING', 'EXECUTING', 'COMPLETED', 'FAILED', 'DENIED', 'CANCELLED');--> statement-breakpoint
 CREATE TYPE "public"."ToolResourceScope" AS ENUM('OWNER_ONLY');--> statement-breakpoint
@@ -80,7 +76,6 @@ CREATE TABLE "AgentProfileVersion" (
 	"maxTurns" integer NOT NULL,
 	"timeoutSeconds" integer NOT NULL,
 	"maxConcurrentRuns" integer NOT NULL,
-	"allowPrivateKnowledge" boolean DEFAULT false NOT NULL,
 	"safeMode" boolean DEFAULT true NOT NULL,
 	"createdBy" uuid,
 	"createdAt" timestamp (6) with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
@@ -100,8 +95,6 @@ CREATE TABLE "AgentRun" (
 	"status" "AgentRunStatus" DEFAULT 'QUEUED' NOT NULL,
 	"input" text NOT NULL,
 	"output" text,
-	"effectiveCapabilities" jsonb DEFAULT '[]'::jsonb NOT NULL,
-	"sources" jsonb DEFAULT '[]'::jsonb NOT NULL,
 	"externalRunId" varchar(255),
 	"jobId" uuid,
 	"failureCode" varchar(80),
@@ -117,8 +110,6 @@ CREATE TABLE "AgentRun" (
 	"sessionId" varchar(200) NOT NULL,
 	"processorLeaseOwner" varchar(160),
 	"processorLeaseExpiresAt" timestamp (6) with time zone,
-	"memorySessionKey" varchar(200) NOT NULL,
-	"conversationHistory" jsonb DEFAULT '[]'::jsonb NOT NULL,
 	"partialOutput" text DEFAULT '' NOT NULL,
 	"lastEventCursor" bigint,
 	"outputCharacterLimit" integer DEFAULT 200000 NOT NULL,
@@ -170,7 +161,10 @@ CREATE TABLE "AgentRunEvent" (
 	"preview" varchar(1000),
 	"errorCode" varchar(80),
 	"approvalId" uuid,
-	"reasoningTokens" integer
+	"reasoningTokens" integer,
+	"toolCallKey" varchar(200),
+	"text" text,
+	"contentOffset" integer
 );
 --> statement-breakpoint
 CREATE TABLE "AgentRuntimeControl" (
@@ -187,7 +181,7 @@ CREATE TABLE "AgentToolGrant" (
 	"toolId" uuid NOT NULL,
 	"enabled" boolean DEFAULT true NOT NULL,
 	"allowedGroups" text[] NOT NULL,
-	"allowedAdminRoles" "bytea"[] NOT NULL,
+	"allowedAdminRoles" "AdministratorRole"[] NOT NULL,
 	"resourceScope" "ToolResourceScope" DEFAULT 'OWNER_ONLY' NOT NULL,
 	"createdBy" uuid,
 	"createdAt" timestamp (6) with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
@@ -206,7 +200,19 @@ CREATE TABLE "AuditEvent" (
 	"outcome" varchar(40) NOT NULL,
 	"correlationId" uuid,
 	"sourceIp" "inet",
-	"metadata" jsonb DEFAULT '{}'::jsonb NOT NULL
+	"metadata" jsonb DEFAULT '{}'::jsonb NOT NULL,
+	"cursor" bigserial NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "AuditForwardingState" (
+	"id" varchar(32) PRIMARY KEY DEFAULT 'global' NOT NULL,
+	"lastForwardedCursor" bigint,
+	"lastForwardedAt" timestamp (6) with time zone,
+	"lastForwardedId" uuid,
+	"lastAttemptAt" timestamp (6) with time zone,
+	"lastError" varchar(500),
+	"deliveredCount" integer DEFAULT 0 NOT NULL,
+	"updatedAt" timestamp (6) with time zone NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE "ChatConversation" (
@@ -220,8 +226,7 @@ CREATE TABLE "ChatConversation" (
 	"createdAt" timestamp (6) with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
 	"updatedAt" timestamp (6) with time zone NOT NULL,
 	"profileId" uuid,
-	"profileName" varchar(120),
-	"hermesMemoryKey" varchar(200) NOT NULL
+	"profileName" varchar(120)
 );
 --> statement-breakpoint
 CREATE TABLE "ChatFeedback" (
@@ -251,7 +256,6 @@ CREATE TABLE "ChatMessage" (
 	"errorCode" varchar(80),
 	"createdAt" timestamp (6) with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
 	"completedAt" timestamp (6) with time zone,
-	"sources" jsonb DEFAULT '[]'::jsonb NOT NULL,
 	"agentRunId" uuid,
 	"reasoningTokens" integer,
 	"firstTokenLatencyMs" integer
@@ -296,6 +300,22 @@ CREATE TABLE "ConnectionMonitoringControl" (
 	CONSTRAINT "ConnectionMonitoringControl_intervalSeconds_check" CHECK (("intervalSeconds" >= 30) AND ("intervalSeconds" <= 86400))
 );
 --> statement-breakpoint
+CREATE TABLE "ControlPlaneSigningKey" (
+	"id" varchar(32) PRIMARY KEY DEFAULT 'primary' NOT NULL,
+	"publicKeyPem" text NOT NULL,
+	"publicKeyFingerprint" varchar(100) NOT NULL,
+	"encryptedValue" "bytea" NOT NULL,
+	"valueNonce" "bytea" NOT NULL,
+	"valueAuthTag" "bytea" NOT NULL,
+	"wrappedDataKey" "bytea" NOT NULL,
+	"keyNonce" "bytea" NOT NULL,
+	"keyAuthTag" "bytea" NOT NULL,
+	"encryptionVersion" integer DEFAULT 1 NOT NULL,
+	"masterKeyVersion" integer DEFAULT 1 NOT NULL,
+	"createdAt" timestamp (6) with time zone NOT NULL,
+	"updatedAt" timestamp (6) with time zone NOT NULL
+);
+--> statement-breakpoint
 CREATE TABLE "CredentialRecoveryControl" (
 	"id" varchar(32) PRIMARY KEY DEFAULT 'global' NOT NULL,
 	"keyFingerprint" varchar(64),
@@ -306,53 +326,6 @@ CREATE TABLE "CredentialRecoveryControl" (
 	"verifiedAt" timestamp (6) with time zone,
 	"verifiedBy" uuid,
 	"revision" integer DEFAULT 0 NOT NULL,
-	"createdAt" timestamp (6) with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-	"updatedAt" timestamp (6) with time zone NOT NULL
-);
---> statement-breakpoint
-CREATE TABLE "Document" (
-	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"ownerSubject" varchar(200) NOT NULL,
-	"fileName" varchar(255) NOT NULL,
-	"mediaType" varchar(160) NOT NULL,
-	"sizeBytes" bigint NOT NULL,
-	"sha256" varchar(64) NOT NULL,
-	"classification" "DocumentClassification" NOT NULL,
-	"status" "DocumentStatus" DEFAULT 'QUEUED' NOT NULL,
-	"failureCode" varchar(80),
-	"failureMessage" varchar(500),
-	"retentionUntil" timestamp (6) with time zone NOT NULL,
-	"completedAt" timestamp (6) with time zone,
-	"deletedAt" timestamp (6) with time zone,
-	"createdAt" timestamp (6) with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-	"updatedAt" timestamp (6) with time zone NOT NULL
-);
---> statement-breakpoint
-CREATE TABLE "DocumentChunk" (
-	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"documentId" uuid NOT NULL,
-	"ownerSubject" varchar(200) NOT NULL,
-	"ordinal" integer NOT NULL,
-	"content" text NOT NULL,
-	"characterCount" integer NOT NULL,
-	"embeddingModel" varchar(120) NOT NULL,
-	"embedding" vector(1024) NOT NULL,
-	"contentSearch" text,
-	"createdAt" timestamp (6) with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
-);
---> statement-breakpoint
-CREATE TABLE "DocumentMemoryPublication" (
-	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"documentId" uuid NOT NULL,
-	"ownerSubject" varchar(200) NOT NULL,
-	"scopeTag" varchar(100) NOT NULL,
-	"status" "MemorySyncStatus" DEFAULT 'NOT_INDEXED' NOT NULL,
-	"externalDocumentId" varchar(255),
-	"failureCode" varchar(80),
-	"failureMessage" varchar(500),
-	"queuedAt" timestamp (6) with time zone,
-	"syncedAt" timestamp (6) with time zone,
-	"deletedAt" timestamp (6) with time zone,
 	"createdAt" timestamp (6) with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
 	"updatedAt" timestamp (6) with time zone NOT NULL
 );
@@ -477,8 +450,7 @@ CREATE TABLE "HermesNodeEnrollment" (
 	"createdAt" timestamp (6) with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
 	"updatedAt" timestamp (6) with time zone NOT NULL,
 	"controlPlaneUrl" text,
-	"hermesImage" text,
-	"supermemoryVersion" varchar(120) DEFAULT '0.0.7-rc.2' NOT NULL
+	"hermesCommit" text
 );
 --> statement-breakpoint
 CREATE TABLE "HermesNodeRequestNonce" (
@@ -498,8 +470,8 @@ CREATE TABLE "HermesRuntimeNode" (
 	"status" "HermesRuntimeNodeStatus" DEFAULT 'PENDING' NOT NULL,
 	"identityPublicKeyPem" text,
 	"identityFingerprint" varchar(64),
-	"hermesVersion" varchar(120),
-	"installerVersion" varchar(120),
+	"hermesVersion" varchar(256),
+	"installerVersion" varchar(256),
 	"capabilities" jsonb DEFAULT '[]'::jsonb NOT NULL,
 	"serviceConnectionId" uuid,
 	"lastSeenAt" timestamp (6) with time zone,
@@ -509,6 +481,12 @@ CREATE TABLE "HermesRuntimeNode" (
 	"createdBy" uuid,
 	"createdAt" timestamp (6) with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
 	"updatedAt" timestamp (6) with time zone NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "InferenceGatewayRequest" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"connectionId" uuid NOT NULL,
+	"occurredAt" timestamp (6) with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE "InstallationCredential" (
@@ -734,6 +712,22 @@ CREATE TABLE "PromptTemplate" (
 	CONSTRAINT "PromptTemplate_activation_evidence_check" CHECK ((status <> 'ACTIVE'::"PromptTemplateStatus") OR (("activationEvaluationId" IS NOT NULL) AND ("firstActivatedAt" IS NOT NULL)))
 );
 --> statement-breakpoint
+CREATE TABLE "RuntimeToolsetAdmission" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"toolsetName" varchar(120) NOT NULL,
+	"admitted" boolean DEFAULT false NOT NULL,
+	"reason" varchar(500) NOT NULL,
+	"admittedBy" uuid,
+	"createdAt" timestamp (6) with time zone NOT NULL,
+	"updatedAt" timestamp (6) with time zone NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "SchemaMetadata" (
+	"id" varchar(32) PRIMARY KEY DEFAULT 'current' NOT NULL,
+	"epoch" varchar(64) NOT NULL,
+	"createdAt" timestamp (6) with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+--> statement-breakpoint
 CREATE TABLE "SecretRecord" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"serviceConnectionId" uuid NOT NULL,
@@ -771,25 +765,6 @@ CREATE TABLE "ServiceConnection" (
 	"monitoringClaimedBy" varchar(200),
 	"monitoringClaimToken" uuid,
 	CONSTRAINT "ServiceConnection_monitoringClaim_check" CHECK ((("monitoringClaimedAt" IS NULL) AND ("monitoringClaimedBy" IS NULL) AND ("monitoringClaimToken" IS NULL)) OR (("monitoringClaimedAt" IS NOT NULL) AND ("monitoringClaimedBy" IS NOT NULL) AND ("monitoringClaimToken" IS NOT NULL)))
-);
---> statement-breakpoint
-CREATE TABLE "ToolActionDispatch" (
-	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"callId" uuid NOT NULL,
-	"status" "ToolActionDispatchStatus" DEFAULT 'PENDING' NOT NULL,
-	"attemptCount" integer DEFAULT 0 NOT NULL,
-	"nextAttemptAt" timestamp (6) with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-	"claimedAt" timestamp (6) with time zone,
-	"claimedBy" varchar(200),
-	"claimToken" uuid,
-	"submittedJobId" uuid,
-	"lastError" varchar(500),
-	"completedAt" timestamp (6) with time zone,
-	"createdAt" timestamp (6) with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-	"updatedAt" timestamp (6) with time zone NOT NULL,
-	CONSTRAINT "ToolActionDispatch_attemptCount_check" CHECK ("attemptCount" >= 0),
-	CONSTRAINT "ToolActionDispatch_claim_check" CHECK (((status = 'PROCESSING'::"ToolActionDispatchStatus") AND ("claimedAt" IS NOT NULL) AND ("claimedBy" IS NOT NULL) AND ("claimToken" IS NOT NULL)) OR ((status <> 'PROCESSING'::"ToolActionDispatchStatus") AND ("claimedAt" IS NULL) AND ("claimedBy" IS NULL) AND ("claimToken" IS NULL))),
-	CONSTRAINT "ToolActionDispatch_completion_check" CHECK (((status = ANY (ARRAY['COMPLETED'::"ToolActionDispatchStatus", 'FAILED'::"ToolActionDispatchStatus", 'CANCELLED'::"ToolActionDispatchStatus"])) AND ("completedAt" IS NOT NULL)) OR ((status = ANY (ARRAY['PENDING'::"ToolActionDispatchStatus", 'PROCESSING'::"ToolActionDispatchStatus"])) AND ("completedAt" IS NULL)))
 );
 --> statement-breakpoint
 CREATE TABLE "ToolApproval" (
@@ -839,8 +814,6 @@ ALTER TABLE "ChatFeedback" ADD CONSTRAINT "ChatFeedback_messageId_fkey" FOREIGN 
 ALTER TABLE "ChatMessage" ADD CONSTRAINT "ChatMessage_conversationId_fkey" FOREIGN KEY ("conversationId") REFERENCES "public"."ChatConversation"("id") ON DELETE cascade ON UPDATE cascade;--> statement-breakpoint
 ALTER TABLE "ChatMessage" ADD CONSTRAINT "ChatMessage_agentRunId_fkey" FOREIGN KEY ("agentRunId") REFERENCES "public"."AgentRun"("id") ON DELETE set null ON UPDATE cascade;--> statement-breakpoint
 ALTER TABLE "ConfigurationRevision" ADD CONSTRAINT "ConfigurationRevision_serviceConnectionId_fkey" FOREIGN KEY ("serviceConnectionId") REFERENCES "public"."ServiceConnection"("id") ON DELETE cascade ON UPDATE cascade;--> statement-breakpoint
-ALTER TABLE "DocumentChunk" ADD CONSTRAINT "DocumentChunk_documentId_fkey" FOREIGN KEY ("documentId") REFERENCES "public"."Document"("id") ON DELETE cascade ON UPDATE cascade;--> statement-breakpoint
-ALTER TABLE "DocumentMemoryPublication" ADD CONSTRAINT "DocumentMemoryPublication_documentId_fkey" FOREIGN KEY ("documentId") REFERENCES "public"."Document"("id") ON DELETE cascade ON UPDATE cascade;--> statement-breakpoint
 ALTER TABLE "EnterpriseUserSession" ADD CONSTRAINT "EnterpriseUserSession_userId_fkey" FOREIGN KEY ("userId") REFERENCES "public"."EnterpriseUser"("id") ON DELETE cascade ON UPDATE cascade;--> statement-breakpoint
 ALTER TABLE "GovernedToolCall" ADD CONSTRAINT "GovernedToolCall_runId_fkey" FOREIGN KEY ("runId") REFERENCES "public"."AgentRun"("id") ON DELETE restrict ON UPDATE cascade;--> statement-breakpoint
 ALTER TABLE "GovernedToolCall" ADD CONSTRAINT "GovernedToolCall_toolId_fkey" FOREIGN KEY ("toolId") REFERENCES "public"."GovernedTool"("id") ON DELETE restrict ON UPDATE cascade;--> statement-breakpoint
@@ -849,12 +822,12 @@ ALTER TABLE "GuardrailPolicy" ADD CONSTRAINT "GuardrailPolicy_activationEvaluati
 ALTER TABLE "HermesNodeEnrollment" ADD CONSTRAINT "HermesNodeEnrollment_nodeId_fkey" FOREIGN KEY ("nodeId") REFERENCES "public"."HermesRuntimeNode"("id") ON DELETE cascade ON UPDATE cascade;--> statement-breakpoint
 ALTER TABLE "HermesNodeRequestNonce" ADD CONSTRAINT "HermesNodeRequestNonce_nodeId_fkey" FOREIGN KEY ("nodeId") REFERENCES "public"."HermesRuntimeNode"("id") ON DELETE cascade ON UPDATE cascade;--> statement-breakpoint
 ALTER TABLE "HermesRuntimeNode" ADD CONSTRAINT "HermesRuntimeNode_serviceConnectionId_fkey" FOREIGN KEY ("serviceConnectionId") REFERENCES "public"."ServiceConnection"("id") ON DELETE set null ON UPDATE cascade;--> statement-breakpoint
+ALTER TABLE "InferenceGatewayRequest" ADD CONSTRAINT "InferenceGatewayRequest_connectionId_fkey" FOREIGN KEY ("connectionId") REFERENCES "public"."ServiceConnection"("id") ON DELETE cascade ON UPDATE cascade;--> statement-breakpoint
 ALTER TABLE "ModelDeployment" ADD CONSTRAINT "ModelDeployment_connectionId_fkey" FOREIGN KEY ("connectionId") REFERENCES "public"."ServiceConnection"("id") ON DELETE restrict ON UPDATE cascade;--> statement-breakpoint
 ALTER TABLE "ModelDeployment" ADD CONSTRAINT "ModelDeployment_activationEvaluationId_fkey" FOREIGN KEY ("activationEvaluationId") REFERENCES "public"."EvaluationRun"("id") ON DELETE set null ON UPDATE cascade;--> statement-breakpoint
 ALTER TABLE "OidcAuthorizationRequest" ADD CONSTRAINT "OidcAuthorizationRequest_serviceConnectionId_fkey" FOREIGN KEY ("serviceConnectionId") REFERENCES "public"."ServiceConnection"("id") ON DELETE cascade ON UPDATE cascade;--> statement-breakpoint
 ALTER TABLE "PromptTemplate" ADD CONSTRAINT "PromptTemplate_activationEvaluationId_fkey" FOREIGN KEY ("activationEvaluationId") REFERENCES "public"."EvaluationRun"("id") ON DELETE set null ON UPDATE cascade;--> statement-breakpoint
 ALTER TABLE "SecretRecord" ADD CONSTRAINT "SecretRecord_serviceConnectionId_fkey" FOREIGN KEY ("serviceConnectionId") REFERENCES "public"."ServiceConnection"("id") ON DELETE cascade ON UPDATE cascade;--> statement-breakpoint
-ALTER TABLE "ToolActionDispatch" ADD CONSTRAINT "ToolActionDispatch_callId_fkey" FOREIGN KEY ("callId") REFERENCES "public"."GovernedToolCall"("id") ON DELETE restrict ON UPDATE cascade;--> statement-breakpoint
 ALTER TABLE "ToolApproval" ADD CONSTRAINT "ToolApproval_callId_fkey" FOREIGN KEY ("callId") REFERENCES "public"."GovernedToolCall"("id") ON DELETE restrict ON UPDATE cascade;--> statement-breakpoint
 CREATE INDEX "AdministratorSession_absoluteExpiresAt_idx" ON "AdministratorSession" USING btree ("absoluteExpiresAt");--> statement-breakpoint
 CREATE INDEX "AdministratorSession_revokedAt_idleExpiresAt_idx" ON "AdministratorSession" USING btree ("revokedAt","idleExpiresAt");--> statement-breakpoint
@@ -871,6 +844,7 @@ CREATE INDEX "AgentRun_status_queuedAt_idx" ON "AgentRun" USING btree ("status",
 CREATE INDEX "AgentRunApproval_runId_status_requestedAt_idx" ON "AgentRunApproval" USING btree ("runId","status","requestedAt");--> statement-breakpoint
 CREATE INDEX "AgentRunApproval_status_expiresAt_idx" ON "AgentRunApproval" USING btree ("status","expiresAt");--> statement-breakpoint
 CREATE UNIQUE INDEX "AgentRunEvent_cursor_key" ON "AgentRunEvent" USING btree ("cursor");--> statement-breakpoint
+CREATE INDEX "AgentRunEvent_runId_toolCallKey_idx" ON "AgentRunEvent" USING btree ("runId","toolCallKey");--> statement-breakpoint
 CREATE INDEX "AgentRunEvent_runId_cursor_idx" ON "AgentRunEvent" USING btree ("runId","cursor");--> statement-breakpoint
 CREATE INDEX "AgentRunEvent_runId_occurredAt_id_idx" ON "AgentRunEvent" USING btree ("runId","occurredAt","id");--> statement-breakpoint
 CREATE UNIQUE INDEX "AgentRunEvent_runId_sourceEventId_key" ON "AgentRunEvent" USING btree ("runId","sourceEventId");--> statement-breakpoint
@@ -878,6 +852,7 @@ CREATE UNIQUE INDEX "AgentToolGrant_profileVersionId_toolId_key" ON "AgentToolGr
 CREATE INDEX "AgentToolGrant_toolId_enabled_idx" ON "AgentToolGrant" USING btree ("toolId","enabled");--> statement-breakpoint
 CREATE INDEX "AuditEvent_actorId_occurredAt_idx" ON "AuditEvent" USING btree ("actorId","occurredAt");--> statement-breakpoint
 CREATE INDEX "AuditEvent_correlationId_idx" ON "AuditEvent" USING btree ("correlationId");--> statement-breakpoint
+CREATE UNIQUE INDEX "AuditEvent_cursor_key" ON "AuditEvent" USING btree ("cursor");--> statement-breakpoint
 CREATE INDEX "AuditEvent_occurredAt_idx" ON "AuditEvent" USING btree ("occurredAt");--> statement-breakpoint
 CREATE INDEX "AuditEvent_resourceType_resourceId_idx" ON "AuditEvent" USING btree ("resourceType","resourceId");--> statement-breakpoint
 CREATE INDEX "ChatConversation_lastMessageAt_idx" ON "ChatConversation" USING btree ("lastMessageAt");--> statement-breakpoint
@@ -893,18 +868,6 @@ CREATE INDEX "ComponentCompatibility_category_status_idx" ON "ComponentCompatibi
 CREATE INDEX "ComponentCompatibility_required_status_idx" ON "ComponentCompatibility" USING btree ("required","status");--> statement-breakpoint
 CREATE INDEX "ConfigurationRevision_createdAt_idx" ON "ConfigurationRevision" USING btree ("createdAt");--> statement-breakpoint
 CREATE UNIQUE INDEX "ConfigurationRevision_serviceConnectionId_revision_key" ON "ConfigurationRevision" USING btree ("serviceConnectionId","revision");--> statement-breakpoint
-CREATE INDEX "Document_ownerSubject_status_updatedAt_idx" ON "Document" USING btree ("ownerSubject","status","updatedAt");--> statement-breakpoint
-CREATE INDEX "Document_retentionUntil_status_idx" ON "Document" USING btree ("retentionUntil","status");--> statement-breakpoint
-CREATE INDEX "Document_sha256_idx" ON "Document" USING btree ("sha256");--> statement-breakpoint
-CREATE INDEX "Document_status_createdAt_idx" ON "Document" USING btree ("status","createdAt");--> statement-breakpoint
-CREATE INDEX "DocumentChunk_content_fts_idx" ON "DocumentChunk" USING gin (to_tsvector('simple'::regconfig, content));--> statement-breakpoint
-CREATE UNIQUE INDEX "DocumentChunk_documentId_ordinal_key" ON "DocumentChunk" USING btree ("documentId","ordinal");--> statement-breakpoint
-CREATE INDEX "DocumentChunk_embedding_idx" ON "DocumentChunk" USING hnsw ("embedding" vector_cosine_ops);--> statement-breakpoint
-CREATE INDEX "DocumentChunk_ownerSubject_idx" ON "DocumentChunk" USING btree ("ownerSubject");--> statement-breakpoint
-CREATE UNIQUE INDEX "DocumentMemoryPublication_documentId_key" ON "DocumentMemoryPublication" USING btree ("documentId");--> statement-breakpoint
-CREATE INDEX "DocumentMemoryPublication_ownerSubject_status_updatedAt_idx" ON "DocumentMemoryPublication" USING btree ("ownerSubject","status","updatedAt");--> statement-breakpoint
-CREATE INDEX "DocumentMemoryPublication_scopeTag_status_idx" ON "DocumentMemoryPublication" USING btree ("scopeTag","status");--> statement-breakpoint
-CREATE INDEX "DocumentMemoryPublication_status_queuedAt_idx" ON "DocumentMemoryPublication" USING btree ("status","queuedAt");--> statement-breakpoint
 CREATE INDEX "EnterpriseUser_email_idx" ON "EnterpriseUser" USING btree ("email");--> statement-breakpoint
 CREATE INDEX "EnterpriseUser_enabled_lastLoginAt_idx" ON "EnterpriseUser" USING btree ("enabled","lastLoginAt");--> statement-breakpoint
 CREATE UNIQUE INDEX "EnterpriseUser_issuer_subject_key" ON "EnterpriseUser" USING btree ("issuer","subject");--> statement-breakpoint
@@ -934,6 +897,7 @@ CREATE UNIQUE INDEX "HermesRuntimeNode_identityFingerprint_key" ON "HermesRuntim
 CREATE UNIQUE INDEX "HermesRuntimeNode_serviceConnectionId_key" ON "HermesRuntimeNode" USING btree ("serviceConnectionId");--> statement-breakpoint
 CREATE UNIQUE INDEX "HermesRuntimeNode_slug_key" ON "HermesRuntimeNode" USING btree ("slug");--> statement-breakpoint
 CREATE INDEX "HermesRuntimeNode_status_lastSeenAt_idx" ON "HermesRuntimeNode" USING btree ("status","lastSeenAt");--> statement-breakpoint
+CREATE INDEX "InferenceGatewayRequest_connectionId_occurredAt_idx" ON "InferenceGatewayRequest" USING btree ("connectionId","occurredAt");--> statement-breakpoint
 CREATE INDEX "InstallationCredential_activatedAt_idx" ON "InstallationCredential" USING btree ("activatedAt");--> statement-breakpoint
 CREATE UNIQUE INDEX "InstallationCredential_keyHash_key" ON "InstallationCredential" USING btree ("keyHash");--> statement-breakpoint
 CREATE INDEX "LocalAdministrator_disabledAt_lockedUntil_idx" ON "LocalAdministrator" USING btree ("disabledAt","lockedUntil");--> statement-breakpoint
@@ -967,16 +931,15 @@ CREATE INDEX "PromptTemplate_activationEvaluationId_idx" ON "PromptTemplate" USI
 CREATE INDEX "PromptTemplate_purpose_status_idx" ON "PromptTemplate" USING btree ("purpose","status");--> statement-breakpoint
 CREATE UNIQUE INDEX "PromptTemplate_single_active_purpose_key" ON "PromptTemplate" USING btree ("purpose") WHERE (status = 'ACTIVE'::"PromptTemplateStatus");--> statement-breakpoint
 CREATE UNIQUE INDEX "PromptTemplate_slug_key" ON "PromptTemplate" USING btree ("slug");--> statement-breakpoint
+CREATE UNIQUE INDEX "RuntimeToolsetAdmission_toolsetName_key" ON "RuntimeToolsetAdmission" USING btree ("toolsetName");--> statement-breakpoint
 CREATE INDEX "SecretRecord_createdAt_idx" ON "SecretRecord" USING btree ("createdAt");--> statement-breakpoint
 CREATE INDEX "SecretRecord_serviceConnectionId_fieldName_active_idx" ON "SecretRecord" USING btree ("serviceConnectionId","fieldName","active");--> statement-breakpoint
 CREATE INDEX "ServiceConnection_enabled_status_idx" ON "ServiceConnection" USING btree ("enabled","status");--> statement-breakpoint
 CREATE INDEX "ServiceConnection_kind_environment_idx" ON "ServiceConnection" USING btree ("kind","environment");--> statement-breakpoint
 CREATE INDEX "ServiceConnection_monitoringClaimedAt_idx" ON "ServiceConnection" USING btree ("monitoringClaimedAt");--> statement-breakpoint
 CREATE UNIQUE INDEX "ServiceConnection_slug_key" ON "ServiceConnection" USING btree ("slug");--> statement-breakpoint
-CREATE UNIQUE INDEX "ToolActionDispatch_callId_key" ON "ToolActionDispatch" USING btree ("callId");--> statement-breakpoint
-CREATE INDEX "ToolActionDispatch_claimedAt_idx" ON "ToolActionDispatch" USING btree ("claimedAt");--> statement-breakpoint
-CREATE INDEX "ToolActionDispatch_status_nextAttemptAt_idx" ON "ToolActionDispatch" USING btree ("status","nextAttemptAt");--> statement-breakpoint
 CREATE UNIQUE INDEX "ToolApproval_callId_key" ON "ToolApproval" USING btree ("callId");--> statement-breakpoint
 CREATE INDEX "ToolApproval_status_expiresAt_idx" ON "ToolApproval" USING btree ("status","expiresAt");--> statement-breakpoint
 CREATE INDEX "WorkerNode_lastSeenAt_idx" ON "WorkerNode" USING btree ("lastSeenAt");--> statement-breakpoint
-CREATE INDEX "WorkerNode_status_lastSeenAt_idx" ON "WorkerNode" USING btree ("status","lastSeenAt");
+CREATE INDEX "WorkerNode_status_lastSeenAt_idx" ON "WorkerNode" USING btree ("status","lastSeenAt");--> statement-breakpoint
+INSERT INTO "SchemaMetadata" ("id", "epoch") VALUES ('current', 'hermes-native-v1');

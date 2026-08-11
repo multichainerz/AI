@@ -171,44 +171,4 @@ describe("WorkerRuntime", () => {
     expect(handler.process).not.toHaveBeenCalled();
   });
 
-  it("runs one benchmark at a time", async () => {
-    // A suite drives the same inference host the installation answers people
-    // on. Two at once would make a benchmark's own load part of what it
-    // measures.
-    let release: (() => void) | undefined;
-    const benchmarks = {
-      runNext: vi.fn(() => new Promise<null>((resolve) => { release = () => resolve(null); })),
-    };
-    const runtime = new WorkerRuntime(
-      source([]), registry(), identity, logger(), 60_000,
-      undefined, 1_000, 5, undefined, benchmarks,
-    );
-
-    await runtime.start();
-    const tick = (runtime as unknown as { dispatchBenchmarks(): Promise<void> });
-    void tick.dispatchBenchmarks();
-    void tick.dispatchBenchmarks();
-
-    expect(benchmarks.runNext).toHaveBeenCalledTimes(1);
-    release?.();
-    await runtime.stop();
-  });
-
-  it("keeps running after a benchmark throws", async () => {
-    const logs = logger();
-    const benchmarks = { runNext: vi.fn(async () => { throw new Error("Hermes is unreachable."); }) };
-    const runtime = new WorkerRuntime(
-      source([]), registry(), identity, logs, 60_000,
-      undefined, 1_000, 5, undefined, benchmarks,
-    );
-
-    await runtime.start();
-    await (runtime as unknown as { dispatchBenchmarks(): Promise<void> }).dispatchBenchmarks();
-
-    expect(logs.error).toHaveBeenCalledWith("Benchmark execution failed.", expect.any(Error));
-    // The guard is released, so the next tick still tries.
-    await (runtime as unknown as { dispatchBenchmarks(): Promise<void> }).dispatchBenchmarks();
-    expect(benchmarks.runNext).toHaveBeenCalledTimes(2);
-    await runtime.stop();
-  });
 });

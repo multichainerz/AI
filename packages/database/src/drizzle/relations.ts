@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { enterpriseUser, enterpriseUserSession, serviceConnection, secretRecord, configurationRevision, chatMessage, chatFeedback, agentProfile, agentProfileVersion, document, chatConversation, agentRun, agentToolGrant, governedTool, oidcAuthorizationRequest, governedToolCall, toolApproval, modelDeployment, evaluationRun, promptTemplate, agentRunEvent, hermesRuntimeNode, hermesNodeRequestNonce, hermesNodeEnrollment, guardrailPolicy, agentRunApproval, documentChunk } from "./schema.js";
+import { enterpriseUser, enterpriseUserSession, serviceConnection, secretRecord, configurationRevision, chatMessage, chatFeedback, agentProfile, agentProfileVersion, chatConversation, agentRun, agentToolGrant, governedTool, oidcAuthorizationRequest, governedToolCall, toolApproval, modelDeployment, evaluationRun, promptTemplate, agentRunEvent, hermesRuntimeNode, hermesNodeRequestNonce, hermesNodeEnrollment, guardrailPolicy, agentRunApproval } from "./schema.js";
 
 export const enterpriseUserSessionRelations = relations(enterpriseUserSession, ({one}) => ({
 	enterpriseUser: one(enterpriseUser, {
@@ -67,10 +67,6 @@ export const agentProfileRelations = relations(agentProfile, ({many}) => ({
 	agentRuns: many(agentRun),
 }));
 
-
-export const documentRelations = relations(document, ({many}) => ({
-	documentChunks: many(documentChunk),
-}));
 
 export const chatConversationRelations = relations(chatConversation, ({many}) => ({
 	chatMessages: many(chatMessage),
@@ -204,12 +200,5 @@ export const agentRunApprovalRelations = relations(agentRunApproval, ({one}) => 
 	agentRun: one(agentRun, {
 		fields: [agentRunApproval.runId],
 		references: [agentRun.id]
-	}),
-}));
-
-export const documentChunkRelations = relations(documentChunk, ({one}) => ({
-	document: one(document, {
-		fields: [documentChunk.documentId],
-		references: [document.id]
 	}),
 }));

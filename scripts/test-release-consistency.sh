@@ -20,8 +20,8 @@ compose_image="$(sed -nE 's/^[[:space:]]*image:[[:space:]]*([^[:space:]]+)[[:spa
 workflow_image="$(sed -nE 's/^[[:space:]]*image:[[:space:]]*([^[:space:]]+)[[:space:]]*$/\1/p' .github/workflows/verify.yml)"
 [[ "${compose_image}" == "${workflow_image}" ]] \
   || fail "compose postgres image (${compose_image}) differs from the CI service image (${workflow_image})"
-[[ "${compose_image}" == "pgvector/pgvector:pg17" ]] \
-  || fail "the postgres image must be pgvector/pgvector:pg17; the migrator creates the vector extension"
+[[ "${compose_image}" == "postgres:17-bookworm" ]] \
+  || fail "the postgres image must be the pinned stock PostgreSQL 17 image"
 
 grep -Fq 'packages/database/dist/drizzle/migrate-cli.js' compose.yaml \
   || fail "the compose migrate service no longer runs the Drizzle migrate CLI"

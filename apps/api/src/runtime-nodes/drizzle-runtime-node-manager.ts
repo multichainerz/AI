@@ -522,9 +522,7 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
         timeoutMs: 8_000,
         healthPath: "/health",
         capabilitiesPath: "/v1/capabilities",
-        runsPath: "/v1/runs",
         sessionsPath: "/api/sessions",
-        executionMode: "native_sessions" as const,
         toolsetsPath: "/v1/toolsets",
         runPollIntervalMs: 1_000,
       };

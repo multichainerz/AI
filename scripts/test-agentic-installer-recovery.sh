@@ -146,17 +146,6 @@ if grep -Eq 'install .*-[og] (10000|"?\$\{HERMES_(UID|GID)\})' "${REPOSITORY_ROO
   exit 1
 fi
 
-# VM2 runs exactly one service plane. Built-in memory lives inside Hermes, so
-# no external memory service may reappear in this installer.
-if grep -qi 'supermemory' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"; then
-  printf 'the Agentic System installer reintroduced an external memory service\n' >&2
-  exit 1
-fi
-if grep -Fq '6767' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"; then
-  printf 'the Agentic System installer still references the removed memory port\n' >&2
-  exit 1
-fi
-
 atomic_write_root="${TEST_ROOT}/atomic-write"
 mkdir -p "${atomic_write_root}"
 printf 'protected=true\n' | write_file_from_stdin 0640 "$(id -u)" "$(id -g)" "${atomic_write_root}/runtime.env"

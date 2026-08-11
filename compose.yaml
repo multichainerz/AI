@@ -2,10 +2,9 @@ name: orcasynapse
 
 # The VM2 agentic node has run under MemoryMax, CPUQuota, TasksMax,
 # NoNewPrivileges and a CapabilityBoundingSet since it shipped; the VM1 control
-# plane -- which holds the database -- had none of it. Unbounded, the worker's
-# ~2 GB of BGE-M3 weights push the host into the kernel OOM killer, and the
-# process it picks by RSS is routinely PostgreSQL. A cgroup ceiling per service
-# turns that into a contained restart of the service that overran.
+# plane -- which holds the database -- had none of it. A cgroup ceiling per
+# service turns an unexpected allocation into a contained restart instead of
+# allowing one process to exhaust the VM.
 #
 # Every limit is overridable so a larger or smaller host can be tuned without
 # forking the file. The memory ceilings are the ones doing that work: they are
@@ -22,8 +21,8 @@ name: orcasynapse
 # therefore not a slower install on a 2 vCPU host, it is a `docker compose up`
 # that cannot create the container at all, and the service it kills first is the
 # worker asking for the most. cpu_shares carries the intent that actually
-# mattered -- under contention the worker's embedding burst yields to the
-# database everything else waits on -- and is in range on every host size.
+# mattered -- under contention background reconciliation yields to the database
+# everything else waits on -- and is in range on every host size.
 x-unprivileged: &unprivileged
   security_opt:
     - no-new-privileges:true
@@ -53,10 +52,9 @@ services:
     <<: *drops-privileges
     mem_limit: ${ORCASYNAPSE_POSTGRES_MEMORY_LIMIT:-1g}
     cpu_shares: ${ORCASYNAPSE_POSTGRES_CPU_SHARES:-1024}
-    # pgvector, not stock postgres: the migrator creates the vector extension
-    # and the baseline declares vector columns, so a plain image cannot apply
-    # migrations at all. Must stay identical to the CI service image.
-    image: pgvector/pgvector:pg17
+    # Stock PostgreSQL 17 is the complete control-plane data dependency. Keep
+    # this identical to the CI service image.
+    image: postgres:17-bookworm
     restart: unless-stopped
     environment:
       POSTGRES_DB: orcasynapse
@@ -128,29 +126,15 @@ services:
 
   worker:
     <<: *unprivileged
-    # The ceiling has to clear the ~2 GB of BGE-M3 weights plus the ONNX
-    # runtime's arenas, or the fix for an OOM becomes an OOM of its own.
-    mem_limit: ${ORCASYNAPSE_WORKER_MEMORY_LIMIT:-3g}
+    mem_limit: ${ORCASYNAPSE_WORKER_MEMORY_LIMIT:-512m}
     # The lightest weight in the file, and not a throttle: shares only decide
-    # who yields when every core is already busy, so embedding still uses the
-    # whole machine while it is otherwise idle. What this buys is that an
-    # ingestion burst cannot starve postgres and api of the CPU they need to
-    # keep answering, which is the failure an operator reads as "the dashboard
-    # hung during an upload".
-    cpu_shares: ${ORCASYNAPSE_WORKER_CPU_SHARES:-256}
+    # who yields when every core is already busy. Hermes reconciliation stays
+    # responsive without starving PostgreSQL or the API.
+    cpu_shares: ${ORCASYNAPSE_WORKER_CPU_SHARES:-512}
     build:
       context: .
       dockerfile: Dockerfile.worker
     restart: unless-stopped
-    environment:
-      # Only the worker embeds. The transformers cache defaults inside
-      # node_modules, which this image makes unwritable by running as a
-      # non-root user, so it is pointed at a mounted volume: the first
-      # embedding then succeeds and the ~2 GB of BGE-M3 weights survive a
-      # restart instead of being re-downloaded.
-      ORCASYNAPSE_MODEL_CACHE_DIR: /var/lib/orcasynapse/models
-    volumes:
-      - model_cache:/var/lib/orcasynapse/models
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -221,7 +205,6 @@ secrets:
 
 volumes:
   postgres_data:
-  model_cache:
 
 networks:
   application:

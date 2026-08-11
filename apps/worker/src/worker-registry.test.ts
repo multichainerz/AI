@@ -60,7 +60,6 @@ async function run(overrides: Partial<typeof agentRun.$inferInsert> = {}): Promi
       ownerSubject: "user:pilot",
       requestedBy: randomUUID(),
       sessionId: randomUUID(),
-      memorySessionKey: randomUUID(),
       input: "Summarize the policy.",
       status: "QUEUED",
       jobId: randomUUID(),

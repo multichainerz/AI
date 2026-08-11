@@ -10,7 +10,6 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY apps/worker/package.json apps/worker/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
 COPY packages/database/package.json packages/database/package.json
-COPY packages/knowledge/package.json packages/knowledge/package.json
 COPY packages/security/package.json packages/security/package.json
 COPY packages/runtime-clients/package.json packages/runtime-clients/package.json
 
@@ -36,11 +35,6 @@ COPY --from=builder /app/packages ./packages
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/pnpm-workspace.yaml ./pnpm-workspace.yaml
 COPY --from=builder /app/pnpm-lock.yaml ./pnpm-lock.yaml
-
-# Created here, owned by node: a compose volume mounted at this path inherits
-# the image's ownership, so without this the non-root service still cannot
-# write the model cache on a fresh install.
-RUN mkdir -p /var/lib/orcasynapse/models && chown -R node:node /var/lib/orcasynapse
 
 USER node
 

@@ -312,7 +312,7 @@ describe("DrizzleEnterpriseIdentityManager sessions", () => {
     const principal = await manager(connectionId).authenticate(token);
 
     expect(principal).toMatchObject({ identityMode: "ENTERPRISE", displayName: "Enterprise User" });
-    expect(principal?.scopes).toEqual(["chat:use", "documents:use", "agents:use"]);
+    expect(principal?.scopes).toEqual(["chat:use", "agents:use"]);
     expect(principal?.session.user.id).toBe(userId);
   });
 

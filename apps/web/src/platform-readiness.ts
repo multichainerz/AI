@@ -46,8 +46,7 @@ export function deriveWorkspaceReadiness(input: {
   const profileReady = input.profiles.some(({ status }) => status === "ACTIVE");
   const executionReady = input.runtime?.enabled === true && profileReady;
   // The agentic infrastructure is the isolated runtime: a healthy Hermes
-  // connection and an online node. Knowledge is served by the control plane
-  // itself and is not part of this boundary.
+  // connection and an online node.
   const agenticInfrastructureReady = hermesReady && runtimeNodeReady;
   const chatReady = inferenceReady && hermesReady && runtimeNodeReady && executionReady;
 
@@ -80,8 +79,7 @@ export function deriveWorkspaceReadiness(input: {
     executionReady,
     agenticInfrastructureReady,
     chatReady,
-    // Document knowledge is local to the control plane, so a ready agentic
-    // workspace is exactly a ready chat path; there is no second plane to wait on.
+    // A ready agentic workspace is exactly a ready Hermes chat path.
     agenticReady: chatReady,
     nextChatStep,
   };

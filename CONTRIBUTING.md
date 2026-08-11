@@ -13,13 +13,12 @@ pnpm install
 ```
 
 The data-layer and API tests provision an isolated database per test file
-against a live PostgreSQL server — and it must be a **pgvector** image, because
-the migrator creates the `vector` extension:
+against a live stock PostgreSQL 17 server:
 
 ```bash
 docker run -d --name orca-base -p 15432:5432 \
   -e POSTGRES_USER=orca -e POSTGRES_PASSWORD=orca -e POSTGRES_DB=postgres \
-  pgvector/pgvector:pg17
+  postgres:17-bookworm
 export ORCASYNAPSE_TEST_DATABASE_URL=postgresql://orca:orca@127.0.0.1:15432/postgres
 ```
 
@@ -60,8 +59,8 @@ Every release is one commit on `main`:
 
 - Subject: `vX.Y.Z` (nothing else).
 - Body: one summary sentence, then lowercase verb-first bullets.
-- The version is bumped in the same commit across **all 12 surfaces**: the
-  root and 8 workspace `package.json` files, `ORCASYNAPSE_VERSION` in
+- The version is bumped in the same commit across the root and every workspace
+  `package.json`, `ORCASYNAPSE_VERSION` in
   `packages/contracts/src/version.ts`, and `INSTALLER_VERSION` in both
   `scripts/install-agentic-node.sh` and `scripts/remove-agentic-node.sh`.
   `scripts/test-release-consistency.sh` enforces the set.

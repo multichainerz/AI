@@ -79,20 +79,12 @@ describe("service connection configuration", () => {
       healthPath: "/health",
       capabilitiesPath: "/v1/capabilities",
       toolsetsPath: "/v1/toolsets",
-      runsPath: "/v1/runs",
       sessionsPath: "/api/sessions",
-      executionMode: "native_sessions",
-      governedMcpUrl: "https://orcasynapse.internal/api/v1/mcp/",
-      governedToolsetName: "orcasynapse-governed-tools",
       runPollIntervalMs: 1_000,
       timeoutMs: 8_000,
     })).toMatchObject({
       toolsetsPath: "/v1/toolsets",
-      runsPath: "/v1/runs",
       sessionsPath: "/api/sessions",
-      executionMode: "native_sessions",
-      governedMcpUrl: "https://orcasynapse.internal/api/v1/mcp/",
-      governedToolsetName: "orcasynapse-governed-tools",
     });
     expect(() => parseServiceConnectionConfiguration("HERMES", { modelAlias: "not-owned-here" })).toThrow();
   });

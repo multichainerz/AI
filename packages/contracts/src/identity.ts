@@ -10,7 +10,7 @@ export const enterpriseSessionSchema = z.object({
   id: z.uuid(),
   identityMode: z.literal("ENTERPRISE"),
   user: enterpriseUserSchema,
-  scopes: z.tuple([z.literal("chat:use"), z.literal("documents:use"), z.literal("agents:use")]),
+  scopes: z.tuple([z.literal("chat:use"), z.literal("agents:use")]),
   createdAt: z.iso.datetime(),
   idleExpiresAt: z.iso.datetime(),
   absoluteExpiresAt: z.iso.datetime(),

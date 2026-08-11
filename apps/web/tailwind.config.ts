@@ -89,7 +89,7 @@ export default {
         // console density is wrong for prose: the answer text was 12px in a
         // 940px column, about 130 characters a line. This is the reading step —
         // used by the transcript and nothing else, so the dense tables in
-        // Operations and Knowledge keep `body` and do not reflow.
+        // Operations keeps `body` and does not reflow.
         read: ["15.5px", { lineHeight: "1.65" }],
         // KPI-column value and hero stat number, both Space Grotesk.
         figure: ["22px", { lineHeight: "1.1", letterSpacing: "-0.02em" }],

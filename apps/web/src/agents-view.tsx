@@ -43,11 +43,10 @@ const terminalGood = new Set(["COMPLETED"]);
  *
  * What was here before was two sentences of "be concise and evidence-based" --
  * enough to satisfy the 10-character minimum and not enough to govern anything.
- * An operator who accepted it got an assistant with no instruction to prefer
- * retrieved material over its own recall, which is the one thing a
- * document-grounded deployment needs it to do.
+ * An operator who accepted it got an assistant with no meaningful accuracy,
+ * uncertainty, or decision boundary.
  *
- * Written once, in `@orcasynapse/contracts`, so the form and migration 0028
+ * Written once in `@orcasynapse/contracts`, so the form and fresh-install seed
  * cannot drift.
  */
 const blankProfile: CreateAgentProfile = DEFAULT_AGENT_PROFILE;
@@ -99,10 +98,6 @@ function draftFromProfile(profile: AgentProfile): CreateAgentProfile {
     maxTurns: 1,
     timeoutSeconds: profile.version.timeoutSeconds,
     maxConcurrentRuns: profile.version.maxConcurrentRuns,
-    allowPrivateKnowledge: profile.version.allowPrivateKnowledge,
-    // Retained by the API schema for rollback compatibility; active memory is
-    // now Hermes-native and has no OrcaSynapse capture mode.
-    memoryMode: "DOCUMENTS_ONLY",
     safeMode: true,
   };
 }
@@ -303,7 +298,7 @@ export function AgentsView({ unlocked, administrator, activationReady, activatio
       <PageHeader
         kicker="Hardened orchestration"
         title="Hermes Profiles"
-        description="Immutable Profile Distributions, scoped knowledge, optional OrcaSynapse-governed MCP actions, safe activity events, and an operator kill switch."
+        description="Immutable Profile Distributions, native Hermes sessions, safe activity events, and an operator kill switch."
         actions={<>
           <Button disabled={!chatAvailable} onClick={onOpenChat}>{chatAvailable ? "Open Session" : "Session not ready"}</Button>
           <Button onClick={() => void load()}>Refresh</Button>
@@ -483,7 +478,7 @@ export function AgentsView({ unlocked, administrator, activationReady, activatio
 
         <Panel>
           {!selectedRun
-            ? <EmptyState title="Select a run">Input, output, sources, and failure information remain in the OrcaSynapse execution ledger.</EmptyState>
+            ? <EmptyState title="Select a run">Input, output, events, and failure information remain in the OrcaSynapse execution ledger.</EmptyState>
             : <>
             <PanelHeading
               kicker="Run detail"
@@ -569,18 +564,6 @@ export function AgentsView({ unlocked, administrator, activationReady, activatio
               <strong className="block text-micro font-semibold uppercase tabular-nums text-bad">{selectedRun.failureCode}</strong>
               <p className="mb-0 mt-1.5 text-body leading-relaxed text-muted">{selectedRun.failureMessage}</p>
             </div>}
-            {selectedRun.sources.length > 0 && <Tile className="mt-3 grid gap-1.5">
-              <MicroLabel>Authorized private sources</MicroLabel>
-              {selectedRun.sources.map((source) => <details className="rounded border border-border bg-surface p-2.5" key={source.documentId}>
-                <summary className="flex cursor-pointer items-center justify-between gap-3 text-body text-text">
-                  {source.fileName}
-                  <small className="font-mono text-micro text-faint">
-                    {Math.round(source.score * 100)}% match · {source.classification.toLowerCase()}
-                  </small>
-                </summary>
-                <p className="mb-0 mt-2 text-caption leading-relaxed text-muted">{source.excerpt}</p>
-              </details>)}
-            </Tile>}
             {runningStatuses.has(selectedRun.status) && <Button
               variant="danger"
               className="mt-3"
@@ -637,15 +620,6 @@ export function AgentsView({ unlocked, administrator, activationReady, activatio
             <Field label="Timeout (seconds)"><Input required type="number" min={30} max={3600} value={profileDraft.timeoutSeconds} onChange={(event) => setProfileDraft({ ...profileDraft, timeoutSeconds: Number(event.target.value) })} /></Field>
             <Field label="Concurrent runs"><Input required type="number" min={1} max={20} value={profileDraft.maxConcurrentRuns} onChange={(event) => setProfileDraft({ ...profileDraft, maxConcurrentRuns: Number(event.target.value) })} /></Field>
           </div>
-          <label className="grid cursor-pointer gap-1.5 rounded border border-border bg-raised p-3">
-            <span className="flex items-center gap-2.5">
-              <input type="checkbox" checked={profileDraft.allowPrivateKnowledge} onChange={(event) => setProfileDraft({ ...profileDraft, allowPrivateKnowledge: event.target.checked })} />
-              <strong className="text-body font-semibold text-text">Allow private knowledge retrieval</strong>
-            </span>
-            <small className="text-caption leading-relaxed text-muted">
-              Searches only the requesting identity’s documents in the private knowledge index.
-            </small>
-          </label>
           <Field label="Memory" hint="Hermes manages its native MEMORY.md and USER.md lifecycle inside the isolated runtime.">
             <div className="rounded border border-border bg-raised p-3 text-body text-muted">
               Hermes-native memory is active. OrcaSynapse does not read, mirror, edit, or expose its contents.

@@ -3,9 +3,7 @@
  *
  * Four governance screens tell a signed-out operator the same thing — sign in
  * as an administrator — and the button underneath has to be the one that
- * offers it. Benchmarks promised sign-in and answered with navigation to
- * Operations, which is locked too, so the operator's only move was a screen
- * that repeated the sentence back at them.
+ * offers it.
  *
  * Copy and wiring drifted apart independently three times during the design
  * system move, because each screen's own test covers its populated state and
@@ -22,7 +20,6 @@ import type { AdministratorSession } from "@orcasynapse/contracts";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { BenchmarksView } from "./benchmarks-view.js";
 import { GuardrailsView } from "./guardrails-view.js";
 import { ModelsView } from "./models-view.js";
 import { PromptsView } from "./prompts-view.js";
@@ -74,17 +71,6 @@ const cases: LockedCase[] = [
         connections={[]}
         onConfigureConnections={elevate}
         onOpenOperations={navigate}
-        onSessionExpired={vi.fn()}
-      />);
-    },
-  },
-  {
-    name: "Benchmarks",
-    render: ({ elevate, navigate }) => {
-      render(<BenchmarksView
-        session={signedOut}
-        onOpenOperations={navigate}
-        onOpenSettings={elevate}
         onSessionExpired={vi.fn()}
       />);
     },

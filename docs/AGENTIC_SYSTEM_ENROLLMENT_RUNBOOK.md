@@ -4,7 +4,7 @@
 
 This workflow turns a clean Ubuntu systemd VM into the isolated OrcaSynapse Agentic System. It installs the Hermes Agent runtime, configures it to use OrcaSynapse's authenticated inference gateway, and establishes a signed node identity without retaining SSH credentials.
 
-VM2 runs exactly one plane: the Hermes gateway/API server, installed natively from Hermes's own installer and supervised by systemd as `orcasynapse-hermes.service`. It durably owns Hermes-native sessions, Skills, `MEMORY.md`, and `USER.md` under `/var/lib/orcasynapse-hermes`; document knowledge remains in OrcaSynapse's pgvector plane on VM1. Destroying or cleanly re-enrolling VM2 without restoring that state loses native session and memory continuity. The installer uses Hermes's root-owned managed scope to pin the approved model route, enable built-in memory, apply secret redaction and unattended loop circuit breakers, and set an explicit `platform_toolsets.api_server: [no_mcp, memory]` baseline so the stock runtime does not inherit its broad default tool surface.
+VM2 runs exactly one plane: the Hermes gateway/API server, installed natively from Hermes's own installer and supervised by systemd as `orcasynapse-hermes.service`. It durably owns Hermes-native sessions, Skills, `MEMORY.md`, and `USER.md` under `/var/lib/orcasynapse-hermes`. Destroying or cleanly re-enrolling VM2 without restoring that state loses native session and memory continuity. The installer uses Hermes's root-owned managed scope to pin the approved model route, enable built-in memory, apply secret redaction and unattended loop circuit breakers, and set an explicit `platform_toolsets.api_server: [no_mcp, memory]` baseline so the stock runtime does not inherit its broad default tool surface.
 
 ## Prerequisites
 
@@ -92,14 +92,14 @@ Restrict journal readers on VM2 and include key rotation and journal-retention b
 
 ## Backup and restore
 
-Back up `${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}/data` for sessions, Skills, profiles, built-in memory, and runtime configuration. Knowledge and control-plane state live in PostgreSQL and are covered by the database backup.
+Back up `${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}/data` for sessions, Skills, profiles, built-in memory, and runtime configuration. Back up PostgreSQL separately for control-plane configuration, sanitized run evidence, and audit history.
 
 Preferred host-loss procedure:
 
 1. revoke the missing node in OrcaSynapse;
 2. restore runtime data only under the approved recovery procedure, or create a clean node;
 3. issue a new invitation and identity;
-4. verify inference gateway authentication, document authorization, and deletion;
+4. verify inference gateway authentication and a Hermes-native session turn;
 5. retain the recovery evidence.
 
 ## Upgrade

@@ -15,10 +15,10 @@ const approval: ToolApproval = {
   callId: "7e2d0f88-3c4b-4d5e-9f0a-1b2c3d4e5f60",
   runId: "8f3e1a99-4d5c-4e6f-a01b-2c3d4e5f6071",
   profileSlug: "hermes-analyst",
-  toolSlug: "document-purge",
-  toolName: "Purge document",
+  toolSlug: "system-restart",
+  toolName: "Restart system",
   requestedBySubject: "user:pilot",
-  arguments: { documentId: "9a4f2b00-5e6d-4f70-b12c-3d4e5f607182" },
+  arguments: { service: "inference" },
   status: "PENDING",
   expiresAt: "2026-08-05T00:15:00.000Z",
   decisionReason: null,
@@ -35,12 +35,12 @@ describe("tool approval contract", () => {
     // Deciding blind is the failure mode: who asked, through which agent, for
     // which tool, with what arguments, and how long the decision stays open.
     expect(item).toMatchObject({
-      toolName: "Purge document",
+      toolName: "Restart system",
       profileSlug: "hermes-analyst",
       requestedBySubject: "user:pilot",
       status: "PENDING",
     });
-    expect(item?.arguments).toEqual({ documentId: "9a4f2b00-5e6d-4f70-b12c-3d4e5f607182" });
+    expect(item?.arguments).toEqual({ service: "inference" });
     expect(item?.expiresAt).toBe("2026-08-05T00:15:00.000Z");
   });
 

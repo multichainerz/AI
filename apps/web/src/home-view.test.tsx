@@ -6,7 +6,7 @@
  * is allowed to see, where the one primary action points, and whether a layer
  * row still routes to the right platform tab.
  */
-import type { AgentMetrics, ChatMetrics, DocumentMetrics, ToolMetrics } from "@orcasynapse/contracts";
+import type { AgentMetrics, ChatMetrics, ToolMetrics } from "@orcasynapse/contracts";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -52,7 +52,6 @@ const chatMetrics = {
   failureRate: 0.02,
   windowStartedAt: "2026-08-02T00:00:00.000Z",
 } as ChatMetrics;
-const documentMetrics = { total: 58, ready: 55 } as DocumentMetrics;
 const agentMetrics = { profiles: 4, activeProfiles: 2 } as AgentMetrics;
 const toolMetrics = { activeTools: 6, activeGrants: 3 } as ToolMetrics;
 const stylesheet = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
@@ -65,7 +64,6 @@ function props(overrides: Partial<Parameters<typeof HomeView>[0]> = {}) {
     healthyConnections: 3,
     monitoring: { enabled: true, intervalSeconds: 300, reason: null, updatedAt: "2026-08-07T00:00:00.000Z", updatedBy: null },
     chatMetrics,
-    documentMetrics,
     agentMetrics,
     toolMetrics,
     layers,
@@ -90,15 +88,12 @@ describe("Home", () => {
     expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(6);
     expect(screen.queryByText("Approved model serving is reachable")).toBeNull();
     expect(screen.getAllByText("Sign in to inspect readiness")).toHaveLength(3);
-    expect(screen.getAllByText("sign in to view")).toHaveLength(6);
-    expect(screen.queryByText("55 indexed")).toBeNull();
+    expect(screen.getAllByText("sign in to view")).toHaveLength(5);
     expect(screen.queryByText("1,249 completed")).toBeNull();
     expect(screen.queryByText("2 active")).toBeNull();
     expect(screen.queryByText("3 grants")).toBeNull();
-    // "Locked" is the layer state; the panel says "Not readable" for the same
-    // condition, because a hop reports whether it can answer, not why.
+    // Readiness detail is withheld while the session is locked.
     expect(screen.getAllByText("Locked").length).toBeGreaterThan(0);
-    expect(screen.getByText("Not readable")).toBeTruthy();
 
     await user.click(screen.getByRole("button", { name: "Sign in" }));
     expect(onUnlock).toHaveBeenCalled();
@@ -126,11 +121,9 @@ describe("Home", () => {
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
     expect(screen.queryByRole("heading", { name: "Three operating layers" })).toBeNull();
     expect(screen.queryByRole("heading", { name: "One governed execution path" })).toBeNull();
-    expect(screen.queryByRole("button", { name: /Add knowledge/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /Agent profiles Instructions/ })).toBeNull();
-    expect(screen.queryByText("What changed in my knowledge sources this week?")).toBeNull();
     expect(screen.getByRole("heading", { name: "Required capabilities" })).toBeTruthy();
-    expect(screen.getAllByRole("listitem")).toHaveLength(4);
+    expect(screen.getAllByRole("listitem")).toHaveLength(3);
   });
 
   it("sends the primary action to the blocking step, and to Session once nothing blocks", async () => {
@@ -182,7 +175,7 @@ describe("Home", () => {
      */
     render(<HomeView {...props({ unlocked: false })} />);
     expect(screen.getByText("Local sign-in ready")).toBeTruthy();
-    expect(screen.getByText("Sign in to manage encrypted endpoints, agents, and knowledge.")).toBeTruthy();
+    expect(screen.getByText("Sign in to manage encrypted endpoints, agents, and policy.")).toBeTruthy();
   });
 
   it("keeps installation ahead of everything else until bootstrap completes", async () => {
@@ -240,9 +233,8 @@ describe("Home", () => {
      */
     expect(screen.getByText(/^since \w/)).toBeTruthy();
     expect(screen.getByText("1,249 completed")).toBeTruthy();
-    expect(screen.getByText("55 indexed")).toBeTruthy();
     // The governed path, with each hop's real state rather than a decorative one.
-    // Hermes and AI Inference each name both a layer row and a topology hop;
+    // Hermes and AI Inference each name a topology hop;
     // the panel-specific assertion is the verdict it draws from them.
     expect(screen.getAllByText("Hermes").length).toBeGreaterThan(0);
     expect(screen.getByText("Identity, policy, audit")).toBeTruthy();
