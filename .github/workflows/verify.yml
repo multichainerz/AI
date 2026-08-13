@@ -38,7 +38,9 @@ jobs:
       - name: Validate installer scripts
         run: bash -n install.sh scripts/*.sh scripts/lib/*.sh
       - name: Hermes corpus reconciler safety
-        run: python3 scripts/test-hermes-corpus-reconciler.py
+        # Root is required to exercise the real VM2 root-to-Hermes credential
+        # transition; the test still confines all fixtures to a temporary tree.
+        run: sudo python3 scripts/test-hermes-corpus-reconciler.py
       - name: Static release and deployment consistency
         run: |
           node scripts/sync-doc-brand.mjs --check

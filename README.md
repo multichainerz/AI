@@ -35,7 +35,7 @@ There is no control-plane vector store, embedding model, document library, exter
 
 ## Install
 
-ai-v3.16.0 established the greenfield `hermes-native-v1` schema generation. ai-v3.17.0 upgrades an existing v3.16 VM1 through its migration and adds the VM2 corpus companion through the generated `--repair` path. Databases from before v3.16 still require a clean installation.
+ai-v3.16.0 established the greenfield `hermes-native-v1` schema generation. ai-v3.17.0 added the Corpus companion, and ai-v3.17.1 fixes its hardened VM2 privilege transition. Existing v3.16 or v3.17 VM1 installations update in place; rerun the generated VM2 installer with `--repair` to install the current companion. Databases from before v3.16 still require a clean installation.
 
 On a clean Debian or Ubuntu VM1:
 
