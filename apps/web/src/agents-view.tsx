@@ -622,7 +622,7 @@ export function AgentsView({ unlocked, administrator, activationReady, activatio
           </div>
           <Field label="Memory" hint="Hermes manages its native MEMORY.md and USER.md lifecycle inside the isolated runtime.">
             <div className="rounded border border-border bg-raised p-3 text-body text-muted">
-              Hermes-native memory is active. OrcaSynapse does not read, mirror, edit, or expose its contents.
+              Hermes-native memory is active and remains canonical on VM2. Administrators can observe and govern its allowlisted file mirror from Agents → Hermes corpus; it is never used as model context.
             </div>
           </Field>
           <div className={cn(

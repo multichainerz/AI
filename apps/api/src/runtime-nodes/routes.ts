@@ -32,6 +32,7 @@ export interface RuntimeNodeRouteOptions {
 
 const AGENTIC_NODE_INSTALLER_PATH = new URL("../../../../scripts/install-agentic-node.sh", import.meta.url);
 const AGENTIC_NODE_REMOVER_PATH = new URL("../../../../scripts/remove-agentic-node.sh", import.meta.url);
+const HERMES_CORPUS_RECONCILER_PATH = new URL("../../../../scripts/hermes-corpus-reconciler.py", import.meta.url);
 
 function managerOrLocked(options: RuntimeNodeRouteOptions, reply: FastifyReply): HermesRuntimeNodeManager | null {
   if (options.manager) return options.manager;
@@ -121,6 +122,15 @@ export async function registerRuntimeNodeInstallerRoutes(
       .header("content-disposition", "inline; filename=remove-agentic-node.sh")
       .type("text/x-shellscript; charset=utf-8")
       .send(remover);
+  });
+
+  app.get("/hermes-corpus-reconciler.py", async (_request, reply) => {
+    const reconciler = await readFile(HERMES_CORPUS_RECONCILER_PATH, "utf8");
+    return reply
+      .header("cache-control", "no-store")
+      .header("content-disposition", "inline; filename=hermes-corpus-reconciler.py")
+      .type("text/x-python; charset=utf-8")
+      .send(reconciler);
   });
 }
 

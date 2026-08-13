@@ -76,6 +76,7 @@ import {
 const OperationsView = lazy(() => import("./operations-view.js").then((module) => ({ default: module.OperationsView })));
 const ChatView = lazy(() => import("./chat-view.js").then((module) => ({ default: module.ChatView })));
 const AgentsView = lazy(() => import("./agents-view.js").then((module) => ({ default: module.AgentsView })));
+const CorpusView = lazy(() => import("./corpus-view.js").then((module) => ({ default: module.CorpusView })));
 const ToolingView = lazy(() => import("./tooling-view.js").then((module) => ({ default: module.ToolingView })));
 const ModelsView = lazy(() => import("./models-view.js").then((module) => ({ default: module.ModelsView })));
 const GuardrailsView = lazy(() => import("./guardrails-view.js").then((module) => ({ default: module.GuardrailsView })));
@@ -1192,6 +1193,13 @@ function App() {
               }}
               onOpenReadiness={() => selectView("Deployment", "nodes")}
               onSessionExpired={forgetAnySession}
+            />
+          ),
+          Corpus: () => (
+            <CorpusView
+              session={adminSession}
+              onConfigure={() => openConnectionSettings()}
+              onSessionExpired={forgetAdminSession}
             />
           ),
           Integrations: () => (

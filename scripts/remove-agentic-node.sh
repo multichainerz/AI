@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="v4.6.0"
+INSTALLER_VERSION="v4.7.0"
 # Honor the same state-root overrides the installer accepts, so a non-default
 # layout installed with ORCASYNAPSE_*_STATE_ROOT can be removed the same way.
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
@@ -16,6 +16,8 @@ HEARTBEAT_SERVICE="orcasynapse-hermes-heartbeat"
 HEARTBEAT_CLIENT="/usr/local/lib/orcasynapse/hermes-heartbeat.sh"
 DESIRED_STATE_SERVICE="orcasynapse-hermes-desired-state"
 DESIRED_STATE_CLIENT="/usr/local/lib/orcasynapse/hermes-desired-state.sh"
+CORPUS_SERVICE="orcasynapse-hermes-corpus"
+CORPUS_CLIENT="/usr/local/lib/orcasynapse/hermes-corpus-reconciler.py"
 
 # >>> ORCASYNAPSE-INSTALLER-UI v1 - generated from scripts/lib/installer-ui.sh; edit the library, then run: bash scripts/sync-installer-ui.sh >>>
 # shellcheck shell=bash
@@ -530,8 +532,11 @@ managed_install_exists() {
     || -e "/etc/systemd/system/${HEARTBEAT_SERVICE}.timer" \
     || -e "/etc/systemd/system/${DESIRED_STATE_SERVICE}.service" \
     || -e "/etc/systemd/system/${DESIRED_STATE_SERVICE}.timer" \
+    || -e "/etc/systemd/system/${CORPUS_SERVICE}.service" \
+    || -e "/etc/systemd/system/${CORPUS_SERVICE}.timer" \
     || -e "${HEARTBEAT_CLIENT}" \
-    || -e "${DESIRED_STATE_CLIENT}" ]] && return 0
+    || -e "${DESIRED_STATE_CLIENT}" \
+    || -e "${CORPUS_CLIENT}" ]] && return 0
   [[ -e "/etc/systemd/system/${RUNTIME_SERVICE}.service" || -e "${HERMES_INSTALL_DIR}" ]]
 }
 
@@ -593,6 +598,7 @@ confirm_destruction() {
     - Node identity, enrollment state, managed policy, and runtime data
     - Signed-heartbeat service and timer
     - Toolset desired-state reconciler service and timer
+    - Hermes corpus observability reconciler service and timer
     - The ${HERMES_USER} service account
 
   Ubuntu packages, unrelated services, the Python and Node runtimes Hermes
@@ -614,6 +620,8 @@ stop_managed_services() {
   systemctl stop "${HEARTBEAT_SERVICE}.service" >/dev/null 2>&1 || true
   systemctl disable --now "${DESIRED_STATE_SERVICE}.timer" >/dev/null 2>&1 || true
   systemctl stop "${DESIRED_STATE_SERVICE}.service" >/dev/null 2>&1 || true
+  systemctl disable --now "${CORPUS_SERVICE}.timer" >/dev/null 2>&1 || true
+  systemctl stop "${CORPUS_SERVICE}.service" >/dev/null 2>&1 || true
 
   # Every call above tolerates failure, so success has to be checked rather than
   # assumed. A stop job that hangs or times out would otherwise be reported as
@@ -671,11 +679,15 @@ remove_managed_state() {
     "/etc/systemd/system/${HEARTBEAT_SERVICE}.timer" \
     "/etc/systemd/system/${DESIRED_STATE_SERVICE}.service" \
     "/etc/systemd/system/${DESIRED_STATE_SERVICE}.timer" \
+    "/etc/systemd/system/${CORPUS_SERVICE}.service" \
+    "/etc/systemd/system/${CORPUS_SERVICE}.timer" \
     "${HEARTBEAT_CLIENT}" \
-    "${DESIRED_STATE_CLIENT}"
+    "${DESIRED_STATE_CLIENT}" \
+    "${CORPUS_CLIENT}"
   systemctl daemon-reload
   systemctl reset-failed "${HEARTBEAT_SERVICE}.service" >/dev/null 2>&1 || true
   systemctl reset-failed "${DESIRED_STATE_SERVICE}.service" >/dev/null 2>&1 || true
+  systemctl reset-failed "${CORPUS_SERVICE}.service" >/dev/null 2>&1 || true
 
   rm -rf --one-file-system -- "${STATE_ROOT}"
   [[ ! -e "${STATE_ROOT}" ]] \

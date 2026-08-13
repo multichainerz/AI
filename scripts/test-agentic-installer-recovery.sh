@@ -103,6 +103,15 @@ grep -Fq 'VM1 accepted the signed VM2 trust handshake.' "${REPOSITORY_ROOT}/scri
 grep -Fq 'The retained VM2 state and dashboard record no longer share the same trust binding.' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 grep -Fq 'render_activity_progress()' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 grep -Fq 'download_with_progress()' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq 'corpus-sync-v1' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq '/install/hermes-corpus-reconciler.py' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq 'CORPUS_SERVICE="orcasynapse-hermes-corpus"' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq 'systemctl enable --now "${CORPUS_SERVICE}.timer"' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq 'HERMES_PYTHON="${HERMES_INSTALL_DIR}/venv/bin/python"' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq 'ExecStart=${HERMES_PYTHON} /usr/local/lib/orcasynapse/hermes-corpus-reconciler.py' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq 'Environment=HERMES_MANAGED_DIR=${HERMES_MANAGED_DIR}' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq 'from tools.memory_tool import load_on_disk_store' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+grep -Fq 'from tools.skill_manager_tool import apply_skill_pending' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 # The UI block is generated from scripts/lib/installer-ui.sh; the marker must
 # survive refactors or the sync tool can no longer maintain this script.
 grep -Fq '>>> ORCASYNAPSE-INSTALLER-UI v1' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"

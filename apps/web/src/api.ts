@@ -157,6 +157,17 @@ import {
   type HermesRuntimeNodeList,
   type MutateHermesRuntimeNode,
   type RemoveHermesRuntimeNode,
+  hermesCorpusEntryListSchema,
+  hermesCorpusMutationListSchema,
+  hermesCorpusMutationSchema,
+  hermesCorpusOverviewSchema,
+  hermesCorpusRevisionListSchema,
+  type CreateHermesCorpusMutation,
+  type DecideHermesCorpusMutation,
+  type HermesCorpusEntry,
+  type HermesCorpusMutation,
+  type HermesCorpusOverview,
+  type HermesCorpusRevision,
 } from "@orcasynapse/contracts";
 
 export class OrcaSynapseApiError extends Error {
@@ -967,6 +978,57 @@ export async function removeHermesRuntimeNode(
     method: "DELETE", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
   });
   await parsedResponse(response);
+}
+
+export async function getHermesCorpusOverview(): Promise<HermesCorpusOverview> {
+  const response = await fetch("/api/v1/admin/corpus/overview", { credentials: "same-origin" });
+  return hermesCorpusOverviewSchema.parse(await parsedResponse(response));
+}
+
+export async function getHermesCorpusEntries(input: {
+  nodeId: string;
+  query?: string;
+  kind?: HermesCorpusEntry["kind"] | "";
+  includeDeleted?: boolean;
+  includeContent?: boolean;
+}): Promise<{ items: HermesCorpusEntry[] }> {
+  const search = new URLSearchParams({ nodeId: input.nodeId, includeContent: input.includeContent === false ? "false" : "true" });
+  if (input.query) search.set("q", input.query);
+  if (input.kind) search.set("kind", input.kind);
+  if (input.includeDeleted) search.set("includeDeleted", "true");
+  const response = await fetch(`/api/v1/admin/corpus/entries?${search.toString()}`, { credentials: "same-origin" });
+  return hermesCorpusEntryListSchema.parse(await parsedResponse(response));
+}
+
+export async function getHermesCorpusRevisions(entryId: string, includeContent = true): Promise<{ items: HermesCorpusRevision[] }> {
+  const response = await fetch(
+    `/api/v1/admin/corpus/entries/${encodeURIComponent(entryId)}/revisions?includeContent=${includeContent ? "true" : "false"}`,
+    { credentials: "same-origin" },
+  );
+  return hermesCorpusRevisionListSchema.parse(await parsedResponse(response));
+}
+
+export async function getHermesCorpusMutations(nodeId?: string): Promise<{ items: HermesCorpusMutation[] }> {
+  const suffix = nodeId ? `?nodeId=${encodeURIComponent(nodeId)}` : "";
+  const response = await fetch(`/api/v1/admin/corpus/mutations${suffix}`, { credentials: "same-origin" });
+  return hermesCorpusMutationListSchema.parse(await parsedResponse(response));
+}
+
+export async function createHermesCorpusMutation(input: CreateHermesCorpusMutation): Promise<HermesCorpusMutation> {
+  const response = await fetch("/api/v1/admin/corpus/mutations", {
+    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return hermesCorpusMutationSchema.parse(await parsedResponse(response));
+}
+
+export async function decideHermesCorpusMutation(
+  mutationId: string,
+  input: DecideHermesCorpusMutation,
+): Promise<HermesCorpusMutation> {
+  const response = await fetch(`/api/v1/admin/corpus/mutations/${encodeURIComponent(mutationId)}/decision`, {
+    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return hermesCorpusMutationSchema.parse(await parsedResponse(response));
 }
 
 /**

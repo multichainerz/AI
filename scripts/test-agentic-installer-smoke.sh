@@ -36,6 +36,7 @@ bad()  { printf '  [FAIL] %s\n' "$1" >&2; failures=$((failures + 1)); }
 cleanup() {
   systemctl disable --now orcasynapse-hermes-heartbeat.timer >/dev/null 2>&1 || true
   systemctl disable --now orcasynapse-hermes-desired-state.timer >/dev/null 2>&1 || true
+  systemctl disable --now orcasynapse-hermes-corpus.timer >/dev/null 2>&1 || true
   rm -f /etc/systemd/system/orcasynapse-hermes-*.service /etc/systemd/system/orcasynapse-hermes-*.timer
   systemctl daemon-reload >/dev/null 2>&1 || true
   systemctl disable --now "${RUNTIME_SERVICE}" >/dev/null 2>&1 || true
@@ -81,12 +82,18 @@ openssl pkey -in "${WORK}/cp.key" -pubout -out "${WORK}/cp.pub" 2>/dev/null
 printf '{"format":"orcasynapse-runtime-desired-state/v1","nodeId":"%s","generatedAt":"2026-08-07T00:00:00Z","admittedToolsets":["clarify","todo_write"]}' \
   "${NODE_ID}" > "${WORK}/desired.json"
 openssl pkeyutl -sign -rawin -inkey "${WORK}/cp.key" -in "${WORK}/desired.json" -out "${WORK}/desired.sig"
+printf '{"format":"orcasynapse-hermes-corpus-desired-state/v1","nodeId":"%s","generatedAt":"2026-08-07T00:00:00Z","mutation":null}' \
+  "${NODE_ID}" > "${WORK}/corpus-desired.json"
+openssl pkeyutl -sign -rawin -inkey "${WORK}/cp.key" -in "${WORK}/corpus-desired.json" -out "${WORK}/corpus-desired.sig"
 
 cat > "${WORK}/controlplane.py" <<'CONTROLPLANE'
 import hashlib, json, os, subprocess, sys, http.server
 NODE = os.environ["NODE_ID"]
 HEARTBEAT_PATH = f"/runtime-control/nodes/{NODE}/heartbeat"
 DESIRED_STATE_PATH = f"/runtime-control/nodes/{NODE}/desired-state"
+CORPUS_SNAPSHOT_PATH = f"/api/v1/runtime-nodes/{NODE}/corpus/snapshot"
+CORPUS_DESIRED_PATH = f"/api/v1/runtime-nodes/{NODE}/corpus/desired-state"
+CORPUS_RESULT_PATH = f"/api/v1/runtime-nodes/{NODE}/corpus/mutation-result"
 
 
 def fingerprint(raw):
@@ -116,6 +123,9 @@ class H(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         raw = self.rfile.read(int(self.headers.get("content-length") or 0))
         if self.path.endswith("/enroll"):
+            enrollment = json.loads(raw or b"{}")
+            if "corpus-sync-v1" in enrollment.get("capabilities", []):
+                return self._json({"error": "corpus advertised before installation"}, 400)
             return self._json({
                 "node": {"id": NODE, "identityFingerprint": fingerprint(raw)},
                 # Deliberately not the historical hard-coded routes: the smoke
@@ -131,7 +141,14 @@ class H(http.server.BaseHTTPRequestHandler):
                 },
             })
         if self.path == HEARTBEAT_PATH:
+            heartbeat = json.loads(raw or b"{}")
+            if "corpus-sync-v1" not in heartbeat.get("capabilities", []):
+                return self._json({"error": "installed corpus capability missing"}, 400)
             return self._json({"accepted": True})
+        if self.path == CORPUS_SNAPSHOT_PATH:
+            return self._json({"accepted": True, "snapshotId": "20fbc05f-6e6c-4b43-9dde-ab48d6baac07", "serverTime": "2026-08-07T00:00:00Z"})
+        if self.path == CORPUS_RESULT_PATH:
+            return self._json({"accepted": True, "serverTime": "2026-08-07T00:00:00Z"})
         if self.path.endswith("/chat/completions"):
             request = json.loads(raw or b"{}")
             if request.get("stream"):
@@ -161,11 +178,25 @@ class H(http.server.BaseHTTPRequestHandler):
             })
         return self._json({"error": "unexpected POST path", "path": self.path}, 404)
     def do_GET(self):
+        if self.path == "/install/hermes-corpus-reconciler.py":
+            body = open(os.environ["CORPUS_CLIENT"], "rb").read()
+            self.send_response(200)
+            self.send_header("content-type", "text/x-python")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if self.path == DESIRED_STATE_PATH:
             return self._json({
                 "documentBase64": os.environ["DOC_B64"],
                 "signature": os.environ["SIG_B64"],
                 "publicKeyFingerprint": "smoke",
+            })
+        if self.path == CORPUS_DESIRED_PATH:
+            return self._json({
+                "documentBase64": os.environ["CORPUS_DOC_B64"],
+                "signature": os.environ["CORPUS_SIG_B64"],
+                "publicKeyFingerprint": os.environ["CP_FINGERPRINT"],
             })
         if self.path == "/health":
             return self._json({"status": "ok"})
@@ -177,6 +208,10 @@ CONTROLPLANE
 CP_PUB="$(cat "${WORK}/cp.pub")" \
 DOC_B64="$(base64 -w0 "${WORK}/desired.json")" \
 SIG_B64="$(base64 -w0 "${WORK}/desired.sig")" \
+CORPUS_DOC_B64="$(base64 -w0 "${WORK}/corpus-desired.json")" \
+CORPUS_SIG_B64="$(base64 -w0 "${WORK}/corpus-desired.sig")" \
+CP_FINGERPRINT="$(openssl pkey -pubin -in "${WORK}/cp.pub" -outform DER 2>/dev/null | sha256sum | awk '{print $1}')" \
+CORPUS_CLIENT="${ROOT}/scripts/hermes-corpus-reconciler.py" \
 NODE_ID="${NODE_ID}" \
   python3 "${WORK}/controlplane.py" "${CONTROL_PLANE_PORT}" >/dev/null 2>&1 &
 STUB_PID=$!
@@ -202,6 +237,10 @@ set -e
 printf '\n=== asserting the installed state ===\n'
 systemctl is-active "${RUNTIME_SERVICE}" >/dev/null 2>&1 \
   && pass "runtime service is active" || bad "runtime service is not active"
+grep -Fq 'ExecStart=/usr/local/lib/hermes-agent/venv/bin/python /usr/local/lib/orcasynapse/hermes-corpus-reconciler.py' \
+  /etc/systemd/system/orcasynapse-hermes-corpus.service \
+  && pass "corpus companion uses the pinned Hermes Python environment" \
+  || bad "corpus companion is detached from the Hermes Python environment"
 [[ "$(git -C /usr/local/lib/hermes-agent rev-parse HEAD 2>/dev/null)" == "${HERMES_COMMIT}" ]] \
   && pass "installed commit matches the pin" || bad "installed commit does not match the pin"
 curl --fail --silent --max-time 5 http://127.0.0.1:8642/health >/dev/null \
@@ -256,6 +295,10 @@ systemctl is-enabled orcasynapse-hermes-heartbeat.timer >/dev/null 2>&1 \
   && pass "heartbeat timer enabled" || bad "heartbeat timer not enabled"
 systemctl is-enabled orcasynapse-hermes-desired-state.timer >/dev/null 2>&1 \
   && pass "desired-state timer enabled" || bad "desired-state timer not enabled"
+systemctl is-enabled orcasynapse-hermes-corpus.timer >/dev/null 2>&1 \
+  && pass "corpus timer enabled" || bad "corpus timer not enabled"
+[[ -x /usr/local/lib/orcasynapse/hermes-corpus-reconciler.py ]] \
+  && pass "corpus reconciler installed" || bad "corpus reconciler missing"
 
 # The v1.4.0 preseed: the node must already hold the admitted allowlist
 # rather than waiting out the first timer tick.
