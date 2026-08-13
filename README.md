@@ -5,7 +5,7 @@
 <h3 align="center">Dynamic intelligence, orchestrated into action.</h3>
 
 <p align="center">
-  An on-premises control plane for Hermes-native sessions, agent profiles, models, policy, tools, and audit.<br />
+  An on-premises control plane for Hermes-native sessions, corpus observability, agent profiles, models, policy, tools, and audit.<br />
   Hermes remains the sole owner of execution context and native memory.
 </p>
 
@@ -26,7 +26,7 @@
 
 The baseline uses two VMs and an existing OpenAI-compatible inference endpoint:
 
-- **VM1 — control plane:** web workspace, API, worker, stock PostgreSQL 17, encrypted configuration, sanitized run projections, evaluations, incidents, and the append-only audit trail.
+- **VM1 — control plane:** web workspace, API, worker, stock PostgreSQL 17, encrypted configuration, a searchable revision mirror of the allowlisted Hermes corpus, sanitized run projections, evaluations, incidents, and the append-only audit trail.
 - **VM2 — Hermes runtime:** native sessions, Skills, toolsets, `MEMORY.md`, `USER.md`, and runtime execution under a hardened systemd service.
 - **Inference:** a dashboard-approved model route. Credentials remain on VM1; VM2 receives a scoped gateway credential.
 - **SIEM (optional):** at-least-once forwarding of the retained audit trail.
@@ -35,7 +35,7 @@ There is no control-plane vector store, embedding model, document library, exter
 
 ## Install
 
-v4.6.0 is a greenfield release. Use clean VM1 and VM2 installations; it intentionally refuses a pre-v3.16 database instead of attempting an unsafe in-place conversion.
+v4.6.0 established the greenfield `hermes-native-v1` schema generation. v4.7.0 upgrades an existing v3.16 VM1 through its migration and adds the VM2 corpus companion through the generated `--repair` path. Databases from before v3.16 still require a clean installation.
 
 On a clean Debian or Ubuntu VM1:
 
@@ -45,21 +45,23 @@ curl -fsSL https://raw.githubusercontent.com/multichainerz/AI/main/install.sh | 
 
 The installer provisions Docker, stock PostgreSQL 17, the API, worker, workspace, protected secrets, and the first administrator. Open the address it prints, connect inference, then use **Platform → Agentic System** to generate the one-time VM2 enrollment command.
 
-VM2 installs vanilla Hermes at the approved commit, applies the managed native-memory and toolset baseline, enrolls its node identity, and reports signed heartbeats. OrcaSynapse does not require SSH credentials or a remote shell channel.
+VM2 installs vanilla Hermes at the approved commit, applies the managed native-memory and toolset baseline, enrolls its node identity, reports signed heartbeats, and publishes a signed allowlisted corpus snapshot. OrcaSynapse does not require SSH credentials or a remote shell channel.
 
 ## Product surfaces
 
 - **Dashboard:** one-screen readiness and operations command center.
 - **Session:** durable conversations over Hermes’ native session API, with streaming, cancellation, telemetry, feedback, archive, export, and audit projections.
-- **Agents:** immutable Profile Distributions, Skills, model selection, lifecycle controls, and run history.
+- **Agents:** immutable Profile Distributions, run history, governed tools, and a repository-style view of Hermes-native memory and Skills.
 - **Platform:** inference routes, Hermes enrollment, enterprise identity, prompts, guardrails, runtime toolset admissions, and encrypted connections.
 - **Operations:** incidents, evaluation evidence, readiness controls, the audit trail, and optional SIEM forwarding.
 
 ## Memory and audit
 
-Hermes is the only memory owner. OrcaSynapse sends a conversation UUID as the Hermes native session ID and never replays PostgreSQL chat history as model context. It does not read, mirror, edit, embed, or expose Hermes’ `MEMORY.md`, `USER.md`, or session database.
+Hermes is the only memory owner. OrcaSynapse sends a conversation UUID as the Hermes native session ID and never replays PostgreSQL chat history as model context. A root-owned VM2 companion publishes signed, bounded snapshots of allowlisted `MEMORY.md`, `USER.md`, Skill, bundle, provenance, and pending-change files. PostgreSQL provides lexical search and immutable revisions; it is never used as model context. Session databases, credentials, symlinks, secret-like files, oversized files, and unapproved paths are excluded.
 
-PostgreSQL remains the system of record for control-plane configuration and sanitized operational evidence. Run lifecycle events, decisions, telemetry, failures, and user actions remain auditable without creating a second agent-memory plane.
+Governed edits travel back as signed mutation commands with an observed-content hash. Hermes applies memory changes through its native MemoryStore and Skill changes through its native validation and mutation functions. Destructive changes require a second administrator. VM1 never mounts VM2 storage and has no SSH or remote-shell path.
+
+PostgreSQL remains the system of record for control-plane configuration, the non-authoritative corpus mirror, and sanitized operational evidence. Run lifecycle events, corpus decisions, telemetry, failures, and user actions remain auditable without creating a second agent-memory source.
 
 Vanilla Hermes keeps transcripts per session but shares file-backed memory within the active Hermes home/profile. This pre-production topology is one trust boundary and is not multi-user memory isolation.
 

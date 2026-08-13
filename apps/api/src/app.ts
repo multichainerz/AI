@@ -26,6 +26,7 @@ import {
   registerRuntimeNodeRoutes,
 } from "./runtime-nodes/routes.js";
 import { registerInferenceGatewayRoutes } from "./inference/routes.js";
+import { registerAdminCorpusRoutes, registerRuntimeCorpusRoutes } from "./corpus/routes.js";
 
 export interface AppOptions {
   logger?: boolean;
@@ -189,11 +190,26 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
   );
 
   await app.register(
+    async (runtimeCorpus) => registerRuntimeCorpusRoutes(runtimeCorpus, {
+      ...(runtime.corpusManager ? { manager: runtime.corpusManager } : {}),
+    }),
+    { prefix: "/api/v1/runtime-nodes" },
+  );
+
+  await app.register(
     async (runtimeNodes) => registerAdminRuntimeNodeRoutes(runtimeNodes, {
       ...(runtime.sessionManager ? { sessionManager: runtime.sessionManager } : {}),
       ...(runtime.runtimeNodeManager ? { manager: runtime.runtimeNodeManager } : {}),
     }),
     { prefix: "/api/v1/admin/runtime-nodes" },
+  );
+
+  await app.register(
+    async (corpus) => registerAdminCorpusRoutes(corpus, {
+      ...(runtime.sessionManager ? { sessionManager: runtime.sessionManager } : {}),
+      ...(runtime.corpusManager ? { manager: runtime.corpusManager } : {}),
+    }),
+    { prefix: "/api/v1/admin/corpus" },
   );
 
   await app.register(

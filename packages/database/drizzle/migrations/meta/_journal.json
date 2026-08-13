@@ -8,6 +8,13 @@
       "when": 1786475364023,
       "tag": "0000_lucky_charles_xavier",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1786660704004,
+      "tag": "0001_lyrical_blue_shield",
+      "breakpoints": true
     }
   ]
 }

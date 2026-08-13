@@ -1,6 +1,6 @@
 # OrcaSynapse Architecture
 
-OrcaSynapse is an on-premises control plane around a vanilla Hermes runtime. The product governs identity, configuration, models, profiles, prompts, guardrails, toolset admission, operations, and audit evidence without becoming a second agent runtime or memory system.
+OrcaSynapse is an on-premises control plane around a vanilla Hermes runtime. The product governs identity, configuration, models, profiles, prompts, guardrails, toolset admission, corpus observability, operations, and audit evidence without becoming a second agent runtime or memory source.
 
 ## Deployment baseline
 
@@ -17,8 +17,12 @@ flowchart LR
   subgraph VM2[VM2 — isolated Agentic System]
     Hermes[Vanilla Hermes runtime]
     Native[Native sessions, Skills, MEMORY.md, USER.md]
+    Corpus[Root-owned corpus reconciler]
     Hermes <--> Native
+    Corpus --> Native
   end
+  Corpus -->|signed bounded snapshots| API
+  API -->|signed conflict-safe mutations| Corpus
   API --> Inference[OpenAI-compatible inference]
   Hermes --> API
   API -. audit batches .-> SIEM[Customer SIEM]
@@ -38,8 +42,9 @@ flowchart LR
 | append-only audit trail and forwarding cursor | OrcaSynapse | VM1 PostgreSQL |
 | native transcript and model context | Hermes | VM2 native session store |
 | `MEMORY.md`, `USER.md`, Skills, runtime workspace | Hermes | VM2 Hermes state root |
+| searchable corpus mirror and immutable revisions | OrcaSynapse | VM1 PostgreSQL |
 
-OrcaSynapse sends its conversation UUID as the Hermes session ID. It never rebuilds model context from the PostgreSQL chat projection and never reads, mirrors, edits, embeds, or exposes Hermes memory files. PostgreSQL records sanitized operational evidence, not a parallel memory corpus.
+OrcaSynapse sends its conversation UUID as the Hermes session ID and never rebuilds model context from the PostgreSQL chat projection or corpus mirror. A root-owned VM2 coordinator signs requests and verifies control-plane commands while an unprivileged Hermes subprocess reads only allowlisted memory, Skill, bundle, provenance, and pending-change paths. VM1 provides lexical search and revisions. Expected-hash mutations are signed back to VM2 and applied through Hermes-native APIs in the pinned Hermes virtualenv; VM2 remains canonical. Native session databases and secret-like, symlinked, oversized, or non-allowlisted files are excluded.
 
 Vanilla Hermes shares file-backed memory within its active home/profile even though transcripts are session-scoped. This pre-production baseline is therefore one trust boundary, not per-user memory isolation.
 
@@ -57,6 +62,8 @@ An in-flight native turn is attached to the worker process; a worker restart can
 
 - VM2 receives a node-scoped gateway credential, never the upstream inference credential.
 - Signed heartbeats and desired-state messages use enrolled Ed25519 node identities with replay protection.
+- Corpus snapshots and mutation receipts use that node identity; mutation commands use the pinned control-plane signing key and expire after dispatch.
+- Destructive corpus operations require a different administrator to approve them. Audit events carry paths, hashes, state, and decisions—not file content.
 - The Hermes unit is unprivileged, filesystem-confined, and receives root-owned managed policy read-only.
 - Native toolsets fail closed unless admitted by an operator; built-in memory is the intentional baseline capability.
 - Secrets on VM1 use envelope encryption, and browser sessions are role- and scope-checked.
@@ -66,4 +73,4 @@ An in-flight native turn is attached to the worker process; a worker restart can
 
 `v4.6.0` starts schema epoch `hermes-native-v1`. The migrator refuses a database with pre-existing public tables unless it already carries the matching epoch. This deliberately prevents an ambiguous partial conversion from earlier releases. Install VM1 and VM2 cleanly; the preserved `backup/pgvector` branch remains the rollback reference for the previous product generation.
 
-The baseline requires no vector extension, embedding runtime, external memory service, Redis, queue broker, object store, or model router.
+The baseline requires no vector extension, embedding runtime, external memory service, Redis, queue broker, object store, or model router. Corpus search uses stock PostgreSQL lexical indexing.

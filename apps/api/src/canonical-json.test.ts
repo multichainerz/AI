@@ -37,6 +37,10 @@ describe("assertSignableBody", () => {
     expect(() => assertSignableBody(null)).not.toThrow();
     expect(() => assertSignableBody({ status: "ONLINE", capabilities: ["a"] })).not.toThrow();
     expect(() => assertSignableBody({ nested: { deep: ["x", null, true] } })).not.toThrow();
+    expect(() => assertSignableBody({
+      format: "orcasynapse-hermes-corpus-snapshot/v1",
+      entries: [{ path: "memories/MEMORY.md", sizeBytes: "42", readOnly: false }],
+    })).not.toThrow();
   });
 
   it("refuses a number, because jq and JSON.stringify disagree about them", () => {

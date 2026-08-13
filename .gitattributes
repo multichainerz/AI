@@ -9,3 +9,5 @@
 # that tree ships a CRLF shebang: execve then fails outright with
 # "/usr/bin/env: 'bash\r': No such file or directory".
 *.sh text eol=lf
+# The API also serves the VM2 corpus companion as an executable artifact.
+*.py text eol=lf

@@ -3,12 +3,13 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="v4.6.0"
+INSTALLER_VERSION="v4.7.0"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 HERMES_HOME_DIR="${STATE_ROOT}/home"
 RUNTIME_SERVICE="orcasynapse-hermes"
 HEARTBEAT_SERVICE="orcasynapse-hermes-heartbeat"
 DESIRED_STATE_SERVICE="orcasynapse-hermes-desired-state"
+CORPUS_SERVICE="orcasynapse-hermes-corpus"
 # Hermes runs as an unprivileged service account rather than a container
 # identity. The name is the unit name so `systemctl`, `journalctl` and `ps` all
 # agree about what is running.
@@ -17,6 +18,7 @@ HERMES_USER="orcasynapse-hermes"
 # that outranks anything the service account can write.
 HERMES_INSTALL_DIR="/usr/local/lib/hermes-agent"
 HERMES_BINARY="/usr/local/bin/hermes"
+HERMES_PYTHON="${HERMES_INSTALL_DIR}/venv/bin/python"
 HERMES_MANAGED_DIR="/etc/hermes"
 HERMES_INSTALL_URL="${ORCASYNAPSE_HERMES_INSTALL_URL:-https://hermes-agent.nousresearch.com/install.sh}"
 ENROLLMENT_STATE="${STATE_ROOT}/enrollment-state.json"
@@ -628,8 +630,9 @@ terminal:
   # Keep Hermes work inside the service account's managed, writable home. This
   # is the canonical replacement for the deprecated MESSAGING_CWD environment.
   cwd: ${HERMES_HOME_DIR}
-# Hermes owns agent memory and session continuity. These files remain inside
-# HERMES_HOME and are never read, mirrored, or edited by OrcaSynapse.
+# Hermes owns agent memory and session continuity. The runtime uses these files
+# directly; OrcaSynapse only receives the bounded corpus mirror and sends
+# conflict-safe mutations back through Hermes-native APIs.
 memory:
   memory_enabled: true
   user_profile_enabled: true
@@ -1305,9 +1308,9 @@ sign_request() {
   printf '%s' "${signature}"
 }
 
-# Agent memory and session history are native to Hermes on this node.
-# OrcaSynapse attests runtime health and keeps only operational audit evidence;
-# it never reads or mirrors the runtime's MEMORY.md / USER.md content.
+# Agent memory and session history are native to Hermes on this node. The
+# separate corpus reconciler mirrors only its allowlisted memory/skill files for
+# governed operator observability; it never becomes the runtime memory source.
 hermes_status="DEGRADED"
 if curl --fail --silent --max-time 5 http://127.0.0.1:8642/health >/dev/null; then
   hermes_status="ONLINE"
@@ -1317,7 +1320,7 @@ payload="$(jq -cS -n \
   --arg observedAt "${observed_at}" \
   --arg status "${hermes_status}" \
   --arg version "${COMMIT_PIN}" \
-  '{observedAt:$observedAt,status:$status,hermesVersion:$version,capabilities:["gateway-api","native-sessions","native-memory","signed-heartbeat"]}')"
+  '{observedAt:$observedAt,status:$status,hermesVersion:$version,capabilities:["gateway-api","native-sessions","native-memory","signed-heartbeat","corpus-sync-v1","corpus-crud-v1"]}')"
 timestamp="${observed_at}"
 nonce="$(cat /proc/sys/kernel/random/uuid)"
 signature="$(sign_request "${timestamp}" "${nonce}" "${payload}")"
@@ -1365,6 +1368,82 @@ WantedBy=timers.target
 EOF
 }
 
+verify_hermes_corpus_compatibility() {
+  [[ -x "${HERMES_PYTHON}" ]] \
+    || fail "the approved Hermes runtime has no virtualenv interpreter at ${HERMES_PYTHON}"
+  HERMES_HOME="${STATE_ROOT}/data" HERMES_MANAGED_DIR="${HERMES_MANAGED_DIR}" \
+    HOME="${HERMES_HOME_DIR}" "${HERMES_PYTHON}" - <<'PYTHON' \
+    || fail "the approved Hermes commit does not expose the native memory and Skill APIs required by the Corpus plane"
+from tools.memory_tool import load_on_disk_store
+from tools.skill_manager_tool import apply_skill_pending
+
+assert callable(load_on_disk_store)
+assert callable(apply_skill_pending)
+PYTHON
+}
+
+write_corpus_reconciler() {
+  local control_plane_url="$1" staged
+  verify_hermes_corpus_compatibility
+  install -d -m 0755 /usr/local/lib/orcasynapse
+  staged="$(mktemp /tmp/orcasynapse-corpus-reconciler.XXXXXX)"
+  ui_register_temp_file "${staged}"
+  download_with_progress "Download the governed Hermes corpus reconciler" \
+    "${control_plane_url%/}/install/hermes-corpus-reconciler.py" "${staged}" \
+    || fail "could not download the Hermes corpus reconciler from OrcaSynapse"
+  grep -Fq 'orcasynapse-hermes-corpus-snapshot/v1' "${staged}" \
+    || fail "the downloaded Hermes corpus reconciler is not a recognized OrcaSynapse artifact"
+  install -m 0755 -o root -g root "${staged}" /usr/local/lib/orcasynapse/hermes-corpus-reconciler.py
+
+  write_file_from_stdin 0644 root root "/etc/systemd/system/${CORPUS_SERVICE}.service" <<EOF
+[Unit]
+Description=Synchronize the governed Hermes corpus with OrcaSynapse
+After=network-online.target orcasynapse-hermes.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=ORCASYNAPSE_HERMES_STATE_ROOT=${STATE_ROOT}
+Environment=ORCASYNAPSE_HERMES_SOURCE=${HERMES_INSTALL_DIR}
+Environment=HERMES_HOME=${STATE_ROOT}/data
+Environment=HERMES_MANAGED_DIR=${HERMES_MANAGED_DIR}
+Environment=HOME=${HERMES_HOME_DIR}
+Environment=ORCASYNAPSE_HERMES_USER=${HERMES_USER}
+ExecStart=${HERMES_PYTHON} /usr/local/lib/orcasynapse/hermes-corpus-reconciler.py
+User=root
+Group=root
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+CapabilityBoundingSet=CAP_DAC_OVERRIDE CAP_SETGID CAP_SETUID
+ReadWritePaths=${STATE_ROOT}
+ReadOnlyPaths=${HERMES_INSTALL_DIR}
+EOF
+
+  write_file_from_stdin 0644 root root "/etc/systemd/system/${CORPUS_SERVICE}.timer" <<EOF
+[Unit]
+Description=Synchronize the governed Hermes corpus every minute
+
+[Timer]
+OnBootSec=45s
+OnUnitActiveSec=60s
+RandomizedDelaySec=10s
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+  systemctl daemon-reload
+  systemctl enable --now "${CORPUS_SERVICE}.timer" >/dev/null
+}
+
 # Repairs the runtime boundary of an already-enrolled node in place. This is
 # deliberately narrower than enrollment: identity, API keys, model policy and
 # control-plane trust remain untouched. It exists because nodes installed by an
@@ -1404,12 +1483,23 @@ repair_runtime_installation() {
     || fail "the repaired Hermes service could not restart"
   wait_for_hermes 0 \
     || fail "the repaired Hermes service did not become healthy within three minutes"
+  # Re-render the heartbeat as part of repair so a node installed before the
+  # corpus companion advertises its new capability immediately. Installing the
+  # companion alone would leave VM1 correctly treating the Corpus surface as
+  # unavailable forever, even while snapshots arrived.
+  write_heartbeat_client
+  write_corpus_reconciler "$(<"${STATE_ROOT}/control-plane-url")"
+  systemctl enable --now "${HEARTBEAT_SERVICE}.timer" >/dev/null
+  systemctl start "${HEARTBEAT_SERVICE}.service" \
+    || warning "The signed heartbeat will retry from its one-minute timer."
+  systemctl start "${CORPUS_SERVICE}.service" \
+    || warning "The corpus reconciler will retry from its one-minute timer."
   REPAIR_COMPLETED=1
 
   ui_complete "AGENTIC SYSTEM RUNTIME REPAIRED"
   ui_panel_kv "Service account home" "${HERMES_HOME_DIR}"
   ui_panel_kv "Runtime workspace" "${HERMES_HOME_DIR}"
-  ui_next "Retry the failed Session run in OrcaSynapse."
+  ui_next "Return to Agents > Corpus and confirm this node has synchronized."
 }
 
 main() {
@@ -1569,6 +1659,11 @@ EOF
       || fail "Hermes did not become healthy within three minutes"
   fi
 
+  # Refuse an incompatible pin before consuming an enrollment claim. Corpus
+  # mutations deliberately depend on these native Hermes APIs rather than on
+  # private file rewrites or a second memory implementation.
+  verify_hermes_corpus_compatibility
+
 
   step 5 7 "Enroll with the OrcaSynapse control plane"
   local model_base_url_json model_alias_json model_api_key_json
@@ -1602,6 +1697,9 @@ EOF
     response_file="$(mktemp)"
     resume_file="$(mktemp)"
     TEMPORARY_FILES+=("${request_file}" "${response_file}" "${resume_file}")
+    # Corpus capability is advertised by the first signed heartbeat only after
+    # its companion is installed. Enrollment must not claim a surface that a
+    # failed post-enrollment setup has not actually activated.
     jq -n \
     --arg nodeId "${node_id}" \
     --arg token "${token}" \
@@ -1693,9 +1791,12 @@ EOF
 
   write_heartbeat_client
   write_desired_state_client
+  write_corpus_reconciler "${control_plane_url}"
   systemctl daemon-reload
   systemctl enable --now "${HEARTBEAT_SERVICE}.timer"
   systemctl start "${HEARTBEAT_SERVICE}.service"
+  systemctl start "${CORPUS_SERVICE}.service" \
+    || warning "The corpus reconciler will retry from its one-minute timer."
 
   success "Signed heartbeat monitoring is active."
 
@@ -1734,6 +1835,7 @@ EOF
   info "The one-time enrollment claim has been consumed."
   info "OrcaSynapse now monitors this node without SSH or any remote execution channel."
   info "Toolset changes made in the dashboard reach this node within five minutes."
+  info "Hermes memory and skill changes appear in Agents > Corpus within one minute."
   warning "Before production, allow OrcaSynapse to reach TCP/8642 and restrict VM2 egress to OrcaSynapse HTTPS plus approved inference and MCP destinations."
   ui_next "Return to OrcaSynapse and confirm this node reports Healthy."
 }

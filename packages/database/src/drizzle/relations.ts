@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { enterpriseUser, enterpriseUserSession, serviceConnection, secretRecord, configurationRevision, chatMessage, chatFeedback, agentProfile, agentProfileVersion, chatConversation, agentRun, agentToolGrant, governedTool, oidcAuthorizationRequest, governedToolCall, toolApproval, modelDeployment, evaluationRun, promptTemplate, agentRunEvent, hermesRuntimeNode, hermesNodeRequestNonce, hermesNodeEnrollment, guardrailPolicy, agentRunApproval } from "./schema.js";
+import { enterpriseUser, enterpriseUserSession, serviceConnection, secretRecord, configurationRevision, chatMessage, chatFeedback, agentProfile, agentProfileVersion, chatConversation, agentRun, agentToolGrant, governedTool, oidcAuthorizationRequest, governedToolCall, toolApproval, modelDeployment, evaluationRun, promptTemplate, agentRunEvent, hermesRuntimeNode, hermesNodeRequestNonce, hermesNodeEnrollment, hermesCorpusSnapshot, hermesCorpusEntry, hermesCorpusMutation, hermesCorpusRevision, guardrailPolicy, agentRunApproval } from "./schema.js";
 
 export const enterpriseUserSessionRelations = relations(enterpriseUserSession, ({one}) => ({
 	enterpriseUser: one(enterpriseUser, {
@@ -173,6 +173,32 @@ export const hermesRuntimeNodeRelations = relations(hermesRuntimeNode, ({one, ma
 	}),
 	hermesNodeRequestNonces: many(hermesNodeRequestNonce),
 	hermesNodeEnrollments: many(hermesNodeEnrollment),
+	hermesCorpusSnapshots: many(hermesCorpusSnapshot),
+	hermesCorpusEntries: many(hermesCorpusEntry),
+	hermesCorpusMutations: many(hermesCorpusMutation),
+	hermesCorpusRevisions: many(hermesCorpusRevision),
+}));
+
+export const hermesCorpusSnapshotRelations = relations(hermesCorpusSnapshot, ({one, many}) => ({
+	hermesRuntimeNode: one(hermesRuntimeNode, { fields: [hermesCorpusSnapshot.nodeId], references: [hermesRuntimeNode.id] }),
+	hermesCorpusEntries: many(hermesCorpusEntry),
+}));
+
+export const hermesCorpusEntryRelations = relations(hermesCorpusEntry, ({one, many}) => ({
+	hermesRuntimeNode: one(hermesRuntimeNode, { fields: [hermesCorpusEntry.nodeId], references: [hermesRuntimeNode.id] }),
+	lastSnapshot: one(hermesCorpusSnapshot, { fields: [hermesCorpusEntry.lastSnapshotId], references: [hermesCorpusSnapshot.id] }),
+	hermesCorpusRevisions: many(hermesCorpusRevision),
+}));
+
+export const hermesCorpusMutationRelations = relations(hermesCorpusMutation, ({one, many}) => ({
+	hermesRuntimeNode: one(hermesRuntimeNode, { fields: [hermesCorpusMutation.nodeId], references: [hermesRuntimeNode.id] }),
+	hermesCorpusRevisions: many(hermesCorpusRevision),
+}));
+
+export const hermesCorpusRevisionRelations = relations(hermesCorpusRevision, ({one}) => ({
+	hermesRuntimeNode: one(hermesRuntimeNode, { fields: [hermesCorpusRevision.nodeId], references: [hermesRuntimeNode.id] }),
+	hermesCorpusEntry: one(hermesCorpusEntry, { fields: [hermesCorpusRevision.entryId], references: [hermesCorpusEntry.id] }),
+	hermesCorpusMutation: one(hermesCorpusMutation, { fields: [hermesCorpusRevision.mutationId], references: [hermesCorpusMutation.id] }),
 }));
 
 export const hermesNodeRequestNonceRelations = relations(hermesNodeRequestNonce, ({one}) => ({

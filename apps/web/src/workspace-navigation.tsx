@@ -7,6 +7,7 @@ export type ActiveView =
   | "Models"
   | "Prompts"
   | "Agents"
+  | "Corpus"
   | "Integrations"
   | "Guardrails"
   | "Operations"
@@ -55,6 +56,7 @@ export const primaryNavigationGroups: ReadonlyArray<{
 const sectionNavigation: Partial<Record<ProductArea, ReadonlyArray<SectionNavigationItem>>> = {
   Agents: [
     { label: "Profiles & runs", view: "Agents" },
+    { label: "Hermes corpus", view: "Corpus" },
     { label: "Governed tools", view: "Integrations" },
   ],
   Operations: [
@@ -73,6 +75,7 @@ const areaByView: Record<ActiveView, ProductArea> = {
   Overview: "Dashboard",
   Chat: "Session",
   Agents: "Agents",
+  Corpus: "Agents",
   Integrations: "Agents",
   Deployment: "Platform",
   Models: "Platform",
@@ -86,6 +89,7 @@ const pathByView: Record<ActiveView, string> = {
   Overview: "#dashboard",
   Chat: "#session",
   Agents: "#agents/profiles",
+  Corpus: "#agents/corpus",
   Integrations: "#agents/tools",
   Deployment: "#platform/setup",
   Models: "#platform/models",
@@ -120,6 +124,9 @@ export function viewFromHash(hash: string): ActiveView {
     case "#agents":
     case "#agents/profiles":
       return "Agents";
+    case "#agents/corpus":
+    case "#corpus":
+      return "Corpus";
     case "#agents/tools":
     case "#integrations":
       return "Integrations";

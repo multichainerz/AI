@@ -4,7 +4,7 @@
 
 This workflow turns a clean Ubuntu systemd VM into the isolated OrcaSynapse Agentic System. It installs the Hermes Agent runtime, configures it to use OrcaSynapse's authenticated inference gateway, and establishes a signed node identity without retaining SSH credentials.
 
-VM2 runs exactly one plane: the Hermes gateway/API server, installed natively from Hermes's own installer and supervised by systemd as `orcasynapse-hermes.service`. It durably owns Hermes-native sessions, Skills, `MEMORY.md`, and `USER.md` under `/var/lib/orcasynapse-hermes`. Destroying or cleanly re-enrolling VM2 without restoring that state loses native session and memory continuity. The installer uses Hermes's root-owned managed scope to pin the approved model route, enable built-in memory, apply secret redaction and unattended loop circuit breakers, and set an explicit `platform_toolsets.api_server: [no_mcp, memory]` baseline so the stock runtime does not inherit its broad default tool surface.
+VM2 runs exactly one agent runtime plane: the Hermes gateway/API server, installed natively from Hermes's own installer and supervised by systemd as `orcasynapse-hermes.service`. It durably owns Hermes-native sessions, Skills, `MEMORY.md`, and `USER.md` under `/var/lib/orcasynapse-hermes`. A root-owned, one-shot `orcasynapse-hermes-corpus` companion publishes an allowlisted signed mirror and applies signed mutations through Hermes-native APIs; it is not a memory runtime and never supplies model context. Destroying or cleanly re-enrolling VM2 without restoring Hermes state loses native session and memory continuity.
 
 ## Prerequisites
 
@@ -42,7 +42,7 @@ For an offline administrative transfer, download the JSON bundle and run `sudo b
 
 Revocation and destruction are intentionally separate. Revoke the node first to disable its runtime credential and generated service connections. Then select **Remove** beside the revoked node and follow the dashboard's two-stage flow:
 
-1. Run the displayed `remove-agentic-node.sh` command on VM2 and type `DESTROY` at its local terminal. It stops and removes the `orcasynapse-hermes` unit, the Hermes installation, the service account, node identity, managed policy, and the heartbeat and desired-state timers. It preserves unrelated systemd units, Ubuntu packages, and external backups. Before any irreversible step it proves the unit is OrcaSynapse-managed - the unit file must carry `X-OrcaSynapse-Managed=true` or name the OrcaSynapse state root in `ReadWritePaths=` - and refuses to touch a Hermes someone else installed. The remover honors the same `ORCASYNAPSE_HERMES_STATE_ROOT` override the installer accepts and reports its own version in the completion panel.
+1. Run the displayed `remove-agentic-node.sh` command on VM2 and type `DESTROY` at its local terminal. It stops and removes the `orcasynapse-hermes` unit, corpus companion, Hermes installation, service account, node identity, managed policy, and the heartbeat, desired-state, and corpus timers. It preserves unrelated systemd units, Ubuntu packages, and external backups. Before any irreversible step it proves the unit is OrcaSynapse-managed - the unit file must carry `X-OrcaSynapse-Managed=true` or name the OrcaSynapse state root in `ReadWritePaths=` - and refuses to touch a Hermes someone else installed. The remover honors the same `ORCASYNAPSE_HERMES_STATE_ROOT` override the installer accepts and reports its own version in the completion panel.
 2. Confirm the host-side result, type the exact node slug, and choose **Remove permanently**. OrcaSynapse transactionally removes the runtime-node record, enrollment claims, replay nonces, and the generated Hermes connection. The security audit event remains.
 
 OrcaSynapse has no standing SSH credential or remote execution path on VM2, so host destruction is an explicit operator-attested action. If the VM has already been destroyed by the infrastructure platform, use that destruction event as the host-side evidence. Snapshot and backup retirement remains the infrastructure operator's responsibility.
@@ -52,15 +52,16 @@ OrcaSynapse has no standing SSH credential or remote execution path on VM2, so h
 1. validates the bundle and expiry;
 2. installs required host packages when needed (`ca-certificates curl git jq openssl python3 xz-utils`);
 3. creates a local Ed25519 identity;
-4. installs Hermes at the approved commit, creates the unprivileged `orcasynapse-hermes` service account, and starts `orcasynapse-hermes.service` with persistent state under the OrcaSynapse state root and a read-only `/etc/hermes` managed scope;
+4. installs Hermes at the approved commit, creates the unprivileged `orcasynapse-hermes` service account, starts `orcasynapse-hermes.service`, and verifies that the pin exposes the native memory and Skill mutation APIs required by the Corpus plane before consuming the enrollment claim;
 5. enrolls with the single-use claim;
 6. receives the OrcaSynapse `/internal/v1` URL, dashboard-selected model alias, and a node-scoped bearer key;
 7. pins the model route, Hermes-native memory, and baseline guardrails in managed scope, admitting only the built-in `memory` tool and disabling default MCP discovery and every other unapproved native toolset;
-8. starts a systemd timer that sends signed replay-protected heartbeats every minute.
+8. installs the root-owned corpus coordinator with Hermes's pinned virtualenv, performs filesystem scanning and mutations as the unprivileged Hermes account, and starts its one-minute timer for signed, bounded snapshots and mutation polling;
+9. starts a systemd timer that sends signed replay-protected heartbeats every minute.
 
 After the claim is consumed, the installer writes a root-only `${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}/enrollment-state.json` recovery journal before applying managed policy. If a later step fails, rerun the same command: the installer reuses the node identity and scoped configuration, repeats idempotent steps, and removes the recovery journal only after the heartbeat timer starts.
 
-The node reports `ONLINE` once its Hermes API port answers. Treat that as transport health, not proof of generation: installation acceptance must also create a native session and stream a turn because the agent can fail after the gateway has started. VM2 runs a single service plane, so there is no separate memory daemon to reconcile.
+The node reports `ONLINE` once its Hermes API port answers. Treat that as transport health, not proof of generation: installation acceptance must also create a native session and stream a turn because the agent can fail after the gateway has started. There is no separate memory daemon; the corpus unit is a short-lived synchronization companion and Hermes remains authoritative.
 
 The inference bootstrap never contains the upstream serving credential. Revoking a node disables its generated Hermes connection.
 
@@ -68,7 +69,7 @@ The inference bootstrap never contains the upstream serving credential. Revoking
 
 | Source | Destination | Required use |
 | --- | --- | --- |
-| VM2 | OrcaSynapse HTTPS | enrollment, heartbeat, inference gateway |
+| VM2 | OrcaSynapse HTTPS | enrollment, heartbeat, inference gateway, signed corpus snapshots and mutation polling |
 | OrcaSynapse | VM2 TCP 8642 | Hermes health and governed agent calls |
 | VM2 | Ubuntu archive, `hermes-agent.nousresearch.com`, GitHub, PyPI, npm, `astral.sh` | installation and upgrade only - see below |
 
@@ -92,7 +93,7 @@ Restrict journal readers on VM2 and include key rotation and journal-retention b
 
 ## Backup and restore
 
-Back up `${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}/data` for sessions, Skills, profiles, built-in memory, and runtime configuration. Back up PostgreSQL separately for control-plane configuration, sanitized run evidence, and audit history.
+Back up `${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}/data` for sessions, Skills, profiles, built-in memory, and runtime configuration. Back up PostgreSQL separately for control-plane configuration, corpus mirror revisions, sanitized run evidence, and audit history. The VM1 mirror is not a substitute for the VM2 backup.
 
 Preferred host-loss procedure:
 
@@ -117,4 +118,4 @@ curl -fsSL https://orcasynapse.example.internal/install/agentic-node.sh \
   | sudo bash -s -- --repair
 ```
 
-The repair mode requires an intact completed enrollment and an OrcaSynapse-owned systemd unit. It changes only the service account home, managed runtime directories, and runtime unit, then restarts Hermes and verifies `/health`. It refuses incomplete state and units it cannot prove OrcaSynapse owns.
+The repair mode requires an intact completed enrollment and an OrcaSynapse-owned systemd unit. It reconciles the service account home, managed runtime directories, runtime unit, and corpus companion, then restarts Hermes and verifies `/health`. It refuses incomplete state and units it cannot prove OrcaSynapse owns.
