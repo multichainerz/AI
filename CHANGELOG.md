@@ -5,6 +5,25 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v3.17.0 — 2026-08-14
+
+Agents now includes a repository-style observability plane for the native
+Hermes corpus. Administrators can browse and lexically search allowlisted
+memory and Skill files, inspect immutable revisions, and submit governed CRUD
+changes while VM2 remains the canonical state owner and the mirror never
+becomes model context.
+
+A confined VM2 companion publishes signed, bounded snapshots and applies
+signed expected-hash mutations through the pinned Hermes MemoryStore and Skill
+APIs. Secret-like paths and content, native session storage, symlinks,
+oversized files, stale snapshots, ambiguous Skill identities, and unsafe
+idempotency replays fail closed. Destructive operations require approval from
+a different administrator.
+
+VM1 receives the stock-PostgreSQL migration, scoped API and audit surfaces,
+and updated public documentation. Fresh VM2 enrollment installs the companion;
+existing ai-v3.16.0 nodes gain it through the generated `--repair` workflow.
+
 ## ai-v3.16.0 — 2026-08-12
 
 OrcaSynapse now has one agent-state authority: vanilla Hermes. Conversations

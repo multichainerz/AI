@@ -43,8 +43,11 @@ branch.
 The pinned vanilla Hermes runtime keeps per-session transcripts but shares its
 file-backed `MEMORY.md` and `USER.md` across sessions in the active home/profile.
 The current pre-production deployment is one trust boundary; it must not be
-treated as multi-user memory isolation. OrcaSynapse does not read or mirror
-those files and records only sanitized lifecycle evidence.
+treated as multi-user memory isolation. A root-owned VM2 companion mirrors an
+allowlisted, bounded view of these files and Skills to administrator-only VM1
+storage for lexical search, revision history, and governed CRUD. VM2 remains
+canonical, the mirror is never prompt context, secret-like and native session
+files are excluded, and audit records contain metadata rather than file content.
 
 ## Handling expectations
 

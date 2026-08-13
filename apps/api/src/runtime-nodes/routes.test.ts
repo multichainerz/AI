@@ -129,12 +129,22 @@ describe("Hermes runtime-node routes", () => {
     expect(ready.body).toContain("write_file_from_stdin()");
     expect(ready.body).toContain("allow_lazy_installs: false");
     expect(ready.body).toContain("native-sessions");
+    expect(ready.body).toContain("corpus-sync-v1");
+    expect(ready.body).toContain('CORPUS_SERVICE="orcasynapse-hermes-corpus"');
+    expect(ready.body).toContain('systemctl enable --now "${CORPUS_SERVICE}.timer"');
+    expect(ready.body).toContain("/install/hermes-corpus-reconciler.py");
     expect(ready.body).toContain("-in \"${message_file}\"");
     // A trust mismatch must still name the identity this VM2 actually holds,
     // so an operator can compare it against the dashboard record.
     expect(ready.body).toContain("VM1 rejected the enrolled VM2 identity ${node_fingerprint}");
     expect(ready.body).not.toContain("/dev/stdin");
     expect((await app.inject({ method: "GET", url: "/install/hermes-node.sh" })).statusCode).toBe(404);
+    const corpusReconciler = await app.inject({ method: "GET", url: "/install/hermes-corpus-reconciler.py" });
+    expect(corpusReconciler.statusCode, corpusReconciler.body).toBe(200);
+    expect(corpusReconciler.headers["content-type"]).toContain("text/x-python");
+    expect(corpusReconciler.headers["cache-control"]).toBe("no-store");
+    expect(corpusReconciler.body).toContain("orcasynapse-hermes-corpus-snapshot/v1");
+    expect(corpusReconciler.body).toContain("apply_skill_pending");
     const remover = await app.inject({ method: "GET", url: "/install/remove-agentic-node.sh" });
     expect(remover.statusCode, remover.body).toBe(200);
     expect(remover.headers["content-disposition"]).toBe("inline; filename=remove-agentic-node.sh");

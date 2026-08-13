@@ -52,6 +52,7 @@ describe("committed Drizzle migrations", () => {
       "SchemaMetadata", "AgentRun", "AgentProfile", "ChatConversation", "ChatMessage",
       "ServiceConnection", "SecretRecord", "AuditEvent", "HermesRuntimeNode",
       "GuardrailPolicy", "ModelDeployment", "EnterpriseUser", "WorkerNode",
+      "HermesCorpusSnapshot", "HermesCorpusEntry", "HermesCorpusRevision", "HermesCorpusMutation",
     ]) {
       expect(statements, table).toContain(`CREATE TABLE "${table}"`);
     }
@@ -67,6 +68,11 @@ describe("committed Drizzle migrations", () => {
       expect(statements, table).not.toContain(`CREATE TABLE "${table}"`);
     }
     expect(statements).not.toContain("vector_cosine_ops");
+    expect(statements).toContain("to_tsvector('simple'");
+    expect(statements).toContain('"requestedBySubject" varchar(320) NOT NULL');
+    expect(statements).toContain('"approvedBySubject" varchar(320)');
+    expect(statements).not.toContain('"destinationPath"');
+    expect(statements).not.toContain("'SKILL_RENAME'");
   });
 
   it("stores administrator role grants as an enum array rather than an opaque fallback", () => {

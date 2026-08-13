@@ -706,6 +706,23 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
     return { publicKeyPem, fingerprint };
   }
 
+  /** Shared enrolled-node authentication for adjacent VM2-owned planes. */
+  async authenticateNodeRequest(nodeId: string, headers: NodeSignatureHeaders, body: unknown): Promise<void> {
+    await this.authenticate(nodeId, headers, body);
+  }
+
+  /** Sign an opaque JSON document with the identity VM2 pinned at enrollment. */
+  async signNodeDocument(document: unknown): Promise<RuntimeDesiredState> {
+    assertSignableBody(document);
+    const { privateKeyPem, fingerprint } = await this.signingKey();
+    const bytes = Buffer.from(JSON.stringify(document), "utf8");
+    return {
+      documentBase64: bytes.toString("base64"),
+      signature: sign(null, bytes, privateKeyPem).toString("base64"),
+      publicKeyFingerprint: fingerprint,
+    };
+  }
+
   /**
    * What this node should be running, signed so the node can trust it.
    *
@@ -726,13 +743,7 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
       generatedAt: new Date().toISOString(),
       admittedToolsets: admissions.map((row) => row.toolsetName),
     };
-    const { privateKeyPem, fingerprint } = await this.signingKey();
-    const bytes = Buffer.from(JSON.stringify(document), "utf8");
-    return {
-      documentBase64: bytes.toString("base64"),
-      signature: sign(null, bytes, privateKeyPem).toString("base64"),
-      publicKeyFingerprint: fingerprint,
-    };
+    return this.signNodeDocument(document);
   }
 
   async heartbeat(nodeId: string, headers: NodeSignatureHeaders, input: HermesNodeHeartbeat): Promise<HermesNodeHeartbeatResult> {

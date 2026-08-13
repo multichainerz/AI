@@ -16,6 +16,7 @@ OrcaSynapse is a private control plane for operating Hermes-based agentic workfl
 ### Agents and Platform
 
 - Version and activate agent profiles, instructions, Skills metadata, limits, and model aliases.
+- Browse and lexically search a signed mirror of Hermes memory and Skill files, inspect revisions, and submit governed CRUD changes.
 - Register and test OpenAI-compatible inference connections.
 - Manage model routes, prompt templates, guardrail policies, native toolset admissions, and governed tool metadata.
 - Enroll, attest, monitor, revoke, repair, and remove a VM2 Hermes node.
@@ -34,7 +35,10 @@ Hermes is the only owner of runtime context and memory. OrcaSynapse must:
 - use stable native Hermes session IDs;
 - allow Hermes to maintain its own transcript and built-in memory;
 - avoid replaying control-plane chat rows as model history;
-- never read, mirror, edit, search, embed, or expose `MEMORY.md`, `USER.md`, or Hermes's session database;
+- keep VM2 authoritative while mirroring only allowlisted `MEMORY.md`, `USER.md`, Skill, bundle, provenance, and pending-change files for administrator observability;
+- apply writes on VM2 through Hermes-native mutation APIs, signed commands, expected hashes, and separate approval for destructive changes;
+- never mirror Hermes's session database or use the corpus mirror as model context;
+- never embed or semantically index the corpus;
 - retain auditability without turning operational evidence into an agent-memory store.
 
 The current vanilla Hermes home/profile shares file-backed memory across its sessions. Until a stronger isolation topology is designed and accepted, the installation is one trust boundary and is not marketed as per-user memory isolation.
@@ -51,7 +55,7 @@ The current vanilla Hermes home/profile shares file-backed memory across its ses
 
 ## Explicit non-goals
 
-- owning or duplicating Hermes memory;
+- owning or serving Hermes memory as an agent context source;
 - local semantic retrieval, file ingestion, embedding, or vector indexing;
 - an external memory service;
 - a synthetic benchmark runner;

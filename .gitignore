@@ -3,6 +3,8 @@ dist/
 coverage/
 *.log
 .DS_Store
+__pycache__/
+*.py[cod]
 
 # Local bootstrap material must never be committed.
 .local/

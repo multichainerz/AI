@@ -40,6 +40,9 @@ export const evaluationTargetType = pgEnum("EvaluationTargetType", ['MODEL', 'PR
 export const guardrailPolicyStatus = pgEnum("GuardrailPolicyStatus", ['DRAFT', 'ACTIVE', 'SUSPENDED'])
 export const hermesNodeEnrollmentStatus = pgEnum("HermesNodeEnrollmentStatus", ['ISSUED', 'CONSUMED', 'REVOKED', 'EXPIRED'])
 export const hermesRuntimeNodeStatus = pgEnum("HermesRuntimeNodeStatus", ['PENDING', 'ONLINE', 'DEGRADED', 'DRAINING', 'SUSPENDED', 'REVOKED', 'OFFLINE'])
+export const hermesCorpusEntryKind = pgEnum("HermesCorpusEntryKind", ['MEMORY', 'SKILL', 'SKILL_FILE', 'SKILL_BUNDLE', 'PROVENANCE', 'PENDING_CHANGE'])
+export const hermesCorpusMutationOperation = pgEnum("HermesCorpusMutationOperation", ['MEMORY_ADD', 'MEMORY_REPLACE', 'MEMORY_REMOVE', 'SKILL_CREATE', 'SKILL_EDIT', 'SKILL_DELETE', 'SKILL_WRITE_FILE', 'SKILL_REMOVE_FILE'])
+export const hermesCorpusMutationStatus = pgEnum("HermesCorpusMutationStatus", ['PENDING_APPROVAL', 'QUEUED', 'DISPATCHED', 'APPLIED', 'REJECTED', 'CONFLICT', 'FAILED', 'EXPIRED'])
 export const modelDeploymentStatus = pgEnum("ModelDeploymentStatus", ['DRAFT', 'ACTIVE', 'SUSPENDED'])
 export const modelWorkload = pgEnum("ModelWorkload", ['CHAT', 'AGENT'])
 export const onboardingEvidenceOutcome = pgEnum("OnboardingEvidenceOutcome", ['PASSED', 'FAILED', 'WARNING'])
@@ -977,6 +980,125 @@ export const hermesNodeEnrollment = pgTable("HermesNodeEnrollment", {
 			foreignColumns: [hermesRuntimeNode.id],
 			name: "HermesNodeEnrollment_nodeId_fkey"
 		}).onUpdate("cascade").onDelete("cascade"),
+]);
+
+/**
+ * An observation of the allowlisted Hermes corpus on one enrolled VM2.
+ * HERMES_HOME remains canonical; these rows are a searchable control-plane
+ * mirror and never participate in prompt construction.
+ */
+export const hermesCorpusSnapshot = pgTable("HermesCorpusSnapshot", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	nodeId: uuid().notNull(),
+	rootHash: varchar({ length: 64 }).notNull(),
+	observedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull(),
+	entryCount: integer().notNull(),
+	totalBytes: bigint({ mode: "number" }).notNull(),
+	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+	index("HermesCorpusSnapshot_nodeId_observedAt_idx").using("btree", table.nodeId.asc().nullsLast(), table.observedAt.desc().nullsLast()),
+	foreignKey({
+		columns: [table.nodeId],
+		foreignColumns: [hermesRuntimeNode.id],
+		name: "HermesCorpusSnapshot_nodeId_fkey"
+	}).onUpdate("cascade").onDelete("cascade"),
+]);
+
+export const hermesCorpusEntry = pgTable("HermesCorpusEntry", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	nodeId: uuid().notNull(),
+	path: text().notNull(),
+	kind: hermesCorpusEntryKind().notNull(),
+	mediaType: varchar({ length: 160 }).notNull(),
+	sizeBytes: integer().notNull(),
+	sha256: varchar({ length: 64 }).notNull(),
+	content: text(),
+	structuredEntries: jsonb(),
+	readOnly: boolean().default(false).notNull(),
+	revision: integer().default(1).notNull(),
+	lastSnapshotId: uuid(),
+	observedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull(),
+	firstSeenAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
+	deletedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
+}, (table) => [
+	uniqueIndex("HermesCorpusEntry_nodeId_path_key").using("btree", table.nodeId.asc().nullsLast(), table.path.asc().nullsLast()),
+	index("HermesCorpusEntry_nodeId_kind_deletedAt_idx").using("btree", table.nodeId.asc().nullsLast(), table.kind.asc().nullsLast(), table.deletedAt.asc().nullsLast()),
+	index("HermesCorpusEntry_search_idx").using("gin", sql`to_tsvector('simple', coalesce(${table.path}, '') || ' ' || coalesce(${table.content}, ''))`),
+	foreignKey({
+		columns: [table.nodeId],
+		foreignColumns: [hermesRuntimeNode.id],
+		name: "HermesCorpusEntry_nodeId_fkey"
+	}).onUpdate("cascade").onDelete("cascade"),
+	foreignKey({
+		columns: [table.lastSnapshotId],
+		foreignColumns: [hermesCorpusSnapshot.id],
+		name: "HermesCorpusEntry_lastSnapshotId_fkey"
+	}).onUpdate("cascade").onDelete("set null"),
+]);
+
+export const hermesCorpusMutation = pgTable("HermesCorpusMutation", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	nodeId: uuid().notNull(),
+	operation: hermesCorpusMutationOperation().notNull(),
+	path: text().notNull(),
+	expectedHash: varchar({ length: 64 }),
+	content: text(),
+	oldText: text(),
+	reason: varchar({ length: 1000 }).notNull(),
+	status: hermesCorpusMutationStatus().notNull(),
+	requestedBy: uuid().notNull(),
+	requestedBySubject: varchar({ length: 320 }).notNull(),
+	approvedBy: uuid(),
+	approvedBySubject: varchar({ length: 320 }),
+	beforeHash: varchar({ length: 64 }),
+	afterHash: varchar({ length: 64 }),
+	error: text(),
+	idempotencyKey: uuid().notNull(),
+	requestedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	approvedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
+	dispatchedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
+	completedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
+}, (table) => [
+	uniqueIndex("HermesCorpusMutation_idempotencyKey_key").using("btree", table.idempotencyKey.asc().nullsLast()),
+	index("HermesCorpusMutation_nodeId_status_requestedAt_idx").using("btree", table.nodeId.asc().nullsLast(), table.status.asc().nullsLast(), table.requestedAt.asc().nullsLast()),
+	foreignKey({
+		columns: [table.nodeId],
+		foreignColumns: [hermesRuntimeNode.id],
+		name: "HermesCorpusMutation_nodeId_fkey"
+	}).onUpdate("cascade").onDelete("cascade"),
+]);
+
+export const hermesCorpusRevision = pgTable("HermesCorpusRevision", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	entryId: uuid(),
+	nodeId: uuid().notNull(),
+	path: text().notNull(),
+	revision: integer().notNull(),
+	changeKind: varchar({ length: 32 }).notNull(),
+	beforeHash: varchar({ length: 64 }),
+	afterHash: varchar({ length: 64 }),
+	beforeContent: text(),
+	afterContent: text(),
+	mutationId: uuid(),
+	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+	index("HermesCorpusRevision_nodeId_path_revision_idx").using("btree", table.nodeId.asc().nullsLast(), table.path.asc().nullsLast(), table.revision.desc().nullsLast()),
+	foreignKey({
+		columns: [table.entryId],
+		foreignColumns: [hermesCorpusEntry.id],
+		name: "HermesCorpusRevision_entryId_fkey"
+	}).onUpdate("cascade").onDelete("set null"),
+	foreignKey({
+		columns: [table.nodeId],
+		foreignColumns: [hermesRuntimeNode.id],
+		name: "HermesCorpusRevision_nodeId_fkey"
+	}).onUpdate("cascade").onDelete("cascade"),
+	foreignKey({
+		columns: [table.mutationId],
+		foreignColumns: [hermesCorpusMutation.id],
+		name: "HermesCorpusRevision_mutationId_fkey"
+	}).onUpdate("cascade").onDelete("set null"),
 ]);
 
 export const guardrailPolicy = pgTable("GuardrailPolicy", {
