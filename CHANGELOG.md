@@ -5,6 +5,20 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## v4.7.1 — 2026-08-14
+
+The VM2 Corpus companion now resolves the Hermes service account before
+forking and uses Python's native numeric user, group, and supplementary-group
+controls for scan and mutation subprocesses. This removes the opaque
+`preexec_fn` failure observed under the hardened systemd unit while preserving
+the root-only signing process and the unprivileged corpus filesystem boundary.
+
+Regression coverage now exercises the complete credential contract and a real
+root-to-service-user transition on POSIX. The fix was also verified under the
+same capability and sandbox properties used by the production unit. Existing
+v4.7.0 nodes are repaired in place by rerunning their generated VM2
+installer with `--repair`.
+
 ## v4.7.0 — 2026-08-14
 
 Agents now includes a repository-style observability plane for the native

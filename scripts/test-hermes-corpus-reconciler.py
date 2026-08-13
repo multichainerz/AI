@@ -16,6 +16,11 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+try:
+    import pwd as system_pwd
+except ImportError:
+    system_pwd = None
+
 
 class CorpusReconcilerTests(unittest.TestCase):
     @classmethod
@@ -149,6 +154,100 @@ class CorpusReconcilerTests(unittest.TestCase):
             self.module.read_state = original
             os.environ.pop("ORCASYNAPSE_NODE_ID", None)
         self.assertEqual(result["status"], "CONFLICT")
+
+    def test_root_scan_uses_native_complete_credential_drop(self) -> None:
+        snapshot = {
+            "format": self.module.FORMAT_SNAPSHOT,
+            "observedAt": "2026-08-14T00:00:00.000Z",
+            "rootHash": hashlib.sha256().hexdigest(),
+            "entries": [],
+        }
+        observed = {}
+        original_geteuid = getattr(self.module.os, "geteuid", None)
+        original_pwd = self.module.pwd
+        original_run = self.module.subprocess.run
+
+        def run(*args, **kwargs):
+            observed["args"] = args
+            observed["kwargs"] = kwargs
+            return types.SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(snapshot).encode("utf-8"),
+                stderr=b"",
+            )
+
+        self.module.os.geteuid = lambda: 0
+        self.module.pwd = types.SimpleNamespace(
+            getpwnam=lambda name: types.SimpleNamespace(pw_uid=731, pw_gid=732)
+            if name == self.module.SERVICE_USER else (_ for _ in ()).throw(KeyError(name)),
+        )
+        self.module.subprocess.run = run
+        try:
+            self.assertEqual(self.module.scan_as_service_user(), snapshot)
+        finally:
+            if original_geteuid is None:
+                del self.module.os.geteuid
+            else:
+                self.module.os.geteuid = original_geteuid
+            self.module.pwd = original_pwd
+            self.module.subprocess.run = original_run
+
+        options = observed["kwargs"]
+        self.assertEqual(options["user"], 731)
+        self.assertEqual(options["group"], 732)
+        self.assertEqual(options["extra_groups"], ())
+        self.assertNotIn("preexec_fn", options)
+
+    def test_missing_service_account_fails_before_spawning(self) -> None:
+        original_pwd = self.module.pwd
+        self.module.pwd = types.SimpleNamespace(
+            getpwnam=lambda name: (_ for _ in ()).throw(KeyError(name)),
+        )
+        try:
+            with self.assertRaisesRegex(self.module.ReconcileError, "service account does not exist"):
+                self.module.service_user_subprocess_credentials()
+        finally:
+            self.module.pwd = original_pwd
+
+    @unittest.skipUnless(
+        os.name == "posix" and hasattr(os, "geteuid") and os.geteuid() == 0 and system_pwd is not None,
+        "a real privilege drop requires a root POSIX test host",
+    )
+    def test_root_scan_really_runs_with_service_account_credentials(self) -> None:
+        try:
+            account = system_pwd.getpwnam("nobody")
+        except KeyError:
+            self.skipTest("the POSIX test host has no nobody account")
+
+        original_state_root = self.module.STATE_ROOT
+        original_home = self.module.HERMES_HOME
+        original_service_user = self.module.SERVICE_USER
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            data = root / "data"
+            memories = data / "memories"
+            memories.mkdir(parents=True)
+            memory = memories / "MEMORY.md"
+            memory.write_text("A service-owned memory", encoding="utf-8")
+            os.chmod(root, 0o711)
+            # Keep the fixture traversable without CAP_CHOWN. The production
+            # unit deliberately lacks that capability; real corpus paths are
+            # already owned by the Hermes account before this service starts.
+            os.chmod(data, 0o755)
+            os.chmod(memories, 0o755)
+            os.chmod(memory, 0o644)
+            self.module.STATE_ROOT = root
+            self.module.HERMES_HOME = data
+            self.module.SERVICE_USER = "nobody"
+            try:
+                snapshot = self.module.scan_as_service_user()
+            finally:
+                self.module.STATE_ROOT = original_state_root
+                self.module.HERMES_HOME = original_home
+                self.module.SERVICE_USER = original_service_user
+
+        self.assertEqual([entry["path"] for entry in snapshot["entries"]], ["memories/MEMORY.md"])
+        self.assertEqual(snapshot["entries"][0]["content"], "A service-owned memory")
 
     def test_memory_changes_use_the_native_store(self) -> None:
         target = self.root / "state/data/memories/MEMORY.md"

@@ -352,7 +352,7 @@ def scan_as_service_user() -> dict[str, Any]:
         return scan_corpus()
     completed = subprocess.run(
         [sys.executable, str(SCRIPT_PATH), "--scan"], capture_output=True,
-        preexec_fn=demote_to_service_user, env={
+        **service_user_subprocess_credentials(), env={
             **os.environ, "HERMES_HOME": str(HERMES_HOME),
             "ORCASYNAPSE_HERMES_STATE_ROOT": str(STATE_ROOT),
             "ORCASYNAPSE_HERMES_SOURCE": str(HERMES_SOURCE),
@@ -504,13 +504,22 @@ def apply_command(command: dict[str, Any]) -> dict[str, Any]:
     return {"status": "APPLIED", "observedHash": file_hash(path), "message": "Hermes applied the governed corpus mutation."}
 
 
-def demote_to_service_user() -> None:
+def service_user_subprocess_credentials() -> dict[str, Any]:
+    """Resolve the Hermes account before fork and request a complete ID drop.
+
+    Python's preexec_fn runs after fork and before exec. Calling pwd/NSS or
+    other non-async-signal-safe library code there can fail opaquely as
+    ``Exception occurred in preexec_fn``. Popen's POSIX credential parameters
+    perform the transition internally and empty supplementary groups as an
+    explicit part of the security boundary.
+    """
     if pwd is None:
         raise ReconcileError("service-account demotion requires a Unix runtime")
-    account = pwd.getpwnam(SERVICE_USER)
-    os.setgroups([])
-    os.setgid(account.pw_gid)
-    os.setuid(account.pw_uid)
+    try:
+        account = pwd.getpwnam(SERVICE_USER)
+    except KeyError as error:
+        raise ReconcileError(f"Hermes service account does not exist: {SERVICE_USER}") from error
+    return {"user": account.pw_uid, "group": account.pw_gid, "extra_groups": ()}
 
 
 def apply_as_service_user(command: dict[str, Any]) -> dict[str, Any]:
@@ -518,7 +527,7 @@ def apply_as_service_user(command: dict[str, Any]) -> dict[str, Any]:
         return apply_command(command)
     completed = subprocess.run(
         [sys.executable, str(SCRIPT_PATH), "--apply-stdin"], input=canonical(command),
-        capture_output=True, preexec_fn=demote_to_service_user, env={
+        capture_output=True, **service_user_subprocess_credentials(), env={
             **os.environ, "HERMES_HOME": str(HERMES_HOME),
             "ORCASYNAPSE_HERMES_STATE_ROOT": str(STATE_ROOT),
             "ORCASYNAPSE_HERMES_SOURCE": str(HERMES_SOURCE),

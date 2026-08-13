@@ -1,6 +1,6 @@
 {
   "name": "@orcasynapse/runtime-clients",
-  "version": "4.7.0",
+  "version": "4.7.1",
   "description": "Typed clients for the Hermes runtime and OpenAI-compatible inference services",
   "license": "BUSL-1.1",
   "private": true,
