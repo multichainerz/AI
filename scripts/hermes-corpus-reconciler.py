@@ -180,6 +180,26 @@ def allowed_roots() -> list[Path]:
     return [HERMES_HOME / "memories", HERMES_HOME / "skills", HERMES_HOME / "skill-bundles", HERMES_HOME / "pending"]
 
 
+def skill_main_path_candidates(relative: str) -> list[str]:
+    """Return the parent Skill paths permitted by the corpus protocol.
+
+    Keep this structurally identical to VM1's skillMainPathCandidates. A
+    support file is mutable only while one of these parents is present in the
+    same signed snapshot as an observed Skill, not merely present on disk.
+    """
+    parts = relative.split("/")
+    candidates: list[str] = []
+    for index in range(2, len(parts) - 1):
+        if parts[index] not in SKILL_SUPPORT_DIRS:
+            continue
+        prefix = parts[1:index]
+        suffix = parts[index + 1:]
+        if prefix and all(SKILL_NAME.fullmatch(part) for part in prefix) \
+                and suffix and all(not part.startswith(".") for part in suffix):
+            candidates.append("/".join((*parts[:index], "SKILL.md")))
+    return candidates
+
+
 def classify(relative: str) -> tuple[str, bool]:
     if relative in {"memories/MEMORY.md", "memories/USER.md"}:
         return "MEMORY", False
@@ -331,6 +351,26 @@ def scan_corpus() -> dict[str, Any]:
                     "content": content, "structuredEntries": structured,
                     "readOnly": read_only or content is None,
                 })
+    # Classification deliberately consults the filesystem so only native
+    # Hermes support trees can become writable. Observation is stricter: a
+    # parent can be present on disk yet absent from the snapshot because its
+    # contents are secret-like or over the file limit. Publishing its detached
+    # children would create an incoherent repository and VM1 must reject it.
+    # Prune every support-tree entry whose parent Skill is not itself visible
+    # in this exact signed snapshot. Unsupported top-level metadata (which has
+    # no parent candidate and is always read-only) remains observable.
+    observed_skills = {
+        entry["path"] for entry in entries if entry["kind"] == "SKILL"
+    }
+    entries = [
+        entry for entry in entries
+        if entry["kind"] != "SKILL_FILE"
+        or not skill_main_path_candidates(entry["path"])
+        or any(
+            candidate in observed_skills
+            for candidate in skill_main_path_candidates(entry["path"])
+        )
+    ]
     entries.sort(key=lambda entry: entry["path"])
     root_hash = hashlib.sha256()
     for entry in entries:
