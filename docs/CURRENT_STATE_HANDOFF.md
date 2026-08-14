@@ -1,4 +1,4 @@
-# Current State Handoff — v4.7.1
+# Current State Handoff — v4.7.2
 
 ## Product state
 
@@ -37,7 +37,7 @@ The earlier product generation is preserved on the `backup/pgvector` branch. Do 
 
 ## Install and recovery
 
-- Existing v4.6.0 and v4.7.0 VM1 installations update in place; rerun the generated VM2 installer with `--repair` to install or replace the corpus companion. Pre-v3.16 databases still require clean hosts.
+- Existing v4.6.0 and ai-v3.17.x VM1 installations update in place; rerun the current generated VM2 installer with `--repair` to install or replace the corpus companion. Pre-v3.16 databases still require clean hosts.
 - Re-running an interrupted installer is supported when its protected completion or enrollment state is intact.
 - Do not point this release at an older OrcaSynapse database; the migrator refuses it before mutation.
 - Back up VM1 PostgreSQL for control/audit state and VM2's Hermes state root for native sessions and memory.

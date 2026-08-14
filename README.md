@@ -35,7 +35,7 @@ There is no control-plane vector store, embedding model, document library, exter
 
 ## Install
 
-v4.6.0 established the greenfield `hermes-native-v1` schema generation. v4.7.0 added the Corpus companion, and v4.7.1 fixes its hardened VM2 privilege transition. Existing v3.16 or v3.17 VM1 installations update in place; rerun the generated VM2 installer with `--repair` to install the current companion. Databases from before v3.16 still require a clean installation.
+v4.6.0 established the greenfield `hermes-native-v1` schema generation. v4.7.0 added the Corpus companion; v4.7.1 replaced its unsafe pre-exec credential hook; and v4.7.2 activates the one narrowly required `CAP_SETUID` permission under hardened systemd. Existing v3.16 or v3.17 VM1 installations update in place; rerun the current generated VM2 installer with `--repair` to install the current companion. Databases from before v3.16 still require a clean installation.
 
 On a clean Debian or Ubuntu VM1:
 

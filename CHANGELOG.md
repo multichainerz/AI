@@ -5,6 +5,20 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v4.7.2 — 2026-08-14
+
+The VM2 Corpus unit now activates only `CAP_SETUID` in the root coordinator's
+ambient capability set. Exact production-unit probing showed that systemd kept
+the capability in the bounding set but omitted it from the permitted and
+effective sets, causing every native Python UID transition to fail with
+`EPERM`. `CAP_DAC_OVERRIDE` and `CAP_SETGID` remain non-ambient.
+
+The coordinator can now enter the Hermes service identity under the full
+filesystem sandbox. Linux clears the child's permitted, effective, and ambient
+capability sets when it leaves UID 0, preserving the unprivileged corpus scan
+and mutation boundary. Existing v3.17 nodes are repaired in place by rerunning
+the current generated VM2 installer with `--repair`.
+
 ## v4.7.1 — 2026-08-14
 
 The VM2 Corpus companion now resolves the Hermes service account before
