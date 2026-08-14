@@ -1,5 +1,6 @@
 import { cva, type VariantProps } from "class-variance-authority";
 import type { HTMLAttributes, ReactNode } from "react";
+import { Card } from "../components/ui/card.js";
 import { cn } from "./cn.js";
 import type { Tone } from "./feedback.js";
 
@@ -14,10 +15,9 @@ import type { Tone } from "./feedback.js";
 
 export function Panel({ className, ...rest }: HTMLAttributes<HTMLElement>) {
   return (
-    <section
-      className={cn("rounded-card border border-border bg-surface p-5 shadow-card", className)}
-      {...rest}
-    />
+    <Card asChild className={cn("p-5", className)}>
+      <section {...rest} />
+    </Card>
   );
 }
 
@@ -167,16 +167,15 @@ export function Tile({
   as?: "div" | "article";
 }) {
   return (
-    <Element
-      className={cn(
-        "rounded bg-raised",
-        strong ? "border border-border-strong" : "border border-border",
-        pad === "sm" ? "p-2.5" : pad === "lg" ? "p-3.5" : "p-3",
-        interactive ? "text-left transition-colors hover:border-border-strong" : null,
-        className,
-      )}
-      {...rest}
-    />
+    <Card asChild className={cn(
+      "bg-secondary shadow-none",
+      strong ? "border-border-strong" : "border-border",
+      pad === "sm" ? "p-2.5" : pad === "lg" ? "p-3.5" : "p-3",
+      interactive ? "text-left transition-colors hover:border-border-strong" : null,
+      className,
+    )}>
+      <Element {...rest} />
+    </Card>
   );
 }
 

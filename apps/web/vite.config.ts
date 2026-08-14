@@ -32,10 +32,16 @@ export const developmentProxyRoutes = {
  * exactly what they saw before.
  */
 const contractsSource = fileURLToPath(new URL("../../packages/contracts/src/index.ts", import.meta.url));
+const webSource = fileURLToPath(new URL("./src", import.meta.url));
 
 export default defineConfig(({ command }) => ({
   plugins: [react()],
-  resolve: command === "serve" ? { alias: { "@orcasynapse/contracts": contractsSource } } : {},
+  resolve: {
+    alias: {
+      "@": webSource,
+      ...(command === "serve" ? { "@orcasynapse/contracts": contractsSource } : {}),
+    },
+  },
   server: {
     host: "0.0.0.0",
     // 5173 unless the environment assigns one. Nothing external depends on the

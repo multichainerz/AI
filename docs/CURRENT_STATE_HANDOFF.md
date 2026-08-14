@@ -1,4 +1,4 @@
-# Current State Handoff — v4.8.2
+# Current State Handoff — v4.9.0
 
 ## Product state
 
@@ -10,7 +10,7 @@ The earlier product generation is preserved on the `backup/pgvector` branch. Do 
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/web` | operator workspace: Dashboard, Session, Agents, Platform, Operations |
+| `apps/web` | operator workspace: Dashboard, Session, Agents, Operations, Settings |
 | `apps/api` | authenticated control-plane API, enrollment, inference gateway, audit |
 | `apps/worker` | run claiming, Hermes-native execution, lifecycle projection, SIEM forwarding |
 | `packages/contracts` | shared API and runtime schemas |

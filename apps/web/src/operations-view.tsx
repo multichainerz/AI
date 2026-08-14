@@ -10,6 +10,7 @@ import {
   type ProductionReadinessControlStatus,
 } from "@orcasynapse/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   OrcaSynapseApiError,
   completeEvaluationRun,
@@ -26,8 +27,8 @@ import {
 } from "./api.js";
 import { adminAccess } from "./admin-access.js";
 import {
-  Alert, Button, EmptyState, HeroBanner, LockedScreen, Metric, MetricRow, MicroLabel,
-  PageHeader, Panel, PanelHeading, StatusText, Tile, cn, toneFor,
+  Alert, Button, EmptyState, HeroBanner, Input, LockedScreen, Metric, MetricRow, MicroLabel,
+  PageHeader, Panel, PanelHeading, Select, StatusText, Textarea, Tile, cn, toneFor,
 } from "./ui/index.js";
 
 interface OperationsViewProps {
@@ -329,10 +330,12 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
           { key: "evaluations", label: "Release gates", count: null, enabled: canReadEvaluations },
           { key: "readiness", label: "Pilot readiness", count: readiness?.summary.blockedControls ?? 0, enabled: canReadReadiness },
         ] as const).map((entry) => (
-          <button
+          <Button
+            variant={tab === entry.key ? "secondary" : "ghost"}
+            size="sm"
             className={cn(
-              "flex items-center gap-2 rounded px-3 py-1.5 text-body transition-colors disabled:cursor-not-allowed disabled:opacity-40",
-              tab === entry.key ? "bg-raised text-text" : "text-muted hover:text-text",
+              "gap-2 px-3 text-body",
+              tab === entry.key && "bg-raised text-text",
             )}
             key={entry.key}
             type="button"
@@ -344,7 +347,7 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
             {entry.count !== null && entry.count > 0 && (
               <span className="rounded border border-warn/50 bg-warn/10 px-1.5 font-mono text-micro text-warn">{entry.count}</span>
             )}
-          </button>
+          </Button>
         ))}
       </nav>
 
@@ -467,26 +470,26 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
             description={overview?.runtime ? `Captured ${relativeTime(overview.runtime.capturedAt)} from domain state` : "Runtime state is unavailable."}
             actions={<Button size="sm" onClick={() => void refresh()} disabled={busy}>Refresh state</Button>}
           />
-          <div className="overflow-x-auto rounded border border-border">
-            <table className="w-full min-w-[560px] border-collapse text-body">
-              <thead>
-                <tr className="border-b border-border bg-raised">
+          <div className="overflow-hidden rounded border border-border">
+            <Table className="min-w-[560px]">
+              <TableHeader>
+                <TableRow className="bg-raised hover:bg-raised">
                   {["Workload", "Pending", "Active", "Failed", "Retained"].map((head) => (
-                    <th className="px-3 py-2 text-left text-micro font-semibold uppercase tabular-nums text-faint" scope="col" key={head}>{head}</th>
+                    <TableHead className="tabular-nums" scope="col" key={head}>{head}</TableHead>
                   ))}
-                </tr>
-              </thead>
-              <tbody>{workloads.map((workload) => <tr className="border-b border-border last:border-b-0" key={workload.name}>
-                <th className="px-3 py-2 text-left font-normal" scope="row">
+                </TableRow>
+              </TableHeader>
+              <TableBody>{workloads.map((workload) => <TableRow key={workload.name}>
+                <TableCell className="font-normal">
                   <strong className="block text-caption font-semibold text-text">{workload.displayName}</strong>
                   <span className="block font-mono text-micro text-faint">{workload.name}</span>
-                </th>
-                <td className="px-3 py-2 font-mono text-caption tabular-nums text-muted">{workload.pendingCount}</td>
-                <td className="px-3 py-2 font-mono text-caption tabular-nums text-muted">{workload.activeCount}</td>
-                <td className={cn("px-3 py-2 font-mono text-caption tabular-nums", workload.failedCount ? "text-bad" : "text-muted")}>{workload.failedCount}</td>
-                <td className="px-3 py-2 font-mono text-caption tabular-nums text-muted">{workload.totalCount}</td>
-              </tr>)}</tbody>
-            </table>
+                </TableCell>
+                <TableCell className="font-mono text-caption tabular-nums text-muted">{workload.pendingCount}</TableCell>
+                <TableCell className="font-mono text-caption tabular-nums text-muted">{workload.activeCount}</TableCell>
+                <TableCell className={cn("font-mono text-caption tabular-nums", workload.failedCount ? "text-bad" : "text-muted")}>{workload.failedCount}</TableCell>
+                <TableCell className="font-mono text-caption tabular-nums text-muted">{workload.totalCount}</TableCell>
+              </TableRow>)}</TableBody>
+            </Table>
           </div>
           <div className="mt-3 grid gap-1.5">
             {executors.map((executor) => <Tile as="article" pad="sm" className="flex flex-wrap items-center justify-between gap-3" key={executor.id}>
@@ -512,13 +515,13 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
       </div>}
 
       {tab === "incidents" && <section className="grid gap-4">
-        <div className="flex flex-wrap items-start justify-between gap-6"><div><h2>Operational incidents</h2><p>Automatic observations and manual context share one durable response ledger.</p></div>{canOperate && <button className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-pill border border-border-strong bg-transparent px-4 text-body font-semibold text-text transition-colors hover:border-faint disabled:cursor-not-allowed disabled:opacity-40" type="button" onClick={() => setShowIncidentForm((shown) => !shown)}>{showIncidentForm ? "Cancel" : "Create incident"}</button>}</div>
+        <div className="flex flex-wrap items-start justify-between gap-6"><div><h2>Operational incidents</h2><p>Automatic observations and manual context share one durable response ledger.</p></div>{canOperate && <Button onClick={() => setShowIncidentForm((shown) => !shown)}>{showIncidentForm ? "Cancel" : "Create incident"}</Button>}</div>
         {showIncidentForm && <form className="ops-form grid gap-3 rounded-card border border-border bg-surface p-5 shadow-card sm:grid-cols-2" onSubmit={(event) => void createIncident(event)}>
-          <label><span>Title</span><input name="title" minLength={3} maxLength={160} required /></label>
-          <label><span>Severity</span><select name="severity"><option value="WARNING">Warning</option><option value="CRITICAL">Critical</option></select></label>
-          <label><span>Component</span><input name="component" minLength={1} maxLength={80} placeholder="e.g. hermes-vm2" required /></label>
-          <label><span>Owner</span><input name="owner" maxLength={160} placeholder="Optional team or operator" /></label>
-          <label className="sm:col-span-2"><span>Summary</span><textarea name="summary" minLength={3} maxLength={1000} rows={3} required /></label>
+          <label><span>Title</span><Input name="title" minLength={3} maxLength={160} required /></label>
+          <label><span>Severity</span><Select name="severity"><option value="WARNING">Warning</option><option value="CRITICAL">Critical</option></Select></label>
+          <label><span>Component</span><Input name="component" minLength={1} maxLength={80} placeholder="e.g. hermes-vm2" required /></label>
+          <label><span>Owner</span><Input name="owner" maxLength={160} placeholder="Optional team or operator" /></label>
+          <label className="sm:col-span-2"><span>Summary</span><Textarea name="summary" minLength={3} maxLength={1000} rows={3} required /></label>
           <div className="flex justify-end sm:col-span-2"><Button variant="primary" type="submit" disabled={busy}>Create incident</Button></div>
         </form>}
         <div className="grid gap-3">{incidents.map((item) => <article className={cn("grid gap-3 rounded border border-l-2 border-border bg-surface p-4",
@@ -528,19 +531,19 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
           <div><h3>{item.title}</h3><p>{item.summary}</p></div>
           <dl><div><dt>Status</dt><dd>{humanLabel(item.status)}</dd></div><div><dt>Component</dt><dd>{item.component}</dd></div><div><dt>Owner</dt><dd>{item.owner ?? "Unassigned"}</dd></div><div><dt>Last observed</dt><dd>{relativeTime(item.lastObservedAt)}</dd></div></dl>
           {item.resolutionNote && <blockquote>{item.resolutionNote}</blockquote>}
-          {canOperate && item.status !== "RESOLVED" && <div className="flex justify-end gap-2"><button type="button" onClick={() => { setIncidentAction({ id: item.id, action: "acknowledge" }); setDecisionNote(""); }} disabled={item.status !== "OPEN"}>Acknowledge</button><button type="button" onClick={() => { setIncidentAction({ id: item.id, action: "resolve" }); setDecisionNote(""); }}>Resolve</button></div>}
-          {incidentAction?.id === item.id && <form className="ops-form grid gap-3 rounded border border-border-strong bg-raised p-3" onSubmit={(event) => void decideIncident(event)}><label><span>Operator note</span><textarea value={decisionNote} onChange={(event) => setDecisionNote(event.target.value)} minLength={3} maxLength={1000} rows={2} required /></label><div><button type="button" onClick={() => setIncidentAction(null)}>Cancel</button><button className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-pill border border-border-strong bg-transparent px-4 text-body font-semibold text-text transition-colors hover:border-faint disabled:cursor-not-allowed disabled:opacity-40" type="submit" disabled={busy}>Record {incidentAction.action}</button></div></form>}
+          {canOperate && item.status !== "RESOLVED" && <div className="flex justify-end gap-2"><Button size="sm" onClick={() => { setIncidentAction({ id: item.id, action: "acknowledge" }); setDecisionNote(""); }} disabled={item.status !== "OPEN"}>Acknowledge</Button><Button size="sm" onClick={() => { setIncidentAction({ id: item.id, action: "resolve" }); setDecisionNote(""); }}>Resolve</Button></div>}
+          {incidentAction?.id === item.id && <form className="ops-form grid gap-3 rounded border border-border-strong bg-raised p-3" onSubmit={(event) => void decideIncident(event)}><label><span>Operator note</span><Textarea value={decisionNote} onChange={(event) => setDecisionNote(event.target.value)} minLength={3} maxLength={1000} rows={2} required /></label><div className="flex justify-end gap-2"><Button variant="ghost" onClick={() => setIncidentAction(null)}>Cancel</Button><Button type="submit" disabled={busy}>Record {incidentAction.action}</Button></div></form>}
         </article>)}{incidents.length === 0 && <p className="m-0 rounded border border-dashed border-border px-4 py-7 text-body text-muted">No operational incidents have been recorded.</p>}</div>
       </section>}
 
       {tab === "evaluations" && <section className="grid gap-4">
-        <div className="flex flex-wrap items-start justify-between gap-6"><div><h2>Release evidence</h2><p>Evidence is immutable after completion. Promotion is a separate, permissioned decision.</p></div>{canManageEvaluations && <button className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-pill border border-border-strong bg-transparent px-4 text-body font-semibold text-text transition-colors hover:border-faint disabled:cursor-not-allowed disabled:opacity-40" type="button" onClick={() => setShowEvaluationForm((shown) => !shown)}>{showEvaluationForm ? "Cancel" : "New candidate"}</button>}</div>
+        <div className="flex flex-wrap items-start justify-between gap-6"><div><h2>Release evidence</h2><p>Evidence is immutable after completion. Promotion is a separate, permissioned decision.</p></div>{canManageEvaluations && <Button onClick={() => setShowEvaluationForm((shown) => !shown)}>{showEvaluationForm ? "Cancel" : "New candidate"}</Button>}</div>
         {showEvaluationForm && <form className="ops-form grid gap-3 rounded-card border border-border bg-surface p-5 shadow-card sm:grid-cols-2" onSubmit={(event) => void createEvaluation(event)}>
-          <label><span>Candidate name</span><input name="name" minLength={3} maxLength={160} required /></label>
-          <label><span>Target type</span><select name="targetType"><option>MODEL</option><option>PROMPT</option><option>POLICY</option><option>AGENT</option></select></label>
-          <label><span>Target reference</span><input name="targetReference" placeholder="laguna-s / hermes-policy" maxLength={240} required /></label>
-          <label><span>Version</span><input name="targetVersion" placeholder="Immutable version or digest" maxLength={120} required /></label>
-          <label><span>Minimum pass rate</span><input name="minimumPassRate" type="number" min={50} max={100} step={0.1} defaultValue={95} required /></label>
+          <label><span>Candidate name</span><Input name="name" minLength={3} maxLength={160} required /></label>
+          <label><span>Target type</span><Select name="targetType"><option>MODEL</option><option>PROMPT</option><option>POLICY</option><option>AGENT</option></Select></label>
+          <label><span>Target reference</span><Input name="targetReference" placeholder="laguna-s / hermes-policy" maxLength={240} required /></label>
+          <label><span>Version</span><Input name="targetVersion" placeholder="Immutable version or digest" maxLength={120} required /></label>
+          <label><span>Minimum pass rate</span><Input name="minimumPassRate" type="number" min={50} max={100} step={0.1} defaultValue={95} required /></label>
           <Tile className="ops-form grid gap-1 sm:col-span-2"><span>Required evidence</span><p>{EVALUATION_CATEGORIES.map(humanLabel).join(" / ")}</p></Tile>
           <div className="flex justify-end sm:col-span-2"><Button variant="primary" type="submit" disabled={busy}>Create candidate</Button></div>
         </form>}
@@ -550,18 +553,18 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
           <div className="grid grid-cols-2 gap-px rounded border border-border bg-border sm:grid-cols-4"><div><strong>{percentage(run.passRate)}</strong><span>observed pass rate</span></div><div><strong>{run.passedCases}/{run.totalCases}</strong><span>cases passed</span></div><div><strong>{run.criticalFailures}</strong><span>critical failures</span></div><div><strong>{percentage(run.minimumPassRate)}</strong><span>required minimum</span></div></div>
           <div className="flex flex-wrap gap-1.5">{run.requiredCategories.map((category) => <span key={category}>{humanLabel(category)}</span>)}</div>
           {run.promotionReason && <blockquote className="m-0 rounded border border-l-2 border-border border-l-accent p-3"><strong>Promotion rationale</strong><span>{run.promotionReason}</span></blockquote>}
-          <footer><span>Created {relativeTime(run.createdAt)}{run.promotedAt ? ` / promoted ${relativeTime(run.promotedAt)}` : ""}</span><div>{run.status === "DRAFT" && canManageEvaluations && <button type="button" onClick={() => openEvidence(run)}>Record evidence</button>}{run.status === "PASSED" && canPromoteEvaluations && <button type="button" onClick={() => { setConfirmPromotionId(run.id); setPromotionReason(""); }}>Promote</button>}</div></footer>
-          {confirmPromotionId === run.id && <form className="ops-form grid gap-3 rounded border border-border-strong bg-raised p-3" onSubmit={(event) => void promote(event, run.id)}><label><span>Promotion rationale</span><textarea value={promotionReason} onChange={(event) => setPromotionReason(event.target.value)} minLength={3} maxLength={1000} rows={2} placeholder="Why this exact evidence is approved for release" required /></label><div><button type="button" onClick={() => { setConfirmPromotionId(null); setPromotionReason(""); }}>Cancel</button><button className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-pill border border-border-strong bg-transparent px-4 text-body font-semibold text-text transition-colors hover:border-faint disabled:cursor-not-allowed disabled:opacity-40" type="submit" disabled={busy}>Confirm promotion</button></div></form>}
-          {evidenceRunId === run.id && <form className="ops-form grid gap-3 rounded border border-border-strong bg-raised p-3" onSubmit={(event) => void recordEvidence(event)}><div className="flex items-start justify-between gap-4"><div><strong>Record immutable results</strong><span>Every required category needs an evidence artifact reference.</span></div><button type="button" onClick={() => setEvidenceRunId(null)}>Close</button></div>{run.requiredCategories.map((category) => {
+          <footer><span>Created {relativeTime(run.createdAt)}{run.promotedAt ? ` / promoted ${relativeTime(run.promotedAt)}` : ""}</span><div className="flex gap-2">{run.status === "DRAFT" && canManageEvaluations && <Button size="sm" onClick={() => openEvidence(run)}>Record evidence</Button>}{run.status === "PASSED" && canPromoteEvaluations && <Button size="sm" onClick={() => { setConfirmPromotionId(run.id); setPromotionReason(""); }}>Promote</Button>}</div></footer>
+          {confirmPromotionId === run.id && <form className="ops-form grid gap-3 rounded border border-border-strong bg-raised p-3" onSubmit={(event) => void promote(event, run.id)}><label><span>Promotion rationale</span><Textarea value={promotionReason} onChange={(event) => setPromotionReason(event.target.value)} minLength={3} maxLength={1000} rows={2} placeholder="Why this exact evidence is approved for release" required /></label><div className="flex justify-end gap-2"><Button variant="ghost" onClick={() => { setConfirmPromotionId(null); setPromotionReason(""); }}>Cancel</Button><Button type="submit" disabled={busy}>Confirm promotion</Button></div></form>}
+          {evidenceRunId === run.id && <form className="ops-form grid gap-3 rounded border border-border-strong bg-raised p-3" onSubmit={(event) => void recordEvidence(event)}><div className="flex items-start justify-between gap-4"><div><strong>Record immutable results</strong><span>Every required category needs an evidence artifact reference.</span></div><Button variant="ghost" size="sm" onClick={() => setEvidenceRunId(null)}>Close</Button></div>{run.requiredCategories.map((category) => {
             const draft = evidenceDraft[category];
             const update = (field: "totalCases" | "passedCases" | "criticalFailures" | "evidenceRef", value: string) => setEvidenceDraft((current) => ({ ...current, [category]: { totalCases: "", passedCases: "", criticalFailures: "0", evidenceRef: "", ...current[category], [field]: value } }));
-            return <fieldset key={category}><legend>{humanLabel(category)}</legend><label><span>Total</span><input type="number" min={1} value={draft?.totalCases ?? ""} onChange={(event) => update("totalCases", event.target.value)} required /></label><label><span>Passed</span><input type="number" min={0} value={draft?.passedCases ?? ""} onChange={(event) => update("passedCases", event.target.value)} required /></label><label><span>Critical</span><input type="number" min={0} value={draft?.criticalFailures ?? "0"} onChange={(event) => update("criticalFailures", event.target.value)} required /></label><label className="sm:col-span-3"><span>Evidence reference</span><input value={draft?.evidenceRef ?? ""} onChange={(event) => update("evidenceRef", event.target.value)} placeholder="Report ID or immutable URI" required /></label></fieldset>;
+            return <fieldset key={category}><legend>{humanLabel(category)}</legend><label><span>Total</span><Input type="number" min={1} value={draft?.totalCases ?? ""} onChange={(event) => update("totalCases", event.target.value)} required /></label><label><span>Passed</span><Input type="number" min={0} value={draft?.passedCases ?? ""} onChange={(event) => update("passedCases", event.target.value)} required /></label><label><span>Critical</span><Input type="number" min={0} value={draft?.criticalFailures ?? "0"} onChange={(event) => update("criticalFailures", event.target.value)} required /></label><label className="sm:col-span-3"><span>Evidence reference</span><Input value={draft?.evidenceRef ?? ""} onChange={(event) => update("evidenceRef", event.target.value)} placeholder="Report ID or immutable URI" required /></label></fieldset>;
           })}<div className="flex justify-end sm:col-span-2"><Button variant="primary" type="submit" disabled={busy}>Complete evaluation</Button></div></form>}
         </article>)}{evaluations.length === 0 && <p className="m-0 rounded border border-dashed border-border px-4 py-7 text-body text-muted">No evaluation candidates have been created.</p>}</div>
       </section>}
 
       {tab === "readiness" && <section className="grid gap-4">
-        <div className="flex flex-wrap items-start justify-between gap-6"><div><h2>Production pilot readiness</h2><p>Evidence-backed controls and externally issued OrcaSynapse decisions. OrcaSynapse records approvals; it does not grant them.</p></div>{canApproveReadiness && <button className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-pill border border-border-strong bg-transparent px-4 text-body font-semibold text-text transition-colors hover:border-faint disabled:cursor-not-allowed disabled:opacity-40" type="button" onClick={() => setShowApprovalForm((shown) => !shown)}>{showApprovalForm ? "Cancel" : "Record sign-off"}</button>}</div>
+        <div className="flex flex-wrap items-start justify-between gap-6"><div><h2>Production pilot readiness</h2><p>Evidence-backed controls and externally issued OrcaSynapse decisions. OrcaSynapse records approvals; it does not grant them.</p></div>{canApproveReadiness && <Button onClick={() => setShowApprovalForm((shown) => !shown)}>{showApprovalForm ? "Cancel" : "Record sign-off"}</Button>}</div>
         <section className={cn("grid gap-3 rounded border border-l-2 border-border bg-surface p-5",
           readiness?.status === "READY" ? "border-l-good" : "border-l-warn")}>
           <div><p className="text-micro font-semibold uppercase tabular-nums text-faint">Derived gate</p><h3>{readiness ? humanLabel(readiness.status) : "Loading"}</h3><p>Ready requires every control to be verified or formally waived and the latest Security, Infrastructure, Product, and Business decisions to be approved.</p></div>
@@ -570,11 +573,11 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
 
         {showApprovalForm && <form className="ops-form grid gap-3 rounded-card border border-border bg-surface p-5 shadow-card sm:grid-cols-2" onSubmit={(event) => void submitReadinessApproval(event)}>
           <div className="sm:col-span-2 text-body text-muted"><strong>External decision record</strong><span>The authority is the OrcaSynapse body that made the decision. Your signed-in OrcaSynapse identity is retained separately as the recorder. {readinessControlsAccepted ? "All controls are accepted for an approval snapshot." : "Approval remains disabled until every control is verified or waived; rejection can still be recorded."}</span></div>
-          <label><span>Approval role</span><select name="role"><option>SECURITY</option><option>INFRASTRUCTURE</option><option>PRODUCT</option><option>BUSINESS</option></select></label>
-          <label><span>Decision</span><select name="decision" defaultValue={readinessControlsAccepted ? "APPROVED" : "REJECTED"}><option value="APPROVED" disabled={!readinessControlsAccepted}>APPROVED</option><option value="REJECTED">REJECTED</option></select></label>
-          <label><span>Approving authority</span><input name="authority" minLength={1} maxLength={160} placeholder="OrcaSynapse Security Review Board" required /></label>
-          <label><span>Approval evidence</span><input name="evidenceRef" minLength={1} maxLength={500} placeholder="Approval ID or immutable artifact reference" required /></label>
-          <label className="sm:col-span-2"><span>Decision rationale</span><textarea name="reason" minLength={3} maxLength={1000} rows={3} required /></label>
+          <label><span>Approval role</span><Select name="role"><option>SECURITY</option><option>INFRASTRUCTURE</option><option>PRODUCT</option><option>BUSINESS</option></Select></label>
+          <label><span>Decision</span><Select name="decision" defaultValue={readinessControlsAccepted ? "APPROVED" : "REJECTED"}><option value="APPROVED" disabled={!readinessControlsAccepted}>APPROVED</option><option value="REJECTED">REJECTED</option></Select></label>
+          <label><span>Approving authority</span><Input name="authority" minLength={1} maxLength={160} placeholder="OrcaSynapse Security Review Board" required /></label>
+          <label><span>Approval evidence</span><Input name="evidenceRef" minLength={1} maxLength={500} placeholder="Approval ID or immutable artifact reference" required /></label>
+          <label className="sm:col-span-2"><span>Decision rationale</span><Textarea name="reason" minLength={3} maxLength={1000} rows={3} required /></label>
           <div className="flex justify-end sm:col-span-2"><Button variant="primary" type="submit" disabled={busy}>Append authority decision</Button></div>
         </form>}
 
@@ -585,13 +588,13 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
             <div className="min-w-0"><h3>{control.title}</h3><p>{control.description}</p></div>
             <dl><div><dt>Owner</dt><dd>{control.owner ?? "Unassigned"}</dd></div><div><dt>Evidence</dt><dd>{control.evidenceRefs.length} reference{control.evidenceRefs.length === 1 ? "" : "s"}</dd></div><div><dt>Updated</dt><dd>{relativeTime(control.updatedAt)}</dd></div></dl>
             {control.note && <blockquote>{control.note}</blockquote>}
-            {canManageReadiness && <button className="inline-flex h-7 items-center justify-center whitespace-nowrap rounded-pill border border-transparent px-2.5 text-[10px] font-medium text-muted transition-colors hover:bg-raised hover:text-text disabled:cursor-not-allowed disabled:opacity-40" type="button" onClick={() => setReadinessControlKey((current) => current === control.key ? null : control.key)}>{readinessControlKey === control.key ? "Close" : "Update evidence"}</button>}
+            {canManageReadiness && <Button variant="ghost" size="sm" onClick={() => setReadinessControlKey((current) => current === control.key ? null : control.key)}>{readinessControlKey === control.key ? "Close" : "Update evidence"}</Button>}
             {readinessControlKey === control.key && <form className="ops-form mt-2 grid gap-3 rounded border border-border-strong bg-surface p-3" onSubmit={(event) => void updateReadiness(event, control)}>
-              <label><span>Status</span><select name="status" defaultValue={control.status}><option>NOT_STARTED</option><option>IN_PROGRESS</option><option>BLOCKED</option><option>VERIFIED</option><option>WAIVED</option></select></label>
-              <label><span>Owner</span><input name="owner" defaultValue={control.owner ?? ""} maxLength={160} placeholder="Required after work starts" /></label>
-              <label className="sm:col-span-2"><span>Evidence references, one per line</span><textarea name="evidenceRefs" defaultValue={control.evidenceRefs.join("\n")} rows={3} maxLength={10020} placeholder="Immutable report, ticket, backup, or approval reference" /></label>
-              <label className="sm:col-span-2"><span>Decision note</span><textarea name="note" defaultValue={control.note ?? ""} rows={2} minLength={3} maxLength={1000} placeholder="Required for blocked, verified, or waived status" /></label>
-              <div className="flex justify-end sm:col-span-2"><button className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-pill border border-border-strong bg-transparent px-4 text-body font-semibold text-text transition-colors hover:border-faint disabled:cursor-not-allowed disabled:opacity-40" type="submit" disabled={busy}>Save control</button></div>
+              <label><span>Status</span><Select name="status" defaultValue={control.status}><option>NOT_STARTED</option><option>IN_PROGRESS</option><option>BLOCKED</option><option>VERIFIED</option><option>WAIVED</option></Select></label>
+              <label><span>Owner</span><Input name="owner" defaultValue={control.owner ?? ""} maxLength={160} placeholder="Required after work starts" /></label>
+              <label className="sm:col-span-2"><span>Evidence references, one per line</span><Textarea name="evidenceRefs" defaultValue={control.evidenceRefs.join("\n")} rows={3} maxLength={10020} placeholder="Immutable report, ticket, backup, or approval reference" /></label>
+              <label className="sm:col-span-2"><span>Decision note</span><Textarea name="note" defaultValue={control.note ?? ""} rows={2} minLength={3} maxLength={1000} placeholder="Required for blocked, verified, or waived status" /></label>
+              <div className="flex justify-end sm:col-span-2"><Button type="submit" disabled={busy}>Save control</Button></div>
             </form>}
           </article>)}{readiness?.controls.length === 0 && <p className="m-0 rounded border border-dashed border-border px-4 py-7 text-body text-muted">The production-readiness checklist has not been migrated.</p>}</div>
 

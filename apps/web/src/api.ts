@@ -8,6 +8,7 @@ import {
   administratorSessionSchema,
   configurationRevisionListSchema,
   platformMetaSchema,
+  platformUpdateSchema,
   serviceConnectionListSchema,
   serviceConnectionSummarySchema,
   rollbackConfigurationResultSchema,
@@ -36,6 +37,7 @@ import {
   type UpdateConnectionMonitoringControl,
   type ConfigurationRevisionList,
   type PlatformMeta,
+  type PlatformUpdate,
   type ServiceConnectionList,
   type ServiceConnectionSummary,
   type RollbackConfigurationResult,
@@ -293,6 +295,14 @@ export async function revokeEnterpriseSession(): Promise<void> {
 export async function getPlatformMeta(signal?: AbortSignal): Promise<PlatformMeta> {
   const response = await fetch("/api/v1/platform", signal ? { signal } : {});
   return platformMetaSchema.parse(await parsedResponse(response));
+}
+
+export async function getPlatformUpdate(): Promise<PlatformUpdate> {
+  const response = await fetch("/api/v1/platform/update", {
+    credentials: "same-origin",
+    cache: "no-store",
+  });
+  return platformUpdateSchema.parse(await parsedResponse(response));
 }
 
 export async function getConnections(): Promise<ServiceConnectionList> {

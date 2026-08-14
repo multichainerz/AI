@@ -5,8 +5,9 @@ import type {
   ToolMetrics,
 } from "@orcasynapse/contracts";
 import { useEffect, useState, type ReactNode } from "react";
-import { cn } from "./ui/index.js";
-import { GearIcon, MonitorIcon, RobotIcon, SyncIcon, TerminalIcon } from "./ui/relay-icons.js";
+import { Bot as RobotIcon, MessageSquareText as TerminalIcon, Monitor as MonitorIcon, RefreshCw as SyncIcon, Settings as GearIcon } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import type { HomeLayer, HomeReadinessCheck } from "./home-view.js";
 import type { ActiveView } from "./workspace-navigation.js";
 
@@ -381,13 +382,13 @@ export function DashboardHero(props: DashboardHeroProps) {
               />
               {props.apiAvailable ? "Control plane online" : "Control plane offline"}
             </span>
-            <button
-              type="button"
+            <Button
+              variant="primary"
               onClick={props.onPrimary}
-              className="rounded-pill bg-accent-fill px-4 py-2 text-caption font-semibold text-white transition-opacity hover:opacity-90"
+              className="px-4 text-caption"
             >
               {props.primaryLabel}
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -411,20 +412,20 @@ export function DashboardHero(props: DashboardHeroProps) {
             >
               <TerminalIcon size={19} />
             </span>
-            <button
-              type="button"
+            <Button
+              variant="ghost"
               onClick={props.onAsk}
               className="min-w-[220px] flex-1 border-b-[1.5px] border-border-strong pb-2 text-left text-[17px] tracking-[-0.01em] text-muted transition-colors hover:border-accent hover:text-text"
             >
               Ask your Hermes agent anything…
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant="primary"
               onClick={props.onAsk}
-              className="shrink-0 rounded-pill bg-accent-fill px-4 py-2 text-caption font-semibold text-white transition-opacity hover:opacity-90"
+              className="shrink-0 px-4 text-caption"
             >
               Start a session
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -476,7 +477,8 @@ export function DashboardHero(props: DashboardHeroProps) {
               {props.readiness.map((check, index) => {
                 const isNext = index === nextIndex;
                 return (
-                  <button
+                  <Button
+                    variant="ghost"
                     className={cn(
                       "grid min-h-12 w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2.5 rounded border px-3 py-2 text-left transition-colors",
                       isNext
@@ -484,7 +486,6 @@ export function DashboardHero(props: DashboardHeroProps) {
                         : "border-border bg-bg hover:border-border-strong",
                     )}
                     key={check.label}
-                    type="button"
                     onClick={() => openReadiness(check)}
                   >
                     <span
@@ -504,7 +505,7 @@ export function DashboardHero(props: DashboardHeroProps) {
                       </small>
                     </span>
                     <span aria-hidden="true" className="font-mono text-caption text-faint">→</span>
-                  </button>
+                  </Button>
                 );
               })}
             </div>

@@ -13,7 +13,8 @@ import type {
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { slugAsTyped, slugify } from "./slug.js";
 import { connectionDefinitions, inferenceEndpointPresets } from "./connection-definitions.js";
-import { Button, Drawer } from "./ui/index.js";
+import { Button, Drawer, Input, Select } from "./ui/index.js";
+import { Switch } from "@/components/ui/switch";
 
 export interface ConnectionDraft extends CreateServiceConnection {
   existingId?: string;
@@ -184,7 +185,7 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
     <Drawer
       open={props.open}
       onClose={props.onClose}
-      kicker="Platform setup"
+      kicker="Application settings"
       title="Connect your AI stack"
       className="max-w-[640px]"
     >
@@ -202,17 +203,17 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
                 <strong>{monitoringEnabled ? "Scheduled monitoring enabled" : "Scheduled monitoring disabled"}</strong>
                 <span>Checks use encrypted connector credentials inside OrcaSynapse and never expose them to the browser.</span>
               </div>
-              <label className="monitoring-toggle"><input type="checkbox" checked={monitoringEnabled} onChange={(event) => setMonitoringEnabled(event.target.checked)} /><span>Run scheduled checks</span></label>
+              <label className="monitoring-toggle"><Switch checked={monitoringEnabled} onCheckedChange={setMonitoringEnabled} /><span>Run scheduled checks</span></label>
               <label>Cadence
-                <select value={monitoringInterval} onChange={(event) => setMonitoringInterval(Number(event.target.value))}>
+                <Select value={monitoringInterval} onChange={(event) => setMonitoringInterval(Number(event.target.value))}>
                   <option value={60}>Every minute</option>
                   <option value={300}>Every 5 minutes</option>
                   <option value={900}>Every 15 minutes</option>
                   <option value={3600}>Every hour</option>
-                </select>
+                </Select>
               </label>
               <label className="sm:col-span-2">Operator reason
-                <input minLength={3} maxLength={500} value={monitoringReason} onChange={(event) => setMonitoringReason(event.target.value)} />
+                <Input minLength={3} maxLength={500} value={monitoringReason} onChange={(event) => setMonitoringReason(event.target.value)} />
               </label>
               <Button variant="primary"
                 type="button"
@@ -227,30 +228,35 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
             </details>
             <div className="kind-tabs" role="tablist" aria-label="Connection type">
               {connectionDefinitions.filter(({ kind }) => kind === "INFERENCE").map((item) => (
-                <button
+                <Button
+                  variant={selectedKind === item.kind ? "secondary" : "ghost"}
+                  size="sm"
                   key={item.kind}
                   type="button"
                   role="tab"
                   aria-selected={selectedKind === item.kind}
                   className={selectedKind === item.kind ? "selected" : ""}
                   onClick={() => setSelectedKind(item.kind)}
-                >{item.name}</button>
+                >{item.name}</Button>
               ))}
-              <button
-                type="button"
+              <Button
+                variant="ghost"
+                size="sm"
                 role="tab"
                 aria-selected="false"
                 onClick={props.onOpenAgenticSystem}
-              >Agentic System</button>
+              >Agentic System</Button>
               {connectionDefinitions.filter(({ kind }) => kind === "OIDC").map((item) => (
-                <button
+                <Button
+                  variant={selectedKind === item.kind ? "secondary" : "ghost"}
+                  size="sm"
                   key={item.kind}
                   type="button"
                   role="tab"
                   aria-selected={selectedKind === item.kind}
                   className={selectedKind === item.kind ? "selected" : ""}
                   onClick={() => setSelectedKind(item.kind)}
-                >{item.name}</button>
+                >{item.name}</Button>
               ))}
             </div>
 
@@ -269,20 +275,20 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
                   <span>{diagnostic?.message ?? existing.lastHealthcheckMessage ?? "Run a credential-aware health check."}</span>
                 </div>
                 {diagnostic && <small>{diagnostic.latencyMs} ms</small>}
-                <button type="button" disabled={props.busy} onClick={() => void props.onTest(existing.id)}>
+                <Button disabled={props.busy} onClick={() => void props.onTest(existing.id)}>
                   {props.busy
                     ? existing.kind === "INFERENCE" && !existing.enabled ? "Testing and activating…" : "Testing…"
                     : existing.kind === "INFERENCE" && !existing.enabled ? "Test & activate" : "Test connection"}
-                </button>
+                </Button>
               </div>
             )}
 
             {selectedKind !== "INFERENCE" && <div className="form-grid">
-              <label>Display name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} required minLength={2}/></label>
-              <label>Slug<input value={slug} onChange={(event) => setSlug(slugAsTyped(event.target.value))} onBlur={() => setSlug((current) => slugify(current))} required disabled={Boolean(existing)}/></label>
-              <label className="sm:col-span-2">{definition.endpointLabel ?? "Endpoint URL"}<input type="url" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder={selectedKind === "OIDC" ? "https://identity.orcasynapse.internal" : "https://service.orcasynapse.internal"}/></label>
-              <label>Environment<select value={environment} onChange={(event) => setEnvironment(event.target.value as Environment)}><option value="DEVELOPMENT">Development</option><option value="STAGING">Staging</option><option value="PRODUCTION">Production</option></select></label>
-              <label className="switch-label"><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)}/><span>Enable after saving</span></label>
+              <label>Display name<Input value={displayName} onChange={(event) => setDisplayName(event.target.value)} required minLength={2}/></label>
+              <label>Slug<Input value={slug} onChange={(event) => setSlug(slugAsTyped(event.target.value))} onBlur={() => setSlug((current) => slugify(current))} required disabled={Boolean(existing)}/></label>
+              <label className="sm:col-span-2">{definition.endpointLabel ?? "Endpoint URL"}<Input type="url" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder={selectedKind === "OIDC" ? "https://identity.orcasynapse.internal" : "https://service.orcasynapse.internal"}/></label>
+              <label>Environment<Select value={environment} onChange={(event) => setEnvironment(event.target.value as Environment)}><option value="DEVELOPMENT">Development</option><option value="STAGING">Staging</option><option value="PRODUCTION">Production</option></Select></label>
+              <label className="switch-label"><Switch checked={enabled} onCheckedChange={setEnabled}/><span>Enable after saving</span></label>
             </div>}
 
             {selectedKind === "INFERENCE" && <section className="inference-discovery-section" aria-labelledby="inference-discovery-title">
@@ -291,7 +297,7 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
               </header>
               <div className="inference-connect-grid">
                 <label>AI Inference address
-                  <input
+                  <Input
                     type="text"
                     inputMode="url"
                     value={baseUrl}
@@ -306,7 +312,7 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
                 </label>
                 <label>API key
                   <span className="secret-input-label">{storedInferenceKeyReusable ? "Stored key will be used" : "Optional"}</span>
-                  <input
+                  <Input
                     type="password"
                     value={secrets.apiKey ?? ""}
                     onChange={(event) => {
@@ -317,12 +323,12 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
                     placeholder={storedInferenceKeyReusable ? "Leave blank to use stored key" : "Enter only if the server requires one"}
                   />
                 </label>
-                <button
-                  className="primary-button inference-discover-button"
-                  type="button"
+                <Button
+                  variant="primary"
+                  className="inference-discover-button"
                   disabled={props.busy || baseUrl.trim().length === 0}
                   onClick={() => void discoverInference()}
-                >{props.busy ? "Discovering…" : "Discover server"}</button>
+                >{props.busy ? "Discovering…" : "Discover server"}</Button>
               </div>
 
               {inferenceDiscovery && <div className={`inference-discovery-result ${inferenceDiscovery.status.toLowerCase()}`}>
@@ -337,12 +343,12 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
                   <span><small>Models found</small><strong>{inferenceDiscovery.models.length}</strong></span>
                 </div>
                 {inferenceDiscovery.models.length > 0 && <label className="discovered-model-select">Model OrcaSynapse should use
-                  <select
+                  <Select
                     value={configuration.modelAlias ?? inferenceDiscovery.models[0]?.id ?? ""}
                     onChange={(event) => setConfiguration((current) => ({ ...current, modelAlias: event.target.value }))}
                   >
                     {inferenceDiscovery.models.map(({ id }) => <option key={id} value={id}>{id}</option>)}
-                  </select>
+                  </Select>
                   <small>Loaded directly from the server; no model name needs to be typed manually.</small>
                 </label>}
                 {inferenceDiscovery.status === "READY" && <div className="inference-activation-note">
@@ -359,23 +365,23 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
               </div>}
             </section>}
 
-            {selectedKind === "INFERENCE" && <button
+            {selectedKind === "INFERENCE" && <Button
+              variant="ghost"
               className="advanced-configuration-toggle"
-              type="button"
               aria-expanded={inferenceAdvancedOpen}
               onClick={() => setInferenceAdvancedOpen((current) => !current)}
-            ><span><strong>Advanced configuration</strong><small>Manual backend, paths, limits, and timeouts</small></span><b>{inferenceAdvancedOpen ? "−" : "+"}</b></button>}
+            ><span><strong>Advanced configuration</strong><small>Manual backend, paths, limits, and timeouts</small></span><b>{inferenceAdvancedOpen ? "−" : "+"}</b></Button>}
 
             {(selectedKind !== "INFERENCE" || inferenceAdvancedOpen) && <div className="configuration-section">
               <div><strong>Operational settings</strong><span>Validated non-secret values</span></div>
               {selectedKind === "INFERENCE" && <div className="form-grid inference-identity-grid">
-                <label>Display name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} required minLength={2}/></label>
-                <label>Slug<input value={slug} onChange={(event) => setSlug(slugAsTyped(event.target.value))} onBlur={() => setSlug((current) => slugify(current))} required disabled={Boolean(existing)}/></label>
-                <label>Environment<select value={environment} onChange={(event) => setEnvironment(event.target.value as Environment)}><option value="DEVELOPMENT">Development</option><option value="STAGING">Staging</option><option value="PRODUCTION">Production</option></select></label>
+                <label>Display name<Input value={displayName} onChange={(event) => setDisplayName(event.target.value)} required minLength={2}/></label>
+                <label>Slug<Input value={slug} onChange={(event) => setSlug(slugAsTyped(event.target.value))} onBlur={() => setSlug((current) => slugify(current))} required disabled={Boolean(existing)}/></label>
+                <label>Environment<Select value={environment} onChange={(event) => setEnvironment(event.target.value as Environment)}><option value="DEVELOPMENT">Development</option><option value="STAGING">Staging</option><option value="PRODUCTION">Production</option></Select></label>
               </div>}
               <div className="configuration-grid">
                 {selectedKind === "INFERENCE" && <label>Serving implementation
-                  <select
+                  <Select
                     value={inferenceBackend}
                     onChange={(event) => setConfiguration((current) => ({
                       ...current,
@@ -383,7 +389,7 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
                     }))}
                   >
                     {inferenceEndpointPresets.map((preset) => <option key={preset.backend} value={preset.backend}>{preset.label}</option>)}
-                  </select>
+                  </Select>
                   <small>{inferencePreset.description}</small>
                 </label>}
                 {operationalFields.map((field) => {
@@ -391,13 +397,12 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
                   if (field.type === "checkbox") {
                     return (
                       <label className="configuration-toggle" key={field.name}>
-                        <input
-                          type="checkbox"
+                        <Switch
                           checked={value === true}
-                          onChange={(event) =>
+                          onCheckedChange={(checked) =>
                             setConfiguration((current) => ({
                               ...current,
-                              [field.name]: event.target.checked,
+                              [field.name]: checked,
                             }))
                           }
                         />
@@ -410,7 +415,7 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
                     return (
                       <label key={field.name}>
                         {field.label}
-                        <select
+                        <Select
                           value={typeof value === "string" ? value : ""}
                           onChange={(event) => setConfiguration((current) => ({
                             ...current,
@@ -420,7 +425,7 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
                           {field.options?.map((option) => (
                             <option key={option.value} value={option.value}>{option.label}</option>
                           ))}
-                        </select>
+                        </Select>
                         <small>{field.help}</small>
                       </label>
                     );
@@ -429,7 +434,7 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
                   return (
                     <label key={field.name}>
                       {field.label}
-                      <input
+                      <Input
                         type={field.type === "text-list" ? "text" : field.type}
                         value={field.type === "text-list" && Array.isArray(value)
                           ? value.join(", ")
@@ -472,7 +477,7 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
                 return (
                   <label key={field.name}>
                     {field.label}{stored && <small>Stored - leave blank to keep</small>}
-                    <input
+                    <Input
                       type="password"
                       value={secrets[field.name] ?? ""}
                       onChange={(event) => setSecrets((current) => ({ ...current, [field.name]: event.target.value }))}
@@ -492,13 +497,14 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
                     <strong id="revision-history-title">Configuration history</strong>
                     <span>Credentials are never restored from an older revision.</span>
                   </div>
-                  <button
-                    type="button"
+                  <Button
+                    variant="ghost"
+                    size="sm"
                     disabled={props.busy}
                     onClick={() => void props.onLoadRevisions(existing.id)}
                   >
                     {props.revisionConnectionId === existing.id ? "Refresh history" : "View history"}
-                  </button>
+                  </Button>
                 </div>
                 {props.revisionConnectionId === existing.id && props.revisionHistory && (
                   <div className="revision-list">
@@ -519,9 +525,9 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
                           <div className="rollback-confirmation">
                             <span>Restore settings from this revision while keeping current credentials?</span>
                             <div>
-                              <button type="button" onClick={() => setRollbackCandidate(null)}>Cancel</button>
-                              <button
-                                type="button"
+                              <Button variant="ghost" size="sm" onClick={() => setRollbackCandidate(null)}>Cancel</Button>
+                              <Button
+                                size="sm"
                                 disabled={props.busy}
                                 onClick={() => {
                                   setRollbackCandidate(null);
@@ -531,15 +537,15 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
                                     props.revisionHistory!.activeRevision,
                                   );
                                 }}
-                              >Confirm restore</button>
+                              >Confirm restore</Button>
                             </div>
                           </div>
                         ) : (
-                          <button
-                            type="button"
+                          <Button
+                            size="sm"
                             disabled={props.busy}
                             onClick={() => setRollbackCandidate(revision.revision)}
-                          >Restore</button>
+                          >Restore</Button>
                         )}
                       </article>
                     ))}

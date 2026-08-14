@@ -288,12 +288,12 @@ export function CorpusView({ session, onConfigure, onSessionExpired }: CorpusVie
           </div> : null}
           <div className="grid max-h-[520px] gap-1.5 overflow-y-auto pr-1">
             {entries.map((entry) => (
-              <button key={entry.id} type="button" onClick={() => setSelectedId(entry.id)}
+              <Button key={entry.id} variant="ghost" onClick={() => setSelectedId(entry.id)}
                 className={cn("rounded border p-3 text-left transition-colors", selected?.id === entry.id ? "border-accent/50 bg-soft" : "border-transparent hover:border-border hover:bg-raised", entry.deletedAt && "opacity-55")}>
                 <span className="flex items-center gap-2 text-label font-semibold text-text"><StorageIcon size={14} /><span className="truncate">{entry.path.split("/").at(-1)}</span></span>
                 <span className="mt-1 block truncate font-mono text-micro text-faint">{entry.path}</span>
                 <span className="mt-2 flex items-center justify-between"><MicroLabel>{entry.kind.replaceAll("_", " ")}</MicroLabel><span className="text-micro text-muted">r{entry.revision}</span></span>
-              </button>
+              </Button>
             ))}
             {!loading && entries.length === 0 ? <EmptyState title="No corpus files">The enrolled Hermes node has not synchronized matching files yet.</EmptyState> : null}
             {loading ? <p className="px-2 text-body text-muted">Reading the signed mirror…</p> : null}

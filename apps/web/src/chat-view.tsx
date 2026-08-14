@@ -6,6 +6,7 @@ import type {
   ChatConversationSummary,
   ChatMessage,
   ChatStreamEvent,
+  ModelDeployment,
 } from "@orcasynapse/contracts";
 import { applyStreamEventToConversation } from "./chat-stream-reducer.js";
 import { interleaveByOffset } from "./chat/interleave.js";
@@ -23,6 +24,16 @@ import { shouldStickToBottom } from "./chat/stick-to-bottom.js";
 import { usePacedStream } from "./chat/use-paced-stream.js";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
+  Bot as RobotIcon,
+  BrainCircuit,
+  Copy as CopyIcon,
+  Layers3 as LayersIcon,
+  Monitor as MonitorIcon,
+  Network as NodeIcon,
+  Send,
+  SquareTerminal as TerminalIcon,
+} from "lucide-react";
+import {
   OrcaSynapseApiError,
   cancelChatRun,
   createChatConversation,
@@ -33,6 +44,7 @@ import {
   getRuntimeCatalogue,
   getChatConversations,
   getAgentProfiles,
+  getModelDeployments,
   streamChatEvents,
   submitChatMessage,
   updateChatConversation,
@@ -46,17 +58,9 @@ import {
   MicroLabel,
   Select,
   StatusText,
+  Textarea,
   cn,
 } from "./ui/index.js";
-import {
-  CopyIcon,
-  LayersIcon,
-  MonitorIcon,
-  NodeIcon,
-  RobotIcon,
-  SnapshotIcon,
-  TerminalIcon,
-} from "./ui/relay-icons.js";
 
 interface ChatViewProps {
   unlocked: boolean;
@@ -120,6 +124,10 @@ function formatMessageTime(value: string): string {
 
 function formatTokenCount(value: number | null): string {
   return value === null ? "—" : value.toLocaleString();
+}
+
+function formatCompactTokenCount(value: number): string {
+  return new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(value);
 }
 
 function formatLatency(value: number | null): string {
@@ -209,7 +217,7 @@ function ActivityKindIcon({ kind, label }: Pick<TimelineEntry<ChatRuntimeEvent>,
   if (kind === "subagent") return <NodeIcon size={14} />;
   if (kind === "reasoning") return <RobotIcon size={14} />;
   if (tool.includes("memory")) return <LayersIcon size={14} />;
-  if (tool.includes("skill")) return <SnapshotIcon size={14} />;
+  if (tool.includes("skill")) return <BrainCircuit size={14} />;
   if (tool.includes("browser") || tool.includes("web")) return <MonitorIcon size={14} />;
   return <TerminalIcon size={14} />;
 }
@@ -436,12 +444,11 @@ function ChatTelemetryIcon({ metric }: { metric: ChatTelemetryMetric["key"] }) {
   if (metric === "throughput") return <MonitorIcon {...props} />;
   if (metric === "tokens") return <LayersIcon {...props} />;
   if (metric === "first-token") return <NodeIcon {...props} />;
-  return <SnapshotIcon {...props} />;
+  return <BrainCircuit {...props} />;
 }
 
 export function ChatView({
   unlocked,
-  identityMode,
   displayName,
   administratorReadiness,
   oidcConfigured,
@@ -468,6 +475,7 @@ export function ChatView({
   const [streamStartedAt, setStreamStartedAt] = useState<number | null>(null);
   const [streamElapsedMs, setStreamElapsedMs] = useState(0);
   const [profiles, setProfiles] = useState<AgentProfile[]>([]);
+  const [modelDeployments, setModelDeployments] = useState<ModelDeployment[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState("");
   const [currentActivity, setCurrentActivity] = useState<string | null>(null);
   const [renaming, setRenaming] = useState(false);
@@ -551,14 +559,20 @@ export function ChatView({
       setActive(null);
       setError(null);
       setProfiles([]);
+      setModelDeployments([]);
       return;
     }
     let current = true;
     setLoading(true);
-    void Promise.all([getChatConversations(), getAgentProfiles(false)])
-      .then(async ([{ items }, profileList]) => {
+    void Promise.all([
+      getChatConversations(),
+      getAgentProfiles(false),
+      getModelDeployments().catch(() => ({ items: [] })),
+    ])
+      .then(async ([{ items }, profileList, modelList]) => {
         if (!current) return;
         setConversations(items);
+        setModelDeployments(modelList.items);
         const activeProfiles = profileList.items.filter(({ status }) => status === "ACTIVE");
         setProfiles(activeProfiles);
         setSelectedProfileId((selected) => selected || activeProfiles[0]?.id || "");
@@ -992,13 +1006,20 @@ export function ChatView({
   }
 
   const assistantResponses = active?.messages.filter(({ role }) => role === "ASSISTANT") ?? [];
-  const completedResponses = assistantResponses.filter(({ status }) => status === "COMPLETED");
-  // Summing nulls as zeroes would put back the claim the runtime never made:
-  // a conversation nobody measured reads as a conversation that cost nothing.
-  const measuredResponses = completedResponses.filter(({ totalTokens }) => totalTokens !== null);
-  const conversationTotalTokens = measuredResponses.length === 0
-    ? null
-    : measuredResponses.reduce((total, message) => total + (message.totalTokens ?? 0), 0);
+  const latestContextSample = [...assistantResponses]
+    .reverse()
+    // A failed gateway attempt can leave a response with zero token telemetry.
+    // It is not evidence that the model had an empty context; walk back to the
+    // latest response that actually measured a prompt instead.
+    .find(({ inputTokens }) => inputTokens !== null && inputTokens > 0);
+  const contextTokens = latestContextSample?.inputTokens ?? null;
+  const contextDeployment = modelDeployments.find(({ modelAlias, status }) => (
+    modelAlias === active?.modelAlias && status === "ACTIVE"
+  )) ?? modelDeployments.find(({ modelAlias }) => modelAlias === active?.modelAlias);
+  const contextWindowTokens = contextDeployment?.contextWindowTokens ?? null;
+  const contextUsagePercent = contextTokens !== null && contextWindowTokens !== null
+    ? Math.min(100, Math.round((contextTokens / contextWindowTokens) * 100))
+    : null;
   const profileAvailable = profiles.length > 0;
   const routeReady = administratorReadiness?.ready !== false && profileAvailable;
   const chatReady = routeReady && active?.status !== "ARCHIVED";
@@ -1019,7 +1040,6 @@ export function ChatView({
     .slice(0, 2)
     .map((part) => part[0]?.toUpperCase() ?? "")
     .join("") || "OS";
-  const sessionAccessLabel = identityMode === "ENTERPRISE" ? "Enterprise access" : "Administrator preview";
   const readinessTitle = !profileAvailable
     ? "Create your first Agent Profile"
     : administratorReadiness?.title ?? "Hermes is ready";
@@ -1049,29 +1069,37 @@ export function ChatView({
     <section className="m-0 grid h-full w-full max-w-none grid-cols-1 bg-bg lg:grid-cols-[288px_minmax(0,1fr)]">
       <aside
         className={cn(
-          "min-w-0 flex-col border-r border-border bg-surface px-3 pb-3 pt-3",
+          "min-w-0 flex-col overflow-x-hidden border-r border-border bg-surface px-3 pb-3 pt-3",
           historyOpen ? "flex" : "hidden lg:flex",
         )}
       >
         <h1 className="sr-only">Session</h1>
-        <div className="mb-2.5 flex items-center justify-between px-1.5">
-          <strong className="font-display text-label font-semibold text-text">Conversations</strong>
-          {conversations.length > 0 ? (
-            <span className="font-mono text-micro tabular-nums text-faint">{conversations.length}</span>
-          ) : null}
+        <div className="mb-3 flex min-w-0 items-center justify-between gap-3 px-1.5 pt-0.5">
+          <div className="min-w-0">
+            <strong className="block font-display text-[13px] font-semibold text-text">Conversations</strong>
+            <span className="mt-0.5 block text-micro text-faint">Hermes workspace history</span>
+          </div>
+          <span
+            className="grid h-6 min-w-6 shrink-0 place-items-center rounded-pill border border-border bg-bg px-1.5 font-mono text-micro font-semibold tabular-nums text-muted"
+            aria-label={`${conversations.length} conversations`}
+          >
+            {conversations.length}
+          </span>
         </div>
         <Button
-          variant="secondary"
-          className="mb-2.5 h-10 w-full justify-start gap-2.5 border-border bg-raised px-3.5 text-text hover:border-accent/40 hover:bg-soft"
+          variant="primary"
+          className="mb-2.5 h-10 w-full justify-between px-3.5 shadow-card"
           onClick={newConversation}
         >
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M5 6.5A2.5 2.5 0 0 1 7.5 4h9A2.5 2.5 0 0 1 19 6.5v7a2.5 2.5 0 0 1-2.5 2.5H11l-4.5 3v-3A2.5 2.5 0 0 1 4 13.5v-7Z" />
-            <path d="M12 7.5v5M9.5 10h5" />
-          </svg>
-          New conversation
+          <span className="flex items-center gap-2.5">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M5 6.5A2.5 2.5 0 0 1 7.5 4h9A2.5 2.5 0 0 1 19 6.5v7a2.5 2.5 0 0 1-2.5 2.5H11l-4.5 3v-3A2.5 2.5 0 0 1 4 13.5v-7Z" />
+            </svg>
+            New conversation
+          </span>
+          <span aria-hidden="true" className="grid h-5 w-5 place-items-center rounded-pill border border-current/20 text-[15px] leading-none">+</span>
         </Button>
-        <label className="relative mb-3 block">
+        <label className="relative mb-2 block">
           <span className="sr-only">Search conversations</span>
           <svg className="pointer-events-none absolute left-3 top-1/2 z-[1] -translate-y-1/2 text-faint" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" aria-hidden="true">
             <circle cx="10.8" cy="10.8" r="6.3" />
@@ -1079,13 +1107,13 @@ export function ChatView({
           </svg>
           <Input
             type="search"
-            className="bg-bg pl-9"
+            className="h-9 border-border bg-bg pl-9 pr-3 text-caption shadow-none focus:bg-surface"
             value={historyFilter}
             onChange={(event) => setHistoryFilter(event.target.value)}
             placeholder="Search conversations"
           />
         </label>
-        <div className="grid min-h-0 flex-1 content-start gap-1 overflow-y-auto pr-0.5" aria-label="Conversation history">
+        <div className="grid min-h-0 flex-1 content-start gap-1 overflow-x-hidden overflow-y-auto pr-0.5" aria-label="Conversation history">
           {visibleConversations.length === 0 && !loading && (
             <div className="grid justify-items-center gap-2 px-4 py-10 text-center">
               <span aria-hidden="true" className="grid h-9 w-9 place-items-center rounded bg-raised text-faint">
@@ -1109,85 +1137,62 @@ export function ChatView({
                 * closes an open menu when clicked, and a second level-1 heading
                 * would make that target ambiguous.
                 */}
-              <h3 className="sticky top-0 z-[1] bg-surface px-3 pb-1 pt-3 text-micro font-semibold uppercase tracking-[0.08em] text-faint">
-                {group.label}
+              <h3 className="sticky top-0 z-[1] flex items-center gap-2 bg-surface px-1.5 pb-1.5 pt-3 text-micro font-semibold uppercase tracking-[0.1em] text-faint">
+                <span>{group.label}</span>
+                <span aria-hidden="true" className="h-px flex-1 bg-border" />
               </h3>
           {group.items.map((conversation) => (
-            <button
-              type="button"
+            <Button
+              variant="ghost"
               key={conversation.id}
               aria-current={active?.id === conversation.id ? "true" : undefined}
               className={cn(
-                "relative grid w-full gap-1 rounded px-3 py-2.5 text-left transition-colors",
+                "relative grid w-full grid-cols-[30px_minmax(0,1fr)] items-start gap-2.5 rounded-card border px-2.5 py-2.5 text-left transition-all duration-150",
                 active?.id === conversation.id
-                  ? "bg-raised"
-                  : "hover:bg-raised/60",
+                  ? "border-accent/30 bg-soft shadow-card"
+                  : "border-transparent hover:border-border hover:bg-raised/70",
               )}
               onClick={() => void selectConversation(conversation.id)}
             >
-              <strong className={cn(
-                "truncate text-[12.5px] text-text",
-                active?.id === conversation.id ? "font-semibold" : "font-medium",
-              )}>{conversation.title}</strong>
-              <span className="flex items-center gap-1.5 text-[10.5px] text-faint">
-                <span className="shrink-0">
-                  {conversation.status === "ARCHIVED" ? "Archived" : formatConversationTime(conversation.lastMessageAt)}
-                </span>
-                <span aria-hidden="true" className="h-[2.5px] w-[2.5px] shrink-0 rounded-full bg-faint" />
-                <span className="truncate">
-                  {conversation.lastMessagePreview ?? conversation.profileName ?? conversation.modelAlias}
+              <span
+                aria-hidden="true"
+                className={cn(
+                  "grid h-[30px] w-[30px] place-items-center rounded border",
+                  active?.id === conversation.id
+                    ? "border-accent/25 bg-accent/10 text-accent"
+                    : "border-border bg-bg text-faint",
+                )}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M5 6.5A2.5 2.5 0 0 1 7.5 4h9A2.5 2.5 0 0 1 19 6.5v7a2.5 2.5 0 0 1-2.5 2.5H11l-4.5 3v-3A2.5 2.5 0 0 1 4 13.5v-7Z" />
+                </svg>
+              </span>
+              <span className="grid min-w-0 gap-1">
+                <strong className={cn(
+                  "truncate text-[12.5px] text-text",
+                  active?.id === conversation.id ? "font-semibold" : "font-medium",
+                )}>{conversation.title}</strong>
+                <span className="flex min-w-0 items-center gap-1.5 text-[10.5px] text-faint">
+                  <span className="shrink-0 font-mono tabular-nums">
+                    {conversation.status === "ARCHIVED" ? "Archived" : formatConversationTime(conversation.lastMessageAt)}
+                  </span>
+                  <span aria-hidden="true" className="h-[2.5px] w-[2.5px] shrink-0 rounded-full bg-faint" />
+                  <span className="truncate">
+                    {conversation.lastMessagePreview ?? conversation.profileName ?? conversation.modelAlias}
+                  </span>
                 </span>
               </span>
-            </button>
+            </Button>
           ))}
             </section>
           ))}
-        </div>
-        {/* The account-style summary anchors the rail like a familiar chat app:
-            identity first, then the two runtime facts an operator checks. */}
-        <div className="mt-auto border-t border-border pt-3">
-          <section className="rounded border border-border bg-raised p-2.5" aria-label="Current session identity">
-            <header className="flex min-w-0 items-center gap-2.5">
-              <span aria-hidden="true" className="grid h-9 w-9 shrink-0 place-items-center rounded bg-soft font-display text-caption font-semibold text-accent">
-                {sessionInitials}
-              </span>
-              <div className="min-w-0 flex-1">
-                <strong className="block truncate text-label font-semibold text-text">{sessionOwner}</strong>
-                <span className="mt-0.5 block truncate text-caption text-faint">{sessionAccessLabel}</span>
-              </div>
-              <span aria-label="Session active" className="h-2 w-2 shrink-0 rounded-full bg-good" />
-            </header>
-            <dl className="m-0 mt-2.5 grid gap-2 border-t border-border pt-2.5">
-              <div className="grid min-w-0 grid-cols-[18px_minmax(0,1fr)] items-center gap-2">
-                <RobotIcon size={15} className="text-accent" />
-                <div className="min-w-0">
-                  <dt className="text-micro font-semibold uppercase tracking-[0.06em] text-faint">Agent</dt>
-                  <dd className="m-0 truncate text-caption font-medium text-muted">{selectedAgentName}</dd>
-                </div>
-              </div>
-              <div className="grid min-w-0 grid-cols-[18px_minmax(0,1fr)] items-center gap-2">
-                <svg className="text-faint" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
-                  <path d="M5 19V9M12 19V5M19 19v-7" />
-                </svg>
-                <div className="min-w-0">
-                  <dt className="text-micro font-semibold uppercase tracking-[0.06em] text-faint">Usage</dt>
-                  <dd
-                    className="m-0 truncate font-mono text-caption tabular-nums text-muted"
-                    title={conversationTotalTokens === null ? "This runtime does not report token usage." : undefined}
-                  >
-                    {conversationTotalTokens === null ? "Not reported" : `${conversationTotalTokens.toLocaleString()} tokens`}
-                  </dd>
-                </div>
-              </div>
-            </dl>
-          </section>
         </div>
       </aside>
 
       <div className="relative grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)_auto]">
         {/* This bar keeps what only it can say: which conversation is open,
             which agent owns a new one, and whether that route is usable. */}
-        <header className="flex min-h-[56px] items-center gap-4 bg-bg px-5 py-2">
+        <header className="flex min-h-[64px] items-center gap-4 bg-bg px-5 py-2.5">
           <Button
             size="sm"
             className="lg:hidden"
@@ -1229,15 +1234,24 @@ export function ChatView({
                 line read "Start a governed Hermes conversation" -- an invitation
                 the empty state below already extends, in larger type. */}
             {active && (
-              <span className="mt-0.5 block truncate text-caption text-faint">
-                {`${active.profileName ?? "Legacy route"} · ${active.messages.length} messages`}
+              <span className="mt-1 flex items-center gap-1.5 truncate text-caption text-faint">
+                <span
+                  aria-hidden="true"
+                  className={cn("h-1.5 w-1.5 shrink-0 rounded-full", active.status === "ACTIVE" ? "bg-good" : "bg-faint")}
+                />
+                <span className="truncate">{active.profileName ?? "Agent profile"}</span>
+                <span aria-hidden="true">·</span>
+                <span className="font-mono tabular-nums">{active.messages.length} messages</span>
               </span>
             )}
           </div>
-          <div className="flex min-w-0 items-center gap-2" aria-label="Conversation runtime">
+          <div
+            className="flex min-w-0 shrink-0 items-center gap-1 rounded-card border border-border bg-surface p-1 shadow-card"
+            aria-label="Conversation runtime"
+          >
             {!active && (
               <div
-                className="relative hidden h-10 min-w-0 items-center rounded border border-border bg-surface transition-colors focus-within:border-accent sm:flex"
+                className="relative hidden h-9 min-w-0 items-center rounded border border-transparent bg-transparent transition-colors focus-within:border-accent sm:flex"
                 data-agent-selector
               >
                 <span className="pointer-events-none absolute left-2.5 top-1/2 z-[1] grid h-6 w-6 -translate-y-1/2 place-items-center rounded bg-soft text-accent" data-agent-selector-icon>
@@ -1260,44 +1274,55 @@ export function ChatView({
               </div>
             )}
             {routeReady || working ? (
-              <div className="flex h-10 items-center gap-2 rounded border border-border bg-surface px-3 text-caption font-semibold text-muted">
+              <div className="flex h-9 items-center gap-2 rounded border border-transparent bg-transparent px-2.5 text-caption font-semibold text-muted">
                 <span aria-hidden="true" className={cn("h-2 w-2 rounded-full", working ? "anim-live bg-accent" : "bg-good")} />
-                <span className="whitespace-nowrap">{working ? `Working · ${(streamElapsedMs / 1_000).toFixed(1)} s` : "Agent ready"}</span>
+                <span className="whitespace-nowrap">{working ? `Working · ${(streamElapsedMs / 1_000).toFixed(1)} s` : "Ready"}</span>
               </div>
             ) : (
-              <button
-                type="button"
-                className="flex h-10 items-center gap-2 rounded border border-warn/35 bg-warn/10 px-2.5 text-left text-warn transition-colors hover:border-warn/60 hover:bg-warn/20"
+              <Button
+                variant="ghost"
+                className="flex h-9 items-center gap-2 rounded border border-transparent bg-warn/10 px-2.5 text-left text-warn transition-colors hover:border-warn/35 hover:bg-warn/20"
                 onClick={openReadiness}
                 aria-label="Open agent setup: setup required"
               >
-                <span className="grid h-6 w-6 place-items-center rounded bg-warn/10">
-                  <RobotIcon size={15} />
+                <span className="grid h-6 w-6 place-items-center rounded bg-warn/10" aria-hidden="true">
+                  <RobotIcon size={14} />
                 </span>
-                <span className="grid leading-tight">
-                  <span className="text-[9px] font-semibold uppercase tracking-[0.08em]">Agent</span>
-                  <strong className="text-caption font-semibold">Setup required</strong>
-                </span>
+                <strong className="whitespace-nowrap text-caption font-semibold">Setup required</strong>
                 <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <path d="M3 8h9M9 4l4 4-4 4" />
                 </svg>
-              </button>
+              </Button>
             )}
-          </div>
 
           {active && !renaming && (
-            <div className="relative flex items-center gap-1.5" ref={moreMenu}>
-              <Button size="sm" disabled={working || loading} onClick={() => void openSkills()}>
+            <div className="relative ml-0.5 flex items-center gap-0.5 border-l border-border pl-1" ref={moreMenu}>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-9 px-2.5"
+                disabled={working || loading}
+                onClick={() => void openSkills()}
+              >
+                <LayersIcon size={14} />
                 Skills
               </Button>
               <Button
+                variant="ghost"
                 size="sm"
+                className="h-9 w-9 p-0"
                 aria-haspopup="menu"
                 aria-expanded={moreOpen}
+                aria-label="More conversation actions"
+                title="More actions"
                 disabled={working || loading}
                 onClick={() => setMoreOpen((open) => !open)}
               >
-                More ⌄
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                  <circle cx="3" cy="8" r="1.2" />
+                  <circle cx="8" cy="8" r="1.2" />
+                  <circle cx="13" cy="8" r="1.2" />
+                </svg>
               </Button>
               {moreOpen && (
                 <div
@@ -1343,6 +1368,7 @@ export function ChatView({
               )}
             </div>
           )}
+          </div>
         </header>
 
         {/*
@@ -1409,7 +1435,8 @@ export function ChatView({
                       prompt: "Create a concise risk checklist for deploying an internal AI assistant.",
                     },
                   ].map((suggestion) => (
-                    <button
+                    <Button
+                      variant="outline"
                       className="grid gap-1.5 rounded-lg border border-border bg-surface px-4 py-3.5 text-left transition-colors hover:border-accent hover:bg-raised/60 disabled:cursor-not-allowed disabled:opacity-40"
                       key={suggestion.label}
                       type="button"
@@ -1418,14 +1445,14 @@ export function ChatView({
                     >
                       <span className="text-body font-semibold leading-snug text-text">{suggestion.label}</span>
                       <span className="text-caption leading-snug text-faint">{suggestion.sub}</span>
-                    </button>
+                    </Button>
                   ))}
                 </div>
               </div>
             ) : (
               active.messages.map((message) => (
                 /*
-                 * The person's turn is a bounded card and the agent's is not.
+                 * The person's turn is a content-sized bubble and the agent's is not.
                  * That asymmetry is the only thing that lets the eye find where
                  * an exchange begins without reading any of the text, which on a
                  * long governed transcript is most of what makes it navigable.
@@ -1434,15 +1461,14 @@ export function ChatView({
                   className={cn(
                     /*
                      * The design's asymmetry, sharpened: the person's turn is a
-                     * right-aligned soft-violet bubble with the flattened corner
-                     * pointing back at them; the agent's turn is an open row
+                     * compact right-aligned soft-violet bubble; the agent's turn is an open row
                      * under the mark. The eye finds where an exchange begins
                      * without reading a word, which on a long governed
                      * transcript is most of what makes it navigable.
                      */
                     "group",
                     message.role === "USER"
-                      ? "mb-7 mt-2 ml-auto max-w-[540px] rounded bg-soft px-4 py-3"
+                      ? "relative mb-7 mt-2 ml-auto flex w-fit max-w-[88%] items-end justify-end gap-2.5 sm:max-w-[72%]"
                       /*
                        * No rule between turns. A hairline under every message
                        * made the transcript a table with rows; the bubble above
@@ -1464,13 +1490,20 @@ export function ChatView({
                       <img src="/brand/sivali-mark.svg" alt="" width={19} height={19} className="block" />
                     </div>
                   )}
-                  <div className="min-w-0">
-                    {/*
-                      * Assistant identity remains visible so every response has
-                      * clear authorship. User metadata stays available on hover
-                      * without adding another label above every user bubble.
-                      */}
-                    <div className="flex min-h-[20px] items-center justify-between gap-3">
+                  <div className={cn(
+                    "min-w-0",
+                    message.role === "USER"
+                      ? "min-w-[72px] rounded-card border border-accent/15 bg-soft px-4 py-2.5 shadow-card"
+                      : "",
+                  )}>
+                    {/* The profile remains visible because it describes the
+                        assistant's governed behavior. The singular runtime's
+                        model alias does not: repeating it above every answer
+                        adds implementation noise without resolving ambiguity. */}
+                    <div className={cn(
+                      "flex items-center justify-between gap-3",
+                      message.role === "USER" ? "absolute -top-6 right-1" : "min-h-[20px]",
+                    )}>
                       <div
                         className={cn(
                           "flex min-w-0 items-baseline gap-2 transition-opacity duration-150",
@@ -1480,16 +1513,11 @@ export function ChatView({
                         )}
                       >
                         <strong className="text-caption font-semibold text-muted">
-                          {message.role === "USER" ? "You" : (active.profileName ?? "Hermes")}
+                          {message.role === "USER" ? "You" : (active.profileName ?? "Agent")}
                         </strong>
                         <time className="font-mono text-micro text-faint" dateTime={message.createdAt}>
                           {formatMessageTime(message.createdAt)}
                         </time>
-                        {message.role === "ASSISTANT" && (
-                          <span className="max-w-[220px] truncate font-mono text-micro text-faint">
-                            {message.modelAlias ?? active.modelAlias}
-                          </span>
-                        )}
                       </div>
                       {message.status !== "COMPLETED" && (
                         <StatusText
@@ -1500,7 +1528,7 @@ export function ChatView({
                       )}
                     </div>
                     {message.role === "USER"
-                      ? <p className="my-1 whitespace-pre-wrap break-words text-body leading-[1.6] text-text">{message.content}</p>
+                      ? <p className="m-0 whitespace-pre-wrap break-words text-[14px] leading-[1.65] text-text">{message.content}</p>
                       : <AgentResponseFlow
                           message={message}
                           currentActivity={currentActivity}
@@ -1605,6 +1633,16 @@ export function ChatView({
                       </div>
                     )}
                   </div>
+                  {message.role === "USER" && (
+                    <span
+                      aria-label={`${sessionOwner} avatar`}
+                      className="grid h-8 w-8 shrink-0 place-items-center overflow-hidden rounded-pill border border-accent/20 bg-accent/10 font-display text-[10px] font-bold uppercase tracking-[0.03em] text-accent"
+                      data-avatar-slot="user"
+                      title={sessionOwner}
+                    >
+                      {sessionInitials}
+                    </span>
+                  )}
                 </article>
               ))
             )}
@@ -1653,7 +1691,7 @@ export function ChatView({
             )}
             onSubmit={submit}
           >
-            <textarea
+            <Textarea
               className="max-h-[180px] min-h-[54px] w-full resize-y border-0 bg-transparent px-1 py-1 text-read text-text outline-0 placeholder:text-faint disabled:cursor-not-allowed"
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
@@ -1673,6 +1711,33 @@ export function ChatView({
               <div className="flex min-w-0 items-center gap-2 px-1 text-micro text-faint">
                 <RobotIcon size={14} className="text-accent" />
                 <span className="max-w-[180px] truncate font-medium text-muted">{selectedAgentName}</span>
+                <span aria-hidden="true" className="hidden h-1 w-1 shrink-0 rounded-full bg-border-strong sm:block" />
+                <span
+                  className="hidden min-w-0 items-center gap-1.5 sm:flex"
+                  aria-label={contextUsagePercent !== null
+                    ? `Context usage ${contextUsagePercent}%`
+                    : contextTokens !== null
+                      ? `Context usage ${contextTokens.toLocaleString()} tokens; percentage unavailable`
+                      : "Context usage is not available"}
+                  title={contextTokens === null
+                    ? "Hermes has not reported prompt token usage for a completed response."
+                    : contextWindowTokens === null
+                      ? `Latest prompt context: ${contextTokens.toLocaleString()} tokens. The configured context window is not available.`
+                      : `Latest prompt context: ${contextTokens.toLocaleString()} of ${contextWindowTokens.toLocaleString()} tokens. This measures the current model prompt, not Hermes persistent memory.`}
+                >
+                  <LayersIcon size={13} className="text-faint" />
+                  <span>Context</span>
+                  <strong className={cn(
+                    "font-mono font-semibold tabular-nums",
+                    contextUsagePercent !== null && contextUsagePercent >= 80 ? "text-warn" : "text-muted",
+                  )}>
+                    {contextUsagePercent !== null
+                      ? `${contextUsagePercent}%`
+                      : contextTokens !== null
+                        ? `${formatCompactTokenCount(contextTokens)} tokens`
+                        : "—"}
+                  </strong>
+                </span>
                 <span aria-hidden="true" className="hidden h-1 w-1 shrink-0 rounded-full bg-border-strong sm:block" />
                 <span className="hidden sm:inline">Shift + Enter for new line</span>
               </div>
@@ -1698,19 +1763,7 @@ export function ChatView({
                     disabled={!draft.trim() || !chatReady}
                     aria-label="Send message"
                   >
-                    <svg
-                      viewBox="0 0 16 16"
-                      width="16"
-                      height="16"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.9"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      aria-hidden="true"
-                    >
-                      <path d="M8 13.2V3.4M3.6 7.8 8 3.4l4.4 4.4" />
-                    </svg>
+                    <Send aria-hidden="true" className="h-4 w-4" />
                   </Button>
                 )}
               </div>

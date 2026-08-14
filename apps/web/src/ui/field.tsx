@@ -1,9 +1,8 @@
-import type {
-  InputHTMLAttributes,
-  ReactNode,
-  SelectHTMLAttributes,
-  TextareaHTMLAttributes,
-} from "react";
+import type { ReactNode } from "react";
+import { Input } from "../components/ui/input.js";
+import { Label } from "../components/ui/label.js";
+import { NativeSelect as Select } from "../components/ui/native-select.js";
+import { Textarea } from "../components/ui/textarea.js";
 import { cn } from "./cn.js";
 
 /**
@@ -15,12 +14,6 @@ import { cn } from "./cn.js";
  * and it is the only option that behaves correctly on a touch device.
  */
 
-const control =
-  "w-full rounded-input border border-border bg-raised px-3 text-body text-text " +
-  "placeholder:text-faint " +
-  "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent " +
-  "disabled:cursor-not-allowed disabled:opacity-40";
-
 export function Field(props: {
   label: string;
   hint?: ReactNode;
@@ -29,22 +22,12 @@ export function Field(props: {
   className?: string;
 }) {
   return (
-    <label className={cn("grid gap-1.5", props.className)} htmlFor={props.htmlFor}>
+    <Label className={cn("grid gap-1.5", props.className)} htmlFor={props.htmlFor}>
       <span className="text-micro font-semibold uppercase tabular-nums text-faint">{props.label}</span>
       {props.children}
       {props.hint ? <small className="text-caption leading-relaxed text-muted">{props.hint}</small> : null}
-    </label>
+    </Label>
   );
 }
 
-export function Input({ className, ...rest }: InputHTMLAttributes<HTMLInputElement>) {
-  return <input className={cn(control, "h-9", className)} {...rest} />;
-}
-
-export function Textarea({ className, ...rest }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  return <textarea className={cn(control, "min-h-[88px] resize-y py-2 leading-relaxed", className)} {...rest} />;
-}
-
-export function Select({ className, ...rest }: SelectHTMLAttributes<HTMLSelectElement>) {
-  return <select className={cn(control, "h-9", className)} {...rest} />;
-}
+export { Input, Select, Textarea };

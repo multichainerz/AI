@@ -1,5 +1,7 @@
 import { cva, type VariantProps } from "class-variance-authority";
 import type { HTMLAttributes, ReactNode } from "react";
+import { Alert as ShadcnAlert } from "../components/ui/alert.js";
+import { Card } from "../components/ui/card.js";
 import { Button } from "./button.js";
 import { cn } from "./cn.js";
 import { Mark, MicroLabel, Panel } from "./surface.js";
@@ -69,7 +71,7 @@ export function StatusText({
   );
 }
 
-const alert = cva("flex items-start justify-between gap-4 rounded border px-3.5 py-3 text-body", {
+const alert = cva("flex items-start justify-between gap-4 px-3.5 py-3", {
   variants: {
     tone: {
       error: "border-bad/40 bg-bad/10 text-bad",
@@ -92,29 +94,24 @@ export function Alert({
   className?: string;
 }) {
   return (
-    <div className={cn(alert({ tone }), className)} role="alert">
+    <ShadcnAlert className={cn(alert({ tone }), className)}>
       <span className="min-w-0">{children}</span>
       {onDismiss ? (
         <Button variant="ghost" size="sm" onClick={onDismiss} className="-my-1 shrink-0">
           Dismiss
         </Button>
       ) : null}
-    </div>
+    </ShadcnAlert>
   );
 }
 
 export function EmptyState(props: { title: string; children?: ReactNode; action?: ReactNode; className?: string }) {
   return (
-    <div
-      className={cn(
-        "grid justify-items-start gap-1.5 rounded border border-dashed border-border px-4 py-7",
-        props.className,
-      )}
-    >
-      <strong className="text-body font-semibold text-text">{props.title}</strong>
-      {props.children ? <span className="max-w-[62ch] text-body text-muted">{props.children}</span> : null}
+    <Card className={cn("grid justify-items-start gap-1.5 border-dashed px-4 py-7 shadow-none", props.className)}>
+      <strong className="text-body font-semibold text-foreground">{props.title}</strong>
+      {props.children ? <span className="max-w-[62ch] text-body text-muted-foreground">{props.children}</span> : null}
       {props.action ? <div className="mt-2">{props.action}</div> : null}
-    </div>
+    </Card>
   );
 }
 
