@@ -30,8 +30,9 @@ export interface TimelineEvent {
 export type TimelineKind = "tool" | "subagent" | "approval" | "reasoning" | "lifecycle";
 /**
  * `running` is the honest answer for a call whose terminal event has not
- * arrived, including one whose run died mid-flight. Nothing here invents a
- * failure the log does not record.
+ * arrived while its run is still active. Once the run itself has a terminal
+ * event, an orphaned entry inherits that outcome: historical activity must
+ * never claim it is still executing.
  */
 export type TimelineStatus = "running" | "completed" | "failed" | "cancelled";
 
@@ -96,6 +97,7 @@ function statusOf(type: string, reported: string | null, previous: TimelineStatu
     if (terminal === "FAILED") return "failed";
     if (terminal === "COMPLETED") return "completed";
     if (terminal === "CANCELLED") return "cancelled";
+    if (terminal === "DENIED" || terminal === "TIMED_OUT") return "failed";
   }
   return previous;
 }
@@ -115,11 +117,24 @@ export function groupRuntimeEvents<E extends TimelineEvent>(events: readonly E[]
   for (const event of events) {
     const kind = kindOf(event.type);
     const key = event.toolCallKey ?? event.id;
-    const existing = event.toolCallKey ? byKey.get(key) : undefined;
+    const exact = event.toolCallKey ? byKey.get(key) : undefined;
+    /*
+     * v4.6.0 accidentally assigned a different synthesized call key to
+     * every Hermes event. Repair those already-retained rows in presentation:
+     * when a non-start event has no exact match, it belongs to the newest open
+     * same-name tool call. This mirrors the worker's correlation rule and keeps
+     * runtime-provided matching keys authoritative.
+     */
+    const fallback = !exact && kind === "tool" && event.type !== "TOOL_STARTED"
+      ? [...ordered].reverse().find((entry) =>
+        entry.kind === "tool" && entry.label === (event.toolName ?? "tool") && entry.status === "running")
+      : undefined;
+    const existing = exact ?? fallback;
 
     if (existing) {
       existing.events.push(event);
       existing.status = statusOf(event.type, event.status, existing.status);
+      if (event.toolCallKey) byKey.set(event.toolCallKey, existing);
       // The runtime reports duration on the event that ends the call, so a
       // later value always supersedes an earlier one.
       if (event.durationMs !== null) existing.durationMs = event.durationMs;
@@ -138,6 +153,18 @@ export function groupRuntimeEvents<E extends TimelineEvent>(events: readonly E[]
     };
     if (event.toolCallKey) byKey.set(key, entry);
     ordered.push(entry);
+  }
+
+  const terminal = [...events].reverse().find((event) =>
+    event.type === "RUN_ENDED" || event.type === "RUN_COMPLETED"
+      || event.type === "RUN_FAILED" || event.type === "RUN_CANCELLED");
+  if (terminal) {
+    const outcome = statusOf(terminal.type, terminal.status, "running");
+    if (outcome !== "running") {
+      for (const entry of ordered) {
+        if (entry.status === "running") entry.status = outcome;
+      }
+    }
   }
 
   return ordered;

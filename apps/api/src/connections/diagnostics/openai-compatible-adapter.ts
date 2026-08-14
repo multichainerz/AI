@@ -1,6 +1,8 @@
 import {
+  boundedJsonResponse,
   failedHttpOutcome,
   healthFetch,
+  ResponseBodyTooLargeError,
   stringConfiguration,
 } from "./http.js";
 import type {
@@ -13,6 +15,8 @@ interface OpenAICompatibleAdapterOptions {
   serviceName: string;
   defaultHealthPath?: string;
 }
+
+const MAX_MODEL_DISCOVERY_BYTES = 1_000_000;
 
 function discoveredModelIds(payload: Record<string, unknown>): string[] {
   const candidates = [
@@ -39,10 +43,17 @@ export class OpenAICompatibleAdapter implements ConnectionDiagnosticAdapter {
 
     let payload: Record<string, unknown>;
     try {
-      const value = await models.json() as unknown;
+      const value = await boundedJsonResponse(models, MAX_MODEL_DISCOVERY_BYTES);
       if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid payload");
       payload = value as Record<string, unknown>;
-    } catch {
+    } catch (error) {
+      if (error instanceof ResponseBodyTooLargeError) {
+        return {
+          status: "DEGRADED",
+          message: `${this.options.serviceName} models response exceeded the one-megabyte safety limit.`,
+          details: { failure: "models_response_too_large", responseTooLarge: true },
+        };
+      }
       return {
         status: "DEGRADED",
         message: `${this.options.serviceName} is reachable but returned an invalid models response.`,

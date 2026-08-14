@@ -1,4 +1,8 @@
-import { healthFetch } from "./http.js";
+import {
+  boundedJsonResponse,
+  healthFetch,
+  ResponseBodyTooLargeError,
+} from "./http.js";
 import type {
   AdapterOutcome,
   ConnectionDiagnosticAdapter,
@@ -6,38 +10,6 @@ import type {
 } from "./types.js";
 
 const MAX_OIDC_DISCOVERY_BYTES = 1_000_000;
-
-class OidcDiscoveryTooLargeError extends Error {}
-
-async function boundedJson(response: Response): Promise<unknown> {
-  const declared = Number(response.headers.get("content-length"));
-  if (Number.isFinite(declared) && declared > MAX_OIDC_DISCOVERY_BYTES) {
-    throw new OidcDiscoveryTooLargeError();
-  }
-  if (!response.body) return JSON.parse("");
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (total > MAX_OIDC_DISCOVERY_BYTES) throw new OidcDiscoveryTooLargeError();
-      chunks.push(value);
-    }
-  } catch (error) {
-    await reader.cancel().catch(() => undefined);
-    throw error;
-  }
-  const joined = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    joined.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(joined));
-}
 
 export class OidcAdapter implements ConnectionDiagnosticAdapter {
   async test(connection: ResolvedConnection, signal: AbortSignal): Promise<AdapterOutcome> {
@@ -56,9 +28,9 @@ export class OidcAdapter implements ConnectionDiagnosticAdapter {
       token_endpoint?: unknown;
     };
     try {
-      discovery = (await boundedJson(response)) as typeof discovery;
+      discovery = (await boundedJsonResponse(response, MAX_OIDC_DISCOVERY_BYTES)) as typeof discovery;
     } catch (error) {
-      if (error instanceof OidcDiscoveryTooLargeError) {
+      if (error instanceof ResponseBodyTooLargeError) {
         return {
           status: "DEGRADED",
           message: "OIDC discovery exceeded the one-megabyte safety limit.",

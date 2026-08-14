@@ -97,7 +97,7 @@ const conversation = {
            */
           id: "e1b", type: "TOOL_STARTED", toolName: "system.status", status: "started",
           summary: null, preview: null, durationMs: null, inputTokens: null, outputTokens: null,
-          reasoningTokens: null, costUsd: null, toolCallKey: "system.status#1",
+          reasoningTokens: null, costUsd: null, toolCallKey: "system.status#1", contentOffset: 41,
           occurredAt: "2026-08-07T09:14:01.500Z",
         },
         {
@@ -115,7 +115,8 @@ const conversation = {
         {
           id: "e3", type: "SUBAGENT_COMPLETED", toolName: null, status: "completed",
           summary: "Summarised retrieval", preview: null, durationMs: 1_902, inputTokens: 880,
-          outputTokens: 260, reasoningTokens: 140, costUsd: 0.0041, occurredAt: "2026-08-07T09:14:04.000Z",
+          outputTokens: 260, reasoningTokens: 140, costUsd: 0.0041, contentOffset: 250,
+          occurredAt: "2026-08-07T09:14:04.000Z",
         },
       ],
       approvals: [
@@ -183,15 +184,30 @@ describe("chat transcript", () => {
     expect(screen.getByText(/pnpm verify && bash/).closest("pre")).toBeTruthy();
   });
 
+  it("keeps the assistant identity visible without requiring hover", async () => {
+    await transcript();
+    const answer = screen.getByText(/Before promoting/).closest("article");
+    expect(answer).toBeTruthy();
+    const identity = within(answer as HTMLElement).getByText("Support agent").parentElement;
+
+    expect(identity?.className).toContain("opacity-100");
+    expect(identity?.className).not.toContain("opacity-0");
+  });
+
   it("derives effective speed rather than reprinting a number the runtime sent", async () => {
     // 382 output tokens over 4.12 s. Nothing reports this; OrcaSynapse computes
     // it, and it is the one figure on the panel an operator actually compares.
     await transcript();
-    const telemetry = screen.getByLabelText("Response performance");
+    const telemetry = screen.getByLabelText("Response telemetry");
 
     expect(within(telemetry).getByText("92.7 tok/s")).toBeTruthy();
+    expect(within(telemetry).getByText("902 in / 382 out")).toBeTruthy();
     expect(within(telemetry).getByText("640 ms")).toBeTruthy();
     expect(within(telemetry).getByText("4.12 s")).toBeTruthy();
+    expect(telemetry.querySelectorAll("svg")).toHaveLength(4);
+    expect(screen.getByRole("button", { name: "Copy response" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Mark response helpful" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Mark response not helpful" })).toBeNull();
   });
 
   it("offers a decision only while the approval is still open", async () => {
@@ -204,35 +220,33 @@ describe("chat transcript", () => {
     expect(within(approval).getByText(/^Expires /)).toBeTruthy();
   });
 
-  it("names every governed step the run took, with what each one cost", async () => {
+  it("places governed actions beside the part of the answer they produced", async () => {
     await transcript();
     const activity = screen.getByLabelText("Hermes agent activity");
 
-    expect(within(activity).getByText("4 events")).toBeTruthy();
-    /*
-     * Four events, three rows: the start and the completion of one tool call
-     * are one thing that happened. `getByText` is the assertion -- it throws on
-     * multiple matches, so an ungrouped list fails here with the name appearing
-     * twice rather than passing quietly.
-     */
-    expect(within(activity).getAllByRole("listitem")).toHaveLength(3);
-    expect(within(activity).getByText("system.status")).toBeTruthy();
-    expect(within(activity).getByText(/412 ms · 120 in · 48 out · \$0\.0012/)).toBeTruthy();
-    expect(within(activity).getByText("Hermes subagent")).toBeTruthy();
+    const intro = within(activity).getByText("Before promoting, confirm three things.");
+    const tool = within(activity).getByLabelText("Ran 1 tool call");
+    const checklist = within(activity).getByRole("heading", { name: "Checklist" });
+    const subagent = within(activity).getByLabelText("Completed 1 agent action");
+    const quote = within(activity).getByText(/Anything unsigned/);
+
+    expect(intro.compareDocumentPosition(tool) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(tool.compareDocumentPosition(checklist) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(checklist.compareDocumentPosition(subagent) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(subagent.compareDocumentPosition(quote) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(activity).getByText("control plane healthy")).toBeTruthy();
+    expect(within(activity).getByText("412 ms")).toBeTruthy();
+    expect(within(activity).queryByText("Agent run accepted")).toBeNull();
   });
 
-  it("folds the machinery away once the turn has landed", async () => {
-    /*
-     * Loud while it happens, quiet once it has. A finished answer with nine
-     * expanded rows of tool traffic above it buries the thing the reader asked
-     * for -- by the third turn the transcript is mostly machinery. The rows
-     * stay in the document, so this is a fold and not a deletion.
-     */
+  it("renders completed activity as a quiet dotted trail instead of a provenance box", async () => {
     await transcript();
     const activity = screen.getByLabelText("Hermes agent activity");
 
-    expect(activity.hasAttribute("open")).toBe(false);
-    expect(within(activity).getAllByRole("listitem")).toHaveLength(3);
+    expect(activity.querySelector("details")).toBeNull();
+    expect(activity.querySelectorAll("section > ol > li")).toHaveLength(2);
+    expect(activity.querySelectorAll("ol.border-dotted")).toHaveLength(2);
+    expect(within(activity).queryByText(/events$/)).toBeNull();
   });
 
   it("says what happened while it is folded, including a failure", async () => {
@@ -249,8 +263,8 @@ describe("chat transcript", () => {
 
     expect(screen.getByText(/Generation failed · RUNTIME_UNREACHABLE/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Retry prompt" })).toBeTruthy();
-    // A failed turn has nothing to measure, so it must not draw a telemetry panel.
-    expect(screen.getAllByLabelText("Response performance")).toHaveLength(1);
+    // A failed turn has nothing to measure, so it must not draw a telemetry row.
+    expect(screen.getAllByLabelText("Response telemetry")).toHaveLength(1);
   });
 
   it("renders no inline style, which the CSP would refuse in the built container", async () => {

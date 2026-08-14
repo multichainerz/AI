@@ -33,14 +33,10 @@ function message(overrides: Partial<ChatMessage> = {}): ChatMessage {
 describe("chat response telemetry", () => {
   it("derives effective throughput and exposes provider usage separately", () => {
     expect(chatMessageTelemetry(message())).toEqual([
-      { key: "throughput", label: "Effective speed", value: "60.0 tok/s" },
-      { key: "input", label: "Input", value: "1,250" },
-      { key: "output", label: "Output", value: "240" },
-      { key: "reasoning", label: "Reasoning", value: "32" },
-      { key: "total", label: "Total", value: "1,490" },
-      { key: "first-token", label: "First token", value: "280 ms" },
+      { key: "throughput", label: "Speed", value: "60.0 tok/s" },
+      { key: "tokens", label: "Tokens", value: "1,250 in / 240 out" },
+      { key: "first-token", label: "TTFT", value: "280 ms" },
       { key: "latency", label: "Latency", value: "4.00 s" },
-      { key: "finish", label: "Finish", value: "stop" },
     ]);
   });
 
@@ -55,7 +51,12 @@ describe("chat response telemetry", () => {
       finishReason: null,
     }));
 
-    expect(metrics.every(({ value }) => value === "—")).toBe(true);
+    expect(metrics).toEqual([
+      { key: "throughput", label: "Speed", value: "—" },
+      { key: "tokens", label: "Tokens", value: "— in / — out" },
+      { key: "first-token", label: "TTFT", value: "—" },
+      { key: "latency", label: "Latency", value: "—" },
+    ]);
   });
 });
 
