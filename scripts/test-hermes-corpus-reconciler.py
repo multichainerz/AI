@@ -128,6 +128,31 @@ class CorpusReconcilerTests(unittest.TestCase):
         finally:
             self.module.MAX_FILES = original
 
+    def test_scan_prunes_support_tree_when_parent_skill_is_not_observable(self) -> None:
+        skill = self.root / "state/data/skills/credential-helper"
+        references = skill / "references"
+        nested = references / "nested"
+        nested.mkdir(parents=True)
+        # The scanner must suppress secret-like files rather than publish even
+        # their hash. Its support tree must disappear with it so VM1 never sees
+        # writable children detached from the governing Skill.
+        (skill / "SKILL.md").write_text(
+            "---\nname: credential-helper\n---\nAPI_KEY=abcdefghijklmnopqrstuvwxyz123456",
+            encoding="utf-8",
+        )
+        (references / "guide.md").write_text("Safe operating instructions", encoding="utf-8")
+        (nested / "SKILL.md").write_text("# Nested support fixture", encoding="utf-8")
+        (self.root / "state/data/skills/catalog.json").write_text(
+            '{"generated":true}', encoding="utf-8",
+        )
+
+        snapshot = self.module.scan_corpus()
+        paths = {entry["path"] for entry in snapshot["entries"]}
+        self.assertNotIn("skills/credential-helper/SKILL.md", paths)
+        self.assertNotIn("skills/credential-helper/references/guide.md", paths)
+        self.assertNotIn("skills/credential-helper/references/nested/SKILL.md", paths)
+        self.assertIn("skills/catalog.json", paths)
+
     @unittest.skipUnless(os.name == "posix", "VM2 symlink confinement is a POSIX boundary")
     def test_scan_never_follows_a_symlink_outside_hermes_home(self) -> None:
         outside = self.root / "outside-secret.md"
