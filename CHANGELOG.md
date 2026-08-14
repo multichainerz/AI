@@ -5,6 +5,20 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v3.17.3 — 2026-08-14
+
+The VM2 Corpus scanner now closes every Skill support tree over the exact
+snapshot it signs. A parent `SKILL.md` may exist on disk but be intentionally
+suppressed because it contains secret-like material or exceeds the mirror file
+limit; its detached children are now suppressed with it instead of being
+published as writable support files that VM1 must reject.
+
+Regression coverage reproduces a redacted parent with ordinary and nested
+support files, proves the entire orphaned tree is omitted, and preserves safe
+read-only top-level metadata. VM1's strict topology validation remains intact.
+Existing v3.17 nodes are repaired in place by rerunning the current generated
+VM2 installer with `--repair`.
+
 ## ai-v3.17.2 — 2026-08-14
 
 The VM2 Corpus unit now activates only `CAP_SETUID` in the root coordinator's
