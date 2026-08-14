@@ -1,7 +1,7 @@
 {
   "name": "@orcasynapse/web",
-  "version": "4.8.2",
-  "description": "OrcaSynapse operator workspace for governed sessions, agents, platform, and operations",
+  "version": "4.9.0",
+  "description": "OrcaSynapse operator workspace for governed sessions, agents, settings, and operations",
   "license": "BUSL-1.1",
   "private": true,
   "type": "module",
@@ -13,8 +13,10 @@
   },
   "dependencies": {
     "@orcasynapse/contracts": "workspace:*",
+    "@radix-ui/react-slot": "^1.3.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "lucide-react": "^1.31.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "react-markdown": "10.1.0",

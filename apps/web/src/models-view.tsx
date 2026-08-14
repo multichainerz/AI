@@ -6,6 +6,7 @@ import type {
   ServiceConnectionSummary,
 } from "@orcasynapse/contracts";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { Switch } from "@/components/ui/switch";
 import {
   OrcaSynapseApiError,
   changeModelDeploymentState,
@@ -385,7 +386,7 @@ export function ModelsView({
             </span>
           </div>
           {decision.action === "activate" && <label className="flex cursor-pointer items-center gap-2.5 rounded border border-border bg-surface p-2.5">
-            <input type="checkbox" checked={decision.makeDefault} onChange={(event) => setDecision({ ...decision, makeDefault: event.target.checked })} />
+            <Switch checked={decision.makeDefault} onCheckedChange={(checked) => setDecision({ ...decision, makeDefault: checked })} />
             <span className="text-body text-text">Make default for {model.workload.toLowerCase()}</span>
           </label>}
           <Field label="Operator reason">

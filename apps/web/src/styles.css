@@ -2,49 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
-/*
- * The one piece of reset the migration needs.
- *
- * Tailwind's preflight is off so it cannot restyle the 2,000 lines still
- * written against browser defaults - but that leaves a bare <button> rendering
- * with the OS default light-grey fill. On a dark UI that is invisible until
- * someone measures it: the rebuilt sidebar put muted text on #f0f0f0 at 2.25:1
- * and looked merely "a bit off".
- *
- * An element selector loses to any class, so every existing styled button keeps
- * its own treatment; only unclassed buttons inherit this.
- */
+/* Keep Tailwind border-width utilities deterministic even if Preflight is
+   disabled by an embedding build. This is a zero-width reset, not a visual
+   button style; canonical components supply every visible control rule. */
 @layer base {
-  /*
-   * The one rule Tailwind's preflight provides that this project cannot do
-   * without.
-   *
-   * `border-style` defaults to `none`, and CSS computes `border-width` to 0
-   * whenever the style is none — so `border`, which sets width only, paints
-   * nothing at all. Preflight normally fixes this globally; preflight is off
-   * here so that it cannot restyle the views still on the old stylesheet, which
-   * left every `border` utility in the design system inert. Panels, cards,
-   * inputs and dialogs were all drawing no border.
-   *
-   * Width stays 0, so this adds no border anywhere by itself, and at
-   * specificity (0,0,0) it loses to every existing rule.
-   */
-
   button {
-    background: transparent;
-    /*
-     * `0 solid transparent`, never `0`.
-     *
-     * The shorthand `border: 0` also sets `border-style: none`, and CSS then
-     * computes border-width to 0 whatever a later rule declares. Tailwind's
-     * `border` utility sets width only, so this reset silently removed the
-     * border from every Button variant in the design system — visible in the
-     * DOM as `.border` present and `border-top-width: 0px` computed. Keeping
-     * the style solid lets a width utility do its job.
-     */
     border: 0 solid transparent;
-    color: inherit;
-    font: inherit;
   }
 }
 
@@ -61,7 +24,7 @@
  * carries cyrillic, greek and vietnamese behind `unicode-range`, and while a
  * browser would never fetch them, Vite emits every one into the image.
  *
- * The split of duties comes from the OrcaNeuron design system: Space Grotesk
+ * The split of duties comes from the OrcaSynapse type system: Space Grotesk
  * draws everything display-sized — headings, the big stat numbers, the brand —
  * and Plus Jakarta Sans sets body and every kicker, with `tabular-nums` doing
  * the column alignment mono used to. Mono remains for genuine identifiers:
@@ -97,9 +60,9 @@
 
 :root {
   /*
-   * The OrcaNeuron token sheet. Dark is the default; `[data-theme="light"]`
+   * The OrcaSynapse semantic token sheet. Dark is the default; `[data-theme="light"]`
    * below overrides the same custom properties, so every utility and every
-   * legacy rule themes without knowing themes exist.
+   * application composition themes without knowing themes exist.
    *
    * Channels first, hex derived from them.
    *
@@ -159,6 +122,29 @@
   --synapse-node-rgb: 34 211 238;
   --brand-rgb: 43 19 100;        /* #2B1364 — sidebar and login hero, both themes */
   --backdrop-rgb: 20 8 50;       /* overlay backdrops, used with an alpha modifier */
+
+  /* shadcn semantic contract. These aliases deliberately resolve to the
+     established OrcaSynapse palette so adopting a component never invents a
+     second visual language or changes the persisted theme model. */
+  --background-rgb: var(--bg-rgb);
+  --foreground-rgb: var(--text-rgb);
+  --card-rgb: var(--surface-rgb);
+  --card-foreground-rgb: var(--text-rgb);
+  --popover-rgb: var(--surface-rgb);
+  --popover-foreground-rgb: var(--text-rgb);
+  --primary-rgb: var(--accent-rgb);
+  --primary-foreground-rgb: var(--onaccent-rgb);
+  --secondary-rgb: var(--raised-rgb);
+  --secondary-foreground-rgb: var(--text-rgb);
+  --muted-foreground-rgb: var(--muted-rgb);
+  --input-rgb: var(--border-strong-rgb);
+  --ring-rgb: var(--accent-rgb);
+  --destructive-rgb: var(--bad-rgb);
+  --destructive-foreground-rgb: 255 255 255;
+  --success-rgb: var(--good-rgb);
+  --warning-rgb: var(--warn-rgb);
+  --sidebar-rgb: var(--brand-rgb);
+  --sidebar-foreground-rgb: 255 255 255;
 
   --bg: rgb(var(--bg-rgb));
   --surface: rgb(var(--surface-rgb));
@@ -287,6 +273,23 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
     gap: 0;
     padding-inline: 0;
   }
+  .app-shell--focus .sidebar-settings-button {
+    width: 52px;
+    height: 52px;
+    min-height: 52px;
+    margin: 8px auto;
+    border: 1px solid rgba(255, 255, 255, 0.045);
+    border-radius: var(--radius-component);
+    background: rgba(255, 255, 255, 0.018);
+  }
+  .app-shell--focus .sidebar-settings-button:hover {
+    border-color: rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.05);
+  }
+  .app-shell--focus .sidebar-settings-button[aria-current="page"] {
+    border-color: rgba(190, 175, 255, 0.22);
+    background: rgba(255, 255, 255, 0.085);
+  }
   .app-shell--focus .sidebar nav button {
     height: 52px;
     transition: color 150ms ease, background-color 150ms ease, border-color 150ms ease, transform 150ms ease;
@@ -354,12 +357,19 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .mobile-brand strong { display: block; font-family: var(--display); font-size: 15px; font-weight: 600; letter-spacing: -.01em; color: #fff; }
 .sidebar nav { min-height: 0; flex: 1; display: grid; align-content: start; gap: 17px; padding: 1px 2px 10px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.28) transparent; }
 .nav-group { display: grid; gap: 3px; }
+.nav-settings-mobile { display: none; }
 .sidebar-bottom {
   flex: 0 0 auto;
   margin: 12px -12px -16px;
   border-top: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(0, 0, 0, 0.08);
 }
+.sidebar-settings-button {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  background: transparent;
+}
+.sidebar-settings-button[aria-current="page"] { background: rgba(255, 255, 255, 0.1); }
+.sidebar-settings-button:focus-visible { outline-offset: -3px; }
 .sidebar-collapse-button {
   min-height: 58px;
   background: transparent;
@@ -709,17 +719,17 @@ main > * { width: min(100%, 1380px); margin-left: auto; margin-right: auto; }
 .theme-toggle__moon { opacity: 1; transform: rotate(0deg) scale(1); }
 .theme-toggle__sun { opacity: 0; transform: rotate(-70deg) scale(0.55); }
 .theme-toggle__label { min-width: 26px; text-align: left; }
-.theme-toggle[data-mode="light"] .theme-toggle__track {
+.theme-toggle__track[data-mode="light"] {
   background: rgb(34 211 238 / 0.2);
   box-shadow: inset 0 0 0 1px rgb(14 155 181 / 0.28);
 }
-.theme-toggle[data-mode="light"] .theme-toggle__thumb {
+.theme-toggle__track[data-mode="light"] .theme-toggle__thumb {
   color: #9a6500;
   box-shadow: 0 3px 10px rgb(112 87 27 / 0.2);
   transform: translateX(24px);
 }
-.theme-toggle[data-mode="light"] .theme-toggle__moon { opacity: 0; transform: rotate(70deg) scale(0.55); }
-.theme-toggle[data-mode="light"] .theme-toggle__sun { opacity: 1; transform: rotate(0deg) scale(1); }
+.theme-toggle__track[data-mode="light"] .theme-toggle__moon { opacity: 0; transform: rotate(70deg) scale(0.55); }
+.theme-toggle__track[data-mode="light"] .theme-toggle__sun { opacity: 1; transform: rotate(0deg) scale(1); }
 .theme-toggle--brand {
   color: rgb(255 255 255 / 0.76);
   border-color: rgb(255 255 255 / 0.16);
@@ -730,11 +740,11 @@ main > * { width: min(100%, 1380px); margin-left: auto; margin-right: auto; }
   border-color: rgb(255 255 255 / 0.3);
   background: rgb(255 255 255 / 0.1);
 }
-.theme-toggle--brand .theme-toggle__track {
+.theme-toggle__track.theme-toggle--brand {
   background: rgb(8 8 12 / 0.42);
   box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.12);
 }
-.theme-toggle--brand[data-mode="light"] .theme-toggle__track {
+.theme-toggle__track.theme-toggle--brand[data-mode="light"] {
   background: rgb(34 211 238 / 0.28);
   box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.18);
 }
@@ -1099,6 +1109,7 @@ button:disabled { opacity: .48; cursor: not-allowed; }.panel { border: 1px solid
   .sidebar nav { min-width: 0; flex: 1 1 auto; display: flex; align-content: initial; gap: 2px; padding: 0; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
   .sidebar nav::-webkit-scrollbar { display: none; }
   .nav-group { display: contents; }
+  .nav-settings-mobile { display: contents; }
   .sidebar nav button {
     min-width: 62px;
     height: 58px;

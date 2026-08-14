@@ -417,9 +417,9 @@ export function AgentsView({ unlocked, administrator, activationReady, activatio
               selectedProfileId === profile.id ? "border-border-strong bg-raised" : "border-border bg-raised/40",
             )}
           >
-            <button
+            <Button
+              variant="ghost"
               className="grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 text-left"
-              type="button"
               onClick={() => setSelectedProfileId(profile.id)}
             >
               <span
@@ -439,7 +439,7 @@ export function AgentsView({ unlocked, administrator, activationReady, activatio
                 </small>
               </div>
               <StatusText dot tone={toneFor(statusTone(profile.status))}>{profile.status.toLowerCase()}</StatusText>
-            </button>
+            </Button>
             {administrator && <div className="flex justify-end gap-1.5">
               <Button size="sm" onClick={() => editProfile(profile)}>New version</Button>
               {profile.status === "ACTIVE"
@@ -459,20 +459,20 @@ export function AgentsView({ unlocked, administrator, activationReady, activatio
             {runs.length === 0 && (
               <EmptyState title="No runs yet">Queued work will appear here with its complete lifecycle.</EmptyState>
             )}
-            {runs.map((run) => <button
+            {runs.map((run) => <Button
+              variant="ghost"
               className={cn(
                 "grid w-full gap-1 rounded border p-2.5 text-left transition-colors",
                 selectedRun?.id === run.id ? "border-border-strong bg-raised" : "border-transparent hover:bg-raised",
               )}
               key={run.id}
-              type="button"
               onClick={() => setSelectedRunId(run.id)}
             >
               <StatusText dot tone={toneFor(statusTone(run.status))}>{run.status.replaceAll("_", " ").toLowerCase()}</StatusText>
               <strong className="truncate text-label font-semibold text-text">{run.profileName}</strong>
               <p className="mb-0 line-clamp-2 text-caption text-muted">{run.input}</p>
               <small className="font-mono text-micro text-faint">v{run.profileVersion} · {friendlyTime(run.createdAt)}</small>
-            </button>)}
+            </Button>)}
           </div>
         </Panel>
 
@@ -634,7 +634,7 @@ export function AgentsView({ unlocked, administrator, activationReady, activatio
             </strong>
             <span className="mt-1 block text-body leading-relaxed text-muted">
               {activationReady === false
-                ? "This Profile will be saved safely without attempting a runtime activation. Finish Platform setup, then verify and activate it from the Profile list."
+                ? "This Profile will be saved safely without attempting a runtime activation. Finish Settings setup, then verify and activate it from the Profile list."
                 : "OrcaSynapse will verify Hermes, activate this immutable Profile, and enable Chat. Personality and Skills describe behavior, never authority."}
             </span>
           </div>

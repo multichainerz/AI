@@ -43,7 +43,7 @@ On a clean Debian or Ubuntu VM1:
 curl -fsSL https://raw.githubusercontent.com/multichainerz/AI/main/install.sh | sudo bash
 ```
 
-The installer provisions Docker, stock PostgreSQL 17, the API, worker, workspace, protected secrets, and the first administrator. Open the address it prints, connect inference, then use **Platform → Agentic System** to generate the one-time VM2 enrollment command.
+The installer provisions Docker, stock PostgreSQL 17, the API, worker, workspace, protected secrets, and the first administrator. Open the address it prints, connect inference, then use **Settings → Agentic System** to generate the one-time VM2 enrollment command.
 
 VM2 installs vanilla Hermes at the approved commit, applies the managed native-memory and toolset baseline, enrolls its node identity, reports signed heartbeats, and publishes a signed allowlisted corpus snapshot. OrcaSynapse does not require SSH credentials or a remote shell channel.
 
@@ -52,7 +52,7 @@ VM2 installs vanilla Hermes at the approved commit, applies the managed native-m
 - **Dashboard:** one-screen readiness and operations command center.
 - **Session:** durable conversations over Hermes’ native session API, with streaming, cancellation, telemetry, feedback, archive, export, and audit projections.
 - **Agents:** immutable Profile Distributions, run history, governed tools, and a repository-style view of Hermes-native memory and Skills.
-- **Platform:** inference routes, Hermes enrollment, enterprise identity, prompts, guardrails, runtime toolset admissions, and encrypted connections.
+- **Settings:** application updates, inference routes, Hermes enrollment, enterprise identity, prompts, guardrails, runtime toolset admissions, and encrypted connections.
 - **Operations:** incidents, evaluation evidence, readiness controls, the audit trail, and optional SIEM forwarding.
 
 ## Memory and audit

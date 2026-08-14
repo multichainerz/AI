@@ -4,6 +4,7 @@ import type {
   GuardrailPolicy,
 } from "@orcasynapse/contracts";
 import { useEffect, useState, type FormEvent } from "react";
+import { Switch } from "@/components/ui/switch";
 import {
   OrcaSynapseApiError,
   changeGuardrailPolicyState,
@@ -275,11 +276,11 @@ export function GuardrailsView({
             <Textarea value={draft.description} minLength={3} maxLength={500} rows={3} required onChange={(event) => setDraft({ ...draft, description: event.target.value })} />
           </Field>
           <label className="flex cursor-pointer items-center gap-2.5 rounded border border-border bg-raised p-2.5">
-            <input type="checkbox" checked={draft.blockControlCharacters} onChange={(event) => setDraft({ ...draft, blockControlCharacters: event.target.checked })} />
+            <Switch checked={draft.blockControlCharacters} onCheckedChange={(checked) => setDraft({ ...draft, blockControlCharacters: checked })} />
             <span className="text-body text-text">Block unsafe control characters</span>
           </label>
           <label className="flex cursor-pointer items-center gap-2.5 rounded border border-border bg-raised p-2.5">
-            <input type="checkbox" checked={draft.blockCredentialPatterns} onChange={(event) => setDraft({ ...draft, blockCredentialPatterns: event.target.checked })} />
+            <Switch checked={draft.blockCredentialPatterns} onCheckedChange={(checked) => setDraft({ ...draft, blockCredentialPatterns: checked })} />
             <span className="text-body text-text">Block recognizable credential patterns</span>
           </label>
         </div>

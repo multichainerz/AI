@@ -1,9 +1,10 @@
 /**
- * The primitive set.
+ * Application-level design compositions.
  *
- * Everything the dashboard is built from, and deliberately nothing more — a
- * closed set is what stops the next screen inventing a tenth kind of stat tile.
- * No Radix: see `overlay.tsx` for why the CSP rules it out.
+ * Canonical controls live under `components/ui`, following shadcn's local
+ * source model. This module keeps OrcaSynapse-specific compositions (metrics,
+ * readiness states and locked screens) together while route imports migrate
+ * without creating a second primitive system.
  */
 export { cn } from "./cn.js";
 export { Button, type ButtonProps } from "./button.js";

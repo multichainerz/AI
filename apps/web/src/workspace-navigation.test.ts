@@ -10,7 +10,7 @@ describe("workspace navigation", () => {
 
   it("maps every internal screen to one product area", () => {
     expect(productAreaForView("Integrations")).toBe("Agents");
-    expect(productAreaForView("Models")).toBe("Platform");
+    expect(productAreaForView("Models")).toBe("Settings");
   });
 
   it("renames the two areas without stranding their old links", () => {
@@ -29,6 +29,14 @@ describe("workspace navigation", () => {
     // through to Overview, which is exactly where it used to go.
     expect(viewFromHash("#home")).toBe("Overview");
     expect(viewFromHash("#dashboard")).toBe("Overview");
+  });
+
+  it("moves Platform into Settings without breaking saved links", () => {
+    expect(pathForView("Deployment")).toBe("#settings/setup");
+    expect(pathForView("Models")).toBe("#settings/models");
+    expect(viewFromHash("#settings/guardrails")).toBe("Guardrails");
+    expect(viewFromHash("#platform/setup")).toBe("Deployment");
+    expect(viewFromHash("#platform/models")).toBe("Models");
   });
 
   it("names the areas the way the product does", () => {

@@ -5,6 +5,24 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v4.9.0 — 2026-08-15
+
+The operator workspace now uses a single source-owned shadcn and Tailwind
+foundation. Semantic theme tokens, cohesive semi-rounded geometry, Lucide
+functional icons, and canonical controls now span authentication, dashboard,
+sessions, agents, settings, and operations while preserving OrcaSynapse's
+product-specific command surfaces and strict no-inline-style CSP.
+
+Settings replaces the former Platform navigation and adds a governed platform
+release panel. Administrators can check the configured upstream for newer
+signed OrcaSynapse tags and initiate the existing host-controlled update path
+without giving the browser arbitrary command execution.
+
+Session presentation now uses a cleaner conversation rail, refined user
+messages with an identity slot, a compact agent header and telemetry row, and
+context usage at the composer. Shared dialog behavior is SSR-safe, traps focus
+deterministically, and keeps the dependency-free crash boundary intact.
+
 ## v4.8.2 — 2026-08-14
 
 Hermes-native sessions now retain the protected OrcaSynapse inference
