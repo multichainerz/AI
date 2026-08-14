@@ -110,6 +110,15 @@ grep -Fq 'systemctl enable --now "${CORPUS_SERVICE}.timer"' "${REPOSITORY_ROOT}/
 grep -Fq 'HERMES_PYTHON="${HERMES_INSTALL_DIR}/venv/bin/python"' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 grep -Fq 'ExecStart=${HERMES_PYTHON} /usr/local/lib/orcasynapse/hermes-corpus-reconciler.py' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 grep -Fq 'Environment=HERMES_MANAGED_DIR=${HERMES_MANAGED_DIR}' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
+# The corpus coordinator needs CAP_SETUID in its active process sets to use
+# Python's native user= transition. Keep only that capability ambient: the
+# kernel clears it when the child leaves UID 0.
+[[ "$(grep -Fc 'AmbientCapabilities=CAP_SETUID' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh")" -eq 1 ]]
+if grep -Eq '^AmbientCapabilities=.*CAP_(DAC_OVERRIDE|SETGID)' \
+    "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"; then
+  printf 'corpus coordinator ambient capability scope is broader than CAP_SETUID\n' >&2
+  exit 1
+fi
 grep -Fq 'from tools.memory_tool import load_on_disk_store' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 grep -Fq 'from tools.skill_manager_tool import apply_skill_pending' "${REPOSITORY_ROOT}/scripts/install-agentic-node.sh"
 # The UI block is generated from scripts/lib/installer-ui.sh; the marker must
