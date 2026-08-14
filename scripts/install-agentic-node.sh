@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="ai-v3.18.1"
+INSTALLER_VERSION="ai-v3.18.2"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 HERMES_HOME_DIR="${STATE_ROOT}/home"
 RUNTIME_SERVICE="orcasynapse-hermes"
@@ -642,11 +642,14 @@ write_hermes_managed_policy() {
   chown root:root "${HERMES_MANAGED_DIR}"
   write_file_from_stdin 0644 root root "${HERMES_MANAGED_DIR}/config.yaml" <<EOF
 model:
-  provider: custom:orcasynapse
+  # Hermes persists a named custom provider as the normalized value custom.
+  # Defining the managed provider under that literal key lets later turns
+  # resolve the same protected credential after native session restoration.
+  provider: custom
   default: ${model_alias_json}
   base_url: ${model_base_url_json}
 providers:
-  orcasynapse:
+  custom:
     name: OrcaSynapse
     api: ${model_base_url_json}
     key_env: OPENAI_API_KEY
@@ -661,7 +664,7 @@ platforms:
       model_routes:
         hermes-agent:
           model: ${model_alias_json}
-          provider: custom:orcasynapse
+          provider: custom
 terminal:
   # Keep Hermes work inside the service account's managed, writable home. This
   # is the canonical replacement for the deprecated MESSAGING_CWD environment.
@@ -754,7 +757,7 @@ for line in lines:
         inside_model = True
     elif inside_model and line and not line[0].isspace() and not line.startswith("#"):
         if model_base_url is not None and not model_provider_written:
-            output.append("  provider: custom:orcasynapse")
+            output.append("  provider: custom")
             model_provider_written = True
         inside_model = False
     if inside_model:
@@ -766,14 +769,14 @@ for line in lines:
             model_base_url = base_url_match.group(1)
         if re.match(r"^\s+provider\s*:", line) and model_base_url is not None:
             if not model_provider_written:
-                output.append("  provider: custom:orcasynapse")
+                output.append("  provider: custom")
                 model_provider_written = True
             continue
     # Hermes treats YAML scalar values literally; it does not expand shell
     # placeholders such as ${OPENAI_API_KEY}. Bare custom endpoints on an IP
     # also deliberately refuse the generic OPENAI_API_KEY fallback. Keep the
     # credential in the owner-only EnvironmentFile and authorize that exact env
-    # var through the named OrcaSynapse provider below. Repair old policies by
+    # var through the managed provider below. Repair old policies by
     # removing both placeholders and any accidentally embedded credential from
     # the world-readable managed YAML.
     if inside_model and re.match(r"^\s+api_key\s*:", line):
@@ -796,7 +799,7 @@ for line in lines:
     output.append(line)
 
 if inside_model and model_base_url is not None and not model_provider_written:
-    output.append("  provider: custom:orcasynapse")
+    output.append("  provider: custom")
 if inside_terminal and not cwd_written:
     output.append(f"  cwd: {cwd}")
 if not terminal_seen:
@@ -805,15 +808,17 @@ if not terminal_seen:
     output.extend(["terminal:", f"  cwd: {cwd}"])
 
 # Hermes will not forward OPENAI_API_KEY to an arbitrary IP-hosted custom
-# endpoint unless the operator explicitly names the provider and its key_env.
-# This declaration provides that consent without putting the secret in YAML.
+# endpoint unless a provider entry explicitly authorizes its key_env. Hermes
+# persists every named custom provider as bare `custom`, so the governed entry
+# must use that literal key or restored sessions lose the credential on turn 2.
+# This declaration provides consent without putting the secret in YAML.
 if model_base_url is not None and model_default is not None:
     providers_index = next(
         (index for index, line in enumerate(output) if re.fullmatch(r"providers:\s*", line)),
         None,
     )
     managed_provider = [
-        "  orcasynapse:",
+        "  custom:",
         "    name: OrcaSynapse",
         f"    api: {model_base_url}",
         "    key_env: OPENAI_API_KEY",
@@ -827,18 +832,18 @@ if model_base_url is not None and model_default is not None:
         output.extend(managed_provider)
     else:
         providers_end = block_end(output, providers_index, 0)
-        provider_index = next(
-            (
-                index for index in range(providers_index + 1, providers_end)
-                if re.fullmatch(r"\s{2}orcasynapse:\s*", output[index])
-            ),
-            None,
-        )
-        if provider_index is None:
-            output[providers_end:providers_end] = managed_provider
-        else:
-            provider_end = block_end(output, provider_index, 2)
-            output[provider_index:provider_end] = managed_provider
+        # Replace both the current literal key and the legacy named key. Keeping
+        # `orcasynapse` beside `custom` would leave repair output ambiguous and
+        # allow a future route to revive the continuation bug.
+        preserved_providers = []
+        index = providers_index + 1
+        while index < providers_end:
+            if re.fullmatch(r"\s{2}(?:custom|orcasynapse):\s*", output[index]):
+                index = block_end(output, index, 2)
+                continue
+            preserved_providers.append(output[index])
+            index += 1
+        output[providers_index + 1:providers_end] = managed_provider + preserved_providers
 
 # Native API sessions receive the stable OrcaSynapse profile alias
 # ``hermes-agent``. Without an explicit API-server route Hermes interprets that
@@ -860,7 +865,7 @@ if model_default is not None:
             "      model_routes:",
             "        hermes-agent:",
             f"          model: {model_default}",
-            "          provider: custom:orcasynapse",
+            "          provider: custom",
         ])
     else:
         platforms_end = block_end(output, platforms_index, 0)
@@ -879,7 +884,7 @@ if model_default is not None:
                 "      model_routes:",
                 "        hermes-agent:",
                 f"          model: {model_default}",
-                "          provider: custom:orcasynapse",
+                "          provider: custom",
             ]
         else:
             api_server_end = block_end(output, api_server_index, 2)
@@ -908,7 +913,7 @@ if model_default is not None:
                     "      model_routes:",
                     "        hermes-agent:",
                     f"          model: {model_default}",
-                    "          provider: custom:orcasynapse",
+                    "          provider: custom",
                 ]
             else:
                 extra_end = block_end(output, extra_index, 4)
@@ -924,7 +929,7 @@ if model_default is not None:
                         "      model_routes:",
                         "        hermes-agent:",
                         f"          model: {model_default}",
-                        "          provider: custom:orcasynapse",
+                        "          provider: custom",
                     ]
                 else:
                     routes_end = block_end(output, routes_index, 6)
@@ -938,7 +943,7 @@ if model_default is not None:
                     managed_alias = [
                         "        hermes-agent:",
                         f"          model: {model_default}",
-                        "          provider: custom:orcasynapse",
+                        "          provider: custom",
                     ]
                     if alias_index is None:
                         output[routes_end:routes_end] = managed_alias
