@@ -49,6 +49,57 @@ export interface TimelineEntry<E extends TimelineEvent = TimelineEvent> {
 }
 
 /**
+ * A visually compact run of adjacent calls to the same activity.
+ *
+ * This is deliberately a second pass over `TimelineEntry`: the first pass
+ * preserves the lifecycle and outcome of every individual call, while this
+ * pass only decides how adjacent calls are presented. A retry after another
+ * tool therefore remains a separate step, and expanding a repeated step still
+ * exposes every original call in order.
+ */
+export interface TimelineEntryGroup<E extends TimelineEvent = TimelineEvent> {
+  /** Stable even while more matching calls arrive at the end of the group. */
+  key: string;
+  kind: TimelineKind;
+  label: string;
+  status: TimelineStatus;
+  entries: TimelineEntry<E>[];
+}
+
+function groupedStatus(entries: readonly TimelineEntry[]): TimelineStatus {
+  // A closed group must never hide a failure behind a later successful retry.
+  if (entries.some(({ status }) => status === "failed")) return "failed";
+  if (entries.some(({ status }) => status === "running")) return "running";
+  if (entries.some(({ status }) => status === "cancelled")) return "cancelled";
+  return "completed";
+}
+
+/** Collapse only consecutive, same-kind, same-name activity for presentation. */
+export function groupConsecutiveTimelineEntries<E extends TimelineEvent>(
+  entries: readonly TimelineEntry<E>[],
+): TimelineEntryGroup<E>[] {
+  const groups: TimelineEntryGroup<E>[] = [];
+
+  for (const entry of entries) {
+    const previous = groups[groups.length - 1];
+    if (previous && previous.kind === entry.kind && previous.label === entry.label) {
+      previous.entries.push(entry);
+      previous.status = groupedStatus(previous.entries);
+      continue;
+    }
+    groups.push({
+      key: entry.key,
+      kind: entry.kind,
+      label: entry.label,
+      status: entry.status,
+      entries: [entry],
+    });
+  }
+
+  return groups;
+}
+
+/**
  * What the activity list says about itself once it is closed.
  *
  * Agent work is worth watching while it happens and worth summarising once it

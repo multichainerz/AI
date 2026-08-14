@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { groupRuntimeEvents, summariseTimeline, type TimelineEvent } from "./timeline.js";
+import {
+  groupConsecutiveTimelineEntries,
+  groupRuntimeEvents,
+  summariseTimeline,
+  type TimelineEvent,
+} from "./timeline.js";
 
 let sequence = 0;
 const event = (over: Partial<TimelineEvent>): TimelineEvent => ({
@@ -194,5 +199,50 @@ describe("summariseTimeline", () => {
     );
 
     expect(summary).toBe("2 steps");
+  });
+});
+
+describe("groupConsecutiveTimelineEntries", () => {
+  const calls = (...events: TimelineEvent[]) => groupRuntimeEvents(events);
+
+  it("compacts only adjacent calls to the same tool", () => {
+    const groups = groupConsecutiveTimelineEntries(calls(
+      event({ type: "TOOL_STARTED", toolCallKey: "cron#1", toolName: "cronjob" }),
+      event({ type: "TOOL_COMPLETED", toolCallKey: "cron#1", toolName: "cronjob" }),
+      event({ type: "TOOL_STARTED", toolCallKey: "cron#2", toolName: "cronjob" }),
+      event({ type: "TOOL_COMPLETED", toolCallKey: "cron#2", toolName: "cronjob" }),
+      event({ type: "TOOL_STARTED", toolCallKey: "read#1", toolName: "read_file" }),
+      event({ type: "TOOL_COMPLETED", toolCallKey: "read#1", toolName: "read_file" }),
+      event({ type: "TOOL_STARTED", toolCallKey: "cron#3", toolName: "cronjob" }),
+      event({ type: "TOOL_COMPLETED", toolCallKey: "cron#3", toolName: "cronjob" }),
+    ));
+
+    expect(groups.map(({ label, entries }) => `${label}:${entries.length}`)).toEqual([
+      "cronjob:2", "read_file:1", "cronjob:1",
+    ]);
+    expect(groups[0]?.key).toBe("cron#1");
+  });
+
+  it("keeps a failure visible in a repeated group summary", () => {
+    const groups = groupConsecutiveTimelineEntries(calls(
+      event({ type: "TOOL_STARTED", toolCallKey: "skill#1", toolName: "skill_manage" }),
+      event({ type: "TOOL_FAILED", toolCallKey: "skill#1", toolName: "skill_manage" }),
+      event({ type: "TOOL_STARTED", toolCallKey: "skill#2", toolName: "skill_manage" }),
+      event({ type: "TOOL_COMPLETED", toolCallKey: "skill#2", toolName: "skill_manage" }),
+    ));
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({ label: "skill_manage", status: "failed" });
+    expect(groups[0]?.entries).toHaveLength(2);
+  });
+
+  it("keeps a growing live group marked running", () => {
+    const groups = groupConsecutiveTimelineEntries(calls(
+      event({ type: "TOOL_STARTED", toolCallKey: "memory#1", toolName: "memory" }),
+      event({ type: "TOOL_COMPLETED", toolCallKey: "memory#1", toolName: "memory" }),
+      event({ type: "TOOL_STARTED", toolCallKey: "memory#2", toolName: "memory" }),
+    ));
+
+    expect(groups[0]).toMatchObject({ status: "running" });
   });
 });

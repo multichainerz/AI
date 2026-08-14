@@ -5,6 +5,17 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## v4.8.1 — 2026-08-14
+
+Session provenance now condenses consecutive calls to the same Hermes tool into
+compact expandable steps while preserving their chronological position. Each
+group exposes a numbered per-call history with individual status, duration,
+details, and errors, and continues to update as live SSE events arrive.
+
+The activity trail now uses a quieter icon-led hierarchy, dotted sequencing,
+and explicit step and call counts. Separate tools, later retries, failures, and
+in-progress work remain distinct and visible instead of being over-grouped.
+
 ## v4.8.0 — 2026-08-14
 
 Session now presents Hermes as a live agent workspace instead of appending an

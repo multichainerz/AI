@@ -113,6 +113,19 @@ const conversation = {
           occurredAt: "2026-08-07T09:14:02.000Z",
         },
         {
+          id: "e2b", type: "TOOL_STARTED", toolName: "system.status", status: "started",
+          summary: null, preview: null, durationMs: null, inputTokens: null, outputTokens: null,
+          reasoningTokens: null, costUsd: null, toolCallKey: "system.status#2", contentOffset: 41,
+          occurredAt: "2026-08-07T09:14:02.100Z",
+        },
+        {
+          id: "e2c", type: "TOOL_COMPLETED", toolName: "system.status", status: "completed",
+          toolCallKey: "system.status#2",
+          summary: "Confirmed service status", preview: "runtime node healthy", durationMs: 385,
+          inputTokens: 80, outputTokens: 24, reasoningTokens: null, costUsd: 0.0008, contentOffset: 41,
+          occurredAt: "2026-08-07T09:14:02.500Z",
+        },
+        {
           id: "e3", type: "SUBAGENT_COMPLETED", toolName: null, status: "completed",
           summary: "Summarised retrieval", preview: null, durationMs: 1_902, inputTokens: 880,
           outputTokens: 260, reasoningTokens: 140, costUsd: 0.0041, contentOffset: 250,
@@ -225,7 +238,7 @@ describe("chat transcript", () => {
     const activity = screen.getByLabelText("Hermes agent activity");
 
     const intro = within(activity).getByText("Before promoting, confirm three things.");
-    const tool = within(activity).getByLabelText("Ran 1 tool call");
+    const tool = within(activity).getByLabelText("Ran 2 tool calls");
     const checklist = within(activity).getByRole("heading", { name: "Checklist" });
     const subagent = within(activity).getByLabelText("Completed 1 agent action");
     const quote = within(activity).getByText(/Anything unsigned/);
@@ -239,11 +252,15 @@ describe("chat transcript", () => {
     expect(within(activity).queryByText("Agent run accepted")).toBeNull();
   });
 
-  it("renders completed activity as a quiet dotted trail instead of a provenance box", async () => {
+  it("renders repeated activity as a compact numbered, expandable step", async () => {
     await transcript();
     const activity = screen.getByLabelText("Hermes agent activity");
 
-    expect(activity.querySelector("details")).toBeNull();
+    const repeated = within(activity).getByLabelText("Used system status, 2 calls, Completed");
+    expect(repeated.tagName).toBe("SUMMARY");
+    expect(repeated.closest("details")?.hasAttribute("open")).toBe(false);
+    expect(within(repeated).getByText("×2")).toBeTruthy();
+    expect(repeated.closest("details")?.querySelectorAll("ol > li")).toHaveLength(2);
     expect(activity.querySelectorAll("section > ol > li")).toHaveLength(2);
     expect(activity.querySelectorAll("ol.border-dotted")).toHaveLength(2);
     expect(within(activity).queryByText(/events$/)).toBeNull();
