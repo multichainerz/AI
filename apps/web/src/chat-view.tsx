@@ -11,7 +11,13 @@ import { applyStreamEventToConversation } from "./chat-stream-reducer.js";
 import { interleaveByOffset } from "./chat/interleave.js";
 import { MarkdownMessage } from "./chat/markdown-message.js";
 import { groupConversationsByDate } from "./chat/conversation-groups.js";
-import { groupRuntimeEvents, summariseTimeline, type TimelineEntry } from "./chat/timeline.js";
+import {
+  groupConsecutiveTimelineEntries,
+  groupRuntimeEvents,
+  summariseTimeline,
+  type TimelineEntry,
+  type TimelineEntryGroup,
+} from "./chat/timeline.js";
 import { COMPOSER_ZONE, THREAD_MEASURE, THREAD_SCROLLER } from "./chat/measure.js";
 import { shouldStickToBottom } from "./chat/stick-to-bottom.js";
 import { usePacedStream } from "./chat/use-paced-stream.js";
@@ -165,7 +171,7 @@ function readableToolName(value: string): string {
   return value.replace(/[._-]+/g, " ").replace(/\s+/g, " ").trim();
 }
 
-function activityTitle(entry: TimelineEntry<ChatRuntimeEvent>): string {
+function activityTitle(entry: Pick<TimelineEntry<ChatRuntimeEvent>, "kind" | "label" | "status">): string {
   if (entry.kind === "reasoning") return entry.status === "running" ? "Planning next step" : "Planned next step";
   if (entry.kind === "subagent") return entry.status === "running" ? "Delegating to a subagent" : "Delegated to a subagent";
   const tool = readableToolName(entry.label || "tool");
@@ -173,6 +179,13 @@ function activityTitle(entry: TimelineEntry<ChatRuntimeEvent>): string {
   if (entry.status === "failed") return `${tool} failed`;
   if (entry.status === "cancelled") return `${tool} cancelled`;
   return `Used ${tool}`;
+}
+
+function activityStatusLabel(status: TimelineEntry<ChatRuntimeEvent>["status"]): string {
+  if (status === "running") return "In progress";
+  if (status === "failed") return "Failed";
+  if (status === "cancelled") return "Cancelled";
+  return "Completed";
 }
 
 function activityGroupTitle(entries: readonly TimelineEntry<ChatRuntimeEvent>[]): string {
@@ -191,45 +204,150 @@ function activityTone(status: TimelineEntry["status"]): string {
   return "bg-accent anim-live";
 }
 
+function ActivityKindIcon({ kind, label }: Pick<TimelineEntry<ChatRuntimeEvent>, "kind" | "label">) {
+  const tool = readableToolName(label).toLowerCase();
+  if (kind === "subagent") return <NodeIcon size={14} />;
+  if (kind === "reasoning") return <RobotIcon size={14} />;
+  if (tool.includes("memory")) return <LayersIcon size={14} />;
+  if (tool.includes("skill")) return <SnapshotIcon size={14} />;
+  if (tool.includes("browser") || tool.includes("web")) return <MonitorIcon size={14} />;
+  return <TerminalIcon size={14} />;
+}
+
+function ActivityCallDetail({
+  entry,
+  index,
+}: {
+  entry: TimelineEntry<ChatRuntimeEvent>;
+  index: number;
+}) {
+  const runtimeEvent = entry.events[entry.events.length - 1]!;
+  const detail = runtimeEvent.preview ?? runtimeEvent.summary;
+  const duration = formatRuntimeDuration(entry.durationMs);
+  return (
+    <li className="grid min-w-0 grid-cols-[24px_minmax(0,1fr)_auto] items-start gap-2.5 py-2 first:pt-1 last:pb-1">
+      <span className="grid h-6 w-6 place-items-center rounded bg-surface font-mono text-micro tabular-nums text-faint">
+        {index + 1}
+      </span>
+      <div className="min-w-0">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="text-caption font-medium text-muted">Call {index + 1}</span>
+          <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", activityTone(entry.status))} aria-hidden="true" />
+          <small className="text-micro text-faint">{activityStatusLabel(entry.status)}</small>
+        </div>
+        {detail && detail !== entry.label && (
+          <p className="mb-0 mt-0.5 line-clamp-2 text-micro leading-relaxed text-faint">{detail}</p>
+        )}
+        {entry.status === "failed" && runtimeEvent.errorCode && (
+          <small className="mt-0.5 block font-mono text-micro text-bad">{runtimeEvent.errorCode}</small>
+        )}
+      </div>
+      {duration && <small className="pt-0.5 font-mono text-micro tabular-nums text-faint">{duration}</small>}
+    </li>
+  );
+}
+
+function ActivityStep({
+  group,
+  index,
+}: {
+  group: TimelineEntryGroup<ChatRuntimeEvent>;
+  index: number;
+}) {
+  const repeated = group.entries.length > 1;
+  const lastEntry = group.entries[group.entries.length - 1]!;
+  const runtimeEvent = lastEntry.events[lastEntry.events.length - 1]!;
+  const detail = runtimeEvent.preview ?? runtimeEvent.summary;
+  const duration = formatRuntimeDuration(lastEntry.durationMs);
+  const title = activityTitle(group);
+  const leading = (
+    <>
+      <span className="grid h-7 w-7 shrink-0 place-items-center rounded border border-border bg-surface font-mono text-micro tabular-nums text-faint">
+        {String(index + 1).padStart(2, "0")}
+      </span>
+      <span className="grid h-7 w-7 shrink-0 place-items-center rounded bg-soft text-accent">
+        <ActivityKindIcon kind={group.kind} label={group.label} />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="flex min-w-0 items-center gap-2">
+          <strong className="truncate text-label font-medium text-text">{title}</strong>
+          {repeated && (
+            <span className="rounded bg-soft px-1.5 py-0.5 font-mono text-micro font-semibold tabular-nums text-accent">
+              ×{group.entries.length}
+            </span>
+          )}
+        </span>
+        {!repeated && detail && detail !== group.label && (
+          <small className="mt-0.5 block truncate text-micro text-faint">{detail}</small>
+        )}
+      </span>
+      <span className="flex shrink-0 items-center gap-2">
+        <span className={cn("h-1.5 w-1.5 rounded-full", activityTone(group.status))} aria-hidden="true" />
+        <small className="hidden text-micro text-faint sm:inline">{activityStatusLabel(group.status)}</small>
+        {!repeated && duration && (
+          <small className="font-mono text-micro tabular-nums text-faint">{duration}</small>
+        )}
+      </span>
+    </>
+  );
+
+  return (
+    <li className="relative min-w-0 py-1 first:pt-0 last:pb-0">
+      <span
+        aria-hidden="true"
+        className={cn(
+          "absolute -left-[25px] top-[17px] h-2 w-2 rounded-full ring-4 ring-bg",
+          activityTone(group.status),
+        )}
+      />
+      {repeated ? (
+        <details className="group rounded border border-transparent bg-raised/35 transition-colors open:border-border open:bg-raised/70">
+          <summary
+            className="flex min-w-0 cursor-pointer list-none items-center gap-2.5 px-2.5 py-2.5 select-none [&::-webkit-details-marker]:hidden"
+            aria-label={`${title}, ${group.entries.length} calls, ${activityStatusLabel(group.status)}`}
+          >
+            {leading}
+            <svg
+              aria-hidden="true"
+              className="h-3.5 w-3.5 shrink-0 text-faint transition-transform duration-200 group-open:rotate-180"
+              viewBox="0 0 16 16"
+              fill="none"
+            >
+              <path d="m4 6 4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </summary>
+          <ol className="m-0 ml-[74px] list-none border-t border-border/70 px-3 py-1 pr-4">
+            {group.entries.map((entry, callIndex) => (
+              <ActivityCallDetail entry={entry} index={callIndex} key={entry.key} />
+            ))}
+          </ol>
+        </details>
+      ) : (
+        <div className="flex min-w-0 items-center gap-2.5 rounded border border-transparent px-2.5 py-2 transition-colors hover:border-border hover:bg-raised/50">
+          {leading}
+        </div>
+      )}
+    </li>
+  );
+}
+
 function AgentActivityTrail({ entries }: { entries: readonly TimelineEntry<ChatRuntimeEvent>[] }) {
+  const groups = groupConsecutiveTimelineEntries(entries);
+  const toolCalls = entries.filter(({ kind }) => kind === "tool").length;
   return (
     <section className="my-3" aria-label={activityGroupTitle(entries)}>
-      <header className="flex min-w-0 items-center gap-2 text-caption text-muted">
-        <TerminalIcon size={15} className="text-faint" />
-        <strong className="truncate font-medium">{activityGroupTitle(entries)}</strong>
+      <header className="mb-2 flex min-w-0 items-center gap-2.5 px-0.5 text-caption text-muted">
+        <span className="grid h-6 w-6 shrink-0 place-items-center rounded bg-soft text-accent">
+          <TerminalIcon size={13} />
+        </span>
+        <strong className="truncate font-medium text-muted">Agent activity</strong>
+        <span className="h-px min-w-4 flex-1 bg-border" aria-hidden="true" />
+        <small className="shrink-0 font-mono text-micro tabular-nums text-faint">
+          {groups.length} step{groups.length === 1 ? "" : "s"}{toolCalls > 0 ? ` · ${toolCalls} call${toolCalls === 1 ? "" : "s"}` : ""}
+        </small>
       </header>
-      <ol className="relative m-0 ml-[7px] mt-2 grid list-none gap-0 border-l border-dotted border-border-strong p-0 pl-5">
-        {entries.map((entry) => {
-          const runtimeEvent = entry.events[entry.events.length - 1]!;
-          const detail = runtimeEvent.preview ?? runtimeEvent.summary;
-          const duration = formatRuntimeDuration(entry.durationMs);
-          return (
-            <li className="relative min-w-0 py-1.5 first:pt-0 last:pb-0" key={entry.key}>
-              <span
-                aria-hidden="true"
-                className={cn(
-                  "absolute -left-[24px] top-[11px] h-[7px] w-[7px] rounded-pill ring-4 ring-bg",
-                  activityTone(entry.status),
-                )}
-              />
-              <div className="flex min-w-0 items-start gap-3 rounded px-2 py-1 transition-colors hover:bg-raised">
-                <div className="min-w-0 flex-1">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <strong className="truncate text-caption font-medium text-muted">{activityTitle(entry)}</strong>
-                    <span className="sr-only">Status: {entry.status}</span>
-                  </div>
-                  {detail && detail !== entry.label && (
-                    <p className="my-0.5 line-clamp-2 text-micro leading-relaxed text-faint">{detail}</p>
-                  )}
-                  {entry.status === "failed" && runtimeEvent.errorCode && (
-                    <small className="font-mono text-micro text-bad">{runtimeEvent.errorCode}</small>
-                  )}
-                </div>
-                {duration && <small className="shrink-0 font-mono text-micro tabular-nums text-faint">{duration}</small>}
-              </div>
-            </li>
-          );
-        })}
+      <ol className="relative m-0 ml-[11px] grid list-none gap-0 border-l border-dotted border-border-strong p-0 pl-5">
+        {groups.map((group, index) => <ActivityStep group={group} index={index} key={group.key} />)}
       </ol>
     </section>
   );
