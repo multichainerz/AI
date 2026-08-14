@@ -249,15 +249,18 @@ curl --fail --silent --max-time 5 http://127.0.0.1:8642/health >/dev/null \
   && pass "runtime answers /health" || bad "runtime does not answer /health"
 grep -q 'smoke-model' /etc/hermes/config.yaml 2>/dev/null \
   && pass "managed policy pins the enrolled model route" || bad "managed policy is missing the model route"
-grep -Fqx '  provider: custom:orcasynapse' /etc/hermes/config.yaml \
-  && pass "managed policy selects the named OrcaSynapse provider" \
-  || bad "managed policy still uses an unsafe bare custom provider"
+grep -Fqx '  provider: custom' /etc/hermes/config.yaml \
+  && pass "managed policy selects the session-stable custom provider" \
+  || bad "managed policy does not select the session-stable custom provider"
+grep -Fqx '  custom:' /etc/hermes/config.yaml \
+  && pass "managed provider survives Hermes session normalization" \
+  || bad "managed provider is not addressable after session normalization"
 grep -Fqx '    key_env: OPENAI_API_KEY' /etc/hermes/config.yaml \
   && pass "managed policy authorizes the protected inference credential by env name" \
   || bad "managed policy does not bind the protected inference credential"
 grep -Fqx '        hermes-agent:' /etc/hermes/config.yaml \
   && grep -Fqx '          model: "smoke-model"' /etc/hermes/config.yaml \
-  && grep -Fqx '          provider: custom:orcasynapse' /etc/hermes/config.yaml \
+  && grep -Fqx '          provider: custom' /etc/hermes/config.yaml \
   && pass "native API sessions route the product alias through the enrolled model" \
   || bad "native API sessions can bypass the enrolled model route"
 if grep -Eq '^  api_key\s*:' /etc/hermes/config.yaml; then
@@ -370,26 +373,40 @@ set -e
 [[ "$(getent passwd orcasynapse-hermes | cut -d: -f6)" == "${expected_home}" ]] \
   && pass "repair reconciled the legacy passwd home" || bad "repair left the legacy passwd home in place"
 
-printf '\n=== submitting a Hermes-native session turn ===\n'
+printf '\n=== submitting consecutive Hermes-native session turns ===\n'
 session_id="smoke-$(date +%s)"
 session_response="$(curl --fail --silent --show-error --max-time 10 \
   -H 'Content-Type: application/json' \
   -H "Authorization: Bearer ${gateway_key}" \
-  --data-binary "{\"id\":\"${session_id}\",\"model\":\"smoke-model\",\"source\":\"api_server\"}" \
+  --data-binary "{\"id\":\"${session_id}\",\"model\":\"hermes-agent\",\"source\":\"api_server\"}" \
   http://127.0.0.1:8642/api/sessions 2>/dev/null || true)"
-stream_response=""
+first_stream_response=""
+second_stream_response=""
 if [[ -n "${session_response}" ]]; then
-  stream_response="$(curl --fail --silent --show-error --max-time 90 --no-buffer \
+  first_stream_response="$(curl --fail --silent --show-error --max-time 90 --no-buffer \
     -H 'Accept: text/event-stream' \
     -H 'Content-Type: application/json' \
     -H "Authorization: Bearer ${gateway_key}" \
-    --data-binary '{"message":"Return the smoke marker and do not call tools.","instructions":"Reply concisely.","model":"smoke-model"}' \
+    --data-binary '{"message":"Return the smoke marker and do not call tools.","instructions":"Reply concisely.","model":"hermes-agent"}' \
+    "http://127.0.0.1:8642/api/sessions/${session_id}/chat/stream" 2>/dev/null || true)"
+  second_stream_response="$(curl --fail --silent --show-error --max-time 90 --no-buffer \
+    -H 'Accept: text/event-stream' \
+    -H 'Content-Type: application/json' \
+    -H "Authorization: Bearer ${gateway_key}" \
+    --data-binary '{"message":"Return the smoke marker again and do not call tools.","instructions":"Reply concisely.","model":"hermes-agent"}' \
     "http://127.0.0.1:8642/api/sessions/${session_id}/chat/stream" 2>/dev/null || true)"
 fi
-if grep -q '^event: run.completed' <<<"${stream_response}"; then
-  pass "real Hermes-native session execution completed inside the hardened service"
+if grep -q '^event: run.completed' <<<"${first_stream_response}" \
+  && grep -q 'SMOKE_RUN_OK' <<<"${first_stream_response}"; then
+  pass "first Hermes-native session turn reached governed inference"
 else
-  bad "Hermes-native session execution did not complete (create=${session_response:-empty})"
+  bad "first Hermes-native session turn did not reach governed inference (create=${session_response:-empty})"
+fi
+if grep -q '^event: run.completed' <<<"${second_stream_response}" \
+  && grep -q 'SMOKE_RUN_OK' <<<"${second_stream_response}"; then
+  pass "restored Hermes session retained its inference credential on turn 2"
+else
+  bad "restored Hermes session lost governed inference on turn 2"
 fi
 
 printf '\n=== resuming from a protected enrollment receipt ===\n'

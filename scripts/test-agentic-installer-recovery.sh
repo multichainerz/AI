@@ -203,6 +203,19 @@ if [[ "${EUID}" -eq 0 ]]; then
     grep -Fqx 'existing: true' "${STATE_ROOT}/data/config.yaml"
   )
 
+  # Fresh installs must use the same literal provider identity Hermes persists
+  # after turn 1. The credential remains an environment reference, never YAML.
+  (
+    HERMES_MANAGED_DIR="${TEST_ROOT}/fresh-managed-policy"
+    write_hermes_managed_policy '"fresh-model"' '"http://192.0.2.5:4000/internal/v1"'
+    grep -Fqx '  provider: custom' "${HERMES_MANAGED_DIR}/config.yaml"
+    grep -Fqx '  custom:' "${HERMES_MANAGED_DIR}/config.yaml"
+    grep -Fqx '    key_env: OPENAI_API_KEY' "${HERMES_MANAGED_DIR}/config.yaml"
+    grep -Fqx '          provider: custom' "${HERMES_MANAGED_DIR}/config.yaml"
+    ! grep -Fq 'custom:orcasynapse' "${HERMES_MANAGED_DIR}/config.yaml"
+    ! grep -Eq '^  api_key\s*:' "${HERMES_MANAGED_DIR}/config.yaml"
+  )
+
   # Repair must preserve the enrolled policy, reconcile terminal.cwd, and add
   # the native memory block once for nodes installed before the transition.
   # Exercise the atomic renderer as root because the real managed file is
@@ -214,15 +227,15 @@ if [[ "${EUID}" -eq 0 ]]; then
     printf 'model:\n  provider: custom\n  default: smoke-model\n  base_url: "http://192.0.2.10:4000/internal/v1"\n  api_key: ${OPENAI_API_KEY}\nmemory:\n  provider: stale-external\n  memory_enabled: false\nsecurity:\n  redact_secrets: true\n' \
       > "${HERMES_MANAGED_DIR}/config.yaml"
     reconcile_managed_runtime_policy
-    grep -Fqx '  provider: custom:orcasynapse' "${HERMES_MANAGED_DIR}/config.yaml"
+    grep -Fqx '  provider: custom' "${HERMES_MANAGED_DIR}/config.yaml"
     grep -Fqx '  default: smoke-model' "${HERMES_MANAGED_DIR}/config.yaml"
     ! grep -Eq '^  api_key\s*:' "${HERMES_MANAGED_DIR}/config.yaml"
     grep -Fqx '    key_env: OPENAI_API_KEY' "${HERMES_MANAGED_DIR}/config.yaml"
     grep -Fqx '    api: "http://192.0.2.10:4000/internal/v1"' "${HERMES_MANAGED_DIR}/config.yaml"
-    [[ "$(grep -Fc '  orcasynapse:' "${HERMES_MANAGED_DIR}/config.yaml")" == "1" ]]
+    [[ "$(grep -Fc '  custom:' "${HERMES_MANAGED_DIR}/config.yaml")" == "1" ]]
     grep -Fqx '        hermes-agent:' "${HERMES_MANAGED_DIR}/config.yaml"
     grep -Fqx '          model: smoke-model' "${HERMES_MANAGED_DIR}/config.yaml"
-    grep -Fqx '          provider: custom:orcasynapse' "${HERMES_MANAGED_DIR}/config.yaml"
+    grep -Fqx '          provider: custom' "${HERMES_MANAGED_DIR}/config.yaml"
     grep -Fqx '  redact_secrets: true' "${HERMES_MANAGED_DIR}/config.yaml"
     grep -Fqx "  cwd: ${HERMES_HOME_DIR}" "${HERMES_MANAGED_DIR}/config.yaml"
     grep -Fqx '  memory_enabled: true' "${HERMES_MANAGED_DIR}/config.yaml"
@@ -231,25 +244,27 @@ if [[ "${EUID}" -eq 0 ]]; then
     reconcile_managed_runtime_policy
     [[ "$(grep -Fc '  cwd:' "${HERMES_MANAGED_DIR}/config.yaml")" == "1" ]]
     [[ "$(grep -Fc 'memory:' "${HERMES_MANAGED_DIR}/config.yaml")" == "1" ]]
-    [[ "$(grep -Fc '  orcasynapse:' "${HERMES_MANAGED_DIR}/config.yaml")" == "1" ]]
+    [[ "$(grep -Fc '  custom:' "${HERMES_MANAGED_DIR}/config.yaml")" == "1" ]]
     [[ "$(grep -Fc '        hermes-agent:' "${HERMES_MANAGED_DIR}/config.yaml")" == "1" ]]
 
     HERMES_MANAGED_DIR="${TEST_ROOT}/managed-policy-drift"
     mkdir -p "${HERMES_MANAGED_DIR}"
-    printf 'model:\n  provider: custom\n  default: repaired-model\n  base_url: "http://192.0.2.20:4000/internal/v1"\nproviders:\n  orcasynapse:\n    name: Stale\n    api: "https://openrouter.ai/api/v1"\n    key_env: OPENROUTER_API_KEY\n    default_model: stale-model\nplatforms:\n  api_server:\n    enabled: false\n    extra:\n      model_routes:\n        other-agent:\n          model: preserved-model\n          provider: preserved-provider\n        hermes-agent:\n          model: stale-model\n          provider: openrouter\n' \
+    printf 'model:\n  provider: custom:orcasynapse\n  default: repaired-model\n  base_url: "http://192.0.2.20:4000/internal/v1"\nproviders:\n  orcasynapse:\n    name: Stale\n    api: "https://openrouter.ai/api/v1"\n    key_env: OPENROUTER_API_KEY\n    default_model: stale-model\nplatforms:\n  api_server:\n    enabled: false\n    extra:\n      model_routes:\n        other-agent:\n          model: preserved-model\n          provider: preserved-provider\n        hermes-agent:\n          model: stale-model\n          provider: openrouter\n' \
       > "${HERMES_MANAGED_DIR}/config.yaml"
     reconcile_managed_runtime_policy
     grep -Fqx '    enabled: true' "${HERMES_MANAGED_DIR}/config.yaml"
     grep -Fqx '    key_env: OPENAI_API_KEY' "${HERMES_MANAGED_DIR}/config.yaml"
     grep -Fqx '    api: "http://192.0.2.20:4000/internal/v1"' "${HERMES_MANAGED_DIR}/config.yaml"
     grep -Fqx '          model: repaired-model' "${HERMES_MANAGED_DIR}/config.yaml"
-    grep -Fqx '          provider: custom:orcasynapse' "${HERMES_MANAGED_DIR}/config.yaml"
+    grep -Fqx '          provider: custom' "${HERMES_MANAGED_DIR}/config.yaml"
     grep -Fqx '        other-agent:' "${HERMES_MANAGED_DIR}/config.yaml"
     grep -Fqx '          model: preserved-model' "${HERMES_MANAGED_DIR}/config.yaml"
     ! grep -Fq 'OPENROUTER_API_KEY' "${HERMES_MANAGED_DIR}/config.yaml"
+    ! grep -Fq 'custom:orcasynapse' "${HERMES_MANAGED_DIR}/config.yaml"
+    ! grep -Fqx '  orcasynapse:' "${HERMES_MANAGED_DIR}/config.yaml"
     ! grep -Fq 'stale-model' "${HERMES_MANAGED_DIR}/config.yaml"
     reconcile_managed_runtime_policy
-    [[ "$(grep -Fc '  orcasynapse:' "${HERMES_MANAGED_DIR}/config.yaml")" == "1" ]]
+    [[ "$(grep -Fc '  custom:' "${HERMES_MANAGED_DIR}/config.yaml")" == "1" ]]
     [[ "$(grep -Fc '        hermes-agent:' "${HERMES_MANAGED_DIR}/config.yaml")" == "1" ]]
   )
 fi
