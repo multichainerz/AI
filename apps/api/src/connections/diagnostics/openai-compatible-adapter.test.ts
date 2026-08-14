@@ -55,6 +55,28 @@ describe("OpenAI-compatible connection diagnostics", () => {
     });
   });
 
+  it("cancels a chunked models response as soon as the safety limit is exceeded", async () => {
+    let bytesProduced = 0;
+    let cancelled = false;
+    const chunk = new Uint8Array(65_536).fill(32);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(new ReadableStream({
+      pull(controller) {
+        bytesProduced += chunk.byteLength;
+        controller.enqueue(chunk);
+      },
+      cancel() {
+        cancelled = true;
+      },
+    }), { status: 200 })));
+
+    await expect(adapter.test(connection, new AbortController().signal)).resolves.toMatchObject({
+      status: "DEGRADED",
+      details: { failure: "models_response_too_large", responseTooLarge: true },
+    });
+    expect(cancelled).toBe(true);
+    expect(bytesProduced).toBeLessThan(2_000_000);
+  });
+
   it("reports degraded when the configured model alias is absent", async () => {
     vi.stubGlobal(
       "fetch",

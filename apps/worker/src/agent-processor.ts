@@ -413,7 +413,38 @@ export class DrizzleAgentProcessor {
 
       let toolCallKey: string | null = event.toolCallKey;
       if (!toolCallKey && TOOL_LIFECYCLE.has(event.type)) {
-        toolCallKey = `${event.toolName ?? "tool"}#${event.sourceEventId ?? Date.now()}`.slice(0, 200);
+        const toolName = event.toolName ?? "tool";
+        if (event.type !== "TOOL_STARTED") {
+          /*
+           * Hermes omits call identifiers on its native memory/tool events.
+           * Correlate the outcome with the newest same-name call that has not
+           * received a terminal event yet. Hermes' agent loop executes these
+           * calls serially, so the newest open call is the one being updated.
+           * Runtime-supplied identifiers always win above this fallback.
+           */
+          const [open] = await transaction.execute<{ toolCallKey: string }>(sql`
+            SELECT s."toolCallKey"
+            FROM "AgentRunEvent" s
+            WHERE s."runId" = ${runId}::uuid
+              AND s."type" IN ('TOOL_STARTED', 'TOOL_PROGRESS')
+              AND s."toolName" IS NOT DISTINCT FROM ${event.toolName}
+              AND s."toolCallKey" IS NOT NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM "AgentRunEvent" t
+                WHERE t."runId" = s."runId"
+                  AND t."toolCallKey" = s."toolCallKey"
+                  AND t."type" IN ('TOOL_COMPLETED', 'TOOL_FAILED')
+              )
+            ORDER BY s."cursor" DESC
+            LIMIT 1
+          `).then((result) => result.rows);
+          toolCallKey = open?.toolCallKey ?? null;
+        }
+        if (!toolCallKey) {
+          // A start, or an outcome whose start was not retained, still needs a
+          // stable entry of its own. Source ids are unique within one run.
+          toolCallKey = `${toolName}#${event.sourceEventId ?? Date.now()}`.slice(0, 200);
+        }
       }
       let contentOffset: number | null = null;
       if (event.type !== "MESSAGE_DELTA") {

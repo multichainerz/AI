@@ -41,6 +41,23 @@ describe("groupRuntimeEvents", () => {
     expect(entries.map(({ key, status }) => `${key}:${status}`)).toEqual(["search#1:completed", "search#2:failed"]);
   });
 
+  it("repairs tool events stored with a different synthesized key per event", () => {
+    // ai-v3.16.0 generated these broken keys. Existing audit rows must become
+    // legible immediately rather than waiting for a database rewrite.
+    const entries = groupRuntimeEvents([
+      event({ type: "TOOL_STARTED", toolCallKey: "memory#event-1", toolName: "memory" }),
+      event({ type: "TOOL_COMPLETED", toolCallKey: "memory#event-2", toolName: "memory" }),
+      event({ type: "TOOL_STARTED", toolCallKey: "memory#event-3", toolName: "memory" }),
+      event({ type: "TOOL_COMPLETED", toolCallKey: "memory#event-4", toolName: "memory" }),
+    ]);
+
+    expect(entries).toHaveLength(2);
+    expect(entries.map(({ status, events }) => ({ status, events: events.length }))).toEqual([
+      { status: "completed", events: 2 },
+      { status: "completed", events: 2 },
+    ]);
+  });
+
   it("holds a long call in the place it started", () => {
     /*
      * First-appearance order, not last-event order. A call that reports progress
@@ -76,10 +93,25 @@ describe("groupRuntimeEvents", () => {
       event({ type: "RUN_ENDED", status: "FAILED" }),
       event({ type: "RUN_ENDED", status: "COMPLETED" }),
       event({ type: "RUN_ENDED", status: "CANCELLED" }),
+      event({ type: "RUN_ENDED", status: "DENIED" }),
+      event({ type: "RUN_ENDED", status: "TIMED_OUT" }),
     ]);
 
     expect(entries.map(({ status }) => status)).toEqual([
-      "failed", "completed", "cancelled", "failed", "completed", "cancelled",
+      "failed", "completed", "cancelled", "failed", "completed", "cancelled", "failed", "failed",
+    ]);
+  });
+
+  it("settles every orphaned running entry when the run has ended", () => {
+    const entries = groupRuntimeEvents([
+      event({ type: "RUN_STARTED", status: "running" }),
+      event({ type: "REASONING_REPORTED", toolName: "_thinking", status: "running" }),
+      event({ type: "TOOL_STARTED", toolCallKey: "memory#open", toolName: "memory", status: "running" }),
+      event({ type: "RUN_ENDED", status: "COMPLETED" }),
+    ]);
+
+    expect(entries.map(({ status }) => status)).toEqual([
+      "completed", "completed", "completed", "completed",
     ]);
   });
 

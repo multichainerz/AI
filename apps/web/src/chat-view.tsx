@@ -8,9 +8,10 @@ import type {
   ChatStreamEvent,
 } from "@orcasynapse/contracts";
 import { applyStreamEventToConversation } from "./chat-stream-reducer.js";
+import { interleaveByOffset } from "./chat/interleave.js";
 import { MarkdownMessage } from "./chat/markdown-message.js";
 import { groupConversationsByDate } from "./chat/conversation-groups.js";
-import { groupRuntimeEvents, summariseTimeline } from "./chat/timeline.js";
+import { groupRuntimeEvents, summariseTimeline, type TimelineEntry } from "./chat/timeline.js";
 import { COMPOSER_ZONE, THREAD_MEASURE, THREAD_SCROLLER } from "./chat/measure.js";
 import { shouldStickToBottom } from "./chat/stick-to-bottom.js";
 import { usePacedStream } from "./chat/use-paced-stream.js";
@@ -28,7 +29,6 @@ import {
   getAgentProfiles,
   streamChatEvents,
   submitChatMessage,
-  setChatFeedback,
   updateChatConversation,
 } from "./api.js";
 import {
@@ -42,7 +42,15 @@ import {
   StatusText,
   cn,
 } from "./ui/index.js";
-import { RobotIcon } from "./ui/relay-icons.js";
+import {
+  CopyIcon,
+  LayersIcon,
+  MonitorIcon,
+  NodeIcon,
+  RobotIcon,
+  SnapshotIcon,
+  TerminalIcon,
+} from "./ui/relay-icons.js";
 
 interface ChatViewProps {
   unlocked: boolean;
@@ -118,12 +126,173 @@ function formatRuntimeDuration(value: number | null): string | null {
   return value < 1_000 ? `${value} ms` : `${(value / 1_000).toFixed(1)} s`;
 }
 
-function runtimeEventLabel(type: string): string {
-  return type.replaceAll("_", " ").toLowerCase().replace(/^./, (character) => character.toUpperCase());
+type ChatRuntimeEvent = ChatMessage["runtimeEvents"][number];
+
+type ResponseFlowBlock =
+  | { kind: "text"; text: string }
+  | { kind: "activity"; entries: TimelineEntry<ChatRuntimeEvent>[] };
+
+/** Lifecycle bookkeeping stays in the audit log without crowding the answer. */
+function visibleTimelineEntries(message: ChatMessage): TimelineEntry<ChatRuntimeEvent>[] {
+  return groupRuntimeEvents(message.runtimeEvents).filter((entry) => {
+    if (entry.kind !== "tool" && entry.kind !== "subagent" && entry.kind !== "reasoning") return false;
+    // Some Hermes versions expose their internal thinking sentinel as a tool.
+    // It has no useful payload and is not a governed call, so showing "Used
+    // thinking" creates noise and inflates the operator-facing tool count.
+    return !(entry.kind === "tool" && readableToolName(entry.label).toLowerCase() === "thinking");
+  });
+}
+
+/** Consecutive calls become one dotted run, while agent prose remains between runs. */
+function responseFlowBlocks(
+  content: string,
+  entries: readonly TimelineEntry<ChatRuntimeEvent>[],
+): ResponseFlowBlock[] {
+  const blocks: ResponseFlowBlock[] = [];
+  for (const part of interleaveByOffset(content, entries)) {
+    if (part.kind === "text") {
+      if (part.text) blocks.push(part);
+      continue;
+    }
+    const previous = blocks[blocks.length - 1];
+    if (previous?.kind === "activity") previous.entries.push(part.entry);
+    else blocks.push({ kind: "activity", entries: [part.entry] });
+  }
+  return blocks;
+}
+
+function readableToolName(value: string): string {
+  return value.replace(/[._-]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function activityTitle(entry: TimelineEntry<ChatRuntimeEvent>): string {
+  if (entry.kind === "reasoning") return entry.status === "running" ? "Planning next step" : "Planned next step";
+  if (entry.kind === "subagent") return entry.status === "running" ? "Delegating to a subagent" : "Delegated to a subagent";
+  const tool = readableToolName(entry.label || "tool");
+  if (entry.status === "running") return `Calling ${tool}`;
+  if (entry.status === "failed") return `${tool} failed`;
+  if (entry.status === "cancelled") return `${tool} cancelled`;
+  return `Used ${tool}`;
+}
+
+function activityGroupTitle(entries: readonly TimelineEntry<ChatRuntimeEvent>[]): string {
+  const running = entries.some(({ status }) => status === "running");
+  const tools = entries.filter(({ kind }) => kind === "tool").length;
+  if (tools === entries.length) {
+    return `${running ? "Running" : "Ran"} ${tools} tool call${tools === 1 ? "" : "s"}`;
+  }
+  return `${running ? "Working through" : "Completed"} ${entries.length} agent action${entries.length === 1 ? "" : "s"}`;
+}
+
+function activityTone(status: TimelineEntry["status"]): string {
+  if (status === "failed") return "bg-bad";
+  if (status === "cancelled") return "bg-warn";
+  if (status === "completed") return "bg-good";
+  return "bg-accent anim-live";
+}
+
+function AgentActivityTrail({ entries }: { entries: readonly TimelineEntry<ChatRuntimeEvent>[] }) {
+  return (
+    <section className="my-3" aria-label={activityGroupTitle(entries)}>
+      <header className="flex min-w-0 items-center gap-2 text-caption text-muted">
+        <TerminalIcon size={15} className="text-faint" />
+        <strong className="truncate font-medium">{activityGroupTitle(entries)}</strong>
+      </header>
+      <ol className="relative m-0 ml-[7px] mt-2 grid list-none gap-0 border-l border-dotted border-border-strong p-0 pl-5">
+        {entries.map((entry) => {
+          const runtimeEvent = entry.events[entry.events.length - 1]!;
+          const detail = runtimeEvent.preview ?? runtimeEvent.summary;
+          const duration = formatRuntimeDuration(entry.durationMs);
+          return (
+            <li className="relative min-w-0 py-1.5 first:pt-0 last:pb-0" key={entry.key}>
+              <span
+                aria-hidden="true"
+                className={cn(
+                  "absolute -left-[24px] top-[11px] h-[7px] w-[7px] rounded-pill ring-4 ring-bg",
+                  activityTone(entry.status),
+                )}
+              />
+              <div className="flex min-w-0 items-start gap-3 rounded px-2 py-1 transition-colors hover:bg-raised">
+                <div className="min-w-0 flex-1">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <strong className="truncate text-caption font-medium text-muted">{activityTitle(entry)}</strong>
+                    <span className="sr-only">Status: {entry.status}</span>
+                  </div>
+                  {detail && detail !== entry.label && (
+                    <p className="my-0.5 line-clamp-2 text-micro leading-relaxed text-faint">{detail}</p>
+                  )}
+                  {entry.status === "failed" && runtimeEvent.errorCode && (
+                    <small className="font-mono text-micro text-bad">{runtimeEvent.errorCode}</small>
+                  )}
+                </div>
+                {duration && <small className="shrink-0 font-mono text-micro tabular-nums text-faint">{duration}</small>}
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+    </section>
+  );
+}
+
+function AgentResponseFlow({
+  message,
+  currentActivity,
+  busy,
+  elapsedMs,
+}: {
+  message: ChatMessage;
+  currentActivity: string | null;
+  busy: boolean;
+  elapsedMs: number;
+}) {
+  const entries = visibleTimelineEntries(message);
+  const blocks = responseFlowBlocks(message.content, entries);
+  const empty = blocks.length === 0;
+
+  return (
+    <div aria-label={entries.length > 0 ? "Hermes agent activity" : undefined}>
+      {empty ? (
+        <MarkdownMessage
+          content={message.status === "PENDING" ? "Thinking…" : "No content returned."}
+          streaming={message.status === "PENDING"}
+        />
+      ) : blocks.map((block, index) => block.kind === "text" ? (
+        <MarkdownMessage
+          content={block.text}
+          streaming={message.status === "PENDING" && index === blocks.length - 1}
+          key={`text-${index}`}
+        />
+      ) : (
+        <AgentActivityTrail entries={block.entries} key={`activity-${block.entries[0]!.key}`} />
+      ))}
+
+      {message.status === "PENDING" && (
+        <div className="mt-3 flex min-w-0 items-center gap-2.5 text-caption text-muted">
+          <span aria-hidden="true" className="grid h-4 w-4 place-items-center">
+            <span className="h-2 w-2 rounded-pill bg-accent anim-live" />
+          </span>
+          <span aria-live="polite" className="min-w-0 truncate">
+            {currentActivity ?? "Hermes is working"}
+          </span>
+          <small className="ml-auto shrink-0 font-mono text-micro tabular-nums text-faint">
+            {busy ? `${(elapsedMs / 1_000).toFixed(1)} s` : "reconnecting"}
+          </small>
+        </div>
+      )}
+
+      {message.status === "COMPLETED" && entries.length > 0 && (
+        <footer className="mt-3 flex items-center gap-2 text-caption text-faint">
+          <NodeIcon size={14} />
+          <span>{summariseTimeline(entries, message.latencyMs)}</span>
+        </footer>
+      )}
+    </div>
+  );
 }
 
 export interface ChatTelemetryMetric {
-  key: "throughput" | "input" | "output" | "reasoning" | "total" | "first-token" | "latency" | "finish";
+  key: "throughput" | "tokens" | "first-token" | "latency";
   label: string;
   value: string;
 }
@@ -133,19 +302,23 @@ export function chatMessageTelemetry(message: ChatMessage): ChatTelemetryMetric[
     ? `${(message.outputTokens / (message.latencyMs / 1_000)).toFixed(1)} tok/s`
     : "—";
   return [
-    { key: "throughput", label: "Effective speed", value: throughput },
-    { key: "input", label: "Input", value: formatTokenCount(message.inputTokens) },
-    { key: "output", label: "Output", value: formatTokenCount(message.outputTokens) },
-    { key: "reasoning", label: "Reasoning", value: formatTokenCount(message.reasoningTokens) },
-    { key: "total", label: "Total", value: formatTokenCount(message.totalTokens) },
-    { key: "first-token", label: "First token", value: formatLatency(message.firstTokenLatencyMs) },
-    { key: "latency", label: "Latency", value: formatLatency(message.latencyMs) },
+    { key: "throughput", label: "Speed", value: throughput },
     {
-      key: "finish",
-      label: "Finish",
-      value: message.finishReason?.replaceAll("_", " ").toLowerCase() ?? "—",
+      key: "tokens",
+      label: "Tokens",
+      value: `${formatTokenCount(message.inputTokens)} in / ${formatTokenCount(message.outputTokens)} out`,
     },
+    { key: "first-token", label: "TTFT", value: formatLatency(message.firstTokenLatencyMs) },
+    { key: "latency", label: "Latency", value: formatLatency(message.latencyMs) },
   ];
+}
+
+function ChatTelemetryIcon({ metric }: { metric: ChatTelemetryMetric["key"] }) {
+  const props = { size: 13, className: "text-faint" } as const;
+  if (metric === "throughput") return <MonitorIcon {...props} />;
+  if (metric === "tokens") return <LayersIcon {...props} />;
+  if (metric === "first-token") return <NodeIcon {...props} />;
+  return <SnapshotIcon {...props} />;
 }
 
 export function ChatView({
@@ -174,7 +347,6 @@ export function ChatView({
   const [error, setError] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyFilter, setHistoryFilter] = useState("");
-  const [feedbackBusy, setFeedbackBusy] = useState<string | null>(null);
   const [streamStartedAt, setStreamStartedAt] = useState<number | null>(null);
   const [streamElapsedMs, setStreamElapsedMs] = useState(0);
   const [profiles, setProfiles] = useState<AgentProfile[]>([]);
@@ -665,28 +837,6 @@ export function ChatView({
     const index = active.messages.findIndex(({ id }) => id === messageId);
     const prior = [...active.messages.slice(0, index)].reverse().find(({ role }) => role === "USER");
     if (prior) setDraft(prior.content);
-  };
-
-  const recordFeedback = async (
-    messageId: string,
-    rating: "HELPFUL" | "NOT_HELPFUL",
-  ) => {
-    if (feedbackBusy) return;
-    setFeedbackBusy(messageId);
-    setError(null);
-    try {
-      const feedback = await setChatFeedback(messageId, rating);
-      setActive((current) => current ? {
-        ...current,
-        messages: current.messages.map((message) =>
-          message.id === messageId ? { ...message, feedback } : message,
-        ),
-      } : current);
-    } catch (cause) {
-      handleError(cause, "Unable to record feedback.");
-    } finally {
-      setFeedbackBusy(null);
-    }
   };
 
   if (!unlocked) {
@@ -1198,16 +1348,19 @@ export function ChatView({
                   )}
                   <div className="min-w-0">
                     {/*
-                      * Name, timestamp and model alias were a four-part header on
-                      * every single turn -- the densest thing in the transcript
-                      * and the least read. They stay in the markup, so a screen
-                      * reader and a hovering eye can both still get them, and
-                      * they hold their space so nothing shifts on hover. Only a
-                      * status that is not COMPLETED keeps permanent ink, because
-                      * that one is news.
+                      * Assistant identity remains visible so every response has
+                      * clear authorship. User metadata stays available on hover
+                      * without adding another label above every user bubble.
                       */}
                     <div className="flex min-h-[20px] items-center justify-between gap-3">
-                      <div className="flex min-w-0 items-baseline gap-2 opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
+                      <div
+                        className={cn(
+                          "flex min-w-0 items-baseline gap-2 transition-opacity duration-150",
+                          message.role === "USER"
+                            ? "opacity-0 group-focus-within:opacity-100 group-hover:opacity-100"
+                            : "opacity-100",
+                        )}
+                      >
                         <strong className="text-caption font-semibold text-muted">
                           {message.role === "USER" ? "You" : (active.profileName ?? "Hermes")}
                         </strong>
@@ -1230,137 +1383,12 @@ export function ChatView({
                     </div>
                     {message.role === "USER"
                       ? <p className="my-1 whitespace-pre-wrap break-words text-body leading-[1.6] text-text">{message.content}</p>
-                      : <MarkdownMessage
-                          content={message.content || (message.status === "PENDING" ? "Thinking…" : "No content returned.")}
-                          streaming={message.status === "PENDING"}
+                      : <AgentResponseFlow
+                          message={message}
+                          currentActivity={currentActivity}
+                          busy={busy}
+                          elapsedMs={streamElapsedMs}
                         />}
-                    {message.role === "ASSISTANT" && message.status === "PENDING" && (
-                      /*
-                        * The transcript's live region, moved here off the
-                        * scroller. Announcing the whole thread on every delta
-                        * read a growing answer back from the top several times
-                        * a second; this says what the run is doing, and says it
-                        * once per change.
-                        */
-                      <div
-                        className="my-2.5 flex items-center justify-between gap-3 rounded border border-border-strong bg-raised px-3 py-2"
-                        aria-label="Live generation status"
-                      >
-                        {/*
-                          * aria-live sits on the activity text alone. On the
-                          * container it also covered the elapsed-seconds
-                          * counter, which a 250ms interval rewrites -- a fresh
-                          * polite announcement four times a second for the
-                          * whole run, which is the announcement storm moving it
-                          * off the scroller was meant to end.
-                          */}
-                        <span aria-live="polite" className="min-w-0">
-                          <StatusText dot tone="accent" className="whitespace-nowrap">
-                            {currentActivity ?? "Hermes is working"}
-                          </StatusText>
-                        </span>
-                        <small className="truncate text-right text-micro text-faint">
-                          {busy ? `${(streamElapsedMs / 1_000).toFixed(1)} s elapsed` : "Awaiting recovery"} · governed run details appear as Hermes reports them
-                        </small>
-                      </div>
-                    )}
-                    {message.role === "ASSISTANT" && message.runtimeEvents.length > 0 && (
-                      /*
-                       * Loud while it happens, quiet once it has. Watching a
-                       * governed run work is the point of the product; nine
-                       * expanded rows sitting above a finished answer, forever,
-                       * is not -- by the third turn the transcript is mostly
-                       * machinery. `open` tracks the turn's own state, so it
-                       * unfolds as the run starts and folds when it lands, and
-                       * `summariseTimeline` names a failure while closed so a
-                       * calm one-liner can never hide one.
-                       *
-                       * `<details>` rather than component state because the
-                       * element already is this: it keeps its contents in the
-                       * accessibility tree, it is keyboard-operable, and it
-                       * needs no JavaScript to open.
-                       */
-                      <details
-                        className="my-3 overflow-hidden rounded-lg border border-border bg-surface"
-                        open={message.status !== "COMPLETED"}
-                        /* `<details>` maps to role="group", so the label is
-                           meaningful here and stays the region's name whether
-                           it is open or closed. */
-                        aria-label="Hermes agent activity"
-                      >
-                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-caption text-muted marker:content-none hover:bg-raised">
-                          <span className="min-w-0 truncate">
-                            {summariseTimeline(groupRuntimeEvents(message.runtimeEvents), message.latencyMs)}
-                          </span>
-                          <span className="shrink-0 font-mono text-micro text-faint">
-                            {message.runtimeEvents.length} event{message.runtimeEvents.length === 1 ? "" : "s"}
-                          </span>
-                        </summary>
-                        <ol className="m-0 grid list-none border-t border-border p-0">{groupRuntimeEvents(message.runtimeEvents).map((entry) => {
-                          const kind = entry.kind;
-                          /*
-                           * The newest event carries the detail worth showing --
-                           * a completion's preview, a failure's code -- while
-                           * the entry carries what the call *is*. Rendering the
-                           * raw list instead gave one tool call four rows and
-                           * no way to tell which progress belonged to it.
-                           */
-                          const runtimeEvent = entry.events[entry.events.length - 1]!;
-                          return (
-                            <li
-                              className="grid min-w-0 grid-cols-[26px_minmax(0,1fr)] gap-2.5 border-t border-border px-3 py-2.5 first:border-t-0"
-                              key={entry.key}
-                            >
-                              <span
-                                aria-hidden="true"
-                                className={cn(
-                                  "grid h-[25px] w-[25px] place-items-center rounded border font-mono text-micro font-bold",
-                                  kind === "tool" ? "border-good/50 bg-good/10 text-good"
-                                    : kind === "approval" ? "border-warn/50 bg-warn/10 text-warn"
-                                      : "border-border-strong bg-raised text-muted",
-                                )}
-                              >
-                                {kind === "tool" ? "TL" : kind === "subagent" ? "SA" : kind === "approval" ? "!" : "AI"}
-                              </span>
-                              <div className="min-w-0">
-                                <div className="flex items-center justify-between gap-2.5">
-                                  <strong className="min-w-0 truncate text-caption font-semibold text-text">
-                                    {kind === "tool" ? entry.label
-                                      : kind === "subagent" ? "Hermes subagent"
-                                        : runtimeEventLabel(runtimeEvent.type)}
-                                  </strong>
-                                  <StatusText
-                                    className="shrink-0"
-                                    tone={entry.status === "failed" || entry.status === "cancelled" ? "bad" : entry.status === "completed" ? "good" : "accent"}
-                                    dot={entry.status === "running"}
-                                  >
-                                    {/* The call's own state, not the last
-                                        event's label: a call that failed reads
-                                        as failed even though its final event is
-                                        just one more row. */}
-                                    {entry.status === "running" && entry.events.length > 1
-                                      ? `${entry.events.length} steps`
-                                      : entry.status}
-                                  </StatusText>
-                                </div>
-                                {(runtimeEvent.preview || runtimeEvent.summary) && (
-                                  <p className="my-1 text-micro leading-relaxed text-muted">
-                                    {runtimeEvent.preview ?? runtimeEvent.summary}
-                                  </p>
-                                )}
-                                <small className="block font-mono text-micro text-faint">{[
-                                  formatRuntimeDuration(entry.durationMs),
-                                  runtimeEvent.inputTokens === null ? null : `${runtimeEvent.inputTokens.toLocaleString()} in`,
-                                  runtimeEvent.outputTokens === null ? null : `${runtimeEvent.outputTokens.toLocaleString()} out`,
-                                  runtimeEvent.reasoningTokens === null ? null : `${runtimeEvent.reasoningTokens.toLocaleString()} reasoning`,
-                                  runtimeEvent.costUsd === null ? null : `$${runtimeEvent.costUsd.toFixed(4)}`,
-                                ].filter(Boolean).join(" · ") || new Date(runtimeEvent.occurredAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</small>
-                              </div>
-                            </li>
-                          );
-                        })}</ol>
-                      </details>
-                    )}
                     {message.role === "ASSISTANT" && message.approvals.map((approval) => (
                       /*
                        * The one block on the transcript that is warn-toned on
@@ -1412,85 +1440,41 @@ export function ChatView({
                       </section>
                     ))}
                     {message.role === "ASSISTANT" && message.status === "COMPLETED" && (
-                      <>
-                        <section className="mt-3.5 overflow-hidden rounded border border-border bg-surface" aria-label="Response performance">
-                          <header className="flex items-center justify-between gap-3.5 border-b border-border bg-raised px-3 py-2.5">
-                            <div>
-                              <MicroLabel className="block">Response telemetry</MicroLabel>
-                              <small className="mt-1 block text-micro text-faint">
-                                Reported by Hermes lifecycle events and measured by OrcaSynapse
-                              </small>
-                            </div>
-                          </header>
-                          {/*
-                            * Hairlines come from the gap showing the container
-                            * behind, so no cell carries a border of its own and
-                            * none of them double against the panel edge — which
-                            * is what the four nth-child rules the old stylesheet
-                            * needed were working around.
-                            *
-                            * Tabular figures and a fixed grid: a column of numbers
-                            * that re-aligns as a run streams is unreadable.
-                            */}
-                          <dl className="m-0 grid grid-cols-2 gap-px bg-border sm:grid-cols-[1.25fr_repeat(3,minmax(72px,1fr))]">
-                            {chatMessageTelemetry(message).map((metric) => (
-                              <div
+                      <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 w-7 shrink-0 p-0"
+                          aria-label="Copy response"
+                          title="Copy response"
+                          onClick={() => void navigator.clipboard?.writeText(message.content)}
+                        >
+                          <CopyIcon size={14} />
+                        </Button>
+                        <dl
+                          aria-label="Response telemetry"
+                          className="m-0 ml-auto flex min-w-0 flex-wrap items-center justify-end gap-x-3 gap-y-1"
+                        >
+                          {chatMessageTelemetry(message).map((metric) => (
+                            <div
+                              className="flex min-w-0 items-center gap-1.5"
+                              key={metric.key}
+                              title={`${metric.label}: ${metric.value}`}
+                            >
+                              <ChatTelemetryIcon metric={metric.key} />
+                              <dt className="sr-only">{metric.label}</dt>
+                              <dd
                                 className={cn(
-                                  "min-w-0 px-3 py-2.5",
-                                  metric.key === "throughput" ? "bg-raised" : "bg-surface",
+                                  "m-0 whitespace-nowrap font-mono text-micro font-semibold tabular-nums",
+                                  metric.key === "throughput" ? "text-accent" : "text-muted",
                                 )}
-                                key={metric.key}
                               >
-                                {/* Eight uppercase micro-labels in one strip
-                                    under an answer -- the single densest thing
-                                    on the screen, and every one of them names a
-                                    figure whose unit already names it. */}
-                                <dt className="truncate text-caption tabular-nums text-faint">{metric.label}</dt>
-                                <dd
-                                  className={cn(
-                                    "m-0 mt-1 truncate font-mono text-caption font-semibold tabular-nums",
-                                    metric.key === "throughput" ? "text-caption text-accent" : "text-muted",
-                                  )}
-                                >
-                                  {metric.value}
-                                </dd>
-                              </div>
-                            ))}
-                          </dl>
-                        </section>
-                        <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
-                          <small className="text-micro leading-relaxed text-faint">
-                            Effective speed is output tokens divided by end-to-end response latency.
-                          </small>
-                          <div className="flex items-center gap-1.5" aria-label="Response actions">
-                            <Button variant="ghost" size="sm" onClick={() => void navigator.clipboard?.writeText(message.content)}>
-                              Copy
-                            </Button>
-                          </div>
-                          <div className="flex items-center gap-1.5" aria-label="Response feedback">
-                            <Button
-                              size="sm"
-                              aria-label="Mark response helpful"
-                              aria-pressed={message.feedback?.rating === "HELPFUL"}
-                              disabled={feedbackBusy === message.id}
-                              className={cn(message.feedback?.rating === "HELPFUL" ? "border-accent text-accent" : null)}
-                              onClick={() => void recordFeedback(message.id, "HELPFUL")}
-                            >
-                              Helpful
-                            </Button>
-                            <Button
-                              size="sm"
-                              aria-label="Mark response not helpful"
-                              aria-pressed={message.feedback?.rating === "NOT_HELPFUL"}
-                              disabled={feedbackBusy === message.id}
-                              className={cn(message.feedback?.rating === "NOT_HELPFUL" ? "border-accent text-accent" : null)}
-                              onClick={() => void recordFeedback(message.id, "NOT_HELPFUL")}
-                            >
-                              Not helpful
-                            </Button>
-                          </div>
-                        </div>
-                      </>
+                                {metric.value}
+                              </dd>
+                            </div>
+                          ))}
+                        </dl>
+                      </div>
                     )}
                     {(message.status === "FAILED" || message.status === "CANCELLED") && (
                       <div className="mt-2 flex items-center justify-between gap-2.5">

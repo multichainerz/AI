@@ -150,6 +150,8 @@ class H(http.server.BaseHTTPRequestHandler):
         if self.path == CORPUS_RESULT_PATH:
             return self._json({"accepted": True, "serverTime": "2026-08-07T00:00:00Z"})
         if self.path.endswith("/chat/completions"):
+            if self.headers.get("authorization") != "Bearer smoke-inference-key":
+                return self._json({"error": "invalid inference credential"}, 401)
             request = json.loads(raw or b"{}")
             if request.get("stream"):
                 return self._sse([{
@@ -247,6 +249,25 @@ curl --fail --silent --max-time 5 http://127.0.0.1:8642/health >/dev/null \
   && pass "runtime answers /health" || bad "runtime does not answer /health"
 grep -q 'smoke-model' /etc/hermes/config.yaml 2>/dev/null \
   && pass "managed policy pins the enrolled model route" || bad "managed policy is missing the model route"
+grep -Fqx '  provider: custom:orcasynapse' /etc/hermes/config.yaml \
+  && pass "managed policy selects the named OrcaSynapse provider" \
+  || bad "managed policy still uses an unsafe bare custom provider"
+grep -Fqx '    key_env: OPENAI_API_KEY' /etc/hermes/config.yaml \
+  && pass "managed policy authorizes the protected inference credential by env name" \
+  || bad "managed policy does not bind the protected inference credential"
+grep -Fqx '        hermes-agent:' /etc/hermes/config.yaml \
+  && grep -Fqx '          model: "smoke-model"' /etc/hermes/config.yaml \
+  && grep -Fqx '          provider: custom:orcasynapse' /etc/hermes/config.yaml \
+  && pass "native API sessions route the product alias through the enrolled model" \
+  || bad "native API sessions can bypass the enrolled model route"
+if grep -Eq '^  api_key\s*:' /etc/hermes/config.yaml; then
+  bad "managed policy exposes or shadows the protected inference credential"
+else
+  pass "managed policy delegates inference credentials to the protected environment"
+fi
+[[ "$(sed -n 's/^OPENAI_API_KEY=//p' "${STATE_ROOT}/data/.env")" == "smoke-inference-key" ]] \
+  && pass "protected environment holds the enrolled inference credential" \
+  || bad "protected environment is missing the enrolled inference credential"
 grep -q 'allow_lazy_installs: false' /etc/hermes/config.yaml 2>/dev/null \
   && pass "managed policy keeps the hardened baseline" || bad "managed policy lost its baseline"
 grep -Fqx '  memory_enabled: true' /etc/hermes/config.yaml \
