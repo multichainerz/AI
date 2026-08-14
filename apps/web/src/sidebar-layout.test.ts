@@ -33,6 +33,18 @@ describe("collapsed navigation rail", () => {
     expect(stylesheet).toContain("margin-inline: -6px");
   });
 
+  it("anchors application settings above the collapse action", () => {
+    const bottomStart = app.indexOf('<div className="sidebar-bottom">');
+    const settings = app.indexOf('className={cn(\n              "sidebar-settings-button', bottomStart);
+    const collapse = app.indexOf('className="sidebar-collapse-button', bottomStart);
+
+    expect(app).toContain("settingsNavigationItem");
+    expect(bottomStart).toBeGreaterThan(-1);
+    expect(settings).toBeGreaterThan(bottomStart);
+    expect(collapse).toBeGreaterThan(settings);
+    expect(stylesheet).toContain('.sidebar-settings-button[aria-current="page"]');
+  });
+
   it("keeps the app-tile treatment when navigation becomes a phone dock", () => {
     expect(stylesheet).toContain(".sidebar .nav-app-icon {");
     expect(stylesheet).toContain(".sidebar nav button[aria-current=\"page\"] .nav-app-icon {");

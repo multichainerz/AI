@@ -7,6 +7,7 @@ const apps: Awaited<ReturnType<typeof createApp>>[] = [];
 
 afterEach(async () => {
   await Promise.all(apps.splice(0).map((app) => app.close()));
+  vi.restoreAllMocks();
 });
 
 describe("OrcaSynapse API", () => {
@@ -30,6 +31,26 @@ describe("OrcaSynapse API", () => {
     expect(response.json()).toMatchObject({
       product: "OrcaSynapse",
       configurationMode: "dashboard",
+    });
+  });
+
+  it("proxies release checks without giving the dashboard host control", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(JSON.stringify([
+      { name: "ai-v3.19.1" },
+      { name: "ai-v3.19.0" },
+    ]), { status: 200 }));
+    const app = await createApp({ logger: false, runtime: { bootstrapState: "READY" } });
+    apps.push(app);
+
+    const response = await app.inject({ method: "GET", url: "/api/v1/platform/update" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(response.json()).toMatchObject({
+      currentVersion: "ai-v3.19.0",
+      latestVersion: "ai-v3.19.1",
+      updateAvailable: true,
+      automaticUpdateSupported: false,
     });
   });
 

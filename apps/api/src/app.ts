@@ -27,6 +27,7 @@ import {
 } from "./runtime-nodes/routes.js";
 import { registerInferenceGatewayRoutes } from "./inference/routes.js";
 import { registerAdminCorpusRoutes, registerRuntimeCorpusRoutes } from "./corpus/routes.js";
+import { checkForPlatformUpdate } from "./platform-updates.js";
 
 export interface AppOptions {
   logger?: boolean;
@@ -188,6 +189,19 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
     }),
     { prefix: "/api/v1/runtime-nodes" },
   );
+
+  app.get("/api/v1/platform/update", async (_request, reply) => {
+    void reply.header("cache-control", "no-store");
+    try {
+      return await checkForPlatformUpdate(ORCASYNAPSE_VERSION);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "The release service returned an unknown error.";
+      return reply.code(503).send({
+        error: "UPDATE_CHECK_UNAVAILABLE",
+        message: `OrcaSynapse could not check for updates. ${detail}`,
+      });
+    }
+  });
 
   await app.register(
     async (runtimeCorpus) => registerRuntimeCorpusRoutes(runtimeCorpus, {

@@ -19,6 +19,16 @@ import type {
 } from "@orcasynapse/contracts";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
+  Activity,
+  Bot,
+  ChevronDown,
+  LayoutDashboard,
+  MessageSquareText,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Settings,
+} from "lucide-react";
+import {
   OrcaSynapseApiError,
   changeLocalAdministratorPassword,
   createInstallationKeyRecoverySession,
@@ -53,20 +63,15 @@ import { FrontPage } from "./front-page.js";
 import { HomeView, type HomeLayer, type HomeReadinessCheck } from "./home-view.js";
 import { SynapseField } from "./dashboard-hero.js";
 import { connectionFor, deriveWorkspaceReadiness } from "./platform-readiness.js";
-import { cn } from "./ui/index.js";
-import {
-  BalancerIcon,
-  MonitorIcon,
-  RobotIcon,
-  ServerIcon,
-  TerminalIcon,
-} from "./ui/relay-icons.js";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { ThemeToggle } from "./ui/theme-toggle.js";
 import { persistRailCollapsed, storedRailCollapsed } from "./shell-preferences.js";
 import {
   pathForView,
   primaryNavigationGroups,
   productAreaForView,
+  settingsNavigationItem,
   viewFromHash,
   WorkspaceContextBar,
   type ActiveView,
@@ -86,26 +91,25 @@ const AuditView = lazy(() => import("./audit-view.js").then((module) => ({ defau
 
 /**
  * Navigation glyphs, dispatched by the icon key `workspace-navigation.tsx`
- * already carries. The drawings are the Relay duotone set from the design
- * system (`ui/relay-icons.tsx`); the mapping lives here because it is a
- * navigation decision, not an icon-library one.
+ * already carries. Functional shell icons use Lucide, matching the shadcn
+ * component contract; the custom SVG remains reserved for the Orca brand.
  *
  * One entry per product area and nothing else. The map used to carry eleven
  * keys, five of which no caller could reach — `Glyph` is only ever handed the
- * six `icon` values in `primaryNavigationGroups`, so the rest were imports
+ * icon values in the navigation model, so the rest were imports
  * held open for a dispatch that never happened.
  *
  * Each drawing is the one the design reference names for that area: a monitor
- * for Home, a terminal window for Chat, a robot for Agents, stacked server
- * racks for Platform, and a node graph for Operations.
+ * for Dashboard, a terminal window for Session, a robot for Agents, a gear for
+ * Settings, and a node graph for Operations.
  */
 function Glyph({ name }: { name: string }) {
   const glyphs: Record<string, ReactNode> = {
-    overview: <MonitorIcon size={22} />,
-    chat: <TerminalIcon size={22} />,
-    agents: <RobotIcon size={22} />,
-    setup: <ServerIcon size={22} />,
-    operations: <BalancerIcon size={22} />,
+    overview: <LayoutDashboard size={20} strokeWidth={1.8} />,
+    chat: <MessageSquareText size={20} strokeWidth={1.8} />,
+    agents: <Bot size={20} strokeWidth={1.8} />,
+    settings: <Settings size={20} strokeWidth={1.8} />,
+    operations: <Activity size={20} strokeWidth={1.8} />,
   };
 
   /*
@@ -219,9 +223,10 @@ function WorkspaceHeader({
           * it is reachable at every width, which is a fix rather than a move.
           */}
         <div className="relative flex items-center" ref={account}>
-          <button
-            type="button"
-            className="flex items-center gap-2.5 rounded-pill border border-border-strong py-1 pl-1 pr-2.5 text-left transition-colors hover:border-faint"
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-9 gap-2.5 py-1 pl-1 pr-2.5 text-left"
             aria-haspopup="menu"
             aria-expanded={accountOpen}
             onClick={() => setAccountOpen((open) => !open)}
@@ -240,12 +245,8 @@ function WorkspaceHeader({
                 {operator.detail}
               </span>
             </span>
-            <span aria-hidden="true" className="shrink-0 text-faint">
-              <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M3 4.6 6 7.6l3-3" />
-              </svg>
-            </span>
-          </button>
+            <ChevronDown aria-hidden="true" className={cn("h-3.5 w-3.5 shrink-0 text-faint transition-transform", accountOpen && "rotate-180")} />
+          </Button>
           {accountOpen && (
             <div
               className="absolute right-0 top-[calc(100%+8px)] z-50 grid min-w-[212px] gap-1 rounded-lg border border-border-strong bg-raised p-2 shadow-overlay"
@@ -255,17 +256,18 @@ function WorkspaceHeader({
                 <span className="block truncate text-caption font-semibold text-text">{operator.name}</span>
                 <span className="mt-0.5 block truncate text-micro capitalize text-faint">{operator.detail}</span>
               </div>
-              <button
-                type="button"
+              <Button
+                variant="ghost"
+                size="sm"
                 role="menuitem"
-                className="rounded px-2 py-1.5 text-left text-caption font-medium text-muted transition-colors hover:bg-surface hover:text-text"
+                className="w-full justify-start px-2 text-caption"
                 onClick={() => {
                   setAccountOpen(false);
                   onSignOut();
                 }}
               >
                 Sign out
-              </button>
+              </Button>
             </div>
           )}
         </div>
@@ -1024,8 +1026,9 @@ function App() {
         </div>
         <nav aria-label="Primary navigation">
           {/*
-            * One flat list of six, not two labelled groups: the design draws
-            * the areas as a single run. The grouping still lives in
+            * One flat list of primary work areas, not two labelled groups: the
+            * design draws them as a single run. Settings is intentionally
+            * anchored below. The grouping still lives in
             * `workspace-navigation.tsx` because that is where the product
             * split is described — this only declines to draw a heading for it.
             */}
@@ -1034,7 +1037,8 @@ function App() {
               const active = area === activeArea;
               const count = navigationCounts[area];
               return (
-                <button
+                <Button
+                  variant="ghost"
                   /*
                    * White on the brand violet, per the design: the active row
                    * is a soft white fill at full white and semibold; inactive
@@ -1044,7 +1048,7 @@ function App() {
                    * lives in the tooltip; the row itself is one line.
                    */
                   className={cn(
-                    "flex h-10 w-full items-center gap-3 rounded px-3 text-left font-sans text-[14.5px] transition-colors",
+                    "h-10 w-full justify-start gap-3 border-transparent px-3 text-left font-sans text-[14.5px]",
                     active
                       ? "bg-white/10 font-semibold text-white"
                       : "font-medium text-white/85 hover:bg-white/[0.06] hover:text-white",
@@ -1065,7 +1069,7 @@ function App() {
                     * The two descendant selectors put the Relay set's cyan
                     * "live node" back on `currentColor` for the duration of
                     * the rail. That accent is meant to appear once per
-                    * composition; six of them stacked down the sidebar was the
+                    * composition; one on every row stacked down the sidebar was the
                     * loudest thing on the screen, and it also defeated the
                     * active/muted tinting, because the dot stayed cyan whether
                     * the row was selected or not.
@@ -1084,12 +1088,58 @@ function App() {
                       {count}
                     </span>
                   )}
-                </button>
+                </Button>
               );
             })}
           </div>
+          <div className="nav-settings-mobile">
+            <Button
+              variant="ghost"
+              className={cn(
+                "h-10 w-full justify-start gap-3 border-transparent px-3 text-left font-sans text-[14.5px]",
+                activeArea === settingsNavigationItem.area
+                  ? "bg-white/10 font-semibold text-white"
+                  : "font-medium text-white/85 hover:bg-white/[0.06] hover:text-white",
+              )}
+              ref={activeArea === settingsNavigationItem.area ? activeNavigationItem : undefined}
+              aria-current={activeArea === settingsNavigationItem.area ? "page" : undefined}
+              type="button"
+              title={settingsNavigationItem.description}
+              onClick={() => selectView(settingsNavigationItem.target)}
+            >
+              <span className={cn(
+                "nav-app-icon flex shrink-0 [&_.fill-node]:fill-current [&_.stroke-node]:stroke-current",
+                activeArea === settingsNavigationItem.area ? "text-accent" : "text-white/45",
+              )}>
+                <Glyph name={settingsNavigationItem.icon} />
+              </span>
+              <span className="min-w-0 flex-1 truncate">{settingsNavigationItem.area}</span>
+            </Button>
+          </div>
         </nav>
         <div className="sidebar-bottom">
+          <Button
+            variant="ghost"
+            className={cn(
+              "sidebar-settings-button min-h-12 w-full justify-start gap-3 rounded-none border-transparent px-4 text-left font-sans text-[14px]",
+              activeArea === settingsNavigationItem.area
+                ? "bg-white/10 font-semibold text-white"
+                : "font-medium text-white/75 hover:bg-white/[0.06] hover:text-white",
+            )}
+            ref={activeArea === settingsNavigationItem.area ? activeNavigationItem : undefined}
+            aria-current={activeArea === settingsNavigationItem.area ? "page" : undefined}
+            type="button"
+            title={settingsNavigationItem.description}
+            onClick={() => selectView(settingsNavigationItem.target)}
+          >
+            <span className={cn(
+              "nav-app-icon flex shrink-0 [&_.fill-node]:fill-current [&_.stroke-node]:stroke-current",
+              activeArea === settingsNavigationItem.area ? "text-accent" : "text-white/45",
+            )}>
+              <Glyph name={settingsNavigationItem.icon} />
+            </span>
+            <span className="min-w-0 flex-1 truncate">{settingsNavigationItem.area}</span>
+          </Button>
           {/*
             * The control that sets the rail's width lives in the rail.
             *
@@ -1097,9 +1147,9 @@ function App() {
             * fixed bottom bar with no width to collapse, and the same media
             * guard keeps `.app-shell--focus` off that layout.
             */}
-          <button
-            type="button"
-            className="sidebar-collapse-button flex w-full items-center gap-3 px-4 text-left font-sans text-[13px] font-medium text-white/70 transition-colors hover:text-white max-[760px]:hidden"
+          <Button
+            variant="ghost"
+            className="sidebar-collapse-button h-12 w-full justify-start gap-3 rounded-none border-transparent px-4 text-left font-sans text-[13px] font-medium text-white/70 hover:bg-white/[0.06] hover:text-white max-[760px]:hidden"
             onClick={() => {
               const next = !railCollapsed;
               setRailCollapsed(next);
@@ -1109,14 +1159,10 @@ function App() {
             aria-label={railCollapsed ? "Expand sidebar" : "Collapse sidebar"}
           >
             <span aria-hidden="true" className="sidebar-collapse-icon grid h-8 w-8 shrink-0 place-items-center text-white/55">
-              <svg viewBox="0 0 16 16" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="1.9" y="2.6" width="12.2" height="10.8" rx="2.2" />
-                <path d="M6.6 2.6v10.8" />
-                {railCollapsed ? <path d="M9.4 6.2 11.2 8l-1.8 1.8" /> : <path d="M11.2 6.2 9.4 8l1.8 1.8" />}
-              </svg>
+              {railCollapsed ? <PanelLeftOpen className="h-5 w-5" /> : <PanelLeftClose className="h-5 w-5" />}
             </span>
             <span className="min-w-0 flex-1 truncate">{railCollapsed ? "Expand" : "Collapse"}</span>
-          </button>
+          </Button>
           {/* The operator block that lived here is now the account chip in the
               top bar, where it is reachable at every width. */}
         </div>
@@ -1225,6 +1271,7 @@ function App() {
           ),
           Deployment: () => (
             <OnboardingView
+              currentVersion={platform?.version ?? "unknown"}
               connections={managedConnections}
               agentRuntime={agentRuntime}
               profiles={agentProfiles}
@@ -1236,7 +1283,7 @@ function App() {
               onOpenWorkspace={(workspace) => selectView(workspace)}
               onRuntimeNodesChange={setRuntimeNodes}
               onOpenOperations={() => selectView("Operations")}
-              onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23platform%2Fsetup")}
+              onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23settings%2Fsetup")}
               onSessionExpired={forgetAdminSession}
             />
           ),

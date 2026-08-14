@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Button } from "@/components/ui/button";
 
 export type ActiveView =
   | "Overview"
@@ -18,7 +19,7 @@ export type ActiveView =
  * internal routing names and deliberately did not follow: renaming those would
  * churn every view module, test fixture and CSS class for no reader's benefit.
  */
-export type ProductArea = "Dashboard" | "Session" | "Agents" | "Platform" | "Operations";
+export type ProductArea = "Dashboard" | "Session" | "Agents" | "Settings" | "Operations";
 
 export interface PrimaryNavigationItem {
   area: ProductArea;
@@ -47,11 +48,22 @@ export const primaryNavigationGroups: ReadonlyArray<{
   {
     label: "Administration",
     items: [
-      { area: "Platform", icon: "setup", target: "Deployment", description: "Setup and AI governance" },
       { area: "Operations", icon: "operations", target: "Operations", description: "Health, evidence and incidents" },
     ],
   },
 ];
+
+/**
+ * Settings is anchored separately at the bottom of the desktop rail. Keeping
+ * it out of the primary groups makes that placement structural rather than a
+ * visual reorder that can drift when navigation items are added later.
+ */
+export const settingsNavigationItem: PrimaryNavigationItem = {
+  area: "Settings",
+  icon: "settings",
+  target: "Deployment",
+  description: "Application setup, governance, and updates",
+};
 
 const sectionNavigation: Partial<Record<ProductArea, ReadonlyArray<SectionNavigationItem>>> = {
   Agents: [
@@ -63,7 +75,7 @@ const sectionNavigation: Partial<Record<ProductArea, ReadonlyArray<SectionNaviga
     { label: "Health & evidence", view: "Operations" },
     { label: "Audit trail", view: "Audit" },
   ],
-  Platform: [
+  Settings: [
     { label: "Setup", view: "Deployment" },
     { label: "Models", view: "Models" },
     { label: "Prompts", view: "Prompts" },
@@ -77,10 +89,10 @@ const areaByView: Record<ActiveView, ProductArea> = {
   Agents: "Agents",
   Corpus: "Agents",
   Integrations: "Agents",
-  Deployment: "Platform",
-  Models: "Platform",
-  Prompts: "Platform",
-  Guardrails: "Platform",
+  Deployment: "Settings",
+  Models: "Settings",
+  Prompts: "Settings",
+  Guardrails: "Settings",
   Operations: "Operations",
   Audit: "Operations",
 };
@@ -91,10 +103,10 @@ const pathByView: Record<ActiveView, string> = {
   Agents: "#agents/profiles",
   Corpus: "#agents/corpus",
   Integrations: "#agents/tools",
-  Deployment: "#platform/setup",
-  Models: "#platform/models",
-  Prompts: "#platform/prompts",
-  Guardrails: "#platform/guardrails",
+  Deployment: "#settings/setup",
+  Models: "#settings/models",
+  Prompts: "#settings/prompts",
+  Guardrails: "#settings/guardrails",
   Operations: "#operations",
   Audit: "#operations/audit",
 };
@@ -130,17 +142,22 @@ export function viewFromHash(hash: string): ActiveView {
     case "#agents/tools":
     case "#integrations":
       return "Integrations";
+    case "#settings":
+    case "#settings/setup":
     case "#platform":
     case "#platform/setup":
     case "#setup":
     case "#deployment":
       return "Deployment";
+    case "#settings/models":
     case "#platform/models":
     case "#models":
       return "Models";
+    case "#settings/prompts":
     case "#platform/prompts":
     case "#prompts":
       return "Prompts";
+    case "#settings/guardrails":
     case "#platform/guardrails":
     case "#guardrails":
       return "Guardrails";
@@ -172,19 +189,20 @@ export function WorkspaceContextBar({ area, activeView, onSelect, trailing }: Wo
     <div className="mb-7 flex min-h-[44px] items-center justify-between gap-4">
       <nav aria-label={`${area} sections`} className="flex min-w-0 items-center gap-1.5 overflow-x-auto">
         {items.map((item) => (
-          <button
+          <Button
             key={item.view}
-            type="button"
+            size="sm"
+            variant={item.view === activeView ? "secondary" : "ghost"}
             className={
               item.view === activeView
-                ? "whitespace-nowrap rounded-pill border border-accent/30 bg-soft px-4 py-2 text-caption font-semibold text-accent"
-                : "whitespace-nowrap rounded-pill border border-transparent px-4 py-2 text-caption font-medium text-muted transition-colors hover:border-border-strong hover:text-text"
+                ? "h-8 whitespace-nowrap border-accent/30 bg-soft px-4 text-caption text-accent hover:bg-soft"
+                : "h-8 whitespace-nowrap px-4 text-caption font-medium"
             }
             aria-current={item.view === activeView ? "page" : undefined}
             onClick={() => onSelect(item.view)}
           >
             {item.label}
-          </button>
+          </Button>
         ))}
       </nav>
       {trailing}

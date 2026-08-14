@@ -1,12 +1,14 @@
 import type { AdministratorSession } from "@orcasynapse/contracts";
 import { ORCASYNAPSE_VERSION } from "@orcasynapse/contracts";
 import { useState, type FormEvent, type InputHTMLAttributes, type ReactNode } from "react";
+import { ArrowRight, KeyRound as KeyIcon, LockKeyhole as LockIcon, LogIn as GatewayIcon, UserRound as IdentityIcon } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { SynapseField } from "./dashboard-hero.js";
-import { GatewayIcon, IdentityIcon, KeyIcon, LockIcon } from "./ui/relay-icons.js";
 import { ThemeToggle } from "./ui/theme-toggle.js";
 
 /**
- * The pre-auth front page, from the OrcaNeuron design system: a violet hero
+ * The pre-auth front page: a shadcn-composed violet product hero
  * presenting the private agentic harness, and a white card that signs the
  * operator in.
  * Nobody sees the workspace shell without a session any more — this page is
@@ -158,17 +160,9 @@ function CredentialField({ label, icon, ...input }: CredentialFieldProps) {
         <span className="flex shrink-0 text-[#6B6C74] transition-colors group-focus-within:text-[#703DEF] [&_.fill-node]:fill-[#0E9BB5]">
           {icon}
         </span>
-        <input className={FIELD_INPUT} {...input} />
+        <Input className={FIELD_INPUT} {...input} />
       </span>
     </label>
-  );
-}
-
-function ArrowGlyph() {
-  return (
-    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M4 12h15" /><path d="M13.5 6.5 19.5 12l-6 5.5" />
-    </svg>
   );
 }
 
@@ -297,13 +291,13 @@ export function FrontPage(props: FrontPageProps) {
                   ) : null}
 
                   <div className="mt-5 flex flex-wrap items-center gap-3.5">
-                    <button className={SUBMIT} type="submit" disabled={props.busy || props.bootstrapState !== "READY"}>
+                    <Button className={SUBMIT} type="submit" disabled={props.busy || props.bootstrapState !== "READY"}>
                       <span>{props.busy ? "Verifying…" : mode === "LOGIN" ? "Sign in" : "Continue recovery"}</span>
-                      <ArrowGlyph />
-                    </button>
+                      <ArrowRight aria-hidden="true" className="h-[17px] w-[17px]" />
+                    </Button>
                   </div>
-                  <button
-                    type="button"
+                  <Button
+                    variant="ghost"
                     className="mt-3.5 flex w-full items-center gap-2.5 rounded-input border border-black/[0.08] bg-transparent px-3.5 py-2.5 text-left text-[12.5px] font-semibold text-[#6B6C74] transition-colors hover:border-[#703DEF]/35 hover:bg-[#703DEF]/[0.04] hover:text-[#191A1C]"
                     onClick={() => setMode(mode === "LOGIN" ? "RECOVERY" : "LOGIN")}
                   >
@@ -311,21 +305,21 @@ export function FrontPage(props: FrontPageProps) {
                       {mode === "LOGIN" ? <KeyIcon size={17} /> : <IdentityIcon size={17} />}
                     </span>
                     <span className="flex-1">{mode === "LOGIN" ? "Use offline recovery key" : "Return to local sign-in"}</span>
-                    <ArrowGlyph />
-                  </button>
+                    <ArrowRight aria-hidden="true" className="h-[17px] w-[17px]" />
+                  </Button>
 
                   {props.oidcConfigured ? (
                     <div className="mt-5 border-t border-black/[0.08] pt-4">
                       <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#93949C]">Or continue with</div>
-                      <button
-                        type="button"
+                      <Button
+                        variant="outline"
                         className="mt-2.5 flex w-full items-center gap-2.5 rounded-input border border-black/[0.12] bg-transparent px-3.5 py-2.5 text-[12.5px] font-semibold text-[#191A1C] transition-colors hover:border-[#703DEF] hover:text-[#703DEF]"
                         onClick={() => window.location.assign(`/api/v1/auth/oidc/start?returnTo=${encodeURIComponent("/#chat")}`)}
                       >
                         <GatewayIcon size={17} />
                         <span className="flex-1 text-left">Enterprise SSO</span>
-                        <ArrowGlyph />
-                      </button>
+                        <ArrowRight aria-hidden="true" className="h-[17px] w-[17px]" />
+                      </Button>
                     </div>
                   ) : null}
                 </form>
@@ -412,10 +406,10 @@ export function FrontPage(props: FrontPageProps) {
                   ) : null}
 
                   <div className="mt-5">
-                    <button className={SUBMIT} type="submit" disabled={props.busy || newPassword !== confirmedPassword}>
+                    <Button className={SUBMIT} type="submit" disabled={props.busy || newPassword !== confirmedPassword}>
                       <span>{props.busy ? "Saving…" : recovering ? "Reset and sign in" : "Change password"}</span>
-                      <ArrowGlyph />
-                    </button>
+                      <ArrowRight aria-hidden="true" className="h-[17px] w-[17px]" />
+                    </Button>
                   </div>
                 </form>
               )}

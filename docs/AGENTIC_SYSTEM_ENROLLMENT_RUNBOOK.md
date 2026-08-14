@@ -20,7 +20,7 @@ Enter a Hermes commit in the dashboard invitation: the full 40-character git SHA
 
 ## Dashboard workflow
 
-1. Open **Platform → Agentic System**.
+1. Open **Settings → Agentic System**.
 2. Create an invitation with the runtime display name, slug, reachable Hermes base URL, approved Hermes commit, and short TTL.
 3. Copy the one-time claim. OrcaSynapse stores only its digest.
 4. On VM2, download the installer from the OrcaSynapse URL shown by the dashboard. The route is unavailable before dashboard setup and healthy AI Inference are present. It remains available afterward for protected local recovery, while a live claim is required to begin a new enrollment.

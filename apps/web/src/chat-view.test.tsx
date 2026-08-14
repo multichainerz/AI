@@ -6,7 +6,7 @@
  * only a rendered view can answer.
  */
 import type { AgentProfile, ChatConversation } from "@orcasynapse/contracts";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -97,10 +97,14 @@ describe("chat composer", () => {
   it("keeps the conversation header on the chat canvas", async () => {
     render(<ChatView {...props} />);
 
-    const header = (await screen.findByLabelText("Conversation runtime")).closest("header");
+    const runtime = await screen.findByLabelText("Conversation runtime");
+    const header = runtime.closest("header");
     expect(header?.classList.contains("bg-bg")).toBe(true);
     expect(header?.classList.contains("bg-surface")).toBe(false);
     expect(header?.classList.contains("border-b")).toBe(false);
+    expect(runtime.classList.contains("rounded-card")).toBe(true);
+    expect(within(runtime).getByRole("button", { name: "Skills" })).toBeTruthy();
+    expect(within(runtime).getByRole("button", { name: "More conversation actions" })).toBeTruthy();
   });
 
   it("identifies the agent picker and turns missing setup into an action", async () => {
@@ -125,13 +129,11 @@ describe("chat composer", () => {
     expect(props.onOpenAgents).toHaveBeenCalledTimes(1);
   });
 
-  it("presents the administrator identity as a compact session summary", async () => {
+  it("does not duplicate administrator identity inside conversation history", async () => {
     render(<ChatView {...props} />);
 
-    const summary = await screen.findByLabelText("Current session identity");
-    expect(summary.textContent).toContain("Operator");
-    expect(summary.textContent).toContain("Administrator preview");
-    expect(summary.textContent).toContain("Support agent");
+    await screen.findByRole("button", { name: /Runbook questions/ });
+    expect(screen.queryByLabelText("Current session identity")).toBeNull();
   });
 
   it("keeps the message when the send fails, since nothing else can recover it", async () => {

@@ -20,12 +20,14 @@ import {
 import { connectionReadiness } from "./connection-readiness.js";
 import { connectionFor, deriveWorkspaceReadiness } from "./platform-readiness.js";
 import { RuntimeNodesPanel } from "./runtime-nodes-panel.js";
+import { PlatformUpdatePanel } from "./platform-update-panel.js";
 import {
   Alert, Button, Dialog, Field, Input, LockedScreen, MicroLabel,
   PageHeader, Panel, Select, StatusText, cn, toneFor,
 } from "./ui/index.js";
 
 interface OnboardingViewProps {
+  currentVersion?: string;
   unlocked: boolean;
   oidcConfigured: boolean;
   connections: ServiceConnectionSummary[];
@@ -53,6 +55,7 @@ function downloadRecoveryKit(fileName: string, serializedKit: string): void {
 }
 
 export function OnboardingView({
+  currentVersion = "unknown",
   connections,
   agentRuntime,
   profiles,
@@ -116,7 +119,7 @@ export function OnboardingView({
     }).catch((cause: unknown) => {
       if (!active) return;
       if (cause instanceof OrcaSynapseApiError && cause.status === 401) latestOnSessionExpired.current();
-      else setError(cause instanceof Error ? cause.message : "Platform setup could not be loaded.");
+      else setError(cause instanceof Error ? cause.message : "Application settings could not be loaded.");
     });
     return () => { active = false; };
   }, [unlocked]);
@@ -129,7 +132,7 @@ export function OnboardingView({
       await operation();
     } catch (cause) {
       if (cause instanceof OrcaSynapseApiError && cause.status === 401) onSessionExpired();
-      setError(cause instanceof Error ? cause.message : "Platform setup could not be updated.");
+      setError(cause instanceof Error ? cause.message : "Application settings could not be updated.");
     } finally {
       setBusy(null);
     }
@@ -231,7 +234,7 @@ export function OnboardingView({
   if (!unlocked) {
     return <LockedScreen
       kicker="Administrator access"
-      title="Platform"
+      title="Settings"
       mark="01"
       headline="Sign in to this OrcaSynapse installation"
       reason="Use the local administrator account created by the installer. Keep the separate Installation Key offline for recovery only."
@@ -256,7 +259,7 @@ export function OnboardingView({
   if (panel === "nodes") {
     return <div className="grid gap-5">
       <PageHeader
-        kicker="Platform · Agentic System"
+        kicker="Settings · Agentic System"
         title="Enroll the isolated agent runtime"
         description="The VM2 installer provisions Hermes, managed policy, and signed monitoring as one controlled layer."
         actions={<Button onClick={() => setPanel("overview")}>Back to setup</Button>}
@@ -313,7 +316,7 @@ export function OnboardingView({
 
   return <div className="grid gap-5">
     <PageHeader
-      kicker="Platform setup"
+      kicker="Application settings"
       title="Three layers. One usable AI workspace."
       description="Connect inference, enroll the agent runtime, and add enterprise identity when the deployment is ready for employees."
       actions={
@@ -328,7 +331,7 @@ export function OnboardingView({
 
     {error && <Alert onDismiss={() => setError(null)}>{error}</Alert>}
 
-    <section className="grid gap-2" aria-label="Platform setup stages">
+    <section className="grid gap-2" aria-label="Application setup stages">
       {stages.map((stage) => <Panel
         className={cn(
           "grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-4 border-l-2",
@@ -432,6 +435,8 @@ export function OnboardingView({
       </Panel>
     </section>
 
+    <PlatformUpdatePanel currentVersion={currentVersion} />
+
     <Panel className="flex flex-wrap items-center justify-between gap-4">
       <div className="min-w-0">
         <strong className="block text-label font-semibold text-text">Production controls stay out of the setup path.</strong>
@@ -520,7 +525,7 @@ export function OnboardingView({
           </div>
           <label className="grid cursor-pointer gap-1 rounded border border-dashed border-border-strong bg-raised px-4 py-4 text-center">
             <span className="text-body text-text">{recoveryFileName || "Select the saved recovery kit"}</span>
-            <input className="sr-only" type="file" accept="application/json,.json" onChange={(event) => void selectRecoveryFile(event)} />
+            <Input className="sr-only" type="file" accept="application/json,.json" onChange={(event) => void selectRecoveryFile(event)} />
           </label>
           <Field label="Recovery passphrase">
             <Input type="password" autoComplete="off" value={recoveryPassphrase} minLength={16} maxLength={1024} onChange={(event) => setRecoveryPassphrase(event.target.value)} />

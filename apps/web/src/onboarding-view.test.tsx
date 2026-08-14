@@ -110,6 +110,7 @@ describe("OnboardingView", () => {
     />);
 
     expect(html).toContain("Three layers. One usable AI workspace.");
+    expect(html).toContain("Application update");
     expect(html).toContain("AI Inference");
     expect(html).toContain("Agentic System");
     expect(html).toContain("Enterprise Access");

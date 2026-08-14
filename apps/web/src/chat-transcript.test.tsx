@@ -153,6 +153,9 @@ vi.mock("./api.js", async () => {
     getChatConversations: vi.fn(async () => ({ items: [{ ...conversation, messages: undefined }] })),
     getChatConversation: vi.fn(async () => conversation),
     getAgentProfiles: vi.fn(async () => ({ items: [] })),
+    getModelDeployments: vi.fn(async () => ({
+      items: [{ modelAlias: "qwen3.6-27b", status: "ACTIVE", contextWindowTokens: 16_384 }],
+    })),
   };
 });
 
@@ -197,14 +200,37 @@ describe("chat transcript", () => {
     expect(screen.getByText(/pnpm verify && bash/).closest("pre")).toBeTruthy();
   });
 
-  it("keeps the assistant identity visible without requiring hover", async () => {
+  it("shows the agent profile while omitting the singular runtime alias", async () => {
     await transcript();
     const answer = screen.getByText(/Before promoting/).closest("article");
     expect(answer).toBeTruthy();
-    const identity = within(answer as HTMLElement).getByText("Support agent").parentElement;
+    const timestamp = (answer as HTMLElement).querySelector("time");
 
-    expect(identity?.className).toContain("opacity-100");
-    expect(identity?.className).not.toContain("opacity-0");
+    expect(timestamp?.textContent?.trim()).toBeTruthy();
+    expect(within(answer as HTMLElement).getByText("Support agent")).toBeTruthy();
+    expect(within(answer as HTMLElement).queryByText("qwen3.6-27b")).toBeNull();
+  });
+
+  it("renders user turns as compact content-sized bubbles", async () => {
+    await transcript();
+    const article = screen.getByText("Run it.").closest("article");
+    const bubble = screen.getByText("Run it.").parentElement;
+    const metadata = within(article as HTMLElement).getByText("You").parentElement?.parentElement;
+
+    expect(article?.className).toContain("w-fit");
+    expect(article?.className).toContain("max-w-[88%]");
+    expect(bubble?.className).toContain("rounded-card");
+    expect(metadata?.className).toContain("absolute");
+    expect(within(article as HTMLElement).getByLabelText("Operator avatar").textContent).toBe("O");
+  });
+
+  it("reports measured model-context usage in the composer", async () => {
+    await transcript();
+
+    const context = screen.getByLabelText("Context usage 6%");
+    expect(context.textContent).toContain("Context");
+    expect(context.textContent).toContain("6%");
+    expect(context.getAttribute("title")).toContain("902 of 16,384 tokens");
   });
 
   it("derives effective speed rather than reprinting a number the runtime sent", async () => {

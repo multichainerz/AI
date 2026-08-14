@@ -13,7 +13,7 @@ OrcaSynapse is a private control plane for operating Hermes-based agentic workfl
 - Stream visible responses and safe run events, support cancellation, and collect feedback.
 - Keep the PostgreSQL transcript as a user-visible operational projection only.
 
-### Agents and Platform
+### Agents and Settings
 
 - Version and activate agent profiles, instructions, Skills metadata, limits, and model aliases.
 - Browse and lexically search a signed mirror of Hermes memory and Skill files, inspect revisions, and submit governed CRUD changes.
