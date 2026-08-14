@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="ai-v3.17.1"
+INSTALLER_VERSION="ai-v3.17.2"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 HERMES_HOME_DIR="${STATE_ROOT}/home"
 RUNTIME_SERVICE="orcasynapse-hermes"
@@ -1423,6 +1423,13 @@ RestrictSUIDSGID=true
 LockPersonality=true
 RestrictRealtime=true
 CapabilityBoundingSet=CAP_DAC_OVERRIDE CAP_SETGID CAP_SETUID
+# The root coordinator must change only the corpus child UID. On hardened
+# systemd hosts CAP_SETUID can remain in the bounding set without entering the
+# service process's permitted/effective sets, which makes Popen(user=...) fail
+# with EPERM. Ambienting this single capability makes the transition possible;
+# Linux clears its permitted, effective, and ambient sets when the child leaves
+# UID 0, so the Hermes scanner/mutator still executes without active privilege.
+AmbientCapabilities=CAP_SETUID
 ReadWritePaths=${STATE_ROOT}
 ReadOnlyPaths=${HERMES_INSTALL_DIR}
 EOF
