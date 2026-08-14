@@ -5,6 +5,17 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v4.8.2 — 2026-08-14
+
+Hermes-native sessions now retain the protected OrcaSynapse inference
+credential after the first turn. Managed VM2 policy uses the literal `custom`
+provider identity that Hermes persists during session restoration, while the
+credential itself remains confined to the service environment.
+
+Fresh-install and repair coverage now reject the obsolete named-provider form,
+remove stale provider aliases, preserve unrelated providers, and execute two
+consecutive native session turns through the stable `hermes-agent` route.
+
 ## v4.8.1 — 2026-08-14
 
 Session provenance now condenses consecutive calls to the same Hermes tool into
