@@ -1,5 +1,54 @@
 import type { AdapterOutcome, ResolvedConnection } from "./types.js";
 
+export class ResponseBodyTooLargeError extends Error {
+  constructor(readonly limitBytes: number) {
+    super(`Response body exceeded ${limitBytes} bytes.`);
+    this.name = "ResponseBodyTooLargeError";
+  }
+}
+
+/**
+ * Parse one JSON response without trusting Content-Length to be present or
+ * truthful. The limit is enforced while bytes are read, so chunked responses
+ * cannot be buffered without bound before validation runs.
+ */
+export async function boundedJsonResponse(response: Response, limitBytes: number): Promise<unknown> {
+  const contentLength = response.headers.get("content-length");
+  if (contentLength !== null) {
+    const declared = Number(contentLength);
+    if (Number.isFinite(declared) && declared > limitBytes) {
+      throw new ResponseBodyTooLargeError(limitBytes);
+    }
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) return JSON.parse("");
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > limitBytes) throw new ResponseBodyTooLargeError(limitBytes);
+      chunks.push(value);
+    }
+  } catch (error) {
+    await reader.cancel().catch(() => undefined);
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+
+  const joined = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    joined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(joined));
+}
+
 export function stringConfiguration(
   connection: ResolvedConnection,
   name: string,

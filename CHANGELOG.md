@@ -5,6 +5,28 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## v4.8.0 — 2026-08-14
+
+Session now presents Hermes as a live agent workspace instead of appending an
+opaque provenance panel after each answer. Agent identity remains visible,
+reasoning and tool calls form a compact dotted trail at the point they occur,
+legacy uncorrelated events are repaired in presentation, and terminal runs can
+no longer leave historical activities marked as running. Response telemetry is
+reduced to an icon-led row for copy, speed, token counts, first-token latency,
+and end-to-end latency.
+
+Inference discovery now recognizes LM Studio's HTTP-200 error payloads instead
+of misclassifying them as SGLang, positively identifies vendor metadata, and
+stops reading chunked JSON responses at the one-megabyte safety boundary. The
+Vite development server now mirrors production routing for `/internal/v1`, so
+locally enrolled VM2 nodes can reach the runtime inference gateway.
+
+Fresh and repaired VM2 installations now bind the stable `hermes-agent` alias
+to a named OrcaSynapse provider, retain inference credentials only in the
+protected environment, and create the private Hermes configuration anchor that
+activates the managed overlay without replacing an existing user config. The
+desired-state client also keeps its runtime credential out of process arguments.
+
 ## v4.7.3 — 2026-08-14
 
 The VM2 Corpus scanner now closes every Skill support tree over the exact

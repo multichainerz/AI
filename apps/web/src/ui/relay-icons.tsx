@@ -249,6 +249,17 @@ export function SnapshotIcon(props: IconProps) {
   );
 }
 
+export function CopyIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <rect x="8" y="8" width="11" height="11" rx="2.5" fill="currentColor" fillOpacity={0.14} />
+      <path d="M8 16H6.5A2.5 2.5 0 0 1 4 13.5v-7A2.5 2.5 0 0 1 6.5 4h7A2.5 2.5 0 0 1 16 6.5V8" />
+      <rect x="8" y="8" width="11" height="11" rx="2.5" />
+      <circle cx="16.5" cy="10.5" r="1.35" {...NODE} />
+    </Svg>
+  );
+}
+
 export function MonitorIcon(props: IconProps) {
   return (
     <Svg {...props}>

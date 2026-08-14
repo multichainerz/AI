@@ -5,7 +5,12 @@ import type {
   InferenceDiscoveryResult,
 } from "@orcasynapse/contracts";
 import { ConnectionNotFoundError } from "../connection-manager.js";
-import { bearerHeaders, endpointUrl } from "./http.js";
+import {
+  bearerHeaders,
+  boundedJsonResponse,
+  endpointUrl,
+  ResponseBodyTooLargeError,
+} from "./http.js";
 import type { ConnectionDiagnosticStore, ResolvedConnection } from "./types.js";
 
 type FetchImplementation = typeof fetch;
@@ -13,6 +18,11 @@ type FetchImplementation = typeof fetch;
 interface InternalProbe {
   public: InferenceDiscoveryProbe;
   payload: Record<string, unknown> | null;
+}
+
+interface ParsedProbePayload {
+  payload: Record<string, unknown> | null;
+  tooLarge: boolean;
 }
 
 const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/;
@@ -27,18 +37,17 @@ function normalizeBaseUrl(value: string): string {
   return url.origin;
 }
 
-async function jsonPayload(response: Response): Promise<Record<string, unknown> | null> {
-  const declaredLength = Number(response.headers.get("content-length"));
-  if (Number.isFinite(declaredLength) && declaredLength > MAX_DISCOVERY_BODY_BYTES) return null;
-  const text = await response.text();
-  if (new TextEncoder().encode(text).byteLength > MAX_DISCOVERY_BODY_BYTES) return null;
+async function jsonPayload(response: Response): Promise<ParsedProbePayload> {
   try {
-    const payload = JSON.parse(text) as unknown;
-    return payload && typeof payload === "object" && !Array.isArray(payload)
-      ? payload as Record<string, unknown>
-      : null;
-  } catch {
-    return null;
+    const payload = await boundedJsonResponse(response, MAX_DISCOVERY_BODY_BYTES);
+    return {
+      payload: payload && typeof payload === "object" && !Array.isArray(payload)
+        ? payload as Record<string, unknown>
+        : null,
+      tooLarge: false,
+    };
+  } catch (error) {
+    return { payload: null, tooLarge: error instanceof ResponseBodyTooLargeError };
   }
 }
 
@@ -54,6 +63,47 @@ function modelIds(payload: Record<string, unknown> | null): string[] {
     const id = [record.id, record.model, record.name].find((value) => typeof value === "string");
     return typeof id === "string" && MODEL_ID.test(id) ? [id] : [];
   }))].slice(0, 200);
+}
+
+/**
+ * LM Studio deliberately returns HTTP 200 for an unknown route and puts the
+ * failure in `{ error: ... }`. Treating transport success as endpoint support
+ * made every LM Studio server look like SGLang because `/get_server_info`
+ * appeared to pass. A discovery probe is successful only when the application
+ * payload did not reject the endpoint.
+ */
+function rejectedPayload(payload: Record<string, unknown> | null): boolean {
+  if (payload === null || !("error" in payload)) return false;
+  if (typeof payload.error === "string") return payload.error.trim().length > 0;
+  return payload.error !== null && payload.error !== undefined && payload.error !== false;
+}
+
+function sglangEvidence(payload: Record<string, unknown> | null): boolean {
+  if (!payload) return false;
+  return [
+    "attention_backend",
+    "context_length",
+    "max_running_requests",
+    "max_total_num_tokens",
+    "model_path",
+    "served_model_name",
+    "speculative_algorithm",
+    "tp_size",
+  ].some((key) => key in payload);
+}
+
+function tgiEvidence(payload: Record<string, unknown> | null): boolean {
+  if (!payload || typeof payload.model_id !== "string") return false;
+  return [
+    "max_best_of",
+    "max_concurrent_requests",
+    "max_input_tokens",
+    "max_stop_sequences",
+    "max_total_tokens",
+    "model_device_type",
+    "model_dtype",
+    "model_sha",
+  ].some((key) => key in payload);
 }
 
 function backendFromEvidence(probes: Map<string, InternalProbe>): {
@@ -80,12 +130,12 @@ function backendFromEvidence(probes: Map<string, InternalProbe>): {
   }
 
   const sglang = probes.get("sglang-info");
-  if (sglang?.public.status === "PASSED") {
+  if (sglang?.public.status === "PASSED" && sglangEvidence(sglang.payload)) {
     return { backend: "SGLANG", confidence: "MEDIUM", evidence: ["SGLang server information responded at /get_server_info."] };
   }
 
   const tgi = probes.get("tgi-info");
-  if (tgi?.public.status === "PASSED") {
+  if (tgi?.public.status === "PASSED" && tgiEvidence(tgi.payload)) {
     return { backend: "TGI", confidence: "MEDIUM", evidence: ["Text Generation Inference metadata responded at /info."] };
   }
 
@@ -137,8 +187,10 @@ export class InferenceDiscoveryService {
           redirect: "error",
           signal: controller.signal,
         });
-        const payload = await jsonPayload(response.clone());
-        const passed = response.ok;
+        const parsed = await jsonPayload(response);
+        const payload = parsed.payload;
+        const applicationRejected = response.ok && rejectedPayload(payload);
+        const passed = response.ok && !applicationRejected && !parsed.tooLarge;
         const rejected = response.status === 401 || response.status === 403;
         return {
           public: {
@@ -150,6 +202,10 @@ export class InferenceDiscoveryService {
             latencyMs: Date.now() - startedAt,
             message: passed
               ? `${label} responded successfully.`
+              : parsed.tooLarge
+                ? `${label} response exceeded the one-megabyte safety limit.`
+              : applicationRejected
+                ? `${label} is not supported by this server.`
               : rejected
                 ? `${label} requires a valid credential.`
                 : `${label} returned HTTP ${response.status}.`,

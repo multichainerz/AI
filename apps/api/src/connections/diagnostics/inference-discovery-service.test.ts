@@ -101,4 +101,100 @@ describe("InferenceDiscoveryService", () => {
 
     expect(result).toMatchObject({ status: "AUTH_REQUIRED", models: [] });
   });
+
+  it("does not mistake LM Studio's HTTP 200 error payloads for vendor endpoints", async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const path = new URL(String(input)).pathname;
+      if (path === "/v1/models") return Response.json({ data: [{ id: "lfm2.5-2.6b" }] });
+      if (path === "/get_server_info") {
+        return Response.json({ error: { message: `Unexpected endpoint or method. (GET ${path})` } });
+      }
+      return Response.json({ error: `Unexpected endpoint or method. (GET ${path})` });
+    });
+    const result = await new InferenceDiscoveryService(undefined, fetchMock as typeof fetch).discover({
+      baseUrl: "http://lm-studio.internal:1234",
+      timeoutMs: 8000,
+    });
+
+    expect(result).toMatchObject({
+      status: "READY",
+      backend: "CUSTOM_OPENAI_COMPATIBLE",
+      models: [{ id: "lfm2.5-2.6b" }],
+      recommended: { healthPath: null, modelsPath: "/v1/models" },
+    });
+    expect(result.probes.find(({ key }) => key === "sglang-info")).toMatchObject({
+      status: "FAILED",
+      httpStatus: 200,
+      message: "SGLang identity is not supported by this server.",
+    });
+  });
+
+  it("requires positive SGLang response evidence instead of trusting a generic HTTP 200", async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const path = new URL(String(input)).pathname;
+      if (path === "/v1/models") return Response.json({ data: [{ id: "model" }] });
+      if (path === "/get_server_info") return Response.json({ message: "generic catch-all" });
+      return Response.json({ error: "not found" }, { status: 404 });
+    });
+
+    const result = await new InferenceDiscoveryService(undefined, fetchMock as typeof fetch).discover({
+      baseUrl: "http://generic.internal:8000",
+      timeoutMs: 8000,
+    });
+
+    expect(result.backend).toBe("CUSTOM_OPENAI_COMPATIBLE");
+  });
+
+  it("recognizes SGLang only when its server metadata is present", async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const path = new URL(String(input)).pathname;
+      if (path === "/v1/models") return Response.json({ data: [{ id: "model" }] });
+      if (path === "/get_server_info") {
+        return Response.json({
+          version: "0.5.6",
+          attention_backend: "flashinfer",
+          max_total_num_tokens: 65_536,
+        });
+      }
+      return Response.json({ error: "not found" }, { status: 404 });
+    });
+
+    const result = await new InferenceDiscoveryService(undefined, fetchMock as typeof fetch).discover({
+      baseUrl: "http://sglang.internal:8000",
+      timeoutMs: 8000,
+    });
+
+    expect(result.backend).toBe("SGLANG");
+  });
+
+  it("cancels a chunked discovery response when it exceeds one megabyte", async () => {
+    let bytesProduced = 0;
+    let cancelled = false;
+    const chunk = new Uint8Array(65_536).fill(32);
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const path = new URL(String(input)).pathname;
+      if (path !== "/v1/models") return Response.json({ error: "not found" }, { status: 404 });
+      return new Response(new ReadableStream({
+        pull(controller) {
+          bytesProduced += chunk.byteLength;
+          controller.enqueue(chunk);
+        },
+        cancel() {
+          cancelled = true;
+        },
+      }), { status: 200 });
+    });
+
+    const result = await new InferenceDiscoveryService(undefined, fetchMock as typeof fetch).discover({
+      baseUrl: "http://oversized.internal:8000",
+      timeoutMs: 8000,
+    });
+
+    expect(result.probes.find(({ key }) => key === "models-openai")).toMatchObject({
+      status: "FAILED",
+      message: "OpenAI model discovery response exceeded the one-megabyte safety limit.",
+    });
+    expect(cancelled).toBe(true);
+    expect(bytesProduced).toBeLessThan(2_000_000);
+  });
 });

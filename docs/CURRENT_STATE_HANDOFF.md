@@ -1,4 +1,4 @@
-# Current State Handoff — v4.7.3
+# Current State Handoff — v4.8.0
 
 ## Product state
 

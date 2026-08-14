@@ -839,7 +839,7 @@ export const agentRunEvent = pgTable("AgentRunEvent", {
 	// Correlates the start, progress and terminal events of one tool call.
 	// Hermes does not issue a call identifier of its own on most surfaces, so
 	// this is the runtime's id where one is offered and a synthesised key where
-	// none is -- see toolCallKeyFor in the worker for how the difference is kept
+	// none is -- see recordSafeEvent in the worker for how the difference is kept
 	// visible rather than papered over.
 	toolCallKey: varchar({ length: 200 }),
 	// The event's own prose, where it is longer than a summary line: reasoning

@@ -4,6 +4,17 @@ import { defineConfig } from "vite";
 
 const developmentApiTarget = process.env.VITE_DEV_API_TARGET ?? "http://localhost:4000";
 
+export const developmentProxyRoutes = {
+  "/api": developmentApiTarget,
+  // VM2 receives the browser-visible control-plane origin during enrollment
+  // and derives /internal/v1 from it. Production Nginx forwards that
+  // same-origin route; Vite must provide the equivalent development bridge.
+  "/internal": developmentApiTarget,
+  "/install": developmentApiTarget,
+  "/healthz": developmentApiTarget,
+  "/readyz": developmentApiTarget,
+} as const;
+
 /**
  * In dev, read the contracts from source rather than from its build output.
  *
@@ -31,11 +42,6 @@ export default defineConfig(({ command }) => ({
     // number - the OIDC callback is served by the API, not by this port - so a
     // supervisor is free to place the dev server wherever it has room.
     port: Number(process.env.PORT ?? 5173),
-    proxy: {
-      "/api": developmentApiTarget,
-      "/install": developmentApiTarget,
-      "/healthz": developmentApiTarget,
-      "/readyz": developmentApiTarget,
-    },
+    proxy: developmentProxyRoutes,
   },
 }));

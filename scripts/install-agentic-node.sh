@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="v4.7.3"
+INSTALLER_VERSION="v4.8.0"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 HERMES_HOME_DIR="${STATE_ROOT}/home"
 RUNTIME_SERVICE="orcasynapse-hermes"
@@ -616,16 +616,52 @@ install_hermes_file_from_stdin() {
   write_file_from_stdin "${mode}" "${HERMES_USER}" "${HERMES_USER}" "${destination}"
 }
 
+# Hermes' gateway loader currently applies the administrator-managed overlay
+# only after it finds the service account's primary config file. The model
+# runtime reads /etc/hermes directly, but without this harmless user-layer
+# anchor api_server settings such as model_routes are silently skipped. Keep
+# the file service-owned so normal Hermes configuration remains viable; the
+# root-owned managed overlay still wins for every governed key.
+ensure_hermes_gateway_config_anchor() {
+  local config="${STATE_ROOT}/data/config.yaml"
+  [[ ! -L "${config}" ]] || fail "the Hermes user configuration must not be a symbolic link"
+  if [[ ! -e "${config}" ]]; then
+    install_hermes_file_from_stdin 0600 "${config}" <<'EOF'
+{}
+EOF
+    return
+  fi
+  [[ -f "${config}" ]] || fail "the Hermes user configuration is not a regular file"
+  chown "${HERMES_USER}:${HERMES_USER}" "${config}"
+  chmod 0600 "${config}"
+}
+
 write_hermes_managed_policy() {
   local model_alias_json="$1" model_base_url_json="$2"
   install -d -m 0755 "${HERMES_MANAGED_DIR}"
   chown root:root "${HERMES_MANAGED_DIR}"
   write_file_from_stdin 0644 root root "${HERMES_MANAGED_DIR}/config.yaml" <<EOF
 model:
-  provider: custom
+  provider: custom:orcasynapse
   default: ${model_alias_json}
   base_url: ${model_base_url_json}
-  api_key: \${OPENAI_API_KEY}
+providers:
+  orcasynapse:
+    name: OrcaSynapse
+    api: ${model_base_url_json}
+    key_env: OPENAI_API_KEY
+    default_model: ${model_alias_json}
+    transport: chat_completions
+platforms:
+  api_server:
+    enabled: true
+    extra:
+      # Agent profiles use this stable product alias while enrollment pins the
+      # concrete model served by the operator's inference endpoint.
+      model_routes:
+        hermes-agent:
+          model: ${model_alias_json}
+          provider: custom:orcasynapse
 terminal:
   # Keep Hermes work inside the service account's managed, writable home. This
   # is the canonical replacement for the deprecated MESSAGING_CWD environment.
@@ -674,11 +710,74 @@ path = pathlib.Path(sys.argv[1])
 cwd = sys.argv[2]
 lines = path.read_text().splitlines()
 output = []
+inside_model = False
+model_provider_written = False
+model_default = None
+model_base_url = None
 inside_terminal = False
 terminal_seen = False
 cwd_written = False
 
+def indentation(value):
+    return len(value) - len(value.lstrip())
+
+def block_end(values, start, indent):
+    end = start + 1
+    while end < len(values):
+        candidate = values[end]
+        if candidate.strip() and not candidate.lstrip().startswith("#") and indentation(candidate) <= indent:
+            break
+        end += 1
+    return end
+
+# Read the enrolled route before rewriting its provider line. The generated
+# model block lists provider before base_url, so a single streaming pass would
+# otherwise discover the route too late and leave two provider keys behind.
+scanning_model = False
+for candidate in lines:
+    if re.fullmatch(r"model:\s*", candidate):
+        scanning_model = True
+        continue
+    if scanning_model and candidate and not candidate[0].isspace() and not candidate.startswith("#"):
+        break
+    if not scanning_model:
+        continue
+    default_match = re.match(r"^\s+default\s*:\s*(.+?)\s*$", candidate)
+    base_url_match = re.match(r"^\s+base_url\s*:\s*(.+?)\s*$", candidate)
+    if default_match:
+        model_default = default_match.group(1)
+    if base_url_match:
+        model_base_url = base_url_match.group(1)
+
 for line in lines:
+    if re.fullmatch(r"model:\s*", line):
+        inside_model = True
+    elif inside_model and line and not line[0].isspace() and not line.startswith("#"):
+        if model_base_url is not None and not model_provider_written:
+            output.append("  provider: custom:orcasynapse")
+            model_provider_written = True
+        inside_model = False
+    if inside_model:
+        default_match = re.match(r"^\s+default\s*:\s*(.+?)\s*$", line)
+        base_url_match = re.match(r"^\s+base_url\s*:\s*(.+?)\s*$", line)
+        if default_match:
+            model_default = default_match.group(1)
+        if base_url_match:
+            model_base_url = base_url_match.group(1)
+        if re.match(r"^\s+provider\s*:", line) and model_base_url is not None:
+            if not model_provider_written:
+                output.append("  provider: custom:orcasynapse")
+                model_provider_written = True
+            continue
+    # Hermes treats YAML scalar values literally; it does not expand shell
+    # placeholders such as ${OPENAI_API_KEY}. Bare custom endpoints on an IP
+    # also deliberately refuse the generic OPENAI_API_KEY fallback. Keep the
+    # credential in the owner-only EnvironmentFile and authorize that exact env
+    # var through the named OrcaSynapse provider below. Repair old policies by
+    # removing both placeholders and any accidentally embedded credential from
+    # the world-readable managed YAML.
+    if inside_model and re.match(r"^\s+api_key\s*:", line):
+        continue
     if re.fullmatch(r"terminal:\s*", line):
         terminal_seen = True
         inside_terminal = True
@@ -696,12 +795,156 @@ for line in lines:
         continue
     output.append(line)
 
+if inside_model and model_base_url is not None and not model_provider_written:
+    output.append("  provider: custom:orcasynapse")
 if inside_terminal and not cwd_written:
     output.append(f"  cwd: {cwd}")
 if not terminal_seen:
     if output and output[-1] != "":
         output.append("")
     output.extend(["terminal:", f"  cwd: {cwd}"])
+
+# Hermes will not forward OPENAI_API_KEY to an arbitrary IP-hosted custom
+# endpoint unless the operator explicitly names the provider and its key_env.
+# This declaration provides that consent without putting the secret in YAML.
+if model_base_url is not None and model_default is not None:
+    providers_index = next(
+        (index for index, line in enumerate(output) if re.fullmatch(r"providers:\s*", line)),
+        None,
+    )
+    managed_provider = [
+        "  orcasynapse:",
+        "    name: OrcaSynapse",
+        f"    api: {model_base_url}",
+        "    key_env: OPENAI_API_KEY",
+        f"    default_model: {model_default}",
+        "    transport: chat_completions",
+    ]
+    if providers_index is None:
+        if output and output[-1] != "":
+            output.append("")
+        output.append("providers:")
+        output.extend(managed_provider)
+    else:
+        providers_end = block_end(output, providers_index, 0)
+        provider_index = next(
+            (
+                index for index in range(providers_index + 1, providers_end)
+                if re.fullmatch(r"\s{2}orcasynapse:\s*", output[index])
+            ),
+            None,
+        )
+        if provider_index is None:
+            output[providers_end:providers_end] = managed_provider
+        else:
+            provider_end = block_end(output, provider_index, 2)
+            output[provider_index:provider_end] = managed_provider
+
+# Native API sessions receive the stable OrcaSynapse profile alias
+# ``hermes-agent``. Without an explicit API-server route Hermes interprets that
+# alias as an upstream model name and may fall through to a public provider.
+# Keep the alias-to-enrollment mapping inside the root-owned managed policy.
+if model_default is not None:
+    platforms_index = next(
+        (index for index, line in enumerate(output) if re.fullmatch(r"platforms:\s*", line)),
+        None,
+    )
+    if platforms_index is None:
+        if output and output[-1] != "":
+            output.append("")
+        output.extend([
+            "platforms:",
+            "  api_server:",
+            "    enabled: true",
+            "    extra:",
+            "      model_routes:",
+            "        hermes-agent:",
+            f"          model: {model_default}",
+            "          provider: custom:orcasynapse",
+        ])
+    else:
+        platforms_end = block_end(output, platforms_index, 0)
+        api_server_index = next(
+            (
+                index for index in range(platforms_index + 1, platforms_end)
+                if re.fullmatch(r"\s{2}api_server:\s*", output[index])
+            ),
+            None,
+        )
+        if api_server_index is None:
+            output[platforms_end:platforms_end] = [
+                "  api_server:",
+                "    enabled: true",
+                "    extra:",
+                "      model_routes:",
+                "        hermes-agent:",
+                f"          model: {model_default}",
+                "          provider: custom:orcasynapse",
+            ]
+        else:
+            api_server_end = block_end(output, api_server_index, 2)
+            enabled_index = next(
+                (
+                    index for index in range(api_server_index + 1, api_server_end)
+                    if re.fullmatch(r"\s{4}enabled:\s*.*", output[index])
+                ),
+                None,
+            )
+            if enabled_index is None:
+                output[api_server_index + 1:api_server_index + 1] = ["    enabled: true"]
+            else:
+                output[enabled_index] = "    enabled: true"
+            api_server_end = block_end(output, api_server_index, 2)
+            extra_index = next(
+                (
+                    index for index in range(api_server_index + 1, api_server_end)
+                    if re.fullmatch(r"\s{4}extra:\s*", output[index])
+                ),
+                None,
+            )
+            if extra_index is None:
+                output[api_server_end:api_server_end] = [
+                    "    extra:",
+                    "      model_routes:",
+                    "        hermes-agent:",
+                    f"          model: {model_default}",
+                    "          provider: custom:orcasynapse",
+                ]
+            else:
+                extra_end = block_end(output, extra_index, 4)
+                routes_index = next(
+                    (
+                        index for index in range(extra_index + 1, extra_end)
+                        if re.fullmatch(r"\s{6}model_routes:\s*", output[index])
+                    ),
+                    None,
+                )
+                if routes_index is None:
+                    output[extra_end:extra_end] = [
+                        "      model_routes:",
+                        "        hermes-agent:",
+                        f"          model: {model_default}",
+                        "          provider: custom:orcasynapse",
+                    ]
+                else:
+                    routes_end = block_end(output, routes_index, 6)
+                    alias_index = next(
+                        (
+                            index for index in range(routes_index + 1, routes_end)
+                            if re.fullmatch(r"\s{8}hermes-agent:\s*", output[index])
+                        ),
+                        None,
+                    )
+                    managed_alias = [
+                        "        hermes-agent:",
+                        f"          model: {model_default}",
+                        "          provider: custom:orcasynapse",
+                    ]
+                    if alias_index is None:
+                        output[routes_end:routes_end] = managed_alias
+                    else:
+                        alias_end = block_end(output, alias_index, 8)
+                        output[alias_index:alias_end] = managed_alias
 
 managed_memory = [
     "memory:",
@@ -1131,13 +1374,15 @@ install -m 0644 -o root -g root "${WORK}/admitted-toolsets" "${STATE_ROOT}/admit
 # is subtracted after every other rule, so naming everything unadmitted there is
 # what actually produces the admitted set and nothing else.
 KEY="$(sed -n 's/^API_SERVER_KEY=//p' "${STATE_ROOT}/data/.env" 2>/dev/null || true)"
-# KNOWN GAP: this key is visible in `ps` for the length of each tick, every
-# five minutes, for the life of the node -- the same credential the unit file
-# deliberately keeps out of its 0644 permissions.
-#
-# A `--config` file was tried here and reverted; it was not the cause of the
-# regression it was blamed for, and the replacement needs verifying against a
-# real node before it lands.
+# Never place the gateway credential in curl's argv. On an ordinary Linux /proc
+# mount every local user can inspect another process's command line, and this
+# request may remain visible for the full ten-second timeout on every retry.
+# curl reads @file headers itself; the root-only work directory and explicit
+# mode keep the value private while argv contains only this temporary path.
+RUNTIME_AUTH_HEADER="${WORK}/runtime-authorization.header"
+printf 'Authorization: Bearer %s\n' "${KEY}" > "${RUNTIME_AUTH_HEADER}"
+chmod 0600 "${RUNTIME_AUTH_HEADER}"
+unset KEY
 #
 # The catalogue fetch is retried, and this is load-bearing. This script runs
 # immediately after `systemctl restart` of the runtime, so the very first
@@ -1150,7 +1395,7 @@ KEY="$(sed -n 's/^API_SERVER_KEY=//p' "${STATE_ROOT}/data/.env" 2>/dev/null || t
 fetch_toolset_catalogue() {
   local attempt
   for attempt in 1 2 3 4 5 6 7 8 9 10; do
-    if curl -s -m 10 -H "Authorization: Bearer ${KEY}" http://127.0.0.1:8642/v1/toolsets \
+    if curl -s -m 10 --header "@${RUNTIME_AUTH_HEADER}" http://127.0.0.1:8642/v1/toolsets \
       > "${WORK}/catalogue.json" 2>/dev/null && [[ -s "${WORK}/catalogue.json" ]]; then
       return 0
     fi
@@ -1483,6 +1728,7 @@ repair_runtime_installation() {
   create_service_account
   install_hermes_directory 0750 "${STATE_ROOT}/data"
   install_hermes_directory 0750 "${HERMES_HOME_DIR}"
+  ensure_hermes_gateway_config_anchor
   reconcile_managed_runtime_policy
   write_hermes_runtime_unit
   systemctl enable "${RUNTIME_SERVICE}" >/dev/null
@@ -1589,6 +1835,7 @@ main() {
   # service account can write, so the pinned model route and the baseline
   # guardrails cannot be overridden from the runtime's own state directory.
   install_hermes_directory 0750 "${STATE_ROOT}/data"
+  ensure_hermes_gateway_config_anchor
   if (( resuming )); then
     [[ -s "${STATE_ROOT}/identity/node.key" && -s "${STATE_ROOT}/identity/node.pub" ]] \
       || fail "the retained enrollment state is missing its node identity"
