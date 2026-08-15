@@ -240,7 +240,8 @@ Columns added:
   the profile, because a version is immutable and a run must reproduce exactly
   what it was given. `ON DELETE RESTRICT`.
 - `AgentProfile.divisionId` — nullable FK, `ON DELETE RESTRICT`
-- `EnterpriseUser.divisionId`, `LocalAdministrator.divisionId` — nullable FKs
+- `EnterpriseUser.divisionId` — nullable FK. **No column on `LocalAdministrator`**:
+  administrators are deployment-wide, see the scope model
 
 **Null division means deployment-wide**, which is what every existing row already
 is, so the migration is a no-op and nothing is re-homed until a super admin
@@ -262,8 +263,33 @@ singleton control row.
 
 Division is not a scope: scopes say what kind of action, division says over which
 rows. The 27 `AdminScope`s and the two-literal enterprise tuple are unchanged.
-Principals gain `divisionId: string | null`, where **null on an administrator
-means super administrator**. No new role.
+No new role.
+
+**Divisions apply to users, not to administrators.** An administrator is
+deployment-wide, sees everything and manages everything; a division bounds which
+profiles a *user* may see and run. `EnterpriseUser.divisionId` is the field that
+matters; `LocalAdministrator.divisionId` is not added at all.
+
+This is a deliberate simplification, and it earns three things:
+
+- **Every administration screen is super-admin by construction.** There is no
+  division-scoped admin to accidentally show a cross-division page to. That
+  matters most for Agents → Memory and Agents → Skills, which are shared per node
+  and therefore *cannot* be filtered — a division-scoped admin opening them would
+  read what every other division's agent had learned. A leak through the
+  dashboard rather than through the agent, and this removes the possibility
+  rather than guarding it.
+- **The visibility rule loses a clause.** It becomes "the caller is an
+  administrator, or the profile's division matches the caller's" — see D.
+- **A whole test hazard disappears.** The testing section's second caution was
+  about a preview session with a null division walking a division-scoped route.
+  With administrators uniformly deployment-wide there is no such combination.
+
+It also matches the original ask: the super admin created at install manages
+everything, because this is on-premise. If a customer later needs a delegated
+administrator bounded to one division, that is a real feature with its own
+design — including what to do about the screens that cannot be filtered — and it
+should not be half-built here by leaving a nullable column lying around.
 
 ## Increments
 
@@ -332,9 +358,11 @@ the intersection is asserted on the call arguments, not on a model reply.
   only through `requireAdmin`.
 - Principals gain `divisionId`, read in both session managers.
 - **One visibility rule, one function, one place:** a profile is visible iff
-  `profile.divisionId === null || profile.divisionId === principal.divisionId ||
-  principal.divisionId === null && principal is an administrator`. Applied at the
-  seam increment A created, and to the admin `includeAll` run reads.
+  `principal is an administrator || profile.divisionId === null ||
+  profile.divisionId === principal.divisionId`. Applied at the seam increment A
+  created. Two clauses rather than three, because administrators are
+  deployment-wide — see the scope model above — so the admin `includeAll` reads
+  need no narrowing at all.
 
 **Done when:** a user in Division A cannot list, name, converse with, or submit a
 run against Division B's profile — four tests, each 404. A super admin still sees
@@ -448,8 +476,10 @@ No auth.js either way.
 - [ ] `submitRun` refuses a profile outside it — 404, not 403
 - [ ] `activeProfile` requires an explicit id and checks it
 - [ ] conversation `create` checks the profile before writing the row
-- [ ] admin `includeAll` narrows to the admin's division when non-null
 - [ ] the visibility rule exists once, in one function
+- [ ] every administration screen is reachable only by an administrator, who is
+      deployment-wide by construction — there is no division-scoped admin, so
+      Memory and Skills cannot be shown to someone they should be filtered for
 - [ ] the worker intersects admitted toolsets with the profile's tool set
 - [ ] a profile version's sets are immutable with the version
 - [ ] deleting a referenced set is refused
@@ -472,7 +502,10 @@ test surviving that deletion is vacuous. Three cautions:
    to write. Add an inventory test in the shape of `admin-session.gate.test.ts`:
    walk `apps/api/src`, find every query touching `agentProfile`, fail on one not
    in a known division-aware call site.
-2. **Two identity paths double every case** — enterprise and
+2. *(Retired by the scope model: administrators are deployment-wide, so the
+   combination below cannot occur. Kept because it is the shape to re-check
+   the day a delegated division admin is ever added.)* **Two identity paths
+   double every case** — enterprise and
    `ADMINISTRATOR_PREVIEW`. A preview session with a null division walking a
    division-scoped route is where a real leak would hide.
 3. **Assert the tool set at the seam** — the arguments passed to `hermes.start` —
