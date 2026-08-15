@@ -21,22 +21,41 @@ openssl pkey -in "${STATE_ROOT}/identity/node.key" -pubout -out "${STATE_ROOT}/i
 signature_body='{"capabilities":["gateway-api","signed-heartbeat"],"hermesVersion":"c015663b215c0e14de4295346b0727db602cbb1d","observedAt":"2026-08-03T00:00:00Z","status":"ONLINE"}'
 signature_timestamp='2026-08-03T00:00:00Z'
 signature_nonce='c634de85-7087-426a-b4f5-f4c2857f55c2'
-signature_value="$(sign_node_payload "${signature_body}" "${signature_timestamp}" "${signature_nonce}")"
+# The method and path are part of the signed message, so a heartbeat signature
+# cannot be replayed against a desired-state endpoint. Both are rebuilt by hand
+# below rather than read back from the installer, so a change to the field order
+# has to be made twice on purpose.
+signature_method='POST'
+signature_path='/api/v1/runtime-nodes/9d1c5b0e-1f2a-4f3b-8c7d-6e5a4b3c2d10/heartbeat'
+signature_value="$(sign_node_payload "${signature_body}" "${signature_timestamp}" "${signature_nonce}" "${signature_method}" "${signature_path}")"
 [[ "${signature_value}" =~ ^[A-Za-z0-9_-]{86}$ ]]
 signature_digest="$(printf '%s' "${signature_body}" | sha256sum | awk '{print $1}')"
-printf '%s\n%s\n%s' "${signature_timestamp}" "${signature_nonce}" "${signature_digest}" \
+printf '%s\n%s\n%s\n%s\n%s' \
+  "${signature_method}" "${signature_path}" "${signature_timestamp}" "${signature_nonce}" "${signature_digest}" \
   > "${TEST_ROOT}/signature-message"
 printf '%s==' "${signature_value}" \
   | tr '_-' '/+' \
   | openssl base64 -d -A \
   > "${TEST_ROOT}/signature-bytes"
-openssl pkeyutl -verify -rawin -pubin \
+# The verdict is read from the output, not the exit code. `openssl pkeyutl
+# -verify` returns 0 for a signature it has just rejected -- confirmed on
+# OpenSSL 3.0.13, where a deliberately corrupted message prints "Signature
+# Verification Failure" and still exits 0. Every previous release ran this
+# assertion under `set -e` believing the exit code carried it, so it verified
+# nothing at all; the node check below is what has actually been guarding this.
+openssl_verdict="$(openssl pkeyutl -verify -rawin -pubin \
   -inkey "${STATE_ROOT}/identity/node.pub" \
   -in "${TEST_ROOT}/signature-message" \
-  -sigfile "${TEST_ROOT}/signature-bytes" >/dev/null
+  -sigfile "${TEST_ROOT}/signature-bytes" 2>&1)"
+[[ "${openssl_verdict}" == *"Signature Verified Successfully"* ]] || {
+  printf 'the installer signature did not verify with openssl: %s\n' "${openssl_verdict}" >&2
+  exit 1
+}
 SIGNATURE_BODY="${signature_body}" \
 SIGNATURE_TIMESTAMP="${signature_timestamp}" \
 SIGNATURE_NONCE="${signature_nonce}" \
+SIGNATURE_METHOD="${signature_method}" \
+SIGNATURE_PATH="${signature_path}" \
 SIGNATURE_VALUE="${signature_value}" \
 SIGNATURE_PUBLIC_KEY="${STATE_ROOT}/identity/node.pub" \
 node --input-type=module -e '
@@ -49,7 +68,16 @@ node --input-type=module -e '
     return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalize(value[key])}`).join(",")}}`;
   };
   const digest = createHash("sha256").update(canonicalize(body)).digest("hex");
-  const message = `${process.env.SIGNATURE_TIMESTAMP}\n${process.env.SIGNATURE_NONCE}\n${digest}`;
+  // Mirrors `signatureMessage` in drizzle-runtime-node-manager.ts: this check
+  // exists because the shell signer and the control-plane verifier are separate
+  // implementations that nothing else compares at runtime.
+  const message = [
+    process.env.SIGNATURE_METHOD,
+    process.env.SIGNATURE_PATH,
+    process.env.SIGNATURE_TIMESTAMP,
+    process.env.SIGNATURE_NONCE,
+    digest,
+  ].join("\n");
   const valid = verify(
     null,
     Buffer.from(message, "utf8"),

@@ -5,6 +5,29 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v5.2.2 — 2026-08-15
+
+Repairs the CI gate that v5.2.0 broke, and the reason nobody noticed.
+
+`scripts/test-agentic-installer-recovery.sh` sources the VM2 installer and signs
+a real heartbeat with it, then rebuilds the expected message by hand. v5.2.0
+added the method and path to the signed message on both the control plane and
+all three client signers, but not to this test's hand-built copy, so the
+installer signed five fields while the test verified three. It needs `jq`, which
+the development workstation does not have, so the break was invisible locally.
+
+The reason it would not have failed loudly even then is the more useful finding:
+the test's `openssl pkeyutl -verify` assertion could never fail. On OpenSSL
+3.0.13 that command prints "Signature Verification Failure" and **exits 0**, so
+running it under `set -e` asserted nothing. It has been decorative in every
+release that shipped it; only the node-based check beside it was ever real.
+
+- pass the method and path through the recovery test's signer and both of its
+  verifiers, so the shell signer and the control-plane verifier are compared on
+  the bytes they actually exchange
+- read the openssl verdict from its output rather than its exit code, and say in
+  the file why the exit code cannot be trusted
+
 ## v5.2.1 — 2026-08-15
 
 The residue a post-release sweep found: three user-visible strings still naming
