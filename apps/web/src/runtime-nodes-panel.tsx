@@ -65,6 +65,37 @@ function humanize(value: string): string {
 }
 
 /**
+ * The node's units that are not doing their job, named.
+ *
+ * Null means the node has never reported units -- an older installer, not a
+ * healthy node. That is why this returns null rather than an empty array for
+ * the unknown case: "nothing wrong" and "nothing known" render differently, and
+ * collapsing them is how a broken node reads as a fine one.
+ *
+ * A unit that is enabled but inactive failed or was stopped; one that is active
+ * but not enabled will be gone at the next reboot. Both are reported, because
+ * they need different fixes.
+ */
+export function unhealthyUnits(node: HermesRuntimeNode): string[] | null {
+  if (!node.units) return null;
+  return node.units
+    .filter((unit) => !unit.active || !unit.enabled)
+    .map((unit) => unit.active ? `${unit.name} (not enabled)` : `${unit.name} (inactive)`);
+}
+
+/**
+ * Three distinct answers, never two. "Not reported" is what an older node gives
+ * and must not read as "all running" — the whole point of showing this is that
+ * an operator can tell a healthy node from one nobody can see into.
+ */
+function unitSummary(node: HermesRuntimeNode): string {
+  const unhealthy = unhealthyUnits(node);
+  if (unhealthy === null) return "Not reported";
+  if (unhealthy.length === 0) return `All ${node.units?.length ?? 0} running`;
+  return unhealthy.join(", ");
+}
+
+/**
  * Whether this node is running something other than the commit recorded for it.
  *
  * Three states, not two. `hermesVersion` is what the node last reported and
@@ -418,7 +449,15 @@ export function RuntimeNodesPanel({
           * Settings → System, and there is no apply button here.
           */}
         <div className="runtime-node-copy"><div><strong>{node.displayName}</strong><span className={`runtime-status ${nodeTone(node.status)}`}>{humanize(node.status)}</span>{commitDrift(node) && <span className="runtime-status quarantined" title="This node is not running the Hermes commit OrcaSynapse recorded for it.">Commit drift</span>}</div><p>{node.baseUrl}</p><small>{node.hostname ?? node.expectedHostname ?? "Awaiting hostname"} · {runtimeRevision(node)}</small></div>
-        <dl><div><dt>Last heartbeat</dt><dd>{node.lastSeenAt ? new Date(node.lastSeenAt).toLocaleString() : "Never"}</dd></div><div><dt>OrcaSynapse → Hermes</dt><dd>{node.serviceConnectionStatus ? humanize(node.serviceConnectionStatus) : "Pending"}</dd></div><div><dt>Identity</dt><dd>{node.identityFingerprint ? `${node.identityFingerprint.slice(0, 12)}…` : "Not enrolled"}</dd></div></dl>
+        <dl><div><dt>Last heartbeat</dt><dd>{node.lastSeenAt ? new Date(node.lastSeenAt).toLocaleString() : "Never"}</dd></div><div><dt>OrcaSynapse → Hermes</dt><dd>{node.serviceConnectionStatus ? humanize(node.serviceConnectionStatus) : "Pending"}</dd></div><div><dt>Identity</dt><dd>{node.identityFingerprint ? `${node.identityFingerprint.slice(0, 12)}…` : "Not enrolled"}</dd></div>
+          {/*
+            * Quiet when healthy, specific when not. The heartbeat's own timer is
+            * absent from this list by construction -- a node whose heartbeat has
+            * stopped never reports anything, and goes Offline above on a stale
+            * `lastSeenAt` instead. Between the two, nothing on the node is
+            * unaccounted for.
+            */}
+          <div><dt>Node services</dt><dd>{unitSummary(node)}</dd></div></dl>
         <div className="runtime-node-actions">
           {node.status === "DRAINING" || node.status === "SUSPENDED" ? <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => void act(node, "RESUME")}>Resume</Button> : <Button variant="ghost" size="sm" disabled={busy !== null || node.status === "PENDING" || node.status === "OFFLINE"} onClick={() => void act(node, "DRAIN")}>Drain</Button>}
           {!["PENDING", "SUSPENDED", "REVOKED"].includes(node.status) && <Button variant="danger" size="sm" disabled={busy !== null} onClick={() => { if (window.confirm(`Suspend ${node.displayName}? Active work will be stopped and new work will be denied until you resume it.`)) void act(node, "SUSPEND"); }}>Suspend</Button>}

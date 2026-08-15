@@ -968,6 +968,12 @@ export const hermesRuntimeNode = pgTable("HermesRuntimeNode", {
 	hermesVersion: varchar({ length: 256 }),
 	installerVersion: varchar({ length: 256 }),
 	capabilities: jsonb().default([]).notNull(),
+	// The node's systemd units at its last heartbeat. Nullable and undefaulted,
+	// unlike capabilities above: an empty array would read as "this node has no
+	// units", while null is the truth for a node whose installer predates the
+	// field. Those two must not render the same, so the database refuses to
+	// invent the difference.
+	units: jsonb(),
 	serviceConnectionId: uuid(),
 	lastSeenAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
 	enrolledAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),

@@ -47,6 +47,20 @@ const hermesCommitSchema = z.string().trim().toLowerCase().regex(
  * the pin is that two nodes enrolled a month apart run identical code.
  */
 export const DEFAULT_HERMES_COMMIT = "c015663b215c0e14de4295346b0727db602cbb1d";
+/**
+ * One systemd unit on the node, as the node sees it.
+ *
+ * `active` and `enabled` are separate questions with different remedies: a unit
+ * that is enabled but inactive failed or was stopped, and a unit that is active
+ * but not enabled will be gone after the next reboot. Reporting only "healthy"
+ * would collapse those into one word and leave an operator guessing which.
+ */
+export const hermesNodeUnitSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  active: z.boolean(),
+  enabled: z.boolean(),
+}).strict();
+
 export const hermesRuntimeNodeSchema = z.object({
   id: z.uuid(),
   slug: nodeSlugSchema,
@@ -71,6 +85,18 @@ export const hermesRuntimeNodeSchema = z.object({
   expectedHermesCommit: z.string().regex(/^[0-9a-f]{40}$/).nullable(),
   installerVersion: z.string().nullable(),
   capabilities: z.array(z.string().min(1).max(120)).max(100),
+  /**
+   * The node's own systemd units, as of its last heartbeat.
+   *
+   * Null means the node has never reported them — an older node, not a healthy
+   * one, and the two must not render the same. An empty array would be a claim
+   * that the node has no units, which nothing can truthfully say.
+   *
+   * This does not cover the heartbeat timer's own failure, and does not need
+   * to: a node whose heartbeat has stopped goes stale and is reported OFFLINE
+   * by `lastSeenAt`. Between the two, every unit on the node is accounted for.
+   */
+  units: z.array(hermesNodeUnitSchema).max(16).nullable(),
   serviceConnectionId: z.uuid().nullable(),
   serviceConnectionStatus: z.enum(["NOT_TESTED", "HEALTHY", "DEGRADED", "UNREACHABLE", "DISABLED"]).nullable(),
   lastSeenAt: z.iso.datetime().nullable(),
@@ -187,11 +213,22 @@ export const runtimeDesiredStateSchema = z.object({
   publicKeyFingerprint: z.string().min(1).max(100),
 }).strict();
 
+/**
+ * `units` is optional, and this schema is `.strict()` — the two facts together
+ * are the whole compatibility story.
+ *
+ * Optional, so a node enrolled before this field existed keeps heartbeating.
+ * Strict, so a node that sends it to a control plane too old to know it would be
+ * refused on every beat, go stale, and be marked OFFLINE — which is why the
+ * field is accepted here one release before any node is taught to send it.
+ * Upgrade VM1 first; that ordering is a requirement, not a preference.
+ */
 export const hermesNodeHeartbeatSchema = z.object({
   observedAt: z.iso.datetime(),
   status: z.enum(["ONLINE", "DEGRADED"]),
   hermesVersion: z.string().trim().min(1).max(256),
   capabilities: z.array(z.string().trim().min(1).max(120)).max(100).default([]),
+  units: z.array(hermesNodeUnitSchema).max(16).optional(),
 }).strict();
 
 export const hermesNodeHeartbeatResultSchema = z.object({

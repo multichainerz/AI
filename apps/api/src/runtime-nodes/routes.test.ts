@@ -36,6 +36,7 @@ const node: HermesRuntimeNode = {
   expectedHermesCommit: "c015663b215c0e14de4295346b0727db602cbb1d",
   installerVersion: null,
   capabilities: [],
+  units: null,
   serviceConnectionId: null,
   serviceConnectionStatus: null,
   lastSeenAt: null,

@@ -339,6 +339,56 @@ describe("DrizzleHermesRuntimeNodeManager signed requests", () => {
     expect(stored?.lastSeenAt).not.toBeNull();
   });
 
+  it("records the node's systemd units when it reports them", async () => {
+    const { node, identity } = await enrolledNode();
+    const units = [
+      { name: "orcasynapse-hermes.service", active: true, enabled: true },
+      { name: "orcasynapse-hermes-corpus.timer", active: false, enabled: true },
+    ];
+    const body = { status: "ONLINE", hermesVersion: "1.0.1", capabilities: [], units };
+
+    await manager().heartbeat(node.id, signedHeaders(identity.privateKey, body, heartbeatOf(node.id)), body as never);
+
+    const [stored] = await context.database
+      .select().from(hermesRuntimeNode).where(eq(hermesRuntimeNode.id, node.id));
+    expect(stored?.units).toEqual(units);
+    const [summary] = (await manager().list()).filter(({ id }) => id === node.id);
+    expect(summary?.units).toEqual(units);
+  });
+
+  /*
+   * A node whose installer predates the field omits it on every beat. Writing
+   * null each time would be harmless for that node, but it also means a node
+   * that reported once and was then downgraded would keep a list describing
+   * units it is no longer speaking for. Absent has to leave the column alone,
+   * and the only way to see the difference is to report and then stop.
+   */
+  it("leaves a previously reported unit list alone when a later heartbeat omits it", async () => {
+    const { node, identity } = await enrolledNode();
+    const units = [{ name: "orcasynapse-hermes.service", active: true, enabled: true }];
+    const first = { status: "ONLINE", hermesVersion: "1.0.1", capabilities: [], units };
+    await manager().heartbeat(node.id, signedHeaders(identity.privateKey, first, heartbeatOf(node.id)), first as never);
+
+    const second = { status: "ONLINE", hermesVersion: "1.0.2", capabilities: [] };
+    await manager().heartbeat(node.id, signedHeaders(identity.privateKey, second, heartbeatOf(node.id)), second as never);
+
+    const [stored] = await context.database
+      .select().from(hermesRuntimeNode).where(eq(hermesRuntimeNode.id, node.id));
+    expect(stored?.hermesVersion).toBe("1.0.2");
+    expect(stored?.units).toEqual(units);
+  });
+
+  it("reports a node that has never sent units as unknown rather than healthy", async () => {
+    const { node, identity } = await enrolledNode();
+    const body = { status: "ONLINE", hermesVersion: "1.0.1", capabilities: [] };
+
+    await manager().heartbeat(node.id, signedHeaders(identity.privateKey, body, heartbeatOf(node.id)), body as never);
+
+    const [summary] = (await manager().list()).filter(({ id }) => id === node.id);
+    // Null, not []. An empty array is a claim that the node has no units.
+    expect(summary?.units).toBeNull();
+  });
+
   it("rejects a replayed nonce", async () => {
     const { node, identity } = await enrolledNode();
     const body = { status: "ONLINE", hermesVersion: "1.0.0", capabilities: [] };

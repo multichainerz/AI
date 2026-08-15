@@ -151,6 +151,7 @@ describe("the runtime node summary", () => {
     expectedHermesCommit: "c015663b215c0e14de4295346b0727db602cbb1d",
     installerVersion: "v5.3.0",
     capabilities: [],
+    units: null,
     serviceConnectionId: null,
     serviceConnectionStatus: null,
     lastSeenAt: null,

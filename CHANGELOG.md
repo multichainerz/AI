@@ -5,6 +5,51 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v5.8.0 — 2026-08-15
+
+Gives VM2's four systemd units one handle, and teaches the control plane to say
+which of them is broken instead of only that a node has gone quiet.
+
+`orcasynapse-hermes-node.target` starts, stops and reports the runtime service
+and the three timers together. It is additive: every unit keeps the `WantedBy=`
+it had, so boot behaviour is unchanged and a node that never gains the target
+goes on working.
+
+**It is not a step toward merging them into one program.** Those four run under
+four different privilege profiles — the runtime is unprivileged, the heartbeat is
+root but `ReadOnlyPaths` the state root and cannot write a byte, the corpus
+reconciler writes it, and the desired-state client re-installs Hermes. A single
+unit would hold the union of those, which is the loosest. `PartOf=` is on the
+timers and the runtime, never on the three oneshots, so stopping the target stops
+*scheduling* rather than killing a reconcile midway through replacing Hermes.
+
+The second half is the compatibility-sensitive one and ships in two parts.
+`hermesNodeHeartbeatSchema` is `.strict()`, so a node sending a field the control
+plane does not know is refused on every beat, goes stale and is marked OFFLINE.
+This release only *accepts* an optional `units` array; the VM2 client that sends
+it comes next, by which time every control plane it could reach already knows the
+key. **Upgrade VM1 first** — that ordering is a requirement, not a preference.
+
+A node that has never reported units reads "Not reported", never "all running".
+The two are different facts and collapsing them is how a broken node looks fine.
+The heartbeat timer's own failure is deliberately absent from that list and does
+not need to be there: a node whose heartbeat stops goes stale and is reported
+OFFLINE from `lastSeenAt`. Between the two, nothing on the node is unaccounted for.
+
+- add `orcasynapse-hermes-node.target`, with `PartOf=` on the runtime and the
+  three timers so a stop actually propagates — `Wants=` alone starts a set and
+  never stops it
+- remove the target by name in the decommissioner, whose `orcasynapse-hermes-*`
+  glob matches `.service` and `.timer` only
+- assert the target by behaviour in the VM2 smoke test: that it starts the set,
+  that stopping it stops all four, and that every member is still independently
+  enabled for boot
+- accept an optional `units` array on the heartbeat and carry it on the node
+  summary as nullable, so "never reported" survives to the screen
+- report `active` and `enabled` separately: one failed or was stopped, the other
+  will be gone after a reboot, and they need different fixes
+- leave a stored unit list alone when a later heartbeat omits it
+
 ## v5.7.0 — 2026-08-15
 
 Makes an in-dashboard update something an operator can watch and check, and

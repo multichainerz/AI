@@ -3,13 +3,16 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="v5.7.0"
+INSTALLER_VERSION="v5.8.0"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 HERMES_HOME_DIR="${STATE_ROOT}/home"
 RUNTIME_SERVICE="orcasynapse-hermes"
 HEARTBEAT_SERVICE="orcasynapse-hermes-heartbeat"
 DESIRED_STATE_SERVICE="orcasynapse-hermes-desired-state"
 CORPUS_SERVICE="orcasynapse-hermes-corpus"
+# The handle for all four. Not a fifth job -- a target owns no process; it
+# exists so an operator has one thing to start, stop and read the state of.
+NODE_TARGET="orcasynapse-hermes-node"
 # Hermes runs as an unprivileged service account rather than a container
 # identity. The name is the unit name so `systemctl`, `journalctl` and `ps` all
 # agree about what is running.
@@ -1024,6 +1027,10 @@ Description=OrcaSynapse-managed Hermes agent runtime
 Documentation=https://github.com/multichainerz/AI
 After=network-online.target
 Wants=network-online.target
+# Stopping the node target stops this too. `Wants=` on the target alone would
+# start the set and never stop it -- start-time dependencies do not propagate a
+# stop, and PartOf is the directive that does.
+PartOf=${NODE_TARGET}.target
 # Proof of ownership for the decommissioner, which refuses to destroy a runtime
 # it cannot identify as ours.
 X-OrcaSynapse-Managed=true
@@ -1073,6 +1080,45 @@ RestrictSUIDSGID=yes
 WantedBy=multi-user.target
 EOF
   systemctl daemon-reload
+}
+
+# One handle for the four units this installer manages.
+#
+# Additive on purpose. Every unit keeps its own `WantedBy=` -- the timers are
+# still wanted by timers.target and the runtime by multi-user.target -- so boot
+# behaviour is exactly what it was, and a node that never gains this target goes
+# on working. What the target adds is starting, stopping, restarting and reading
+# the state of the set with one command, which is what an operator reaches for
+# and what nobody had.
+#
+# It is not an argument for merging the four into one program. They run under
+# four different privilege profiles: the runtime is unprivileged, the heartbeat
+# is root but cannot write a byte to the state root, the corpus reconciler
+# writes it, and the desired-state client re-installs Hermes. One unit would
+# hold the union of those, which is the loosest of them.
+write_hermes_node_target() {
+  write_file_from_stdin 0644 root root "/etc/systemd/system/${NODE_TARGET}.target" <<EOF
+[Unit]
+Description=OrcaSynapse Agentic System node
+Documentation=https://github.com/multichainerz/AI
+# Wants, not Requires: a node whose corpus timer has been deliberately masked is
+# a degraded node rather than a failed target, and Requires would refuse to
+# start the other three because of it.
+Wants=${RUNTIME_SERVICE}.service
+Wants=${HEARTBEAT_SERVICE}.timer
+Wants=${DESIRED_STATE_SERVICE}.timer
+Wants=${CORPUS_SERVICE}.timer
+After=${RUNTIME_SERVICE}.service
+# Proof of ownership for the decommissioner, the same marker the runtime unit
+# carries -- this file is removed by name rather than by the
+# orcasynapse-hermes-* glob, which matches no .target.
+X-OrcaSynapse-Managed=true
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  systemctl daemon-reload
+  systemctl enable "${NODE_TARGET}.target" >/dev/null
 }
 
 install_host_dependencies() {
@@ -1615,6 +1661,11 @@ EOF
   write_file_from_stdin 0644 root root "/etc/systemd/system/${DESIRED_STATE_SERVICE}.timer" <<EOF
 [Unit]
 Description=Reconcile the OrcaSynapse desired runtime state every five minutes
+# On the timer, never on the oneshot it triggers. Stopping the node target must
+# stop *scheduling*, not kill a reconcile that is halfway through re-installing
+# Hermes -- the same hazard the VM1 update agent avoids by running its upgrade
+# in a transient scope.
+PartOf=${NODE_TARGET}.target
 
 [Timer]
 OnBootSec=90s
@@ -1741,6 +1792,11 @@ EOF
   write_file_from_stdin 0644 root root "/etc/systemd/system/${HEARTBEAT_SERVICE}.timer" <<EOF
 [Unit]
 Description=Send OrcaSynapse Hermes runtime node heartbeat every minute
+# On the timer, never on the oneshot it triggers. Stopping the node target must
+# stop *scheduling*, not kill a reconcile that is halfway through re-installing
+# Hermes -- the same hazard the VM1 update agent avoids by running its upgrade
+# in a transient scope.
+PartOf=${NODE_TARGET}.target
 
 [Timer]
 OnBootSec=30s
@@ -1822,6 +1878,11 @@ EOF
   write_file_from_stdin 0644 root root "/etc/systemd/system/${CORPUS_SERVICE}.timer" <<EOF
 [Unit]
 Description=Synchronize the governed Hermes corpus every minute
+# On the timer, never on the oneshot it triggers. Stopping the node target must
+# stop *scheduling*, not kill a reconcile that is halfway through re-installing
+# Hermes -- the same hazard the VM1 update agent avoids by running its upgrade
+# in a transient scope.
+PartOf=${NODE_TARGET}.target
 
 [Timer]
 OnBootSec=45s
@@ -1882,6 +1943,10 @@ repair_runtime_installation() {
   # unavailable forever, even while snapshots arrived.
   write_heartbeat_client
   write_corpus_reconciler "$(<"${STATE_ROOT}/control-plane-url")"
+  # After all four units exist, so the target's Wants= name units that are
+  # on disk. It is enabled and not started -- each site below starts what it
+  # needs, in the order it needs.
+  write_hermes_node_target
   systemctl enable --now "${HEARTBEAT_SERVICE}.timer" >/dev/null
   systemctl start "${HEARTBEAT_SERVICE}.service" \
     || warning "The signed heartbeat will retry from its one-minute timer."
@@ -2187,6 +2252,10 @@ EOF
   write_heartbeat_client
   write_desired_state_client
   write_corpus_reconciler "${control_plane_url}"
+  # After all four units exist, so the target's Wants= name units that are
+  # on disk. It is enabled and not started -- each site below starts what it
+  # needs, in the order it needs.
+  write_hermes_node_target
   systemctl daemon-reload
   systemctl enable --now "${HEARTBEAT_SERVICE}.timer"
   systemctl start "${HEARTBEAT_SERVICE}.service"

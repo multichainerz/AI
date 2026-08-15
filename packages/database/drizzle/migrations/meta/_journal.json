@@ -43,6 +43,13 @@
       "when": 1786802063920,
       "tag": "0005_wealthy_big_bertha",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1786805575499,
+      "tag": "0006_legal_sebastian_shaw",
+      "breakpoints": true
     }
   ]
 }

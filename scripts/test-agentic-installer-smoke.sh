@@ -324,6 +324,55 @@ systemctl is-enabled orcasynapse-hermes-corpus.timer >/dev/null 2>&1 \
 [[ -x /usr/local/lib/orcasynapse/hermes-corpus-reconciler.py ]] \
   && pass "corpus reconciler installed" || bad "corpus reconciler missing"
 
+# ---------------------------------------------------------------------------
+# The node target: one handle for the four units above
+# ---------------------------------------------------------------------------
+# Asserted by behaviour, not by the presence of the file. A target whose Wants=
+# name their units correctly but whose members carry no PartOf= installs
+# cleanly, enables cleanly, and then does nothing at all when stopped -- which
+# is the failure this exists to prevent and the one a file check cannot see.
+systemctl is-enabled orcasynapse-hermes-node.target >/dev/null 2>&1 \
+  && pass "node target enabled" || bad "node target not enabled"
+
+# The target is additive: every member keeps the WantedBy= it had, so boot
+# behaviour is unchanged and a node that never gains the target still comes up.
+systemctl is-enabled orcasynapse-hermes.service >/dev/null 2>&1 \
+  && pass "the runtime is still independently enabled for boot" \
+  || bad "the target displaced the runtime WantedBy, so an older node would not start"
+
+systemctl start orcasynapse-hermes-node.target >/dev/null 2>&1 \
+  && pass "the node target starts" || bad "the node target could not be started"
+systemctl is-active orcasynapse-hermes.service >/dev/null 2>&1 \
+  && pass "starting the target brought the runtime up" \
+  || bad "the target started without its runtime"
+
+# The half Wants= alone does not give. Start-time dependencies do not propagate
+# a stop, so without PartOf= on each member this command is silent and leaves
+# all four running -- an operator would read "stopped" and be wrong.
+systemctl stop orcasynapse-hermes-node.target >/dev/null 2>&1 || true
+target_stopped=0
+for unit in orcasynapse-hermes.service orcasynapse-hermes-heartbeat.timer \
+  orcasynapse-hermes-desired-state.timer orcasynapse-hermes-corpus.timer; do
+  if systemctl is-active "${unit}" >/dev/null 2>&1; then
+    bad "stopping the node target left ${unit} active"
+  else
+    target_stopped=$((target_stopped + 1))
+  fi
+done
+(( target_stopped == 4 )) \
+  && pass "stopping the node target stopped all four members" \
+  || bad "stopping the node target stopped only ${target_stopped} of 4 members"
+
+# Put the node back the way the rest of this file expects to find it.
+systemctl start orcasynapse-hermes-node.target >/dev/null 2>&1 || true
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  systemctl is-active orcasynapse-hermes.service >/dev/null 2>&1 && break
+  sleep 2
+done
+systemctl is-active orcasynapse-hermes.service >/dev/null 2>&1 \
+  && pass "the node target restored the runtime for the rest of this suite" \
+  || bad "the runtime did not come back after the target round trip"
+
 # The v1.4.0 preseed: the node must already hold the admitted allowlist
 # rather than waiting out the first timer tick.
 if [[ -s "${STATE_ROOT}/admitted-toolsets" ]]; then

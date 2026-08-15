@@ -21,7 +21,7 @@ import type {
   RuntimeDesiredState,
   RuntimeDesiredStateDocument,
 } from "@orcasynapse/contracts";
-import { DEFAULT_HERMES_COMMIT } from "@orcasynapse/contracts";
+import { DEFAULT_HERMES_COMMIT, hermesNodeUnitSchema } from "@orcasynapse/contracts";
 import {
   auditEvent,
   configurationRevision,
@@ -72,6 +72,7 @@ type StoredNode = {
   hermesVersion: string | null;
   installerVersion: string | null;
   capabilities: unknown;
+  units: unknown;
   serviceConnectionId: string | null;
   serviceConnection?: { status: HermesRuntimeNode["serviceConnectionStatus"] } | null;
   lastSeenAt: Date | null;
@@ -138,6 +139,22 @@ function installableCommit(value: string | null | undefined): string | null {
 }
 
 /**
+ * The units column, validated rather than trusted.
+ *
+ * Null for a node that has never reported them, and null again for a column
+ * holding anything this release cannot read. Both are "unknown", which is the
+ * honest answer and the one the dashboard renders differently from "healthy" —
+ * whereas an empty array would claim the node has no units at all.
+ */
+function storedUnits(value: unknown): HermesRuntimeNode["units"] {
+  if (!Array.isArray(value)) return null;
+  // The contract schema's own array(), rather than importing zod here: this
+  // package does not depend on zod directly and should not start doing so.
+  const parsed = hermesNodeUnitSchema.array().max(16).safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+/**
  * @param expectedHermesCommit the commit the control plane recorded for this
  * node. Required rather than defaulted: every caller knows the answer or can
  * look it up, and a default of null would quietly report "no target recorded"
@@ -163,6 +180,7 @@ function summarize(node: StoredNode, expectedHermesCommit: string | null): Herme
     expectedHermesCommit: installableCommit(expectedHermesCommit),
     installerVersion: node.installerVersion,
     capabilities,
+    units: storedUnits(node.units),
     serviceConnectionId: node.serviceConnectionId,
     serviceConnectionStatus: node.serviceConnection?.status ?? null,
     lastSeenAt: node.lastSeenAt?.toISOString() ?? null,
@@ -932,6 +950,14 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
         status: effectiveStatus,
         hermesVersion: input.hermesVersion,
         capabilities: input.capabilities,
+        /*
+         * Only when the node sent them. A node whose installer predates the
+         * field omits it, and writing null on every one of its beats would
+         * overwrite nothing with nothing forever -- harmless, but it would also
+         * mean a node that reported once and then downgraded kept its stale
+         * list. Absent stays absent; reported replaces.
+         */
+        ...(input.units ? { units: input.units } : {}),
         // Availability is based on control-plane receipt time. A skewed or
         // malicious node clock must not keep a dead runtime looking online.
         lastSeenAt: receivedAt,

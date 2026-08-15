@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="v5.7.0"
+INSTALLER_VERSION="v5.8.0"
 # Honor the same state-root overrides the installer accepts, so a non-default
 # layout installed with ORCASYNAPSE_*_STATE_ROOT can be removed the same way.
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
@@ -17,6 +17,11 @@ HEARTBEAT_CLIENT="/usr/local/lib/orcasynapse/hermes-heartbeat.sh"
 DESIRED_STATE_SERVICE="orcasynapse-hermes-desired-state"
 DESIRED_STATE_CLIENT="/usr/local/lib/orcasynapse/hermes-desired-state.sh"
 CORPUS_SERVICE="orcasynapse-hermes-corpus"
+# Removed by name. Every other unit here is deleted by the
+# orcasynapse-hermes-* glob elsewhere in this script, and that glob matches
+# .service and .timer only -- a .target left behind would keep pulling four
+# units that no longer exist on every boot.
+NODE_TARGET="orcasynapse-hermes-node"
 CORPUS_CLIENT="/usr/local/lib/orcasynapse/hermes-corpus-reconciler.py"
 
 # >>> ORCASYNAPSE-INSTALLER-UI v1 - generated from scripts/lib/installer-ui.sh; edit the library, then run: bash scripts/sync-installer-ui.sh >>>
@@ -613,7 +618,12 @@ EOF
 }
 
 stop_managed_services() {
-  # The runtime first: the timers only report on and reconcile it, so stopping
+  # The target first. It Wants the other four, so leaving it enabled while they
+  # are stopped one at a time gives systemd a reason to pull them back up.
+  # Tolerated like everything else here: a node enrolled before the target
+  # existed simply has none.
+  systemctl disable --now "${NODE_TARGET}.target" >/dev/null 2>&1 || true
+  # Then the runtime: the timers only report on and reconcile it, so stopping
   # them first would leave the reconciler free to restart what we just stopped.
   systemctl disable --now "${RUNTIME_SERVICE}.service" >/dev/null 2>&1 || true
   systemctl disable --now "${HEARTBEAT_SERVICE}.timer" >/dev/null 2>&1 || true
@@ -635,6 +645,10 @@ stop_managed_services() {
 }
 
 remove_hermes_runtime() {
+  if [[ -e "/etc/systemd/system/${NODE_TARGET}.target" ]]; then
+    rm -f -- "/etc/systemd/system/${NODE_TARGET}.target"
+    success "Agentic System node target removed."
+  fi
   if [[ -e "/etc/systemd/system/${RUNTIME_SERVICE}.service" ]]; then
     rm -f -- "/etc/systemd/system/${RUNTIME_SERVICE}.service"
     systemctl daemon-reload >/dev/null 2>&1 || true
