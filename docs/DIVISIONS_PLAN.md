@@ -2,6 +2,13 @@
 
 Status: **plan, awaiting approval.** Nothing here is implemented.
 
+Written at v5.5.0; **recalibrated against v6.0.1**. Every citation below was
+re-checked against the tree rather than assumed: the 27 `AdminScope`s, the five
+tables this extends, the nine files it touches, the seeded profile's empty
+`skills`, and all three preconditions — which are all still open. What moved in
+the eleven releases between is recorded inline where it matters, and none of it
+changes the increments, their order, or the estimate.
+
 The shape: a super admin saves a named **tool set** in the Tools tab and a named
 **skill set** in the Skills tab. A **profile** takes one of each plus its own
 system prompt. A **division** is assigned a profile. Users of that division start
@@ -22,15 +29,39 @@ Stated once, because the product should not imply more than it does.
 | Which Hermes toolsets a run may enable | **Enforced in code** — the run payload takes `admittedToolsets`, so the worker hands over the profile's set and nothing more |
 | Which skills a run uses | **Described, not enforced** — the runtime reports its skills but the run payload has no skills field, so nothing selects them per session |
 | How the agent behaves within that boundary | **Described** by the system prompt — its remit, tone, what to decline |
-| Memory (`MEMORY.md`, `USER.md`) | **Not isolated** — one Hermes, one home, and the `memory` toolset is always permitted |
+| Memory (`MEMORY.md`, `USER.md`) | **Not isolated between divisions on one node** — one home, and the `memory` toolset is always permitted. It *is* isolated between nodes; see below |
 
 A skill set is therefore a declaration the prompt can name: *"you work from the
 Finance skill set"*. That is useful and honest. It does not stop another skill
 being loadable by the same runtime.
 
-`docs/ARCHITECTURE.md` already records the memory position ("one trust boundary,
-not per-user memory isolation"), and a live test asserts the product makes no
+`docs/ARCHITECTURE.md:75` already records the memory position ("one trust
+boundary, not per-user memory isolation"), and
+`apps/web/src/connection-definitions.test.ts:31` asserts the product makes no
 tenant-isolation claim. Both remain true here.
+
+### Memory is bounded by the node, not by Hermes
+
+Worth stating precisely, because it changes what the upgrade path is.
+
+`HermesCorpusEntry` is unique on **`(nodeId, path)`**
+(`packages/database/src/drizzle/schema.ts`), and `HERMES_HOME` is a fixed
+`Environment=` line in the runtime unit — one home per node, set at install.
+`memories/MEMORY.md` and `memories/USER.md` are the only two paths the reconciler
+will carry, and the reconciler resolves a write to one of two targets.
+
+So the reason divisions share memory is not that Hermes cannot separate it. It is
+that they share **a node**. The corpus is already keyed by node, which means:
+
+- **This plan's one-VM2 scope is a choice, not a constraint.** Nothing here has
+  to be built differently to allow otherwise.
+- **A second VM2 gives a division genuinely separate memory today**, with no
+  schema or code change, because a second node is a second key.
+
+That makes the honest sentence for the Skills and Memory screens sharper than
+"shared by every division": they are shared by every division *on this node*. If
+a division ever needs real memory separation, the answer is to enrol a node for
+it — not to build isolation inside one.
 
 ## The precondition
 
@@ -51,6 +82,12 @@ is why increment A is first: it is what makes "assigned" mean anything.
 
 Generated migrations only, additive, forward-only. The `hermes-native-v1` epoch
 does not change.
+
+The tree has moved from five migrations to seven since this was written —
+`0005` added `PlatformUpdateAgent` and `PlatformUpdateRun`, `0006` added
+`HermesRuntimeNode.units` — so this work starts at `0007`. Neither touches a
+table named here and neither changes the epoch, so nothing below is affected;
+the number is recorded only so the first `pnpm db:generate` is not a surprise.
 
 ```
 ToolSet                          SkillSet
@@ -175,15 +212,20 @@ passes unchanged. **4–5 days.**
 ### E — the super admin's screens, and the honest statements
 
 - New Settings tab **People**: create users, set or change a division,
-  enable/disable. Divisions managed alongside.
+  enable/disable. Divisions managed alongside. It becomes the sixth tab in that
+  row — Setup, Models, Prompts, Guardrails, System — where "System" is what
+  "Application" was renamed to at v5.7.0.
 - Agents → Profiles: division selector plus the tool-set and skill-set pickers,
   and a division column in the list. The confirm dialog says that assigning a
   profile to a division removes it from everyone else.
 - Skills and Memory screens carry a persistent note that they are shared by every
-  division on this deployment — asserted by a test, so deleting it fails the
-  build.
+  division **on this node** — asserted by a test, so deleting it fails the build.
+  The node wording is the accurate one; see the memory section above.
 
-CSP: `style-src 'self'`, no inline styles.
+CSP: `style-src 'self'`, no inline styles. Any form this adds is a **centred
+`Dialog`**, not the right-hand `Drawer` — the connection form moved off the edge
+at v6.0.1 because a panel sliding in over the screen it serves covers the thing
+it is explaining, and a new one should not reintroduce that.
 
 **Done when:** a super admin creates a tool set, a skill set, a profile using
 both, a division, and a user in it — and that user signs in and sees exactly that
