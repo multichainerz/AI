@@ -33,6 +33,32 @@ flowchart LR
 - **Inference** is an operator-approved OpenAI-compatible endpoint reached through VM1's scoped gateway.
 - **SIEM** forwarding is optional and exports retained audit events at least once.
 
+### Operator workspace
+
+The VM1 workspace is a React application built with Tailwind CSS and a
+source-owned shadcn component layer. Canonical interactive controls live in
+`apps/web/src/components/ui`; OrcaSynapse-specific readiness, session,
+telemetry, and command-center compositions live above those primitives. Both
+light and dark appearances consume the same semantic color variables and one
+semi-rounded component radius.
+
+The web container keeps `style-src 'self'` without `unsafe-inline`. Components
+must not inject runtime stylesheets or JSX `style` attributes, and visual assets
+and fonts must remain same-origin. Lucide provides functional interface icons;
+the orca and synapse artwork remain product assets. The compatibility layer in
+`apps/web/src/ui` may compose canonical controls but must not become a second
+primitive or theme system.
+
+### Release awareness
+
+Settings can ask the API to compare the installed `vX.Y.Z` version with the
+official repository tag list. The API accepts only stable OrcaSynapse release
+tags and returns a release link plus a command pinned to the selected tag. The
+browser may copy that command, but it cannot execute it: the application
+container intentionally has no VM1 root, Docker socket, or host-update control.
+VM2 remains a separately pinned Hermes installation and is repaired or
+re-enrolled through its own governed workflow.
+
 ## State ownership
 
 | State | Owner | Location |

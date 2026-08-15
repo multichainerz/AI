@@ -273,23 +273,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
     gap: 0;
     padding-inline: 0;
   }
-  .app-shell--focus .sidebar-settings-button {
-    width: 52px;
-    height: 52px;
-    min-height: 52px;
-    margin: 8px auto;
-    border: 1px solid rgba(255, 255, 255, 0.045);
-    border-radius: var(--radius-component);
-    background: rgba(255, 255, 255, 0.018);
-  }
-  .app-shell--focus .sidebar-settings-button:hover {
-    border-color: rgba(255, 255, 255, 0.12);
-    background: rgba(255, 255, 255, 0.05);
-  }
-  .app-shell--focus .sidebar-settings-button[aria-current="page"] {
-    border-color: rgba(190, 175, 255, 0.22);
-    background: rgba(255, 255, 255, 0.085);
-  }
   .app-shell--focus .sidebar nav button {
     height: 52px;
     transition: color 150ms ease, background-color 150ms ease, border-color 150ms ease, transform 150ms ease;
@@ -355,21 +338,25 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
  */
 .mobile-brand { display: flex; align-items: center; gap: 11px; }
 .mobile-brand strong { display: block; font-family: var(--display); font-size: 15px; font-weight: 600; letter-spacing: -.01em; color: #fff; }
-.sidebar nav { min-height: 0; flex: 1; display: grid; align-content: start; gap: 17px; padding: 1px 2px 10px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.28) transparent; }
+/* A column rather than a start-packed grid, and the change is load-bearing:
+   `.nav-group--bottom` reaches the foot of the menu with an auto margin, which
+   a grid with `align-content: start` would have swallowed silently. */
+.sidebar nav { min-height: 0; flex: 1; display: flex; flex-direction: column; gap: 17px; padding: 1px 2px 10px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.28) transparent; }
 .nav-group { display: grid; gap: 3px; }
-.nav-settings-mobile { display: none; }
+/* Settings, last in the same menu. The auto margin is the whole of "at the
+   bottom" -- and it is also what keeps the row reachable when the rail is too
+   short for its own contents: once the nav scrolls, an auto margin resolves to
+   zero, so the row follows Operations instead of being pushed past the fold. */
+.nav-group--bottom { margin-top: auto; }
 .sidebar-bottom {
   flex: 0 0 auto;
   margin: 12px -12px -16px;
   border-top: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(0, 0, 0, 0.08);
 }
-.sidebar-settings-button {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  background: transparent;
-}
-.sidebar-settings-button[aria-current="page"] { background: rgba(255, 255, 255, 0.1); }
-.sidebar-settings-button:focus-visible { outline-offset: -3px; }
+/* The width control, not a destination: it sits below the menu, outside the
+   `<nav>`, on the footer band -- so the one edge-to-edge row left in the rail
+   is the one row that does not navigate anywhere. */
 .sidebar-collapse-button {
   min-height: 58px;
   background: transparent;
@@ -659,37 +646,22 @@ main > * { width: min(100%, 1380px); margin-left: auto; margin-right: auto; }
   box-shadow: 0 36px 100px -44px rgb(0 0 0 / 0.9);
   transition: background-color 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
 }
-.theme-toggle {
-  display: inline-flex;
-  min-height: 34px;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 10px 4px 5px;
-  color: var(--muted);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-component);
-  background: var(--raised);
-  cursor: pointer;
-  font-size: 11px;
-  font-weight: 650;
-  line-height: 1;
-  transition: color 180ms ease, border-color 180ms ease, background-color 180ms ease, box-shadow 180ms ease;
-}
-.theme-toggle:hover {
-  color: var(--text);
-  border-color: var(--faint);
-  box-shadow: 0 6px 18px -14px rgb(var(--text-rgb) / 0.72);
-}
 .theme-toggle__track {
   position: relative;
   display: block;
   width: 48px;
   height: 24px;
   flex: 0 0 auto;
+  padding: 0;
+  border-color: transparent;
   border-radius: 999px;
   background: rgb(var(--text-rgb) / 0.08);
   box-shadow: inset 0 0 0 1px rgb(var(--text-rgb) / 0.12);
   transition: background-color 240ms ease, box-shadow 240ms ease;
+}
+.theme-toggle__track:hover {
+  background: rgb(var(--text-rgb) / 0.12);
+  box-shadow: inset 0 0 0 1px rgb(var(--text-rgb) / 0.18);
 }
 .theme-toggle__thumb {
   position: absolute;
@@ -718,7 +690,6 @@ main > * { width: min(100%, 1380px); margin-left: auto; margin-right: auto; }
 .theme-toggle__sun svg { width: 12px; height: 12px; }
 .theme-toggle__moon { opacity: 1; transform: rotate(0deg) scale(1); }
 .theme-toggle__sun { opacity: 0; transform: rotate(-70deg) scale(0.55); }
-.theme-toggle__label { min-width: 26px; text-align: left; }
 .theme-toggle__track[data-mode="light"] {
   background: rgb(34 211 238 / 0.2);
   box-shadow: inset 0 0 0 1px rgb(14 155 181 / 0.28);
@@ -730,30 +701,19 @@ main > * { width: min(100%, 1380px); margin-left: auto; margin-right: auto; }
 }
 .theme-toggle__track[data-mode="light"] .theme-toggle__moon { opacity: 0; transform: rotate(70deg) scale(0.55); }
 .theme-toggle__track[data-mode="light"] .theme-toggle__sun { opacity: 1; transform: rotate(0deg) scale(1); }
-.theme-toggle--brand {
-  color: rgb(255 255 255 / 0.76);
-  border-color: rgb(255 255 255 / 0.16);
-  background: rgb(255 255 255 / 0.06);
-}
-.theme-toggle--brand:hover {
-  color: #fff;
-  border-color: rgb(255 255 255 / 0.3);
-  background: rgb(255 255 255 / 0.1);
-}
 .theme-toggle__track.theme-toggle--brand {
   background: rgb(8 8 12 / 0.42);
   box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.12);
+}
+.theme-toggle__track.theme-toggle--brand:hover {
+  background: rgb(8 8 12 / 0.55);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.2);
 }
 .theme-toggle__track.theme-toggle--brand[data-mode="light"] {
   background: rgb(34 211 238 / 0.28);
   box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.18);
 }
-@media (max-width: 560px) {
-  .workspace-header .theme-toggle { padding-right: 5px; }
-  .workspace-header .theme-toggle__label { display: none; }
-}
 @media (prefers-reduced-motion: reduce) {
-  .theme-toggle,
   .theme-toggle__track,
   .theme-toggle__thumb,
   .theme-toggle__moon,
@@ -861,7 +821,7 @@ main > * { width: min(100%, 1380px); margin-left: auto; margin-right: auto; }
     min-height: 0;
   }
   .dashboard-hero__content {
-    grid-template-rows: auto auto auto minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
   }
 }
 .mobile-brand { display: none; }
@@ -1106,11 +1066,20 @@ button:disabled { opacity: .48; cursor: not-allowed; }.panel { border: 1px solid
   body { padding-bottom: 72px; }
   .app-shell { display: block; }
   .sidebar { position: fixed; inset: auto 0 0; z-index: 150; width: 100%; height: 72px; display: flex; flex-direction: row; padding: 7px max(10px, env(safe-area-inset-right)) calc(7px + env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left)); border: 0; border-top: 1px solid rgba(255, 255, 255, 0.14); background: rgb(var(--brand-rgb) / 0.95); backdrop-filter: blur(16px); }
-  .sidebar nav { min-width: 0; flex: 1 1 auto; display: flex; align-content: initial; gap: 2px; padding: 0; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+  .sidebar nav { min-width: 0; flex: 1 1 auto; display: flex; flex-direction: row; gap: 2px; padding: 0; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
   .sidebar nav::-webkit-scrollbar { display: none; }
+  /* Both groups stop generating boxes here, which is what puts every row --
+     Settings included -- on the one horizontal run. It also disposes of
+     `.nav-group--bottom`'s auto margin: in a row-direction flex container that
+     margin would push the group down and off the bar. */
   .nav-group { display: contents; }
-  .nav-settings-mobile { display: contents; }
+  /* `width: auto` first, and it is the reason the rest of this rule works.
+     The rows carry `w-full` for the rail, where the full width is the point;
+     here that resolved against the bar, so every tile measured the whole bar,
+     `shrink-0` refused to give any of it back, and the dock scrolled one area
+     at a time. The `min-width` below is what a tile was always meant to be. */
   .sidebar nav button {
+    width: auto;
     min-width: 62px;
     height: 58px;
     flex-direction: column;
@@ -1176,10 +1145,26 @@ button:disabled { opacity: .48; cursor: not-allowed; }.panel { border: 1px solid
  */
 .setup-spinner { display: inline-block; width: 15px; height: 15px; border: 2px solid var(--border-strong); border-top-color: var(--accent); border-radius: 50%; animation: setup-spin .75s linear infinite; }@media (prefers-reduced-motion: reduce) { .setup-spinner { animation: none; } }
 @keyframes setup-spin { to { transform: rotate(360deg); } }
-.runtime-nodes-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; align-items: start; gap: 13px; }
+/*
+ * One column, not a page-width pair.
+ *
+ * This panel is now the body of setup's second step, so it lives inside the
+ * wizard's content column at roughly 780px rather than across the whole page.
+ * A 300px aside inside that left 465px for a four-column node row, and the
+ * five-child principles grid — which has four columns — pushed its last child
+ * onto a second row 65px wide, where the sentence rendered one letter per line.
+ *
+ * These are the rules the 980px media query below already applied; they are
+ * promoted to the base because the panel no longer has a width at which the
+ * two-column form is right. Measured in the browser at 1440x900, not inferred:
+ * a media query keys on the viewport, and the container was the thing that
+ * changed.
+ */
+.runtime-nodes-layout { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 13px; }
 .runtime-nodes-overview { min-width: 0; overflow: hidden; }
 .runtime-node-heading-actions { display: flex; gap: 8px; }
-.runtime-node-principles { display: grid; grid-template-columns: repeat(3, minmax(0, 130px)) minmax(220px, 1fr); gap: 1px; padding: 1px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); background: var(--border); }
+.runtime-node-principles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; padding: 1px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); background: var(--border); }
+.runtime-node-principles > div { grid-column: 1 / -1; min-height: auto; }
 .runtime-node-principles > * { min-height: 76px; display: flex; flex-direction: column; justify-content: center; padding: 13px 16px; background: var(--bg); }
 .runtime-node-principles strong { font-size: 16px; font-weight: 650; }
 .runtime-node-principles span { margin-top: 5px; color: var(--faint); font-size: 8px; line-height: 1.45; }
@@ -1348,4 +1333,79 @@ strong, output, time, td, th { font-variant-numeric: tabular-nums; }
 .anim-shine { animation: ask-shine 5.4s ease-in-out infinite; }
 
 @media (prefers-reduced-motion: reduce) {.anim-live, .anim-shine { animation: none; }
+}
+
+/*
+ * The chat composer surface.
+ *
+ * Two things the utility layer cannot state under `style-src 'self'`, kept
+ * together because they describe one control.
+ *
+ * 1. Height that follows the draft. Every JavaScript autosize writes a measured
+ *    pixel height into `element.style`, which is the one attribute the
+ *    production CSP drops. So the field is a single-cell grid holding the
+ *    textarea and a hidden copy of the same text: the copy is ordinary flow
+ *    content and therefore has a natural height, the textarea is stretched to
+ *    the row it shares, and `max-height` is where growing stops and scrolling
+ *    starts. React's only job is to keep `data-composer-value` in step with the
+ *    draft, which `chat-composer.test.tsx` asserts.
+ *
+ *    The copy has to be the same box as the textarea in every respect that
+ *    affects wrapping, so one rule sets both. Only the reading size is left to
+ *    the `text-read` class on the grid, which both inherit.
+ *
+ * 2. Focus as a property of the whole surface rather than a ring drawn around
+ *    the textarea inside it. This is a stylesheet rule and not Tailwind's
+ *    `ring-*` because a ring composes into the same `box-shadow` as
+ *    `shadow-card`, and `--shadow-card` is literally `none` in the dark theme:
+ *    `box-shadow: 0 0 #0000, 0 0 #0000, none` is not a valid shadow list, so
+ *    the browser drops the whole declaration and the focus ring vanishes in
+ *    exactly one theme. Stating the composer's own depth here avoids the
+ *    composition entirely.
+ */
+.chat-composer { transition: border-color 160ms ease, box-shadow 160ms ease; }
+.chat-composer:focus-within {
+  border-color: rgb(var(--accent-rgb) / 0.8);
+  box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.14);
+}
+/* Dark separates by border contrast and casts nothing, as everywhere else in
+   the set; light needs the shadow because its hairlines are faint by design. */
+[data-theme="light"] .chat-composer {
+  box-shadow: 0 1px 2px rgb(var(--backdrop-rgb) / 0.05), 0 12px 28px -20px rgb(var(--backdrop-rgb) / 0.3);
+}
+[data-theme="light"] .chat-composer:focus-within {
+  box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.14), 0 12px 28px -20px rgb(var(--backdrop-rgb) / 0.3);
+}
+/* An unusable composer sits *in* the page rather than on it, so it casts
+   nothing in either theme — the one thing `bg-bg` alone cannot say. Last,
+   because it ties on specificity with the light-theme rule above. */
+.chat-composer.is-off { box-shadow: none; }
+
+.chat-composer-field { display: grid; grid-template-columns: minmax(0, 1fr); }
+.chat-composer-field > textarea,
+.chat-composer-field::after {
+  grid-area: 1 / 1 / 2 / 2;
+  min-height: 3.25rem;
+  max-height: 13rem;
+  padding: 0.625rem 0.75rem 0.5rem;
+  font: inherit;
+  letter-spacing: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border: 0;
+}
+/* Past `max-height` the textarea takes its scroll back, and a platform-width
+   scrollbar inside a 10px corner is the whole surface's worst edge. */
+.chat-composer-field > textarea { resize: none; overflow-y: auto; scrollbar-width: thin; }
+/* The trailing space is load-bearing: without it a draft ending in a newline
+   reserves no room for the line the caret is already sitting on. */
+.chat-composer-field::after {
+  content: attr(data-composer-value) " ";
+  visibility: hidden;
+  pointer-events: none;
+  /* `visibility: hidden` paints nothing but still occupies its box, and past
+     `max-height` that box is the whole draft: a 31,000-character message left
+     eight thousand pixels of invisible text hanging out of the composer and
+     into the page's scroll height. Measured, not reasoned about. */
+  overflow: hidden;
 }

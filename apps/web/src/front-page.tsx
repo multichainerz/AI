@@ -51,18 +51,77 @@ interface FrontPageProps {
 }
 
 /**
- * The product in one picture: intent enters a governed agentic harness, which
- * coordinates models, Hermes sessions, native memory, policy, and tools before
- * an action leaves the controlled environment. The return path makes the
- * operational loop explicit.
- * Static by design, like the synapse field behind it.
+ * The deployment in one picture, and deliberately the real one: an operator's
+ * intent reaches the control plane, which holds identity, policy, models and
+ * the audit trail, and which dispatches a governed run to an isolated Hermes
+ * runtime that owns its own sessions, memory and tools. Inference is an
+ * approved route out; the dashed return is the evidence coming back.
+ *
+ * It replaced an abstract "intent → harness → tools" drawing carrying fourteen
+ * labels around an orbit. The picture an operator needs before signing in is
+ * the boundary they are about to run things inside, not a metaphor — so this
+ * one names the two machines, keeps a single left-to-right reading order, and
+ * spends its contrast on the one box that is this product.
+ *
+ * Static by design, like the synapse field behind it. Every colour is a
+ * presentation attribute rather than an inline style (`style-src 'self'`).
  */
-function AgenticHarnessDiagram() {
+const CONTROL_PLANE_CAPABILITIES = [
+  "Identity · Policy",
+  "Models · Prompts",
+  "Approved inference",
+  "Audit · Evidence",
+];
+// Deliberately the words the Agents area now uses for the same four things —
+// Runtime, Memory, Skills, Agent tools — so the diagram an operator reads
+// before signing in names what they will find inside.
+const RUNTIME_CAPABILITIES = ["Native sessions", "Memory · Skills", "Agent tools"];
+
+function DiagramCard({
+  x,
+  title,
+  subtitle,
+  items,
+  hero,
+}: {
+  x: number;
+  title: string;
+  subtitle: string;
+  items: string[];
+  hero?: boolean;
+}) {
+  return (
+    <g>
+      <rect
+        x={x}
+        y="58"
+        width={hero ? 184 : 142}
+        height="126"
+        rx="17"
+        fill={hero ? "#2A1470" : "#FFFFFF"}
+        fillOpacity={hero ? undefined : "0.07"}
+        stroke={hero ? "#22D3EE" : "#8C74F2"}
+        strokeOpacity={hero ? "0.5" : "0.55"}
+        strokeWidth={hero ? 1.6 : 1.5}
+      />
+      <text x={x + 20} y="86" fill="#FFFFFF" fontSize="11" fontWeight="700" letterSpacing="0.8" className="font-sans">{title}</text>
+      <text x={x + 20} y="100" fill="#B9A5FF" fontSize="8.5" className="font-sans">{subtitle}</text>
+      {items.map((label, index) => (
+        <g key={label}>
+          <circle cx={x + 22} cy={118.5 + index * 17} r="2.5" fill="#22D3EE" fillOpacity={hero ? "1" : "0.75"} />
+          <text x={x + 33} y={122 + index * 17} fill="#D8CFFF" fontSize="9" className="font-sans">{label}</text>
+        </g>
+      ))}
+    </g>
+  );
+}
+
+function DeploymentDiagram() {
   return (
     <svg
-      viewBox="0 0 560 250"
+      viewBox="0 0 560 224"
       className="block w-full max-w-[520px] overflow-visible"
-      aria-label="Agentic workflow coordinates intelligence and action inside your controlled environment"
+      aria-label="An operator's intent enters the OrcaSynapse control plane, which holds identity, policy, models, the approved inference route and the audit trail, and dispatches governed runs to an isolated Hermes runtime that owns its own sessions, memory and tools — all inside infrastructure you control"
     >
       <defs>
         <marker id="front-page-arrow" markerHeight="6" markerWidth="6" orient="auto" refX="5" refY="3">
@@ -70,68 +129,28 @@ function AgenticHarnessDiagram() {
         </marker>
       </defs>
 
-      <rect x="14" y="16" width="532" height="218" rx="22" fill="none" stroke="#FFFFFF" strokeOpacity="0.28" strokeWidth="1.6" strokeDasharray="9 8" />
-      <text x="34" y="42" fill="#B9A5FF" fontSize="10.5" fontWeight="600" letterSpacing="1.4" className="font-sans">CONTROLLED ENVIRONMENT</text>
+      <rect x="8" y="10" width="544" height="204" rx="20" fill="none" stroke="#FFFFFF" strokeOpacity="0.24" strokeWidth="1.5" strokeDasharray="9 8" />
+      <text x="28" y="35" fill="#B9A5FF" fontSize="10" fontWeight="650" letterSpacing="1.5" className="font-sans">INFRASTRUCTURE YOU CONTROL</text>
 
       <g>
-        <rect x="34" y="94" width="82" height="64" rx="12" fill="#FFFFFF" fillOpacity="0.1" stroke="#8C74F2" strokeOpacity="0.65" strokeWidth="1.5" />
-        <circle cx="53" cy="116" r="6" fill="#22D3EE" fillOpacity="0.18" stroke="#22D3EE" strokeWidth="1.5" />
-        <path d="m50 116 2 2 4-5" fill="none" stroke="#22D3EE" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" />
-        <text x="67" y="119" fill="#FFFFFF" fontSize="10.5" fontWeight="650" className="font-sans">INTENT</text>
-        <text x="51" y="140" fill="#B9A5FF" fontSize="8.5" className="font-sans">Human · event</text>
+        <rect x="26" y="93" width="114" height="56" rx="14" fill="#FFFFFF" fillOpacity="0.09" stroke="#B9A5FF" strokeOpacity="0.4" strokeWidth="1.4" />
+        <circle cx="48" cy="112" r="5.5" fill="none" stroke="#22D3EE" strokeWidth="1.6" />
+        <path d="M39 131c1.8-6.5 5-9.5 9-9.5s7.2 3 9 9.5" fill="none" stroke="#22D3EE" strokeLinecap="round" strokeWidth="1.6" />
+        <text x="66" y="116" fill="#FFFFFF" fontSize="9.5" fontWeight="650" letterSpacing="0.5" className="font-sans">OPERATOR</text>
+        <text x="66" y="131" fill="#B9A5FF" fontSize="8" className="font-sans">Intent · event</text>
       </g>
 
-      <g fill="none" stroke="#8C74F2" strokeLinecap="round" strokeWidth="1.5">
-        <path d="M116 126h62" markerEnd="url(#front-page-arrow)" />
-        <path d="M326 126h56" markerEnd="url(#front-page-arrow)" />
-        <path d="M222 82 207 68" strokeOpacity="0.68" />
-        <path d="m276 82 29-14" strokeOpacity="0.68" />
-        <path d="m219 164-17 15" strokeOpacity="0.68" />
-        <path d="m278 163 20 16" strokeOpacity="0.68" />
+      {/* Solid out, dashed back: the request and the evidence it returns. Both
+          carried the word for it until the labels turned out to be wider than
+          the 40px they had to sit in, overprinting the cards on either side. */}
+      <g fill="none" stroke="#22D3EE" strokeLinecap="round" strokeOpacity="0.85" strokeWidth="1.6">
+        <path d="M140 121h24" markerEnd="url(#front-page-arrow)" />
+        <path d="M352 100h34" markerEnd="url(#front-page-arrow)" />
       </g>
+      <path d="M392 142h-34" fill="none" stroke="#22D3EE" strokeDasharray="4 6" strokeLinecap="round" strokeOpacity="0.6" strokeWidth="1.4" markerEnd="url(#front-page-arrow)" />
 
-      <g>
-        <circle cx="252" cy="126" r="66" fill="#7C5CF5" fillOpacity="0.08" stroke="#8C74F2" strokeOpacity="0.22" />
-        <circle cx="252" cy="126" r="45" fill="#4A2BAE" fillOpacity="0.82" stroke="#B9A5FF" strokeOpacity="0.6" strokeWidth="1.6" />
-        <path d="M232 125c8-14 18-18 29-10 7 5 8 15 2 24-6 8-18 8-26 1-7-6-10-16-5-25" fill="none" stroke="#22D3EE" strokeLinecap="round" strokeWidth="2" />
-        <circle cx="232" cy="125" r="4" fill="#22D3EE" />
-        <circle cx="263" cy="139" r="4" fill="#22D3EE" />
-        <circle cx="261" cy="115" r="3" fill="#B9A5FF" />
-        <text x="252" y="150" fill="#FFFFFF" textAnchor="middle" fontSize="8.5" fontWeight="650" letterSpacing="0.9" className="font-sans">PLAN · REASON</text>
-      </g>
-
-      {[
-        [166, 49, 76, "MODELS"],
-        [286, 49, 94, "SESSIONS"],
-        [160, 176, 84, "MEMORY"],
-        [286, 176, 76, "POLICY"],
-      ].map(([x, y, width, label]) => (
-        <g key={String(label)}>
-          <rect x={x} y={y} width={width} height="25" rx="12.5" fill="#FFFFFF" fillOpacity="0.09" stroke="#B9A5FF" strokeOpacity="0.36" />
-          <circle cx={Number(x) + 13} cy={Number(y) + 12.5} r="2.8" fill="#22D3EE" />
-          <text x={Number(x) + 23} y={Number(y) + 16} fill="#D8CFFF" fontSize="8.5" fontWeight="650" letterSpacing="0.7" className="font-sans">{label}</text>
-        </g>
-      ))}
-      <text x="252" y="216" fill="#B9A5FF" textAnchor="middle" fontSize="10.5" fontWeight="650" letterSpacing="1.2" className="font-sans">AGENTIC HARNESS</text>
-
-      <g>
-        <rect x="389" y="77" width="130" height="96" rx="13" fill="#2A1470" stroke="#8C74F2" strokeOpacity="0.55" strokeWidth="1.5" />
-        <text x="406" y="100" fill="#FFFFFF" fontSize="10.5" fontWeight="650" className="font-sans">TOOLS + ACTIONS</text>
-        <g fill="#FFFFFF" fillOpacity="0.08">
-          <rect x="404" y="111" width="100" height="15" rx="7.5" />
-          <rect x="404" y="132" width="100" height="15" rx="7.5" />
-        </g>
-        <g fill="#22D3EE">
-          <circle cx="415" cy="118.5" r="2.8" />
-          <circle cx="415" cy="139.5" r="2.8" />
-        </g>
-        <text x="425" y="121.5" fill="#B9A5FF" fontSize="8" className="font-sans">Execute workflows</text>
-        <text x="425" y="142.5" fill="#B9A5FF" fontSize="8" className="font-sans">Operate systems</text>
-        <text x="454" y="162" fill="#22D3EE" textAnchor="middle" fontSize="8" fontWeight="650" letterSpacing="0.7" className="font-sans">GOVERNED OUTPUT</text>
-      </g>
-
-      <path d="M454 180C431 224 145 228 75 170" fill="none" stroke="#22D3EE" strokeDasharray="4 7" strokeOpacity="0.55" strokeWidth="1.4" markerEnd="url(#front-page-arrow)" />
-      <text x="393" y="217" fill="#B9A5FF" fontSize="8" fontWeight="600" letterSpacing="0.7" className="font-sans">OBSERVE · ADAPT · CONTINUE</text>
+      <DiagramCard hero x={168} title="CONTROL PLANE" subtitle="Governs every run" items={CONTROL_PLANE_CAPABILITIES} />
+      <DiagramCard x={392} title="HERMES" subtitle="Isolated runtime" items={RUNTIME_CAPABILITIES} />
     </svg>
   );
 }
@@ -224,7 +243,7 @@ export function FrontPage(props: FrontPageProps) {
                 policy, and tools—all inside infrastructure you control.
               </p>
               <div className="mt-5 hidden sm:block">
-                <AgenticHarnessDiagram />
+                <DeploymentDiagram />
               </div>
             </div>
 
@@ -324,25 +343,11 @@ export function FrontPage(props: FrontPageProps) {
                   ) : null}
                 </form>
               ) : (
-                <form onSubmit={submitPassword}>
-                  <div className="flex items-start gap-3.5">
-                    <span className="grid h-11 w-11 shrink-0 place-items-center rounded bg-[#703DEF]/10 text-[#703DEF] [&_.fill-node]:fill-[#0E9BB5]">
-                      <LockIcon size={21} />
-                    </span>
-                    <div className="min-w-0">
-                      <span className="block text-[10.5px] font-semibold uppercase tracking-[0.14em] text-[#703DEF]">Credential update</span>
-                      <h2 className="m-0 mt-1 font-display text-[25px] font-semibold tracking-[-0.028em] text-[#191A1C]">
-                        {recovering ? "Reset local administrator" : "Change temporary password"}
-                      </h2>
-                      <p className="mb-0 mt-1.5 text-[13px] leading-relaxed text-[#6B6C74]">
-                        {recovering
-                          ? "The recovery key has been verified. Set a new local password; every other local and recovery session will be revoked."
-                          : "Set a permanent password before entering the workspace. Every other session for this account will be revoked."}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="mt-6 flex flex-col gap-3">
+                <form
+                  onSubmit={submitPassword}
+                  aria-label={recovering ? "Reset local administrator" : "Change temporary password"}
+                >
+                  <div className="flex flex-col gap-3">
                     {recovering ? (
                       <CredentialField
                         label="Username"

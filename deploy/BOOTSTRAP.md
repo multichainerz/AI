@@ -34,7 +34,7 @@ The bootstrap resolves `ORCASYNAPSE_REF` (default `main`) to an immutable Git co
 sudo env ORCASYNAPSE_REF=<40-character-commit> ORCASYNAPSE_ARCHIVE_SHA256=<sha256> bash install.sh
 ```
 
-When `/opt/orcasynapse` already exists, the installer distinguishes a verified installation with the current `hermes-native-v1` schema epoch from older or unknown state. Only a current-epoch installation can use the in-place source update that preserves PostgreSQL volumes, protected secrets, and recovery material. Pre-v3.16 installations require a clean reinstall, after a separate `ERASE` confirmation because it permanently removes the Compose stack, named data volumes, accounts, and local secrets. Non-interactive automation must explicitly set `ORCASYNAPSE_EXISTING_INSTALL_ACTION=upgrade|erase|abort`; automated erase additionally requires `ORCASYNAPSE_CONFIRM_ERASE=ERASE`.
+When `/opt/orcasynapse` already exists, the installer distinguishes a verified installation with the current `hermes-native-v1` schema epoch from older or unknown state. Only a current-epoch installation can use the in-place source update that preserves PostgreSQL volumes, protected secrets, and recovery material. Pre-v4.6.0 installations require a clean reinstall, after a separate `ERASE` confirmation because it permanently removes the Compose stack, named data volumes, accounts, and local secrets. Non-interactive automation must explicitly set `ORCASYNAPSE_EXISTING_INSTALL_ACTION=upgrade|erase|abort`; automated erase additionally requires `ORCASYNAPSE_CONFIRM_ERASE=ERASE`.
 
 From an intact local release bundle, the equivalent host command is:
 

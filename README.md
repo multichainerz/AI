@@ -35,7 +35,7 @@ There is no control-plane vector store, embedding model, document library, exter
 
 ## Install
 
-v4.6.0 established the greenfield `hermes-native-v1` schema generation. v4.7.0 added the Corpus companion; subsequent v3.17 patches hardened its privilege transition and ensure every mirrored Skill support tree has an observed parent. Existing v3.16 or v3.17 VM1 installations update in place; rerun the current generated VM2 installer with `--repair` to install the current companion. Databases from before v3.16 still require a clean installation.
+v4.6.0 established the greenfield `hermes-native-v1` schema generation. v4.7.0 added the Corpus companion; subsequent v4.7.x patches hardened its privilege transition and ensure every mirrored Skill support tree has an observed parent. Existing v4.6.0 or v4.7.x VM1 installations update in place; rerun the current generated VM2 installer with `--repair` to install the current companion. Databases from before v4.6.0 still require a clean installation.
 
 On a clean Debian or Ubuntu VM1:
 
@@ -53,7 +53,7 @@ VM2 installs vanilla Hermes at the approved commit, applies the managed native-m
 - **Session:** durable conversations over Hermes’ native session API, with streaming, cancellation, telemetry, feedback, archive, export, and audit projections.
 - **Agents:** immutable Profile Distributions, run history, governed tools, and a repository-style view of Hermes-native memory and Skills.
 - **Settings:** application updates, inference routes, Hermes enrollment, enterprise identity, prompts, guardrails, runtime toolset admissions, and encrypted connections.
-- **Operations:** incidents, evaluation evidence, readiness controls, the audit trail, and optional SIEM forwarding.
+- **Operations:** health and incidents, release gates, the audit trail, and optional SIEM forwarding.
 
 ## Memory and audit
 
@@ -92,6 +92,7 @@ Use `pnpm dev` for the API and workspace and `pnpm dev:worker` for durable Herme
 | [Prompt controls](docs/PROMPT_CONTROL_RUNBOOK.md) | Versioned prompts and promotion |
 | [Guardrail controls](docs/GUARDRAIL_CONTROL_RUNBOOK.md) | Runtime policy and evaluation gates |
 | [Product requirements](docs/ORCASYNAPSE_PRD.md) | Current scope, roles, and acceptance boundaries |
+| [Web design system](apps/web/DESIGN_SYSTEM.md) | shadcn/Tailwind source boundaries, tokens, CSP, and accessibility |
 | [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [License](LICENSE) | Project meta |
 
 > OrcaSynapse is an on-premises pre-production control plane. Production approval remains environment-specific.

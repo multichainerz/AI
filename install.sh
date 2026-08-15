@@ -665,7 +665,7 @@ choose_existing_install_action() {
     case "${configured_action}" in
       upgrade)
         [[ "${verified}" == "1" ]] || fail "cannot upgrade an unverified directory; use an empty path or explicitly choose erase"
-        [[ "${epoch_compatible}" == "1" ]] || fail "this greenfield release cannot preserve a pre-v3.16 database; choose erase on clean VM1 and restore only through the preserved prior release"
+        [[ "${epoch_compatible}" == "1" ]] || fail "this greenfield release cannot preserve a pre-v4.6.0 database; choose erase on clean VM1 and restore only through the preserved prior release"
         existing_install_action="upgrade"
         return
         ;;

@@ -1,34 +1,60 @@
 /**
  * @vitest-environment jsdom
  *
- * Most cases here render to static markup, which never runs an effect. The
- * recovery-owner case has to: the defect it holds down only exists once the
- * snapshot effect has run more than once.
+ * Setup as a three-step wizard.
+ *
+ * The screen this replaces was six unrelated blocks whose ordering an operator
+ * had to infer from the order of the cards, with a terminal action that could
+ * not be reached at all. The cases below are the ones that make it a sequence
+ * rather than a page: one step open, every step re-openable, and every reason a
+ * step is waiting attached to that step rather than pooled into a page-level
+ * list whose count disagreed with its own contents.
+ *
+ * `VIEW_PREVIEW_OUT` writes the rendered markup so the populated screen can be
+ * looked at without signing in, as elsewhere in this suite. This file carried
+ * neither that nor an inline-style assertion before the rewrite, which made it
+ * the only view test that could not have caught a CSP-breaking change.
  */
-import type { OnboardingSnapshot, ServiceConnectionSummary, ServiceKind } from "@orcasynapse/contracts";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import type {
+  AdministratorSession,
+  AgentProfile,
+  AgentRuntimeControl,
+  HermesRuntimeNode,
+  OnboardingSnapshot,
+  ServiceConnectionSummary,
+  ServiceKind,
+} from "@orcasynapse/contracts";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { writeFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const snapshot = vi.hoisted(() => ({
-  generatedAt: "2026-08-07T00:00:00.000Z",
+const snapshot = {
+  generatedAt: "2026-08-15T00:00:00.000Z",
   installation: {},
-  architecture: { topologyMode: "COMPACT", targetEnvironment: "DEVELOPMENT", reason: null, revision: 1 },
+  architecture: { topologyMode: "COMPACT", targetEnvironment: "DEVELOPMENT", reason: "Pilot", revision: 1 },
   recovery: { recoveryOwner: "Platform owner", revision: 3 },
   journey: { status: "IN_PROGRESS", activatedEnvironment: null, revision: 2 },
   components: [],
   steps: [],
   evidence: [],
   gate: { ready: false, blockers: [], warnings: [] },
-} as unknown as OnboardingSnapshot));
+} as unknown as OnboardingSnapshot;
+
+const api = vi.hoisted(() => ({
+  getOnboardingSnapshot: vi.fn(),
+  getHermesRuntimeNodes: vi.fn(),
+  runOnboardingValidation: vi.fn(),
+}));
 
 vi.mock("./api.js", async () => {
   const actual = await vi.importActual<typeof import("./api.js")>("./api.js");
-  return { ...actual, getOnboardingSnapshot: vi.fn(async () => snapshot) };
+  return { ...actual, ...api };
 });
 
 const { OnboardingView } = await import("./onboarding-view.js");
+
+const session = { role: "PLATFORM_ADMIN", scopes: [], passwordChangeRequired: false } as unknown as AdministratorSession;
 
 function connection(kind: ServiceKind, baseUrl: string): ServiceConnectionSummary {
   return {
@@ -36,8 +62,24 @@ function connection(kind: ServiceKind, baseUrl: string): ServiceConnectionSummar
     baseUrl,
     enabled: true,
     status: "HEALTHY",
+    configuration: kind === "INFERENCE" ? { modelAlias: "laguna-s" } : {},
   } as ServiceConnectionSummary;
 }
+
+const onlineNode = {
+  id: "3f1d1b9c-5a5c-4a58-9a1e-8b7f3c2d1e00",
+  slug: "hermes-runtime-01",
+  displayName: "Hermes Runtime 01",
+  baseUrl: "http://10.0.0.12:8642",
+  status: "ONLINE",
+  revision: 1,
+  enrolledAt: "2026-08-15T00:00:00.000Z",
+  revokedAt: null,
+  lastSeenAt: "2026-08-15T00:00:00.000Z",
+} as unknown as HermesRuntimeNode;
+
+const activeProfile = { status: "ACTIVE" } as unknown as AgentProfile;
+const enabledRuntime = { enabled: true } as unknown as AgentRuntimeControl;
 
 const callbacks = {
   onConfigure: vi.fn(),
@@ -48,152 +90,278 @@ const callbacks = {
   onSessionExpired: vi.fn(),
 };
 
-const runtimeState = {
-  agentRuntime: null,
-  profiles: [],
-  runtimeNodes: [],
+type Overrides = Partial<Parameters<typeof OnboardingView>[0]>;
+
+function props(overrides: Overrides = {}) {
+  return {
+    session,
+    oidcConfigured: false,
+    connections: [],
+    agentRuntime: null,
+    profiles: [] as AgentProfile[],
+    runtimeNodes: [] as HermesRuntimeNode[],
+    ...callbacks,
+    ...overrides,
+  };
+}
+
+/** Everything the first step needs, and nothing beyond it. */
+const inferenceDone: Overrides = {
+  connections: [connection("INFERENCE", "http://vllm.internal:8000")],
 };
+
+/** All three steps satisfied. */
+const everythingDone: Overrides = {
+  connections: [
+    connection("INFERENCE", "http://vllm.internal:8000"),
+    connection("HERMES", "http://hermes.internal:8642"),
+  ],
+  runtimeNodes: [onlineNode],
+  profiles: [activeProfile],
+  agentRuntime: enabledRuntime,
+};
+
+async function open(overrides: Overrides = {}) {
+  render(<OnboardingView {...props(overrides)} />);
+  // The snapshot load runs in an effect; every case below reads a screen that
+  // has already seen it.
+  await waitFor(() => expect(api.getOnboardingSnapshot).toHaveBeenCalled());
+  await act(async () => { await Promise.resolve(); });
+}
+
+const rail = () => within(screen.getByRole("list", { name: "Setup steps" }));
+
+beforeEach(() => {
+  for (const mock of Object.values(api)) mock.mockReset();
+  api.getOnboardingSnapshot.mockResolvedValue(snapshot);
+  api.getHermesRuntimeNodes.mockResolvedValue({ items: [] });
+  api.runOnboardingValidation.mockResolvedValue(snapshot);
+  for (const spy of Object.values(callbacks)) spy.mockReset();
+});
 
 afterEach(cleanup);
 
-describe("OnboardingView", () => {
-  it("keeps the recovery owner an operator is typing when the parent re-renders", async () => {
-    // App polls and passes a fresh `onSessionExpired` arrow every few seconds.
-    // With that identity in the snapshot effect's dependencies the effect
-    // re-runs and writes the stored owner back over the field, so a name being
-    // typed into the recovery kit form vanishes mid-entry. The sibling effect
-    // above it already carries an eslint-disable for exactly this.
-    const user = userEvent.setup();
-    const props = {
-      connections: [connection("INFERENCE", "http://vllm.internal:8000")],
-      unlocked: true,
-      oidcConfigured: false,
-      ...runtimeState,
-      ...callbacks,
-    };
-    const { rerender } = render(<OnboardingView {...props} onSessionExpired={() => undefined} />);
+describe("the setup wizard", () => {
+  it("locks against a session that may not call admin routes, not merely a missing one", async () => {
+    // `unlocked !== signed in`: the API refuses a session that still owes a
+    // forced password change, so a view that took a bare boolean could render
+    // a full workspace whose every request returns 403. This was the last admin
+    // view taking that boolean rather than the session itself.
+    render(<OnboardingView {...props({
+      session: { ...session, passwordChangeRequired: true } as AdministratorSession,
+    })} />);
 
-    await user.click(screen.getByRole("button", { name: "Installation recovery" }));
+    expect(screen.getByText("Sign in to this OrcaSynapse installation")).toBeTruthy();
+    expect(screen.queryByRole("list", { name: "Setup steps" })).toBeNull();
+    expect(api.getOnboardingSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("draws three steps and expands exactly one", async () => {
+    await open();
+
+    expect(rail().getAllByRole("button")).toHaveLength(3);
+    expect(screen.getByRole("region", { name: "Step 1: Connect an inference server" })).toBeTruthy();
+    expect(screen.queryByRole("region", { name: /^Step 2:/ })).toBeNull();
+    expect(screen.queryByRole("region", { name: /^Step 3:/ })).toBeNull();
+  });
+
+  it("opens on the first unfinished step rather than always on the first", async () => {
+    await open(inferenceDone);
+    expect(screen.getByRole("region", { name: "Step 2: Install the agent runtime" })).toBeTruthy();
+  });
+
+  it("keeps a completed step collapsed but re-openable", async () => {
+    const user = userEvent.setup();
+    await open(inferenceDone);
+
+    // Collapsed: step 1 is finished, so the body has moved on without it.
+    expect(screen.queryByRole("region", { name: /^Step 1:/ })).toBeNull();
+
+    await user.click(rail().getByRole("button", { name: /Connect an inference server/ }));
+    expect(screen.getByRole("region", { name: "Step 1: Connect an inference server" })).toBeTruthy();
+    expect(screen.queryByRole("region", { name: /^Step 2:/ })).toBeNull();
+  });
+
+  it("moves the address when a step is opened, so a reload lands back on it", async () => {
+    /*
+     * The defect this closes: the nodes panel was local state, so Back left
+     * Settings entirely and reloading part-way through a twenty-minute VM2
+     * install returned to the overview. Opening a step from the rail has to
+     * reach the router, not just this component — otherwise the same defect
+     * has only moved.
+     */
+    const user = userEvent.setup();
+    const onSelectStep = vi.fn();
+    render(<OnboardingView {...props({ ...inferenceDone, onSelectStep })} />);
+    await waitFor(() => expect(screen.getByRole("list", { name: "Setup steps" })).toBeTruthy());
+
+    await user.click(rail().getByRole("button", { name: /Create an Agent Profile/ }));
+
+    expect(onSelectStep).toHaveBeenCalledWith("profile");
+    expect(screen.getByRole("region", { name: "Step 3: Create an Agent Profile" })).toBeTruthy();
+  });
+
+  it("opens the step the address names", async () => {
+    /*
+     * Named against a state whose natural landing is step 2 and whose
+     * last-resort fallback is step 3, so "the address chose this" is the only
+     * thing that can put step 1 on screen. Pointing at the step the fallbacks
+     * would have picked anyway proves nothing.
+     */
+    await open({ ...inferenceDone, initialStep: "inference" });
+    expect(screen.getByRole("region", { name: "Step 1: Connect an inference server" })).toBeTruthy();
+    expect(screen.queryByRole("region", { name: /^Step 2:/ })).toBeNull();
+  });
+
+  it("counts exactly what it draws", async () => {
+    await open(inferenceDone);
+    expect(screen.getByText("1 of 3")).toBeTruthy();
+
+    const bar = screen.getByLabelText("1 of 3 setup steps complete") as HTMLProgressElement;
+    expect(bar.value).toBe(1);
+    expect(bar.max).toBe(3);
+    // A computed inline width is what `style-src 'self'` refuses, so the
+    // fraction has to be drawn by an element that carries it as data.
+    expect(bar.getAttribute("style")).toBeNull();
+  });
+
+  it("puts every blocker inside the step it blocks, and none on the page", async () => {
+    /*
+     * The block this replaces printed `blockers.length` beside a
+     * `.slice(0, 5)` of the same array — "10 blockers remain" over five rows.
+     * A per-step list has no count to disagree with, and the assertion that
+     * matters is that the reasons are *inside* the step's own region rather
+     * than pooled somewhere above it.
+     */
+    await open();
+
+    const step = within(screen.getByRole("region", { name: "Step 1: Connect an inference server" }));
+    const waiting = step.getByRole("list", { name: "What step 1 is waiting on" });
+    expect(within(waiting).getAllByRole("listitem").length).toBeGreaterThan(0);
+    expect(within(waiting).getByText(/No inference connection is registered/)).toBeTruthy();
+
+    // Nothing outside a step counts blockers at anyone.
+    expect(screen.queryByText(/blockers remain/)).toBeNull();
+  });
+
+  it("names the two inference traps nothing in the product states today", async () => {
+    await open(inferenceDone);
+    await userEvent.setup().click(rail().getByRole("button", { name: /Connect an inference server/ }));
+
+    const step = within(screen.getByRole("region", { name: "Step 1: Connect an inference server" }));
+    expect(step.getByText(/exactly one/i)).toBeTruthy();
+    expect(step.getByText(/without a selected model cannot\s+seed anything/i)).toBeTruthy();
+  });
+
+  it("hands the nodes panel no target environment until the snapshot says so", async () => {
+    /*
+     * The panel used to be given `snapshot?.architecture.targetEnvironment ??
+     * "DEVELOPMENT"`, so a PRODUCTION install whose snapshot had not arrived
+     * was offered the development enrolment path — unpinned runtime, plain
+     * HTTP — which the API then refuses. Held on the wiring rather than only in
+     * the panel's own test, because the wrong value was supplied here.
+     */
+    let resolveSnapshot: (value: OnboardingSnapshot) => void = () => undefined;
+    api.getOnboardingSnapshot.mockReturnValue(new Promise<OnboardingSnapshot>((resolve) => { resolveSnapshot = resolve; }));
+
+    render(<OnboardingView {...props({ ...inferenceDone, initialStep: "runtime" })} />);
+    await waitFor(() => expect(screen.getByRole("region", { name: /^Step 2:/ })).toBeTruthy());
+
+    // Said twice on purpose: once as a reason this step is waiting, and once by
+    // the panel that would otherwise be offering the installer.
+    expect(screen.getAllByText(/The architecture decision has not loaded/).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: "Generate VM2 installer" })).toBeNull();
+
+    // And once it does arrive, the enrolment path opens normally — without
+    // which the assertions above would pass against a panel that is simply
+    // broken.
+    await act(async () => {
+      resolveSnapshot(snapshot);
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Generate VM2 installer" })).toBeTruthy());
+  });
+
+  it("re-runs the AI-services check at the hand-off into step 3", async () => {
+    /*
+     * Profile activation is refused until the `hermes-api` component has
+     * passed, and `POST /onboarding/validate` for the `ai-services` stage is
+     * the only thing that records it. Setup never called it — its sole caller
+     * was the Agents screen — so an operator following this screen's own
+     * ordering was refused for a reason the screen had never mentioned.
+     */
+    const user = userEvent.setup();
+    await open({ ...everythingDone, initialStep: "profile" });
+
+    const step = within(screen.getByRole("region", { name: "Step 3: Create an Agent Profile" }));
+    await user.click(step.getByRole("button", { name: /Agent Profiles?$/ }));
+
+    expect(api.runOnboardingValidation).toHaveBeenCalledWith({ stageKey: "ai-services" });
+    await waitFor(() => expect(callbacks.onOpenWorkspace).toHaveBeenCalledWith("Agents"));
+  });
+
+  it("states the Production activation deadlock instead of leaving it as operator error", async () => {
+    api.getOnboardingSnapshot.mockResolvedValue({
+      ...snapshot,
+      architecture: { ...snapshot.architecture, targetEnvironment: "PRODUCTION" },
+    } as OnboardingSnapshot);
+    await open(everythingDone);
+
+    expect(screen.getByText(/Recording activation needs backend work on a Production target/)).toBeTruthy();
+    expect(screen.getByText(/downgraded to a warning when the target is Production/)).toBeTruthy();
+  });
+
+  it("keeps the three blocks that are not setup steps off the setup screen", async () => {
+    await open(everythingDone);
+    const markup = document.body.innerHTML;
+
+    // The update check moved to Settings → Application.
+    expect(markup).not.toContain("Check for updates");
+    // The activation record moved to Operations.
+    expect(markup).not.toContain("Activate installation");
+    expect(markup).not.toContain("Activation rationale");
+    // The Governed Chat promo is gone: it duplicated step 3 and its only
+    // button was a disabled instruction that opened Chat anyway.
+    expect(markup).not.toContain("Governed Chat");
+    // Recovery stays, as the footer action it always was.
+    expect(screen.getByRole("button", { name: "Installation recovery" })).toBeTruthy();
+  });
+
+  it("keeps the recovery owner an operator is typing when the parent re-renders", async () => {
+    /*
+     * App polls and passes a fresh `onSessionExpired` arrow every few seconds.
+     * With that identity in the snapshot effect's dependencies the effect
+     * re-runs and writes the stored owner back over the field, so a name being
+     * typed into the recovery kit form vanishes mid-entry.
+     */
+    const user = userEvent.setup();
+    const stable = props(inferenceDone);
+    const { rerender } = render(<OnboardingView {...stable} onSessionExpired={() => undefined} />);
+
+    await user.click(await screen.findByRole("button", { name: "Installation recovery" }));
     const owner = await screen.findByLabelText("Recovery owner");
     await user.clear(owner);
     await user.type(owner, "Infrastructure recovery team");
 
-    rerender(<OnboardingView {...props} onSessionExpired={() => undefined} />);
+    rerender(<OnboardingView {...stable} onSessionExpired={() => undefined} />);
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 
     expect((owner as HTMLInputElement).value).toBe("Infrastructure recovery team");
   });
 
-  it("uses the installer-provisioned local account as the routine pre-session gate", () => {
-    const html = renderToStaticMarkup(<OnboardingView
-      connections={[]}
-      unlocked={false}
-      oidcConfigured={false}
-      {...runtimeState}
-      {...callbacks}
-    />);
-
-    expect(html).toContain("Sign in to this OrcaSynapse installation");
-    expect(html).toContain("for recovery only");
-    expect(html).not.toContain("Development quick start");
+  it("renders no inline style, which the CSP would refuse in the built container", async () => {
+    await open(everythingDone);
+    // Assert the screen is populated first: a `not.toMatch` against markup that
+    // failed to render passes vacuously.
+    expect(screen.getByRole("list", { name: "Setup steps" })).toBeTruthy();
+    expect(document.body.innerHTML).not.toMatch(/\sstyle="/);
   });
 
-  it("opens on the lean development path once the installation is claimed", () => {
-    const html = renderToStaticMarkup(<OnboardingView
-      connections={[
-        connection("INFERENCE", "http://vllm.internal:8000"),
-      ]}
-      unlocked
-      oidcConfigured={false}
-      {...runtimeState}
-      {...callbacks}
-    />);
-
-    expect(html).toContain("Three layers. One usable AI workspace.");
-    expect(html).toContain("Application update");
-    expect(html).toContain("AI Inference");
-    expect(html).toContain("Agentic System");
-    expect(html).toContain("Enterprise Access");
-    expect(html).toContain("Finish the Agentic System");
-    expect(html).toContain("Installation recovery");
-    expect(html).not.toContain("Guided journey");
-  });
-
-  it("keeps workspace launch actions disabled until their required services are healthy", () => {
-    const html = renderToStaticMarkup(<OnboardingView
-      connections={[]}
-      unlocked
-      oidcConfigured={false}
-      {...runtimeState}
-      {...callbacks}
-    />);
-
-    // Chat runs on VM2, so it stays gated on the inference route that feeds it.
-    expect(html).toContain("Set up inference first");
-    expect(html).toContain("Governed Chat");
-    expect(html).not.toContain("Enroll Agentic System first");
-  });
-
-  it("opens Agentic System configuration on the VM2 installer rather than connector fields", () => {
-    const html = renderToStaticMarkup(<OnboardingView
-      connections={[connection("INFERENCE", "http://vllm.internal:8000")]}
-      unlocked
-      oidcConfigured={false}
-      initialTab="nodes"
-      {...runtimeState}
-      {...callbacks}
-    />);
-
-    expect(html).toContain("Agentic System");
-    expect(html).toContain("Generate VM2 installer");
-    expect(html).not.toContain("Connect Hermes");
-    expect(html).not.toContain("Operational settings");
-  });
-
-  it("can enter advanced Hermes readiness directly from another workspace", () => {
-    const html = renderToStaticMarkup(<OnboardingView
-      connections={[
-        connection("INFERENCE", "http://vllm.internal:8000"),
-        connection("HERMES", "http://hermes.internal:8642"),
-      ]}
-      unlocked
-      oidcConfigured={false}
-      initialTab="readiness"
-      {...runtimeState}
-      {...callbacks}
-    />);
-
-    expect(html).toContain("Three layers. One usable AI workspace.");
-  });
-
-  it("offers the architecture decision the topology gate depends on", () => {
-    // Validation's system-topology stage passes only when a rationale exists,
-    // and this control is the only thing that can write one.
-    const html = renderToStaticMarkup(<OnboardingView
-      connections={[connection("INFERENCE", "http://vllm.internal:8000")]}
-      unlocked
-      oidcConfigured={false}
-      {...runtimeState}
-      {...callbacks}
-    />);
-
-    expect(html).toContain("Architecture decision");
-    expect(html).toContain("Topology and target environment");
-    expect(html).toContain("Validation cannot pass the system stage until this decision exists");
-  });
-
-  it("offers an activation control that states what still blocks it", () => {
-    const html = renderToStaticMarkup(<OnboardingView
-      connections={[connection("INFERENCE", "http://vllm.internal:8000")]}
-      unlocked
-      oidcConfigured={false}
-      {...runtimeState}
-      {...callbacks}
-    />);
-
-    expect(html).toContain("Activation");
-    expect(html).toContain("Activate installation");
-    // Without a loaded snapshot the control must not present itself as ready.
-    expect(html).toContain("disabled");
+  it("draws the populated screen", async () => {
+    await open(inferenceDone);
+    expect(screen.getByRole("region", { name: /^Step 2:/ })).toBeTruthy();
+    if (process.env.VIEW_PREVIEW_OUT) {
+      writeFileSync(process.env.VIEW_PREVIEW_OUT, document.body.innerHTML, "utf8");
+    }
   });
 });

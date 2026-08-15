@@ -5,6 +5,7 @@ import type {
   ToolMetrics,
 } from "@orcasynapse/contracts";
 import { DashboardHero } from "./dashboard-hero.js";
+import type { SetupStepKey } from "./setup-steps.js";
 import type { ActiveView } from "./workspace-navigation.js";
 
 /** The compact deployment state the Dashboard uses to derive its live path. */
@@ -23,7 +24,14 @@ export interface HomeReadinessCheck {
   detail: string;
   ready: boolean;
   action: ActiveView;
-  deploymentTab?: "journey" | "nodes" | "readiness";
+  /**
+   * The Setup step that repairs this capability, when Setup is the destination.
+   *
+   * It used to be a tab name (`journey`/`nodes`/`readiness`) belonging to a
+   * three-block screen that no longer exists. The step keys are the wizard's
+   * own, so a row here and the screen it opens cannot describe different things.
+   */
+  setupStep?: SetupStepKey;
 }
 
 interface HomeViewProps {
@@ -37,7 +45,7 @@ interface HomeViewProps {
   toolMetrics: ToolMetrics | null;
   layers: HomeLayer[];
   readiness: HomeReadinessCheck[];
-  onSelect: (view: ActiveView, deploymentTab?: "journey" | "nodes" | "readiness") => void;
+  onSelect: (view: ActiveView, setupStep?: SetupStepKey) => void;
   onUnlock: () => void;
 }
 
@@ -71,13 +79,13 @@ export function HomeView(props: HomeViewProps) {
 
   const primaryAction = () => {
     if (setupIncomplete) {
-      props.onSelect("Deployment", "journey");
+      props.onSelect("Deployment", "inference");
     } else if (!props.unlocked) {
       props.onUnlock();
     } else if (allReady) {
       props.onSelect("Chat");
-    } else if (next?.deploymentTab) {
-      props.onSelect(next.action, next.deploymentTab);
+    } else if (next?.setupStep) {
+      props.onSelect(next.action, next.setupStep);
     } else {
       props.onSelect(next?.action ?? "Deployment");
     }

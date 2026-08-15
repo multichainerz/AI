@@ -4,11 +4,19 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 export const buttonVariants = cva(
-  "inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-md border text-body font-semibold transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-40 [&_svg]:pointer-events-none [&_svg]:shrink-0",
+  "inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-md border text-body font-semibold transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
     variants: {
       variant: {
-        default: "border-primary bg-primary text-primary-foreground hover:border-accent-strong hover:bg-accent-strong",
+        /*
+         * Filled CTAs use `--accent-fill`, the violet that can host white text
+         * at AA. `--primary` aliases the lighter `--accent`, which is tuned to
+         * sit *on* a dark surface and measures 3.40:1 under white — so a
+         * `bg-primary text-primary-foreground` button in dark theme landed as
+         * near-black ink on lavender, which reads as a stock control rather
+         * than the product's filled action.
+         */
+        default: "border-accent-fill bg-accent-fill text-white hover:bg-accent-fill/90",
         destructive: "border-destructive/50 bg-destructive text-destructive-foreground hover:bg-destructive/90",
         outline: "border-input bg-background text-foreground hover:border-border-strong hover:bg-secondary",
         secondary: "border-secondary bg-secondary text-secondary-foreground hover:bg-secondary/80",
@@ -16,7 +24,7 @@ export const buttonVariants = cva(
         link: "border-transparent bg-transparent p-0 text-primary underline-offset-4 hover:underline",
         // Transitional aliases keep product behavior stable while route files
         // move from the former primitive layer onto shadcn naming.
-        primary: "border-primary bg-primary text-primary-foreground hover:border-accent-strong hover:bg-accent-strong",
+        primary: "border-accent-fill bg-accent-fill text-white hover:bg-accent-fill/90",
         danger: "border-destructive/40 bg-destructive/10 text-destructive hover:border-destructive hover:bg-destructive/20",
       },
       size: {
@@ -25,6 +33,9 @@ export const buttonVariants = cva(
         lg: "h-11 rounded-md px-5 text-[14px]",
         icon: "h-9 w-9 p-0",
         md: "h-9 px-4",
+        // Multi-line cards (empty-state suggestions). Height follows content;
+        // the single-line sizes above would clip a title and caption.
+        auto: "h-auto px-4 py-3.5",
       },
     },
     defaultVariants: { variant: "outline", size: "default" },

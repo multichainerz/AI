@@ -7,10 +7,10 @@ import { PlatformUpdatePanel } from "./platform-update-panel.js";
 vi.mock("./api.js", () => ({
   getPlatformUpdate: vi.fn(async () => ({
     currentVersion: "v4.8.2",
-    latestVersion: "ai-v3.18.3",
+    latestVersion: "v4.8.3",
     updateAvailable: true,
-    releaseUrl: "https://github.com/multichainerz/AI/tree/ai-v3.18.3",
-    updateCommand: "curl installer | sudo ORCASYNAPSE_REF=ai-v3.18.3 bash",
+    releaseUrl: "https://github.com/multichainerz/AI/tree/v4.8.3",
+    updateCommand: "curl installer | sudo ORCASYNAPSE_REF=v4.8.3 bash",
     automaticUpdateSupported: false,
     automaticUpdateReason: "The dashboard has no host control.",
     checkedAt: "2026-08-14T00:00:00.000Z",
@@ -27,7 +27,7 @@ describe("PlatformUpdatePanel", () => {
     expect(screen.getByText("Not checked")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Check for updates" }));
 
-    expect(await screen.findByText("ai-v3.18.3 is ready to install")).toBeTruthy();
+    expect(await screen.findByText("v4.8.3 is ready to install")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Copy update command" })).toBeTruthy();
   });
 });

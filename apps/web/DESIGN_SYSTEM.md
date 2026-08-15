@@ -2,6 +2,10 @@
 
 The web application uses the shadcn local-source model on top of Tailwind CSS. It is not a second theme layered over the product: shadcn components consume the existing OrcaSynapse semantic variables, light/dark theme attribute, typography, and single semi-rounded radius.
 
+“Pure shadcn” is not a migration target. shadcn is the source-ownership model
+for reusable controls; Tailwind remains the layout and composition language,
+and complex OrcaSynapse surfaces remain deliberately product-specific.
+
 ## Source boundaries
 
 - `src/components/ui/` contains canonical, reusable controls: button, card, input, textarea, select, switch, dialog, sheet, alert, badge, avatar, separator, skeleton, and table.
@@ -21,7 +25,21 @@ All non-circular surfaces resolve to `--radius-component`. `rounded-full` is res
 - Dialogs trap focus, close on Escape or backdrop activation, restore focus, and lock document scrolling.
 - Controls require accessible names, visible keyboard focus, and semantic disabled states.
 - Self-hosted fonts and same-origin assets are the only allowed visual dependencies.
+- The dependency-free crash boundary in `src/main.tsx` may use a native button because it must render even when the application component graph cannot load.
+
+## Current exceptions
+
+- Native elements inside canonical primitives are implementation details, not a second design system.
+- `NativeSelect` deliberately uses the platform `<select>` instead of a custom popover so keyboard behavior and the production CSP stay predictable.
+- Dialog and Switch follow shadcn composition and accessibility conventions but are local CSP-safe implementations. Radix Slot is allowed; Popper-style primitives that inject positioning styles are not.
+- `src/ui` remains while routes consume OrcaSynapse domain compositions. Remove an export only when its callers have moved or the composition itself is obsolete; do not mechanically flatten domain UI into route files.
 
 ## Adding a component
 
 Use shadcn conventions, adapt colors to the semantic RGB variables, export it from `src/components/ui/index.ts`, and add focused interaction/SSR coverage. Run the web build, web test suite, and CSP closure check before handoff.
+
+```bash
+pnpm --filter @orcasynapse/web build
+pnpm --filter @orcasynapse/web test
+bash scripts/test-csp-closure.sh
+```

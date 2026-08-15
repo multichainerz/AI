@@ -81,6 +81,10 @@ describe("chat overlays", () => {
     // second level-1 heading would make that ambiguous.
     expect(heading.tagName).toBe("H3");
     expect(await screen.findByRole("button", { name: /Runbook questions/ })).toBeTruthy();
+    const create = screen.getByRole("button", { name: "New conversation" });
+    expect(create.textContent?.trim()).toBe("New conversation");
+    expect(create.className).toContain("bg-accent-fill");
+    expect(create.className).not.toContain("justify-between");
   });
 
   it("keeps Tab inside the open dialog", async () => {

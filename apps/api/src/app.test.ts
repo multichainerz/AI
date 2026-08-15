@@ -1,7 +1,27 @@
+import { ORCASYNAPSE_VERSION } from "@orcasynapse/contracts";
 import type { OrcaSynapseDatabase } from "@orcasynapse/database";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OperationsManager } from "./operations/operations-manager.js";
 import { createApp } from "./app.js";
+
+/**
+ * One patch above whatever this build is, derived rather than written down.
+ *
+ * The release-check case used to hardcode the shipped version and a literal
+ * successor, so every version bump failed a test that had found nothing wrong —
+ * the release ritual and the test disagreed once per release, by construction.
+ */
+const NEWER_RELEASE_TAG = (() => {
+  // Tolerates the retired `ai-` prefix for the same reason the parser does.
+  // Deriving the successor is not enough on its own: the first version of this
+  // helper hardcoded the prefix in its own pattern, so the moment the prefix was
+  // dropped it silently matched nothing, returned the current version unchanged,
+  // and asserted that a release was newer than itself.
+  const match = /^(?:ai-)?v(\d+)\.(\d+)\.(\d+)$/.exec(ORCASYNAPSE_VERSION);
+  if (!match) throw new Error(`ORCASYNAPSE_VERSION '${ORCASYNAPSE_VERSION}' is not a release tag.`);
+  const [, major, minor, patch] = match;
+  return `v${major}.${minor}.${Number(patch) + 1}`;
+})();
 
 const apps: Awaited<ReturnType<typeof createApp>>[] = [];
 
@@ -36,8 +56,8 @@ describe("OrcaSynapse API", () => {
 
   it("proxies release checks without giving the dashboard host control", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(JSON.stringify([
-      { name: "ai-v3.19.1" },
-      { name: "v4.9.0" },
+      { name: NEWER_RELEASE_TAG },
+      { name: ORCASYNAPSE_VERSION },
     ]), { status: 200 }));
     const app = await createApp({ logger: false, runtime: { bootstrapState: "READY" } });
     apps.push(app);
@@ -47,8 +67,8 @@ describe("OrcaSynapse API", () => {
     expect(response.statusCode).toBe(200);
     expect(response.headers["cache-control"]).toBe("no-store");
     expect(response.json()).toMatchObject({
-      currentVersion: "v4.9.0",
-      latestVersion: "ai-v3.19.1",
+      currentVersion: ORCASYNAPSE_VERSION,
+      latestVersion: NEWER_RELEASE_TAG,
       updateAvailable: true,
       automaticUpdateSupported: false,
     });

@@ -20,7 +20,7 @@ Enter a Hermes commit in the dashboard invitation: the full 40-character git SHA
 
 ## Dashboard workflow
 
-1. Open **Settings → Agentic System**.
+1. Open **Settings → Setup** and select step 2, *Install the agent runtime*. It is also addressable directly at `#settings/setup/runtime`.
 2. Create an invitation with the runtime display name, slug, reachable Hermes base URL, approved Hermes commit, and short TTL.
 3. Copy the one-time claim. OrcaSynapse stores only its digest.
 4. On VM2, download the installer from the OrcaSynapse URL shown by the dashboard. The route is unavailable before dashboard setup and healthy AI Inference are present. It remains available afterward for protected local recovery, while a live claim is required to begin a new enrollment.
@@ -106,6 +106,13 @@ Preferred host-loss procedure:
 ## Upgrade
 
 Do not use an invitation as a generic remote administrator. Upgrade with pinned artifacts under customer change control: an upgrade is a new invitation naming a new Hermes commit, followed by a re-enrollment. Before promotion, test the exact Hermes commit, API contracts, state migration, backup, rollback, and agent cancellation in a non-production environment.
+
+The **Settings → Application** release check concerns the OrcaSynapse VM1
+release only. It compares official stable tags and gives the administrator a
+version-pinned VM1 installer command; the browser cannot run it. It does not
+change the VM2 Hermes commit, repair the runtime boundary, or bypass this
+re-enrollment workflow. Treat VM1 and VM2 changes as separate approvals even
+when they are scheduled in the same maintenance window.
 
 Hermes's own installer ignores `--commit` when the existing checkout is already newer, which would leave a host running a revision the control plane never approved. OrcaSynapse passes `--force-commit` so the approved pin always wins, including a deliberate downgrade to an earlier approved commit, and then reads the commit back out of the finished checkout rather than trusting the value it asked for.
 

@@ -7,7 +7,7 @@
  * row still routes to the right platform tab.
  */
 import type { AgentMetrics, ChatMetrics, ToolMetrics } from "@orcasynapse/contracts";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -31,8 +31,8 @@ const layers: HomeLayer[] = [
 ];
 
 const readiness = (ready: boolean): HomeReadinessCheck[] => [
-  { label: "AI Inference", detail: "Approved model serving is reachable", ready: true, action: "Deployment", deploymentTab: "journey" },
-  { label: "Isolated agent runtime", detail: "VM2 is online and Hermes is reachable", ready: true, action: "Deployment", deploymentTab: "nodes" },
+  { label: "AI Inference", detail: "Approved model serving is reachable", ready: true, action: "Deployment", setupStep: "inference" },
+  { label: "Isolated agent runtime", detail: "VM2 is online and Hermes is reachable", ready: true, action: "Deployment", setupStep: "runtime" },
   { label: "Active Agent Profile", detail: "Create and activate an Agent Profile", ready, action: "Agents" },
 ];
 
@@ -48,12 +48,34 @@ const readiness = (ready: boolean): HomeReadinessCheck[] => [
 const chatMetrics = {
   conversations: 342,
   responses: 1_284,
+  // 1,249 + 24 + 11 = 1,284. The outcome bar divides the response total, so a
+  // fixture whose parts do not sum to it would draw a bar that cannot occur.
   completed: 1_249,
+  failed: 24,
+  cancelled: 11,
+  totalTokens: 1_284_930,
+  averageLatencyMs: 1_450,
   failureRate: 0.02,
   windowStartedAt: "2026-08-02T00:00:00.000Z",
+  feedback: { helpful: 88, notHelpful: 12 },
 } as ChatMetrics;
-const agentMetrics = { profiles: 4, activeProfiles: 2 } as AgentMetrics;
-const toolMetrics = { activeTools: 6, activeGrants: 3 } as ToolMetrics;
+const agentMetrics = {
+  profiles: 4,
+  activeProfiles: 2,
+  queuedRuns: 3,
+  runningRuns: 2,
+  completedRuns: 180,
+  failedRuns: 15,
+} as AgentMetrics;
+const toolMetrics = {
+  activeTools: 6,
+  activeGrants: 3,
+  pendingApprovals: 2,
+  executingCalls: 1,
+  completedCalls: 940,
+  deniedCalls: 7,
+  failedCalls: 4,
+} as ToolMetrics;
 const stylesheet = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
 
 function props(overrides: Partial<Parameters<typeof HomeView>[0]> = {}) {
@@ -88,8 +110,10 @@ describe("Home", () => {
     expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(6);
     expect(screen.queryByText("Approved model serving is reachable")).toBeNull();
     expect(screen.getAllByText("Sign in to inspect readiness")).toHaveLength(3);
-    expect(screen.getAllByText("sign in to view")).toHaveLength(5);
+    // One per KPI tile: every headline figure is an authenticated read.
+    expect(screen.getAllByText("sign in to view")).toHaveLength(6);
     expect(screen.queryByText("1,249 completed")).toBeNull();
+    expect(screen.queryByText("97% completed")).toBeNull();
     expect(screen.queryByText("2 active")).toBeNull();
     expect(screen.queryByText("3 grants")).toBeNull();
     // Readiness detail is withheld while the session is locked.
@@ -116,14 +140,20 @@ describe("Home", () => {
   });
 
   it("keeps the dashboard to one command surface without duplicate sections or shortcuts", () => {
-    render(<HomeView {...props()} />);
+    const { container } = render(<HomeView {...props()} />);
 
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
     expect(screen.queryByRole("heading", { name: "Three operating layers" })).toBeNull();
     expect(screen.queryByRole("heading", { name: "One governed execution path" })).toBeNull();
     expect(screen.queryByRole("button", { name: /Agent profiles Instructions/ })).toBeNull();
     expect(screen.getByRole("heading", { name: "Required capabilities" })).toBeTruthy();
-    expect(screen.getAllByRole("listitem")).toHaveLength(3);
+    /*
+     * Three hops, counted as the ordered list's own children rather than as
+     * every listitem on the screen. The global count was standing in for "the
+     * path was not duplicated", and it broke the moment a hop grew a nested
+     * list of its own diagnostics — which is a different claim entirely.
+     */
+    expect(container.querySelector("ol")?.querySelectorAll(":scope > li")).toHaveLength(3);
   });
 
   it("sends the primary action to the blocking step, and to Session once nothing blocks", async () => {
@@ -143,18 +173,30 @@ describe("Home", () => {
     expect(ready).toHaveBeenCalledWith("Chat");
   });
 
+  it("does not offer a session composer until required capabilities are ready", () => {
+    render(<HomeView {...props()} />);
+    expect(screen.queryByRole("button", { name: "Ask your Hermes agent" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Start a session" })).toBeNull();
+
+    cleanup();
+    render(<HomeView {...props({ readiness: readiness(true) })} />);
+    expect(screen.getByRole("button", { name: "Ask your Hermes agent" })).toBeTruthy();
+  });
+
   it("routes each readiness repair to its exact workspace", async () => {
-    // VM2 is enrolled under Nodes; landing an operator on Journey when they
-    // clicked the runtime check is the difference between one click and five.
+    // VM2 is enrolled in setup's second step; landing an operator on the first
+    // when they clicked the runtime check is the difference between one click
+    // and five. The destination is a step key now rather than a tab name — the
+    // three-block screen those tabs belonged to no longer exists.
     const user = userEvent.setup();
     const onSelect = vi.fn();
     render(<HomeView {...props({ onSelect })} />);
 
     await user.click(screen.getByRole("button", { name: /AI Inference/ }));
-    expect(onSelect).toHaveBeenLastCalledWith("Deployment", "journey");
+    expect(onSelect).toHaveBeenLastCalledWith("Deployment", "inference");
 
     await user.click(screen.getByRole("button", { name: /Isolated agent runtime/ }));
-    expect(onSelect).toHaveBeenLastCalledWith("Deployment", "nodes");
+    expect(onSelect).toHaveBeenLastCalledWith("Deployment", "runtime");
 
     await user.click(screen.getByRole("button", { name: /Active Agent Profile/ }));
     expect(onSelect).toHaveBeenLastCalledWith("Agents");
@@ -185,7 +227,7 @@ describe("Home", () => {
     expect(screen.getByText("Installation required")).toBeTruthy();
     expect(screen.getByText("Run the protected VM1 installer before configuring services.")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Open setup" }));
-    expect(onSelect).toHaveBeenCalledWith("Deployment", "journey");
+    expect(onSelect).toHaveBeenCalledWith("Deployment", "inference");
   });
 
   it("renders no inline style, which the CSP would refuse in the built container", () => {
@@ -254,6 +296,95 @@ describe("Home", () => {
     }
   });
 
+  /*
+   * The panel polls four contracts and drew about half of what they carry.
+   * `queuedRuns`, `runningRuns`, `completedRuns`, `failedRuns`, `failed`,
+   * `cancelled`, `totalTokens`, `feedback`, `pendingApprovals` and
+   * `deniedCalls` all arrived on every refresh and reached no pixel: the
+   * screen could say how many Profiles existed but not whether any of them
+   * were running. These cases pin the figures to the surfaces that now own
+   * them, so a future tidy-up cannot quietly drop them back out of sight.
+   */
+  it("draws the run pipeline, which the poll always reported and nothing drew", () => {
+    render(<HomeView {...props()} />);
+    const pipeline = within(screen.getByRole("region", { name: "Run pipeline" }));
+
+    expect(pipeline.getByText("Queued")).toBeTruthy();
+    expect(pipeline.getByText("Running")).toBeTruthy();
+    expect(pipeline.getByText("180")).toBeTruthy();
+    expect(pipeline.getByText("15")).toBeTruthy();
+  });
+
+  it("divides the response total into its outcomes instead of only counting it", () => {
+    render(<HomeView {...props()} />);
+    const pipeline = within(screen.getByRole("region", { name: "Run pipeline" }));
+
+    expect(pipeline.getByText("1,249 completed")).toBeTruthy();
+    expect(pipeline.getByText("24 failed")).toBeTruthy();
+    expect(pipeline.getByText("11 cancelled")).toBeTruthy();
+    // The tile above states the share; the bar below states the counts. One
+    // fact, one place — the count used to be printed in both.
+    expect(screen.getByText("97% completed")).toBeTruthy();
+  });
+
+  it("surfaces the tool decisions that are waiting on a person", () => {
+    render(<HomeView {...props()} />);
+    const pipeline = within(screen.getByRole("region", { name: "Run pipeline" }));
+
+    // Scoped to each figure's own pair: "2" is also the running-run count, and
+    // a bare getByText would pass while pointing at the wrong number.
+    const figure = (label: string) =>
+      within(pipeline.getByText(label).parentElement as HTMLElement).getAllByRole("definition")[0]?.textContent;
+    expect(figure("Awaiting approval")).toBe("2");
+    expect(figure("Denied")).toBe("7");
+  });
+
+  it("compacts a seven-figure token total into the width a column has", () => {
+    render(<HomeView {...props()} />);
+    // 1,284,930 in a cell sized for four glyphs is a truncated number, which
+    // is worse than a rounded one.
+    expect(screen.getByText("1.3M")).toBeTruthy();
+    expect(screen.queryByText("1,284,930")).toBeNull();
+  });
+
+  it("draws bring-up progress as a ring, not only as a fraction in a chip", () => {
+    const { container, unmount } = render(<HomeView {...props()} />);
+    const dash = () => container.querySelector("circle[stroke-dasharray]")?.getAttribute("stroke-dasharray") ?? "";
+    const [filled, circumference] = dash().split(" ").map(Number);
+
+    expect(circumference).toBeGreaterThan(0);
+    expect((filled ?? 0) / (circumference ?? 1)).toBeCloseTo(2 / 3, 5);
+    unmount();
+
+    // Locked, the ring is a track and nothing else: a two-thirds arc drawn from
+    // figures nobody is allowed to read would be an invented reading.
+    const { container: locked } = render(<HomeView {...props({ unlocked: false })} />);
+    expect(locked.querySelector("circle[stroke-dasharray]")?.getAttribute("stroke-dasharray")).toMatch(/^0 /);
+  });
+
+  it("reports identity without restating what the governed path already says", () => {
+    /*
+     * The path column derives its two middle hops from the inference and
+     * agentic layer states, so listing all three layers beside it printed
+     * "Ready" and "Degraded" on the screen twice. Enterprise access is the one
+     * layer no other panel carries, so it is the one that stays — and as text,
+     * because "AI Inference" already names a capability *button* here and two
+     * controls with one name are ambiguous to a pointer and a screen reader
+     * alike.
+     */
+    render(<HomeView {...props()} />);
+
+    // The layer's own diagnostic, which said why a hop was degraded and until
+    // now reached no pixel at all.
+    expect(screen.getByText(/Needs Profile or policy/)).toBeTruthy();
+    expect(screen.getByText("Identity")).toBeTruthy();
+    expect(screen.getByText("Enterprise Access")).toBeTruthy();
+    expect(screen.queryByText("Agentic System")).toBeNull();
+    expect(screen.getAllByRole("button", { name: /AI Inference/ })).toHaveLength(1);
+    // Stated once, by the hop that owns it.
+    expect(screen.getAllByText("Degraded")).toHaveLength(1);
+  });
+
   it("draws the completed share as a bar, because a fraction has a denominator worth seeing", () => {
     /*
      * The one figure here with a denominator. Moving the banner onto HeroBanner
@@ -292,8 +423,11 @@ describe("Home", () => {
      * succeeded" when the truth is "nothing has been attempted".
      */
     const untouched = { ...chatMetrics, conversations: 0, responses: 0, completed: 0 } as ChatMetrics;
-    const { container } = render(<HomeView {...props({ chatMetrics: untouched })} />);
-    expect(container.querySelector("progress")).toBeNull();
+    render(<HomeView {...props({ chatMetrics: untouched })} />);
+    // Named rather than "the first progress in the tree": the run pipeline and
+    // the satisfaction tile draw their own bars from metrics this fixture
+    // leaves populated, so only this one's absence is the claim.
+    expect(screen.queryByLabelText("Responses: proportion of the total")).toBeNull();
   });
 
   it("draws no bar while the session is locked, rather than an empty one", () => {
