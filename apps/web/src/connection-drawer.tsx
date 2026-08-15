@@ -199,46 +199,13 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
       open={props.open}
       onClose={props.onClose}
       kicker="Application settings"
-      title="Connect your AI stack"
+      title={existing ? `Update ${definition.name}` : `Connect ${definition.name}`}
+      description={definition.role}
       className="max-w-[640px]"
     >
       <div className="grid gap-4">
         {(
           <form className="connection-form" onSubmit={submitConnection}>
-            <details className="drawer-operations-details">
-              <summary>
-                <span><strong>Connection monitoring</strong><small>Optional scheduled health checks</small></span>
-                <em>{monitoringEnabled ? "On" : "Off"}</em>
-              </summary>
-              <section className={`monitoring-control ${monitoringEnabled ? "enabled" : "disabled"}`} aria-label="Scheduled connection monitoring">
-              <div>
-                <small>Continuous health evidence</small>
-                <strong>{monitoringEnabled ? "Scheduled monitoring enabled" : "Scheduled monitoring disabled"}</strong>
-                <span>Checks use encrypted connector credentials inside OrcaSynapse and never expose them to the browser.</span>
-              </div>
-              <label className="monitoring-toggle"><Switch checked={monitoringEnabled} onCheckedChange={setMonitoringEnabled} /><span>Run scheduled checks</span></label>
-              <label>Cadence
-                <Select value={monitoringInterval} onChange={(event) => setMonitoringInterval(Number(event.target.value))}>
-                  <option value={60}>Every minute</option>
-                  <option value={300}>Every 5 minutes</option>
-                  <option value={900}>Every 15 minutes</option>
-                  <option value={3600}>Every hour</option>
-                </Select>
-              </label>
-              <label className="sm:col-span-2">Operator reason
-                <Input minLength={3} maxLength={500} value={monitoringReason} onChange={(event) => setMonitoringReason(event.target.value)} />
-              </label>
-              <Button variant="primary"
-                type="button"
-                disabled={props.busy || monitoringReason.trim().length < 3}
-                onClick={() => void props.onUpdateMonitoring({
-                  enabled: monitoringEnabled,
-                  intervalSeconds: monitoringInterval,
-                  reason: monitoringReason.trim(),
-                })}
-              >{props.busy ? "Applying…" : "Save monitoring"}</Button>
-              </section>
-            </details>
             <div className="kind-tabs" role="tablist" aria-label="Connection type">
               {connectionDefinitions.filter(({ kind }) => kind === "INFERENCE").map((item) => (
                 <Button
@@ -273,11 +240,6 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
               ))}
             </div>
 
-            <div className="form-heading">
-              <div className={`connection-mark ${definition.tone}`}>{definition.name.slice(0, 2).toUpperCase()}</div>
-              <div><h3>{existing ? `Update ${definition.name}` : `Connect ${definition.name}`}</h3><p>{definition.role}</p></div>
-              {existing && <span className="saved-badge">Saved</span>}
-            </div>
 
             {existing && (
               <div className={`diagnostic-result ${(diagnostic?.status ?? existing.status).toLowerCase()}`}>
@@ -567,6 +529,46 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
               </section>
             )}
 
+            {/*
+              * Last, not first. This is an optional scheduled health check and it
+              * opened the modal -- above the connection it monitors, and above the
+              * fields an operator came here to fill in. Its own summary says
+              * "Optional"; it now sits where optional things belong.
+              */}
+            <details className="drawer-operations-details">
+              <summary>
+                <span><strong>Connection monitoring</strong><small>Optional scheduled health checks</small></span>
+                <em>{monitoringEnabled ? "On" : "Off"}</em>
+              </summary>
+              <section className={`monitoring-control ${monitoringEnabled ? "enabled" : "disabled"}`} aria-label="Scheduled connection monitoring">
+              <div>
+                <small>Continuous health evidence</small>
+                <strong>{monitoringEnabled ? "Scheduled monitoring enabled" : "Scheduled monitoring disabled"}</strong>
+                <span>Checks use encrypted connector credentials inside OrcaSynapse and never expose them to the browser.</span>
+              </div>
+              <label className="monitoring-toggle"><Switch checked={monitoringEnabled} onCheckedChange={setMonitoringEnabled} /><span>Run scheduled checks</span></label>
+              <label>Cadence
+                <Select value={monitoringInterval} onChange={(event) => setMonitoringInterval(Number(event.target.value))}>
+                  <option value={60}>Every minute</option>
+                  <option value={300}>Every 5 minutes</option>
+                  <option value={900}>Every 15 minutes</option>
+                  <option value={3600}>Every hour</option>
+                </Select>
+              </label>
+              <label className="sm:col-span-2">Operator reason
+                <Input minLength={3} maxLength={500} value={monitoringReason} onChange={(event) => setMonitoringReason(event.target.value)} />
+              </label>
+              <Button variant="primary"
+                type="button"
+                disabled={props.busy || monitoringReason.trim().length < 3}
+                onClick={() => void props.onUpdateMonitoring({
+                  enabled: monitoringEnabled,
+                  intervalSeconds: monitoringInterval,
+                  reason: monitoringReason.trim(),
+                })}
+              >{props.busy ? "Applying…" : "Save monitoring"}</Button>
+              </section>
+            </details>
             {props.error && <p className="form-error">{props.error}</p>}
             <div className="drawer-actions">
               <Button type="button" onClick={props.onClose}>Cancel</Button>

@@ -5,6 +5,28 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v6.0.4 — 2026-08-16
+
+Rewrites the connection modal's reading order. It serves all three connection
+kinds, so this is not only the inference one.
+
+Three faults, and they compounded. Its title said "Connect your AI stack" while
+the card immediately beneath said "Update AI Inference" — a generic promise
+arguing with the specific job, and the card existed only to correct it. Scheduled
+monitoring, whose own summary calls itself optional, was the **first** thing on
+the screen: above the connection it monitors and above the fields an operator
+came to fill in. And the result was six bordered containers stacked vertically,
+which is what made it read as noise rather than a form.
+
+It now goes: what you are editing, its current state, the form, optional extras,
+save. Four containers instead of six.
+
+- title the modal for the job — "Update AI Inference" or "Connect AI Inference" —
+  and carry the connection's role as the description
+- delete the duplicate heading card that only existed to say what the title
+  should have
+- move scheduled monitoring to the foot, where optional things belong
+
 ## v6.0.3 — 2026-08-16
 
 Moves the last panel off the right edge of Setup. v6.0.1 did this for step 1's
