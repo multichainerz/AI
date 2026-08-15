@@ -63,6 +63,63 @@ That makes the honest sentence for the Skills and Memory screens sharper than
 a division ever needs real memory separation, the answer is to enrol a node for
 it — not to build isolation inside one.
 
+### Why the built-in store cannot be scoped, and where the seam actually is
+
+Verified against the pinned commit `c015663b`, because this decides what is
+possible rather than what is convenient.
+
+`load_on_disk_store()` **takes no arguments**, and `MemoryStore.__init__` takes
+only two character limits. The path is `get_hermes_home() / "memories"` with two
+fixed filenames. There is no user, session, namespace or tenant parameter
+anywhere in the built-in store, and Hermes' own docstring calls the directory
+*"profile-scoped"* — profile meaning the home. `USER.md` is singular by design:
+its header describes *"what the agent knows about **the user**"*, one human.
+
+Hermes' gateway **does** carry a `user_id`, and its own test states the intent:
+*"gateway user_id flows from AIAgent → MemoryManager → plugins, so each gateway
+user gets their own memory bucket."* Note where that arrow stops. The identity
+travels as far as **plugins** and is dropped before the file store.
+
+So per-division memory has exactly two implementations and no third:
+
+1. **A home per division** — the boundary Hermes actually has.
+2. **A memory provider that buckets per user** — real tenancy, at the cost below.
+
+The system prompt is not one of them. An agent that can call the memory tool
+reads the whole file; the prompt is a request, not a control.
+
+### The provider option, if a home per division ever stops being enough
+
+**Hindsight** (`vectorize-io/hindsight`, **MIT**) is the right provider for this
+product if one is ever adopted: PostgreSQL with pgvector, self-hostable with no
+egress, and a `bank_id` scoping key that maps one-to-one onto a division. MIT is
+compatible with this repository's BSL 1.1. The alternative worth knowing is Mem0
+in OSS in-process mode — lighter, no service, harder to back up or inspect.
+
+Two constraints on any adoption, both non-negotiable:
+
+**Its PostgreSQL runs on VM2, never VM1's.** The control plane's database
+publishes no port and sits on a `data` network marked `internal: true` — it is
+unreachable from outside the compose project by design. Reaching it from VM2
+would mean putting a SQL credential on the host that runs an LLM with tool
+execution and loadable skills, against the database holding admin sessions,
+sealed secret envelopes and the audit trail. VM2 makes signed HTTP calls and
+nothing else; that is the whole reason it exists.
+
+**It costs the observability guarantee until the mirroring is built.** Providers
+are *additive* — the official documentation is explicit that "the built-in memory
+continues to work exactly as before; the external provider is additive". The
+corpus reconciler mirrors two allowlisted file paths and knows nothing about a
+bank, so the moment a provider holds the real knowledge, Agents → Memory shows an
+empty `MEMORY.md` while the agent remembers a great deal. That is a dashboard
+that lies, which is worse than one that admits a limit.
+
+**Therefore: not part of the five increments below.** A home per division is the
+first answer and keeps everything this product claims. Hindsight becomes the
+right call only when the number of divisions makes a node each genuinely absurd —
+and the project at that point is *mirroring a bank into the corpus plane*, which
+is larger than everything in this plan put together, not the install.
+
 ## The precondition
 
 Assigning a profile to a division means nothing until three holes are closed.
