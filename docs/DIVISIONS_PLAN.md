@@ -363,9 +363,67 @@ it is explaining, and a new one should not reintroduce that.
 both, a division, and a user in it — and that user signs in and sees exactly that
 profile. Driven end to end. **5–7 days**, plus the auth path below.
 
+### F — scoped memory without waiting on upstream
+*Optional, and later. A–E stand alone; this is the answer if "shared per node"
+stops being acceptable before Hermes' session API grows an identity.*
+
+The rule that makes it work, and the only thing separating it from a bad idea:
+
+> **The tool filters. The prompt never does.**
+
+An agent given SQL access and a prompt saying "only your division's rows" has a
+request, not a boundary — one injection or one broader `WHERE` reads everything.
+Worse, a table with division columns *looks* like tenancy and will therefore be
+trusted with things `MEMORY.md` never was. An honest shared file beats a
+database that appears private and is not.
+
+So the agent gets `remember(text)` and `recall(query)` and **no division
+parameter at all**. The scope is injected by the implementation. There is
+nothing for the agent to get wrong, and nothing to talk it out of.
+
+Non-determinism about *what* to remember stays exactly as it is — that is what
+memory is, and the agent already decides it for `MEMORY.md`. What stops being
+non-deterministic is who can read it.
+
+- **SQLite, one file per Hermes process**, beside the runtime and owned by the
+  service account. Not PostgreSQL: this is a keyed local store for small records
+  with one writer, which is SQLite's ideal profile rather than its edge, and a
+  Postgres would be a service to run, patch and back up for three columns. It is
+  also strictly an upgrade on the flat file it supplements — atomicity, crash
+  safety, a schema and a `WHERE` clause where today there are none. **One file
+  per process is a hard constraint**: two Hermes processes sharing one SQLite is
+  where this goes wrong.
+- **The scope arrives as a credential, not an instruction.** Hermes' session API
+  carries no identity (see above), but OrcaSynapse composes the system prompt per
+  profile and profiles are per division, so the prompt can carry a scoped token
+  the tool exchanges for a division. That is capability-based rather than
+  instruction-based, which is a real difference. State its limit plainly: the
+  agent can read its own system prompt, so it holds its own token — it simply
+  never holds anyone else's.
+- **The MCP plane is the candidate host** for the tool. It is already built and
+  currently inert. Spike it before designing further.
+- **The mirror ships in this increment, not after it.** A second store the corpus
+  plane cannot see is the same failure as a provider: the dashboard would show
+  `MEMORY.md` while the real knowledge sat elsewhere. Unlike Hindsight, we own
+  the schema and both ends, so this is ordinary work rather than an integration
+  against someone else's format — but it is the bulk of the cost and it is not
+  optional.
+- **The restore runbook grows a line.** A SQLite file is copied or `.backup`-ed;
+  simple, and untested until it is written down.
+
+**Done when:** a run in Division A cannot recall a row written by Division B —
+asserted against the tool's arguments and its SQL, never against a model reply;
+the tool's signature has no division parameter, so the mutation that would break
+it does not typecheck; the store's contents appear in Agents → Memory beside the
+file-backed entries and are labelled as to which division they belong to; and
+deleting the scope injection fails a test. **7–11 days**, most of it the mirror.
+
 ## Total
 
-**16–22 days**, plus D1.
+**16–22 days** for A–E, plus D1. Increment F adds **7–11 days** and is
+deliberately outside that total: A–E deliver scoped access to profiles and tools
+with memory honestly shared per node, which is the product decision already
+taken. F is only worth starting if that honesty becomes a blocker.
 
 ## The one open decision
 
@@ -400,7 +458,10 @@ No auth.js either way.
 - [ ] no division column on the tables listed above
 - [ ] every new route resolves its session through `requireAdmin`
 - [ ] every mutation writes an audit event and takes `expectedRevision`
-- [ ] Skills and Memory screens state they are deployment-wide
+- [ ] Skills and Memory screens state they are shared per node
+- [ ] *(F only)* the memory tool takes no division parameter
+- [ ] *(F only)* the scoped store is mirrored into the corpus plane in the same
+      increment that introduces it
 
 ## Testing
 
