@@ -47,6 +47,8 @@ import { DrizzleHermesRuntimeNodeManager } from "./runtime-nodes/drizzle-runtime
 import { DrizzleInferenceGateway } from "./inference/inference-gateway.js";
 import type { HermesCorpusManager } from "./corpus/corpus-manager.js";
 import { DrizzleHermesCorpusManager } from "./corpus/drizzle-corpus-manager.js";
+import type { PlatformReleaseTargetManager } from "./updates/release-target-manager.js";
+import { DrizzlePlatformReleaseTargetManager } from "./updates/drizzle-release-target-manager.js";
 
 export type BootstrapState = "REQUIRED" | "READY" | "LOCKED";
 
@@ -71,6 +73,7 @@ export interface RuntimeServices {
   onboardingManager?: OnboardingManager;
   runtimeNodeManager?: HermesRuntimeNodeManager;
   corpusManager?: HermesCorpusManager;
+  releaseTargetManager?: PlatformReleaseTargetManager;
   inferenceGateway?: DrizzleInferenceGateway;
   database?: OrcaSynapseDatabase;
   /** Closes the single connection pool the control plane opens. */
@@ -160,6 +163,7 @@ export function createRuntimeServices(): RuntimeServices {
     const onboardingManager = new DrizzleOnboardingManager(database, masterKey, aiOpsManager);
     const runtimeNodeManager = new DrizzleHermesRuntimeNodeManager(database, encryption, connectionTestService);
     const corpusManager = new DrizzleHermesCorpusManager(database, runtimeNodeManager);
+    const releaseTargetManager = new DrizzlePlatformReleaseTargetManager(database);
     const inferenceGateway = new DrizzleInferenceGateway(database, connectionManager);
     return {
       bootstrapState,
@@ -196,6 +200,7 @@ export function createRuntimeServices(): RuntimeServices {
       onboardingManager,
       runtimeNodeManager,
       corpusManager,
+      releaseTargetManager,
       inferenceGateway,
     };
   } catch (error) {

@@ -5,6 +5,52 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v5.3.0 — 2026-08-15
+
+The first two increments of updating the deployment from the dashboard, planned
+in `docs/IN_DASHBOARD_UPDATE_PLAN.md`. Neither applies an update yet — one makes
+an upgrade recoverable, the other records which release an operator approved —
+and both are useful on their own, which is why they ship before anything acts on
+them.
+
+The design keeps the boundary the update check already states: the container
+still has no host-root or Docker control. It records an approved target; root
+agents on each host will pull it. The host pulls, the container never pushes,
+which is how VM2's three polling timers have always worked.
+
+**Back the database up before migrating.** `install.sh` restored the source tree
+on a failed upgrade but never the database, and the migrations are forward-only —
+so an upgrade that failed after migrating left a new schema with old code and no
+way back. Survivable only because an operator was at a shell, which is exactly
+what this feature removes.
+
+- dump the database on the upgrade path before anything is staged, and abort the
+  upgrade when the dump cannot be trusted: gzip readable, content non-empty, and
+  pg_dump's own end marker present
+- read the password inside the container from its mounted secret rather than
+  passing it through `docker compose exec -e`, which would put it on the host's
+  process list for the length of the dump
+- keep the newest three dumps by modification time, not by filename — `v10.0.0`
+  sorts below `v9.0.0`, so a lexical pruner eventually deletes the newest
+- stop `exec`ing into the host installer when a dump exists: `exec` replaced the
+  process holding the only pointer to the dump, so the one run that most needed
+  to print a restore path could not
+- add `docs/DATABASE_RESTORE_RUNBOOK.md`, and a test that proves the restore
+  command in it actually brings a deleted row back
+
+**Record an approved release.** A `PlatformReleaseTarget` singleton holds the
+version an administrator approved and the commit it resolved to, so what is
+applied later cannot move underneath the approval.
+
+- approve and withdraw from Settings → Application, behind `readiness:approve`,
+  with the pinned commit, the approver and the time shown on the panel
+- resolve the tag to a 40-character commit at approval time, refuse anything
+  that is not a release tag, and refuse a downgrade
+- leave the unauthenticated update check unchanged: the target names an
+  administrator, so serving it there would have made that identity readable
+  without a session, and a test pins that route against it
+- say plainly on the panel that a target is recorded rather than applied
+
 ## v5.2.2 — 2026-08-15
 
 Repairs the CI gate that v5.2.0 broke, and the reason nobody noticed.

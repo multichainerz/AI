@@ -28,6 +28,7 @@ import {
 import { registerInferenceGatewayRoutes } from "./inference/routes.js";
 import { registerAdminCorpusRoutes, registerRuntimeCorpusRoutes } from "./corpus/routes.js";
 import { checkForPlatformUpdate } from "./platform-updates.js";
+import { registerAdminUpdateRoutes } from "./updates/routes.js";
 
 export interface AppOptions {
   logger?: boolean;
@@ -190,6 +191,12 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
     { prefix: "/api/v1/runtime-nodes" },
   );
 
+  /*
+   * The release question, and only that. This route needs no session, so it
+   * never carries the approved target — that record names the administrator who
+   * approved it. `/api/v1/admin/updates` answers the same question with the
+   * target attached, for a caller that has proved who it is.
+   */
   app.get("/api/v1/platform/update", async (_request, reply) => {
     void reply.header("cache-control", "no-store");
     try {
@@ -202,6 +209,14 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
       });
     }
   });
+
+  await app.register(
+    async (updates) => registerAdminUpdateRoutes(updates, {
+      ...(runtime.sessionManager ? { sessionManager: runtime.sessionManager } : {}),
+      ...(runtime.releaseTargetManager ? { manager: runtime.releaseTargetManager } : {}),
+    }),
+    { prefix: "/api/v1/admin/updates" },
+  );
 
   await app.register(
     async (runtimeCorpus) => registerRuntimeCorpusRoutes(runtimeCorpus, {

@@ -859,6 +859,35 @@ export const platformArchitectureDecision = pgTable("PlatformArchitectureDecisio
 	targetEnvironment: onboardingTargetEnvironment().default('DEVELOPMENT').notNull(),
 });
 
+/**
+ * The release an operator has approved this deployment to move to.
+ *
+ * Intent only. Nothing in the container acts on this row - the dashboard runs
+ * without host-root or Docker control and that boundary is deliberate. Root
+ * agents on VM1 and VM2 read the target and apply it; the host pulls, the
+ * container never pushes.
+ *
+ * desiredCommit is what makes the record safe to act on later. A tag is a
+ * moving ref - it can be re-pointed after approval - so the commit it resolved
+ * to at approval time is stored beside it, and the constraint below refuses a
+ * row where the two do not travel together. approvedBySubject is kept beside
+ * approvedBy because a federated approver has no row in LocalAdministrator, so
+ * the uuid alone cannot be resolved back to a name afterwards.
+ */
+export const platformReleaseTarget = pgTable("PlatformReleaseTarget", {
+	id: varchar({ length: 32 }).default('global').primaryKey().notNull(),
+	desiredVersion: varchar({ length: 64 }),
+	desiredCommit: varchar({ length: 40 }),
+	approvedBy: uuid(),
+	approvedBySubject: varchar({ length: 320 }),
+	approvedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
+	revision: integer().default(0).notNull(),
+	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
+}, (table) => [
+	check("PlatformReleaseTarget_approval_check", sql`(("desiredVersion" IS NULL) AND ("desiredCommit" IS NULL) AND ("approvedAt" IS NULL) AND ("approvedBySubject" IS NULL)) OR ((length(btrim(("desiredVersion")::text)) > 0) AND (("desiredCommit")::text ~ '^[0-9a-f]{40}$'::text) AND ("approvedAt" IS NOT NULL) AND (length(btrim(("approvedBySubject")::text)) > 0))`),
+]);
+
 export const hermesRuntimeNode = pgTable("HermesRuntimeNode", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	slug: varchar({ length: 64 }).notNull(),

@@ -11,6 +11,7 @@ ORCASYNAPSE_ARCHIVE_SHA256="${ORCASYNAPSE_ARCHIVE_SHA256:-}"
 temporary_root=""
 staging_dir=""
 backup_dir=""
+database_backup_path=""
 existing_install_action=""
 
 # >>> ORCASYNAPSE-INSTALLER-UI v1 - generated from scripts/lib/installer-ui.sh; edit the library, then run: bash scripts/sync-installer-ui.sh >>>
@@ -492,6 +493,11 @@ UI_BANNER_META="Source ${ORCASYNAPSE_GITHUB_REPOSITORY} @ ${ORCASYNAPSE_REF}"
 UI_DOWNLOAD_MAX_TIME=300
 
 cleanup() {
+  # Read before anything else in this handler: every command below overwrites
+  # $?, and the restore notice at the end has to tell a failed run apart from a
+  # successful one. The same mistake was already made and fixed once in
+  # scripts/install-orcasynapse.sh, where it logged status=0 for every failure.
+  local status=$?
   (( UI_INTERACTIVE )) && printf '\033[?25h'
   [[ -z "${temporary_root}" || ! -d "${temporary_root}" ]] || rm -rf -- "${temporary_root}"
   [[ -z "${staging_dir}" || ! -d "${staging_dir}" ]] || rm -rf -- "${staging_dir}"
@@ -501,6 +507,20 @@ cleanup() {
     else
       warning "A protected source backup remains at ${backup_dir}; inspect it before removal."
     fi
+  fi
+  # The source tree restores itself; the database does not, because the
+  # migrations are forward-only and have no down step. An upgrade that fails
+  # after they ran leaves a new schema under old code, and this dump is the only
+  # way back -- so its path is the last thing an operator reads here, not
+  # something they have to know to go looking for.
+  if (( status != 0 )) && [[ -n "${database_backup_path}" && -f "${database_backup_path}" ]]; then
+    ui_panel_begin "${UI_AMBER}" "THE PRE-UPGRADE DATABASE DUMP IS INTACT" "="
+    ui_panel_kv 'Dump' "${database_backup_path}"
+    ui_panel_kv 'Restore guide' "${ORCASYNAPSE_INSTALL_DIR}/docs/DATABASE_RESTORE_RUNBOOK.md"
+    ui_panel_kv 'Backup record' "${ORCASYNAPSE_INSTALL_DIR}/.local/state/last-database-backup.json"
+    ui_panel_line 'This upgrade did not finish. Nothing else is needed to keep the dump; it is'
+    ui_panel_line 'already on disk. Follow the restore guide before running any further upgrade.'
+    ui_panel_end "${UI_AMBER}" "="
   fi
 }
 trap cleanup EXIT
@@ -780,6 +800,249 @@ clean_existing_install() {
   success "Clean-installation boundary verified; new source installation can proceed."
 }
 
+# The release the dump is being taken *from*, used to name the file and to tell
+# a restoring operator which source tree the schema in it belongs to. The
+# completion receipt is the authority because it is written by the run that
+# actually finished; the source tree's version constant is the fallback for a
+# receipt written before that field existed. Anything else becomes "unknown"
+# rather than putting an operator-supplied fragment into a filename.
+existing_install_version() {
+  local receipt="${ORCASYNAPSE_INSTALL_DIR}/.local/state/install-complete.json"
+  local version_file="${ORCASYNAPSE_INSTALL_DIR}/packages/contracts/src/version.ts"
+  local version=""
+  if [[ -r "${receipt}" ]]; then
+    version="$(sed -nE 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' "${receipt}" | head -n 1)"
+  fi
+  if [[ -z "${version}" && -r "${version_file}" ]]; then
+    version="$(sed -nE 's/.*ORCASYNAPSE_VERSION = "([^"]+)".*/\1/p' "${version_file}" | head -n 1)"
+  fi
+  version="${version//[^A-Za-z0-9._-]/}"
+  printf '%s' "${version:-unknown}"
+}
+
+# Which role and database to dump, read out of the Compose secret rather than
+# assumed. The database URL is a file mounted into the containers and never an
+# environment variable on the host, so this file is the only place those names
+# exist outside PostgreSQL itself.
+#
+# The password in that URL is deliberately not parsed: passing it to
+# `docker compose exec -e PGPASSWORD=` would publish the database password to
+# every `ps` on the host for the length of the dump. The postgres container
+# already has its own copy at /run/secrets/postgres_password, which is where the
+# dump command below reads it.
+#
+# Returns non-zero instead of calling fail: this runs inside a command
+# substitution, where fail's exit would end only the subshell and leave the
+# caller running with an empty answer.
+database_identity_from_secret() {
+  local secret="${ORCASYNAPSE_INSTALL_DIR}/.local/secrets/orcasynapse_database_url"
+  local url remainder authority user database
+  [[ -s "${secret}" ]] || return 1
+  url="$(<"${secret}")"
+  url="${url//[[:space:]]/}"
+  [[ "${url}" == *"://"* ]] || return 1
+  remainder="${url#*://}"
+  # Credentials are stripped before the path is read. A password may legally
+  # contain a slash, and taking the path first would then cut the URL inside the
+  # password and dump a database that does not exist. The host is taken after
+  # the *last* @ and the role before the *first* one, so a password containing
+  # either character still leaves both ends correct.
+  authority="${remainder##*@}"
+  user="${remainder%%@*}"
+  user="${user%%:*}"
+  [[ "${authority}" == */* ]] || return 1
+  database="${authority#*/}"
+  database="${database%%\?*}"
+  [[ "${user}" =~ ^[A-Za-z0-9_-]+$ && "${database}" =~ ^[A-Za-z0-9_-]+$ ]] || return 1
+  printf '%s %s' "${user}" "${database}"
+}
+
+# pg_dump runs inside the postgres container rather than on the host: the
+# database listens only on Compose's internal `data` network, the host has no
+# postgres client of its own, and the credential is a container-mounted secret.
+#
+# Kept as a function so run_with_progress can drive it -- that helper redirects
+# its command's stdout into a log file, so the dump has to own the redirection
+# to its target rather than write to stdout.
+run_database_dump() {
+  local target="$1" db_user="$2" db_name="$3"
+  # --clean --if-exists --no-owner: the dump has to be restorable *over* the
+  # database it came from, which is the only restore that matters here, and
+  # restorable by a role with a different name into a scratch database, which is
+  # how an operator inspects one before committing to it.
+  docker compose --project-directory "${ORCASYNAPSE_INSTALL_DIR}" exec -T postgres \
+    sh -c 'PGPASSWORD="$(cat /run/secrets/postgres_password)" exec pg_dump --username="$1" --dbname="$2" --no-password --clean --if-exists --no-owner' \
+    orcasynapse-pg-dump "${db_user}" "${db_name}" \
+    | gzip -9 > "${target}"
+}
+
+# pg_isready over TCP rather than the socket, for the reason compose.yaml's
+# healthcheck states: the official entrypoint runs its initdb-phase server with
+# listen_addresses='', so the socket answers while the port still refuses, and a
+# dump started in that window fails against a database that is about to be fine.
+wait_for_database() {
+  local db_user="$1" db_name="$2" deadline=$((SECONDS + 120))
+  until docker compose --project-directory "${ORCASYNAPSE_INSTALL_DIR}" exec -T postgres \
+      pg_isready -h 127.0.0.1 -U "${db_user}" -d "${db_name}" >/dev/null 2>&1; do
+    (( SECONDS < deadline )) || return 1
+    sleep 2
+  done
+}
+
+# Three dumps kept, by modification time rather than by name. The name carries
+# the release it was taken from, and release names do not sort chronologically:
+# v5.10.0 sorts before v5.9.0, so a lexical pruner would delete the newest dump
+# on the first two-digit minor version -- the release most likely to need it.
+prune_database_backups() {
+  local backups_dir="$1" path
+  local -a stale=()
+  while IFS= read -r path; do
+    # `if` rather than `[[ … ]] && stale+=(…)`: a false test is a failing
+    # command, and as the last statement in a loop body it trips errexit.
+    if [[ -n "${path}" ]]; then stale+=("${path}"); fi
+  done < <(find "${backups_dir}" -maxdepth 1 -type f -name '*.sql.gz' -printf '%T@ %p\n' 2>/dev/null \
+    | sort -k1,1rn -k2,2r | tail -n +4 | cut -d' ' -f2-)
+  (( ${#stale[@]} > 0 )) || return 0
+  rm -f -- "${stale[@]}"
+  info "Kept the three most recent database dumps; removed ${#stale[@]} older one(s)."
+}
+
+# The pointer a restore starts from, so finding the dump is never a matter of
+# guessing at a filename. It records the commit the dump was taken from as well
+# as the one being installed, because restoring the data is only half of going
+# back -- the other half is reinstalling that commit's source.
+#
+# Written under .local/state, which the upgrade copies into the new tree, so it
+# survives the source swap that is about to happen.
+record_database_backup() {
+  local path="$1" version="$2" bytes="$3" target_commit="$4"
+  local receipt="${ORCASYNAPSE_INSTALL_DIR}/.local/state/last-database-backup.json"
+  local from_commit="" escaped_path
+  if [[ -r "${ORCASYNAPSE_INSTALL_DIR}/.orcasynapse-source-commit" ]]; then
+    from_commit="$(<"${ORCASYNAPSE_INSTALL_DIR}/.orcasynapse-source-commit")"
+  fi
+  escaped_path="${path//\\/\\\\}"
+  escaped_path="${escaped_path//\"/\\\"}"
+  install -d -m 0700 "${ORCASYNAPSE_INSTALL_DIR}/.local/state"
+  printf '{"path":"%s","version":"%s","bytes":%s,"createdAt":"%s","fromCommit":"%s","toCommit":"%s"}\n' \
+    "${escaped_path}" "${version}" "${bytes}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    "${from_commit}" "${target_commit}" > "${receipt}"
+  chmod 0600 "${receipt}"
+}
+
+# The gate this whole path exists for: the four migrations under
+# packages/database/drizzle/migrations are forward-only and have no down step,
+# so an upgrade that fails after they run leaves a new schema under old code
+# with no way back. Every exit from here is therefore either a dump on disk, a
+# stated reason why there is no database to dump, or a failure that stops the
+# upgrade before a single file has been staged.
+back_up_database_before_upgrade() {
+  local target_commit="$1"
+  local secret="${ORCASYNAPSE_INSTALL_DIR}/.local/secrets/orcasynapse_database_url"
+  local backups_dir="${ORCASYNAPSE_INSTALL_DIR}/.local/state/backups"
+  local identity db_user db_name version stamp target partial trailer bytes
+
+  # No database URL means this installation never provisioned a database, so the
+  # migrations will build the schema from empty and there is nothing to lose.
+  if [[ ! -s "${secret}" ]]; then
+    warning "This installation has no database secret, so it has no database to preserve; continuing without a pre-upgrade dump."
+    return 0
+  fi
+  # No Docker client at all means no container ever created a database on this
+  # host. A Docker client with an unreachable daemon is a different situation
+  # entirely, and not a safe one: the host installer this script hands off to
+  # starts Docker itself and then migrates, so the volume is still on disk and
+  # the migration would still reach it.
+  if ! command -v docker >/dev/null 2>&1; then
+    warning "Docker is not installed on this host, so there is no database to preserve; continuing without a pre-upgrade dump."
+    return 0
+  fi
+  docker info >/dev/null 2>&1 \
+    || fail "the Docker daemon is not reachable, so the database cannot be backed up before the forward-only migrations run; start Docker (systemctl start docker) and run this installer again"
+  docker compose version >/dev/null 2>&1 \
+    || fail "Docker Compose v2 is required to back up the database before upgrading"
+
+  identity="$(database_identity_from_secret)" \
+    || fail "the protected database URL secret is not a connection URL this installer can dump; restore the complete protected secret set before upgrading"
+  db_user="${identity%% *}"
+  db_name="${identity##* }"
+
+  # A stopped stack still has its data volume, and the host installer would
+  # start it and migrate it, so "not running" is a reason to start PostgreSQL
+  # rather than a reason to skip the dump. Only postgres is started, and the
+  # handoff starts the whole stack a few minutes later regardless.
+  #
+  # Reachability is the question, so reachability is what is asked -- rather
+  # than `compose ps`, whose answer depends on which of `-q`, `-a` and
+  # `--status` the installed Compose understands.
+  if ! docker compose --project-directory "${ORCASYNAPSE_INSTALL_DIR}" exec -T postgres \
+      pg_isready -h 127.0.0.1 -U "${db_user}" -d "${db_name}" >/dev/null 2>&1; then
+    run_with_progress "Start PostgreSQL for the pre-upgrade backup" \
+      docker compose --project-directory "${ORCASYNAPSE_INSTALL_DIR}" up -d --no-build postgres \
+      || fail "PostgreSQL could not be started to take the pre-upgrade database dump; nothing has been changed"
+  fi
+  run_with_progress "Wait for PostgreSQL to accept connections" wait_for_database "${db_user}" "${db_name}" \
+    || fail "PostgreSQL did not accept connections within two minutes, so the pre-upgrade database dump could not be taken; nothing has been changed"
+
+  version="$(existing_install_version)"
+  stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  # 0700, alongside .local/secrets: a dump is the entire application database in
+  # plain SQL, which is every secret the database holds and every customer row.
+  #
+  # Under .local, so upgrade_source_tree carries it into the new tree with the
+  # rest of the protected state. That copy is why retention is three and not
+  # thirty: every upgrade briefly holds two copies of everything kept here.
+  install -d -m 0700 "${backups_dir}"
+  target="${backups_dir}/${version}-${stamp}.sql.gz"
+  partial="${target}.partial"
+  rm -f -- "${partial}"
+
+  # Written under a .partial name and renamed only once proven complete.
+  # Retention and every restore procedure treat a *.sql.gz as usable, and a
+  # truncated dump that looks usable is worse than no dump at all.
+  run_with_progress "Back up ${db_name} before migrating" \
+    run_database_dump "${partial}" "${db_user}" "${db_name}" \
+    || { rm -f -- "${partial}"; fail "the pre-upgrade database dump failed; nothing has been changed. These migrations cannot be undone, so an upgrade that cannot be reversed must not begin: correct the reported error and run this installer again"; }
+
+  # Three questions, because a dump can fail in three ways that all leave a file
+  # behind and all report success: an unreadable archive, a readable archive
+  # holding nothing, and a readable archive holding a stream pg_dump abandoned
+  # partway. Only the trailer answers the third, because pg_dump writes it last.
+  #
+  # Note what is deliberately *not* checked: the size of the gzip file. gzip
+  # writes a valid twenty-byte archive for an empty input, so a dump that
+  # produced not one row still passes `test -s` -- a check that reads like a
+  # guard and can never fire.
+  if ! gzip -t -- "${partial}" 2>/dev/null; then
+    rm -f -- "${partial}"
+    fail "the pre-upgrade database dump is not a readable gzip archive; nothing has been changed and the upgrade was not started"
+  fi
+  # One decompression pass answers both remaining questions. Read through a
+  # command substitution rather than piped into grep: grep -q exits on its first
+  # match, the writer ahead of it dies on the broken pipe, and under
+  # `set -o pipefail` a successful match would then report failure.
+  trailer="$(gzip -cd -- "${partial}" | tail -c 4096 || true)"
+  if [[ -z "${trailer}" ]]; then
+    rm -f -- "${partial}"
+    fail "the pre-upgrade database dump is empty -- PostgreSQL returned no data; nothing has been changed and the upgrade was not started"
+  fi
+  if [[ "${trailer}" != *"PostgreSQL database dump complete"* ]]; then
+    rm -f -- "${partial}"
+    fail "the pre-upgrade database dump is incomplete -- pg_dump did not write its end marker; nothing has been changed and the upgrade was not started"
+  fi
+
+  mv -- "${partial}" "${target}"
+  chmod 0600 "${target}"
+  database_backup_path="${target}"
+  # Exported for the host installer and for the update agent that will drive
+  # this path without an operator at a terminal.
+  export ORCASYNAPSE_DATABASE_BACKUP_PATH="${target}"
+  bytes="$(stat -c '%s' "${target}" 2>/dev/null || printf '0')"
+  record_database_backup "${target}" "${version}" "${bytes}" "${target_commit}"
+  prune_database_backups "${backups_dir}"
+  success "Database dump written to ${target} ($(format_transfer_bytes "${bytes}"))."
+}
+
 upgrade_source_tree() {
   local install_parent install_name
   install_parent="$(dirname -- "${ORCASYNAPSE_INSTALL_DIR}")"
@@ -823,7 +1086,13 @@ install_source_tree() {
         warning "Destructive confirmation accepted; starting the clean reinstall."
         clean_existing_install
         ;;
-      upgrade) ;;
+      upgrade)
+        # Before anything is staged, copied or moved. The dump is the only way
+        # back from a forward-only migration, so an upgrade that cannot produce
+        # one must not start -- at this point failing costs the operator
+        # nothing, because the installation is still entirely untouched.
+        back_up_database_before_upgrade "${commit}"
+        ;;
       *) fail "existing-installation action could not be resolved" ;;
     esac
   fi
@@ -873,6 +1142,17 @@ main() {
   success "Verified source installed at ${ORCASYNAPSE_INSTALL_DIR}."
   info "Handing off to the host installer. Builds can take several minutes."
   export ORCASYNAPSE_BOOTSTRAP_BRANDED=1
+  # An upgrade that took a dump is supervised rather than exec'd. `exec`
+  # replaces this process, and with it the EXIT handler holding the only
+  # pointer to that dump -- so the one run that most needs to print a restore
+  # path, a migration that fails after it has already altered the schema, would
+  # be the one run unable to. Nothing else changes: exported variables cross a
+  # child exactly as they cross an exec, and errexit hands the child's status
+  # straight back out of this script.
+  if [[ -n "${database_backup_path}" ]]; then
+    bash "${ORCASYNAPSE_INSTALL_DIR}/scripts/install-orcasynapse.sh"
+    return
+  fi
   exec bash "${ORCASYNAPSE_INSTALL_DIR}/scripts/install-orcasynapse.sh"
 }
 

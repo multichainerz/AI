@@ -1409,3 +1409,95 @@ strong, output, time, td, th { font-variant-numeric: tabular-nums; }
      into the page's scroll height. Measured, not reasoned about. */
   overflow: hidden;
 }
+
+/*
+ * The pixel-grid loader (`components/ui/loading-state.tsx`).
+ *
+ * Every value the upstream component passed through `style={{…}}` lives here
+ * instead: the container serves `style-src 'self'` with no `unsafe-inline`, so
+ * an inline style attribute is refused and the grid would have drawn nine
+ * static squares. Delays are `nth-child` rules rather than Tailwind arbitrary
+ * values because the variants renumber them, and a class name assembled at
+ * runtime is a class Tailwind's scanner never emits.
+ */
+.pixel-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 4px);
+  gap: 1.5px;
+}
+.pixel-grid__cell {
+  width: 4px;
+  height: 4px;
+  border-radius: 1px;
+  background: rgb(var(--text-rgb));
+  opacity: 0.15;
+  animation: pixel-on 650ms ease-in-out infinite;
+}
+.pixel-grid[data-variant="dots"] .pixel-grid__cell { border-radius: 50%; }
+
+/* Chevron wavefront: delay rises with column and with distance from the middle
+ * row, so the front leans as it drives right. */
+.pixel-grid[data-variant="drive"] .pixel-grid__cell:nth-child(1),
+.pixel-grid[data-variant="dots"] .pixel-grid__cell:nth-child(1) { animation-delay: 90ms; }
+.pixel-grid[data-variant="drive"] .pixel-grid__cell:nth-child(2),
+.pixel-grid[data-variant="dots"] .pixel-grid__cell:nth-child(2) { animation-delay: 180ms; }
+.pixel-grid[data-variant="drive"] .pixel-grid__cell:nth-child(3),
+.pixel-grid[data-variant="dots"] .pixel-grid__cell:nth-child(3) { animation-delay: 270ms; }
+.pixel-grid[data-variant="drive"] .pixel-grid__cell:nth-child(4),
+.pixel-grid[data-variant="dots"] .pixel-grid__cell:nth-child(4) { animation-delay: 0ms; }
+.pixel-grid[data-variant="drive"] .pixel-grid__cell:nth-child(5),
+.pixel-grid[data-variant="dots"] .pixel-grid__cell:nth-child(5) { animation-delay: 90ms; }
+.pixel-grid[data-variant="drive"] .pixel-grid__cell:nth-child(6),
+.pixel-grid[data-variant="dots"] .pixel-grid__cell:nth-child(6) { animation-delay: 180ms; }
+.pixel-grid[data-variant="drive"] .pixel-grid__cell:nth-child(7),
+.pixel-grid[data-variant="dots"] .pixel-grid__cell:nth-child(7) { animation-delay: 90ms; }
+.pixel-grid[data-variant="drive"] .pixel-grid__cell:nth-child(8),
+.pixel-grid[data-variant="dots"] .pixel-grid__cell:nth-child(8) { animation-delay: 180ms; }
+.pixel-grid[data-variant="drive"] .pixel-grid__cell:nth-child(9),
+.pixel-grid[data-variant="dots"] .pixel-grid__cell:nth-child(9) { animation-delay: 270ms; }
+
+/* Orbit: one comet around the perimeter. The centre cell is in no lap, so it
+ * holds the dim state rather than pulsing out of step with the ring. */
+.pixel-grid[data-variant="orbit"] .pixel-grid__cell { animation-duration: 950ms; }
+.pixel-grid[data-variant="orbit"] .pixel-grid__cell:nth-child(1) { animation-delay: 0ms; }
+.pixel-grid[data-variant="orbit"] .pixel-grid__cell:nth-child(2) { animation-delay: 110ms; }
+.pixel-grid[data-variant="orbit"] .pixel-grid__cell:nth-child(3) { animation-delay: 220ms; }
+.pixel-grid[data-variant="orbit"] .pixel-grid__cell:nth-child(6) { animation-delay: 330ms; }
+.pixel-grid[data-variant="orbit"] .pixel-grid__cell:nth-child(9) { animation-delay: 440ms; }
+.pixel-grid[data-variant="orbit"] .pixel-grid__cell:nth-child(8) { animation-delay: 550ms; }
+.pixel-grid[data-variant="orbit"] .pixel-grid__cell:nth-child(7) { animation-delay: 660ms; }
+.pixel-grid[data-variant="orbit"] .pixel-grid__cell:nth-child(4) { animation-delay: 770ms; }
+.pixel-grid[data-variant="orbit"] .pixel-grid__cell:nth-child(5) { animation: none; opacity: 0.07; }
+
+.shimmer-label {
+  color: rgb(var(--muted-rgb));
+  background-image: linear-gradient(90deg, rgb(var(--muted-rgb)) 35%, rgb(var(--text-rgb)) 50%, rgb(var(--muted-rgb)) 65%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer-text 1.4s linear infinite;
+}
+
+@keyframes pixel-on {
+  0%, 100% { opacity: 0.12; }
+  50% { opacity: 1; }
+}
+@keyframes shimmer-text {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/*
+ * Reduced motion freezes the grid to its dim state and drops the shimmer back
+ * to a plain colour. The elapsed timer keeps ticking: it is information, not
+ * decoration, and it is the only thing on screen saying the turn is still alive.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .pixel-grid__cell { animation: none; }
+  .shimmer-label {
+    animation: none;
+    background-image: none;
+    -webkit-text-fill-color: rgb(var(--muted-rgb));
+  }
+}

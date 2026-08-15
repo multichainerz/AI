@@ -71,22 +71,23 @@ describe("signing in from the front page", () => {
   });
 
   /*
-   * The diagram is the deployment, not a metaphor. It names the two machines
-   * and the boundary they sit in, and the drawing it replaced — an orbit of
-   * abstractions around a "plan · reason" core — must not creep back, because
-   * the whole point of the redesign was that it said less than it appeared to.
+   * The hero carries no diagram at all now. Two have been drawn here and both
+   * were removed — an orbit of abstractions around a "plan · reason" core, then
+   * a literal two-machine deployment picture — so this asserts the absence
+   * rather than the contents of a third. The page's job before sign-in is the
+   * sign-in card; the architecture is documented where it can be read properly.
    */
-  it("draws the real deployment: operator, control plane, isolated Hermes runtime", () => {
+  it("draws no architecture diagram in the hero", () => {
     const { container } = render(<FrontPage {...base} {...handlers()} />);
 
-    expect(screen.getByLabelText(/intent enters the OrcaSynapse control plane/i)).toBeTruthy();
-    expect(container.textContent).toContain("INFRASTRUCTURE YOU CONTROL");
-    expect(container.textContent).toContain("OPERATOR");
-    expect(container.textContent).toContain("CONTROL PLANE");
-    expect(container.textContent).toContain("HERMES");
-    expect(container.textContent).toContain("Approved inference");
-    expect(container.textContent).toContain("Audit · Evidence");
-    expect(container.textContent).not.toMatch(/AGENTIC HARNESS|PLAN . REASON|TOOLS \+ ACTIONS|CONTROLLED ENVIRONMENT/);
+    expect(screen.queryByLabelText(/intent enters the OrcaSynapse control plane/i)).toBeNull();
+    expect(container.querySelector("svg[viewBox='0 0 560 224']")).toBeNull();
+    expect(container.textContent).not.toMatch(
+      /INFRASTRUCTURE YOU CONTROL|CONTROL PLANE|Approved inference|Audit . Evidence|AGENTIC HARNESS|TOOLS \+ ACTIONS/,
+    );
+    // The heading and the sign-in card are what the page is for, and both stay.
+    expect(container.textContent).toContain("Dynamic intelligence, orchestrated into action.");
+    expect(screen.getByRole("region", { name: "Administrator access" })).toBeTruthy();
   });
 
   it("keeps the sign-in card compact and removes decorative framing copy", () => {

@@ -158,3 +158,11 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install a fresh control plane end to end
         run: sudo bash scripts/test-orcasynapse-installer-smoke.sh
+      # The upgrade path's database dump, which is the only thing standing
+      # between a migration that fails halfway and an unrecoverable install:
+      # the source tree is restored automatically on failure, the database is
+      # not, and the migrations are forward-only. Lives in this job because it
+      # needs root and a Docker daemon; it builds no images and takes ~90s, so
+      # it is far cheaper than the smoke test above it.
+      - name: Verify the upgrade backs the database up before migrating
+        run: sudo bash scripts/test-orcasynapse-installer-backup.sh

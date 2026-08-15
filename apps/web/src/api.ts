@@ -8,6 +8,7 @@ import {
   administratorSessionSchema,
   configurationRevisionListSchema,
   platformMetaSchema,
+  platformReleaseTargetSchema,
   platformUpdateSchema,
   serviceConnectionListSchema,
   serviceConnectionSummarySchema,
@@ -36,7 +37,9 @@ import {
   type InferenceDiscoveryResult,
   type UpdateConnectionMonitoringControl,
   type ConfigurationRevisionList,
+  type ApproveReleaseTarget,
   type PlatformMeta,
+  type PlatformReleaseTarget,
   type PlatformUpdate,
   type ServiceConnectionList,
   type ServiceConnectionSummary,
@@ -291,12 +294,37 @@ export async function getPlatformMeta(signal?: AbortSignal): Promise<PlatformMet
   return platformMetaSchema.parse(await parsedResponse(response));
 }
 
+/**
+ * The release check and the approved target, from the administrator route.
+ *
+ * Not the unauthenticated `/api/v1/platform/update`: the response names the
+ * administrator who approved the target, which is not public. Both answer the
+ * same release question; only this one carries the record.
+ */
 export async function getPlatformUpdate(): Promise<PlatformUpdate> {
-  const response = await fetch("/api/v1/platform/update", {
+  const response = await fetch("/api/v1/admin/updates", {
     credentials: "same-origin",
     cache: "no-store",
   });
   return platformUpdateSchema.parse(await parsedResponse(response));
+}
+
+export async function approveReleaseTarget(input: ApproveReleaseTarget): Promise<PlatformReleaseTarget> {
+  const response = await fetch("/api/v1/admin/updates/target", {
+    method: "POST",
+    headers: adminHeaders(),
+    credentials: "same-origin",
+    body: JSON.stringify(input),
+  });
+  return platformReleaseTargetSchema.parse(await parsedResponse(response));
+}
+
+export async function clearReleaseTarget(): Promise<void> {
+  const response = await fetch("/api/v1/admin/updates/target", {
+    method: "DELETE",
+    credentials: "same-origin",
+  });
+  if (!response.ok) await parsedResponse(response);
 }
 
 export async function getConnections(): Promise<ServiceConnectionList> {

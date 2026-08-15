@@ -9,6 +9,7 @@ import type {
   ModelDeployment,
 } from "@orcasynapse/contracts";
 import { applyStreamEventToConversation } from "./chat-stream-reducer.js";
+import { LoadingState } from "./components/ui/loading-state.js";
 import { interleaveByOffset } from "./chat/interleave.js";
 import { MarkdownMessage } from "./chat/markdown-message.js";
 import { groupConversationsByDate } from "./chat/conversation-groups.js";
@@ -427,17 +428,22 @@ function AgentResponseFlow({
         <AgentActivityTrail entries={block.entries} key={`activity-${block.entries[0]!.key}`} />
       ))}
 
+      {/*
+        * The elapsed figure is passed in rather than measured by the indicator:
+        * the turn's clock starts when the stream opens and has to survive a
+        * reconnect, which a timer mounted here could not do. When the stream is
+        * down the timer is replaced outright — a number that had stopped
+        * advancing would read as a stalled turn rather than a lost connection.
+        */}
       {message.status === "PENDING" && (
-        <div className="mt-3 flex min-w-0 items-center gap-2.5 text-caption text-muted">
-          <span aria-hidden="true" className="grid h-4 w-4 place-items-center">
-            <span className="h-2 w-2 rounded-pill bg-accent anim-live" />
-          </span>
-          <span aria-live="polite" className="min-w-0 truncate">
-            {currentActivity ?? "Hermes is working"}
-          </span>
-          <small className="ml-auto shrink-0 font-mono text-micro tabular-nums text-faint">
-            {busy ? `${(elapsedMs / 1_000).toFixed(1)} s` : "reconnecting"}
-          </small>
+        <div className="mt-3" aria-live="polite">
+          <LoadingState
+            label={currentActivity ?? "Hermes is working"}
+            variant="drive"
+            elapsedMs={elapsedMs}
+            {...(busy ? {} : { trailing: "reconnecting" })}
+            className="w-full"
+          />
         </div>
       )}
 
@@ -1367,7 +1373,10 @@ export function ChatView({
                   <RobotIcon size={15} />
                 </span>
                 <Select
-                  className="h-9 w-[216px] border-0 bg-transparent pl-10 pr-2 text-caption font-semibold focus-visible:outline-offset-0"
+                  // `ring-0` because the wrapper above owns the focus border:
+                  // shadcn's select base carries `focus-visible:ring-2`, which
+                  // otherwise draws a second rectangle inside the first.
+                  className="h-9 w-[216px] border-0 bg-transparent pl-10 pr-2 text-caption font-semibold shadow-none focus-visible:outline-offset-0 focus-visible:ring-0"
                   disabled={!profileAvailable}
                   value={selectedProfileId}
                   onChange={(event) => setSelectedProfileId(event.target.value)}
@@ -1503,15 +1512,22 @@ export function ChatView({
                 >
                   <img src="/brand/sivali-mark.svg" alt="" width={28} height={28} className="block" />
                 </div>
-                <h2 className="m-0 font-display text-[30px] font-semibold leading-[1.2] tracking-[-0.03em] text-text">
+                {/*
+                  * The greeting carries its own bottom margin because the
+                  * paragraph that used to follow it is gone. That paragraph
+                  * explained that every response is a governed Agent Run and
+                  * which of the profile's settings applied -- the machinery,
+                  * described to someone who came here to ask a question, with
+                  * the profile it referred to already named in the header a few
+                  * pixels away. Its `mb-6` was the only gap between the heading
+                  * and what follows, so removing the text without moving the
+                  * spacing left the two touching.
+                  */}
+                <h2 className="mb-6 mt-0 font-display text-[30px] font-semibold leading-[1.2] tracking-[-0.03em] text-text">
                   Ask anything about
                   <br />
                   your workspace.
                 </h2>
-                <p className="mb-6 mt-3 max-w-[460px] text-body leading-relaxed text-muted">
-                  Every response is a governed Hermes Agent Run. Your selected profile controls behavior, Skills,
-                  model selection, and tool policy; Hermes owns session continuity and memory internally.
-                </p>
                 {/*
                   * Two bordered cards used to stand between the greeting and the
                   * one thing a reader came here to do. The profile picker moved

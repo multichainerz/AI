@@ -3,6 +3,7 @@ import {
   checkForPlatformUpdate,
   latestReleaseVersion,
   parseReleaseVersion,
+  resolveReleaseTarget,
 } from "./platform-updates.js";
 
 /*
@@ -64,5 +65,49 @@ describe("platform update checks", () => {
     expect(update.latestVersion).toBe("v4.8.3");
     expect(update.updateCommand).toContain("ORCASYNAPSE_REF=v4.8.3");
     expect(update.automaticUpdateSupported).toBe(false);
+    expect(update.target).toBeNull();
+  });
+});
+
+describe("resolving an approved tag to a commit", () => {
+  const COMMIT = "3f6a1c9d20b74e5a8c1d0f2b7e4a9c6d5b8e0134";
+  const OLDER_COMMIT = "9a1b2c3d4e5f60718293a4b5c6d7e8f901234567";
+  const tags = (entries: unknown[]) =>
+    vi.fn(async () => new Response(JSON.stringify(entries), { status: 200 }));
+
+  it("pins the tag to the 40-character commit GitHub reports for it", async () => {
+    // The commit is the point of the exercise: an operator approves a tag, but
+    // a tag can be re-pointed afterwards, so what gets recorded is what the tag
+    // meant at the moment of approval.
+    const fetchImplementation = tags([
+      { name: "documentation", commit: { sha: "c".repeat(40) } },
+      { name: "v4.8.3", commit: { sha: COMMIT } },
+      { name: "v4.8.2", commit: { sha: OLDER_COMMIT } },
+    ]);
+
+    expect(await resolveReleaseTarget("v4.8.3", fetchImplementation)).toEqual({ tag: "v4.8.3", commit: COMMIT });
+    // The approved tag's commit, not the first entry's and not the newest.
+    expect(await resolveReleaseTarget("v4.8.2", fetchImplementation)).toEqual({ tag: "v4.8.2", commit: OLDER_COMMIT });
+  });
+
+  it("refuses anything that is not a published release tag", async () => {
+    const published = [{ name: "v4.8.3", commit: { sha: COMMIT } }, { name: "documentation", commit: { sha: "c".repeat(40) } }];
+
+    // Not a release tag at all, so no lookup is worth making.
+    expect(await resolveReleaseTarget("main", tags(published))).toBeNull();
+    expect(await resolveReleaseTarget("v4.8.3-rc.1", tags(published))).toBeNull();
+    // Correctly shaped, but no such release exists.
+    expect(await resolveReleaseTarget("v9.9.9", tags(published))).toBeNull();
+    // A branch or a moving ref that happens to be listed is still not a release.
+    expect(await resolveReleaseTarget("documentation", tags(published))).toBeNull();
+  });
+
+  it("reports a lookup it cannot pin rather than storing a partial commit", async () => {
+    // An abbreviated sha would still install *something*, just not provably the
+    // approved commit, so this fails the approval instead of narrowing it.
+    await expect(resolveReleaseTarget("v4.8.3", tags([{ name: "v4.8.3", commit: { sha: COMMIT.slice(0, 7) } }])))
+      .rejects.toThrow(/commit/i);
+    await expect(resolveReleaseTarget("v4.8.3", vi.fn(async () => new Response("", { status: 502 }))))
+      .rejects.toThrow(/502/);
   });
 });

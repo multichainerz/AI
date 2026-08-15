@@ -5,6 +5,9 @@ import {
   createInstallationKeyRecoverySession,
   createLocalAdministratorSession,
   recoverLocalAdministrator,
+  approveReleaseTarget,
+  clearReleaseTarget,
+  getPlatformUpdate,
   getConnections,
   getConnectionMonitoring,
   getEnterpriseSession,
@@ -185,6 +188,50 @@ describe("OrcaSynapse browser API", () => {
 
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/admin/connections/monitoring");
     expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ method: "PATCH", credentials: "same-origin" });
+  });
+
+  it("reads the release check from the administrator route and approves only a tag", async () => {
+    /*
+     * Not `/api/v1/platform/update`. That route needs no session, so it never
+     * carries the approved target — the record names the administrator who
+     * approved it. The approval body carries a tag and the revision the
+     * operator was shown; the commit is resolved server-side.
+     */
+    const target = {
+      desiredVersion: "v5.3.0",
+      desiredCommit: "3f6a1c9d20b74e5a8c1d0f2b7e4a9c6d5b8e0134",
+      approvedBy: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb",
+      approvedBySubject: "platform-admin",
+      approvedAt: "2026-08-15T00:00:00.000Z",
+      revision: 1,
+    };
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse({
+        currentVersion: "v5.2.2",
+        latestVersion: "v5.3.0",
+        updateAvailable: true,
+        releaseUrl: "https://github.com/multichainerz/AI/tree/v5.3.0",
+        updateCommand: "curl installer | sudo ORCASYNAPSE_REF=v5.3.0 bash",
+        automaticUpdateSupported: false,
+        automaticUpdateReason: "The dashboard has no host control.",
+        checkedAt: "2026-08-15T00:00:00.000Z",
+        target: null,
+      }))
+      .mockResolvedValueOnce(jsonResponse(target))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    await getPlatformUpdate();
+    await approveReleaseTarget({ desiredVersion: "v5.3.0", expectedRevision: 0 });
+    await clearReleaseTarget();
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/admin/updates");
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("/api/v1/admin/updates/target");
+    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({
+      method: "POST",
+      credentials: "same-origin",
+      body: JSON.stringify({ desiredVersion: "v5.3.0", expectedRevision: 0 }),
+    });
+    expect(fetchMock.mock.calls[2]?.[1]).toMatchObject({ method: "DELETE", credentials: "same-origin" });
   });
 
   it("reads model routes and sends an evidence-bound activation decision", async () => {

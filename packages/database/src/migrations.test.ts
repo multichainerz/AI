@@ -53,6 +53,7 @@ describe("committed Drizzle migrations", () => {
       "ServiceConnection", "SecretRecord", "AuditEvent", "HermesRuntimeNode",
       "GuardrailPolicy", "ModelDeployment", "EnterpriseUser", "WorkerNode",
       "HermesCorpusSnapshot", "HermesCorpusEntry", "HermesCorpusRevision", "HermesCorpusMutation",
+      "PlatformReleaseTarget",
     ]) {
       expect(statements, table).toContain(`CREATE TABLE "${table}"`);
     }
@@ -79,6 +80,19 @@ describe("committed Drizzle migrations", () => {
     const statements = sql();
     expect(statements).toContain('"allowedAdminRoles" "AdministratorRole"[] NOT NULL');
     expect(statements).not.toContain('"allowedAdminRoles" "bytea"[]');
+  });
+
+  it("pins an approved release target to a commit the database itself will not let move", () => {
+    /*
+     * The whole point of the target row is that what a host agent applies later
+     * cannot drift from what the operator approved. A tag can be re-pointed;
+     * the resolved commit cannot. So "approved" is a single state in the
+     * database — version, commit, time and approver together, or none of them —
+     * rather than four columns a partial write could leave disagreeing.
+     */
+    const statements = sql();
+    expect(statements).toContain('CONSTRAINT "PlatformReleaseTarget_approval_check"');
+    expect(statements).toContain(`("desiredCommit")::text ~ '^[0-9a-f]{40}$'::text`);
   });
 
   it("defaults array columns to empty rather than a parsed fragment", () => {

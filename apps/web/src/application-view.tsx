@@ -20,7 +20,7 @@ interface ApplicationViewProps {
  * documentation had already been sending people to.
  */
 export function ApplicationView({ session, currentVersion, onConfigure, onOpenOperations }: ApplicationViewProps) {
-  const { unlocked } = adminAccess(session);
+  const { unlocked, can } = adminAccess(session);
 
   if (!unlocked) {
     return <LockedScreen
@@ -38,10 +38,10 @@ export function ApplicationView({ session, currentVersion, onConfigure, onOpenOp
       <PageHeader
         kicker="Application settings"
         title="This installation"
-        description="Version, releases, and the update command VM1 runs. Nothing here changes how the workspace is configured."
+        description="Version, releases, the approved target, and the update command VM1 runs. Nothing here changes how the workspace is configured."
       />
 
-      <PlatformUpdatePanel currentVersion={currentVersion} />
+      <PlatformUpdatePanel currentVersion={currentVersion} canApprove={can("readiness:approve")} />
 
       <Panel className="flex flex-wrap items-center justify-between gap-4">
         <div className="min-w-[280px] flex-1">

@@ -1,8 +1,8 @@
 import type { PlatformUpdate } from "@orcasynapse/contracts";
 import { useState } from "react";
-import { getPlatformUpdate } from "./api.js";
+import { approveReleaseTarget, clearReleaseTarget, getPlatformUpdate } from "./api.js";
 import { Button, MicroLabel, Panel, StatusText } from "./ui/index.js";
-import { CopyIcon, SyncIcon } from "./ui/relay-icons.js";
+import { CopyIcon } from "./ui/relay-icons.js";
 
 type UpdateState =
   | { status: "idle" }
@@ -10,20 +10,65 @@ type UpdateState =
   | { status: "ready"; update: PlatformUpdate }
   | { status: "error"; message: string };
 
-export function PlatformUpdatePanel({ currentVersion }: { currentVersion: string }) {
+function approvedAt(value: string): string {
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+}
+
+function failureMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
+interface PlatformUpdatePanelProps {
+  currentVersion: string;
+  /**
+   * Whether this session holds `readiness:approve`. Every administrator role
+   * may read the check; recording a target is the deliberate act, so a session
+   * without the scope is shown the target rather than a button that would come
+   * back 403.
+   */
+  canApprove: boolean;
+}
+
+export function PlatformUpdatePanel({ currentVersion, canApprove }: PlatformUpdatePanelProps) {
   const [state, setState] = useState<UpdateState>({ status: "idle" });
   const [copied, setCopied] = useState(false);
+  /*
+   * Which decision is in flight, kept apart from the check's own state so a
+   * refused approval does not throw away the release the operator just looked
+   * at — they need it on screen to decide what to do about the refusal. Which
+   * one, rather than merely whether: both buttons can be on screen at once when
+   * a release newer than the approved target appears, and a single flag made a
+   * withdrawal relabel the approve button.
+   */
+  const [pending, setPending] = useState<"approve" | "withdraw" | null>(null);
+  const [decisionError, setDecisionError] = useState<string | null>(null);
+  const busy = pending !== null;
 
   const check = async () => {
     setCopied(false);
+    setDecisionError(null);
     setState({ status: "checking" });
     try {
       setState({ status: "ready", update: await getPlatformUpdate() });
     } catch (error) {
       setState({
         status: "error",
-        message: error instanceof Error ? error.message : "The update check failed.",
+        message: failureMessage(error, "The update check failed."),
       });
+    }
+  };
+
+  /** Re-reads rather than patching state: the revision has moved. */
+  const decide = async (kind: "approve" | "withdraw", decision: () => Promise<unknown>, fallback: string) => {
+    setPending(kind);
+    setDecisionError(null);
+    try {
+      await decision();
+      setState({ status: "ready", update: await getPlatformUpdate() });
+    } catch (error) {
+      setDecisionError(failureMessage(error, fallback));
+    } finally {
+      setPending(null);
     }
   };
 
@@ -33,6 +78,14 @@ export function PlatformUpdatePanel({ currentVersion }: { currentVersion: string
   };
 
   const available = state.status === "ready" && state.update.updateAvailable;
+  const target = state.status === "ready" ? state.update.target : null;
+  // Nothing to approve once the checked release is already the recorded target.
+  const approvable = canApprove
+    && state.status === "ready"
+    && state.update.updateAvailable
+    && target?.desiredVersion !== state.update.latestVersion
+    ? state.update
+    : null;
   const statusLabel = state.status === "checking"
     ? "Checking"
     : state.status === "error"
@@ -48,8 +101,23 @@ export function PlatformUpdatePanel({ currentVersion }: { currentVersion: string
     <Panel className="overflow-hidden p-0" aria-label="Application update">
       <div className="flex flex-wrap items-start justify-between gap-4 p-5">
         <div className="flex min-w-0 items-start gap-3">
-          <span className="grid h-10 w-10 shrink-0 place-items-center rounded border border-border-strong bg-raised text-accent">
-            <SyncIcon size={21} />
+          {/*
+            * The Orca mark in white on the brand fill, rather than the accent
+            * sync glyph this used to carry.
+            *
+            * `sivali-mark.svg` is a traced, fixed-colour violet, so white comes
+            * from `brightness-0 invert` — the mark is flattened to black and
+            * then inverted, which is why it survives the eight distinct fills
+            * in the source without a second asset to keep in step. Tailwind
+            * utilities rather than a `style` attribute, because the container
+            * serves `style-src 'self'`.
+            *
+            * The tile is filled rather than `bg-raised`: white on a raised
+            * surface is legible in dark theme and invisible in light, and this
+            * panel renders in both.
+            */}
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded border border-accent-fill bg-accent-fill">
+            <img src="/brand/sivali-mark.svg" alt="" width={22} height={22} className="block shrink-0 brightness-0 invert" />
           </span>
           <div className="min-w-0">
             <MicroLabel className="block">Application update</MicroLabel>
@@ -61,7 +129,19 @@ export function PlatformUpdatePanel({ currentVersion }: { currentVersion: string
         </div>
         <div className="flex shrink-0 items-center gap-3">
           <StatusText dot tone={statusTone}>{statusLabel}</StatusText>
-          <Button onClick={() => void check()} disabled={state.status === "checking"}>
+          {approvable && (
+            <Button variant="primary" onClick={() => void decide(
+              "approve",
+              () => approveReleaseTarget({
+                desiredVersion: approvable.latestVersion,
+                expectedRevision: approvable.target?.revision ?? 0,
+              }),
+              "The release could not be approved.",
+            )} disabled={busy}>
+              {pending === "approve" ? "Approving…" : `Approve ${approvable.latestVersion}`}
+            </Button>
+          )}
+          <Button onClick={() => void check()} disabled={state.status === "checking" || busy}>
             {state.status === "checking" ? "Checking…" : "Check for updates"}
           </Button>
         </div>
@@ -70,6 +150,12 @@ export function PlatformUpdatePanel({ currentVersion }: { currentVersion: string
       {state.status === "error" && (
         <div className="border-t border-border bg-bad/5 px-5 py-3 text-body text-bad" role="status">
           {state.message}
+        </div>
+      )}
+
+      {decisionError && (
+        <div className="border-t border-border bg-bad/5 px-5 py-3 text-body text-bad" role="status">
+          {decisionError}
         </div>
       )}
 
@@ -105,6 +191,40 @@ export function PlatformUpdatePanel({ currentVersion }: { currentVersion: string
             {state.update.updateCommand}
           </code>
           <p className="mb-0 mt-2 text-caption text-faint">{state.update.automaticUpdateReason}</p>
+        </div>
+      )}
+
+      {target && (
+        <div className="border-t border-border px-5 py-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <strong className="block text-label font-semibold text-text">
+                {target.desiredVersion} is approved as this deployment's target
+              </strong>
+              <span className="mt-1 block text-caption text-muted">
+                Approved by {target.approvedBySubject} on {approvedAt(target.approvedAt)}. Recorded, not applied — the
+                upgrade still runs on VM1 with the command above. The hosts read this record themselves and pick up the
+                pinned commit; nothing is ever pushed to them from the browser.
+              </span>
+            </div>
+            {canApprove && (
+              <Button
+                variant="ghost"
+                onClick={() => void decide("withdraw", clearReleaseTarget, "The approval could not be withdrawn.")}
+                disabled={busy}
+              >
+                {pending === "withdraw" ? "Withdrawing…" : "Withdraw approval"}
+              </Button>
+            )}
+          </div>
+          {/*
+            * The commit, not just the tag. A tag can be re-pointed after
+            * approval, so this is the value that says what will actually be
+            * installed — and the one an operator compares against a host.
+            */}
+          <code className="mt-3 block overflow-x-auto rounded border border-border bg-bg px-3 py-2.5 font-mono text-caption text-muted">
+            {target.desiredCommit}
+          </code>
         </div>
       )}
     </Panel>

@@ -50,117 +50,24 @@ interface FrontPageProps {
   onRecover: (username: string, newPassword: string) => Promise<boolean>;
 }
 
-/**
- * The deployment in one picture, and deliberately the real one: an operator's
- * intent reaches the control plane, which holds identity, policy, models and
- * the audit trail, and which dispatches a governed run to an isolated Hermes
- * runtime that owns its own sessions, memory and tools. Inference is an
- * approved route out; the dashed return is the evidence coming back.
- *
- * It replaced an abstract "intent → harness → tools" drawing carrying fourteen
- * labels around an orbit. The picture an operator needs before signing in is
- * the boundary they are about to run things inside, not a metaphor — so this
- * one names the two machines, keeps a single left-to-right reading order, and
- * spends its contrast on the one box that is this product.
- *
- * Static by design, like the synapse field behind it. Every colour is a
- * presentation attribute rather than an inline style (`style-src 'self'`).
- */
-const CONTROL_PLANE_CAPABILITIES = [
-  "Identity · Policy",
-  "Models · Prompts",
-  "Approved inference",
-  "Audit · Evidence",
-];
-// Deliberately the words the Agents area now uses for the same four things —
-// Runtime, Memory, Skills, Agent tools — so the diagram an operator reads
-// before signing in names what they will find inside.
-const RUNTIME_CAPABILITIES = ["Native sessions", "Memory · Skills", "Agent tools"];
-
-function DiagramCard({
-  x,
-  title,
-  subtitle,
-  items,
-  hero,
-}: {
-  x: number;
-  title: string;
-  subtitle: string;
-  items: string[];
-  hero?: boolean;
-}) {
-  return (
-    <g>
-      <rect
-        x={x}
-        y="58"
-        width={hero ? 184 : 142}
-        height="126"
-        rx="17"
-        fill={hero ? "#2A1470" : "#FFFFFF"}
-        fillOpacity={hero ? undefined : "0.07"}
-        stroke={hero ? "#22D3EE" : "#8C74F2"}
-        strokeOpacity={hero ? "0.5" : "0.55"}
-        strokeWidth={hero ? 1.6 : 1.5}
-      />
-      <text x={x + 20} y="86" fill="#FFFFFF" fontSize="11" fontWeight="700" letterSpacing="0.8" className="font-sans">{title}</text>
-      <text x={x + 20} y="100" fill="#B9A5FF" fontSize="8.5" className="font-sans">{subtitle}</text>
-      {items.map((label, index) => (
-        <g key={label}>
-          <circle cx={x + 22} cy={118.5 + index * 17} r="2.5" fill="#22D3EE" fillOpacity={hero ? "1" : "0.75"} />
-          <text x={x + 33} y={122 + index * 17} fill="#D8CFFF" fontSize="9" className="font-sans">{label}</text>
-        </g>
-      ))}
-    </g>
-  );
-}
-
-function DeploymentDiagram() {
-  return (
-    <svg
-      viewBox="0 0 560 224"
-      className="block w-full max-w-[520px] overflow-visible"
-      aria-label="An operator's intent enters the OrcaSynapse control plane, which holds identity, policy, models, the approved inference route and the audit trail, and dispatches governed runs to an isolated Hermes runtime that owns its own sessions, memory and tools — all inside infrastructure you control"
-    >
-      <defs>
-        <marker id="front-page-arrow" markerHeight="6" markerWidth="6" orient="auto" refX="5" refY="3">
-          <path d="M0 0 6 3 0 6Z" fill="#22D3EE" fillOpacity="0.9" />
-        </marker>
-      </defs>
-
-      <rect x="8" y="10" width="544" height="204" rx="20" fill="none" stroke="#FFFFFF" strokeOpacity="0.24" strokeWidth="1.5" strokeDasharray="9 8" />
-      <text x="28" y="35" fill="#B9A5FF" fontSize="10" fontWeight="650" letterSpacing="1.5" className="font-sans">INFRASTRUCTURE YOU CONTROL</text>
-
-      <g>
-        <rect x="26" y="93" width="114" height="56" rx="14" fill="#FFFFFF" fillOpacity="0.09" stroke="#B9A5FF" strokeOpacity="0.4" strokeWidth="1.4" />
-        <circle cx="48" cy="112" r="5.5" fill="none" stroke="#22D3EE" strokeWidth="1.6" />
-        <path d="M39 131c1.8-6.5 5-9.5 9-9.5s7.2 3 9 9.5" fill="none" stroke="#22D3EE" strokeLinecap="round" strokeWidth="1.6" />
-        <text x="66" y="116" fill="#FFFFFF" fontSize="9.5" fontWeight="650" letterSpacing="0.5" className="font-sans">OPERATOR</text>
-        <text x="66" y="131" fill="#B9A5FF" fontSize="8" className="font-sans">Intent · event</text>
-      </g>
-
-      {/* Solid out, dashed back: the request and the evidence it returns. Both
-          carried the word for it until the labels turned out to be wider than
-          the 40px they had to sit in, overprinting the cards on either side. */}
-      <g fill="none" stroke="#22D3EE" strokeLinecap="round" strokeOpacity="0.85" strokeWidth="1.6">
-        <path d="M140 121h24" markerEnd="url(#front-page-arrow)" />
-        <path d="M352 100h34" markerEnd="url(#front-page-arrow)" />
-      </g>
-      <path d="M392 142h-34" fill="none" stroke="#22D3EE" strokeDasharray="4 6" strokeLinecap="round" strokeOpacity="0.6" strokeWidth="1.4" markerEnd="url(#front-page-arrow)" />
-
-      <DiagramCard hero x={168} title="CONTROL PLANE" subtitle="Governs every run" items={CONTROL_PLANE_CAPABILITIES} />
-      <DiagramCard x={392} title="HERMES" subtitle="Isolated runtime" items={RUNTIME_CAPABILITIES} />
-    </svg>
-  );
-}
-
 const FIELD =
   "flex min-h-[50px] items-center gap-3 rounded-input border border-black/[0.09] bg-[#F7F7F5] px-3.5 py-3 " +
   "transition-[border-color,background-color,box-shadow] focus-within:border-[#703DEF]/55 focus-within:bg-white " +
   "focus-within:shadow-[0_0_0_4px_rgba(112,61,239,0.08)]";
+/*
+ * The focus affordance belongs to the wrapper, so the control inside it has to
+ * give up every one of its own.
+ *
+ * `Input` is shadcn's, and its base carries `focus-visible:ring-2` plus
+ * `shadow-sm`. This string already cancelled the border and the outline but not
+ * the ring, so a focused field drew twice: the wrapper's violet border and
+ * shadow around the outside, and the input's ring as a second rounded rectangle
+ * inset from it. `cn` is tailwind-merge, so `ring-0` here beats the base's
+ * `ring-2` — the cancellation has to be spelled out rather than assumed.
+ */
 const FIELD_INPUT =
-  "min-w-0 flex-1 border-0 bg-transparent p-0 text-[14.5px] text-[#191A1C] outline-none focus-visible:outline-none placeholder:text-[#93949C]";
+  "min-w-0 flex-1 border-0 bg-transparent p-0 text-[14.5px] text-[#191A1C] shadow-none outline-none " +
+  "focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 placeholder:text-[#93949C]";
 const SUBMIT =
   "flex min-h-[50px] w-full items-center justify-between gap-3 rounded-input border-0 bg-[#703DEF] px-5 py-3.5 " +
   "text-[14.5px] font-semibold text-white shadow-[0_12px_24px_-14px_rgba(112,61,239,0.8)] transition-colors hover:bg-[#5B2EDB] " +
@@ -242,9 +149,6 @@ export function FrontPage(props: FrontPageProps) {
                 OrcaSynapse is the control plane for Hermes-native sessions, agent profiles, models,
                 policy, and tools—all inside infrastructure you control.
               </p>
-              <div className="mt-5 hidden sm:block">
-                <DeploymentDiagram />
-              </div>
             </div>
 
             <div
