@@ -646,6 +646,28 @@ main > * { width: min(100%, 1380px); margin-left: auto; margin-right: auto; }
   box-shadow: 0 36px 100px -44px rgb(0 0 0 / 0.9);
   transition: background-color 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
 }
+/*
+ * One height for every mode this panel shows.
+ *
+ * Sign-in, offline recovery and the forced password change put different
+ * numbers of fields in the same card, so the panel used to grow and shrink as
+ * an operator moved between them -- the whole frame jumping while they were
+ * reading it, and the background lattice behind it reflowing each time.
+ *
+ * A min-height rather than a fixed height: this pins the common case and still
+ * lets the card grow if a validation message appears, which is the one time
+ * content must never be clipped. The tallest mode sets the number.
+ */
+.front-page__presentation {
+  min-height: 452px;
+}
+@media (max-width: 1023px) {
+  /* Stacked, so the two columns become one and a fixed height would leave a
+     large empty band under the form on a phone. */
+  .front-page__presentation {
+    min-height: 0;
+  }
+}
 .theme-toggle__track {
   position: relative;
   display: block;
@@ -727,6 +749,38 @@ main > * { width: min(100%, 1380px); margin-left: auto; margin-right: auto; }
   background: #fff;
   box-shadow: 0 30px 80px -40px rgb(46 16 101 / 0.35);
 }
+/*
+ * The animated dot lattice behind sign-in and boot.
+ *
+ * `color` rather than a custom property, because the canvas reads its fill from
+ * `getComputedStyle(canvas).color` -- one declaration the cascade and both
+ * themes already know how to override, instead of a second channel for the same
+ * decision.
+ *
+ * It sits under the synapse graph and the card: `position: absolute` with no
+ * z-index, so it stacks below the later siblings that carry one.
+ */
+.dot-grid-field {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  color: rgb(255 255 255);
+  pointer-events: none;
+}
+[data-theme="light"] .dot-grid-field {
+  color: rgb(16 16 20);
+}
+.dot-grid-field--sign-in {
+  opacity: 0.16;
+}
+[data-theme="light"] .dot-grid-field--sign-in {
+  opacity: 0.08;
+}
+.dot-grid-field--boot {
+  opacity: 0.22;
+}
+
 [data-theme="light"] .dashboard-synapse--front-page {
   opacity: 0.2;
 }

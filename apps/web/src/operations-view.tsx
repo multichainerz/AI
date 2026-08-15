@@ -68,6 +68,23 @@ function relativeTime(value: string | null): string {
   return `${Math.round(hours / 24)}d ago`;
 }
 
+/**
+ * How old a snapshot may be before this screen stops speaking in the present
+ * tense about it.
+ *
+ * Five minutes. The overview is regenerated on load and on Refresh, so a
+ * healthy screen is seconds old; anything past this is a page left open, or a
+ * control plane that stopped answering while the reader was looking at it.
+ */
+const SNAPSHOT_STALE_AFTER_MS = 5 * 60 * 1_000;
+
+export function snapshotIsStale(generatedAt: string | null | undefined, now: number = Date.now()): boolean {
+  if (!generatedAt) return false;
+  const timestamp = new Date(generatedAt).getTime();
+  if (!Number.isFinite(timestamp)) return false;
+  return now - timestamp > SNAPSHOT_STALE_AFTER_MS;
+}
+
 function percentage(value: number | null): string {
   return value === null ? "--" : `${Math.round(value * 1000) / 10}%`;
 }
@@ -150,6 +167,7 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
   const executors = overview?.runtime?.executors ?? [];
   const pendingWork = workloads.reduce((total, workload) => total + workload.pendingCount, 0);
   const failedWork = workloads.reduce((total, workload) => total + workload.failedCount, 0);
+  const runningWork = workloads.reduce((total, workload) => total + workload.activeCount, 0);
   const sortedComponents = useMemo(() => [...(overview?.components ?? [])].sort((left, right) => {
     const weight = { UNAVAILABLE: 0, DEGRADED: 1, NOT_VERIFIED: 2, NOT_CONFIGURED: 3, HEALTHY: 4 } as const;
     return weight[left.status] - weight[right.status] || left.label.localeCompare(right.label);
@@ -201,6 +219,7 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
   }
 
   const metrics = overview?.metrics;
+  const stale = snapshotIsStale(overview?.generatedAt);
   return (
     <>
       <PageHeader
@@ -227,19 +246,22 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
           highlight={{
             label: "Services needing attention",
             value: overview?.components.filter(({ status }) => status !== "HEALTHY").length ?? "--",
-            caption: `${overview?.components.length ?? 0} observed components`,
+            caption: `of ${overview?.components.length ?? 0} checked`,
           }}
           metrics={[
             {
               label: "Open incidents",
               tone: overview?.incidents.critical ? "bad" : "neutral",
               value: overview?.incidents.open ?? "--",
-              caption: `${overview?.incidents.critical ?? 0} critical`,
+              // An incident is often raised *about* a service above, so these
+              // two figures can describe one event. Saying so beats leaving a
+              // reader to count two problems where there is one.
+              caption: `${overview?.incidents.critical ?? 0} critical · may describe a service above`,
             },
             {
-              label: "Hermes runs pending",
+              label: "Runs waiting to start",
               value: numberFormatter.format(pendingWork),
-              caption: `${failedWork} retained agent-run failures`,
+              caption: `${runningWork} running now · ${failedWork} failed, all time`,
             },
             /*
               "Release evidence" used to be the fourth figure here. It is a
@@ -259,9 +281,17 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
           <Panel>
             <PanelHeading
               kicker="Infrastructure"
-              title="Service topology"
-              description="Live state is distinguished from dashboard configuration and last-verified connection tests."
-              actions={<StatusText>Snapshot {relativeTime(overview?.generatedAt ?? null)}</StatusText>}
+              title="Services"
+              description="Everything OrcaSynapse depends on, worst first. “Live” was checked just now; “Verified” is the last connection test and may be old."
+              /*
+               * Toned, not merely timestamped. Every figure on this screen
+               * comes from this one snapshot, so when it is old the whole page
+               * is describing the past — and it said so in the same muted grey
+               * as a reading taken two seconds ago.
+               */
+              actions={<StatusText dot={stale} tone={stale ? "warn" : "neutral"}>
+                {`Snapshot ${relativeTime(overview?.generatedAt ?? null)}${stale ? " — refresh" : ""}`}
+              </StatusText>}
             />
             <div className="grid gap-2 sm:grid-cols-2">
               {sortedComponents.map((component) => (
@@ -284,92 +314,7 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
 
         </div>
 
-        <Panel>
-          <PanelHeading
-            kicker="Layered policy"
-            title="Guardrail posture"
-            description="Application controls are reported separately from target-environment evidence."
-          />
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{overview?.guardrails.map((control) => <Tile as="article" className="grid gap-1.5" key={control.layer}>
-            <header className="flex items-center justify-between gap-3">
-              <MicroLabel>{humanLabel(control.layer)}</MicroLabel>
-              <StatusText dot tone={toneFor(control.status.toLowerCase())}>{humanLabel(control.status)}</StatusText>
-            </header>
-            <h3 className="m-0 font-display text-label font-semibold text-text">{control.label}</h3>
-            <p className="mb-0 text-caption leading-relaxed text-muted">{control.summary}</p>
-            <small className="font-mono text-micro text-faint">{control.evidence}</small>
-          </Tile>)}</div>
-        </Panel>
-
-        <Panel>
-          <PanelHeading
-            kicker="Workflows"
-            title="24-hour and retained workload signals"
-            description="Counts retain their domain meaning; all-time values are not presented as live error rates."
-          />
-          <MetricRow className="border-b-0 pb-0 lg:grid-cols-3">
-            <Metric label="Chat responses / 24h" value={metrics?.chat?.responses ?? "--"} caption={`${percentage(metrics?.chat?.failureRate ?? null)} failed / ${metrics?.chat?.averageLatencyMs ?? "--"} ms average`} />
-            <Metric label="Hermes runs" value={metrics?.agents?.runningRuns ?? "--"} caption={`${metrics?.agents?.queuedRuns ?? 0} queued / ${metrics?.agents?.failedRuns ?? 0} retained failures`} />
-            {/* "Agent tools" was the tab's name before it became Agents ->
-                Tools, and it named the surface rather than the figure: the
-                value is executing calls, like its two neighbours count
-                responses and runs. */}
-            <Metric label="Tool calls" value={metrics?.tools?.executingCalls ?? "--"} caption={`${metrics?.tools?.pendingApprovals ?? 0} pending review / ${metrics?.tools?.deniedCalls ?? 0} denied`} />
-          </MetricRow>
-        </Panel>
-
-        <Panel>
-          <PanelHeading
-            kicker="PostgreSQL coordination"
-            title="Durable runtime state"
-            description={overview?.runtime ? `Captured ${relativeTime(overview.runtime.capturedAt)} from domain state` : "Runtime state is unavailable."}
-            actions={<Button size="sm" onClick={() => void refresh()} disabled={busy}>Refresh state</Button>}
-          />
-          <div className="overflow-hidden rounded border border-border">
-            <Table className="min-w-[560px]">
-              <TableHeader>
-                <TableRow className="bg-raised hover:bg-raised">
-                  {["Workload", "Pending", "Active", "Failed", "Retained"].map((head) => (
-                    <TableHead className="tabular-nums" scope="col" key={head}>{head}</TableHead>
-                  ))}
-                </TableRow>
-              </TableHeader>
-              <TableBody>{workloads.map((workload) => <TableRow key={workload.name}>
-                <TableCell className="font-normal">
-                  <strong className="block text-caption font-semibold text-text">{workload.displayName}</strong>
-                  <span className="block font-mono text-micro text-faint">{workload.name}</span>
-                </TableCell>
-                <TableCell className="font-mono text-caption tabular-nums text-muted">{workload.pendingCount}</TableCell>
-                <TableCell className="font-mono text-caption tabular-nums text-muted">{workload.activeCount}</TableCell>
-                <TableCell className={cn("font-mono text-caption tabular-nums", workload.failedCount ? "text-bad" : "text-muted")}>{workload.failedCount}</TableCell>
-                <TableCell className="font-mono text-caption tabular-nums text-muted">{workload.totalCount}</TableCell>
-              </TableRow>)}</TableBody>
-            </Table>
-          </div>
-          <div className="mt-3 grid gap-1.5">
-            {executors.map((executor) => <Tile as="article" pad="sm" className="flex flex-wrap items-center justify-between gap-3" key={executor.id}>
-              <div className="flex min-w-0 items-center gap-2.5">
-                <StatusText dot tone={toneFor(executor.status.toLowerCase())} />
-                <div className="min-w-0">
-                  <strong className="block truncate text-caption font-semibold text-text">{executor.name}</strong>
-                  <small className="block font-mono text-micro text-faint">
-                    {executor.workloads.length} workloads / version {executor.version}
-                  </small>
-                </div>
-              </div>
-              <div className="text-right">
-                <StatusText tone={toneFor(executor.status.toLowerCase())}>{humanLabel(executor.status)}</StatusText>
-                <span className="mt-0.5 block font-mono text-micro text-faint">{relativeTime(executor.lastSeenAt)}</span>
-              </div>
-            </Tile>)}
-            {executors.length === 0 && (
-              <EmptyState title="No executor heartbeat">No runtime executor heartbeat has been recorded.</EmptyState>
-            )}
-          </div>
-        </Panel>
-      </div>
-
-      <section className="mt-5 grid gap-4">
+      <section className="grid gap-4">
         {/*
           The ledger's own heading, which was a bare `<h2>` and `<p>`: with
           preflight on, that renders at body size and reads as another
@@ -377,9 +322,9 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
         */}
         <PanelHeading
           className="mb-0"
-          kicker="Response ledger"
-          title="Operational incidents"
-          description="Automatic observations and manual context share one durable response ledger."
+          kicker="Needs a decision"
+          title="Incidents"
+          description="Raised automatically by OrcaSynapse or by an operator. These are the items on this screen that someone has to act on."
           actions={canOperate ? <Button onClick={() => setShowIncidentForm((shown) => !shown)}>{showIncidentForm ? "Cancel" : "Create incident"}</Button> : undefined}
         />
         {showIncidentForm && <form className="ops-form grid gap-3 rounded-card border border-border bg-surface p-5 shadow-card sm:grid-cols-2" onSubmit={(event) => void createIncident(event)}>
@@ -439,6 +384,93 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
           {incidentAction?.id === item.id && <form className="ops-form grid gap-3 rounded border border-border-strong bg-raised p-3" onSubmit={(event) => void decideIncident(event)}><label><span>Operator note</span><Textarea value={decisionNote} onChange={(event) => setDecisionNote(event.target.value)} minLength={3} maxLength={1000} rows={2} required /></label><div className="flex justify-end gap-2"><Button variant="ghost" onClick={() => setIncidentAction(null)}>Cancel</Button><Button type="submit" disabled={busy}>Record {incidentAction.action}</Button></div></form>}
         </article>)}{incidents.length === 0 && <p className="m-0 rounded border border-dashed border-border px-4 py-7 text-body text-muted">No operational incidents have been recorded.</p>}</div>
       </section>
+
+        <Panel>
+          <PanelHeading
+            kicker="Throughput"
+            title="Activity"
+            description="What this deployment has done. The headline figures cover the last 24 hours; anything labelled “all time” counts every record still kept."
+          />
+          <MetricRow className="border-b-0 pb-0 lg:grid-cols-3">
+            <Metric label="Chat responses / 24h" value={metrics?.chat?.responses ?? "--"} caption={`${percentage(metrics?.chat?.failureRate ?? null)} failed · ${metrics?.chat?.averageLatencyMs ?? "--"} ms average`} />
+            <Metric label="Hermes runs in progress" value={metrics?.agents?.runningRuns ?? "--"} caption={`${metrics?.agents?.queuedRuns ?? 0} waiting · ${metrics?.agents?.failedRuns ?? 0} failed, all time`} />
+            {/* "Agent tools" was the tab's name before it became Agents ->
+                Tools, and it named the surface rather than the figure: the
+                value is executing calls, like its two neighbours count
+                responses and runs. */}
+            <Metric label="Tool calls" value={metrics?.tools?.executingCalls ?? "--"} caption={`${metrics?.tools?.pendingApprovals ?? 0} awaiting review · ${metrics?.tools?.deniedCalls ?? 0} denied`} />
+          </MetricRow>
+        </Panel>
+
+        <Panel>
+          <PanelHeading
+            kicker="Queues and workers"
+            title="Background work"
+            description={overview?.runtime
+              ? `Queued and running agent work, and the workers processing it. Read ${relativeTime(overview.runtime.capturedAt)}.`
+              : "No worker has reported, so there is nothing to say about queued work."}
+            actions={<Button size="sm" onClick={() => void refresh()} disabled={busy}>Refresh state</Button>}
+          />
+          <div className="overflow-hidden rounded border border-border">
+            <Table className="min-w-[560px]">
+              <TableHeader>
+                <TableRow className="bg-raised hover:bg-raised">
+                  {["Workload", "Waiting", "Running", "Failed", "All time"].map((head) => (
+                    <TableHead className="tabular-nums" scope="col" key={head}>{head}</TableHead>
+                  ))}
+                </TableRow>
+              </TableHeader>
+              <TableBody>{workloads.map((workload) => <TableRow key={workload.name}>
+                <TableCell className="font-normal">
+                  <strong className="block text-caption font-semibold text-text">{workload.displayName}</strong>
+                  <span className="block font-mono text-micro text-faint">{workload.name}</span>
+                </TableCell>
+                <TableCell className="font-mono text-caption tabular-nums text-muted">{workload.pendingCount}</TableCell>
+                <TableCell className="font-mono text-caption tabular-nums text-muted">{workload.activeCount}</TableCell>
+                <TableCell className={cn("font-mono text-caption tabular-nums", workload.failedCount ? "text-bad" : "text-muted")}>{workload.failedCount}</TableCell>
+                <TableCell className="font-mono text-caption tabular-nums text-muted">{workload.totalCount}</TableCell>
+              </TableRow>)}</TableBody>
+            </Table>
+          </div>
+          <div className="mt-3 grid gap-1.5">
+            {executors.map((executor) => <Tile as="article" pad="sm" className="flex flex-wrap items-center justify-between gap-3" key={executor.id}>
+              <div className="flex min-w-0 items-center gap-2.5">
+                <StatusText dot tone={toneFor(executor.status.toLowerCase())} />
+                <div className="min-w-0">
+                  <strong className="block truncate text-caption font-semibold text-text">{executor.name}</strong>
+                  <small className="block font-mono text-micro text-faint">
+                    {executor.workloads.length === 1 ? "1 workload" : `${executor.workloads.length} workloads`} · version {executor.version}
+                  </small>
+                </div>
+              </div>
+              <div className="text-right">
+                <StatusText tone={toneFor(executor.status.toLowerCase())}>{humanLabel(executor.status)}</StatusText>
+                <span className="mt-0.5 block font-mono text-micro text-faint">{relativeTime(executor.lastSeenAt)}</span>
+              </div>
+            </Tile>)}
+            {executors.length === 0 && (
+              <EmptyState title="No executor heartbeat">No runtime executor heartbeat has been recorded.</EmptyState>
+            )}
+          </div>
+        </Panel>
+
+        <Panel>
+          <PanelHeading
+            kicker="Policy"
+            title="Guardrails"
+            description="Which protections are switched on, and the policy version each one is running."
+          />
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{overview?.guardrails.map((control) => <Tile as="article" className="grid gap-1.5" key={control.layer}>
+            <header className="flex items-center justify-between gap-3">
+              <MicroLabel>{humanLabel(control.layer)}</MicroLabel>
+              <StatusText dot tone={toneFor(control.status.toLowerCase())}>{humanLabel(control.status)}</StatusText>
+            </header>
+            <h3 className="m-0 font-display text-label font-semibold text-text">{control.label}</h3>
+            <p className="mb-0 text-caption leading-relaxed text-muted">{control.summary}</p>
+            <small className="font-mono text-micro text-faint">{control.evidence}</small>
+          </Tile>)}</div>
+        </Panel>
+      </div>
     </>
   );
 }

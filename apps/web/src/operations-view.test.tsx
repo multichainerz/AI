@@ -77,7 +77,7 @@ vi.mock("./api.js", async () => {
   };
 });
 
-const { OperationsView } = await import("./operations-view.js");
+const { OperationsView, snapshotIsStale } = await import("./operations-view.js");
 const { getAiOpsOverview, getOperationalIncidents } = await import("./api.js");
 
 async function view() {
@@ -93,7 +93,7 @@ afterEach(cleanup);
 describe("operations control room", () => {
   it("puts the degraded component first, since that is the one to act on", async () => {
     await view();
-    const topology = screen.getByText("Service topology").closest("section")!;
+    const topology = screen.getByText("Services").closest("section")!;
     const labels = within(topology).getAllByText(/AI Inference|Hermes runtime/).map((node) => node.textContent);
     expect(labels[0]).toBe("Hermes runtime");
   });
@@ -161,9 +161,9 @@ describe("operations control room", () => {
     // called Tools now -- rather than the number under it, which is executing
     // calls, exactly as its neighbours are responses and runs.
     await view();
-    const workflows = screen.getByText("24-hour and retained workload signals").closest("section")!;
+    const workflows = screen.getByText("Activity").closest("section")!;
     expect(within(workflows).getByText("Chat responses / 24h")).toBeTruthy();
-    expect(within(workflows).getByText("Hermes runs")).toBeTruthy();
+    expect(within(workflows).getByText("Hermes runs in progress")).toBeTruthy();
     expect(within(workflows).getByText("Tool calls")).toBeTruthy();
     expect(within(workflows).queryByText("Agent tools")).toBeNull();
   });
@@ -181,7 +181,7 @@ describe("operations control room", () => {
 
     expect(await screen.findByText("Hermes node vm2-b unreachable")).toBeTruthy();
     expect(screen.getAllByText("Critical").length).toBeGreaterThan(0);
-    expect(screen.getByText("Operational incidents")).toBeTruthy();
+    expect(screen.getByText("Incidents")).toBeTruthy();
   });
 
   it("renders no inline style, which the CSP would refuse in the built container", async () => {
@@ -305,5 +305,65 @@ describe("operations control room", () => {
     await act(async () => { await Promise.resolve(); });
 
     expect(vi.mocked(getAiOpsOverview).mock.calls.length).toBe(loads);
+  });
+
+  /*
+   * Every figure on this screen comes from one snapshot, so its age is a
+   * property of the whole page rather than a detail in the corner. It was
+   * rendered in the same muted grey whether it was two seconds or two days
+   * old, which is the failure mode where a reader trusts a screen that has
+   * quietly stopped updating -- exactly the case a degraded control plane
+   * produces.
+   */
+  it("marks the snapshot when it is too old for the screen to be believed", async () => {
+    await view();
+
+    const snapshot = screen.getByText(/^Snapshot /);
+
+    // The fixture's generatedAt is fixed in 2026 and long past the window.
+    expect(snapshot.textContent).toContain("refresh");
+  });
+
+  it("says nothing extra about a snapshot that is current", () => {
+    const now = Date.parse("2026-08-07T11:00:30.000Z");
+
+    expect(snapshotIsStale("2026-08-07T11:00:00.000Z", now)).toBe(false);
+    expect(snapshotIsStale("2026-08-07T10:54:00.000Z", now)).toBe(true);
+    // Absent or unparseable is not stale: "unknown" must not be dressed up as
+    // a fault the operator can act on.
+    expect(snapshotIsStale(null, now)).toBe(false);
+    expect(snapshotIsStale("not a date", now)).toBe(false);
+  });
+
+  /*
+   * The screen used to print "Hermes runs 0" in the summary and "Hermes runs 1"
+   * a panel below, because one counted queued runs and the other running ones
+   * under the same name. Two figures that disagree and share a label is worse
+   * than either being absent.
+   */
+  it("never labels two different run counts with the same name", async () => {
+    await view();
+
+    expect(screen.getByText("Runs waiting to start")).toBeTruthy();
+    expect(screen.getByText("Hermes runs in progress")).toBeTruthy();
+    expect(screen.queryByText("Hermes runs pending")).toBeNull();
+    // The Background work table still has a row called "Hermes runs", and that
+    // is fine: its columns say which number is which. The rule is about
+    // headline figures, which carry a single number and no such context.
+    const activity = screen.getByText("Activity").closest("section")!;
+    expect(within(activity).queryByText("Hermes runs")).toBeNull();
+  });
+
+  /*
+   * `totalCount` is every run of every status still in the database. It was
+   * shown as "Retained", which reads as a retention policy or a backlog and is
+   * neither, and the word appeared in two captions as well without either one
+   * defining it.
+   */
+  it("names the all-time column for what it counts", async () => {
+    await view();
+
+    expect(screen.getByRole("columnheader", { name: "All time" })).toBeTruthy();
+    expect(screen.queryByRole("columnheader", { name: "Retained" })).toBeNull();
   });
 });

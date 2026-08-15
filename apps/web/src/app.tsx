@@ -63,7 +63,7 @@ import type { SetupStepKey } from "./setup-steps.js";
 import { connectionReadiness } from "./connection-readiness.js";
 import { FrontPage } from "./front-page.js";
 import { HomeView, type HomeLayer, type HomeReadinessCheck } from "./home-view.js";
-import { SynapseField } from "./dashboard-hero.js";
+import { DotGridField } from "./dot-grid-field.js";
 import { connectionFor, deriveWorkspaceReadiness } from "./platform-readiness.js";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -147,7 +147,7 @@ function BrandMark({ size = 28 }: { size?: number }) {
 export function ApplicationBootScreen() {
   return (
     <div className="app-boot-screen" aria-busy="true" aria-live="polite">
-      <SynapseField className="dashboard-synapse--boot" />
+      <DotGridField className="dot-grid-field--boot" />
       <div className="app-boot-stage">
         <div className="app-boot-orbit" aria-hidden="true">
           <span className="app-boot-orbit__ring app-boot-orbit__ring--outer" />

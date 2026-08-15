@@ -5,6 +5,46 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v6.0.0 — 2026-08-15
+
+Replaces the static synapse graph behind sign-in, boot and the error screen with
+an animated dot lattice, and makes Operations → Health readable.
+
+The lattice is reimplemented from a WebGL reference rather than lifted from it.
+The original ran a GLSL shader through Three.js loaded from a CDN, and styled
+every element inline — neither can ship here. This product installs on-premise
+and is often air-gapped, and the container serves `script-src 'self'`, so the
+CDN `<script>` is refused by the browser and the page renders with no background
+and no error an operator can see. `scripts/test-csp-closure.sh` separately fails
+the build on `style={{`. A 2D canvas draws the same thing for no dependency and
+no network.
+
+**Health stopped explaining its own data model at the reader.** Every panel
+description was a sentence about how the data is stored — "live state is
+distinguished from dashboard configuration", "counts retain their domain
+meaning" — written to record a past confusion rather than to say what you are
+looking at. The screen also called three different numbers "Hermes runs",
+showing `0` in the summary and `1` a panel below, and labelled a running total
+"Retained", which reads as a retention policy and is neither.
+
+- draw the dot lattice on a 2D canvas: no Three.js, no CDN, no inline styles,
+  and it stops entirely under `prefers-reduced-motion`
+- keep the cell phase deterministic — `Math.random()` per frame would re-roll
+  every cell and make the whole field strobe
+- retire the static synapse graph from sign-in, boot and the error screen
+- pin the sign-in panel's height, so it stops resizing as an operator moves
+  between sign-in, offline recovery and the forced password change
+- put the version and the copyright at opposite ends of the sign-in footer, with
+  the year read at render so a long-running deployment does not claim the wrong
+  one
+- rename Health's panels to what they hold: Services, Incidents, Activity,
+  Background work, Guardrails
+- move Incidents directly under Services, since it is the only thing on the
+  screen anyone has to act on, and it sat below three panels of steady state
+- disambiguate the run counts and rename "Retained" to "All time"
+- tone the snapshot age: every figure comes from that one reading, and it was
+  drawn in the same muted grey at two seconds old and at two days
+
 ## v5.9.0 — 2026-08-15
 
 Teaches the VM2 heartbeat to say which of the node's systemd units is broken.

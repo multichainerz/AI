@@ -107,19 +107,25 @@ describe("signing in from the front page", () => {
     expect(access.querySelector(".bg-gradient-to-r")).toBeNull();
   });
 
-  it("carries the shared static synapse field behind the sign-in surface", () => {
+  /*
+   * The static synapse graph that used to sit here has been replaced by the
+   * animated dot lattice. What the assertion is really about has not changed:
+   * the background belongs to the page rather than to the card, and it stays
+   * out of the accessibility tree on the one screen a reader has to get
+   * through to use the product at all.
+   */
+  it("carries the background lattice behind the sign-in surface, not inside it", () => {
     const { container } = render(<FrontPage {...base} {...handlers()} />);
     const page = container.querySelector(".front-page");
     const presentation = container.querySelector(".front-page__presentation");
-    const field = container.querySelector("svg.dashboard-synapse--front-page");
+    const field = container.querySelector("canvas.dot-grid-field--sign-in");
 
+    expect(field).toBeTruthy();
     expect(page?.firstElementChild).toBe(field);
     expect(presentation?.contains(field)).toBe(false);
-    expect(field).toBeTruthy();
     expect(field?.getAttribute("aria-hidden")).toBe("true");
-    expect(field?.getAttribute("focusable")).toBe("false");
-    expect(field?.querySelectorAll(".dashboard-synapse__node")).toHaveLength(43);
-    expect(field?.querySelector("[class*='synapse__signal']")).toBeNull();
+    // The graph it replaced is gone rather than hidden.
+    expect(container.querySelector(".dashboard-synapse")).toBeNull();
   });
 
   it("sends the typed credentials to the local sign-in handler", async () => {

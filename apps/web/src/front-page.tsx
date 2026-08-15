@@ -4,7 +4,7 @@ import { useState, type FormEvent, type InputHTMLAttributes, type ReactNode } fr
 import { ArrowRight, KeyRound as KeyIcon, LockKeyhole as LockIcon, LogIn as GatewayIcon, UserRound as IdentityIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { SynapseField } from "./dashboard-hero.js";
+import { DotGridField } from "./dot-grid-field.js";
 import { ThemeToggle } from "./ui/theme-toggle.js";
 
 /**
@@ -129,7 +129,7 @@ export function FrontPage(props: FrontPageProps) {
 
   return (
     <div className="front-page relative isolate flex min-h-screen items-center justify-center overflow-hidden px-5 py-3 sm:px-7">
-      <SynapseField className="dashboard-synapse--front-page" />
+      <DotGridField className="dot-grid-field--sign-in" />
       <div className="front-page__frame relative z-[1] w-full max-w-[1180px] rounded p-4">
         <div className="front-page__presentation relative overflow-hidden rounded-modal bg-brand px-6 pt-5 sm:px-8">
 
@@ -327,7 +327,21 @@ export function FrontPage(props: FrontPageProps) {
           </div>
 
           <div className="relative z-[1] flex flex-wrap items-center gap-5 border-t border-white/[0.12] py-4">
-            <span className="text-[12px] text-white/[0.52]">OrcaSynapse · {ORCASYNAPSE_VERSION}</span>
+            {/*
+              * Two ends of one line: what this is on the left, whose it is on
+              * the right. `flex-1` on the first rather than `justify-between`
+              * on the parent, because the parent also wraps — and on a narrow
+              * viewport `justify-between` would push the two apart across a
+              * full width before finally stacking them.
+              *
+              * The year is read at render rather than baked in, so a deployment
+              * left running across a new year does not sit on a sign-in screen
+              * claiming the wrong one.
+              */}
+            <span className="flex-1 text-[12px] text-white/[0.52]">OrcaSynapse · {ORCASYNAPSE_VERSION}</span>
+            <span className="text-[12px] text-white/[0.52]">
+              © {new Date().getFullYear()} orca.id. All rights reserved.
+            </span>
           </div>
 
         </div>

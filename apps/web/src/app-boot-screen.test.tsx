@@ -27,7 +27,7 @@ describe("application boot screen", () => {
   it("keeps both the synapse field and orbital decoration out of the accessibility tree", () => {
     const { container } = render(<ApplicationBootScreen />);
 
-    expect(container.querySelector("svg.dashboard-synapse--boot")?.getAttribute("aria-hidden")).toBe("true");
+    expect(container.querySelector("canvas.dot-grid-field--boot")?.getAttribute("aria-hidden")).toBe("true");
     expect(container.querySelector(".app-boot-orbit")?.getAttribute("aria-hidden")).toBe("true");
     expect(container.querySelector(".app-boot-progress")?.getAttribute("aria-hidden")).toBe("true");
   });

@@ -5,7 +5,7 @@ import "./theme.js";
 import { Component, StrictMode, type ErrorInfo, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./app.js";
-import { SynapseField } from "./dashboard-hero.js";
+import { DotGridField } from "./dot-grid-field.js";
 import "./styles.css";
 
 const root = document.getElementById("root");
@@ -42,7 +42,7 @@ class ApplicationErrorBoundary extends Component<{ children: ReactNode }, Applic
     if (!this.state.error) return this.props.children;
     return (
       <main className="relative isolate flex min-h-screen items-center justify-center overflow-hidden bg-bg px-6 py-12" role="alert">
-        <SynapseField className="dashboard-synapse--error" />
+        <DotGridField className="dot-grid-field--boot" />
         <div className="relative z-[1] w-full max-w-[520px] rounded-card border border-border bg-surface p-7 shadow-card sm:p-9">
           <div aria-hidden="true" className="grid h-[46px] w-[46px] place-items-center rounded-pill bg-soft">
             <img src="/brand/sivali-mark.svg" alt="" width={28} height={28} className="block" />
