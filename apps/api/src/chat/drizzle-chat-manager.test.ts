@@ -13,7 +13,6 @@ import {
   chatFeedback,
   chatMessage,
   createTestDatabase,
-  evaluationRun,
   guardrailPolicy,
   chatRunWakeStatement,
   createChatRunWakeHub,
@@ -125,17 +124,10 @@ async function seedActiveProfile(modelAlias = "hermes-agent") {
 }
 
 async function seedActiveGuardrail(overrides: Record<string, unknown> = {}) {
-  const [evaluation] = await context.database
-    .insert(evaluationRun)
-    .values({
-      name: "Guardrail baseline", targetType: "POLICY", targetReference: "guardrail:baseline",
-      targetVersion: "1", minimumPassRate: 0.9, requiredCategories: ["safety"],
-    })
-    .returning({ id: evaluationRun.id });
   await context.database.insert(guardrailPolicy).values({
     slug: "baseline", displayName: "Baseline", description: "Conservative baseline.",
     version: "1", status: "ACTIVE", maxInputCharacters: 100, maxOutputCharacters: 5_000,
-    activationEvaluationId: evaluation!.id, firstActivatedAt: new Date(),
+    firstActivatedAt: new Date(),
     ...overrides,
   });
 }
@@ -272,7 +264,7 @@ describe("DrizzleChatManager message submission", () => {
     const conversationId = await conversation();
 
     await expect(manager().submitMessage(principal, conversationId, "Hello"))
-      .rejects.toThrow(/Activate one evaluated guardrail policy/);
+      .rejects.toThrow(/Activate one guardrail policy/);
   });
 
   it("rate-limits a subject across its conversations", async () => {

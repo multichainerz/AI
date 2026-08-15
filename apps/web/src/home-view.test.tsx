@@ -127,13 +127,14 @@ describe("Home", () => {
   it("names the next blocking step rather than a generic welcome", () => {
     render(<HomeView {...props()} />);
 
-    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Finish your private AI workspace");
     /*
-     * The panel states the title and the action, not the step — it is the high
-     * level. The blocking step is still named on the screen, in the required
-     * capabilities list, which is the surface that owns it.
+     * The masthead is gone: its title and its "N of 3 ready. Next: <step>"
+     * line both restated the Required capabilities panel directly beneath.
+     * The blocking step is still named, by the surface that owns it.
      */
-    expect(screen.getByText(/Next: Create and activate an Agent Profile\./)).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("OrcaSynapse control center");
+    expect(screen.queryByText(/Finish your private AI workspace/)).toBeNull();
+    expect(screen.queryByText(/required capabilities are ready/)).toBeNull();
     expect(screen.getAllByText("Create and activate an Agent Profile").length).toBeGreaterThan(0);
     expect(screen.getByText("2/3 ready")).toBeTruthy();
     expect(screen.getByText("Next")).toBeTruthy();
@@ -166,7 +167,6 @@ describe("Home", () => {
 
     const ready = vi.fn();
     render(<HomeView {...props({ readiness: readiness(true), onSelect: ready })} />);
-    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Your agentic workspace is ready");
     // The label is the product word; the argument is the routing token, which
     // deliberately did not follow the rename.
     await user.click(screen.getByRole("button", { name: "Open Session" }));
@@ -216,16 +216,14 @@ describe("Home", () => {
      * other arm a provable no-op rather than a hopeful one.
      */
     render(<HomeView {...props({ unlocked: false })} />);
-    expect(screen.getByText("Local sign-in ready")).toBeTruthy();
-    expect(screen.getByText("Sign in to manage encrypted endpoints, agents, and policy.")).toBeTruthy();
+    // The masthead carried this copy; the action label is what survives it.
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeTruthy();
   });
 
   it("keeps installation ahead of everything else until bootstrap completes", async () => {
     const user = userEvent.setup();
     const onSelect = vi.fn();
     render(<HomeView {...props({ bootstrapState: "REQUIRED", unlocked: false, onSelect })} />);
-    expect(screen.getByText("Installation required")).toBeTruthy();
-    expect(screen.getByText("Run the protected VM1 installer before configuring services.")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Open setup" }));
     expect(onSelect).toHaveBeenCalledWith("Deployment", "inference");
   });

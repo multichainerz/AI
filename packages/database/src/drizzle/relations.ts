@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { enterpriseUser, enterpriseUserSession, serviceConnection, secretRecord, configurationRevision, chatMessage, chatFeedback, agentProfile, agentProfileVersion, chatConversation, agentRun, agentToolGrant, governedTool, oidcAuthorizationRequest, governedToolCall, toolApproval, modelDeployment, evaluationRun, promptTemplate, agentRunEvent, hermesRuntimeNode, hermesNodeRequestNonce, hermesNodeEnrollment, hermesCorpusSnapshot, hermesCorpusEntry, hermesCorpusMutation, hermesCorpusRevision, guardrailPolicy, agentRunApproval } from "./schema.js";
+import { enterpriseUser, enterpriseUserSession, serviceConnection, secretRecord, configurationRevision, chatMessage, chatFeedback, agentProfile, agentProfileVersion, chatConversation, agentRun, agentToolGrant, governedTool, oidcAuthorizationRequest, governedToolCall, toolApproval, modelDeployment, agentRunEvent, hermesRuntimeNode, hermesNodeRequestNonce, hermesNodeEnrollment, hermesCorpusSnapshot, hermesCorpusEntry, hermesCorpusMutation, hermesCorpusRevision, agentRunApproval } from "./schema.js";
 
 export const enterpriseUserSessionRelations = relations(enterpriseUserSession, ({one}) => ({
 	enterpriseUser: one(enterpriseUser, {
@@ -140,23 +140,6 @@ export const modelDeploymentRelations = relations(modelDeployment, ({one}) => ({
 		fields: [modelDeployment.connectionId],
 		references: [serviceConnection.id]
 	}),
-	evaluationRun: one(evaluationRun, {
-		fields: [modelDeployment.activationEvaluationId],
-		references: [evaluationRun.id]
-	}),
-}));
-
-export const evaluationRunRelations = relations(evaluationRun, ({many}) => ({
-	modelDeployments: many(modelDeployment),
-	promptTemplates: many(promptTemplate),
-	guardrailPolicies: many(guardrailPolicy),
-}));
-
-export const promptTemplateRelations = relations(promptTemplate, ({one}) => ({
-	evaluationRun: one(evaluationRun, {
-		fields: [promptTemplate.activationEvaluationId],
-		references: [evaluationRun.id]
-	}),
 }));
 
 export const agentRunEventRelations = relations(agentRunEvent, ({one}) => ({
@@ -212,13 +195,6 @@ export const hermesNodeEnrollmentRelations = relations(hermesNodeEnrollment, ({o
 	hermesRuntimeNode: one(hermesRuntimeNode, {
 		fields: [hermesNodeEnrollment.nodeId],
 		references: [hermesRuntimeNode.id]
-	}),
-}));
-
-export const guardrailPolicyRelations = relations(guardrailPolicy, ({one}) => ({
-	evaluationRun: one(evaluationRun, {
-		fields: [guardrailPolicy.activationEvaluationId],
-		references: [evaluationRun.id]
 	}),
 }));
 

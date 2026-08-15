@@ -169,7 +169,7 @@ describe("DrizzleAgentManager profiles", () => {
     expect(activated.activeVersionConfiguration?.version).toBe(1);
   });
 
-  it("requires promoted evaluation evidence outside development", async () => {
+  it("activates outside development on its own merits, with no evaluation evidence", async () => {
     const created = await manager().createProfile(principal, profileInput());
     await allowActivation();
     await context.database
@@ -181,9 +181,7 @@ describe("DrizzleAgentManager profiles", () => {
       });
 
     await expect(manager().activateProfile(principal, created.id))
-      .rejects.toThrow(/promoted evaluation evidence/);
-    // Standby is not a release into the target environment, so it stays open.
-    await expect(manager().standbyProfile(principal, created.id)).resolves.toMatchObject({ status: "STANDBY" });
+      .resolves.toMatchObject({ status: "ACTIVE", activeVersion: 1 });
   });
 
   it("leaves the active version pinned when a profile is suspended", async () => {

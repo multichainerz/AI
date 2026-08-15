@@ -16,7 +16,6 @@ const draft = {
   maxOutputCharacters: 200_000,
   blockControlCharacters: true,
   blockCredentialPatterns: true,
-  activationEvaluationId: null,
   firstActivatedAt: null,
   revision: 1,
   createdBy: null,
@@ -44,12 +43,11 @@ describe("guardrail policy contracts", () => {
     expect(createGuardrailPolicySchema.safeParse({ ...draft, maxOutputCharacters: 1_000_001 }).success).toBe(false);
   });
 
-  it("requires evidence and a timestamp for active policy output", () => {
+  it("requires an activation timestamp for active policy output", () => {
     expect(guardrailPolicySchema.safeParse({ ...draft, status: "ACTIVE" }).success).toBe(false);
     expect(guardrailPolicySchema.parse({
       ...draft,
       status: "ACTIVE",
-      activationEvaluationId: "de44bc5d-0355-4c3f-872e-1af99f356d19",
       firstActivatedAt: "2026-07-30T00:00:00.000Z",
     }).status).toBe("ACTIVE");
   });

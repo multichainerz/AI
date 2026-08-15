@@ -93,37 +93,48 @@ describe("workspace navigation", () => {
     expect(productAreaForView("Chat")).toBe("Session");
   });
 
-  it("gives Agents five tabs, one job each", () => {
+  it("gives Agents four tabs, one job each", () => {
     /*
-     * Three tabs did two jobs each. "Profiles & runs" put an immutable
-     * configuration list and a live execution ledger behind one label, and
      * "Hermes corpus" named a storage mechanism rather than either of the two
-     * things stored in it. Splitting them is the point of this model; the
-     * assertion is the order and the labels, because the tab strip is the only
-     * place the split is visible.
+     * unrelated things stored in it, so it became Skills and Memory. Runtime
+     * went the other way: it was briefly a fifth tab holding the kill switch,
+     * the run counters and the execution ledger, and that fragmented one
+     * workflow -- define a Profile, watch what it does, decide whether it may
+     * run -- across two screens whose only join was a cross-tab button. One
+     * tab owns all three again.
+     *
+     * The assertion is the order and the labels, because the tab strip is the
+     * only place this structure is visible.
      */
     expect(sectionNavigationFor("Agents")).toEqual([
       { label: "Profiles", view: "Agents" },
-      { label: "Runtime", view: "Runtime" },
       { label: "Skills", view: "Skills" },
       { label: "Memory", view: "Memory" },
-      { label: "Agent Tools", view: "Integrations" },
+      { label: "Tools", view: "Integrations" },
     ]);
     expect(sectionNavigationFor("Dashboard")).toEqual([]);
   });
 
-  it("routes each half of a split tab to its own address", () => {
+  it("keeps the retired Runtime address pointing at the tab that absorbed it", () => {
+    /*
+     * `#agents/runtime` addressed a screen that is now part of Profiles, and
+     * every part of what it held moved there rather than being dropped. A
+     * bookmark to it therefore has a correct destination, and letting it fall
+     * through to the default would drop the operator out of the area entirely
+     * -- the same reasoning `#agents/corpus` is kept alive by.
+     */
     expect(pathForView("Agents")).toBe("#agents/profiles");
-    expect(pathForView("Runtime")).toBe("#agents/runtime");
     expect(pathForView("Skills")).toBe("#agents/skills");
     expect(pathForView("Memory")).toBe("#agents/memory");
     expect(pathForView("Integrations")).toBe("#agents/tools");
 
-    expect(viewFromHash("#agents/runtime")).toBe("Runtime");
+    expect(viewFromHash("#agents/runtime")).toBe("Agents");
+    expect(viewFromHash("#runtime")).toBe("Agents");
+    expect(viewFromHash("#agents/profiles")).toBe("Agents");
     expect(viewFromHash("#agents/skills")).toBe("Skills");
     expect(viewFromHash("#agents/memory")).toBe("Memory");
 
-    for (const view of ["Runtime", "Skills", "Memory"] as const) {
+    for (const view of ["Agents", "Skills", "Memory"] as const) {
       expect(productAreaForView(view)).toBe("Agents");
     }
   });

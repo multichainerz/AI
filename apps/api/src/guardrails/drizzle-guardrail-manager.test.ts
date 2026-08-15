@@ -3,7 +3,6 @@ import { eq } from "drizzle-orm";
 import {
   auditEvent,
   createTestDatabase,
-  evaluationRun,
   guardrailPolicy,
   serviceConnection,
   type TestDatabase,
@@ -44,24 +43,6 @@ async function healthyInference(status: "HEALTHY" | "DEGRADED" = "HEALTHY") {
     status,
     baseUrl: "http://127.0.0.1:8000",
     configuration: {},
-  });
-}
-
-async function promoteSafetyEvidence(slug: string, version: string) {
-  await context.database.insert(evaluationRun).values({
-    name: "Guardrail release evaluation",
-    targetType: "POLICY",
-    targetReference: `policy:${slug}`,
-    targetVersion: version,
-    status: "PROMOTED",
-    minimumPassRate: 0.9,
-    requiredCategories: ["SAFETY"],
-    categoryResults: [{ category: "SAFETY", passRate: 1, passed: true }],
-    totalCases: 1,
-    passedCases: 1,
-    completedAt: new Date(),
-    promotedAt: new Date(),
-    promotionReason: "Approved for release.",
   });
 }
 
@@ -108,7 +89,6 @@ describe("DrizzleGuardrailManager", () => {
 
   it("requires exactly one healthy effective inference route", async () => {
     const created = await manager().create(principal, draft);
-    await promoteSafetyEvidence(draft.slug, draft.version);
 
     await expect(
       manager().activate(principal, created.id, { expectedRevision: created.revision, reason: "Release" }),
@@ -120,24 +100,10 @@ describe("DrizzleGuardrailManager", () => {
     ).rejects.toThrow(/enabled and healthy before policy activation/);
   });
 
-  it("requires exact promoted safety evidence", async () => {
+  it("activates atomically on its own merits, with no evaluation evidence", async () => {
     const created = await manager().create(principal, draft);
+    expect(created.status).toBe("DRAFT");
     await healthyInference();
-
-    await expect(
-      manager().activate(principal, created.id, { expectedRevision: created.revision, reason: "Release" }),
-    ).rejects.toThrow(/promoted safety evaluation evidence/);
-
-    await promoteSafetyEvidence(draft.slug, "9.9.9");
-    await expect(
-      manager().activate(principal, created.id, { expectedRevision: created.revision, reason: "Release" }),
-    ).rejects.toThrow(/promoted safety evaluation evidence/);
-  });
-
-  it("activates atomically and records the evidence reference", async () => {
-    const created = await manager().create(principal, draft);
-    await healthyInference();
-    await promoteSafetyEvidence(draft.slug, draft.version);
 
     const activated = await manager().activate(principal, created.id, {
       expectedRevision: created.revision,
@@ -145,7 +111,7 @@ describe("DrizzleGuardrailManager", () => {
     });
 
     expect(activated.status).toBe("ACTIVE");
-    expect(activated.activationEvaluationId).not.toBeNull();
+    expect(activated.firstActivatedAt).not.toBeNull();
 
     const [stored] = await context.database
       .select({ status: guardrailPolicy.status })
@@ -157,11 +123,9 @@ describe("DrizzleGuardrailManager", () => {
   it("permits only one active chat policy at a time", async () => {
     const first = await manager().create(principal, draft);
     await healthyInference();
-    await promoteSafetyEvidence(draft.slug, draft.version);
     await manager().activate(principal, first.id, { expectedRevision: first.revision, reason: "Release" });
 
     const second = await manager().create(principal, { ...draft, slug: "chat-alternate" });
-    await promoteSafetyEvidence("chat-alternate", draft.version);
 
     await expect(
       manager().activate(principal, second.id, { expectedRevision: second.revision, reason: "Release" }),
@@ -188,7 +152,6 @@ describe("DrizzleGuardrailManager", () => {
     ).rejects.toThrow(/Only the active policy/);
 
     await healthyInference();
-    await promoteSafetyEvidence(draft.slug, draft.version);
     const active = await manager().activate(principal, created.id, {
       expectedRevision: created.revision,
       reason: "Release",

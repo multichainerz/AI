@@ -178,7 +178,7 @@ export function ModelsView({
           maxConcurrentRequests: draft.maxConcurrentRequests,
           expectedRevision: editing.revision,
         });
-        setMessage("Model route updated. Material changes require matching evaluation evidence before activation.");
+        setMessage("Model route updated. Material changes return the route to draft and require reactivation.");
       } else {
         await createModelDeployment({ ...draft, slug: slugify(draft.slug) });
         setMessage("Draft model route created.");
@@ -246,14 +246,14 @@ export function ModelsView({
       title="Models"
       description="Approve Chat and Hermes aliases on healthy model-serving connections."
       actions={<>
-        <Button onClick={onOpenOperations}>Evaluation evidence</Button>
+        <Button onClick={onOpenOperations}>Open Operations</Button>
         {canManage && <Button variant="primary" onClick={startCreate}>New model route</Button>}
       </>}
     />
 
     <MetricRow className="lg:grid-cols-4" aria-label="Model catalogue summary">
       <Metric label="Catalogue routes" value={models.length} caption="Versioned records" />
-      <Metric label="Active routes" value={activeCount} tone={activeCount > 0 ? "good" : "neutral"} caption="Evaluation gated" />
+      <Metric label="Active routes" value={activeCount} tone={activeCount > 0 ? "good" : "neutral"} caption="Serving now" />
       <Metric label="Defaults" value={defaultCount} caption="Per workload" />
       <Metric label="Workloads" value={workloadCount} caption="Chat and agent" />
     </MetricRow>
@@ -265,8 +265,8 @@ export function ModelsView({
           OrcaSynapse approves routes; AI Inference remains the serving plane.
         </strong>
         <p className="mb-0 mt-1 text-body text-muted">
-          Activation never modifies upstream configuration. The alias must already exist at the selected endpoint and the
-          exact model version must have promoted evaluation evidence.
+          Activation never modifies upstream configuration. The alias must already exist at the selected endpoint on an
+          enabled, healthy serving connection.
         </p>
       </div>
       <Button className="shrink-0" onClick={onConfigureConnections}>Manage serving connections</Button>
@@ -285,7 +285,7 @@ export function ModelsView({
             <p className="mb-0 mt-1.5 text-body text-muted">
               {editing
                 ? "Active routes must be suspended before editing."
-                : "New routes remain draft until exact evaluation evidence is promoted."}
+                : "New routes remain draft until they are activated."}
             </p>
           </div>
           <Button variant="ghost" size="sm" onClick={() => setShowEditor(false)}>Cancel</Button>
@@ -347,7 +347,7 @@ export function ModelsView({
             { label: "Context", value: compactNumber(model.contextWindowTokens) },
             { label: "Output", value: compactNumber(model.maxOutputTokens) },
             { label: "Concurrency", value: model.maxConcurrentRequests },
-            { label: "Evidence", value: model.activationEvaluationId ? "Promoted" : "Required" },
+            { label: "Activation", value: model.firstActivatedAt ? "Started" : "Never active" },
           ].map((fact) => (
             <div className="min-w-0 bg-surface px-2.5 py-2" key={fact.label}>
               <dt className="truncate text-micro font-semibold uppercase tabular-nums text-faint">{fact.label}</dt>
@@ -377,7 +377,7 @@ export function ModelsView({
         >
           <div>
             <strong className="block text-label font-semibold text-text">
-              {decision.action === "activate" ? "Activate evaluated route" : "Suspend route"}
+              {decision.action === "activate" ? "Activate route" : "Suspend route"}
             </strong>
             <span className="mt-1 block text-body text-muted">
               {decision.action === "activate"

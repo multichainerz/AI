@@ -29,7 +29,6 @@ const draftPrompt: PromptTemplate = {
   status: "DRAFT",
   content: "You are the OrcaSynapse assistant. Be accurate, concise, and explicit about uncertainty.",
   contentChecksum: "a".repeat(64),
-  activationEvaluationId: null,
   firstActivatedAt: null,
   revision: 1,
   createdBy: session.id,
@@ -137,7 +136,7 @@ describe("a prompt another operator moved first", () => {
     await waitFor(() => screen.getByText(/changed since it was loaded/));
 
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
-    await waitFor(() => screen.getByText(/chat-system prompt activated/));
+    await waitFor(() => screen.getByText(/Chat-system prompt activated/));
     expect(changePromptTemplateState.mock.calls[1]![2]).toMatchObject({ expectedRevision: 2 });
   });
 

@@ -11,8 +11,6 @@ import {
   getChatConversations,
   cancelChatRun,
   getToolRuntime,
-  completeEvaluationRun,
-  promoteEvaluationRun,
   recordProductionReadinessApproval,
   updateProductionReadinessControl,
   rollbackConfiguration,
@@ -204,7 +202,6 @@ describe("OrcaSynapse browser API", () => {
       maxOutputTokens: 8192,
       maxConcurrentRequests: 2,
       isDefault: true,
-      activationEvaluationId: "de44bc5d-0355-4c3f-872e-1af99f356d19",
       firstActivatedAt: "2026-07-30T00:00:00.000Z",
       revision: 2,
       createdBy: null,
@@ -240,7 +237,6 @@ describe("OrcaSynapse browser API", () => {
       maxOutputCharacters: 200000,
       blockControlCharacters: true,
       blockCredentialPatterns: true,
-      activationEvaluationId: "de44bc5d-0355-4c3f-872e-1af99f356d19",
       firstActivatedAt: "2026-07-30T00:00:00.000Z",
       revision: 2,
       createdBy: null,
@@ -271,7 +267,6 @@ describe("OrcaSynapse browser API", () => {
       status: "ACTIVE",
       content: "You are the approved OrcaSynapse assistant. State uncertainty and protect private data.",
       contentChecksum: "a".repeat(64),
-      activationEvaluationId: "de44bc5d-0355-4c3f-872e-1af99f356d19",
       firstActivatedAt: "2026-07-30T00:00:00.000Z",
       revision: 2,
       createdBy: null,
@@ -452,74 +447,6 @@ describe("OrcaSynapse browser API", () => {
       reason: "Keep the boundary closed during interoperability testing.",
       approvalTtlMinutes: 45,
     });
-  });
-
-  it("submits category evidence to the immutable completion endpoint", async () => {
-    const evaluationId = "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d";
-    const result = {
-      category: "SAFETY" as const,
-      totalCases: 20,
-      passedCases: 20,
-      criticalFailures: 0,
-      evidenceRefs: ["evaluations/hermes-v3/safety.json"],
-    };
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({
-      id: evaluationId,
-      name: "Hermes v3",
-      targetType: "AGENT",
-      targetReference: "agent:hermes-analyst",
-      targetVersion: "3",
-      status: "PASSED",
-      minimumPassRate: 0.95,
-      requiredCategories: ["SAFETY"],
-      results: [{ ...result, passRate: 1, status: "PASSED" }],
-      totalCases: 20,
-      passedCases: 20,
-      criticalFailures: 0,
-      passRate: 1,
-      createdAt: "2026-07-30T00:00:00.000Z",
-      completedAt: "2026-07-30T00:10:00.000Z",
-      promotedAt: null,
-      promotionReason: null,
-    }));
-
-    await completeEvaluationRun(evaluationId, { results: [result] });
-
-    const [url, options] = fetchMock.mock.calls[0]!;
-    expect(url).toBe(`/api/v1/admin/operations/evaluations/${evaluationId}/complete`);
-    expect(options).toMatchObject({ method: "POST", credentials: "same-origin" });
-    expect(JSON.parse(String(options?.body))).toEqual({ results: [result] });
-  });
-
-  it("submits the operator rationale to the separate promotion endpoint", async () => {
-    const evaluationId = "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d";
-    const reason = "Approved for the controlled OrcaSynapse pilot.";
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({
-      id: evaluationId,
-      name: "Hermes v3",
-      targetType: "AGENT",
-      targetReference: "agent:hermes-analyst",
-      targetVersion: "3",
-      status: "PROMOTED",
-      minimumPassRate: 0.95,
-      requiredCategories: ["SAFETY"],
-      results: [{ category: "SAFETY", totalCases: 20, passedCases: 20, criticalFailures: 0, evidenceRefs: ["evaluations/hermes-v3/safety.json"], passRate: 1, status: "PASSED" }],
-      totalCases: 20,
-      passedCases: 20,
-      criticalFailures: 0,
-      passRate: 1,
-      createdAt: "2026-07-30T00:00:00.000Z",
-      completedAt: "2026-07-30T00:10:00.000Z",
-      promotedAt: "2026-07-30T00:12:00.000Z",
-      promotionReason: reason,
-    }));
-
-    await promoteEvaluationRun(evaluationId, reason);
-
-    const [url, options] = fetchMock.mock.calls[0]!;
-    expect(url).toBe(`/api/v1/admin/operations/evaluations/${evaluationId}/promote`);
-    expect(options).toMatchObject({ method: "POST", credentials: "same-origin" });
-    expect(JSON.parse(String(options?.body))).toEqual({ reason });
   });
 
   it("sends concurrency-safe readiness evidence and external approval records", async () => {

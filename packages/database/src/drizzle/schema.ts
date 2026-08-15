@@ -17,7 +17,7 @@
  * migrations.test.ts asserts on the emitted SQL and guards these decisions.
  */
 
-import { pgTable, index, uniqueIndex, uuid, varchar, text, boolean, timestamp, foreignKey, inet, jsonb, integer, check, doublePrecision, bigint, numeric, bigserial, pgEnum } from "drizzle-orm/pg-core"
+import { pgTable, index, uniqueIndex, uuid, varchar, text, boolean, timestamp, foreignKey, inet, jsonb, integer, check, bigint, numeric, bigserial, pgEnum } from "drizzle-orm/pg-core"
 import { sql } from "drizzle-orm"
 import { bytea } from "./bytea.js"
 
@@ -35,8 +35,6 @@ export const componentCompatibilityStatus = pgEnum("ComponentCompatibilityStatus
 export const connectionStatus = pgEnum("ConnectionStatus", ['NOT_TESTED', 'HEALTHY', 'DEGRADED', 'UNREACHABLE', 'DISABLED'])
 export const deploymentEnvironment = pgEnum("DeploymentEnvironment", ['DEVELOPMENT', 'STAGING', 'PRODUCTION'])
 export const deploymentTopologyMode = pgEnum("DeploymentTopologyMode", ['COMPACT', 'CONTROL_PLANE', 'SEGMENTED_PRODUCTION'])
-export const evaluationRunStatus = pgEnum("EvaluationRunStatus", ['DRAFT', 'PASSED', 'FAILED', 'PROMOTED'])
-export const evaluationTargetType = pgEnum("EvaluationTargetType", ['MODEL', 'PROMPT', 'POLICY', 'AGENT'])
 export const guardrailPolicyStatus = pgEnum("GuardrailPolicyStatus", ['DRAFT', 'ACTIVE', 'SUSPENDED'])
 export const hermesNodeEnrollmentStatus = pgEnum("HermesNodeEnrollmentStatus", ['ISSUED', 'CONSUMED', 'REVOKED', 'EXPIRED'])
 export const hermesRuntimeNodeStatus = pgEnum("HermesRuntimeNodeStatus", ['PENDING', 'ONLINE', 'DEGRADED', 'DRAINING', 'SUSPENDED', 'REVOKED', 'OFFLINE'])
@@ -539,37 +537,6 @@ export const toolApproval = pgTable("ToolApproval", {
 		}).onUpdate("cascade").onDelete("restrict"),
 ]);
 
-export const evaluationRun = pgTable("EvaluationRun", {
-	id: uuid().defaultRandom().primaryKey().notNull(),
-	name: varchar({ length: 160 }).notNull(),
-	targetType: evaluationTargetType().notNull(),
-	targetReference: varchar({ length: 240 }).notNull(),
-	targetVersion: varchar({ length: 120 }).notNull(),
-	status: evaluationRunStatus().default('DRAFT').notNull(),
-	minimumPassRate: doublePrecision().notNull(),
-	requiredCategories: text().array().notNull(),
-	categoryResults: jsonb().default([]).notNull(),
-	totalCases: integer().default(0).notNull(),
-	passedCases: integer().default(0).notNull(),
-	criticalFailures: integer().default(0).notNull(),
-	createdBy: uuid(),
-	completedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
-	promotedBy: uuid(),
-	promotedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
-	promotionReason: varchar({ length: 1000 }),
-	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
-}, (table) => [
-	index("EvaluationRun_status_createdAt_idx").using("btree", table.status.asc().nullsLast(), table.createdAt.asc().nullsLast()),
-	index("EvaluationRun_targetType_targetReference_targetVersion_idx").using("btree", table.targetType.asc().nullsLast(), table.targetReference.asc().nullsLast(), table.targetVersion.asc().nullsLast()),
-	check("EvaluationRun_threshold_check", sql`("minimumPassRate" >= (0.5)::double precision) AND ("minimumPassRate" <= (1)::double precision)`),
-	check("EvaluationRun_categories_check", sql`(cardinality("requiredCategories") >= 1) AND (cardinality("requiredCategories") <= 6)`),
-	check("EvaluationRun_results_shape_check", sql`jsonb_typeof("categoryResults") = 'array'::text`),
-	check("EvaluationRun_counts_check", sql`("totalCases" >= 0) AND ("passedCases" >= 0) AND ("passedCases" <= "totalCases") AND ("criticalFailures" >= 0) AND ("criticalFailures" <= ("totalCases" - "passedCases"))`),
-	check("EvaluationRun_evidence_check", sql`((status = 'DRAFT'::"EvaluationRunStatus") AND ("completedAt" IS NULL) AND ("promotedAt" IS NULL) AND ("promotionReason" IS NULL)) OR ((status = ANY (ARRAY['PASSED'::"EvaluationRunStatus", 'FAILED'::"EvaluationRunStatus"])) AND ("completedAt" IS NOT NULL) AND ("promotedAt" IS NULL) AND ("promotionReason" IS NULL) AND (jsonb_array_length("categoryResults") > 0)) OR ((status = 'PROMOTED'::"EvaluationRunStatus") AND ("completedAt" IS NOT NULL) AND ("promotedAt" IS NOT NULL) AND (length(btrim(("promotionReason")::text)) >= 3) AND (jsonb_array_length("categoryResults") > 0))`),
-	check("EvaluationRun_quality_check", sql`(status = ANY (ARRAY['DRAFT'::"EvaluationRunStatus", 'FAILED'::"EvaluationRunStatus"])) OR (("totalCases" > 0) AND ("criticalFailures" = 0) AND ((("passedCases")::double precision / ("totalCases")::double precision) >= "minimumPassRate"))`),
-]);
-
 export const productionReadinessControl = pgTable("ProductionReadinessControl", {
 	key: varchar({ length: 80 }).primaryKey().notNull(),
 	title: varchar({ length: 160 }).notNull(),
@@ -663,7 +630,6 @@ export const modelDeployment = pgTable("ModelDeployment", {
 	maxOutputTokens: integer().notNull(),
 	maxConcurrentRequests: integer().notNull(),
 	isDefault: boolean().default(false).notNull(),
-	activationEvaluationId: uuid(),
 	firstActivatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
 	revision: integer().default(1).notNull(),
 	createdBy: uuid(),
@@ -671,7 +637,6 @@ export const modelDeployment = pgTable("ModelDeployment", {
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
 }, (table) => [
-	index("ModelDeployment_activationEvaluationId_idx").using("btree", table.activationEvaluationId.asc().nullsLast()),
 	uniqueIndex("ModelDeployment_active_default_workload_key").using("btree", table.workload.asc().nullsLast()).where(sql`((status = 'ACTIVE'::"ModelDeploymentStatus") AND ("isDefault" = true))`),
 	index("ModelDeployment_connectionId_idx").using("btree", table.connectionId.asc().nullsLast()),
 	uniqueIndex("ModelDeployment_slug_key").using("btree", table.slug.asc().nullsLast()),
@@ -682,13 +647,8 @@ export const modelDeployment = pgTable("ModelDeployment", {
 			foreignColumns: [serviceConnection.id],
 			name: "ModelDeployment_connectionId_fkey"
 		}).onUpdate("cascade").onDelete("restrict"),
-	foreignKey({
-			columns: [table.activationEvaluationId],
-			foreignColumns: [evaluationRun.id],
-			name: "ModelDeployment_activationEvaluationId_fkey"
-		}).onUpdate("cascade").onDelete("set null"),
 	check("ModelDeployment_limits_check", sql`(("contextWindowTokens" >= 1024) AND ("contextWindowTokens" <= 4194304)) AND (("maxOutputTokens" >= 64) AND ("maxOutputTokens" <= 131072)) AND ("maxOutputTokens" <= "contextWindowTokens") AND (("maxConcurrentRequests" >= 1) AND ("maxConcurrentRequests" <= 1024)) AND (revision > 0)`),
-	check("ModelDeployment_activation_evidence_check", sql`(status <> 'ACTIVE'::"ModelDeploymentStatus") OR (("activationEvaluationId" IS NOT NULL) AND ("firstActivatedAt" IS NOT NULL))`),
+	check("ModelDeployment_activation_check", sql`(status <> 'ACTIVE'::"ModelDeploymentStatus") OR ("firstActivatedAt" IS NOT NULL)`),
 	check("ModelDeployment_default_status_check", sql`("isDefault" = false) OR (status = 'ACTIVE'::"ModelDeploymentStatus")`),
 ]);
 
@@ -702,7 +662,6 @@ export const promptTemplate = pgTable("PromptTemplate", {
 	status: promptTemplateStatus().default('DRAFT').notNull(),
 	content: text().notNull(),
 	contentChecksum: varchar({ length: 64 }).notNull(),
-	activationEvaluationId: uuid(),
 	firstActivatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
 	revision: integer().default(1).notNull(),
 	createdBy: uuid(),
@@ -710,17 +669,11 @@ export const promptTemplate = pgTable("PromptTemplate", {
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
 }, (table) => [
-	index("PromptTemplate_activationEvaluationId_idx").using("btree", table.activationEvaluationId.asc().nullsLast()),
 	index("PromptTemplate_purpose_status_idx").using("btree", table.purpose.asc().nullsLast(), table.status.asc().nullsLast()),
 	uniqueIndex("PromptTemplate_single_active_purpose_key").using("btree", table.purpose.asc().nullsLast()).where(sql`(status = 'ACTIVE'::"PromptTemplateStatus")`),
 	uniqueIndex("PromptTemplate_slug_key").using("btree", table.slug.asc().nullsLast()),
-	foreignKey({
-			columns: [table.activationEvaluationId],
-			foreignColumns: [evaluationRun.id],
-			name: "PromptTemplate_activationEvaluationId_fkey"
-		}).onUpdate("cascade").onDelete("set null"),
 	check("PromptTemplate_content_check", sql`((char_length(btrim(content)) >= 20) AND (char_length(btrim(content)) <= 20000)) AND (("contentChecksum")::text ~ '^[a-f0-9]{64}$'::text) AND (revision > 0)`),
-	check("PromptTemplate_activation_evidence_check", sql`(status <> 'ACTIVE'::"PromptTemplateStatus") OR (("activationEvaluationId" IS NOT NULL) AND ("firstActivatedAt" IS NOT NULL))`),
+	check("PromptTemplate_activation_check", sql`(status <> 'ACTIVE'::"PromptTemplateStatus") OR ("firstActivatedAt" IS NOT NULL)`),
 ]);
 
 export const onboardingStep = pgTable("OnboardingStep", {
@@ -1109,7 +1062,6 @@ export const guardrailPolicy = pgTable("GuardrailPolicy", {
 	version: varchar({ length: 120 }).notNull(),
 	status: guardrailPolicyStatus().default('DRAFT').notNull(),
 	maxInputCharacters: integer().notNull(),
-	activationEvaluationId: uuid(),
 	firstActivatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
 	revision: integer().default(1).notNull(),
 	createdBy: uuid(),
@@ -1120,16 +1072,10 @@ export const guardrailPolicy = pgTable("GuardrailPolicy", {
 	blockControlCharacters: boolean().default(true).notNull(),
 	blockCredentialPatterns: boolean().default(true).notNull(),
 }, (table) => [
-	index("GuardrailPolicy_activationEvaluationId_idx").using("btree", table.activationEvaluationId.asc().nullsLast()),
 	uniqueIndex("GuardrailPolicy_single_active_key").using("btree", sql`(true)`).where(sql`(status = 'ACTIVE'::"GuardrailPolicyStatus")`),
 	uniqueIndex("GuardrailPolicy_slug_key").using("btree", table.slug.asc().nullsLast()),
 	index("GuardrailPolicy_status_updatedAt_idx").using("btree", table.status.asc().nullsLast(), table.updatedAt.asc().nullsLast()),
-	foreignKey({
-			columns: [table.activationEvaluationId],
-			foreignColumns: [evaluationRun.id],
-			name: "GuardrailPolicy_activationEvaluationId_fkey"
-		}).onUpdate("cascade").onDelete("set null"),
-	check("GuardrailPolicy_activation_evidence_check", sql`(status <> 'ACTIVE'::"GuardrailPolicyStatus") OR (("activationEvaluationId" IS NOT NULL) AND ("firstActivatedAt" IS NOT NULL))`),
+	check("GuardrailPolicy_activation_check", sql`(status <> 'ACTIVE'::"GuardrailPolicyStatus") OR ("firstActivatedAt" IS NOT NULL)`),
 ]);
 
 export const administratorSession = pgTable("AdministratorSession", {

@@ -26,7 +26,7 @@
 
 The baseline uses two VMs and an existing OpenAI-compatible inference endpoint:
 
-- **VM1 — control plane:** web workspace, API, worker, stock PostgreSQL 17, encrypted configuration, a searchable revision mirror of the allowlisted Hermes corpus, sanitized run projections, evaluations, incidents, and the append-only audit trail.
+- **VM1 — control plane:** web workspace, API, worker, stock PostgreSQL 17, encrypted configuration, a searchable revision mirror of the allowlisted Hermes corpus, sanitized run projections, incidents, and the append-only audit trail.
 - **VM2 — Hermes runtime:** native sessions, Skills, toolsets, `MEMORY.md`, `USER.md`, and runtime execution under a hardened systemd service.
 - **Inference:** a dashboard-approved model route. Credentials remain on VM1; VM2 receives a scoped gateway credential.
 - **SIEM (optional):** at-least-once forwarding of the retained audit trail.
@@ -53,7 +53,7 @@ VM2 installs vanilla Hermes at the approved commit, applies the managed native-m
 - **Session:** durable conversations over Hermes’ native session API, with streaming, cancellation, telemetry, feedback, archive, export, and audit projections.
 - **Agents:** immutable Profile Distributions, run history, governed tools, and a repository-style view of Hermes-native memory and Skills.
 - **Settings:** application updates, inference routes, Hermes enrollment, enterprise identity, prompts, guardrails, runtime toolset admissions, and encrypted connections.
-- **Operations:** health and incidents, release gates, the audit trail, and optional SIEM forwarding.
+- **Operations:** health and incidents, the audit trail, and optional SIEM forwarding.
 
 ## Memory and audit
 
@@ -88,9 +88,9 @@ Use `pnpm dev` for the API and workspace and `pnpm dev:worker` for durable Herme
 | [Installation and recovery](deploy/BOOTSTRAP.md) | VM1 bootstrap, clean-install requirement, secrets, backup, and erase |
 | [Agentic System enrollment](docs/AGENTIC_SYSTEM_ENROLLMENT_RUNBOOK.md) | VM2 enrollment, native state, toolset allowlist, and decommission |
 | [Audit trail and SIEM forwarding](docs/AUDIT_TRAIL_RUNBOOK.md) | Reading, forwarding, health, and replay behavior |
-| [Model controls](docs/MODEL_CONTROL_RUNBOOK.md) | Model registration, evaluation evidence, and activation |
+| [Model controls](docs/MODEL_CONTROL_RUNBOOK.md) | Model registration, versioning, and activation |
 | [Prompt controls](docs/PROMPT_CONTROL_RUNBOOK.md) | Versioned prompts and promotion |
-| [Guardrail controls](docs/GUARDRAIL_CONTROL_RUNBOOK.md) | Runtime policy and evaluation gates |
+| [Guardrail controls](docs/GUARDRAIL_CONTROL_RUNBOOK.md) | Runtime policy versioning and activation |
 | [Product requirements](docs/ORCASYNAPSE_PRD.md) | Current scope, roles, and acceptance boundaries |
 | [Web design system](apps/web/DESIGN_SYSTEM.md) | shadcn/Tailwind source boundaries, tokens, CSP, and accessibility |
 | [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [License](LICENSE) | Project meta |

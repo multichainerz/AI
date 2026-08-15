@@ -45,17 +45,13 @@ export const modelDeploymentSchema = z.object({
   maxOutputTokens: z.number().int().min(64).max(131_072),
   maxConcurrentRequests: z.number().int().min(1).max(1_024),
   isDefault: z.boolean(),
-  activationEvaluationId: z.uuid().nullable(),
   firstActivatedAt: z.iso.datetime().nullable(),
   revision: z.number().int().positive(),
   createdBy: z.uuid().nullable(),
   updatedBy: z.uuid().nullable(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
-}).superRefine(({ status, isDefault, activationEvaluationId, firstActivatedAt }, context) => {
-  if (status === "ACTIVE" && !activationEvaluationId) {
-    context.addIssue({ code: "custom", path: ["activationEvaluationId"], message: "Active model routes require promoted evaluation evidence." });
-  }
+}).superRefine(({ status, isDefault, firstActivatedAt }, context) => {
   if (status === "ACTIVE" && !firstActivatedAt) {
     context.addIssue({ code: "custom", path: ["firstActivatedAt"], message: "Active model routes require an activation timestamp." });
   }

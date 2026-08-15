@@ -10,7 +10,6 @@ import type {
 import { and, asc, desc, eq } from "drizzle-orm";
 import {
   auditEvent,
-  evaluationRun,
   modelDeployment,
   serviceConnection,
   type OrcaSynapseDatabase,
@@ -62,7 +61,6 @@ function dto(model: StoredModel): ModelDeployment {
     maxOutputTokens: model.maxOutputTokens,
     maxConcurrentRequests: model.maxConcurrentRequests,
     isDefault: model.isDefault,
-    activationEvaluationId: model.activationEvaluationId,
     firstActivatedAt: model.firstActivatedAt?.toISOString() ?? null,
     revision: model.revision,
     createdBy: model.createdBy,
@@ -197,7 +195,6 @@ export class DrizzleModelManager implements ModelManager {
             ...(changes.maxConcurrentRequests === undefined ? {} : { maxConcurrentRequests: changes.maxConcurrentRequests }),
             status: materialChange ? "DRAFT" : current.status,
             isDefault: false,
-            activationEvaluationId: materialChange ? null : current.activationEvaluationId,
             revision: increment(modelDeployment.revision),
             updatedBy: principal.id,
           })
@@ -245,25 +242,6 @@ export class DrizzleModelManager implements ModelManager {
         throw new ModelConflictError("The selected serving connection must be enabled and healthy before activation.");
       }
 
-      const [evaluation] = await transaction
-        .select({ id: evaluationRun.id })
-        .from(evaluationRun)
-        .where(
-          and(
-            eq(evaluationRun.targetType, "MODEL"),
-            eq(evaluationRun.targetReference, `model:${current.slug}`),
-            eq(evaluationRun.targetVersion, current.version),
-            eq(evaluationRun.status, "PROMOTED"),
-          ),
-        )
-        .orderBy(desc(evaluationRun.promotedAt))
-        .limit(1);
-      if (!evaluation) {
-        throw new ModelConflictError(
-          `Activation requires promoted evaluation evidence for model:${current.slug} version ${current.version}.`,
-        );
-      }
-
       // Held for the rest of the transaction so demoting the incumbent default
       // and promoting this route cannot interleave with a concurrent activation.
       await transaction.execute(advisoryLock(`orcasynapse-model-default:${current.workload}`));
@@ -279,7 +257,6 @@ export class DrizzleModelManager implements ModelManager {
         .set({
           status: "ACTIVE",
           isDefault: input.makeDefault,
-          activationEvaluationId: evaluation.id,
           firstActivatedAt: current.firstActivatedAt ?? new Date(),
           revision: increment(modelDeployment.revision),
           updatedBy: principal.id,
@@ -307,7 +284,6 @@ export class DrizzleModelManager implements ModelManager {
         outcome: "SUCCESS",
         metadata: {
           reason: input.reason,
-          evaluationRunId: evaluation.id,
           version: current.version,
           makeDefault: input.makeDefault,
         },

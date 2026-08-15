@@ -704,7 +704,7 @@ export class DrizzleOnboardingManager implements OnboardingManager {
       const policy = policyRows[0];
       const toolControl = toolControlRows[0];
       return [
-        { stageKey, outcome: policy ? "PASSED" : "FAILED", code: "guardrail-baseline", summary: policy ? `Guardrail policy '${policy.slug}' is active.` : "Activate an evaluated guardrail policy." },
+        { stageKey, outcome: policy ? "PASSED" : "FAILED", code: "guardrail-baseline", summary: policy ? `Guardrail policy '${policy.slug}' is active.` : "Activate a guardrail policy." },
         { stageKey, componentKey: "mcp-gateway", outcome: toolControl?.enabled || architecture.targetEnvironment === "PRODUCTION" ? "WARNING" : "PASSED", code: "zero-tool-posture", summary: toolControl?.enabled ? "Governed tools are enabled; complete the tool security acceptance before Production." : architecture.targetEnvironment === "PRODUCTION" ? "Tool runtime is disabled; Production still requires retained gateway protocol and authorization evidence." : "Tool runtime is disabled, preserving the zero-tool baseline." },
       ];
     }

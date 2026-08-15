@@ -15,10 +15,13 @@ Chat and Agent routes must use an approved OpenAI-compatible Inference Server co
 
 1. Register and successfully test the serving connection.
 2. Create a draft route with exact alias and bounded limits.
-3. Evaluate representative quality, safety, context, streaming, cancellation, and performance behavior.
-4. Promote immutable `MODEL` evidence for the exact candidate/version.
-5. Activate with a reason; select one default Chat route and one active Agent route.
-6. Suspend on incident, failed evaluation, or incompatible upstream change.
+3. Verify representative quality, safety, context, streaming, cancellation, and performance behavior against that exact version. OrcaSynapse does not record this verification; retain it wherever your change record lives.
+4. Activate with a reason; select one default Chat route and one active Agent route.
+5. Suspend on incident, regression, or incompatible upstream change.
+
+Activation requires the selected serving connection to be enabled and healthy, and the connection kind to match the workload. It carries no separate evidence precondition: OrcaSynapse used to demand a promoted evaluation run for the exact `model:<slug>` and version, and that requirement — along with the Release gates screen that produced it — was removed.
+
+A material edit (version, alias, limits, connection) returns a route to draft, so an activated route is always the exact version that was reviewed. The route version is immutable within a revision and the activation reason is retained in the audit trail.
 
 After first activation for a workload, OrcaSynapse fails closed if its governed active route disappears. It does not fall back to a free-form connection alias.
 
@@ -28,7 +31,7 @@ Direct Chat uses the active default Chat alias. The internal runtime gateway use
 
 ## Acceptance
 
-Against the exact production inference-backend/model build, retain evidence for:
+Against the exact production inference-backend/model build, retain your own evidence for:
 
 - `/v1/models` and `/v1/chat/completions` compatibility;
 - the exact chat template, reasoning parser, and tool-call parser;

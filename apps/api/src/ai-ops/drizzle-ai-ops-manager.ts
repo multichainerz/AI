@@ -1,20 +1,12 @@
 import {
-  evaluationCategoryResultSchema,
-  evaluationCategorySchema,
   type AiOpsComponent,
   type AiOpsOverview,
   type AiOpsWorkflow,
-  type CompleteEvaluationRun,
-  type CreateEvaluationRun,
   type CreateOperationalIncident,
-  type EvaluationCategory,
-  type EvaluationRun,
-  type EvaluationRunList,
   type GuardrailControl,
   type IncidentDecision,
   type OperationalIncident,
   type OperationalIncidentList,
-  type PromoteEvaluationRun,
   type ProductionReadiness,
   type ProductionReadinessApproval,
   type ProductionReadinessControl,
@@ -27,7 +19,6 @@ import {
 } from "@orcasynapse/contracts";
 import {
   auditEvent,
-  evaluationRun,
   guardrailPolicy,
   operationalIncident,
   productionReadinessApproval,
@@ -76,25 +67,6 @@ interface StoredIncident {
   acknowledgedAt: Date | null;
   resolvedAt: Date | null;
   resolutionNote: string | null;
-}
-
-interface StoredEvaluation {
-  id: string;
-  name: string;
-  targetType: "MODEL" | "PROMPT" | "POLICY" | "AGENT";
-  targetReference: string;
-  targetVersion: string;
-  status: "DRAFT" | "PASSED" | "FAILED" | "PROMOTED";
-  minimumPassRate: number;
-  requiredCategories: string[];
-  categoryResults: unknown;
-  totalCases: number;
-  passedCases: number;
-  criticalFailures: number;
-  createdAt: Date;
-  completedAt: Date | null;
-  promotedAt: Date | null;
-  promotionReason: string | null;
 }
 
 interface StoredReadinessControl {
@@ -167,9 +139,9 @@ function guardrailPosture(active: ActiveGuardrailPolicy | null): GuardrailContro
     status: "PARTIAL",
     summary: active
       ? `Schema, identity, rate, and ${active.maxInputCharacters.toLocaleString("en-US")}-character chat limits are locally enforced with ${enabledChecks} OrcaSynapse-native content check${enabledChecks === 1 ? "" : "s"}.`
-      : "Schema, size, identity, and rate constraints are enforced; no evaluated OrcaSynapse guardrail policy is active.",
+      : "Schema, size, identity, and rate constraints are enforced; no OrcaSynapse guardrail policy is active.",
     evidence: active
-      ? `Policy ${active.id} is evaluation-gated in PostgreSQL; semantic safety classification remains outside this deterministic baseline.`
+      ? `Policy ${active.id} is version-pinned in PostgreSQL; semantic safety classification remains outside this deterministic baseline.`
       : "API contracts and identity-scoped request limits are enforced in the chat, agent, and tool routes.",
   },
   {
@@ -178,7 +150,7 @@ function guardrailPosture(active: ActiveGuardrailPolicy | null): GuardrailContro
     status: active ? "PARTIAL" : "NOT_VERIFIED",
     summary: active
       ? `OrcaSynapse caps streamed responses at ${active.maxOutputCharacters.toLocaleString("en-US")} characters; semantic output classification is not claimed.`
-      : "Provider responses are structurally bounded, but no evaluated output guardrail assignment is active.",
+      : "Provider responses are structurally bounded, but no output guardrail assignment is active.",
     evidence: active
       ? "Streaming failures and response-limit rejections are retained as sanitized audit events; representative model safety still requires deployment evidence."
       : "Streaming state and persistence are validated locally; safety-model evidence has not been recorded.",
@@ -188,7 +160,7 @@ function guardrailPosture(active: ActiveGuardrailPolicy | null): GuardrailContro
     label: "Model access",
     status: "ENFORCED",
     summary: "Users and agents call dashboard-approved aliases through OrcaSynapse; provider credentials remain backend-only.",
-    evidence: "Versioned model routes require healthy serving connections and exact promoted evaluation evidence before activation.",
+    evidence: "Versioned model routes require an enabled, healthy serving connection before activation.",
   },
   {
     layer: "TOOL_USE",
@@ -222,41 +194,6 @@ function incident(record: StoredIncident): OperationalIncident {
     acknowledgedAt: record.acknowledgedAt?.toISOString() ?? null,
     resolvedAt: record.resolvedAt?.toISOString() ?? null,
     resolutionNote: record.resolutionNote,
-  };
-}
-
-function evaluation(record: StoredEvaluation): EvaluationRun {
-  const requiredCategories = evaluationCategorySchema.array().min(1)
-    .refine((items) => new Set(items).size === items.length)
-    .parse(record.requiredCategories);
-  const rawResults = Array.isArray(record.categoryResults) ? record.categoryResults : [];
-  const results = evaluationCategoryResultSchema.array()
-    .refine((items) => new Set(items.map(({ category }) => category)).size === items.length)
-    .parse(rawResults);
-  if (record.status !== "DRAFT") {
-    const resultCategories = new Set(results.map(({ category }) => category));
-    if (requiredCategories.some((category) => !resultCategories.has(category))) {
-      throw new AiOpsConflictError("Stored evaluation evidence is inconsistent with its required gate categories.");
-    }
-  }
-  return {
-    id: record.id,
-    name: record.name,
-    targetType: record.targetType,
-    targetReference: record.targetReference,
-    targetVersion: record.targetVersion,
-    status: record.status,
-    minimumPassRate: record.minimumPassRate,
-    requiredCategories,
-    results,
-    totalCases: record.totalCases,
-    passedCases: record.passedCases,
-    criticalFailures: record.criticalFailures,
-    passRate: record.totalCases === 0 ? null : record.passedCases / record.totalCases,
-    createdAt: record.createdAt.toISOString(),
-    completedAt: record.completedAt?.toISOString() ?? null,
-    promotedAt: record.promotedAt?.toISOString() ?? null,
-    promotionReason: record.promotionReason,
   };
 }
 
@@ -564,7 +501,7 @@ export class DrizzleAiOpsManager implements AiOpsManager {
     }
 
     await this.reconcileAutomatedIncidents(components, generatedAt);
-    const [incidentItems, openIncidentCount, criticalIncidentCount, evaluationGroups] = await Promise.all([
+    const [incidentItems, openIncidentCount, criticalIncidentCount] = await Promise.all([
       this.database
         .select().from(operationalIncident).where(this.openIncident)
         .orderBy(desc(operationalIncident.detectedAt)).limit(20),
@@ -575,17 +512,11 @@ export class DrizzleAiOpsManager implements AiOpsManager {
         .select({ total: count() }).from(operationalIncident)
         .where(and(this.openIncident, eq(operationalIncident.severity, "CRITICAL")))
         .then(([row]) => row?.total ?? 0),
-      this.database
-        .select({ status: evaluationRun.status, total: count() })
-        .from(evaluationRun).groupBy(evaluationRun.status),
     ]);
     const visibleIncidents = incidentItems.map((item) => incident(item as StoredIncident)).sort((left, right) => {
       if (left.severity !== right.severity) return left.severity === "CRITICAL" ? -1 : 1;
       return right.detectedAt.localeCompare(left.detectedAt);
     });
-    const evaluationCount = (status: StoredEvaluation["status"]) => evaluationGroups
-      .filter((group) => group.status === status)
-      .reduce((sum, group) => sum + group.total, 0);
     const status = components.some(({ status }) => status === "UNAVAILABLE")
       ? "CRITICAL"
       : components.some(({ status }) => status !== "HEALTHY")
@@ -603,12 +534,6 @@ export class DrizzleAiOpsManager implements AiOpsManager {
         open: openIncidentCount,
         critical: criticalIncidentCount,
         items: visibleIncidents,
-      },
-      evaluations: {
-        drafts: evaluationCount("DRAFT"),
-        passed: evaluationCount("PASSED"),
-        failed: evaluationCount("FAILED"),
-        promoted: evaluationCount("PROMOTED"),
       },
     };
   }
@@ -658,105 +583,6 @@ export class DrizzleAiOpsManager implements AiOpsManager {
       owner: input.owner ?? principal.subject,
       resolutionNote: input.note,
     }, "operations.incident_resolved", input);
-  }
-
-  async listEvaluations(): Promise<EvaluationRunList> {
-    const items = await this.database
-      .select().from(evaluationRun).orderBy(desc(evaluationRun.createdAt)).limit(200);
-    return { items: items.map((item) => evaluation(item as StoredEvaluation)) };
-  }
-
-  async createEvaluation(principal: AdminPrincipal, input: CreateEvaluationRun): Promise<EvaluationRun> {
-    const created = await this.database.transaction(async (transaction) => {
-      const [record] = await transaction
-        .insert(evaluationRun)
-        .values({ ...input, createdBy: principal.id, categoryResults: [] })
-        .returning();
-      if (!record) throw new AiOpsConflictError("The evaluation candidate could not be created.");
-      await transaction.insert(auditEvent).values({
-        actorType: "USER", actorId: principal.id, action: "evaluation.candidate_created",
-        resourceType: "EvaluationRun", resourceId: record.id, outcome: "SUCCESS",
-        metadata: { targetType: record.targetType, targetReference: record.targetReference, targetVersion: record.targetVersion },
-      });
-      return record;
-    });
-    return evaluation(created as StoredEvaluation);
-  }
-
-  async completeEvaluation(principal: AdminPrincipal, evaluationId: string, input: CompleteEvaluationRun): Promise<EvaluationRun> {
-    const [current] = await this.database
-      .select().from(evaluationRun).where(eq(evaluationRun.id, evaluationId)).limit(1);
-    if (!current) throw new AiOpsNotFoundError("The evaluation candidate does not exist.");
-    if (current.status !== "DRAFT") throw new AiOpsConflictError("Completed evaluation evidence is immutable; create a new candidate to rerun it.");
-    const resultByCategory = new Map(input.results.map((result) => [result.category, result]));
-    const missing = current.requiredCategories.filter((category) => !resultByCategory.has(category as EvaluationCategory));
-    if (missing.length > 0) throw new AiOpsConflictError(`Evidence is missing for required categories: ${missing.join(", ")}.`);
-    const unexpected = input.results.filter(({ category }) => !current.requiredCategories.includes(category));
-    if (unexpected.length > 0) throw new AiOpsConflictError(`Evidence was provided for categories outside this gate: ${unexpected.map(({ category }) => category).join(", ")}.`);
-
-    const categoryResults = input.results.map((result) => {
-      const passRate = result.passedCases / result.totalCases;
-      return {
-        ...result,
-        passRate,
-        status: passRate >= current.minimumPassRate && result.criticalFailures === 0 ? "PASSED" as const : "FAILED" as const,
-      };
-    });
-    const totalCases = categoryResults.reduce((sum, result) => sum + result.totalCases, 0);
-    const passedCases = categoryResults.reduce((sum, result) => sum + result.passedCases, 0);
-    const criticalFailures = categoryResults.reduce((sum, result) => sum + result.criticalFailures, 0);
-    const requiredPassed = current.requiredCategories.every((category) => resultByCategory.has(category as EvaluationCategory)
-      && categoryResults.find((result) => result.category === category)?.status === "PASSED");
-    const status = requiredPassed ? "PASSED" as const : "FAILED" as const;
-    const completedAt = new Date();
-    const updated = await this.database.transaction(async (transaction) => {
-      const claimed = await transaction
-        .update(evaluationRun)
-        .set({ status, categoryResults, totalCases, passedCases, criticalFailures, completedAt })
-        .where(and(eq(evaluationRun.id, evaluationId), eq(evaluationRun.status, "DRAFT")))
-        .returning();
-      const [recorded] = claimed;
-      if (claimed.length !== 1 || !recorded) {
-        throw new AiOpsConflictError("The evaluation candidate changed before evidence was recorded.");
-      }
-      await transaction.insert(auditEvent).values({
-        actorType: "USER", actorId: principal.id, action: "evaluation.evidence_recorded",
-        resourceType: "EvaluationRun", resourceId: evaluationId, outcome: status,
-        metadata: { totalCases, passedCases, criticalFailures, status },
-      });
-      return recorded;
-    });
-    return evaluation(updated as StoredEvaluation);
-  }
-
-  async promoteEvaluation(principal: AdminPrincipal, evaluationId: string, input: PromoteEvaluationRun): Promise<EvaluationRun> {
-    const promotedAt = new Date();
-    const promoted = await this.database.transaction(async (transaction) => {
-      const claimed = await transaction
-        .update(evaluationRun)
-        .set({ status: "PROMOTED", promotedBy: principal.id, promotedAt, promotionReason: input.reason })
-        .where(and(
-          eq(evaluationRun.id, evaluationId),
-          eq(evaluationRun.status, "PASSED"),
-          eq(evaluationRun.criticalFailures, 0),
-        ))
-        .returning();
-      const [record] = claimed;
-      if (claimed.length !== 1 || !record) {
-        const exists = await transaction
-          .select({ id: evaluationRun.id }).from(evaluationRun)
-          .where(eq(evaluationRun.id, evaluationId)).limit(1);
-        if (exists.length === 0) throw new AiOpsNotFoundError("The evaluation candidate does not exist.");
-        throw new AiOpsConflictError("Only a passed, unpromoted evaluation candidate can be promoted.");
-      }
-      await transaction.insert(auditEvent).values({
-        actorType: "USER", actorId: principal.id, action: "evaluation.candidate_promoted",
-        resourceType: "EvaluationRun", resourceId: evaluationId, outcome: "SUCCESS",
-        metadata: { reason: input.reason },
-      });
-      return record;
-    });
-    return evaluation(promoted as StoredEvaluation);
   }
 
   async productionReadiness(): Promise<ProductionReadiness> {

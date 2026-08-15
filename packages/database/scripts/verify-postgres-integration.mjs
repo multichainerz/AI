@@ -105,7 +105,7 @@ try {
   }
   const forbiddenTables = [
     "Document", "DocumentChunk", "ChatConversationDocument", "AgentMemory", "MemoryPolicy",
-    "BenchmarkRun", "BenchmarkSuite", "BenchmarkCase",
+    "BenchmarkRun", "BenchmarkSuite", "BenchmarkCase", "EvaluationRun",
   ];
   const retired = await verifier.query(
     `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = ANY($1::text[])`,
@@ -113,6 +113,38 @@ try {
   );
   if (retired.rows.length > 0) {
     throw new Error(`Retired control-plane tables remain: ${retired.rows.map((row) => row.table_name).join(", ")}.`);
+  }
+
+  // The release-gate removal. Each governed relation keeps an activation check,
+  // so probing for the surviving constraint first stops the absence assertion
+  // below from passing because the query looked in the wrong catalogue.
+  const activationConstraints = await verifier.query(`
+    SELECT conname FROM pg_constraint
+    WHERE contype = 'c' AND conrelid = ANY (ARRAY[
+      '"ModelDeployment"'::regclass, '"PromptTemplate"'::regclass, '"GuardrailPolicy"'::regclass
+    ]) AND conname LIKE '%\\_activation\\_%'
+  `);
+  const activationNames = new Set(activationConstraints.rows.map((row) => row.conname));
+  for (const relation of ["ModelDeployment", "PromptTemplate", "GuardrailPolicy"]) {
+    if (!activationNames.has(`${relation}_activation_check`)) {
+      throw new Error(`${relation}_activation_check is missing; the activation invariant was lost.`);
+    }
+    if (activationNames.has(`${relation}_activation_evidence_check`)) {
+      throw new Error(`${relation}_activation_evidence_check remains; activation still demands evaluation evidence.`);
+    }
+  }
+  const evaluationEnums = await verifier.query(`
+    SELECT typname FROM pg_type
+    JOIN pg_namespace ON pg_namespace.oid = pg_type.typnamespace
+    WHERE pg_namespace.nspname = 'public'
+      AND typname = ANY($1::text[])
+  `, [["EvaluationRunStatus", "EvaluationTargetType", "GuardrailPolicyStatus"]]);
+  const enumNames = new Set(evaluationEnums.rows.map((row) => row.typname));
+  if (!enumNames.has("GuardrailPolicyStatus")) {
+    throw new Error("The enum probe found no GuardrailPolicyStatus; it cannot prove the evaluation enums are gone.");
+  }
+  if (enumNames.has("EvaluationRunStatus") || enumNames.has("EvaluationTargetType")) {
+    throw new Error("The retired evaluation enums remain in the public schema.");
   }
 
   const versionColumns = await verifier.query(`

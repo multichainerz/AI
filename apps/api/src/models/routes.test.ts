@@ -7,7 +7,6 @@ import type { ModelManager } from "./model-manager.js";
 const TOKEN = "a".repeat(43);
 const MODEL_ID = "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d";
 const CONNECTION_ID = "5277951c-7d22-4cec-8d46-fad3afba37dd";
-const EVALUATION_ID = "de44bc5d-0355-4c3f-872e-1af99f356d19";
 const session: AdministratorSession = {
   id: "ac369dab-cad5-4fd9-83ed-b4fbf528028a",
   subject: "platform-admin",
@@ -31,7 +30,6 @@ const route: ModelDeployment = {
   maxOutputTokens: 8_192,
   maxConcurrentRequests: 2,
   isDefault: true,
-  activationEvaluationId: EVALUATION_ID,
   firstActivatedAt: "2026-07-30T00:00:00.000Z",
   revision: 2,
   createdBy: session.id,
@@ -49,7 +47,7 @@ class Sessions implements AdminSessionManager {
 function manager(): ModelManager {
   return {
     list: vi.fn(async () => ({ items: [route] })),
-    create: vi.fn(async (): Promise<ModelDeployment> => ({ ...route, status: "DRAFT", isDefault: false, activationEvaluationId: null, revision: 1 })),
+    create: vi.fn(async (): Promise<ModelDeployment> => ({ ...route, status: "DRAFT", isDefault: false, firstActivatedAt: null, revision: 1 })),
     update: vi.fn(async () => route),
     activate: vi.fn(async () => route),
     suspend: vi.fn(async (): Promise<ModelDeployment> => ({ ...route, status: "SUSPENDED", isDefault: false })),

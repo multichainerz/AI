@@ -47,18 +47,6 @@ function manager(overrides: Partial<AiOpsDependencies> = {}) {
   return new DrizzleAiOpsManager(context.database, dependencies(overrides));
 }
 
-function evaluationInput(overrides: Record<string, unknown> = {}) {
-  return {
-    name: "Agent safety gate",
-    targetType: "AGENT",
-    targetReference: "agent:support",
-    targetVersion: "1",
-    minimumPassRate: 0.9,
-    requiredCategories: ["SAFETY"],
-    ...overrides,
-  } as never;
-}
-
 async function seedControl(key: string, overrides: Record<string, unknown> = {}) {
   const [control] = await context.database
     .insert(productionReadinessControl)
@@ -83,19 +71,6 @@ describe("DrizzleAiOpsManager overview", () => {
     );
     expect(overview.components.filter(({ status }) => status === "NOT_CONFIGURED")).toHaveLength(2);
     expect(overview.incidents).toMatchObject({ open: 0, critical: 0, items: [] });
-    expect(overview.evaluations).toEqual({ drafts: 0, passed: 0, failed: 0, promoted: 0 });
-  });
-
-  it("counts evaluations by their governed state", async () => {
-    const created = await manager().createEvaluation(principal, evaluationInput());
-    await manager().createEvaluation(principal, evaluationInput({ targetVersion: "2" }));
-    await manager().completeEvaluation(principal, created.id, {
-      results: [{ category: "SAFETY", totalCases: 10, passedCases: 10, criticalFailures: 0, evidenceRefs: ["run-log-1"] }],
-    } as never);
-
-    const overview = await manager().overview();
-
-    expect(overview.evaluations).toMatchObject({ drafts: 1, passed: 1, promoted: 0 });
   });
 
   it("opens an automated incident for a degraded component and resolves it when it recovers", async () => {
@@ -162,75 +137,6 @@ describe("DrizzleAiOpsManager incidents", () => {
     await expect(manager().acknowledgeIncident(principal, created.id, { note: "late" } as never))
       .rejects.toBeInstanceOf(AiOpsConflictError);
     await expect(manager().resolveIncident(principal, randomUUID(), { note: "x" } as never))
-      .rejects.toBeInstanceOf(AiOpsNotFoundError);
-  });
-});
-
-describe("DrizzleAiOpsManager evaluations", () => {
-  it("scores evidence against the gate and marks it passed", async () => {
-    const created = await manager().createEvaluation(principal, evaluationInput());
-
-    const completed = await manager().completeEvaluation(principal, created.id, {
-      results: [{ category: "SAFETY", totalCases: 20, passedCases: 19, criticalFailures: 0, evidenceRefs: ["run-log-1"] }],
-    } as never);
-
-    expect(completed).toMatchObject({ status: "PASSED", totalCases: 20, passedCases: 19, criticalFailures: 0 });
-  });
-
-  it("fails the gate below the minimum pass rate or on a critical failure", async () => {
-    const low = await manager().createEvaluation(principal, evaluationInput());
-    expect(await manager().completeEvaluation(principal, low.id, {
-      results: [{ category: "SAFETY", totalCases: 20, passedCases: 10, criticalFailures: 0, evidenceRefs: ["run-log-1"] }],
-    } as never)).toMatchObject({ status: "FAILED" });
-
-    const critical = await manager().createEvaluation(principal, evaluationInput({ targetVersion: "2" }));
-    expect(await manager().completeEvaluation(principal, critical.id, {
-      results: [{ category: "SAFETY", totalCases: 20, passedCases: 19, criticalFailures: 1, evidenceRefs: ["run-log-1"] }],
-    } as never)).toMatchObject({ status: "FAILED" });
-  });
-
-  it("requires evidence for exactly the gate's categories", async () => {
-    const created = await manager().createEvaluation(principal, evaluationInput({ requiredCategories: ["SAFETY", "RETRIEVAL"] }));
-
-    await expect(manager().completeEvaluation(principal, created.id, {
-      results: [{ category: "SAFETY", totalCases: 10, passedCases: 10, criticalFailures: 0, evidenceRefs: ["run-log-1"] }],
-    } as never)).rejects.toThrow(/missing for required categories: RETRIEVAL/);
-
-    await expect(manager().completeEvaluation(principal, created.id, {
-      results: [
-        { category: "SAFETY", totalCases: 10, passedCases: 10, criticalFailures: 0, evidenceRefs: ["run-log-1"] },
-        { category: "RETRIEVAL", totalCases: 10, passedCases: 10, criticalFailures: 0, evidenceRefs: ["run-log-1"] },
-        { category: "PERMISSIONS", totalCases: 10, passedCases: 10, criticalFailures: 0, evidenceRefs: ["run-log-1"] },
-      ],
-    } as never)).rejects.toThrow(/outside this gate: PERMISSIONS/);
-  });
-
-  it("treats recorded evidence as immutable", async () => {
-    const created = await manager().createEvaluation(principal, evaluationInput());
-    await manager().completeEvaluation(principal, created.id, {
-      results: [{ category: "SAFETY", totalCases: 10, passedCases: 10, criticalFailures: 0, evidenceRefs: ["run-log-1"] }],
-    } as never);
-
-    await expect(manager().completeEvaluation(principal, created.id, {
-      results: [{ category: "SAFETY", totalCases: 10, passedCases: 10, criticalFailures: 0, evidenceRefs: ["run-log-1"] }],
-    } as never)).rejects.toThrow(/immutable/);
-  });
-
-  it("promotes only a passed candidate, and only once", async () => {
-    const draft = await manager().createEvaluation(principal, evaluationInput());
-
-    await expect(manager().promoteEvaluation(principal, draft.id, { reason: "Ship it" } as never))
-      .rejects.toThrow(/passed, unpromoted/);
-
-    await manager().completeEvaluation(principal, draft.id, {
-      results: [{ category: "SAFETY", totalCases: 10, passedCases: 10, criticalFailures: 0, evidenceRefs: ["run-log-1"] }],
-    } as never);
-    const promoted = await manager().promoteEvaluation(principal, draft.id, { reason: "Ship it" } as never);
-    expect(promoted).toMatchObject({ status: "PROMOTED", promotionReason: "Ship it" });
-
-    await expect(manager().promoteEvaluation(principal, draft.id, { reason: "Again" } as never))
-      .rejects.toBeInstanceOf(AiOpsConflictError);
-    await expect(manager().promoteEvaluation(principal, randomUUID(), { reason: "x" } as never))
       .rejects.toBeInstanceOf(AiOpsNotFoundError);
   });
 });

@@ -170,8 +170,8 @@ export function GuardrailsView({
         reason: decision.reason.trim(),
       });
       setMessage(decision.action === "activate"
-        ? "Evaluated guardrail policy activated for chat."
-        : "Guardrail policy suspended; chat now fails closed until another evaluated policy is active.");
+        ? "Guardrail policy activated for chat."
+        : "Guardrail policy suspended; chat now fails closed until another policy is active.");
       setDecision(null);
       await load();
     } catch (cause) {
@@ -206,9 +206,9 @@ export function GuardrailsView({
     <PageHeader
       kicker="Policy control"
       title="Guardrails"
-      description="Release evaluated limits and deterministic safety checks enforced inside OrcaSynapse."
+      description="Release the limits and deterministic safety checks enforced inside OrcaSynapse."
       actions={<>
-        <Button onClick={onOpenOperations}>Evaluation evidence</Button>
+        <Button onClick={onOpenOperations}>Open Operations</Button>
         {canManage && <Button variant="primary" onClick={startCreate}>New policy</Button>}
       </>}
     />
@@ -261,7 +261,7 @@ export function GuardrailsView({
               {editing ? `Edit ${editing.displayName}` : "New chat policy"}
             </h2>
             <p className="mb-0 mt-1.5 text-body text-muted">
-              These controls run locally in OrcaSynapse and are versioned with evaluation evidence.
+              These controls run locally in OrcaSynapse and are pinned to an immutable policy version.
             </p>
           </div>
           <Button variant="ghost" size="sm" onClick={() => setShowEditor(false)}>Cancel</Button>
@@ -297,7 +297,7 @@ export function GuardrailsView({
           title="No policy records yet"
           action={canManage ? <Button onClick={startCreate}>Create the first policy</Button> : undefined}
         >
-          Chat continues using its existing schema, identity, and rate boundaries until the first evaluated policy is
+          Chat continues using its existing schema, identity, and rate boundaries until the first policy is
           activated.
         </EmptyState>
       )}
@@ -332,7 +332,7 @@ export function GuardrailsView({
           {[
             { label: "Input ceiling", value: `${policy.maxInputCharacters.toLocaleString("en-US")} chars` },
             { label: "Output ceiling", value: `${policy.maxOutputCharacters.toLocaleString("en-US")} chars` },
-            { label: "Safety evidence", value: policy.activationEvaluationId ? "Promoted" : "Required" },
+            { label: "Activation", value: policy.firstActivatedAt ? "Started" : "Never active" },
             { label: "Last updated", value: when(policy.updatedAt) },
           ].map((fact) => (
             <div className="min-w-0 bg-surface px-2.5 py-2" key={fact.label}>
@@ -363,11 +363,11 @@ export function GuardrailsView({
         >
           <div>
             <strong className="block text-label font-semibold text-text">
-              {decision.action === "activate" ? "Activate evaluated policy" : "Suspend active policy"}
+              {decision.action === "activate" ? "Activate policy" : "Suspend active policy"}
             </strong>
             <span className="mt-1 block text-body text-muted">
               {decision.action === "activate"
-                ? `Requires a promoted POLICY evaluation for policy:${policy.slug}, version ${policy.version}, including SAFETY.`
+                ? `Makes policy:${policy.slug}, version ${policy.version}, the single enforced chat boundary.`
                 : "Because this policy has previously enforced chat, suspension deliberately makes chat fail closed."}
             </span>
           </div>

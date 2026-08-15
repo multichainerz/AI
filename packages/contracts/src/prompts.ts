@@ -23,17 +23,13 @@ export const promptTemplateSchema = z.object({
   status: promptStatusSchema,
   content: promptContentSchema,
   contentChecksum: z.string().regex(/^[a-f0-9]{64}$/),
-  activationEvaluationId: z.uuid().nullable(),
   firstActivatedAt: z.iso.datetime().nullable(),
   revision: z.number().int().positive(),
   createdBy: z.uuid().nullable(),
   updatedBy: z.uuid().nullable(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
-}).superRefine(({ status, activationEvaluationId, firstActivatedAt }, context) => {
-  if (status === "ACTIVE" && !activationEvaluationId) {
-    context.addIssue({ code: "custom", path: ["activationEvaluationId"], message: "Active prompts require promoted evaluation evidence." });
-  }
+}).superRefine(({ status, firstActivatedAt }, context) => {
   if (status === "ACTIVE" && !firstActivatedAt) {
     context.addIssue({ code: "custom", path: ["firstActivatedAt"], message: "Active prompts require an activation timestamp." });
   }

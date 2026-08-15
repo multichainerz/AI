@@ -6,7 +6,6 @@ import type { GuardrailManager } from "./guardrail-manager.js";
 
 const TOKEN = "a".repeat(43);
 const POLICY_ID = "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d";
-const EVALUATION_ID = "de44bc5d-0355-4c3f-872e-1af99f356d19";
 const session: AdministratorSession = {
   id: "ac369dab-cad5-4fd9-83ed-b4fbf528028a",
   subject: "platform-admin",
@@ -27,7 +26,6 @@ const policy: GuardrailPolicy = {
   maxOutputCharacters: 200_000,
   blockControlCharacters: true,
   blockCredentialPatterns: true,
-  activationEvaluationId: EVALUATION_ID,
   firstActivatedAt: "2026-07-30T00:00:00.000Z",
   revision: 2,
   createdBy: session.id,
@@ -46,7 +44,6 @@ function manager(): GuardrailManager {
   const draftPolicy: GuardrailPolicy = {
     ...policy,
     status: "DRAFT",
-    activationEvaluationId: null,
     firstActivatedAt: null,
     revision: 1,
   };

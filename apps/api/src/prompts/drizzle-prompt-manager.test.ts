@@ -3,7 +3,6 @@ import { and, eq } from "drizzle-orm";
 import {
   auditEvent,
   createTestDatabase,
-  evaluationRun,
   promptTemplate,
   type TestDatabase,
 } from "@orcasynapse/database";
@@ -30,32 +29,6 @@ const draft = {
   version: "1.0.0",
   content: "You are a careful internal analyst who cites approved evidence only.",
 };
-
-/**
- * A promoted run must satisfy EvaluationRun_evidence_check: completed, promoted,
- * with a reason and at least one category result. Building it correctly here is
- * itself coverage - a mock would have accepted an unpromotable row.
- */
-async function promoteEvidence(slug: string, version: string) {
-  await context.database.insert(evaluationRun).values({
-    name: "Prompt release evaluation",
-    targetType: "PROMPT",
-    targetReference: `prompt:${slug}`,
-    targetVersion: version,
-    status: "PROMOTED",
-    minimumPassRate: 0.9,
-    requiredCategories: ["CHAT", "SAFETY"],
-    categoryResults: [
-      { category: "CHAT", passRate: 1, passed: true },
-      { category: "SAFETY", passRate: 1, passed: true },
-    ],
-    totalCases: 2,
-    passedCases: 2,
-    completedAt: new Date(),
-    promotedAt: new Date(),
-    promotionReason: "Approved for release.",
-  });
-}
 
 describe("DrizzlePromptManager", () => {
   it("creates a template with a content checksum and audits the checksum, not the content", async () => {
@@ -100,31 +73,24 @@ describe("DrizzlePromptManager", () => {
     ).rejects.toThrow(/changed in another session/i);
   });
 
-  it("requires exact promoted chat and safety evidence before activating", async () => {
+  it("activates a template on its own merits, with no evaluation evidence", async () => {
     const created = await manager().create(principal, draft);
+    expect(created.status).toBe("DRAFT");
 
-    await expect(
-      manager().activate(principal, created.id, { expectedRevision: created.revision, reason: "Release" }),
-    ).rejects.toThrow(/promoted CHAT and SAFETY evaluation evidence/);
-
-    await promoteEvidence(draft.slug, draft.version);
     const activated = await manager().activate(principal, created.id, {
       expectedRevision: created.revision,
       reason: "Release",
     });
 
     expect(activated.status).toBe("ACTIVE");
-    expect(activated.activationEvaluationId).not.toBeNull();
     expect(activated.firstActivatedAt).not.toBeNull();
   });
 
   it("rejects a second active prompt for the same purpose", async () => {
     const first = await manager().create(principal, draft);
-    await promoteEvidence(draft.slug, draft.version);
     await manager().activate(principal, first.id, { expectedRevision: first.revision, reason: "Release" });
 
     const second = await manager().create(principal, { ...draft, slug: "chat-system-alt" });
-    await promoteEvidence("chat-system-alt", draft.version);
 
     await expect(
       manager().activate(principal, second.id, { expectedRevision: second.revision, reason: "Release" }),
@@ -133,7 +99,6 @@ describe("DrizzlePromptManager", () => {
 
   it("blocks editing an active prompt until it is suspended", async () => {
     const created = await manager().create(principal, draft);
-    await promoteEvidence(draft.slug, draft.version);
     const active = await manager().activate(principal, created.id, {
       expectedRevision: created.revision,
       reason: "Release",
@@ -169,9 +134,8 @@ describe("DrizzlePromptManager", () => {
     ).rejects.toBeInstanceOf(PromptNotFoundError);
   });
 
-  it("returns a material edit to draft and clears its activation evidence", async () => {
+  it("returns a material edit to draft", async () => {
     const created = await manager().create(principal, draft);
-    await promoteEvidence(draft.slug, draft.version);
     const active = await manager().activate(principal, created.id, {
       expectedRevision: created.revision,
       reason: "Release",
@@ -188,7 +152,6 @@ describe("DrizzlePromptManager", () => {
     });
 
     expect(edited.status).toBe("DRAFT");
-    expect(edited.activationEvaluationId).toBeNull();
 
     const [stored] = await context.database
       .select({ status: promptTemplate.status })

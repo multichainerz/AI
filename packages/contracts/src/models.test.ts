@@ -35,8 +35,8 @@ describe("model catalogue contracts", () => {
     expect(() => updateModelDeploymentSchema.parse({ displayName: "Updated" })).toThrow();
   });
 
-  it("rejects an active default route without retained evaluation evidence", () => {
-    expect(() => modelDeploymentSchema.parse({
+  it("rejects an active default route with no activation timestamp", () => {
+    const active = {
       ...input,
       id: input.connectionId,
       status: "ACTIVE",
@@ -49,13 +49,16 @@ describe("model catalogue contracts", () => {
         status: "HEALTHY",
       },
       isDefault: true,
-      activationEvaluationId: null,
       firstActivatedAt: "2026-07-30T00:00:00.000Z",
       revision: 1,
       createdBy: null,
       updatedBy: null,
       createdAt: "2026-07-30T00:00:00.000Z",
       updatedAt: "2026-07-30T00:00:00.000Z",
-    })).toThrow();
+    };
+    // The positive case first: without it, the rejection below would also pass
+    // if the fixture were malformed for some entirely unrelated reason.
+    expect(modelDeploymentSchema.parse(active).status).toBe("ACTIVE");
+    expect(() => modelDeploymentSchema.parse({ ...active, firstActivatedAt: null })).toThrow();
   });
 });

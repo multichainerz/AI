@@ -82,10 +82,8 @@ import {
 } from "./workspace-navigation.js";
 
 const OperationsView = lazy(() => import("./operations-view.js").then((module) => ({ default: module.OperationsView })));
-const ReleaseGatesView = lazy(() => import("./release-gates-view.js").then((module) => ({ default: module.ReleaseGatesView })));
 const ChatView = lazy(() => import("./chat-view.js").then((module) => ({ default: module.ChatView })));
 const AgentsView = lazy(() => import("./agents-view.js").then((module) => ({ default: module.AgentsView })));
-const AgentRuntimeView = lazy(() => import("./agent-runtime-view.js").then((module) => ({ default: module.AgentRuntimeView })));
 /*
  * Skills and Memory are one module rendered at two scopes rather than two
  * modules, because they are one governed mirror partitioned by file kind:
@@ -1222,7 +1220,10 @@ function App() {
           Agents: () => (
             <AgentsView
               unlocked={agentsUnlocked}
-              administrator={adminSession !== null}
+              // `unlocked` from `adminAccess`, not `adminSession !== null`: a
+              // session pending a forced password change is signed in and
+              // refused by every admin route, so the two are not the same test.
+              administrator={unlocked}
               activationReady={unlocked ? readiness.agenticInfrastructureReady && readiness.inferenceReady : null}
               activationMessage={readiness.nextChatStep?.detail ?? null}
               oidcConfigured={oidcStatus?.configured === true}
@@ -1233,17 +1234,6 @@ function App() {
                 selectView("Chat");
               }}
               onOpenReadiness={() => selectView("Deployment", "runtime")}
-              onSessionExpired={forgetAnySession}
-            />
-          ),
-          Runtime: () => (
-            <AgentRuntimeView
-              unlocked={agentsUnlocked}
-              administrator={adminSession !== null}
-              oidcConfigured={oidcStatus?.configured === true}
-              onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23agents%2Fruntime")}
-              onConfigure={() => openConnectionSettings("HERMES")}
-              onOpenProfiles={() => selectView("Agents")}
               onSessionExpired={forgetAnySession}
             />
           ),
@@ -1327,13 +1317,6 @@ function App() {
           ),
           Operations: () => (
             <OperationsView
-              session={adminSession}
-              onConfigure={() => openConnectionSettings()}
-              onSessionExpired={forgetAdminSession}
-            />
-          ),
-          Releases: () => (
-            <ReleaseGatesView
               session={adminSession}
               onConfigure={() => openConnectionSettings()}
               onSessionExpired={forgetAdminSession}

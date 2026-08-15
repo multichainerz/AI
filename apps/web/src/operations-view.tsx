@@ -26,10 +26,11 @@ import {
  * the only three-level navigation left in the product besides Setup. Two of
  * those tabs have gone their own ways:
  *
- * - **Release gates** moved to `release-gates-view.tsx`. It answers a
- *   different question at a different moment for a different person, has its
- *   own scopes, and was sharing a poll with a control room it has nothing to
- *   do with.
+ * - **Release gates** was removed with the whole evaluation subsystem. It was
+ *   the only client of `POST /evaluations`, and the evidence it produced was
+ *   the only way to satisfy an activation gate that applied even in
+ *   development — so the gate went with it, and models, prompts, guardrails
+ *   and agent profiles now activate on their own merits.
  * - **Pilot readiness** was deleted outright, not moved. Nothing in the
  *   repository can create a `ProductionReadinessControl`: the API exposes
  *   `GET /readiness`, `PATCH /readiness/controls/:key` and

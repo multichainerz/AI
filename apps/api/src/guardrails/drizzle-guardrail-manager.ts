@@ -5,10 +5,9 @@ import type {
   GuardrailPolicyList,
   UpdateGuardrailPolicy,
 } from "@orcasynapse/contracts";
-import { and, arrayContains, asc, desc, eq, isNotNull, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNotNull, ne, sql } from "drizzle-orm";
 import {
   auditEvent,
-  evaluationRun,
   guardrailPolicy,
   modelDeployment,
   serviceConnection,
@@ -36,7 +35,6 @@ function dto(policy: StoredPolicy): GuardrailPolicy {
     maxOutputCharacters: policy.maxOutputCharacters,
     blockControlCharacters: policy.blockControlCharacters,
     blockCredentialPatterns: policy.blockCredentialPatterns,
-    activationEvaluationId: policy.activationEvaluationId,
     firstActivatedAt: policy.firstActivatedAt?.toISOString() ?? null,
     revision: policy.revision,
     createdBy: policy.createdBy,
@@ -117,7 +115,6 @@ export class DrizzleGuardrailManager implements GuardrailManager {
           ...(changes.blockControlCharacters === undefined ? {} : { blockControlCharacters: changes.blockControlCharacters }),
           ...(changes.blockCredentialPatterns === undefined ? {} : { blockCredentialPatterns: changes.blockCredentialPatterns }),
           status: materialChange ? "DRAFT" : current.status,
-          activationEvaluationId: materialChange ? null : current.activationEvaluationId,
           revision: increment(guardrailPolicy.revision),
           updatedBy: principal.id,
         })
@@ -212,31 +209,10 @@ export class DrizzleGuardrailManager implements GuardrailManager {
           );
         }
 
-        const [evaluation] = await transaction
-          .select({ id: evaluationRun.id })
-          .from(evaluationRun)
-          .where(
-            and(
-              eq(evaluationRun.targetType, "POLICY"),
-              eq(evaluationRun.targetReference, `policy:${current.slug}`),
-              eq(evaluationRun.targetVersion, current.version),
-              eq(evaluationRun.status, "PROMOTED"),
-              arrayContains(evaluationRun.requiredCategories, ["SAFETY"]),
-            ),
-          )
-          .orderBy(desc(evaluationRun.promotedAt))
-          .limit(1);
-        if (!evaluation) {
-          throw new GuardrailConflictError(
-            `Activation requires promoted safety evaluation evidence for policy:${current.slug} version ${current.version}.`,
-          );
-        }
-
         const activated = await transaction
           .update(guardrailPolicy)
           .set({
             status: "ACTIVE",
-            activationEvaluationId: evaluation.id,
             firstActivatedAt: current.firstActivatedAt ?? new Date(),
             revision: increment(guardrailPolicy.revision),
             updatedBy: principal.id,
@@ -263,7 +239,6 @@ export class DrizzleGuardrailManager implements GuardrailManager {
           outcome: "SUCCESS",
           metadata: {
             reason: input.reason,
-            evaluationRunId: evaluation.id,
             version: current.version,
             enforcementPlane: "ORCASYNAPSE",
           },

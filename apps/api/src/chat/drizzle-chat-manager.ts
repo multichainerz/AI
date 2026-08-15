@@ -1242,7 +1242,7 @@ export class DrizzleChatManager implements ChatManager {
       .from(guardrailPolicy)
       .where(eq(guardrailPolicy.status, "ACTIVE"))
       .limit(2);
-    if (catalogueEnforced && policies.length === 0) throw new ChatConfigurationError("Activate one evaluated guardrail policy before using Chat.");
+    if (catalogueEnforced && policies.length === 0) throw new ChatConfigurationError("Activate one guardrail policy before using Chat.");
     if (policies.length > 1) throw new ChatConfigurationError("More than one chat guardrail policy is active.");
     const policy = policies[0];
     return {

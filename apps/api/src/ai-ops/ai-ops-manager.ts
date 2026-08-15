@@ -1,14 +1,9 @@
 import type {
   AiOpsOverview,
-  CompleteEvaluationRun,
-  CreateEvaluationRun,
   CreateOperationalIncident,
-  EvaluationRun,
-  EvaluationRunList,
   IncidentDecision,
   OperationalIncident,
   OperationalIncidentList,
-  PromoteEvaluationRun,
   ProductionReadiness,
   ProductionReadinessApproval,
   RecordProductionReadinessApproval,
@@ -23,10 +18,6 @@ export interface AiOpsManager {
   createIncident(principal: AdminPrincipal, input: CreateOperationalIncident): Promise<OperationalIncident>;
   acknowledgeIncident(principal: AdminPrincipal, incidentId: string, input: IncidentDecision): Promise<OperationalIncident>;
   resolveIncident(principal: AdminPrincipal, incidentId: string, input: IncidentDecision): Promise<OperationalIncident>;
-  listEvaluations(): Promise<EvaluationRunList>;
-  createEvaluation(principal: AdminPrincipal, input: CreateEvaluationRun): Promise<EvaluationRun>;
-  completeEvaluation(principal: AdminPrincipal, evaluationId: string, input: CompleteEvaluationRun): Promise<EvaluationRun>;
-  promoteEvaluation(principal: AdminPrincipal, evaluationId: string, input: PromoteEvaluationRun): Promise<EvaluationRun>;
   productionReadiness(): Promise<ProductionReadiness>;
   updateReadinessControl(principal: AdminPrincipal, controlKey: string, input: UpdateProductionReadinessControl): Promise<ProductionReadinessControl>;
   recordReadinessApproval(principal: AdminPrincipal, input: RecordProductionReadinessApproval): Promise<ProductionReadinessApproval>;

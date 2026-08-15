@@ -5,7 +5,6 @@ import {
   agentProfileVersion,
   componentCompatibility,
   createTestDatabase,
-  evaluationRun,
   guardrailPolicy,
   localAdministrator,
   onboardingEvidence,
@@ -211,19 +210,12 @@ describe("DrizzleOnboardingManager validation", () => {
   });
 
   it("treats the zero-tool posture as the passing development baseline", async () => {
-    // An ACTIVE policy must carry real activation evidence: the check constraint
-    // demands both fields, and the foreign key demands a genuine evaluation.
-    const [evaluation] = await context.database
-      .insert(evaluationRun)
-      .values({
-        name: "Guardrail baseline", targetType: "POLICY", targetReference: "guardrail:baseline",
-        targetVersion: "1", minimumPassRate: 0.9, requiredCategories: ["safety"],
-      })
-      .returning({ id: evaluationRun.id });
+    // GuardrailPolicy_activation_check still demands an activation timestamp on
+    // an ACTIVE row, so the seed has to carry one.
     await context.database.insert(guardrailPolicy).values({
       slug: "baseline", displayName: "Baseline", description: "Conservative baseline.",
       version: "1", status: "ACTIVE", maxInputCharacters: 32_000,
-      activationEvaluationId: evaluation!.id, firstActivatedAt: new Date(),
+      firstActivatedAt: new Date(),
     });
 
     const snapshot = await manager().runValidation(principal, { stageKey: "guardrails-tools" } as never);

@@ -30,7 +30,6 @@ const draftPolicy: GuardrailPolicy = {
   maxOutputCharacters: 200_000,
   blockControlCharacters: true,
   blockCredentialPatterns: true,
-  activationEvaluationId: null,
   firstActivatedAt: null,
   revision: 1,
   createdBy: session.id,
@@ -138,7 +137,7 @@ describe("a policy another operator moved first", () => {
     await waitFor(() => screen.getByText(/changed since it was loaded/));
 
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
-    await waitFor(() => screen.getByText(/guardrail policy activated for chat/));
+    await waitFor(() => screen.getByText(/Guardrail policy activated for chat/));
     expect(changeGuardrailPolicyState.mock.calls[1]![2]).toMatchObject({ expectedRevision: 2 });
   });
 

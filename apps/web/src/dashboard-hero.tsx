@@ -32,9 +32,6 @@ import type { ActiveView } from "./workspace-navigation.js";
 interface DashboardHeroProps {
   unlocked: boolean;
   apiAvailable: boolean;
-  /** The page's own title, which this panel now carries. */
-  title: string;
-  detail: string;
   primaryLabel: string;
   onPrimary: () => void;
   onAsk: () => void;
@@ -571,16 +568,21 @@ export function DashboardHero(props: DashboardHeroProps) {
         <div className="dashboard-hero__content relative z-[1] grid min-h-0 gap-4">
 
         <div className="grid gap-4">
+        {/*
+          A fixed title, not a status sentence.
+
+          The heading used to change with readiness — "Finish your private AI
+          workspace", "Your agentic workspace is ready" — above a line reading
+          "0 of 3 required capabilities are ready. Next: Connect and verify
+          model serving." Both restated the Required capabilities panel forty
+          pixels below, which already shows the fraction and marks that exact
+          step NEXT. The panel keeps that job; this is just the page's name,
+          and the `<h1>` the Dashboard needs as its landmark.
+        */}
         <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
-          <div className="min-w-0 max-w-[68ch]">
-            <span className="block text-micro uppercase tracking-[0.18em] text-faint">
-              OrcaSynapse control center
-            </span>
-            <h1 className="m-0 mt-1.5 font-display text-[25px] font-semibold leading-[1.12] tracking-[-0.025em] text-text sm:text-[29px]">
-              {props.title}
-            </h1>
-            <p className="mb-0 mt-1.5 max-w-[68ch] text-caption leading-relaxed text-muted">{props.detail}</p>
-          </div>
+          <h1 className="m-0 min-w-0 font-display text-[25px] font-semibold leading-[1.12] tracking-[-0.025em] text-text sm:text-[29px]">
+            OrcaSynapse control center
+          </h1>
           {/*
             Two groups, not three competing chips.
 

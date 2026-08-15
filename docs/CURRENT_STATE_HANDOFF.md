@@ -1,8 +1,8 @@
-# Current State Handoff — v5.0.0
+# Current State Handoff — v5.1.0
 
 ## Product state
 
-This release is the greenfield Hermes-native baseline. OrcaSynapse controls identity, profiles, inference routes, prompts, guardrails, native toolset admission, corpus observability, evaluations, incidents, operational projections, and audit. Hermes alone owns session context and the canonical built-in memory and Skill files on VM2.
+This release is the greenfield Hermes-native baseline. OrcaSynapse controls identity, profiles, inference routes, prompts, guardrails, native toolset admission, corpus observability, incidents, operational projections, and audit. Hermes alone owns session context and the canonical built-in memory and Skill files on VM2.
 
 `v4.9.0` also establishes the workspace presentation baseline. Shared
 controls use source-owned shadcn conventions over Tailwind and the existing
@@ -14,7 +14,7 @@ remain product compositions rather than being forced into generic cards.
 `v5.0.0` reorganises the workspace around the question each surface
 answers. Setup is a three-step wizard — inference, agent runtime, Agent Profile
 — with one step open at a time and every blocker stated inside the step it
-blocks. Operations is three flat tabs (Health, Release gates, Audit trail)
+blocks. Operations is two flat tabs (Health, Audit trail)
 rather than two tabs over four sub-tabs, and Agents is five (Profiles, Runtime,
 Skills, Memory, Agent Tools). Application updates have their own Settings tab.
 

@@ -64,7 +64,7 @@ re-enrolled through its own governed workflow.
 | State | Owner | Location |
 | --- | --- | --- |
 | identities, roles, profiles, model routes, prompts, guardrails, tool admissions | OrcaSynapse | VM1 PostgreSQL |
-| chat projection, run lifecycle, decisions, failures, evaluation evidence | OrcaSynapse | VM1 PostgreSQL |
+| chat projection, run lifecycle, decisions, failures, operational incidents | OrcaSynapse | VM1 PostgreSQL |
 | append-only audit trail and forwarding cursor | OrcaSynapse | VM1 PostgreSQL |
 | native transcript and model context | Hermes | VM2 native session store |
 | `MEMORY.md`, `USER.md`, Skills, runtime workspace | Hermes | VM2 Hermes state root |

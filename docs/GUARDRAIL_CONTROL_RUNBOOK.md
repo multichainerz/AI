@@ -14,10 +14,13 @@ These checks are deterministic safeguards, not a semantic safety classifier or c
 ## Lifecycle
 
 1. Create or edit a draft policy.
-2. Run representative safety and false-positive evaluations.
-3. Promote exact `POLICY` evidence for that candidate/version.
-4. Activate with an audited reason.
-5. Suspend immediately if behavior is unsafe.
+2. Exercise representative safety and false-positive cases against that exact version. OrcaSynapse does not record this verification; retain it wherever your change record lives.
+3. Activate with an audited reason.
+4. Suspend immediately if behavior is unsafe.
+
+Activation requires exactly one enabled, healthy inference connection to be effective, and only one policy can be active at a time. It carries no separate evidence precondition: OrcaSynapse used to demand a promoted `POLICY` evaluation carrying `SAFETY` for the exact `policy:<slug>` and version, and that requirement — along with the Release gates screen that produced it — was removed.
+
+A change to any runtime control (input or output ceiling, control-character or credential blocking, version) returns a policy to draft, so an active policy is always the exact version that was reviewed. The activation reason is retained in the audit trail.
 
 After the first governed policy is activated, missing or suspended policy state fails closed rather than silently returning to an unmanaged default.
 

@@ -101,8 +101,6 @@ import {
   aiOpsOverviewSchema,
   operationalIncidentListSchema,
   operationalIncidentSchema,
-  evaluationRunListSchema,
-  evaluationRunSchema,
   productionReadinessSchema,
   productionReadinessControlSchema,
   productionReadinessApprovalSchema,
@@ -111,10 +109,6 @@ import {
   type OperationalIncidentList,
   type CreateOperationalIncident,
   type IncidentDecision,
-  type EvaluationRun,
-  type EvaluationRunList,
-  type CreateEvaluationRun,
-  type CompleteEvaluationRun,
   type ProductionReadiness,
   type ProductionReadinessControl,
   type ProductionReadinessApproval,
@@ -849,33 +843,6 @@ export async function decideOperationalIncident(
     method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
   });
   return operationalIncidentSchema.parse(await parsedResponse(response));
-}
-
-export async function getEvaluationRuns(): Promise<EvaluationRunList> {
-  const response = await fetch("/api/v1/admin/operations/evaluations", { credentials: "same-origin" });
-  return evaluationRunListSchema.parse(await parsedResponse(response));
-}
-
-export async function createEvaluationRun(input: CreateEvaluationRun): Promise<EvaluationRun> {
-  const response = await fetch("/api/v1/admin/operations/evaluations", {
-    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
-  });
-  return evaluationRunSchema.parse(await parsedResponse(response));
-}
-
-export async function completeEvaluationRun(id: string, input: CompleteEvaluationRun): Promise<EvaluationRun> {
-  const response = await fetch(`/api/v1/admin/operations/evaluations/${encodeURIComponent(id)}/complete`, {
-    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
-  });
-  return evaluationRunSchema.parse(await parsedResponse(response));
-}
-
-export async function promoteEvaluationRun(id: string, reason: string): Promise<EvaluationRun> {
-  const response = await fetch(`/api/v1/admin/operations/evaluations/${encodeURIComponent(id)}/promote`, {
-    method: "POST", headers: adminHeaders(), credentials: "same-origin",
-    body: JSON.stringify({ reason }),
-  });
-  return evaluationRunSchema.parse(await parsedResponse(response));
 }
 
 export async function getProductionReadiness(): Promise<ProductionReadiness> {

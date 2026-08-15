@@ -18,17 +18,13 @@ export const guardrailPolicySchema = z.object({
   maxOutputCharacters: z.number().int().min(1_024).max(1_000_000),
   blockControlCharacters: z.boolean(),
   blockCredentialPatterns: z.boolean(),
-  activationEvaluationId: z.uuid().nullable(),
   firstActivatedAt: z.iso.datetime().nullable(),
   revision: z.number().int().positive(),
   createdBy: z.uuid().nullable(),
   updatedBy: z.uuid().nullable(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
-}).superRefine(({ status, activationEvaluationId, firstActivatedAt }, context) => {
-  if (status === "ACTIVE" && !activationEvaluationId) {
-    context.addIssue({ code: "custom", path: ["activationEvaluationId"], message: "Active policies require promoted evaluation evidence." });
-  }
+}).superRefine(({ status, firstActivatedAt }, context) => {
   if (status === "ACTIVE" && !firstActivatedAt) {
     context.addIssue({ code: "custom", path: ["firstActivatedAt"], message: "Active policies require an activation timestamp." });
   }

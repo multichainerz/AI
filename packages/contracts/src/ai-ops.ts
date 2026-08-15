@@ -84,84 +84,6 @@ export const incidentDecisionSchema = z.object({
   owner: z.string().trim().min(1).max(160).optional(),
 }).strict();
 
-export const EVALUATION_CATEGORIES = [
-  "CHAT",
-  "RETRIEVAL",
-  "TOOL_USE",
-  "SAFETY",
-  "PERMISSIONS",
-] as const;
-export const evaluationCategorySchema = z.enum(EVALUATION_CATEGORIES);
-export const evaluationTargetTypeSchema = z.enum(["MODEL", "PROMPT", "POLICY", "AGENT"]);
-export const evaluationStatusSchema = z.enum(["DRAFT", "PASSED", "FAILED", "PROMOTED"]);
-
-export const evaluationCategoryResultSchema = z.object({
-  category: evaluationCategorySchema,
-  totalCases: z.number().int().min(1).max(100_000),
-  passedCases: z.number().int().nonnegative().max(100_000),
-  criticalFailures: z.number().int().nonnegative().max(100_000),
-  passRate: z.number().min(0).max(1),
-  status: z.enum(["PASSED", "FAILED"]),
-  evidenceRefs: z.array(z.string().trim().min(1).max(500)).min(1).max(20),
-});
-
-export const createEvaluationRunSchema = z.object({
-  name: z.string().trim().min(3).max(160),
-  targetType: evaluationTargetTypeSchema,
-  targetReference: z.string().trim().min(1).max(240),
-  targetVersion: z.string().trim().min(1).max(120),
-  minimumPassRate: z.number().min(0.5).max(1).default(0.95),
-  requiredCategories: z.array(evaluationCategorySchema).min(1).max(EVALUATION_CATEGORIES.length)
-    .refine((items) => new Set(items).size === items.length, "Evaluation categories must be unique."),
-}).strict();
-
-export const completeEvaluationRunSchema = z.object({
-  results: z.array(z.object({
-    category: evaluationCategorySchema,
-    totalCases: z.number().int().min(1).max(100_000),
-    passedCases: z.number().int().nonnegative().max(100_000),
-    criticalFailures: z.number().int().nonnegative().max(100_000).default(0),
-    evidenceRefs: z.array(z.string().trim().min(1).max(500)).min(1).max(20),
-  }).superRefine((result, context) => {
-    if (result.passedCases > result.totalCases) {
-      context.addIssue({ code: "custom", message: "Passed cases cannot exceed total cases." });
-    }
-    if (result.criticalFailures > result.totalCases - result.passedCases) {
-      context.addIssue({ code: "custom", message: "Critical failures cannot exceed failed cases." });
-    }
-  })).min(1).max(EVALUATION_CATEGORIES.length)
-    .refine((items) => new Set(items.map(({ category }) => category)).size === items.length, "Evaluation result categories must be unique."),
-}).strict();
-
-export const promoteEvaluationRunSchema = z.object({
-  reason: z.string().trim().min(3).max(1_000),
-}).strict();
-
-export const evaluationRunSchema = z.object({
-  id: z.uuid(),
-  name: z.string().min(3).max(160),
-  targetType: evaluationTargetTypeSchema,
-  targetReference: z.string().min(1).max(240),
-  targetVersion: z.string().min(1).max(120),
-  status: evaluationStatusSchema,
-  minimumPassRate: z.number().min(0.5).max(1),
-  requiredCategories: z.array(evaluationCategorySchema).min(1),
-  results: z.array(evaluationCategoryResultSchema),
-  totalCases: z.number().int().nonnegative(),
-  passedCases: z.number().int().nonnegative(),
-  criticalFailures: z.number().int().nonnegative(),
-  passRate: z.number().min(0).max(1).nullable(),
-  createdAt: z.iso.datetime(),
-  completedAt: z.iso.datetime().nullable(),
-  promotedAt: z.iso.datetime().nullable(),
-  promotionReason: z.string().max(1_000).nullable(),
-});
-export const evaluationRunIdentifierSchema = z.uuid();
-
-export const evaluationRunListSchema = z.object({
-  items: z.array(evaluationRunSchema),
-});
-
 export const PRODUCTION_READINESS_DOMAINS = [
   "SECURITY",
   "INFRASTRUCTURE",
@@ -273,12 +195,6 @@ export const aiOpsOverviewSchema = z.object({
     critical: z.number().int().nonnegative(),
     items: z.array(operationalIncidentSchema),
   }),
-  evaluations: z.object({
-    drafts: z.number().int().nonnegative(),
-    passed: z.number().int().nonnegative(),
-    failed: z.number().int().nonnegative(),
-    promoted: z.number().int().nonnegative(),
-  }),
 });
 
 export type AiOpsComponentStatus = z.infer<typeof aiOpsComponentStatusSchema>;
@@ -289,13 +205,6 @@ export type OperationalIncident = z.infer<typeof operationalIncidentSchema>;
 export type OperationalIncidentList = z.infer<typeof operationalIncidentListSchema>;
 export type CreateOperationalIncident = z.infer<typeof createOperationalIncidentSchema>;
 export type IncidentDecision = z.infer<typeof incidentDecisionSchema>;
-export type EvaluationCategory = z.infer<typeof evaluationCategorySchema>;
-export type EvaluationTargetType = z.infer<typeof evaluationTargetTypeSchema>;
-export type CreateEvaluationRun = z.infer<typeof createEvaluationRunSchema>;
-export type CompleteEvaluationRun = z.infer<typeof completeEvaluationRunSchema>;
-export type PromoteEvaluationRun = z.infer<typeof promoteEvaluationRunSchema>;
-export type EvaluationRun = z.infer<typeof evaluationRunSchema>;
-export type EvaluationRunList = z.infer<typeof evaluationRunListSchema>;
 export type ProductionReadinessDomain = z.infer<typeof productionReadinessDomainSchema>;
 export type ProductionReadinessControlStatus = z.infer<typeof productionReadinessControlStatusSchema>;
 export type ProductionReadinessControl = z.infer<typeof productionReadinessControlSchema>;

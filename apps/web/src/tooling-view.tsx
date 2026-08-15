@@ -1,43 +1,22 @@
 import type {
   AdministratorSession,
-  AgentProfile,
-  GatewayCredential,
   GovernedTool,
   HermesRuntimeCatalogue,
-  IssuedGatewayCredential,
-  ToolApproval,
-  ToolCall,
-  ToolGrant,
-  ToolMetrics,
-  ToolRuntimeControl,
   ToolsetAdmission,
 } from "@orcasynapse/contracts";
-import { Check, X } from "lucide-react";
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { Switch } from "@/components/ui/switch";
 import {
   OrcaSynapseApiError,
-  getAgentProfiles,
-  getGatewayCredentials,
-  getGovernedTools,
-  decideToolApproval,
   decideToolsetAdmission,
-  getPendingToolApprovals,
+  getGovernedTools,
   getRuntimeCatalogue,
   getToolsetAdmissions,
-  getToolCalls,
-  getToolGrants,
-  getToolMetrics,
-  getToolRuntime,
-  issueGatewayCredential,
-  revokeGatewayCredential,
-  setGovernedToolStatus,
-  updateToolRuntime,
-  upsertToolGrant,
 } from "./api.js";
 import { adminAccess } from "./admin-access.js";
 import {
-  Alert, Button, EmptyState, Field, Input, LockedScreen, Metric, MetricRow, MicroLabel,
-  PageHeader, Panel, PanelHeading, Select, StatusText, Tile, cn, toneFor,
+  Alert, Button, EmptyState, Field, Input, LockedScreen, MicroLabel,
+  PageHeader, Panel, PanelHeading, StatusText, Tile, cn,
 } from "./ui/index.js";
 
 interface ToolingViewProps {
@@ -47,26 +26,33 @@ interface ToolingViewProps {
 }
 
 /**
- * The one native toolset that is permitted whether or not anybody admits it.
+ * The one tool the runtime is permitted to run whether or not anybody allowed it.
  *
  * `HermesClient.assertAdmittedToolBoundaryFor` adds this to the permitted set
- * unconditionally, which is invariant 7's "except built-in memory". Two things
- * follow, and the screen got both wrong before: an enabled `memory` toolset is
- * never drift, and an Admit/Revoke button on it would be a control that cannot
- * change the outcome.
+ * unconditionally. Two things follow, and the screen got both wrong before: an
+ * enabled `memory` is never drift, and a switch on it would be a control that
+ * cannot change the outcome. It is drawn as a fixed, locked-on row instead —
+ * omitting it made "0 allowed" read as "my agents can do nothing", which is the
+ * opposite of what the boundary does.
  */
-const BASELINE_TOOLSET = "memory";
+const BASELINE = "memory";
 
-function tone(value: string): string {
-  if (["ACTIVE", "COMPLETED", "APPROVED"].includes(value)) return "ready";
-  if (["PENDING", "APPROVAL_PENDING", "EXECUTING", "REQUESTED"].includes(value)) return "processing";
-  if (["FAILED", "DENIED", "REJECTED", "EXPIRED", "CANCELLED"].includes(value)) return "failed";
-  return "neutral";
-}
-
-function when(value: string | null): string {
-  if (!value) return "—";
-  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
+/**
+ * One row of the list: a tool group the runtime reports, or a decision this
+ * installation recorded about one it has not.
+ */
+interface ToolRow {
+  name: string;
+  label: string | null;
+  toolCount: number;
+  /** Switched on inside the runtime's own managed policy. */
+  enabled: boolean;
+  /** The runtime told us about it. False for a decision staged ahead of time. */
+  reported: boolean;
+  /** This installation permits it. Always true for the baseline. */
+  permitted: boolean;
+  baseline: boolean;
+  reason: string | null;
 }
 
 function plural(count: number, singular: string, plural_ = `${singular}s`): string {
@@ -74,238 +60,156 @@ function plural(count: number, singular: string, plural_ = `${singular}s`): stri
 }
 
 /**
- * One prerequisite of enabling the MCP gateway, drawn where the button is.
+ * Agent Tools was two screens wearing one hat.
  *
- * The API refuses `PATCH /runtime {enabled:true}` for four separate reasons and
- * the screen used to name one of them, in an empty state at the foot of a
- * different card. An operator pressing a live-looking button and receiving a
- * 409 is being told the same thing far too late.
+ * One plane is live: the runtime runs its own tools, OrcaSynapse never sees an
+ * individual call, and permitting a whole tool group is the entire lever. The
+ * other — a gateway, a tool registry, exact-version grants, approvals and a
+ * call ledger for tools OrcaSynapse executes itself — cannot execute anything
+ * in this build and never has: nothing seeds `GovernedTool`, there is no route
+ * to create one, and `DrizzleToolingManager.executeHandler` throws for every
+ * handler key. Half the screen therefore asked an administrator to reason about
+ * grants, scopes and approvals for tools that do not exist, which is most of
+ * why it read as incomprehensible.
+ *
+ * That half is gone. What remains is the live plane as a list you can read and
+ * a switch you can throw, plus one tripwire: if a release ever registers an MCP
+ * tool, the screen says so rather than hiding a subsystem that came back.
  */
-function Prerequisite({ met, label, detail }: { met: boolean; label: string; detail: ReactNode }) {
-  const Icon = met ? Check : X;
-  return (
-    <Tile as="article" pad="sm" className="flex items-start gap-3">
-      <span
-        aria-hidden="true"
-        className={cn(
-          "mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded border",
-          met ? "border-good/50 bg-good/10 text-good" : "border-bad/50 bg-bad/10 text-bad",
-        )}
-      >
-        <Icon className="h-3 w-3" />
-      </span>
-      <div className="min-w-0">
-        <strong className="block text-label font-semibold text-text">{label}</strong>
-        <small className="mt-0.5 block text-caption leading-relaxed text-muted">{detail}</small>
-      </div>
-    </Tile>
-  );
-}
-
 export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingViewProps) {
-  const [tools, setTools] = useState<GovernedTool[]>([]);
-  const [grants, setGrants] = useState<ToolGrant[]>([]);
-  const [profiles, setProfiles] = useState<AgentProfile[]>([]);
-  const [credentials, setCredentials] = useState<GatewayCredential[]>([]);
-  const [calls, setCalls] = useState<ToolCall[]>([]);
-  const [approvals, setApprovals] = useState<ToolApproval[]>([]);
-  const [approvalReason, setApprovalReason] = useState("");
   const [admissions, setAdmissions] = useState<ToolsetAdmission[]>([]);
   const [catalogue, setCatalogue] = useState<HermesRuntimeCatalogue | null>(null);
+  // "Unread" and "read, and empty" are different governance states, and
+  // conflating them hid an unreachable runtime behind a reassuring empty list.
   const [catalogueRead, setCatalogueRead] = useState(true);
-  const [admissionReason, setAdmissionReason] = useState("");
-  const [pendingToolset, setPendingToolset] = useState("");
-  const [runtime, setRuntime] = useState<ToolRuntimeControl | null>(null);
-  const [metrics, setMetrics] = useState<ToolMetrics | null>(null);
-  const [profileVersionId, setProfileVersionId] = useState("");
-  const [toolId, setToolId] = useState("");
-  const [groupClaims, setGroupClaims] = useState("");
-  const [adminRole, setAdminRole] = useState("PLATFORM_ADMIN");
-  const [credentialName, setCredentialName] = useState("Hermes on-prem gateway");
-  const [issuedCredential, setIssuedCredential] = useState<IssuedGatewayCredential | null>(null);
-  const [runtimeReason, setRuntimeReason] = useState("Gateway controls reviewed for the isolated pilot.");
+  const [mcpTools, setMcpTools] = useState<GovernedTool[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [editing, setEditing] = useState<{ name: string; next: boolean } | null>(null);
+  const [reason, setReason] = useState("");
+  const [stagedName, setStagedName] = useState("");
+  const [stagedReason, setStagedReason] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const { unlocked, scopes } = adminAccess(session);
   const canManage = scopes.includes("tools:manage");
-  const profileVersions = useMemo(() => profiles.flatMap((profile) => {
-    const versions = [{ profile, version: profile.version, live: profile.activeVersion === profile.version.version }];
-    if (profile.activeVersionConfiguration && profile.activeVersionConfiguration.id !== profile.version.id) {
-      versions.push({ profile, version: profile.activeVersionConfiguration, live: true });
-    }
-    return versions;
-  }), [profiles]);
-
-  const admittedNames = useMemo(
-    () => new Set(admissions.filter(({ admitted }) => admitted).map(({ toolsetName }) => toolsetName)),
-    [admissions],
-  );
 
   /**
-   * Every toolset the runtime knows about, plus any admitted one it does not.
+   * Everything the runtime reports, plus anything this installation decided
+   * about that it has not.
    *
-   * An admission for a toolset the runtime has never reported still belongs on
-   * screen — it is a decision this installation made, and hiding it would make
-   * a revocation look like it had already happened.
-   *
-   * The memory baseline is deliberately not in here. It is drawn as its own
-   * fixed row with no decision attached, because a decision on it is one the
-   * boundary would ignore.
+   * A decision on an unreported tool still belongs on screen: hiding it would
+   * make a revocation look like it had already taken effect.
    */
-  const toolsetRows = useMemo(() => {
-    const reasons = new Map(admissions.map((entry) => [entry.toolsetName, entry.reason]));
-    const rows = (catalogue?.toolsets ?? []).map((toolset) => ({
-      name: toolset.name,
-      label: toolset.label,
-      toolCount: toolset.toolCount,
-      enabled: toolset.enabled,
-      reported: true,
-      admitted: admittedNames.has(toolset.name),
-      reason: reasons.get(toolset.name) ?? null,
-    }));
-    const known = new Set(rows.map(({ name }) => name));
+  const rows = useMemo((): ToolRow[] => {
+    const decisions = new Map(admissions.map((entry) => [entry.toolsetName, entry]));
+    const reported = catalogue?.toolsets ?? [];
+    const list: ToolRow[] = reported
+      .filter(({ name }) => name !== BASELINE)
+      .map((toolset) => ({
+        name: toolset.name,
+        label: toolset.label,
+        toolCount: toolset.toolCount,
+        enabled: toolset.enabled,
+        reported: true,
+        permitted: decisions.get(toolset.name)?.admitted === true,
+        baseline: false,
+        reason: decisions.get(toolset.name)?.reason ?? null,
+      }));
+    const known = new Set(list.map(({ name }) => name));
     for (const entry of admissions) {
-      if (known.has(entry.toolsetName)) continue;
-      rows.push({
+      if (known.has(entry.toolsetName) || entry.toolsetName === BASELINE) continue;
+      list.push({
         name: entry.toolsetName,
         label: null,
         toolCount: 0,
         enabled: false,
         reported: false,
-        admitted: entry.admitted,
+        permitted: entry.admitted,
+        baseline: false,
         reason: entry.reason,
       });
     }
-    return rows
-      .filter(({ name }) => name !== BASELINE_TOOLSET)
-      .sort((left, right) => left.name.localeCompare(right.name));
-  }, [catalogue, admissions, admittedNames]);
+    list.sort((left, right) => left.name.localeCompare(right.name));
 
-  const baseline = useMemo(
-    () => catalogue?.toolsets.find(({ name }) => name === BASELINE_TOOLSET) ?? null,
-    [catalogue],
-  );
+    const memory = reported.find(({ name }) => name === BASELINE) ?? null;
+    return [{
+      name: BASELINE,
+      label: memory?.label ?? null,
+      toolCount: memory?.toolCount ?? 0,
+      enabled: memory?.enabled ?? false,
+      reported: memory !== null,
+      permitted: true,
+      baseline: true,
+      reason: null,
+    }, ...list];
+  }, [catalogue, admissions]);
 
-  // What the boundary is currently refusing runs over. `memory` cannot appear
-  // here: it is filtered out of the rows above for exactly this reason.
+  const others = useMemo(() => rows.filter(({ baseline }) => !baseline), [rows]);
+  const allowed = useMemo(() => others.filter(({ permitted }) => permitted), [others]);
+  // What the boundary is refusing runs over. The baseline cannot appear here:
+  // it is permitted by construction.
   const drifted = useMemo(
-    () => toolsetRows.filter((row) => row.enabled && !row.admitted).map(({ name }) => name),
-    [toolsetRows],
+    () => others.filter((row) => row.enabled && !row.permitted).map(({ name }) => name),
+    [others],
   );
 
-  const admittedCount = useMemo(
-    () => toolsetRows.filter(({ admitted }) => admitted).length,
-    [toolsetRows],
-  );
-
-  const activeTools = useMemo(() => tools.filter(({ status }) => status === "ACTIVE"), [tools]);
-
-  /*
-   * The API counts a grant only when its tool is also ACTIVE, so counting
-   * enabled grants alone would promise a prerequisite that is not met.
-   */
-  const activeGrants = useMemo(
-    () => grants.filter((grant) => grant.enabled && tools.some(({ id, status }) => id === grant.toolId && status === "ACTIVE")),
-    [grants, tools],
-  );
-  const activeCredentials = useMemo(
-    () => credentials.filter(({ enabled, revokedAt }) => enabled && !revokedAt),
-    [credentials],
-  );
-
-  /** The four things `updateRuntimeControl` checks before it will open the gateway. */
-  const prerequisites = useMemo(() => [
-    {
-      met: activeTools.length > 0,
-      label: "A governed tool is installed",
-      detail: activeTools.length > 0
-        ? `${plural(activeTools.length, "active tool")} in the registry.`
-        : "No governed tool is installed. Tools arrive with an OrcaSynapse release; this console cannot add one.",
-    },
-    {
-      met: activeGrants.length > 0,
-      label: "An exact agent revision is granted a tool",
-      detail: activeGrants.length > 0
-        ? `${plural(activeGrants.length, "active grant")} across agent revisions.`
-        : "No agent revision is granted a tool, so no run could reach one.",
-    },
-    {
-      met: activeCredentials.length > 0,
-      label: "A gateway credential is active",
-      detail: activeCredentials.length > 0
-        ? `${plural(activeCredentials.length, "active credential")}.`
-        : "No gateway credential has been issued, so Hermes cannot authenticate to the gateway.",
-    },
-    {
-      met: catalogueRead && drifted.length === 0,
-      label: "The runtime agrees with the admitted toolsets",
-      detail: !catalogueRead
-        ? "OrcaSynapse could not read the runtime's toolsets, so it cannot verify the boundary this check depends on."
-        : drifted.length > 0
-          ? `Hermes has ${plural(drifted.length, "enabled toolset")} nobody admitted: ${drifted.join(", ")}.`
-          : "Hermes reports nothing enabled that this installation has not admitted.",
-    },
-  ], [activeTools, activeGrants, activeCredentials, catalogueRead, drifted]);
-
-  const unmet = prerequisites.filter(({ met }) => !met).length;
-
-  /**
-   * The answer to "what can my agents do right now?", stated rather than left
-   * to be inferred from five counters.
-   */
-  const capability = useMemo((): { tone: "good" | "warn" | "bad"; headline: string; detail: string } => {
+  /** The answer to "what can my agents do right now", stated rather than counted. */
+  const summary = useMemo((): { tone: "good" | "warn" | "bad"; headline: string; detail: string } => {
+    if (!loaded) {
+      /*
+       * First paint holds no catalogue and no decisions, which is exactly what a
+       * runtime that answered and offers nothing looks like. Announcing "memory
+       * only" there is a claim this screen has not checked yet — the same
+       * conflation `catalogueRead` exists to prevent, on a shorter clock.
+       */
+      return {
+        tone: "warn",
+        headline: "Reading what the runtime offers.",
+        detail: "OrcaSynapse is asking the runtime which tools it offers. Nothing below is settled until it answers.",
+      };
+    }
     if (drifted.length > 0) {
       return {
         tone: "bad",
-        headline: "Every chat turn and agent run is refused.",
-        detail: `The runtime has ${plural(drifted.length, "toolset")} enabled that this installation never admitted (${drifted.join(", ")}). Admit them below, or have the runtime disable them. Nothing runs until the two agree.`,
+        headline: "Agent runs and chat are blocked.",
+        detail: `The runtime has ${plural(drifted.length, "tool")} switched on that nobody allowed here (${drifted.join(", ")}). Allow them below, or have the runtime switch them off. Nothing runs until the two agree.`,
       };
     }
-    const mcp = activeTools.length === 0
-      ? "No OrcaSynapse-executed MCP tool is installed, so nothing routes through the gateway."
-      : runtime?.enabled
-        ? `The MCP gateway is open over ${plural(activeTools.length, "governed tool")}.`
-        : "The MCP gateway is closed, so every governed tool call is denied.";
     if (!catalogueRead) {
       return {
         tone: "warn",
-        headline: "OrcaSynapse cannot read what the runtime can do.",
-        detail: `Hermes did not answer the toolset query, so this screen cannot confirm which native toolsets are enabled and neither plane can be enabled. ${mcp}`,
+        headline: "OrcaSynapse could not reach the runtime.",
+        detail: "The list below is this installation's own record of past decisions, not what the runtime is running now. Check the Hermes connection under Settings.",
       };
     }
     return {
-      tone: admittedCount > 0 ? "warn" : "good",
-      headline: admittedCount > 0
-        ? `Agents run with built-in memory and ${plural(admittedCount, "admitted toolset")}.`
-        : "Agents run with built-in memory only.",
-      detail: `Admitted toolsets are executed by the runtime, so OrcaSynapse records that a tool ran but never inspects the call. ${mcp}`,
+      tone: allowed.length > 0 ? "warn" : "good",
+      headline: allowed.length > 0
+        ? `Agents can use built-in memory and ${plural(allowed.length, "other tool")}.`
+        : "Agents can use built-in memory only.",
+      detail: "The runtime runs these tools itself, so OrcaSynapse records that a tool ran but never sees the call.",
     };
-  }, [drifted, catalogueRead, admittedCount, activeTools, runtime]);
+  }, [loaded, drifted, catalogueRead, allowed]);
 
   const fail = (cause: unknown) => {
     if (cause instanceof OrcaSynapseApiError && cause.status === 401) onSessionExpired();
-    setError(cause instanceof Error ? cause.message : "OrcaSynapse could not complete the governed-tool operation.");
+    setError(cause instanceof Error ? cause.message : "OrcaSynapse could not complete the tool operation.");
   };
 
   const load = async () => {
-    const [toolList, grantList, profileList, credentialList, callList, control, nextMetrics, approvalList, admissionList, runtimeCatalogue] = await Promise.all([
-      getGovernedTools(), getToolGrants(), getAgentProfiles(true), getGatewayCredentials(), getToolCalls(), getToolRuntime(), getToolMetrics(),
-      getPendingToolApprovals(), getToolsetAdmissions(),
+    const [admissionList, runtimeCatalogue, toolList] = await Promise.all([
+      getToolsetAdmissions(),
       // The runtime may be unreachable; its catalogue is informative, not
-      // load-bearing, so a failure must not blank the whole page. It is still
-      // reported: "unread" and "read, and empty" are different governance
-      // states, and conflating them hid an unreachable runtime behind a
-      // reassuring empty list.
+      // load-bearing, so a failure must not blank the whole page.
       getRuntimeCatalogue().catch(() => null),
+      getGovernedTools(),
     ]);
-    setTools(toolList.items); setGrants(grantList.items); setProfiles(profileList.items); setCredentials(credentialList.items);
-    setCalls(callList.items); setRuntime(control); setMetrics(nextMetrics);
-    setApprovals(approvalList.items);
     setAdmissions(admissionList.items);
-    setCatalogue(runtimeCatalogue); setCatalogueRead(runtimeCatalogue !== null);
-    setProfileVersionId((current) => current || profileList.items[0]?.activeVersionConfiguration?.id || profileList.items[0]?.version.id || "");
-    setToolId((current) => current || toolList.items[0]?.id || "");
+    setCatalogue(runtimeCatalogue);
+    setCatalogueRead(runtimeCatalogue !== null);
+    setMcpTools(toolList.items);
+    setLoaded(true);
   };
 
   useEffect(() => {
@@ -316,40 +220,45 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
     return () => { active = false; window.clearInterval(timer); };
   }, [unlocked]);
 
-  const action = async (key: string, operation: () => Promise<unknown>, message?: string) => {
+  const action = async (key: string, operation: () => Promise<unknown>, message: string) => {
     if (busy) return;
     setBusy(key); setError(null); setNotice(null);
-    try { await operation(); await load(); if (message) setNotice(message); }
+    try { await operation(); await load(); setNotice(message); }
     catch (cause) { fail(cause); }
     finally { setBusy(null); }
   };
 
-  const saveGrant = async (event: FormEvent) => {
+  const decide = async (event: FormEvent) => {
     event.preventDefault();
-    const groups = groupClaims.split(",").map((value) => value.trim()).filter(Boolean);
-    const roles = adminRole ? [adminRole as "PLATFORM_ADMIN" | "SECURITY_ADMIN" | "OPERATIONS_ADMIN" | "AUDITOR"] : [];
-    if (!profileVersionId || !toolId || (groups.length === 0 && roles.length === 0)) return;
-    await action("grant", () => upsertToolGrant({ profileVersionId, toolId, enabled: true, allowedGroups: groups, allowedAdminRoles: roles, resourceScope: "OWNER_ONLY" }), "The exact version grant is active.");
+    if (!editing || reason.trim().length < 3) return;
+    const { name, next } = editing;
+    await action(name, async () => {
+      await decideToolsetAdmission(name, next, reason.trim());
+      setEditing(null);
+      setReason("");
+    }, next
+      ? `${name} is allowed. The runtime still decides whether to switch it on.`
+      : `${name} is blocked. Any run made while the runtime still has it on is refused.`);
   };
 
-  const recordAdmission = async (event: FormEvent) => {
+  const stage = async (event: FormEvent) => {
     event.preventDefault();
-    const name = pendingToolset.trim();
-    const reason = admissionReason.trim();
-    if (name.length < 1 || reason.length < 3) return;
-    await action(`toolset-${name}`, async () => {
-      await decideToolsetAdmission(name, true, reason);
-      setPendingToolset("");
-    }, `${name} is admitted. The runtime still decides whether to enable it.`);
+    const name = stagedName.trim();
+    if (name.length < 1 || stagedReason.trim().length < 3) return;
+    await action(`staged-${name}`, async () => {
+      await decideToolsetAdmission(name, true, stagedReason.trim());
+      setStagedName("");
+      setStagedReason("");
+    }, `${name} is allowed. It will appear above once the runtime reports it.`);
   };
 
   if (!unlocked) {
     return <LockedScreen
-      kicker="Agent tooling governance"
-      title="Agent Tools"
-      mark="TG"
+      kicker="Agents"
+      title="Tools"
+      mark="TL"
       headline="Scoped administrator required"
-      reason="Unlock the console to admit or refuse the toolsets the Hermes runtime executes, and to govern the MCP tools OrcaSynapse executes itself."
+      reason="Unlock the console to see which tools your agents can use, and to allow or block one."
       actionLabel="Administrator setup"
       onAction={onConfigure}
     />;
@@ -357,512 +266,236 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
 
   return <div className="grid gap-5">
     <PageHeader
-      kicker="Agent tooling governance"
-      title="Agent Tools"
-      description="Two planes decide what an agent can do. The Hermes runtime executes its own toolsets, so OrcaSynapse can only admit or refuse a whole toolset. OrcaSynapse executes its own MCP tools, so it inspects, scopes and records every one of those calls."
+      kicker="Agents"
+      title="Tools"
+      description="What your agents are allowed to use. The runtime runs these tools itself, so OrcaSynapse permits or refuses a whole tool group rather than an individual call."
       actions={<Button onClick={() => void load()}>Refresh</Button>}
     />
 
     {error && <Alert onDismiss={() => setError(null)}>{error}</Alert>}
     {notice && <Alert tone="good" onDismiss={() => setNotice(null)}>{notice}</Alert>}
 
-    {/* What can my agents do right now — stated, then counted. The five figures
-        used to float in the page with no container and no relationship to the
-        panels above and below them. */}
     <Panel
-      aria-label="Agent tooling summary"
+      aria-label="What agents can use"
       className={cn(
-        "grid gap-4 border-l-2",
-        capability.tone === "bad" ? "border-l-bad" : capability.tone === "warn" ? "border-l-warn" : "border-l-good",
+        "border-l-2",
+        summary.tone === "bad" ? "border-l-bad" : summary.tone === "warn" ? "border-l-warn" : "border-l-good",
       )}
     >
-      <div className="min-w-0">
-        <MicroLabel className="block">Current capability</MicroLabel>
-        <strong className={cn(
-          "mt-1.5 block text-label font-semibold",
-          capability.tone === "bad" ? "text-bad" : capability.tone === "warn" ? "text-warn" : "text-text",
-        )}>
-          {capability.headline}
-        </strong>
-        <p className="mb-0 mt-1 max-w-[86ch] text-body leading-relaxed text-muted">{capability.detail}</p>
-      </div>
-      <MetricRow className="border-b-0 pb-0 lg:grid-cols-5">
-        <Metric
-          label="Admitted toolsets"
-          value={admittedCount}
-          tone={admittedCount > 0 ? "warn" : undefined}
-          caption="runtime-executed"
-        />
-        <Metric
-          label="Runtime drift"
-          value={drifted.length}
-          tone={drifted.length > 0 ? "bad" : "good"}
-          caption="enabled, never admitted"
-        />
-        <Metric label="Governed MCP tools" value={metrics?.activeTools ?? activeTools.length} caption="OrcaSynapse-executed" />
-        <Metric label="Version grants" value={metrics?.activeGrants ?? activeGrants.length} caption="exact agent revisions" />
-        <Metric
-          label="Awaiting approval"
-          value={metrics?.pendingApprovals ?? approvals.length}
-          tone={(metrics?.pendingApprovals ?? approvals.length) > 0 ? "warn" : undefined}
-          caption="consequential calls"
-        />
-      </MetricRow>
+      <MicroLabel className="block">Right now</MicroLabel>
+      <strong className={cn(
+        "mt-1.5 block text-label font-semibold",
+        summary.tone === "bad" ? "text-bad" : summary.tone === "warn" ? "text-warn" : "text-text",
+      )}>
+        {summary.headline}
+      </strong>
+      <p className="mb-0 mt-1 max-w-[86ch] text-body leading-relaxed text-muted">{summary.detail}</p>
     </Panel>
 
-    {approvals.length > 0 && (
-      /* Belongs to the MCP plane below, and is drawn here anyway: an agent is
-         blocked and the decision expires. An interrupt outranks the taxonomy. */
-      <Panel className="border-l-2 border-l-warn" aria-label="Tool calls awaiting approval">
-        <PanelHeading
-          kicker="Waiting on you · MCP plane"
-          title={`${approvals.length} consequential ${approvals.length === 1 ? "call" : "calls"} awaiting a decision`}
-          description="An agent is blocked until you decide. Approving authorises this call only — it cannot reach data the requester could not already reach, and it does not grant the tool again."
-          actions={runtime ? <StatusText>expires after {plural(runtime.approvalTtlMinutes, "minute")}</StatusText> : undefined}
-        />
-        <Field className="mb-3 max-w-[520px]" label="Why this call is authorised or refused">
-          <Input
-            value={approvalReason}
-            minLength={3}
-            maxLength={1000}
-            placeholder="Reviewed with the data owner"
-            onChange={(event) => setApprovalReason(event.target.value)}
-          />
-        </Field>
-        <div className="grid gap-2">{approvals.map((approval) => (
-          <article className="flex flex-wrap items-center justify-between gap-4 rounded border border-warn/40 bg-warn/10 p-3" key={approval.id}>
-            <div className="min-w-0">
-              <strong className="block text-label font-semibold text-text">{approval.toolName}</strong>
-              <small className="mt-1 block text-caption text-muted">
-                {approval.profileSlug} · requested by {approval.requestedBySubject}
-              </small>
-              <small className="mt-0.5 block text-micro text-faint">Expires {when(approval.expiresAt)}</small>
-              {/* The arguments verbatim: this is the decision, and a summary
-                  of it would be the operator approving something else. */}
-              <code className="mt-1.5 block break-all rounded border border-border bg-bg px-2 py-1.5 font-mono text-micro text-muted">
-                {JSON.stringify(approval.arguments)}
-              </code>
-            </div>
-            <div className="flex shrink-0 gap-2">
-              <Button
-                variant="primary"
-                disabled={!canManage || busy !== null || approvalReason.trim().length < 3}
-                onClick={() => void action(`approve-${approval.id}`, async () => {
-                  await decideToolApproval(approval.id, "APPROVE", approvalReason.trim());
-                })}
-              >Approve</Button>
-              <Button
-                variant="danger"
-                disabled={!canManage || busy !== null || approvalReason.trim().length < 3}
-                onClick={() => void action(`reject-${approval.id}`, async () => {
-                  await decideToolApproval(approval.id, "REJECT", approvalReason.trim());
-                })}
-              >Reject</Button>
-            </div>
-          </article>
-        ))}</div>
-      </Panel>
-    )}
-
-    {/*
-      * Plane one: the runtime's own toolsets.
-      *
-      * This is the plane that is actually live, which is why it now leads the
-      * page. The gateway used to, and it governs a plane with nothing in it.
-      */}
-    <Panel aria-label="Hermes-native toolsets">
+    <Panel aria-label="Runtime tools" data-loaded={loaded ? "true" : "false"}>
       <PanelHeading
-        kicker="Plane 1 · executed by the runtime"
-        title="Hermes-native toolsets"
-        description="The runtime executes these itself, so OrcaSynapse never sees an individual call and cannot scope one. Admission is the whole lever: a toolset nobody admitted must never be enabled on the runtime, and a run submitted while one is refuses outright. Admitting does not switch anything on — the runtime's managed policy still decides that."
-        actions={<StatusText tone={admittedCount > 0 ? "good" : "neutral"}>
-          {admittedCount} of {toolsetRows.length} admitted
-        </StatusText>}
+        title="Runtime tools"
+        description="Each row is a group of related tools the runtime offers. The switch is this installation's decision; the runtime's own policy decides whether it is actually switched on."
+        /* "0 of 0 allowed" beside a row that reads "Always allowed" is a
+           fraction with nothing in it, so it is drawn only once there is
+           something to count. */
+        actions={others.length > 0
+          ? <StatusText tone={allowed.length > 0 ? "good" : "neutral"}>
+              {allowed.length} of {others.length} allowed
+            </StatusText>
+          : undefined}
       />
 
-      {drifted.length > 0 && (
-        <Alert className="mb-3">
-          Every chat turn and agent run is refused: the runtime has {plural(drifted.length, "toolset")} enabled
-          that nobody admitted ({drifted.join(", ")}). This is not confined to this screen — Chat and Agent
-          Runtime are refused by the same check.
-        </Alert>
-      )}
-      {!catalogueRead && (
-        <Alert tone="warn" className="mb-3">
-          OrcaSynapse could not read the runtime's toolsets. Anything below is this installation's own record of
-          past decisions, not what Hermes is running now. Check the Hermes connection under Settings.
-        </Alert>
-      )}
-
-      {/* The baseline, stated. "0 of 0 admitted" alone reads as "my agents can
-          do nothing", which is the opposite of what invariant 7 says. */}
-      <Tile as="article" className="mb-3 flex flex-wrap items-center justify-between gap-3 border-border-strong">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <strong className="font-mono text-label font-semibold text-text">{BASELINE_TOOLSET}</strong>
-            <StatusText tone="accent">baseline</StatusText>
-            {baseline?.enabled && <StatusText dot tone="good">enabled on runtime</StatusText>}
-          </div>
-          <small className="mt-1 block text-caption leading-relaxed text-muted">
-            Built-in memory is permitted on every run and cannot be admitted or revoked here. It writes only
-            Hermes-owned MEMORY.md and USER.md; OrcaSynapse neither receives nor mirrors that content.
-          </small>
-        </div>
-      </Tile>
-
-      <Field className="mb-3 max-w-[520px]" label="Why this toolset is admitted or refused">
-        <Input
-          value={admissionReason}
-          minLength={3}
-          maxLength={500}
-          placeholder="Reviewed with the data owner"
-          onChange={(event) => setAdmissionReason(event.target.value)}
-        />
-      </Field>
-
-      {toolsetRows.length === 0
-        ? <EmptyState title={catalogueRead ? "The runtime reports no other toolsets" : "No toolsets read from the runtime"}>
-            {catalogueRead
-              ? "Beyond built-in memory, Hermes has nothing to admit. Record a decision by name below if you want it in place before the runtime offers one."
-              : "Hermes did not answer, so nothing can be listed. Record a decision by name below to have it in place for when it does."}
-          </EmptyState>
-        : <div className="grid gap-2">
-          {toolsetRows.map((row) => (
-            /* Drift is the alarm state: the runtime is running something
-               nobody admitted, so every run is refused until it agrees. */
-            <article
+      <div className="grid gap-2">
+        {rows.map((row) => {
+          const drifting = row.enabled && !row.permitted;
+          const open = editing?.name === row.name;
+          return (
+            <Tile
+              as="article"
               key={row.name}
+              aria-label={row.name}
               className={cn(
-                "flex flex-wrap items-center justify-between gap-4 rounded border p-3",
-                row.enabled && !row.admitted ? "border-bad/50 bg-bad/10" : "border-border bg-raised",
+                "grid gap-3",
+                drifting ? "border-bad/50 bg-bad/10" : null,
+                open ? "border-accent/60" : null,
               )}
             >
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                  <strong className="font-mono text-label font-semibold text-text">{row.name}</strong>
-                  <StatusText dot tone={row.admitted ? "good" : "neutral"}>
-                    {row.admitted ? "admitted" : "not admitted"}
-                  </StatusText>
-                  {row.enabled && (
-                    <StatusText dot tone={row.admitted ? "good" : "bad"}>enabled on runtime</StatusText>
+              <div className="flex flex-wrap items-start justify-between gap-x-5 gap-y-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                    <strong className="font-mono text-label font-semibold text-text">{row.name}</strong>
+                    {row.label ? <span className="text-caption text-muted">{row.label}</span> : null}
+                  </div>
+                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+                    {row.reported
+                      ? <small className="text-caption text-muted">{plural(row.toolCount, "tool")}</small>
+                      : <small className="text-caption text-muted">
+                          {row.baseline ? "not listed by the runtime" : "decision on record only"}
+                        </small>}
+                    {row.reported && (drifting
+                      ? <StatusText dot tone="bad">on at the runtime but not allowed here</StatusText>
+                      : row.enabled
+                        ? <StatusText dot tone="good">on at the runtime</StatusText>
+                        : <StatusText tone="neutral">off at the runtime</StatusText>)}
+                  </div>
+                  {row.baseline && (
+                    <small className="mt-1.5 block max-w-[72ch] text-caption leading-relaxed text-muted">
+                      Built-in memory is permitted on every run and cannot be turned off here. It writes only the
+                      runtime's own MEMORY.md and USER.md; OrcaSynapse neither receives nor mirrors that content.
+                    </small>
                   )}
-                  {!row.reported && <StatusText tone="neutral">not reported by the runtime</StatusText>}
+                  {row.reason ? (
+                    <small className="mt-1.5 block max-w-[72ch] text-caption leading-relaxed text-faint">
+                      {row.reason}
+                    </small>
+                  ) : null}
                 </div>
-                <small className="mt-1 block text-caption text-muted">
-                  {row.reported ? `${plural(row.toolCount, "tool")}` : "decision on record only"}
-                  {row.reason ? ` · ${row.reason}` : ""}
-                </small>
+                <div className="flex shrink-0 items-center gap-2.5">
+                  <span className="text-caption text-muted">
+                    {row.baseline ? "Always allowed" : row.permitted ? "Allowed" : "Blocked"}
+                  </span>
+                  {/*
+                    * The switch states the decision and opens the reason beneath
+                    * the row rather than flipping straight away. It stays where
+                    * it is until the decision is recorded, because until then it
+                    * has not been made.
+                    */}
+                  <Switch
+                    aria-label={`Allow ${row.name}`}
+                    checked={row.permitted}
+                    disabled={row.baseline || !canManage || busy !== null}
+                    onCheckedChange={(next) => {
+                      setEditing({ name: row.name, next });
+                      setReason("");
+                    }}
+                  />
+                </div>
               </div>
-              <Button
-                size="sm"
-                variant={row.admitted ? "danger" : "primary"}
-                disabled={!canManage || busy !== null || admissionReason.trim().length < 3}
-                onClick={() => void action(`toolset-${row.name}`, async () => {
-                  await decideToolsetAdmission(row.name, !row.admitted, admissionReason.trim());
-                })}
-              >{row.admitted ? "Revoke" : "Admit"}</Button>
-            </article>
-          ))}
-        </div>}
 
-      {/* The API accepts a decision on any name; without this the screen could
-          only ever decide about toolsets an already-reachable runtime had
-          already reported, which is precisely the case that needs no staging. */}
+              {open && (
+                <form
+                  className="grid gap-2.5 border-t border-border pt-3 sm:flex sm:items-end"
+                  onSubmit={(event) => void decide(event)}
+                >
+                  {/* A reason is a governance requirement the API enforces with
+                      a 400. Asked for here, at the moment of the decision, it
+                      reads as the decision — the single shared box this screen
+                      used to carry disabled every button on the page until it
+                      was filled in, which is what made it feel like paperwork. */}
+                  <Field
+                    className="min-w-0 flex-1"
+                    label={editing.next ? `Why ${row.name} is allowed` : `Why ${row.name} is blocked`}
+                  >
+                    <Input
+                      value={reason}
+                      minLength={3}
+                      maxLength={500}
+                      placeholder="Reviewed with the data owner"
+                      onChange={(event) => setReason(event.target.value)}
+                    />
+                  </Field>
+                  <div className="flex shrink-0 gap-2">
+                    <Button
+                      variant={editing.next ? "primary" : "danger"}
+                      type="submit"
+                      disabled={busy !== null || reason.trim().length < 3}
+                    >
+                      {busy === row.name ? "Saving…" : editing.next ? "Allow" : "Block"}
+                    </Button>
+                    <Button variant="ghost" onClick={() => { setEditing(null); setReason(""); }}>Cancel</Button>
+                  </div>
+                </form>
+              )}
+            </Tile>
+          );
+        })}
+      </div>
+
+      {/* `loaded` and not merely `others.length === 0`: the two states are
+          identical in the markup and opposite in meaning. */}
+      {loaded && others.length === 0 && (
+        <EmptyState
+          className="mt-2"
+          title={catalogueRead
+            ? "The runtime reports no tools beyond built-in memory"
+            : "Nothing could be read from the runtime"}
+        >
+          {catalogueRead
+            ? "There is nothing else to allow or block. A tool group appears here as soon as the runtime offers one."
+            : "The runtime did not answer, so nothing can be listed. A decision recorded below is in place for when it does."}
+        </EmptyState>
+      )}
+
       {canManage && (
-        <form className="mt-3 flex flex-wrap items-end gap-2.5 border-t border-border pt-3" onSubmit={(event) => void recordAdmission(event)}>
-          <Field label="Toolset name" className="min-w-[220px] flex-1">
-            <Input
-              value={pendingToolset}
-              maxLength={120}
-              placeholder="clarify"
-              onChange={(event) => setPendingToolset(event.target.value)}
-            />
-          </Field>
-          <Button
-            variant="secondary"
-            type="submit"
-            disabled={busy !== null || pendingToolset.trim().length < 1 || admissionReason.trim().length < 3}
-          >
-            {busy === `toolset-${pendingToolset.trim()}` ? "Recording…" : "Record admission"}
-          </Button>
-          {/* Below the row rather than as the field's hint: a hint inside the
-              Field grows it, and `items-end` then drops the button a line. */}
-          <p className="mb-0 basis-full text-caption leading-relaxed text-muted">
-            Records a decision for a toolset the runtime has not reported yet. Exact name, as Hermes spells it.
-            Admitting does not enable it — the runtime still has to.
+        <div className="mt-4 border-t border-border pt-4">
+          <MicroLabel className="block">Not listed above</MicroLabel>
+          <p className="mb-0 mt-1.5 max-w-[72ch] text-caption leading-relaxed text-muted">
+            Allow a tool the runtime has not reported yet, named exactly as the runtime spells it. It takes
+            effect the moment the runtime offers it.
           </p>
-        </form>
+          {/*
+            * `flex-wrap` is load-bearing, not tidiness: without it the two
+            * fields and the button refuse to reflow and the row squeezes them
+            * into a third of the panel instead of taking a second line.
+            */}
+          <form
+            className="mt-3 flex flex-wrap items-end gap-2.5"
+            onSubmit={(event) => void stage(event)}
+          >
+            <Field label="Tool name" className="min-w-[180px] flex-1">
+              <Input
+                value={stagedName}
+                maxLength={120}
+                placeholder="clarify"
+                onChange={(event) => setStagedName(event.target.value)}
+              />
+            </Field>
+            <Field label="Why it is allowed" className="min-w-[220px] flex-[2]">
+              <Input
+                value={stagedReason}
+                minLength={3}
+                maxLength={500}
+                placeholder="Reviewed with the data owner"
+                onChange={(event) => setStagedReason(event.target.value)}
+              />
+            </Field>
+            {/* Outline, not `secondary`: the secondary fill measures
+                rgb(28,28,36) against a rgb(22,22,28) panel, so the one control
+                the empty-runtime state offers had no visible edge at all. */}
+            <Button
+              type="submit"
+              className="shrink-0"
+              disabled={busy !== null || stagedName.trim().length < 1 || stagedReason.trim().length < 3}
+            >
+              {busy === `staged-${stagedName.trim()}` ? "Saving…" : "Record decision"}
+            </Button>
+          </form>
+        </div>
       )}
     </Panel>
 
     {/*
-      * Plane two: the tools OrcaSynapse executes.
+      * The one tripwire kept from the removed plane.
       *
-      * The gateway switch, its four prerequisites and the plane's own
-      * explanation are one block, because the question "why can I not press
-      * this" was answerable only by scrolling to the foot of another card.
+      * `GovernedTool` is the first link in its chain — no tool, no grant, no
+      * call, no approval — so a non-empty registry is the only way that plane
+      * can come back to life. If it ever does, this says so instead of leaving
+      * a subsystem running behind a screen that no longer mentions it.
       */}
-    <Panel
-      aria-label="OrcaSynapse MCP gateway"
-      className={cn("border-l-2", runtime?.enabled ? "border-l-good" : "border-l-border-strong")}
-    >
-      <PanelHeading
-        kicker="Plane 2 · executed by OrcaSynapse"
-        title="MCP gateway"
-        description="OrcaSynapse executes these itself over its own MCP server, so every call is authenticated, matched against an exact-version grant, scoped to the requester's own resources, recorded, and — when the tool is consequential — held for a human decision."
-        actions={<StatusText dot tone={runtime?.enabled ? "good" : "neutral"}>
-          {runtime?.enabled ? "open" : "closed"}
-        </StatusText>}
-      />
-
-      <div className="mb-4 flex items-start gap-4">
-        {/* Fail-closed is the default and the word says so. OFF here means
-            every call is denied, not that the feature is idle. */}
-        <span className={cn(
-          "grid h-11 w-11 shrink-0 place-items-center rounded border font-mono text-caption font-bold",
-          runtime?.enabled ? "border-good/50 bg-good/10 text-good" : "border-border-strong bg-raised text-muted",
-        )}>
-          {runtime?.enabled ? "ON" : "OFF"}
-        </span>
-        <div className="min-w-0">
-          <strong className="block text-label font-semibold text-text">
-            {runtime?.enabled ? "Governed calls are permitted" : "Every tool call is denied fail-closed"}
-          </strong>
-          <p className="mb-0 mt-1 text-body text-muted">{runtime?.reason ?? "Runtime state is loading."}</p>
-        </div>
-      </div>
-
-      <MicroLabel className="mb-2 block">Before this gateway can be opened</MicroLabel>
-      <div className="grid gap-2 sm:grid-cols-2">
-        {prerequisites.map((item) => <Prerequisite key={item.label} {...item} />)}
-      </div>
-
-      <form
-        className="mt-4 flex flex-wrap items-end gap-2.5 border-t border-border pt-4"
-        onSubmit={(event) => { event.preventDefault(); void action("runtime", () => updateToolRuntime({ enabled: !runtime?.enabled, reason: runtimeReason, approvalTtlMinutes: runtime?.approvalTtlMinutes ?? 15 })); }}
-      >
-        <Field label="Why you are changing the gateway" className="min-w-[240px] flex-1">
-          <Input disabled={!canManage} minLength={3} maxLength={500} value={runtimeReason} onChange={(event) => setRuntimeReason(event.target.value)} />
-        </Field>
-        <Button
-          variant={runtime?.enabled ? "danger" : "primary"}
-          /* Closing is always allowed — it is the fail-closed direction. Only
-             opening is gated, and it is gated here rather than by a 409 from
-             the API after the operator has already pressed it. */
-          disabled={!canManage || busy !== null || runtimeReason.trim().length < 3 || (!runtime?.enabled && unmet > 0)}
-          type="submit"
-        >
-          {canManage ? busy === "runtime" ? "Applying…" : runtime?.enabled ? "Disable gateway" : "Enable gateway" : "Read-only access"}
-        </Button>
-        {!runtime?.enabled && unmet > 0 && (
-          <p className="mb-0 basis-full text-caption text-muted">
-            {`Enable is blocked by ${unmet === 1 ? "1 unmet check" : `${unmet} unmet checks`} above.`}
-          </p>
-        )}
-      </form>
-    </Panel>
-
-    <div className="grid items-start gap-4 lg:grid-cols-2">
-      <Panel aria-label="Tool registry">
-        <PanelHeading
-          kicker="Prerequisite 1"
-          title="Tool registry"
-          actions={<StatusText>{plural(tools.length, "tool")}</StatusText>}
-        />
-        {tools.length === 0
-          ? <EmptyState title="No governed tool is installed">
-              Governed tools are OrcaSynapse's own MCP handlers: the units a grant points at and the gateway
-              exposes. They arrive with an OrcaSynapse release — the console has no route to add, upload or
-              write one — so until a release ships them, this plane can record decisions but cannot execute
-              anything.
-            </EmptyState>
-          : <div className="grid gap-2">{tools.map((tool) => <Tile as="article" className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3" key={tool.id}>
-            {/* R or A: whether a call can only read, or needs a human. That is
-                the whole risk model, so it leads the row. */}
-            <span className={cn(
-              "grid h-8 w-8 place-items-center rounded border font-mono text-micro font-bold",
-              tool.risk === "READ_ONLY" ? "border-good/50 bg-good/10 text-good" : "border-warn/50 bg-warn/10 text-warn",
-            )}>
-              {tool.risk === "READ_ONLY" ? "R" : "A"}
-            </span>
-            <div className="min-w-0">
-              <div className="flex items-center gap-3">
-                <strong className="truncate text-label font-semibold text-text">{tool.displayName}</strong>
-                <StatusText dot tone={toneFor(tone(tool.status))}>{tool.status.toLowerCase()}</StatusText>
-              </div>
-              <p className="mb-0 mt-0.5 text-caption leading-relaxed text-muted">{tool.description}</p>
-              <small className="mt-1 block font-mono text-micro text-faint">
-                {tool.slug} · {tool.risk === "READ_ONLY" ? "read-only" : "human approval required"}
-              </small>
-            </div>
-            <Button
-              size="sm"
-              variant={tool.status === "ACTIVE" ? "danger" : "secondary"}
-              disabled={!canManage || busy !== null}
-              onClick={() => void action(`tool-${tool.id}`, () => setGovernedToolStatus(tool.id, tool.status === "ACTIVE" ? "SUSPENDED" : "ACTIVE"))}
-            >
-              {canManage ? tool.status === "ACTIVE" ? "Suspend" : "Activate" : "View only"}
-            </Button>
-          </Tile>)}</div>}
+    {mcpTools.length > 0 && (
+      <Panel aria-label="OrcaSynapse-executed MCP tools" className="border-l-2 border-l-warn">
+        <strong className="block text-label font-semibold text-warn">
+          {mcpTools.length === 1
+            ? "1 OrcaSynapse-executed MCP tool is registered."
+            : `${mcpTools.length} OrcaSynapse-executed MCP tools are registered.`}
+        </strong>
+        <p className="mb-0 mt-1 max-w-[86ch] text-body leading-relaxed text-muted">
+          This build cannot execute them: no local executor is registered for any handler, so every such call
+          fails. They are separate from the runtime tools above and are not governed from this screen. Raise it
+          with the platform team before relying on them.
+        </p>
       </Panel>
-
-      <Panel aria-label="Gateway credentials">
-        <PanelHeading
-          kicker="Prerequisite 3"
-          title="Gateway credentials"
-          description="The bearer token Hermes presents to OrcaSynapse's MCP server. Shown once, never again."
-          actions={<StatusText tone={activeCredentials.length > 0 ? "good" : "neutral"}>
-            {plural(activeCredentials.length, "active")}
-          </StatusText>}
-        />
-        <form
-          className="mb-3 flex flex-wrap items-end gap-2.5"
-          onSubmit={(event) => { event.preventDefault(); void action("credential", async () => { const issued = await issueGatewayCredential(credentialName.trim()); setIssuedCredential(issued); }, "Copy the new credential now; OrcaSynapse will not display it again."); }}
-        >
-          <Field label="Client name" className="min-w-[200px] flex-1">
-            <Input disabled={!canManage} minLength={2} maxLength={120} value={credentialName} onChange={(event) => setCredentialName(event.target.value)} />
-          </Field>
-          <Button variant="primary" disabled={!canManage || busy !== null || credentialName.trim().length < 2} type="submit">
-            {canManage ? busy === "credential" ? "Issuing…" : "Issue credential" : "Read-only access"}
-          </Button>
-        </form>
-        {/* Shown exactly once and never again, so it is warn-toned rather than
-            celebratory: navigating away loses it. */}
-        {issuedCredential && <div className="mb-3 grid gap-2 rounded border border-warn/50 bg-warn/10 p-3">
-          <div>
-            <strong className="block text-label font-semibold text-warn">One-time credential</strong>
-            <span className="mt-1 block text-body text-muted">Store this in the isolated Hermes MCP header configuration.</span>
-          </div>
-          <code className="break-all rounded border border-border bg-bg px-2.5 py-2 font-mono text-caption text-text">
-            {issuedCredential.token}
-          </code>
-          <Button className="justify-self-end" onClick={() => void navigator.clipboard.writeText(issuedCredential.token)}>Copy</Button>
-        </div>}
-        {credentials.length === 0
-          ? <EmptyState title="No credential issued">
-              Hermes cannot authenticate to the gateway until one exists, so the gateway cannot be opened.
-            </EmptyState>
-          : <div className="grid gap-2">{credentials.map((credential) => <Tile as="article" pad="sm" className="flex flex-wrap items-center justify-between gap-3" key={credential.id}>
-            <div className="min-w-0">
-              <strong className="block truncate text-label font-semibold text-text">{credential.name}</strong>
-              <code className="mt-0.5 block font-mono text-micro text-faint">{credential.tokenPrefix}…</code>
-            </div>
-            <StatusText>Last used {when(credential.lastUsedAt)}</StatusText>
-            <StatusText dot tone={credential.enabled ? "good" : "neutral"}>{credential.enabled ? "active" : "revoked"}</StatusText>
-            {credential.enabled && <Button
-              size="sm"
-              variant="danger"
-              disabled={!canManage || busy !== null}
-              onClick={() => void action(`credential-${credential.id}`, () => revokeGatewayCredential(credential.id))}
-            >
-              {canManage ? "Revoke" : "View only"}
-            </Button>}
-          </Tile>)}</div>}
-      </Panel>
-    </div>
-
-    {/* Full width, with the form beside its own output. As a column next to the
-        empty registry it was the tallest thing on the page facing the
-        shortest. */}
-    <Panel aria-label="Exact-version grants">
-      <PanelHeading
-        kicker="Prerequisite 2 · least privilege"
-        title="Exact-version grants"
-        description="A grant binds one tool to one exact agent revision and one set of identity claims. Editing an agent creates a new revision, which carries no grants — that is the point."
-        actions={<StatusText tone={activeGrants.length > 0 ? "good" : "neutral"}>owner-only · {plural(activeGrants.length, "active")}</StatusText>}
-      />
-      <div className="grid items-start gap-5 lg:grid-cols-2">
-        <form className="grid gap-3 sm:grid-cols-2" onSubmit={(event) => void saveGrant(event)}>
-          {(tools.length === 0 || profileVersions.length === 0) && (
-            <p className="mb-0 rounded border border-border bg-raised px-3 py-2.5 text-caption leading-relaxed text-muted sm:col-span-2">
-              {tools.length === 0
-                ? "A grant points at a governed tool, and none is installed, so nothing can be granted yet."
-                : "A grant points at an exact agent revision, and no agent profile exists yet. Create one under Agents."}
-            </p>
-          )}
-          <Field label="Agent revision">
-            <Select disabled={!canManage} value={profileVersionId} onChange={(event) => setProfileVersionId(event.target.value)}>
-              {profileVersions.map(({ profile, version, live }) => (
-                <option key={version.id} value={version.id}>{profile.slug} · v{version.version}{live ? " · live" : " · current draft"}</option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Tool">
-            <Select disabled={!canManage} value={toolId} onChange={(event) => setToolId(event.target.value)}>
-              {tools.map((tool) => <option key={tool.id} value={tool.id}>{tool.displayName} · {tool.risk.toLowerCase().replace("_", " ")}</option>)}
-            </Select>
-          </Field>
-          <Field label="Exact enterprise groups" className="sm:col-span-2" hint="Comma-separated, exact case-sensitive claims.">
-            <Input disabled={!canManage} placeholder="OrcaSynapse-AI-Pilot, OrcaSynapse-Ops" value={groupClaims} onChange={(event) => setGroupClaims(event.target.value)} />
-          </Field>
-          <Field label="Administrator recovery role" className="sm:col-span-2">
-            <Select disabled={!canManage} value={adminRole} onChange={(event) => setAdminRole(event.target.value)}>
-              <option value="">None</option>
-              <option value="PLATFORM_ADMIN">Platform administrator</option>
-              <option value="SECURITY_ADMIN">Security administrator</option>
-              <option value="OPERATIONS_ADMIN">Operations administrator</option>
-              <option value="AUDITOR">Auditor</option>
-            </Select>
-          </Field>
-          <Button variant="primary" className="justify-self-end sm:col-span-2" disabled={!canManage || busy !== null || !profileVersionId || !toolId} type="submit">
-            {canManage ? busy === "grant" ? "Saving…" : "Save version grant" : "Read-only access"}
-          </Button>
-        </form>
-        <div className="grid content-start gap-2">{grants.length === 0
-          ? <EmptyState title="No grants configured">
-              Without one the gateway cannot be opened, and a run that reached a tool would be refused for
-              lack of a grant.
-            </EmptyState>
-          : grants.map((grant) => <Tile as="article" pad="sm" className="flex items-center justify-between gap-3" key={grant.id}>
-              <div className="min-w-0">
-                <strong className="block truncate font-mono text-caption font-semibold text-text">
-                  {grant.profileSlug} · v{grant.profileVersion} → {grant.toolName}
-                </strong>
-                <small className="mt-1 block truncate text-micro text-faint">
-                  {grant.allowedGroups.length > 0 ? grant.allowedGroups.join(", ") : grant.allowedAdminRoles.join(", ")} · {grant.resourceScope.toLowerCase().replace("_", " ")}
-                </small>
-              </div>
-              <StatusText dot tone={grant.enabled ? "good" : "neutral"}>{grant.enabled ? "active" : "disabled"}</StatusText>
-            </Tile>)}</div>
-      </div>
-    </Panel>
-
-    {/* `min-w-0` is load-bearing: without it this Panel takes an automatic
-        minimum size from the 720px table below and overflows its grid track,
-        which scrolls the entire screen sideways rather than just the table. */}
-    <Panel aria-label="Tool-call ledger" className="min-w-0">
-      <PanelHeading
-        kicker="Plane 2 evidence"
-        title="Tool-call ledger"
-        description="Only the MCP plane appears here. A native toolset call happens inside the runtime, so OrcaSynapse has no row to write for it."
-        actions={<StatusText>
-          {plural(metrics?.completedCalls ?? 0, "completed")} · {metrics?.deniedCalls ?? 0} denied · {metrics?.failedCalls ?? 0} failed
-        </StatusText>}
-      />
-      <div className="overflow-x-auto rounded border border-border">
-        <div className="grid min-w-[720px] grid-cols-[110px_minmax(0,1fr)_minmax(0,1fr)_120px_minmax(0,1.2fr)] gap-3 border-b border-border bg-raised px-3 py-2">
-          {["Status", "Tool", "Agent", "Requested", "Outcome"].map((head) => (
-            <span className="text-micro font-semibold uppercase tabular-nums text-faint" key={head}>{head}</span>
-          ))}
-        </div>
-        {calls.length === 0
-          ? <EmptyState className="m-3 border-0" title="No calls recorded">
-              Nothing has been executed through the gateway. With no tool installed and the gateway closed,
-              that is the expected state rather than a sign of a quiet week.
-            </EmptyState>
-          : calls.map((call) => <article
-              className="grid min-w-[720px] grid-cols-[110px_minmax(0,1fr)_minmax(0,1fr)_120px_minmax(0,1.2fr)] items-center gap-3 border-b border-border px-3 py-2 last:border-b-0"
-              key={call.id}
-            >
-              <StatusText dot tone={toneFor(tone(call.status))}>{call.status.toLowerCase().replace("_", " ")}</StatusText>
-              <strong className="truncate font-mono text-caption font-medium text-text">{call.toolName}</strong>
-              <span className="truncate font-mono text-caption text-muted">{call.profileSlug} · v{call.profileVersion}</span>
-              <span className="truncate font-mono text-micro text-faint">{when(call.requestedAt)}</span>
-              <span className="truncate text-caption text-muted">
-                {call.errorMessage ?? (call.result ? "Result retained" : "Awaiting outcome")}
-              </span>
-            </article>)}
-      </div>
-    </Panel>
+    )}
   </div>;
 }

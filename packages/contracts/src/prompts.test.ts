@@ -20,7 +20,7 @@ describe("prompt governance contracts", () => {
     }).success).toBe(true);
   });
 
-  it("rejects active prompts without evidence and activation history", () => {
+  it("rejects active prompts with no activation history", () => {
     expect(promptTemplateSchema.safeParse({
       id: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d",
       slug: "orcasynapse-chat-system",
@@ -31,7 +31,6 @@ describe("prompt governance contracts", () => {
       status: "ACTIVE",
       content,
       contentChecksum: checksum,
-      activationEvaluationId: null,
       firstActivatedAt: null,
       revision: 1,
       createdBy: null,

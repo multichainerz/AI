@@ -5,6 +5,28 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v5.1.0 — 2026-08-15
+
+Agents is four tabs and Operations is two. Runtime folds back into Profiles as
+one workflow — may it run, what is defined, what each definition has done —
+with the execution boundary leading because nothing below it can run while it
+is off, and the run ledger scoped by the profile selected above it. Agent Tools
+becomes Tools and loses the half of itself that governed a subsystem no code
+path can reach: the MCP gateway, registry, grants, credentials and call ledger
+are gone from the console, leaving a browsable list of what the runtime reports
+and a two-click decision on each. A tripwire remains, so a release that ever
+registers an MCP tool cannot revive the plane silently.
+
+Release gates and the evaluation subsystem are removed outright — screen, API,
+contracts, scopes, and the three activation-evidence constraints that made
+models, prompts and guardrails demand evidence the console could no longer
+produce. Two migrations drop the constraints, the columns and the table; the
+half of each constraint that asserted `firstActivatedAt` survives under its own
+name, because it was never about evaluations.
+
+The Dashboard drops its dynamic masthead. A fixed title replaces a heading that
+changed with readiness above a line restating the panel directly beneath it.
+
 ## v5.0.0 — 2026-08-15
 
 Settings → Setup is a three-step wizard instead of six unrelated blocks and

@@ -22,7 +22,6 @@ import {
   agentRuntimeControl,
   auditEvent,
   componentCompatibility,
-  evaluationRun,
   hermesRuntimeNode,
   modelDeployment,
   platformArchitectureDecision,
@@ -785,22 +784,6 @@ export class DrizzleAgentManager implements AgentManager {
           .limit(1)
         : [];
       const targetEnvironment = architecture?.targetEnvironment ?? "DEVELOPMENT";
-      const requiresReleaseEvidence = state === "ACTIVE" && targetEnvironment !== "DEVELOPMENT";
-      const [releaseEvidence] = requiresReleaseEvidence
-        ? await transaction
-          .select({ id: evaluationRun.id })
-          .from(evaluationRun)
-          .where(and(
-            eq(evaluationRun.targetType, "AGENT"),
-            eq(evaluationRun.targetReference, `agent:${profile.slug}`),
-            eq(evaluationRun.targetVersion, String(profile.currentVersion)),
-            eq(evaluationRun.status, "PROMOTED"),
-          ))
-          .limit(1)
-        : [];
-      if (requiresReleaseEvidence && !releaseEvidence) {
-        throw new AgentConflictError(`${targetEnvironment.toLowerCase()} activation requires promoted evaluation evidence for agent:${profile.slug} version ${profile.currentVersion}. Promote the matching evaluation in Operations, or keep this installation in Development while validating the first profile.`);
-      }
       await transaction
         .update(agentProfile)
         .set({ status: state, ...(requiresRelease ? { activeVersion: profile.currentVersion } : {}) })
@@ -811,10 +794,8 @@ export class DrizzleAgentManager implements AgentManager {
         resourceType: "AgentProfile", resourceId: profileId, outcome: "SUCCESS",
         metadata: {
           activeVersion: requiresRelease ? profile.currentVersion : profile.activeVersion,
-          evaluationRunId: releaseEvidence?.id ?? null,
           modelRouteId: modelRoute?.id ?? null,
           targetEnvironment,
-          releaseEvidenceRequired: requiresReleaseEvidence,
         },
       });
       const reloaded = await transaction.query.agentProfile.findFirst({

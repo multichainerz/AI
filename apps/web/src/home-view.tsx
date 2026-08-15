@@ -59,18 +59,15 @@ export function HomeView(props: HomeViewProps) {
   const next = props.readiness.find(({ ready }) => !ready);
   const setupIncomplete = props.bootstrapState !== "READY";
 
-  const title = setupIncomplete
-    ? props.bootstrapState === "REQUIRED" ? "Installation required" : "Installation trust locked"
-    : !props.unlocked
-      ? "Local sign-in ready"
-      : allReady ? "Your agentic workspace is ready" : "Finish your private AI workspace";
-  const detail = setupIncomplete
-    ? "Run the protected VM1 installer before configuring services."
-    : !props.unlocked
-      ? "Sign in to manage encrypted endpoints, agents, and policy."
-      : allReady
-        ? "Every required capability is ready for governed sessions."
-        : `${readyCount} of ${props.readiness.length} required capabilities are ready${next ? `. Next: ${next.detail}.` : "."}`;
+  /*
+   * The masthead is gone, and with it the `title` and `detail` this computed.
+   *
+   * Both restated the panel directly beneath them — `detail` spelled out
+   * "N of 3 required capabilities are ready. Next: <step>" while Required
+   * capabilities already showed the fraction and marked that step NEXT. The
+   * label on the primary action is the one string here that nothing else
+   * carries, so it is the one that survives.
+   */
   const primaryLabel = setupIncomplete
     ? "Open setup"
     : !props.unlocked
@@ -95,8 +92,6 @@ export function HomeView(props: HomeViewProps) {
     <DashboardHero
       unlocked={props.unlocked}
       apiAvailable={props.apiAvailable}
-      title={title}
-      detail={detail}
       primaryLabel={primaryLabel}
       onPrimary={primaryAction}
       onAsk={() => (props.unlocked ? props.onSelect("Chat") : props.onUnlock())}

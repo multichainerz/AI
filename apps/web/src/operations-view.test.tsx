@@ -47,7 +47,6 @@ const overview = {
       { id: "i2", title: "Chat latency above budget", severity: "WARNING", status: "RESOLVED", detectedAt: "2026-08-07T09:10:00.000Z", lastObservedAt: "2026-08-07T09:40:00.000Z", component: "chat-gateway", owner: "platform-admin", summary: "Median answer time crossed the six-second budget for twenty minutes.", automated: false, resolutionNote: "Restarted the inference node; latency returned to 3.1s." },
     ],
   },
-  evaluations: { drafts: 1, passed: 2, failed: 0, promoted: 1 },
   metrics: {
     chat: { responses: 1_284, failureRate: 0.012, averageLatencyMs: 4_120 },
     agents: { runningRuns: 1, queuedRuns: 0, failedRuns: 2 },
@@ -67,10 +66,11 @@ vi.mock("./api.js", async () => {
     getAiOpsOverview: vi.fn(async () => overview),
     getOperationalIncidents: vi.fn(async () => ({ items: overview.incidents.items })),
     /*
-     * `getEvaluationRuns` and `getProductionReadiness` used to be stubbed here
-     * too. Health no longer calls either — evaluations moved to Release gates
-     * and readiness has no screen — and leaving the stubs would have let the
-     * view start fetching them again without a single test noticing.
+     * `getProductionReadiness` used to be stubbed here too, and so did the
+     * evaluation reads before the whole evaluation subsystem was removed.
+     * Health calls neither — readiness has no screen — and leaving the stubs
+     * would have let the view start fetching them again without a single test
+     * noticing.
      */
   };
 });
@@ -123,9 +123,10 @@ describe("operations control room", () => {
 
   it("no longer hides release gates or pilot readiness behind this screen", async () => {
     /*
-     * Release gates moved to its own view; pilot readiness was deleted because
-     * `ProductionReadinessControl` has no create route and no seed anywhere,
-     * so the screen could never show a row.
+     * Release gates was removed outright with the evaluation subsystem behind
+     * it; pilot readiness was deleted because `ProductionReadinessControl` has
+     * no create route and no seed anywhere, so the screen could never show a
+     * row.
      */
     await view();
 

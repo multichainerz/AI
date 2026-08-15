@@ -1,16 +1,10 @@
 import {
   aiOpsOverviewSchema,
-  completeEvaluationRunSchema,
-  createEvaluationRunSchema,
   createOperationalIncidentSchema,
-  evaluationRunListSchema,
-  evaluationRunSchema,
   incidentDecisionSchema,
   operationalIncidentListSchema,
   operationalIncidentSchema,
   operationalIncidentIdentifierSchema,
-  evaluationRunIdentifierSchema,
-  promoteEvaluationRunSchema,
   productionReadinessApprovalSchema,
   productionReadinessControlKeySchema,
   productionReadinessControlSchema,
@@ -90,56 +84,6 @@ export async function registerAiOpsRoutes(app: FastifyInstance, options: AiOpsRo
       }
     });
   }
-
-  app.get("/evaluations", async (request, reply) => {
-    const principal = await requireAdmin(request, reply, options.sessionManager, "evaluations:read");
-    if (!principal) return reply;
-    const manager = managerOrLocked(options, reply);
-    if (!manager) return reply;
-    return evaluationRunListSchema.parse(await manager.listEvaluations());
-  });
-
-  app.post("/evaluations", async (request, reply) => {
-    const principal = await requireAdmin(request, reply, options.sessionManager, "evaluations:manage");
-    if (!principal) return reply;
-    const manager = managerOrLocked(options, reply);
-    if (!manager) return reply;
-    const input = createEvaluationRunSchema.safeParse(request.body);
-    if (!input.success) return reply.code(400).send({ error: "INVALID_EVALUATION", message: "The evaluation candidate is invalid." });
-    return reply.code(201).send(evaluationRunSchema.parse(await manager.createEvaluation(principal, input.data)));
-  });
-
-  app.post<{ Params: { evaluationId: string } }>("/evaluations/:evaluationId/complete", async (request, reply) => {
-    const principal = await requireAdmin(request, reply, options.sessionManager, "evaluations:manage");
-    if (!principal) return reply;
-    const manager = managerOrLocked(options, reply);
-    if (!manager) return reply;
-    const evaluationId = evaluationRunIdentifierSchema.safeParse(request.params.evaluationId);
-    if (!evaluationId.success) return reply.code(400).send({ error: "INVALID_EVALUATION", message: "The evaluation identifier is invalid." });
-    const input = completeEvaluationRunSchema.safeParse(request.body);
-    if (!input.success) return reply.code(400).send({ error: "INVALID_EVIDENCE", message: "The evaluation evidence is invalid." });
-    try {
-      return evaluationRunSchema.parse(await manager.completeEvaluation(principal, evaluationId.data, input.data));
-    } catch (error) {
-      return conflictResponse(error, reply);
-    }
-  });
-
-  app.post<{ Params: { evaluationId: string } }>("/evaluations/:evaluationId/promote", async (request, reply) => {
-    const principal = await requireAdmin(request, reply, options.sessionManager, "evaluations:promote");
-    if (!principal) return reply;
-    const manager = managerOrLocked(options, reply);
-    if (!manager) return reply;
-    const evaluationId = evaluationRunIdentifierSchema.safeParse(request.params.evaluationId);
-    if (!evaluationId.success) return reply.code(400).send({ error: "INVALID_EVALUATION", message: "The evaluation identifier is invalid." });
-    const input = promoteEvaluationRunSchema.safeParse(request.body);
-    if (!input.success) return reply.code(400).send({ error: "INVALID_PROMOTION", message: "A promotion reason is required." });
-    try {
-      return evaluationRunSchema.parse(await manager.promoteEvaluation(principal, evaluationId.data, input.data));
-    } catch (error) {
-      return conflictResponse(error, reply);
-    }
-  });
 
   app.get("/readiness", async (request, reply) => {
     const principal = await requireAdmin(request, reply, options.sessionManager, "readiness:read");

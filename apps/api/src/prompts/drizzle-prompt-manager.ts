@@ -6,10 +6,9 @@ import type {
   PromptTemplateList,
   UpdatePromptTemplate,
 } from "@orcasynapse/contracts";
-import { and, arrayContains, asc, desc, eq, ne } from "drizzle-orm";
+import { and, asc, desc, eq, ne } from "drizzle-orm";
 import {
   auditEvent,
-  evaluationRun,
   promptTemplate,
   type OrcaSynapseDatabase,
 } from "@orcasynapse/database";
@@ -34,7 +33,6 @@ function dto(prompt: StoredPrompt): PromptTemplate {
     status: prompt.status,
     content: prompt.content,
     contentChecksum: prompt.contentChecksum,
-    activationEvaluationId: prompt.activationEvaluationId,
     firstActivatedAt: prompt.firstActivatedAt?.toISOString() ?? null,
     revision: prompt.revision,
     createdBy: prompt.createdBy,
@@ -120,7 +118,6 @@ export class DrizzlePromptManager implements PromptManager {
             ? {}
             : { content: changes.content, contentChecksum: checksum(changes.content) }),
           status: materialChange ? "DRAFT" : current.status,
-          activationEvaluationId: materialChange ? null : current.activationEvaluationId,
           revision: increment(promptTemplate.revision),
           updatedBy: principal.id,
         })
@@ -181,31 +178,10 @@ export class DrizzlePromptManager implements PromptManager {
           );
         }
 
-        const [evaluation] = await transaction
-          .select({ id: evaluationRun.id })
-          .from(evaluationRun)
-          .where(
-            and(
-              eq(evaluationRun.targetType, "PROMPT"),
-              eq(evaluationRun.targetReference, `prompt:${current.slug}`),
-              eq(evaluationRun.targetVersion, current.version),
-              eq(evaluationRun.status, "PROMOTED"),
-              arrayContains(evaluationRun.requiredCategories, ["CHAT", "SAFETY"]),
-            ),
-          )
-          .orderBy(desc(evaluationRun.promotedAt))
-          .limit(1);
-        if (!evaluation) {
-          throw new PromptConflictError(
-            `Activation requires promoted CHAT and SAFETY evaluation evidence for prompt:${current.slug} version ${current.version}.`,
-          );
-        }
-
         const activated = await transaction
           .update(promptTemplate)
           .set({
             status: "ACTIVE",
-            activationEvaluationId: evaluation.id,
             firstActivatedAt: current.firstActivatedAt ?? new Date(),
             revision: increment(promptTemplate.revision),
             updatedBy: principal.id,
@@ -232,7 +208,6 @@ export class DrizzlePromptManager implements PromptManager {
           outcome: "SUCCESS",
           metadata: {
             reason: input.reason,
-            evaluationRunId: evaluation.id,
             purpose: current.purpose,
             version: current.version,
             contentChecksum: current.contentChecksum,

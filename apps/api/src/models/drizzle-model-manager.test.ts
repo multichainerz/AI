@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import {
   createTestDatabase,
-  evaluationRun,
   modelDeployment,
   serviceConnection,
   type TestDatabase,
@@ -58,24 +57,6 @@ function draft(connectionId: string, overrides: Record<string, unknown> = {}) {
   } as never;
 }
 
-async function promoteEvidence(slug: string, version: string) {
-  await context.database.insert(evaluationRun).values({
-    name: "Model release evaluation",
-    targetType: "MODEL",
-    targetReference: `model:${slug}`,
-    targetVersion: version,
-    status: "PROMOTED",
-    minimumPassRate: 0.9,
-    requiredCategories: ["CHAT"],
-    categoryResults: [{ category: "CHAT", passRate: 1, passed: true }],
-    totalCases: 1,
-    passedCases: 1,
-    completedAt: new Date(),
-    promotedAt: new Date(),
-    promotionReason: "Approved for release.",
-  });
-}
-
 describe("DrizzleModelManager", () => {
   it("creates a route and returns it joined to its serving connection", async () => {
     const connectionId = await connection();
@@ -115,7 +96,6 @@ describe("DrizzleModelManager", () => {
   it("requires an enabled and healthy serving connection before activation", async () => {
     const degraded = await connection({ status: "DEGRADED" });
     const created = await manager().create(principal, draft(degraded));
-    await promoteEvidence(created.slug, created.version);
 
     await expect(
       manager().activate(principal, created.id, {
@@ -126,24 +106,26 @@ describe("DrizzleModelManager", () => {
     ).rejects.toThrow(/enabled and healthy before activation/);
   });
 
-  it("requires promoted evaluation evidence for the exact version", async () => {
+  it("activates a route on its own merits, with no evaluation evidence", async () => {
     const connectionId = await connection();
     const created = await manager().create(principal, draft(connectionId));
+    expect(created.status).toBe("DRAFT");
 
-    await expect(
-      manager().activate(principal, created.id, {
-        expectedRevision: created.revision,
-        reason: "Release",
-        makeDefault: true,
-      }),
-    ).rejects.toThrow(/promoted evaluation evidence/);
+    const activated = await manager().activate(principal, created.id, {
+      expectedRevision: created.revision,
+      reason: "Release",
+      makeDefault: true,
+    });
+
+    expect(activated.status).toBe("ACTIVE");
+    expect(activated.isDefault).toBe(true);
+    expect(activated.firstActivatedAt).not.toBeNull();
   });
 
   it("demotes the incumbent default when a new route becomes default", async () => {
     const connectionId = await connection();
 
     const first = await manager().create(principal, draft(connectionId));
-    await promoteEvidence(first.slug, first.version);
     const firstActive = await manager().activate(principal, first.id, {
       expectedRevision: first.revision,
       reason: "Release",
@@ -152,7 +134,6 @@ describe("DrizzleModelManager", () => {
     expect(firstActive.isDefault).toBe(true);
 
     const second = await manager().create(principal, draft(connectionId));
-    await promoteEvidence(second.slug, second.version);
     const secondActive = await manager().activate(principal, second.id, {
       expectedRevision: second.revision,
       reason: "Release",
@@ -170,7 +151,6 @@ describe("DrizzleModelManager", () => {
   it("clears the default flag when a route is suspended", async () => {
     const connectionId = await connection();
     const created = await manager().create(principal, draft(connectionId));
-    await promoteEvidence(created.slug, created.version);
     const active = await manager().activate(principal, created.id, {
       expectedRevision: created.revision,
       reason: "Release",
@@ -190,7 +170,6 @@ describe("DrizzleModelManager", () => {
   it("blocks editing an active route until it is suspended", async () => {
     const connectionId = await connection();
     const created = await manager().create(principal, draft(connectionId));
-    await promoteEvidence(created.slug, created.version);
     const active = await manager().activate(principal, created.id, {
       expectedRevision: created.revision,
       reason: "Release",

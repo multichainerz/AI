@@ -10,13 +10,11 @@ export type ActiveView =
   | "Models"
   | "Prompts"
   | "Agents"
-  | "Runtime"
   | "Skills"
   | "Memory"
   | "Integrations"
   | "Guardrails"
   | "Operations"
-  | "Releases"
   | "Audit";
 
 /*
@@ -59,7 +57,7 @@ export const primaryNavigationGroups: ReadonlyArray<{
     items: [
       { area: "Dashboard", icon: "overview", target: "Overview", description: "Activity, readiness and next actions" },
       { area: "Session", icon: "chat", target: "Chat", description: "Governed conversations" },
-      { area: "Agents", icon: "agents", target: "Agents", description: "Profiles, runtime, skills, memory and tools" },
+      { area: "Agents", icon: "agents", target: "Agents", description: "Profiles and runs, skills, memory and tools" },
     ],
   },
   {
@@ -89,43 +87,42 @@ export function primaryNavigationItems(placement: NavigationPlacement): Readonly
 
 const sectionNavigation: Partial<Record<ProductArea, ReadonlyArray<SectionNavigationItem>>> = {
   /*
-   * Five tabs, one job each.
-   *
-   * Three of these used to be two: "Profiles & runs" carried both the
-   * immutable configuration list and the live execution ledger, and "Hermes
-   * corpus" was named after the storage mechanism rather than either of the
-   * two unrelated things stored in it. The order is the operator's sequence --
-   * define a Profile, watch it run, then govern what it knows and what it may
+   * Four tabs, one job each. The order is the operator's sequence -- define a
+   * Profile and watch what it does, then govern what it knows and what it may
    * reach.
+   *
+   * "Hermes corpus" was named after the storage mechanism rather than either of
+   * the two unrelated things stored in it, so it became Skills and Memory.
+   * Runtime went the other way. It briefly held the kill switch, the run
+   * counters and the execution ledger as a fifth tab, and that split one
+   * workflow down the middle: the question "is this Profile working" was
+   * answered on a different screen from the one that defines it, joined only by
+   * a cross-tab button. Profiles owns all three again -- what an agent is, what
+   * it is doing, and whether it may run at all.
    */
   Agents: [
     { label: "Profiles", view: "Agents" },
-    { label: "Runtime", view: "Runtime" },
     { label: "Skills", view: "Skills" },
     { label: "Memory", view: "Memory" },
-    { label: "Agent Tools", view: "Integrations" },
+    { label: "Tools", view: "Integrations" },
   ],
   /*
-   * Three tabs, split on the question each one answers: is it broken *now*,
-   * may this artifact be promoted *before* it ships, and what happened *then*.
+   * Two tabs: is it broken *now*, and what happened *then*.
    *
-   * It was two tabs, one of which held four sub-tabs — the only three-level
-   * navigation left in the product besides Setup. "Health & evidence" was the
-   * symptom: "evidence" is not a category, it is a word that appears in all
-   * three of these jobs meaning something different each time (evaluation
-   * evidence, audit evidence, readiness evidence), so it named a tab an
-   * operator could not predict the contents of. Worse, its two evidence
-   * sub-tabs were scope-gated, so an operator without `evaluations:read`
-   * read a tab name promising a screen they could never open.
+   * This was one tab called "Health & evidence" holding four sub-tabs — the
+   * only three-level navigation left in the product besides Setup. "Evidence"
+   * was never a category; it is a word that meant something different in each
+   * of those sub-tabs, so it named a tab whose contents an operator could not
+   * predict.
    *
-   * Pilot readiness is gone rather than moved. `ProductionReadinessControl`
-   * has no create route and no seed anywhere in the repo — only SELECT and
-   * UPDATE in production code — so that screen could never display a row.
-   * The tables stay; the tab was a promise the backend cannot keep.
+   * Both evidence surfaces are gone rather than renamed. Pilot readiness could
+   * never show a row: `ProductionReadinessControl` has no create route and no
+   * seed anywhere in the repo. Release gates governed an evaluation subsystem
+   * that has since been removed outright, along with the activation gates that
+   * depended on it. In both cases the tables outlived the screen.
    */
   Operations: [
     { label: "Health", view: "Operations" },
-    { label: "Release gates", view: "Releases" },
     { label: "Audit trail", view: "Audit" },
   ],
   /*
@@ -147,7 +144,6 @@ const areaByView: Record<ActiveView, ProductArea> = {
   Overview: "Dashboard",
   Chat: "Session",
   Agents: "Agents",
-  Runtime: "Agents",
   Skills: "Agents",
   Memory: "Agents",
   Integrations: "Agents",
@@ -157,7 +153,6 @@ const areaByView: Record<ActiveView, ProductArea> = {
   Prompts: "Settings",
   Guardrails: "Settings",
   Operations: "Operations",
-  Releases: "Operations",
   Audit: "Operations",
 };
 
@@ -165,7 +160,6 @@ const pathByView: Record<ActiveView, string> = {
   Overview: "#dashboard",
   Chat: "#session",
   Agents: "#agents/profiles",
-  Runtime: "#agents/runtime",
   Skills: "#agents/skills",
   Memory: "#agents/memory",
   Integrations: "#agents/tools",
@@ -175,7 +169,6 @@ const pathByView: Record<ActiveView, string> = {
   Prompts: "#settings/prompts",
   Guardrails: "#settings/guardrails",
   Operations: "#operations/health",
-  Releases: "#operations/releases",
   Audit: "#operations/audit",
 };
 
@@ -235,12 +228,18 @@ export function viewFromHash(hash: string): ActiveView {
     case "#operations/audit":
     case "#audit":
       return "Audit";
+    /*
+     * `#agents/runtime` addressed a fifth tab that Profiles has absorbed
+     * whole -- the kill switch, the run counters and the execution ledger all
+     * live there now -- so the old address has a correct destination rather
+     * than falling through to Overview and dropping the operator out of the
+     * area. Same reasoning as `#agents/corpus` below.
+     */
     case "#agents":
     case "#agents/profiles":
-      return "Agents";
     case "#agents/runtime":
     case "#runtime":
-      return "Runtime";
+      return "Agents";
     /*
      * `#agents/corpus` addressed one screen that is now two. Skills is where
      * the majority of it went -- the file tree, the mutation queue and the
@@ -300,10 +299,16 @@ export function viewFromHash(hash: string): ActiveView {
     case "#operations/health":
     case "#health":
       return "Operations";
+    /*
+     * Release gates was removed with the evaluation subsystem. Its hashes stay
+     * as cases rather than becoming dead links: an operator following an old
+     * bookmark lands on Health, which is the surface that absorbed what
+     * Operations still does, instead of falling through to the Dashboard.
+     */
     case "#operations/releases":
     case "#operations/evaluations":
     case "#releases":
-      return "Releases";
+      return "Operations";
     default:
       return "Overview";
   }

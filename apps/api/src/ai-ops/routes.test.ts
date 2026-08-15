@@ -2,7 +2,6 @@ import {
   ADMIN_SCOPES,
   type AdministratorSession,
   type AiOpsOverview,
-  type EvaluationRun,
   type OperationalIncident,
   type ProductionReadiness,
   type ProductionReadinessApproval,
@@ -16,7 +15,7 @@ import { AiOpsConflictError, type AiOpsManager } from "./ai-ops-manager.js";
 const TOKEN = "o".repeat(43);
 const SESSION_ID = "ac369dab-cad5-4fd9-83ed-b4fbf528028a";
 const INCIDENT_ID = "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb";
-const EVALUATION_ID = "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d";
+const RETIRED_EVALUATION_ID = "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d";
 const timestamp = "2026-07-30T00:00:00.000Z";
 const principal: AdministratorSession = {
   id: SESSION_ID,
@@ -48,26 +47,6 @@ const incident: OperationalIncident = {
   acknowledgedAt: null,
   resolvedAt: null,
   resolutionNote: null,
-};
-
-const evaluation: EvaluationRun = {
-  id: EVALUATION_ID,
-  name: "Hermes analyst v1",
-  targetType: "AGENT",
-  targetReference: "agent:hermes-analyst",
-  targetVersion: "1",
-  status: "DRAFT",
-  minimumPassRate: 0.95,
-  requiredCategories: ["SAFETY", "PERMISSIONS"],
-  results: [],
-  totalCases: 0,
-  passedCases: 0,
-  criticalFailures: 0,
-  passRate: null,
-  createdAt: timestamp,
-  completedAt: null,
-  promotedAt: null,
-  promotionReason: null,
 };
 
 const readinessControl: ProductionReadinessControl = {
@@ -117,7 +96,6 @@ const overview: AiOpsOverview = {
   metrics: { chat: null, agents: null, tools: null },
   guardrails: [],
   incidents: { open: 1, critical: 1, items: [incident] },
-  evaluations: { drafts: 1, passed: 0, failed: 0, promoted: 0 },
 };
 
 function fakeManager(): AiOpsManager {
@@ -127,10 +105,6 @@ function fakeManager(): AiOpsManager {
     createIncident: vi.fn(async () => incident),
     acknowledgeIncident: vi.fn(async (): Promise<OperationalIncident> => ({ ...incident, status: "ACKNOWLEDGED", acknowledgedAt: timestamp })),
     resolveIncident: vi.fn(async (): Promise<OperationalIncident> => ({ ...incident, status: "RESOLVED", resolvedAt: timestamp })),
-    listEvaluations: vi.fn(async () => ({ items: [evaluation] })),
-    createEvaluation: vi.fn(async () => evaluation),
-    completeEvaluation: vi.fn(async (): Promise<EvaluationRun> => ({ ...evaluation, status: "PASSED", completedAt: timestamp })),
-    promoteEvaluation: vi.fn(async (): Promise<EvaluationRun> => ({ ...evaluation, status: "PROMOTED", completedAt: timestamp, promotedAt: timestamp, promotionReason: "Approved for the controlled pilot." })),
     productionReadiness: vi.fn(async () => readiness),
     updateReadinessControl: vi.fn(async (): Promise<ProductionReadinessControl> => ({ ...readinessControl, status: "IN_PROGRESS", owner: "Security", revision: 1 })),
     recordReadinessApproval: vi.fn(async () => readinessApproval),
@@ -155,35 +129,31 @@ describe("AI operations routes", () => {
     expect(response.json()).toMatchObject({ status: "DEGRADED", incidents: { critical: 1 } });
   });
 
-  it("validates identifiers before incident and evaluation decisions", async () => {
+  it("validates identifiers before incident decisions", async () => {
     const { app, manager } = await harness();
     const headers = { cookie: `${ADMIN_SESSION_COOKIE}=${TOKEN}` };
     expect((await app.inject({ method: "POST", url: "/api/v1/admin/operations/incidents/not-a-uuid/resolve", headers, payload: { note: "Recovered cleanly." } })).statusCode).toBe(400);
-    expect((await app.inject({ method: "POST", url: "/api/v1/admin/operations/evaluations/not-a-uuid/promote", headers })).statusCode).toBe(400);
     expect(manager.resolveIncident).not.toHaveBeenCalled();
-    expect(manager.promoteEvaluation).not.toHaveBeenCalled();
   });
 
-  it("keeps evidence conflicts explicit", async () => {
-    const manager = fakeManager();
-    vi.mocked(manager.promoteEvaluation).mockRejectedValueOnce(new AiOpsConflictError("Evidence has not passed."));
-    const { app } = await harness(manager);
-    const response = await app.inject({ method: "POST", url: `/api/v1/admin/operations/evaluations/${EVALUATION_ID}/promote`, headers: { cookie: `${ADMIN_SESSION_COOKIE}=${TOKEN}` }, payload: { reason: "Approved for the controlled pilot." } });
-    expect(response.statusCode).toBe(409);
-    expect(response.json()).toMatchObject({ error: "CONFLICT" });
-  });
-
-  it("requires a promotion rationale before invoking the release decision", async () => {
-    const { app, manager } = await harness();
-    const response = await app.inject({
-      method: "POST",
-      url: `/api/v1/admin/operations/evaluations/${EVALUATION_ID}/promote`,
-      headers: { cookie: `${ADMIN_SESSION_COOKIE}=${TOKEN}` },
-      payload: {},
-    });
-    expect(response.statusCode).toBe(400);
-    expect(response.json()).toMatchObject({ error: "INVALID_PROMOTION" });
-    expect(manager.promoteEvaluation).not.toHaveBeenCalled();
+  /**
+   * The release-gate removal. A 404 alone would also be what an unmounted
+   * router returns, so the surviving sibling is asserted first: if `/incidents`
+   * answers on this app and `/evaluations` does not, the routes really are gone
+   * rather than the whole plugin being absent.
+   */
+  it("no longer serves the retired evaluation endpoints", async () => {
+    const { app } = await harness();
+    const headers = { cookie: `${ADMIN_SESSION_COOKIE}=${TOKEN}` };
+    expect((await app.inject({ method: "GET", url: "/api/v1/admin/operations/incidents", headers })).statusCode).toBe(200);
+    for (const [method, url] of [
+      ["GET", "/api/v1/admin/operations/evaluations"],
+      ["POST", "/api/v1/admin/operations/evaluations"],
+      ["POST", `/api/v1/admin/operations/evaluations/${RETIRED_EVALUATION_ID}/complete`],
+      ["POST", `/api/v1/admin/operations/evaluations/${RETIRED_EVALUATION_ID}/promote`],
+    ] as const) {
+      expect((await app.inject({ method, url, headers, payload: {} })).statusCode).toBe(404);
+    }
   });
 
   it("returns production readiness and validates optimistic control updates", async () => {

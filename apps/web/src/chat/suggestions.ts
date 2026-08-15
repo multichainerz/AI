@@ -38,8 +38,8 @@ export const CHAT_SUGGESTIONS: readonly ChatSuggestion[] = [
   },
   {
     label: "Plan a model activation",
-    sub: "Draft, evaluate, promote, activate",
-    prompt: "Walk through activating an AGENT model route: draft, evaluation evidence, promotion, and the fail-closed default after first activation.",
+    sub: "Draft, verify the connection, activate",
+    prompt: "Walk through activating an AGENT model route: draft, the healthy serving connection it requires, activation, and the fail-closed default after first activation.",
   },
   {
     label: "Review toolset admission",

@@ -34,7 +34,6 @@ const model = (over: Partial<ModelDeployment>): ModelDeployment => ({
   modelAlias: "hermes-agent",
   workload: "AGENT",
   connection: { id: "conn-1", displayName: "Primary vLLM", kind: "INFERENCE", status: "HEALTHY" },
-  activationEvaluationId: "6d5af930-66fb-4741-a9e2-1665c3730546",
   version: "2.1-nvfp4",
   license: "Approved: internal-use",
   contextWindowTokens: 131_072,
@@ -62,7 +61,6 @@ const draftRoute = model({
   isDefault: false,
   revision: 1,
   firstActivatedAt: null,
-  activationEvaluationId: null,
   license: null,
 });
 
@@ -219,14 +217,14 @@ describe("models catalogue", () => {
     expect(screen.getByText("Default")).toBeTruthy();
   });
 
-  it("shows the immutable version, which is what evaluation evidence is pinned to", async () => {
+  it("shows the immutable version, which is what a route is pinned to", async () => {
     await view();
     expect(screen.getByText("2.1-nvfp4")).toBeTruthy();
     expect(screen.getByText("3.6-awq")).toBeTruthy();
-    // The draft has no promoted evidence, and the card has to say so — that is
-    // the single thing standing between it and serving traffic.
-    expect(screen.getByText("Required")).toBeTruthy();
-    expect(screen.getByText("Promoted")).toBeTruthy();
+    // Whether a route has ever served traffic is the fact the card carries:
+    // suspending one that has is the fail-closed decision.
+    expect(screen.getByText("Started")).toBeTruthy();
+    expect(screen.getByText("Never active")).toBeTruthy();
   });
 
   it("renders no inline style, which the CSP would refuse in the built container", async () => {

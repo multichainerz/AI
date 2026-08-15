@@ -438,7 +438,7 @@ export function OnboardingView({
             sentence rather than something in Operations.
           */}
           <span className="mt-1 block text-body text-muted">
-            Incidents and release gates live in Operations. Recovery is here.
+            Incidents and the audit trail live in Operations. Recovery is here.
           </span>
         </div>
         <div className="flex shrink-0 gap-2">

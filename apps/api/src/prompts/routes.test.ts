@@ -27,7 +27,6 @@ const activePrompt: PromptTemplate = {
   status: "ACTIVE",
   content: CONTENT,
   contentChecksum: createHash("sha256").update(CONTENT).digest("hex"),
-  activationEvaluationId: "de44bc5d-0355-4c3f-872e-1af99f356d19",
   firstActivatedAt: "2026-07-30T00:00:00.000Z",
   revision: 2,
   createdBy: session.id,
@@ -43,7 +42,7 @@ class Sessions implements AdminSessionManager {
 }
 
 function manager(): PromptManager {
-  const draft: PromptTemplate = { ...activePrompt, status: "DRAFT", activationEvaluationId: null, firstActivatedAt: null, revision: 1 };
+  const draft: PromptTemplate = { ...activePrompt, status: "DRAFT", firstActivatedAt: null, revision: 1 };
   const suspended: PromptTemplate = { ...activePrompt, status: "SUSPENDED" };
   return {
     list: vi.fn(async () => ({ items: [activePrompt] })),

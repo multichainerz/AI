@@ -30,7 +30,6 @@ const shared = {
   createdAt: "2026-08-01T00:00:00.000Z",
   updatedAt: "2026-08-06T12:00:00.000Z",
   firstActivatedAt: "2026-08-02T00:00:00.000Z",
-  activationEvaluationId: "6d5af930-66fb-4741-a9e2-1665c3730546",
   revision: 4,
 };
 
@@ -109,10 +108,11 @@ describe("prompts", () => {
     expect(screen.getAllByText(/9f2c4a1b7e5d3086…/).length).toBeGreaterThan(0);
   });
 
-  it("reports the evidence gate as passed only when an evaluation is promoted", async () => {
+  it("counts the drafts waiting behind the bound release", async () => {
     await promptsView();
     const summary = screen.getByLabelText("Prompt governance summary");
-    expect(within(summary).getByText("Passed")).toBeTruthy();
+    expect(within(summary).getByText("Draft records")).toBeTruthy();
+    expect(within(summary).getByText("0")).toBeTruthy();
   });
 });
 

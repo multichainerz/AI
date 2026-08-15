@@ -151,7 +151,7 @@ export function PromptsView({ session, onOpenOperations, onOpenSettings, onSessi
         reason: decision.reason.trim(),
       });
       setMessage(decision.action === "activate"
-        ? "Evaluated chat-system prompt activated. New requests use this exact version."
+        ? "Chat-system prompt activated. New requests use this exact version."
         : "Prompt suspended. Because governance was previously adopted, chat now fails closed.");
       setDecision(null);
       await load();
@@ -184,9 +184,9 @@ export function PromptsView({ session, onOpenOperations, onOpenSettings, onSessi
     <PageHeader
       kicker="Release governance"
       title="Prompts"
-      description="Author, evaluate, and release the exact system instruction used by OrcaSynapse chat."
+      description="Author and release the exact system instruction used by OrcaSynapse chat."
       actions={<>
-        <Button onClick={onOpenOperations}>Evaluation evidence</Button>
+        <Button onClick={onOpenOperations}>Open Operations</Button>
         {canManage && <Button variant="primary" onClick={startCreate}>New prompt</Button>}
       </>}
     />
@@ -200,10 +200,9 @@ export function PromptsView({ session, onOpenOperations, onOpenSettings, onSessi
         caption={active ? `v${active.version}` : activatedBefore ? "Fail closed" : "Legacy mode"}
       />
       <Metric
-        label="Evidence gate"
-        value={active?.activationEvaluationId ? "Passed" : "Required"}
-        tone={active?.activationEvaluationId ? "good" : "warn"}
-        caption="CHAT + SAFETY"
+        label="Draft records"
+        value={prompts.filter(({ status }) => status === "DRAFT").length}
+        caption="Awaiting release"
       />
       <Metric
         label="Instruction size"
@@ -251,7 +250,7 @@ export function PromptsView({ session, onOpenOperations, onOpenSettings, onSessi
               {editing ? `Edit ${editing.displayName}` : "New chat-system prompt"}
             </h2>
             <p className="mb-0 mt-1.5 text-body text-muted">
-              Changing instruction content requires a new version and matching promoted evaluation.
+              Changing instruction content requires a new version and returns the prompt to draft.
             </p>
           </div>
           <Button variant="ghost" size="sm" onClick={() => setShowEditor(false)}>Cancel</Button>
@@ -285,7 +284,7 @@ export function PromptsView({ session, onOpenOperations, onOpenSettings, onSessi
           title="No governed prompts yet"
           action={canManage ? <Button onClick={startCreate}>Create the first prompt</Button> : undefined}
         >
-          Chat keeps the built-in instruction until the first evaluated prompt is activated.
+          Chat keeps the built-in instruction until the first prompt is activated.
         </EmptyState>
       )}
       {prompts.map((prompt) => <Panel className="grid min-w-0 gap-4" key={prompt.id}>
@@ -314,7 +313,7 @@ export function PromptsView({ session, onOpenOperations, onOpenSettings, onSessi
         <dl className="m-0 grid grid-cols-2 gap-px rounded border border-border bg-border">
           {[
             { label: "Checksum", value: `${prompt.contentChecksum.slice(0, 16)}…` },
-            { label: "Evaluation", value: prompt.activationEvaluationId ? "Promoted" : "Required" },
+            { label: "Purpose", value: prompt.purpose.toLowerCase().replaceAll("_", " ") },
             { label: "Updated", value: when(prompt.updatedAt) },
             { label: "Activation history", value: prompt.firstActivatedAt ? "Started" : "Never active" },
           ].map((fact) => (
@@ -346,11 +345,11 @@ export function PromptsView({ session, onOpenOperations, onOpenSettings, onSessi
         >
           <div>
             <strong className="block text-label font-semibold text-text">
-              {decision.action === "activate" ? "Release evaluated prompt" : "Suspend runtime prompt"}
+              {decision.action === "activate" ? "Release prompt" : "Suspend runtime prompt"}
             </strong>
             <span className="mt-1 block text-body text-muted">
               {decision.action === "activate"
-                ? `Requires a promoted PROMPT evaluation for prompt:${prompt.slug}, version ${prompt.version}, including CHAT and SAFETY.`
+                ? `Releases prompt:${prompt.slug}, version ${prompt.version}, as the single active ${prompt.purpose.toLowerCase().replaceAll("_", " ")} instruction.`
                 : "Suspension makes chat fail closed after prompt governance has been adopted."}
             </span>
           </div>
