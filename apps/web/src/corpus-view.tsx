@@ -22,8 +22,22 @@ import {
   Panel, PanelHeading, Select, StatusText, Textarea, Tile, cn,
 } from "./ui/index.js";
 
+/**
+ * Which half of the Hermes corpus a mounted instance of this screen governs.
+ *
+ * The split is the contract's, not an invention of the UI: the VM2 reconciler
+ * classifies exactly `memories/MEMORY.md` and `memories/USER.md` as `MEMORY`
+ * and every other allowlisted path as one of the four skill kinds, so "Skills"
+ * and "Memory" partition the mirror with nothing left over and nothing shared.
+ * The mutation vocabulary partitions the same way — every operation is either
+ * `MEMORY_*` or `SKILL_*` — which is what lets each tab show only the change
+ * requests it could itself have made.
+ */
+export type CorpusScope = "SKILLS" | "MEMORY";
+
 interface CorpusViewProps {
   session: AdministratorSession | null;
+  scope: CorpusScope;
   onConfigure: () => void;
   onSessionExpired: () => void;
 }
@@ -38,15 +52,55 @@ type Draft = {
   reason: string;
 };
 
-const kinds: Array<{ value: HermesCorpusEntry["kind"] | ""; label: string }> = [
-  { value: "", label: "All files" },
-  { value: "MEMORY", label: "Memory" },
+const skillKinds: Array<{ value: HermesCorpusEntry["kind"] | ""; label: string }> = [
+  { value: "", label: "All skill files" },
   { value: "SKILL", label: "Skills" },
   { value: "SKILL_FILE", label: "Skill support" },
   { value: "SKILL_BUNDLE", label: "Bundles" },
   { value: "PROVENANCE", label: "Provenance" },
   { value: "PENDING_CHANGE", label: "Pending changes" },
 ];
+
+const scopes: Record<CorpusScope, {
+  title: string;
+  kicker: string;
+  mark: string;
+  description: string;
+  lockedReason: string;
+  deniedReason: string;
+  countLabel: string;
+  emptyTitle: string;
+  emptyBody: string;
+  selectTitle: string;
+  selectBody: string;
+}> = {
+  SKILLS: {
+    title: "Hermes Skills",
+    kicker: "Hermes native skills",
+    mark: "HS",
+    description: "The Skill files Hermes actually loads, with their support files, bundles and provenance. VM2 remains canonical; this control plane mirrors, searches, versions, and audits signed changes.",
+    lockedReason: "An administrator session is required to inspect the native Hermes Skill repository.",
+    deniedReason: "Your role cannot observe the Hermes repository mirror.",
+    countLabel: "Mirrored Skill files",
+    emptyTitle: "No skill files",
+    emptyBody: "The enrolled Hermes node has not synchronized matching Skill files yet.",
+    selectTitle: "Select a Skill file",
+    selectBody: "Choose a Skill, support file or bundle to inspect its mirrored content and history.",
+  },
+  MEMORY: {
+    title: "Hermes Memory",
+    kicker: "Hermes native memory",
+    mark: "HM",
+    description: "MEMORY.md and USER.md as Hermes actually holds them. VM2 remains canonical; this control plane mirrors, versions, and audits signed changes. Memory is never used as model context from here.",
+    lockedReason: "An administrator session is required to inspect native Hermes memory.",
+    deniedReason: "Your role cannot observe the Hermes repository mirror.",
+    countLabel: "Mirrored memory files",
+    emptyTitle: "No memory files",
+    emptyBody: "The enrolled Hermes node has not synchronized MEMORY.md or USER.md yet.",
+    selectTitle: "Select a memory file",
+    selectBody: "Choose MEMORY.md or USER.md to inspect its mirrored entries and history.",
+  },
+};
 
 const destructive = new Set<Operation>(["MEMORY_REMOVE", "SKILL_DELETE", "SKILL_REMOVE_FILE"]);
 function time(value: string | null): string {
@@ -94,7 +148,9 @@ function initialDraft(operation: Operation, entry?: HermesCorpusEntry | null, ol
   };
 }
 
-export function CorpusView({ session, onConfigure, onSessionExpired }: CorpusViewProps) {
+export function CorpusView({ session, scope, onConfigure, onSessionExpired }: CorpusViewProps) {
+  const copy = scopes[scope];
+  const memoryScope = scope === "MEMORY";
   const [nodes, setNodes] = useState<HermesCorpusStatus[]>([]);
   const [nodeId, setNodeId] = useState("");
   const [entries, setEntries] = useState<HermesCorpusEntry[]>([]);
@@ -139,15 +195,24 @@ export function CorpusView({ session, onConfigure, onSessionExpired }: CorpusVie
         getHermesCorpusEntries({
           nodeId: targetNodeId,
           ...(query.trim() ? { query: query.trim() } : {}),
-          kind,
+          /*
+           * Memory is a single kind, so the mirror is asked for that kind and
+           * answers with the two files. Skills is four kinds and the entries
+           * endpoint takes one, so the ask stays broad and the partition is
+           * applied on arrival rather than through four round trips.
+           */
+          kind: memoryScope ? "MEMORY" : kind,
           includeDeleted,
           includeContent: canReadContent,
         }),
         canReadContent ? getHermesCorpusMutations(targetNodeId) : Promise.resolve({ items: [] }),
       ]);
-      setEntries(entryList.items);
-      setMutations(mutationList.items);
-      setSelectedId((current) => entryList.items.some(({ id }) => id === current) ? current : entryList.items[0]?.id ?? "");
+      const items = entryList.items.filter(({ kind: entryKind }) => (entryKind === "MEMORY") === memoryScope);
+      setEntries(items);
+      setMutations(mutationList.items.filter(
+        ({ operation }) => operation.startsWith("MEMORY_") === memoryScope,
+      ));
+      setSelectedId((current) => items.some(({ id }) => id === current) ? current : items[0]?.id ?? "");
     } finally {
       setLoading(false);
     }
@@ -162,7 +227,7 @@ export function CorpusView({ session, onConfigure, onSessionExpired }: CorpusVie
     if (!nodeId || !canObserve) return;
     const timer = window.setTimeout(() => void loadRepository(nodeId).catch(fail), 220);
     return () => window.clearTimeout(timer);
-  }, [nodeId, query, kind, includeDeleted, canObserve, canReadContent]);
+  }, [nodeId, query, kind, includeDeleted, canObserve, canReadContent, memoryScope]);
 
   useEffect(() => {
     if (!nodeId || !canObserve) return;
@@ -170,7 +235,7 @@ export function CorpusView({ session, onConfigure, onSessionExpired }: CorpusVie
       void Promise.all([loadOverview(), loadRepository(nodeId)]).catch(fail);
     }, 30_000);
     return () => window.clearInterval(timer);
-  }, [nodeId, query, kind, includeDeleted, canObserve, canReadContent]);
+  }, [nodeId, query, kind, includeDeleted, canObserve, canReadContent, memoryScope]);
 
   useEffect(() => {
     if (!selected) { setRevisions([]); return; }
@@ -229,18 +294,18 @@ export function CorpusView({ session, onConfigure, onSessionExpired }: CorpusVie
   };
 
   if (!session) return (
-    <LockedScreen title="Hermes corpus" mark="HC" actionLabel="Administrator sign in" onAction={onConfigure}
-      reason="An administrator session is required to inspect native Hermes memory and skills." />
+    <LockedScreen title={copy.title} mark={copy.mark} actionLabel="Administrator sign in" onAction={onConfigure}
+      reason={copy.lockedReason} />
   );
   if (!canObserve) return (
-    <LockedScreen title="Hermes corpus" mark="HC" actionLabel="Review access" onAction={onConfigure}
-      headline="Corpus access required" reason="Your role cannot observe the Hermes repository mirror." />
+    <LockedScreen title={copy.title} mark={copy.mark} actionLabel="Review access" onAction={onConfigure}
+      headline="Corpus access required" reason={copy.deniedReason} />
   );
 
   return (
     <div className="mx-auto w-full max-w-[1540px]">
-      <PageHeader kicker="Hermes native state" title="Corpus"
-        description="Observe and govern the files Hermes actually uses. VM2 remains canonical; this control plane mirrors, searches, versions, and audits signed changes."
+      <PageHeader kicker={copy.kicker} title={copy.title}
+        description={copy.description}
         actions={<Button onClick={() => void refresh().catch(fail)} disabled={loading}><SyncIcon size={16} />Refresh</Button>} />
 
       {error ? <Alert className="mb-4" onDismiss={() => setError(null)}>{error}</Alert> : null}
@@ -257,9 +322,13 @@ export function CorpusView({ session, onConfigure, onSessionExpired }: CorpusVie
           <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search paths and mirrored text…" />
         </Field>
         <div className="flex gap-2">
-          <Select aria-label="Corpus kind" value={kind} onChange={(event) => setKind(event.target.value as typeof kind)}>
-            {kinds.map((item) => <option key={item.value || "all"} value={item.value}>{item.label}</option>)}
-          </Select>
+          {/* Memory is one kind, so a kind filter there would be a control with
+              one option. Skills is four, and the filter earns its place. */}
+          {memoryScope ? null : (
+            <Select aria-label="Corpus kind" value={kind} onChange={(event) => setKind(event.target.value as typeof kind)}>
+              {skillKinds.map((item) => <option key={item.value || "all"} value={item.value}>{item.label}</option>)}
+            </Select>
+          )}
           <Button className="shrink-0" variant={includeDeleted ? "primary" : "secondary"} onClick={() => setIncludeDeleted((value) => !value)}>
             Deleted
           </Button>
@@ -269,7 +338,9 @@ export function CorpusView({ session, onConfigure, onSessionExpired }: CorpusVie
       {node ? (
         <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
           <Tile><MicroLabel className="block">Synchronization</MicroLabel><StatusText className="mt-2" dot tone={!node.available ? "bad" : node.stale ? "warn" : "good"}>{!node.available ? "Unavailable" : node.stale ? "Stale" : "Current"}</StatusText></Tile>
-          <Tile><MicroLabel className="block">Mirrored files</MicroLabel><strong className="mt-2 block font-display text-figure text-text">{node.entryCount}</strong></Tile>
+          {/* The node-level total would be a different, larger number than the
+              list beneath it, so this tile counts what the tab actually shows. */}
+          <Tile><MicroLabel className="block">{copy.countLabel}</MicroLabel><strong className="mt-2 block font-display text-figure text-text">{entries.length}</strong></Tile>
           <Tile><MicroLabel className="block">Observed corpus</MicroLabel><strong className="mt-2 block font-display text-figure text-text">{bytes(node.totalBytes)}</strong></Tile>
           <Tile><MicroLabel className="block">Last signed snapshot</MicroLabel><strong className="mt-2 block text-label text-text">{time(node.lastSyncedAt)}</strong><span className="mt-1 block font-mono text-micro text-faint">{shortHash(node.rootHash)}</span></Tile>
         </div>
@@ -281,8 +352,11 @@ export function CorpusView({ session, onConfigure, onSessionExpired }: CorpusVie
 
       <div className="grid min-h-[590px] gap-4 xl:grid-cols-[300px_minmax(0,1fr)_340px]">
         <Panel className="min-w-0 p-3">
-          <PanelHeading className="px-1 pt-1" kicker="Repository" title="Files" actions={canWrite ? <Button size="sm" onClick={() => { setSelectedId(""); setDraft(initialDraft("SKILL_CREATE")); }}>New skill</Button> : undefined} />
-          {canWrite && node?.writable ? <div className="mb-3 grid grid-cols-2 gap-2">
+          <PanelHeading className="px-1 pt-1" kicker="Repository" title={memoryScope ? "Memory files" : "Skill files"}
+            actions={canWrite && !memoryScope ? <Button size="sm" onClick={() => { setSelectedId(""); setDraft(initialDraft("SKILL_CREATE")); }}>New skill</Button> : undefined} />
+          {/* The two native memory files can be created before Hermes has ever
+              written them, which is the one write this tab offers up front. */}
+          {memoryScope && canWrite && node?.writable ? <div className="mb-3 grid grid-cols-2 gap-2">
             <Button size="sm" onClick={() => setDraft({ ...initialDraft("MEMORY_ADD"), path: "memories/MEMORY.md" })}>Add agent memory</Button>
             <Button size="sm" onClick={() => setDraft({ ...initialDraft("MEMORY_ADD"), path: "memories/USER.md" })}>Add user profile</Button>
           </div> : null}
@@ -295,7 +369,7 @@ export function CorpusView({ session, onConfigure, onSessionExpired }: CorpusVie
                 <span className="mt-2 flex items-center justify-between"><MicroLabel>{entry.kind.replaceAll("_", " ")}</MicroLabel><span className="text-micro text-muted">r{entry.revision}</span></span>
               </Button>
             ))}
-            {!loading && entries.length === 0 ? <EmptyState title="No corpus files">The enrolled Hermes node has not synchronized matching files yet.</EmptyState> : null}
+            {!loading && entries.length === 0 ? <EmptyState title={copy.emptyTitle}>{copy.emptyBody}</EmptyState> : null}
             {loading ? <p className="px-2 text-body text-muted">Reading the signed mirror…</p> : null}
           </div>
         </Panel>
@@ -339,7 +413,7 @@ export function CorpusView({ session, onConfigure, onSessionExpired }: CorpusVie
                 <Button variant="danger" onClick={() => openOperation("SKILL_REMOVE_FILE")}>Delete file</Button>
               </div> : null}
             </>
-          ) : <EmptyState title="Select a corpus file">Choose a memory or skill file to inspect its mirrored content and history.</EmptyState>}
+          ) : <EmptyState title={copy.selectTitle}>{copy.selectBody}</EmptyState>}
         </Panel>
 
         <div className="grid min-w-0 content-start gap-4">

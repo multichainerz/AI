@@ -10,7 +10,8 @@ OrcaSynapse is a private control plane for operating Hermes-based agentic workfl
 
 - Show readiness, service health, activity, and the governed execution path.
 - Create, fork, archive, and delete conversations backed by Hermes-native sessions.
-- Stream visible responses and safe run events, support cancellation, and collect feedback.
+- Stream visible responses and safe run events at the point they occur, grouping consecutive repeated tool calls without losing chronology or per-call detail.
+- Keep agent identity visible, present compact response telemetry, expose composer context usage, and support cancellation.
 - Keep the PostgreSQL transcript as a user-visible operational projection only.
 
 ### Agents and Settings
@@ -20,10 +21,20 @@ OrcaSynapse is a private control plane for operating Hermes-based agentic workfl
 - Register and test OpenAI-compatible inference connections.
 - Manage model routes, prompt templates, guardrail policies, native toolset admissions, and governed tool metadata.
 - Enroll, attest, monitor, revoke, repair, and remove a VM2 Hermes node.
+- Check official stable OrcaSynapse release tags and provide a version-pinned VM1 update command without granting the browser or application container host control.
+
+### Workspace experience
+
+- Use Tailwind CSS and source-owned shadcn-style primitives as the shared control foundation.
+- Preserve OrcaSynapse-specific dashboard, session, corpus, and operations compositions above those primitives.
+- Use one semantic token contract for light and dark appearances, one semi-rounded component radius, and Lucide for functional interface icons.
+- Remain operable by keyboard, trap and restore dialog focus, expose semantic disabled and status states, and keep accessible control names.
+- Satisfy the production `style-src 'self'` policy without runtime stylesheet injection, JSX inline styles, off-origin visual assets, or missing self-hosted fonts.
 
 ### Operations and assurance
 
-- Record run state, sanitized events, usage, failures, evaluations, readiness controls, and incidents.
+- Record run state, sanitized events, usage, failures, evaluations, and incidents.
+- Separate the three operational questions into their own surfaces: Health (what is degraded now), Release gates (what evidence an activation carries), and the Audit trail (what happened). The production-readiness register remains in the schema but has no console surface: nothing in the product can create a control, so a screen for it would always be empty.
 - Preserve an append-only audit trail for administrative and execution lifecycle actions.
 - Forward audit batches to an optional SIEM with retry-safe cursor state.
 - Enforce local administrator, recovery, and OIDC role/scope boundaries.
@@ -61,9 +72,10 @@ The current vanilla Hermes home/profile shares file-backed memory across its ses
 - a synthetic benchmark runner;
 - remote shell administration of VM2;
 - hosting or scheduling GPU inference;
+- unattended browser-initiated VM1 or VM2 host updates;
 - multi-tenant isolation of a shared vanilla Hermes memory home;
 - Redis, a queue broker, an object store, or a separate model-routing tier.
 
 ## Acceptance
 
-A release is acceptable when repository verification passes, a fresh stock-PostgreSQL migration is idempotent, retired tables/extensions are absent, VM1 installs cleanly, VM2 enrolls at its approved Hermes commit, a native session turn completes, cancellation and failure evidence remain legible, audit forwarding remains durable, and all public documentation states the same ownership boundaries.
+A release is acceptable when repository verification and CSP closure pass, a fresh stock-PostgreSQL migration is idempotent, retired tables/extensions are absent, VM1 installs cleanly, VM2 enrolls at its approved Hermes commit, a native session turn completes, cancellation and failure evidence remain legible, keyboard focus remains contained in modal workflows, audit forwarding remains durable, and all public and internal documentation states the same ownership boundaries.

@@ -1,6 +1,17 @@
 import { platformUpdateSchema, type PlatformUpdate } from "@orcasynapse/contracts";
 
-const RELEASE_TAG_PATTERN = /^ai-v(\d+)\.(\d+)\.(\d+)$/;
+/**
+ * A stable release tag, in either spelling.
+ *
+ * Releases through `ai-v1.99.0` carried the `ai-` prefix; from `v2.0.0` they
+ * do not. The prefix is optional here rather than replaced because a
+ * deployment installed before the rename reports its own version to this
+ * parser: matching only the new form would throw for exactly those
+ * installations, turning their update check into a 503 at the moment it would
+ * have told them an update exists. Old tags also remain in the upstream list,
+ * and dropping them would narrow the set the latest release is chosen from.
+ */
+const RELEASE_TAG_PATTERN = /^(?:ai-)?v(\d+)\.(\d+)\.(\d+)$/;
 const TAGS_ENDPOINT = "https://api.github.com/repos/multichainerz/AI/tags?per_page=100";
 const INSTALLER_URL = "https://raw.githubusercontent.com/multichainerz/AI/main/install.sh";
 

@@ -9,22 +9,19 @@ export function ThemeToggle({ tone = "surface" }: { tone?: "surface" | "brand" }
   const light = theme === "light";
 
   return (
-    <div className={cn("theme-toggle", tone === "brand" && "theme-toggle--brand")}>
-      <Switch
-        checked={light}
-        aria-label="Light appearance"
-        title={`Switch to the ${light ? "dark" : "light"} theme`}
-        className={cn("theme-toggle__track", tone === "brand" && "theme-toggle--brand")}
-        data-mode={theme}
-        thumb={(
-          <span className="theme-toggle__thumb">
-            <span className="theme-toggle__moon"><Moon aria-hidden="true" /></span>
-            <span className="theme-toggle__sun"><Sun aria-hidden="true" /></span>
-          </span>
-        )}
-        onCheckedChange={() => setTheme(toggleTheme())}
-      />
-      <span className="theme-toggle__label">{light ? "Light" : "Dark"}</span>
-    </div>
+    <Switch
+      checked={light}
+      aria-label="Light appearance"
+      title={`Switch to the ${light ? "dark" : "light"} theme`}
+      className={cn("theme-toggle__track", tone === "brand" && "theme-toggle--brand")}
+      data-mode={theme}
+      thumb={(
+        <span className="theme-toggle__thumb">
+          <span className="theme-toggle__moon"><Moon aria-hidden="true" /></span>
+          <span className="theme-toggle__sun"><Sun aria-hidden="true" /></span>
+        </span>
+      )}
+      onCheckedChange={() => setTheme(toggleTheme())}
+    />
   );
 }

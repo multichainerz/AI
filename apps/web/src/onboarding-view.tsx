@@ -1,4 +1,5 @@
 import type {
+  AdministratorSession,
   AgentProfile,
   DeploymentTopologyMode,
   OnboardingTargetEnvironment,
@@ -8,33 +9,45 @@ import type {
   ServiceConnectionSummary,
   ServiceKind,
 } from "@orcasynapse/contracts";
-import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { adminAccess } from "./admin-access.js";
 import {
   OrcaSynapseApiError,
-  completeOnboarding,
-  exportCredentialRecoveryKit,
   getOnboardingSnapshot,
+  runOnboardingValidation,
   updateArchitectureDecision,
-  verifyCredentialRecoveryKit,
 } from "./api.js";
 import { connectionReadiness } from "./connection-readiness.js";
 import { connectionFor, deriveWorkspaceReadiness } from "./platform-readiness.js";
-import { RuntimeNodesPanel } from "./runtime-nodes-panel.js";
-import { PlatformUpdatePanel } from "./platform-update-panel.js";
+import { RecoveryKitDialog } from "./recovery-kit-dialog.js";
+import {
+  DEFAULT_HERMES_COMMIT,
+  RuntimeNodesPanel,
+  defaultControlPlaneUrl,
+} from "./runtime-nodes-panel.js";
+import { deriveSetupSteps, type SetupStep, type SetupStepKey } from "./setup-steps.js";
 import {
   Alert, Button, Dialog, Field, Input, LockedScreen, MicroLabel,
-  PageHeader, Panel, Select, StatusText, cn, toneFor,
+  PageHeader, Panel, PanelHeading, Select, StatusText, StepList, Tile, cn,
 } from "./ui/index.js";
 
 interface OnboardingViewProps {
-  currentVersion?: string;
-  unlocked: boolean;
+  session: AdministratorSession | null;
   oidcConfigured: boolean;
   connections: ServiceConnectionSummary[];
   agentRuntime: AgentRuntimeControl | null;
   profiles: AgentProfile[];
   runtimeNodes: HermesRuntimeNode[];
-  initialTab?: "journey" | "nodes" | "readiness";
+  /** The step named by `#settings/setup/<step>`, if the route named one. */
+  initialStep?: SetupStepKey | null;
+  /**
+   * Reports the step an operator opened, so the address can follow.
+   *
+   * Without it the rail would be local state again — which is the defect this
+   * screen is replacing: Back left Settings entirely, and reloading part-way
+   * through a twenty-minute VM2 install returned to the overview.
+   */
+  onSelectStep?: (step: SetupStepKey) => void;
   onConfigure: (kind?: ServiceKind) => void;
   onOpenWorkspace: (workspace: "Chat" | "Agents") => void;
   onOpenOperations: () => void;
@@ -43,26 +56,41 @@ interface OnboardingViewProps {
   onSessionExpired: () => void;
 }
 
-type SetupPanel = "overview" | "nodes";
+const stepTone = { done: "good", current: "accent", blocked: "warn" } as const;
+const stepStatusLabel = { done: "Done", current: "In progress", blocked: "Waiting" } as const;
 
-function downloadRecoveryKit(fileName: string, serializedKit: string): void {
-  const url = URL.createObjectURL(new Blob([serializedKit], { type: "application/json" }));
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = fileName;
-  link.click();
-  URL.revokeObjectURL(url);
-}
-
+/**
+ * Setup, as the sequence it actually is.
+ *
+ * This screen used to present six unrelated blocks and nine buttons, in an
+ * order the operator had to infer from the order of the cards, with a terminal
+ * action that could not be reached at all. It is one job — get from a fresh
+ * install to a governed session — and that job has exactly three steps, so it
+ * is drawn as three steps: a rail on the left, one expanded step on the right,
+ * and every completed step still one click away.
+ *
+ * Two rules hold the shape:
+ *
+ * 1. **Blockers live inside the step they block.** The page-level list this
+ *    replaces said "10 blockers remain" beside five rows, because the count was
+ *    `blockers.length` and the list was `.slice(0, 5)`. Attaching each reason to
+ *    its own step removes that class of mismatch by construction — there is no
+ *    count to disagree with a list.
+ * 2. **Nothing that is not one of the three steps stays.** The update check
+ *    moved to Settings → Application, the activation record to Operations, the
+ *    Governed Chat promo was deleted (it duplicated step 3 and its only button
+ *    was a disabled instruction), and recovery became a footer action, which is
+ *    what it always was.
+ */
 export function OnboardingView({
-  currentVersion = "unknown",
+  session,
   connections,
   agentRuntime,
   profiles,
   runtimeNodes,
-  unlocked,
   oidcConfigured,
-  initialTab = "journey",
+  initialStep = null,
+  onSelectStep,
   onConfigure,
   onOpenWorkspace,
   onOpenOperations,
@@ -70,37 +98,30 @@ export function OnboardingView({
   onSignIn,
   onSessionExpired,
 }: OnboardingViewProps) {
-  const [panel, setPanel] = useState<SetupPanel>(initialTab === "nodes" ? "nodes" : "overview");
+  const { unlocked } = adminAccess(session);
   const [snapshot, setSnapshot] = useState<OnboardingSnapshot | null>(null);
+  const [openStep, setOpenStep] = useState<SetupStepKey | null>(initialStep);
   const [recoveryOpen, setRecoveryOpen] = useState(false);
-  const [recoveryOwner, setRecoveryOwner] = useState("");
-  const [recoveryPassphrase, setRecoveryPassphrase] = useState("");
-  const [recoveryConfirm, setRecoveryConfirm] = useState("");
-  const [recoveryKit, setRecoveryKit] = useState("");
-  const [recoveryFileName, setRecoveryFileName] = useState("");
   const [architectureOpen, setArchitectureOpen] = useState(false);
   const [topologyMode, setTopologyMode] = useState<DeploymentTopologyMode>("COMPACT");
   const [targetEnvironment, setTargetEnvironment] = useState<OnboardingTargetEnvironment>("DEVELOPMENT");
   const [architectureReason, setArchitectureReason] = useState("");
-  const [activationReason, setActivationReason] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    setPanel(initialTab === "nodes" ? "nodes" : "overview");
-    if (initialTab === "readiness") onOpenOperations();
+    setOpenStep(initialStep);
   // The route token is the source of truth here. Callback identity can change
-  // during App refreshes and must not reset an operator who is enrolling VM2.
+  // during App refreshes and must not close the step an operator is working in.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialTab]);
+  }, [initialStep]);
 
   // Held in a ref so the snapshot effect below depends only on `unlocked`.
   //
   // App re-renders on its own poll and hands down a fresh `onSessionExpired`
   // arrow every few seconds. Tracking that identity re-ran the load, and each
-  // run writes the stored recovery owner back into the field -- so a name an
-  // operator was typing into the recovery kit form was silently replaced
-  // mid-entry. The route effect above carries a disable for the same hazard.
+  // run wrote stored values back into fields an operator was typing into. The
+  // route effect above carries a disable for the same hazard.
   const latestOnSessionExpired = useRef(onSessionExpired);
   useEffect(() => {
     latestOnSessionExpired.current = onSessionExpired;
@@ -113,9 +134,7 @@ export function OnboardingView({
     }
     let active = true;
     void getOnboardingSnapshot().then((next) => {
-      if (!active) return;
-      setSnapshot(next);
-      setRecoveryOwner(next.recovery.recoveryOwner ?? "");
+      if (active) setSnapshot(next);
     }).catch((cause: unknown) => {
       if (!active) return;
       if (cause instanceof OrcaSynapseApiError && cause.status === 401) latestOnSessionExpired.current();
@@ -123,53 +142,6 @@ export function OnboardingView({
     });
     return () => { active = false; };
   }, [unlocked]);
-
-  const run = async (key: string, operation: () => Promise<void>) => {
-    if (busy) return;
-    setBusy(key);
-    setError(null);
-    try {
-      await operation();
-    } catch (cause) {
-      if (cause instanceof OrcaSynapseApiError && cause.status === 401) onSessionExpired();
-      setError(cause instanceof Error ? cause.message : "Application settings could not be updated.");
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const exportRecovery = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!snapshot || recoveryPassphrase !== recoveryConfirm) return;
-    await run("recovery-export", async () => {
-      const exported = await exportCredentialRecoveryKit({
-        recoveryOwner: recoveryOwner.trim(),
-        passphrase: recoveryPassphrase,
-        expectedRevision: snapshot.recovery.revision,
-      });
-      downloadRecoveryKit(exported.fileName, exported.serializedKit);
-      setRecoveryFileName(exported.fileName);
-      setRecoveryKit("");
-      setRecoveryPassphrase("");
-      setRecoveryConfirm("");
-      setSnapshot(await getOnboardingSnapshot());
-    });
-  };
-
-  const verifyRecovery = async () => {
-    if (!snapshot) return;
-    await run("recovery-verify", async () => {
-      setSnapshot(await verifyCredentialRecoveryKit({
-        serializedKit: recoveryKit,
-        passphrase: recoveryPassphrase,
-        expectedRevision: snapshot.recovery.revision,
-      }));
-      setRecoveryPassphrase("");
-      setRecoveryKit("");
-      setRecoveryFileName("");
-      setRecoveryOpen(false);
-    });
-  };
 
   useEffect(() => {
     if (!snapshot) return;
@@ -202,33 +174,36 @@ export function OnboardingView({
     }
   };
 
-  const activate = async () => {
-    if (!snapshot) return;
-    setBusy("activate");
+  /**
+   * The 2 → 3 hand-off.
+   *
+   * Profile activation refuses unless the `hermes-api` component is PASSED, and
+   * the only thing that writes that is `POST /onboarding/validate` for the
+   * `ai-services` stage. Setup never called it — its sole caller was the Agents
+   * screen, which ran it implicitly — so an operator who followed this screen's
+   * ordering arrived at profile activation and was refused for a reason the
+   * screen had never mentioned. Running it here makes the hand-off explicit at
+   * the boundary that needs it.
+   */
+  const openProfiles = async () => {
+    if (busy) return;
+    setBusy("ai-services");
     try {
-      setSnapshot(await completeOnboarding({
-        reason: activationReason.trim(),
-        expectedRevision: snapshot.journey.revision,
-      }));
-      setActivationReason("");
+      setSnapshot(await runOnboardingValidation({ stageKey: "ai-services" }));
       setError(null);
     } catch (cause) {
-      if (cause instanceof OrcaSynapseApiError && cause.status === 401) onSessionExpired();
-      else setError(cause instanceof Error ? cause.message : "Unable to record activation.");
+      if (cause instanceof OrcaSynapseApiError && cause.status === 401) {
+        onSessionExpired();
+        setBusy(null);
+        return;
+      }
+      // A failed re-validation is worth reporting, but it must not strand the
+      // operator on a screen whose only remaining action is the one it blocked.
+      setError(cause instanceof Error ? cause.message : "The AI-services check could not be re-run.");
     } finally {
       setBusy(null);
     }
-  };
-
-  const selectRecoveryFile = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    if (file.size > 16_384) {
-      setError("Recovery kit exceeds the supported size.");
-      return;
-    }
-    setRecoveryFileName(file.name);
-    setRecoveryKit(await file.text());
+    onOpenWorkspace("Agents");
   };
 
   if (!unlocked) {
@@ -245,222 +220,259 @@ export function OnboardingView({
   }
 
   const inference = connectionFor(connections, "INFERENCE");
-  const hermes = connectionFor(connections, "HERMES");
   const readiness = deriveWorkspaceReadiness({ connections, runtimeNodes, profiles, runtime: agentRuntime });
-  const {
-    inferenceReady,
-    runtimeNodeReady: nodeReady,
-    executionReady,
-    agenticInfrastructureReady,
-    agenticReady,
-  } = readiness;
-  const readyCoreLayers = Number(inferenceReady) + Number(agenticReady);
+  const architecture = snapshot?.architecture ?? null;
 
-  if (panel === "nodes") {
-    return <div className="grid gap-5">
-      <PageHeader
-        kicker="Settings · Agentic System"
-        title="Enroll the isolated agent runtime"
-        description="The VM2 installer provisions Hermes, managed policy, and signed monitoring as one controlled layer."
-        actions={<Button onClick={() => setPanel("overview")}>Back to setup</Button>}
-      />
-      {error && <Alert onDismiss={() => setError(null)}>{error}</Alert>}
-      <RuntimeNodesPanel
-        targetEnvironment={snapshot?.architecture.targetEnvironment ?? "DEVELOPMENT"}
-        inferenceReady={inferenceReady}
-        onConfigureInference={() => onConfigure("INFERENCE")}
-        onNodesChange={onRuntimeNodesChange}
-        onSessionExpired={onSessionExpired}
-      />
-    </div>;
-  }
+  /*
+   * `?? "DEVELOPMENT"` is safe here and was not safe in the nodes panel, which
+   * is worth stating because it is the same expression.
+   *
+   * There it decided whether to *offer* an enrolment, so guessing DEVELOPMENT
+   * removed the production artifact guard from a PRODUCTION install. Here it
+   * only decides which reasons are listed, and the panel still refuses to enrol
+   * anything until the target is known — so the worst this default can do is
+   * omit a line for the moment before the snapshot lands, which the extra
+   * blocker below states outright.
+   */
+  const steps: SetupStep[] = deriveSetupSteps({
+    readiness,
+    connections,
+    runtimeNodes,
+    targetEnvironment: architecture?.targetEnvironment ?? "DEVELOPMENT",
+    hermesCommit: DEFAULT_HERMES_COMMIT,
+    controlPlaneUrl: defaultControlPlaneUrl(),
+  }).map((step) => step.key === "runtime" && architecture === null && step.status !== "done"
+    ? {
+      ...step,
+      blockedBy: [
+        ...step.blockedBy,
+        "The architecture decision has not loaded, so production artifact requirements cannot be checked yet.",
+      ],
+    }
+    : step);
 
-  const stages = [
-    {
-      number: "01",
-      title: "AI Inference",
-      description: "Connect the approved OpenAI-compatible model server used by OrcaSynapse and Hermes.",
-      detail: inference?.baseUrl ?? "vLLM, llama.cpp, SGLang, Ollama, TGI, or another compatible endpoint.",
-      readiness: connectionReadiness(inference),
-      action: () => onConfigure("INFERENCE"),
-      actionLabel: inference ? "Manage inference" : "Connect inference",
-    },
-    {
-      number: "02",
-      title: "Agentic System",
-      description: "Enroll one isolated Ubuntu VM running the governed Hermes runtime.",
-      detail: hermes
-        ? `Hermes: ${connectionReadiness(hermes).label} · VM2: ${nodeReady ? "Online" : "Not online"} · Profile: ${executionReady ? "Active" : "Needs activation"}`
-        : "One generated command installs and binds the complete VM2 runtime.",
-      readiness: agenticReady
-        ? { label: "Ready", tone: "ready" as const }
-        : hermes
-          ? { label: "Needs attention", tone: "degraded" as const }
-          : { label: "Not configured", tone: "neutral" as const },
-      action: () => !inferenceReady ? onConfigure("INFERENCE") : agenticInfrastructureReady ? executionReady ? setPanel("nodes") : onOpenWorkspace("Agents") : setPanel("nodes"),
-      actionLabel: !inferenceReady ? "Set up inference first" : agenticInfrastructureReady ? executionReady ? "Manage runtime" : "Activate an Agent Profile" : "Enroll VM2",
-    },
-    {
-      number: "03",
-      title: "Enterprise Access",
-      description: "Add OIDC or Microsoft Entra ID when employees are ready to use the workspace.",
-      detail: oidcConfigured ? "Enterprise sign-in is configured." : "Optional for local evaluation; required before multi-user rollout.",
-      readiness: oidcConfigured
-        ? { label: "Ready", tone: "ready" as const }
-        : { label: "Optional", tone: "neutral" as const },
-      action: () => onConfigure("OIDC"),
-      actionLabel: oidcConfigured ? "Manage access" : "Configure later",
-      optional: true,
-    },
-  ];
+  const done = steps.filter((step) => step.status === "done").length;
+  const allDone = done === steps.length;
+  const active = steps.find((step) => step.key === openStep)
+    ?? steps.find((step) => step.status === "current")
+    ?? steps[steps.length - 1];
+  const productionBlocked = architecture?.targetEnvironment === "PRODUCTION";
 
   return <div className="grid gap-5">
     <PageHeader
       kicker="Application settings"
-      title="Three layers. One usable AI workspace."
-      description="Connect inference, enroll the agent runtime, and add enterprise identity when the deployment is ready for employees."
+      title="Bring this installation up"
+      description="Three steps between a fresh install and a governed session. Each is finished when OrcaSynapse can prove it, not when it has been opened."
       actions={
-        <div className="text-right" aria-label={`${readyCoreLayers} of 2 required layers ready`}>
-          <strong className={cn("block text-figure font-semibold tabular-nums", readyCoreLayers === 2 ? "text-good" : "text-warn")}>
-            {readyCoreLayers}/2
+        <div className="min-w-[150px] text-right">
+          <strong className={cn("block text-figure font-semibold tabular-nums", allDone ? "text-good" : "text-warn")}>
+            {done} of {steps.length}
           </strong>
-          <MicroLabel className="block">required layers ready</MicroLabel>
+          <MicroLabel className="block">steps complete</MicroLabel>
+          {/*
+            * `<progress>` rather than a div with a computed width: the fraction
+            * is data, and `style-src 'self'` refuses the inline width that
+            * would express it.
+            */}
+          <progress
+            className={cn("metric-progress mt-2 block h-0.5 w-full", allDone ? "is-good" : "is-warn")}
+            aria-label={`${done} of ${steps.length} setup steps complete`}
+            value={done}
+            max={steps.length}
+          />
         </div>
       }
     />
 
     {error && <Alert onDismiss={() => setError(null)}>{error}</Alert>}
 
-    <section className="grid gap-2" aria-label="Application setup stages">
-      {stages.map((stage) => <Panel
-        className={cn(
-          "grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-4 border-l-2",
-          // One mapping for every readiness vocabulary in the product.
-          { good: "border-l-good", bad: "border-l-bad", warn: "border-l-warn", accent: "border-l-accent", neutral: "border-l-border-strong" }[toneFor(stage.readiness.tone)],
-        )}
-        key={stage.number}
-      >
-        <div
-          aria-hidden="true"
-          className="grid h-9 w-9 place-items-center rounded border border-border-strong bg-raised font-mono text-caption font-bold text-accent"
-        >
-          {stage.number}
-        </div>
-        <div className="min-w-0">
-          <div className="flex items-center gap-3">
-            <h2 className="m-0 font-display text-[14px] font-semibold tracking-[-0.01em] text-text">{stage.title}</h2>
-            {stage.optional && <MicroLabel className="rounded border border-border bg-raised px-1.5 py-0.5">Optional</MicroLabel>}
-          </div>
-          <p className="mb-0 mt-1 text-body text-muted">{stage.description}</p>
-          <small className="mt-1 block text-caption text-faint">{stage.detail}</small>
-        </div>
-        <div className="flex shrink-0 items-center gap-3">
-          <StatusText dot tone={toneFor(stage.readiness.tone)}>{stage.readiness.label}</StatusText>
-          <Button onClick={stage.action}>{stage.actionLabel}</Button>
-        </div>
-      </Panel>)}
-    </section>
+    <div className="grid gap-5 lg:grid-cols-[264px_minmax(0,1fr)] lg:items-start">
+      <StepList
+        label="Setup steps"
+        className="lg:sticky lg:top-4"
+        activeKey={active?.key ?? ""}
+        items={steps.map((step) => ({
+          key: step.key,
+          ordinal: step.ordinal,
+          title: step.title,
+          status: step.status,
+          ...(step.status === "done" ? {} : { caption: step.blockedBy[0] ?? step.purpose }),
+        }))}
+        onSelect={(key) => {
+          // Both: the local state keeps the rail responsive even where no
+          // router is wired, and the callback is what puts the step in the
+          // address so Back and a reload agree with the screen.
+          setOpenStep(key as SetupStepKey);
+          onSelectStep?.(key as SetupStepKey);
+        }}
+      />
 
-    <section className="grid gap-4" aria-label="Available workspaces">
-      <Panel>
-        <MicroLabel className="block">Employee workspace</MicroLabel>
-        <h2 className="m-0 mt-1.5 font-display text-[15px] font-semibold tracking-[-0.01em] text-text">Governed Chat</h2>
-        <p className="mb-4 mt-1.5 text-body leading-relaxed text-muted">
-          Talk to an active Hermes Profile with policy, memory, tool activity, and runtime evidence around every response.
-        </p>
-        <Button variant="primary" disabled={!readiness.chatReady} onClick={() => onOpenWorkspace("Chat")}>
-          {readiness.chatReady ? "Open Chat" : readiness.nextChatStep?.title ?? "Finish setup first"}
-        </Button>
-      </Panel>
-    </section>
+      {active && <section className="grid gap-4" aria-label={`Step ${active.ordinal}: ${active.title}`}>
+        <Panel>
+          <PanelHeading
+            kicker={`Step ${active.ordinal} of ${steps.length}`}
+            title={active.title}
+            description={active.purpose}
+            actions={<StatusText dot tone={stepTone[active.status]}>{stepStatusLabel[active.status]}</StatusText>}
+          />
 
-    <section className="grid gap-4 lg:grid-cols-2">
-      <Panel className="flex flex-col">
-        <MicroLabel className="block">Architecture decision</MicroLabel>
-        <h2 className="m-0 mt-1.5 font-display text-[15px] font-semibold tracking-[-0.01em] text-text">Topology and target environment</h2>
-        <p className="mb-4 mt-1.5 flex-1 text-body leading-relaxed text-muted">
-          {snapshot?.architecture.reason
-            ? `${snapshot.architecture.topologyMode.toLowerCase().replaceAll("_", " ")} topology recorded for ${snapshot.architecture.targetEnvironment.toLowerCase()}.`
-            : "Record a topology and rationale. Validation cannot pass the system stage until this decision exists."}
-        </p>
-        <Button className="self-start" onClick={() => setArchitectureOpen(true)} disabled={!snapshot}>
-          {snapshot?.architecture.reason ? "Change decision" : "Record decision"}
-        </Button>
-      </Panel>
+          {/*
+            * Every reason, not the first five. The list this replaces printed a
+            * count taken from the whole array beside a `.slice(0, 5)` of it, so
+            * the screen contradicted itself whenever more than five things were
+            * wrong — which is exactly when an operator is reading it.
+            */}
+          {active.blockedBy.length > 0 && (
+            <ul className="m-0 grid list-none gap-1.5 p-0" aria-label={`What step ${active.ordinal} is waiting on`}>
+              {active.blockedBy.map((blocker) => (
+                // `text-text`, not the `text-muted` the block this replaces
+                // used: muted over the warn tint measures 4.46:1 in dark theme,
+                // which is under AA — and a blocker is the one thing on the
+                // step nobody should have to lean in to read.
+                <li className="rounded border border-warn/40 bg-warn/10 px-2.5 py-1.5 text-body text-text" key={blocker}>
+                  {blocker}
+                </li>
+              ))}
+            </ul>
+          )}
 
-      <Panel>
-        <MicroLabel className="block">Activation</MicroLabel>
-        <h2 className="m-0 mt-1.5 font-display text-[15px] font-semibold tracking-[-0.01em] text-text">
-          {snapshot?.journey.status === "COMPLETED" ? `Activated for ${snapshot.journey.activatedEnvironment?.toLowerCase()}` : "Record environment activation"}
-        </h2>
-        <p className="mb-0 mt-1.5 text-body leading-relaxed text-muted">
-          {snapshot?.journey.status === "COMPLETED"
-            ? "This installation is activated. Re-running validation reopens the journey."
-            : snapshot?.gate.ready
-              ? "Every required contract and stage has passed. Record why this installation is being activated."
-              : `${snapshot?.gate.blockers.length ?? 0} blocker${snapshot?.gate.blockers.length === 1 ? "" : "s"} remain.`}
-        </p>
-        {/* The blockers by name. "3 blockers remain" without them is a dead
-            end; with them it is a list of next actions. */}
-        {snapshot && !snapshot.gate.ready && snapshot.gate.blockers.length > 0 && (
-          <ul className="m-0 mt-3 grid list-none gap-1 p-0">
-            {snapshot.gate.blockers.slice(0, 5).map((blocker) => (
-              <li className="rounded border border-warn/40 bg-warn/10 px-2.5 py-1.5 text-body text-muted" key={blocker}>
-                {blocker}
-              </li>
-            ))}
-          </ul>
-        )}
-        {snapshot?.journey.status !== "COMPLETED" && (
-          <form className="mt-4 flex flex-wrap items-end gap-2.5" onSubmit={(event) => { event.preventDefault(); void activate(); }}>
-            <Field label="Activation rationale" className="min-w-[220px] flex-1">
-              <Input
-                value={activationReason}
-                minLength={3}
-                maxLength={1000}
-                placeholder="First production activation approved by the platform owner"
-                disabled={!snapshot?.gate.ready}
-                onChange={(event) => setActivationReason(event.target.value)}
-              />
-            </Field>
-            <Button
-              variant="primary"
-              type="submit"
-              disabled={busy !== null || !snapshot?.gate.ready || activationReason.trim().length < 3}
-            >
-              {busy === "activate" ? "Recording…" : "Activate installation"}
+          {active.key === "inference" && <div className="mt-4 grid gap-3">
+            <Tile className="flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0">
+                <MicroLabel className="block">Endpoint</MicroLabel>
+                <span className="mt-1 block truncate text-body text-text">
+                  {inference?.baseUrl ?? "vLLM, llama.cpp, SGLang, Ollama, TGI, or another OpenAI-compatible server."}
+                </span>
+              </div>
+              <StatusText dot tone={connectionReadiness(inference).tone === "ready" ? "good" : inference ? "warn" : "neutral"}>
+                {connectionReadiness(inference).label}
+              </StatusText>
+            </Tile>
+            {/*
+              * The two traps, stated where they can still be avoided. Neither
+              * appears anywhere in the product today, and both are silent: the
+              * enrolment seed takes the single healthy inference connection and
+              * reads a served model off it, so a second healthy endpoint and a
+              * healthy endpoint with no model alias both end the same way — a
+              * VM2 installer that cannot be generated, for a reason the screen
+              * never named.
+              */}
+            <p className="m-0 text-caption leading-relaxed text-faint">
+              OrcaSynapse seeds VM2 from <strong className="font-semibold text-muted">exactly one</strong> healthy
+              inference connection, and reads the served model off it. A second healthy endpoint removes the ability to
+              enrol rather than adding redundancy, and a connection that tests healthy without a selected model cannot
+              seed anything.
+            </p>
+            <Button className="justify-self-start" variant={active.status === "done" ? "ghost" : "primary"} onClick={() => onConfigure("INFERENCE")}>
+              {inference ? "Manage inference server" : "Connect inference server"}
             </Button>
-          </form>
-        )}
-      </Panel>
-    </section>
+          </div>}
 
-    <PlatformUpdatePanel currentVersion={currentVersion} />
+          {active.key === "runtime" && <div className="mt-4 grid gap-3">
+            {/*
+              * The architecture decision belongs to this step: the target
+              * environment is what decides whether enrolment demands a
+              * commit-pinned runtime and an HTTPS origin.
+              */}
+            <Tile className="flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0">
+                <MicroLabel className="block">Architecture decision</MicroLabel>
+                <span className="mt-1 block text-body text-text">
+                  {architecture
+                    ? `${architecture.topologyMode.toLowerCase().replaceAll("_", " ")} topology · ${architecture.targetEnvironment.toLowerCase()}`
+                    : "Not loaded"}
+                </span>
+              </div>
+              <Button disabled={!snapshot} onClick={() => setArchitectureOpen(true)}>
+                {architecture?.reason ? "Change decision" : "Record decision"}
+              </Button>
+            </Tile>
+          </div>}
 
-    <Panel className="flex flex-wrap items-center justify-between gap-4">
-      <div className="min-w-0">
-        <strong className="block text-label font-semibold text-text">Production controls stay out of the setup path.</strong>
-        <span className="mt-1 block text-body text-muted">
-          Readiness evidence, incidents, evaluations, and recovery drills live in Operations.
+          {active.key === "profile" && <div className="mt-4 grid gap-3">
+            <p className="m-0 text-caption leading-relaxed text-faint">
+              Activating a Profile re-runs the AI-services check first: activation is refused until the Hermes API
+              component has passed, and that check is the only thing that records it.
+            </p>
+            <Button
+              className="justify-self-start"
+              variant={active.status === "done" ? "ghost" : "primary"}
+              disabled={busy !== null}
+              onClick={() => void openProfiles()}
+            >
+              {busy === "ai-services" ? "Re-running the AI-services check…" : readiness.profileReady ? "Manage Agent Profiles" : "Create an Agent Profile"}
+            </Button>
+          </div>}
+        </Panel>
+
+        {active.key === "runtime" && <RuntimeNodesPanel
+          targetEnvironment={architecture?.targetEnvironment ?? null}
+          inferenceReady={readiness.inferenceReady}
+          onConfigureInference={() => onConfigure("INFERENCE")}
+          onNodesChange={onRuntimeNodesChange}
+          onSessionExpired={onSessionExpired}
+        />}
+      </section>}
+    </div>
+
+    {allDone && <Panel>
+      <PanelHeading
+        className="mb-0"
+        kicker="Setup complete"
+        title="This installation is ready for governed sessions"
+        description="Inference, the isolated runtime, and an active Agent Profile are all answering."
+        actions={<Button variant="primary" onClick={() => onOpenWorkspace("Chat")}>Open Session</Button>}
+      />
+    </Panel>}
+
+    <Panel className="grid gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="min-w-0">
+          <strong className="block text-label font-semibold text-text">Production controls stay out of the setup path.</strong>
+          {/*
+            Names only what an operator will actually find. The line used to
+            list five destinations, three of which were wrong after this
+            restructure: pilot readiness was deleted outright (nothing can
+            create a readiness control), the activation record has no screen
+            anywhere yet, and recovery is the button to the right of this
+            sentence rather than something in Operations.
+          */}
+          <span className="mt-1 block text-body text-muted">
+            Incidents and release gates live in Operations. Recovery is here.
+          </span>
+        </div>
+        <div className="flex shrink-0 gap-2">
+          <Button variant="ghost" onClick={onOpenOperations}>Open Operations</Button>
+          <Button variant="ghost" onClick={() => setRecoveryOpen(true)}>Installation recovery</Button>
+        </div>
+      </div>
+      {/*
+        * Stated at the point it matters — directly beneath the sentence that
+        * sends an operator to Operations to record activation — rather than
+        * left to look like their mistake once they get there.
+        *
+        * A PRODUCTION-target installation cannot record activation today, by
+        * two independent server-side mechanisms, and nothing on this screen
+        * changes either one. Deliberately not gated on the three steps being
+        * finished: the deadlock is a property of the target, and an operator
+        * blocked at step 2 for a related reason deserves to know it now.
+        */}
+      {productionBlocked && <Tile className="grid gap-1.5">
+        <strong className="text-label font-semibold text-text">Recording activation needs backend work on a Production target.</strong>
+        <span className="text-body leading-relaxed text-muted">
+          Every passing automated check is downgraded to a warning when the target is Production, which leaves its
+          component short of passed; and the gate adds a Production blocker until a readiness control is accepted, which
+          nothing can create yet. The three steps above are unaffected — the attestation record is what is blocked.
         </span>
-      </div>
-      <div className="flex shrink-0 gap-2">
-        <Button variant="ghost" onClick={onOpenOperations}>Open Operations</Button>
-        <Button variant="ghost" onClick={() => setRecoveryOpen(true)}>Installation recovery</Button>
-      </div>
+      </Tile>}
     </Panel>
 
-    {/*
-      * Two more hand-rolled backdrops become real dialogs. The recovery one
-      * takes a passphrase that is never retained anywhere, so losing focus out
-      * of it mid-entry is not a recoverable mistake.
-      */}
     <Dialog
       open={architectureOpen}
       onClose={() => setArchitectureOpen(false)}
       kicker="Architecture decision"
       title="Topology and target environment"
-      description="Changing the topology or target environment invalidates recorded contract evidence, because that evidence was proven against the previous architecture."
+      description="Saving this resets every recorded component to not-tested and every stage to not-started, because that evidence was proven against the previous architecture. Nothing is deleted, but everything has to be re-run."
       footer={
         <Button variant="primary" type="submit" form="architecture-form" disabled={busy !== null || architectureReason.trim().length < 3}>
           {busy === "architecture" ? "Saving…" : "Save decision"}
@@ -487,53 +499,18 @@ export function OnboardingView({
         </Field>
         {targetEnvironment === "PRODUCTION" && (
           <StatusText tone="warn" className="normal-case">
-            Production additionally requires a verified recovery kit, enterprise identity, and promoted evaluation evidence.
+            Production enrolment additionally requires a 40-character Hermes commit and an HTTPS OrcaSynapse origin.
           </StatusText>
         )}
       </form>
     </Dialog>
 
-    <Dialog
+    <RecoveryKitDialog
       open={recoveryOpen}
+      snapshot={snapshot}
       onClose={() => setRecoveryOpen(false)}
-      kicker="Offline recovery"
-      title="Protect connector encryption"
-      description="Export an encrypted recovery kit and store it outside the OrcaSynapse host. The passphrase and kit are never retained by the dashboard."
-    >
-      {!snapshot
-        ? <p className="m-0 text-body text-faint">Loading recovery state…</p>
-        : <div className="grid gap-4">
-          <form className="grid gap-3" onSubmit={(event) => void exportRecovery(event)}>
-            <Field label="Recovery owner">
-              <Input value={recoveryOwner} minLength={2} maxLength={160} placeholder="Infrastructure recovery team" onChange={(event) => setRecoveryOwner(event.target.value)} />
-            </Field>
-            <Field label="Recovery passphrase">
-              <Input type="password" autoComplete="new-password" value={recoveryPassphrase} minLength={16} maxLength={1024} onChange={(event) => setRecoveryPassphrase(event.target.value)} />
-            </Field>
-            <Field label="Confirm passphrase">
-              <Input type="password" autoComplete="new-password" value={recoveryConfirm} minLength={16} maxLength={1024} onChange={(event) => setRecoveryConfirm(event.target.value)} />
-            </Field>
-            {recoveryConfirm && recoveryPassphrase !== recoveryConfirm && (
-              <StatusText tone="bad" className="normal-case">Passphrases do not match.</StatusText>
-            )}
-            <Button variant="primary" className="justify-self-end" disabled={busy !== null || recoveryOwner.trim().length < 2 || recoveryPassphrase.length < 16 || recoveryPassphrase !== recoveryConfirm} type="submit">
-              {busy === "recovery-export" ? "Encrypting…" : "Export recovery kit"}
-            </Button>
-          </form>
-          <div className="flex items-center gap-3 border-t border-border pt-4">
-            <MicroLabel>Verify retained copy</MicroLabel>
-          </div>
-          <label className="grid cursor-pointer gap-1 rounded border border-dashed border-border-strong bg-raised px-4 py-4 text-center">
-            <span className="text-body text-text">{recoveryFileName || "Select the saved recovery kit"}</span>
-            <Input className="sr-only" type="file" accept="application/json,.json" onChange={(event) => void selectRecoveryFile(event)} />
-          </label>
-          <Field label="Recovery passphrase">
-            <Input type="password" autoComplete="off" value={recoveryPassphrase} minLength={16} maxLength={1024} onChange={(event) => setRecoveryPassphrase(event.target.value)} />
-          </Field>
-          <Button className="justify-self-end" disabled={busy !== null || !recoveryKit || recoveryPassphrase.length < 16} onClick={() => void verifyRecovery()}>
-            {busy === "recovery-verify" ? "Verifying…" : "Verify recovery kit"}
-          </Button>
-        </div>}
-    </Dialog>
+      onSnapshot={setSnapshot}
+      onSessionExpired={onSessionExpired}
+    />
   </div>;
 }

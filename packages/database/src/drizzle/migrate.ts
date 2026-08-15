@@ -105,7 +105,7 @@ export async function runMigrations(connectionString: string): Promise<void> {
         `SELECT count(*)::text AS total FROM pg_tables WHERE schemaname = 'public'`,
       );
       if (Number(existing.rows[0]?.total ?? 0) > 0) {
-        throw new Error(`Existing pre-v3.16.0 database detected. This release requires a fresh installation (${SCHEMA_EPOCH}).`);
+        throw new Error(`Existing pre-v4.6.0 database detected. This release requires a fresh installation (${SCHEMA_EPOCH}).`);
       }
     }
     const database = drizzle(pool);

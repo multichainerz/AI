@@ -20,6 +20,7 @@ import type { AdministratorSession } from "@orcasynapse/contracts";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ApplicationView } from "./application-view.js";
 import { GuardrailsView } from "./guardrails-view.js";
 import { ModelsView } from "./models-view.js";
 import { PromptsView } from "./prompts-view.js";
@@ -72,6 +73,23 @@ const cases: LockedCase[] = [
         onConfigureConnections={elevate}
         onOpenOperations={navigate}
         onSessionExpired={vi.fn()}
+      />);
+    },
+  },
+  /*
+   * Application is the newest of them, split out of Setup when the update check
+   * left the bring-up path. A screen added later is exactly the one that drifts
+   * from the shared promise, so it joins the table on the day it arrives rather
+   * than after someone notices it says something different.
+   */
+  {
+    name: "Application",
+    render: ({ elevate, navigate }) => {
+      render(<ApplicationView
+        session={signedOut}
+        currentVersion="3.19.0"
+        onConfigure={elevate}
+        onOpenOperations={navigate}
       />);
     },
   },

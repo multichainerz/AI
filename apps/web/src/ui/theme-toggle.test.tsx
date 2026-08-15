@@ -21,6 +21,8 @@ describe("ThemeToggle", () => {
     expect(toggle.getAttribute("data-mode")).toBe("dark");
     expect(container.querySelector(".theme-toggle__moon svg")).toBeTruthy();
     expect(container.querySelector(".theme-toggle__sun svg")).toBeTruthy();
+    expect(container.textContent).not.toMatch(/\bDark\b/);
+    expect(container.textContent).not.toMatch(/\bLight\b/);
 
     await user.click(toggle);
 

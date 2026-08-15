@@ -55,9 +55,22 @@ pnpm verify:postgres  # full-migration integration proof (needs ORCASYNAPSE_INTE
 
 ## Release convention
 
+Versions are `vX.Y.Z`. **The minor digit runs 0-9 and then rolls into the
+major**: `2.9.0` was followed by `3.0.0`, not `2.10.0`, and `4.9.0` by `5.0.0`.
+This is not semver — the major carries no compatibility meaning here, because
+database compatibility is gated by the schema epoch
+(`packages/database/src/drizzle/migrate.ts`) and nothing in the product branches
+on a version number. `scripts/test-release-consistency.sh` enforces the roll,
+because the rule held through the whole 2.x line and was then lost for eleven
+releases without anything noticing.
+
+Releases up to and including `ai-v1.99.0` carried an `ai-` prefix. That prefix
+is retired; `apps/api/src/platform-updates.ts` still parses it so deployments
+installed before the rename keep working.
+
 Every release is one commit on `main`:
 
-- Subject: `ai-vX.Y.Z` (nothing else).
+- Subject: `vX.Y.Z` (nothing else).
 - Body: one summary sentence, then lowercase verb-first bullets.
 - The version is bumped in the same commit across the root and every workspace
   `package.json`, `ORCASYNAPSE_VERSION` in
@@ -65,7 +78,9 @@ Every release is one commit on `main`:
   `scripts/install-agentic-node.sh` and `scripts/remove-agentic-node.sh`.
   `scripts/test-release-consistency.sh` enforces the set.
 - A matching entry is added to [CHANGELOG.md](CHANGELOG.md).
-- The commit is tagged `ai-vX.Y.Z` and the tag is pushed.
+- The commit is tagged `vX.Y.Z` and the tag is pushed. Tags are lightweight, so
+  `--follow-tags` pushes none of them: use `git push origin main` then
+  `git push origin vX.Y.Z`.
 
 `pnpm verify` must be green before any release commit.
 
