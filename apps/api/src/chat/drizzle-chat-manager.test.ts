@@ -138,6 +138,42 @@ describe("DrizzleChatManager conversations", () => {
       .rejects.toBeInstanceOf(ChatConfigurationError);
   });
 
+  /*
+   * The second hole increment A closes, and the one the test above cannot see.
+   *
+   * `activeProfile(undefined)` used to fall through to
+   * `orderBy(desc(updatedAt)).limit(1)` -- omit the id and you were handed
+   * whichever profile had been edited most recently. With divisions that is a
+   * free read of another division's agent: no UUID to guess, just leave the
+   * field out.
+   *
+   * Note why this needs its own test rather than strengthening the one above:
+   * that case seeds no profile at all, so it throws whether the guess exists or
+   * not, and would keep passing with the hole wide open. Here a profile *is*
+   * active and reachable, so the only way to pass is to refuse to guess.
+   */
+  it("refuses to guess a profile when the caller names none", async () => {
+    await seedActiveProfile();
+
+    await expect(manager().create(principal, {} as never))
+      .rejects.toBeInstanceOf(ChatConfigurationError);
+  });
+
+  /*
+   * The same 404-not-409 rule the agents side asserts, pinned here too, because
+   * a caller reaches a profile through two doors and only one of them was ever
+   * tested. A profile the caller may not see must be indistinguishable from one
+   * that does not exist -- so this is `ChatConversationNotFoundError` (404) and
+   * not `ChatConfigurationError`, which would say "not active" and thereby
+   * confirm the UUID names a real profile.
+   */
+  it("answers 404 for a profile the caller cannot see", async () => {
+    await seedActiveProfile();
+
+    await expect(manager().create(principal, { profileId: randomUUID() } as never))
+      .rejects.toBeInstanceOf(ChatConversationNotFoundError);
+  });
+
   it("pins the conversation to the profile's model and rejects a mismatch", async () => {
     const profileId = await seedActiveProfile();
 

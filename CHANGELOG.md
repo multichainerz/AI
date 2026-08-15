@@ -5,6 +5,40 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v6.1.0 — 2026-08-16
+
+Closes the three profile-selection holes, which is increment A of
+`docs/DIVISIONS_PLAN.md` and the precondition for divisions.
+
+Assigning a profile to a division means nothing while any signed-in user can
+reach any profile, and three separate paths allowed exactly that. `listProfiles`
+ignored its principal, so every user saw every active profile. `submitRun` took
+the caller's profile UUID on trust — the row was loaded and run, with that
+profile's prompt and tools. `activeProfile` was reachable with no id at all and
+fell through to "whichever profile was edited most recently", so omitting a
+field was enough to be handed someone else's agent.
+
+All three now resolve a profile through one shared rule in
+`apps/api/src/agents/profile-visibility.ts`. Divisions add their clause to that
+one function and nothing else changes, which is what makes the increment worth
+shipping before the feature it serves.
+
+- add `profileVisibleTo`, the single visibility rule both managers consult
+- thread the principal through `listProfiles`, which was `_principal`
+- check visibility in `submitRun` before any runtime state is read, so a caller
+  who may not see a profile cannot learn whether the runtime is up by asking
+- require an explicit profile id in `activeProfile`; a caller with none is now
+  a compile error rather than a silent default
+- answer 404 rather than 409 for a profile the caller cannot see, so refusal is
+  indistinguishable from absence — a 409 would confirm the UUID names something
+  real, which is the fact a division boundary exists to withhold
+- keep a visible but inactive profile a 409, so an operator is never told their
+  own suspended profile has vanished
+
+Behaviour is otherwise unchanged: with no divisions defined the rule admits
+everything. The one visible change is that starting a session without naming a
+profile now says so instead of guessing.
+
 ## v6.0.4 — 2026-08-16
 
 Rewrites the connection modal's reading order. It serves all three connection

@@ -33,6 +33,7 @@ import {
 } from "@orcasynapse/database";
 import { and, asc, count, desc, eq, gt, gte, inArray, isNotNull, ne, sql, type SQL } from "drizzle-orm";
 import type { AgentManager, AgentPrincipal } from "../agents/agent-manager.js";
+import { profileVisibleTo } from "../agents/profile-visibility.js";
 import { inspectInputText } from "../guardrails/runtime-policy.js";
 import {
   ChatConfigurationError,
@@ -416,7 +417,15 @@ export class DrizzleChatManager implements ChatManager {
   }
 
   async create(principal: ChatPrincipal, input: CreateChatConversation): Promise<ChatConversationSummary> {
-    const profile = await this.activeProfile(input.profileId);
+    /*
+     * `profileId` stays optional in the contract so an omitted field answers
+     * with this sentence rather than a schema error naming a field the operator
+     * never filled in. What it must not do any more is default to something.
+     */
+    if (!input.profileId) {
+      throw new ChatConfigurationError("Select an Agent Profile to start a Session.");
+    }
+    const profile = await this.activeProfile(principal, input.profileId);
     if (input.modelAlias && input.modelAlias !== profile.modelAlias) {
       throw new ChatConfigurationError(`Agent '${profile.displayName}' uses model '${profile.modelAlias}'.`);
     }
@@ -1004,7 +1013,7 @@ export class DrizzleChatManager implements ChatManager {
         if (active.length > 0) {
           throw new ChatConversationConflictError("Stop the active Hermes run before forking this conversation.");
         }
-        await this.activeProfile(source.profileId);
+        await this.activeProfile(principal, source.profileId);
         const through = input.throughMessageId
           ? source.messages.find(({ id }) => id === input.throughMessageId)
           : source.messages.at(-1);
@@ -1194,20 +1203,35 @@ export class DrizzleChatManager implements ChatManager {
     };
   }
 
-  private async activeProfile(profileId?: string): Promise<{ id: string; displayName: string; modelAlias: string; version: number }> {
+  /**
+   * Resolve one named, visible, active profile. Never guess one.
+   *
+   * The id was optional until increment A, and omitting it fell through to
+   * `orderBy(desc(updatedAt)).limit(1)` -- the caller was handed whichever
+   * profile had been edited most recently. Harmless while every user may use
+   * every profile; a free read of another division's agent the moment they may
+   * not, requiring no UUID at all, just an absent field.
+   *
+   * Now the id is required by the signature, so a caller that has none is a
+   * compile error rather than a silent default, and the lookup no longer
+   * filters on status: visibility and activeness are different answers with
+   * different codes. Not visible is 404 (see `profileVisibleTo` for why
+   * absence and refusal must be indistinguishable); visible but not active is a
+   * configuration conflict naming what to fix.
+   */
+  private async activeProfile(
+    principal: ChatPrincipal,
+    profileId: string,
+  ): Promise<{ id: string; displayName: string; modelAlias: string; version: number }> {
     const [profile] = await this.database
-      .select({ id: agentProfile.id, activeVersion: agentProfile.activeVersion })
+      .select({ id: agentProfile.id, status: agentProfile.status, activeVersion: agentProfile.activeVersion })
       .from(agentProfile)
-      .where(and(
-        ...(profileId ? [eq(agentProfile.id, profileId)] : []),
-        eq(agentProfile.status, "ACTIVE"),
-        isNotNull(agentProfile.activeVersion),
-      ))
-      .orderBy(desc(agentProfile.updatedAt))
+      .where(eq(agentProfile.id, profileId))
       .limit(1);
-    if (!profile?.activeVersion) throw new ChatConfigurationError(profileId
-      ? "The selected Agent Profile is not active."
-      : "Create and activate one Hermes Profile before starting Chat.");
+    if (!profileVisibleTo(principal, profile)) throw new ChatConversationNotFoundError();
+    if (profile.status !== "ACTIVE" || !profile.activeVersion) {
+      throw new ChatConfigurationError("The selected Agent Profile is not active.");
+    }
     const [version] = await this.database
       .select({
         displayName: agentProfileVersion.displayName,

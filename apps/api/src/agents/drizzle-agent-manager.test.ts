@@ -275,6 +275,39 @@ describe("DrizzleAgentManager runs", () => {
       .rejects.toThrow(/active agent profile/);
   });
 
+  /*
+   * The hole increment A closes: `submitRun` reached a profile by whatever UUID
+   * the caller posted, with no check that the caller may use it. It is asserted
+   * as a 404 rather than a 409 because the answer must not distinguish "this
+   * profile is not yours" from "this profile does not exist" -- once divisions
+   * land, a 409 here would confirm another division's UUID names something real.
+   *
+   * Before the fix this failed with AgentConflictError ("Only an active agent
+   * profile can accept runs"), which is the 409 that leaks exactly that.
+   */
+  it("answers 404, not 409, for a profile the caller cannot see", async () => {
+    await enableRuntime();
+    await enrolHealthyRuntime();
+
+    await expect(manager().submitRun(principal, { profileId: randomUUID(), input: "hello" } as never))
+      .rejects.toBeInstanceOf(AgentNotFoundError);
+  });
+
+  /*
+   * The other half of the same rule, and the reason the 404 above is not simply
+   * a relabelled 409: a profile that exists but is suspended stays a conflict.
+   * It is visible, the caller may see it, it just cannot take work. Collapsing
+   * both into 404 would tell an operator their own profile had vanished.
+   */
+  it("keeps a visible but inactive profile a 409", async () => {
+    const created = await manager().createProfile(principal, profileInput());
+    await enableRuntime();
+    await enrolHealthyRuntime();
+
+    await expect(manager().submitRun(principal, { profileId: created.id, input: "hello" } as never))
+      .rejects.toBeInstanceOf(AgentConflictError);
+  });
+
   it("scopes run visibility to the requesting owner unless the caller may see all", async () => {
     const active = await activeProfile();
     await enableRuntime();

@@ -1,6 +1,6 @@
 {
   "name": "@orcasynapse/security",
-  "version": "6.0.4",
+  "version": "6.1.0",
   "description": "Envelope encryption and credential primitives for OrcaSynapse",
   "license": "BUSL-1.1",
   "private": true,

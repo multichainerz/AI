@@ -41,6 +41,7 @@ import {
   type AgentManager,
   type AgentPrincipal,
 } from "./agent-manager.js";
+import { profileVisibleTo } from "./profile-visibility.js";
 
 interface StoredVersion {
   id: string;
@@ -315,7 +316,7 @@ export class DrizzleAgentManager implements AgentManager {
    * crosses over -- `getRuntimeControl`'s reason and operator stay on the admin
    * route that returns them.
    */
-  async listProfiles(_principal: AgentPrincipal, includeInactive: boolean): Promise<AgentProfileList> {
+  async listProfiles(principal: AgentPrincipal, includeInactive: boolean): Promise<AgentProfileList> {
     const [profiles, runtime] = await Promise.all([
       this.database.query.agentProfile.findMany({
         ...(includeInactive
@@ -328,7 +329,19 @@ export class DrizzleAgentManager implements AgentManager {
       this.getRuntimeControl(),
     ]);
     return {
-      items: (profiles as LoadedProfile[]).map((profile) => profileDto(storedProfile(profile), includeInactive)),
+      /*
+       * The principal was `_principal` until increment A: this list was the
+       * same for every signed-in user, so a division could never bound it.
+       *
+       * Filtering through the shared rule rather than adding a `where` clause
+       * is deliberate. The rule is one function that both this and `submitRun`
+       * consult, so the list and the gate cannot disagree -- a profile you
+       * cannot run is a profile you never see named. Increment D adds the
+       * division clause to that function and this narrows with it, untouched.
+       */
+      items: (profiles as LoadedProfile[])
+        .filter((profile) => profileVisibleTo(principal, profile))
+        .map((profile) => profileDto(storedProfile(profile), includeInactive)),
       executionEnabled: runtime.enabled,
     };
   }
@@ -518,6 +531,21 @@ export class DrizzleAgentManager implements AgentManager {
         .from(agentProfile)
         .where(eq(agentProfile.id, input.profileId))
         .limit(1);
+      /*
+       * Before anything else is read, and before any runtime state is
+       * disclosed: may this caller use this profile at all?
+       *
+       * `submitRun` previously took the caller's UUID on trust -- the row was
+       * loaded and run. A profile that does not exist fell through to the
+       * "only an active agent profile can accept runs" conflict below, which is
+       * a 409, and a 409 confirms the UUID names something real. That is the
+       * fact a division boundary exists to withhold, so it answers 404 here.
+       *
+       * Placed ahead of the runtime checks deliberately: a caller who may not
+       * see a profile should not learn whether the runtime is up by asking
+       * about it.
+       */
+      if (!profileVisibleTo(principal, profile)) throw new AgentNotFoundError();
       const runtimeNodes = await transaction
         .select({
           status: hermesRuntimeNode.status,
