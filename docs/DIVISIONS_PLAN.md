@@ -120,6 +120,49 @@ right call only when the number of divisions makes a node each genuinely absurd 
 and the project at that point is *mirroring a bank into the corpus plane*, which
 is larger than everything in this plan put together, not the install.
 
+#### What it would actually cost to reach, verified
+
+Three facts settle the shape, and two of them are about our code rather than
+Hindsight's.
+
+**1. Nothing new to provision for embeddings.** Hindsight's embedded daemon
+"computes embeddings via `sentence_transformers`" — in-process, no endpoint. Mem0
+by contrast declares embedder providers and dimensions
+(`text-embedding-3-small` at 1536, `nomic-embed-text` at 768) and would need one
+served. That is the second reason to prefer Hindsight here.
+
+**2. Its LLM reuses a path that already exists.** The plugin offers an
+`openai_compatible` provider, and VM2 is already handed
+`inferenceGatewayBaseUrl(controlPlaneUrl)` — VM1's `/internal/v1` — with a
+gateway key issued at enrolment. So the reflect step points at the same URL, key
+and alias Hermes already uses. No new route, no new credential, and the calls
+stay proxied through VM1 rather than a plugin opening its own channel to the
+GPUs. Note the asymmetry with the paragraph above: VM1's *inference gateway* is
+deliberately exposed to enrolled nodes; VM1's *database* is deliberately exposed
+to nothing. "Point it at VM1" is right for one and disqualifying for the other.
+
+**3. The scoping key is missing on our side, and that is the linchpin.**
+`ensureNativeSession` creates a Hermes session with exactly
+`{ id, model, source }` — no user identity. Hermes threads a `user_id` from its
+gateway to plugins, but we never populate it, so every session would land in
+Hindsight's static `bank_id` default of `"hermes"`: one bank for the whole
+deployment, and the same non-tenancy as the files.
+
+So the work is not the install. It is: confirm the gateway's session API accepts
+an identity, thread one from the worker (which already carries `ownerSubject`),
+and only then does a bank mean anything.
+
+**And the identity to send is the division, not the user.** Per-user buckets are
+finer than this plan wants: a division's agent should accumulate knowledge its
+whole division benefits from, and per-user memory would give each person a
+private agent that learns nothing from its colleagues — a different product.
+`bank_id` per division is the mapping; `ownerSubject` is the wrong key even
+though it is the one already to hand.
+
+None of this changes the ordering. It sharpens what "adopt Hindsight" would mean:
+one field threaded through the session API, one Postgres on VM2, and then the
+mirroring project that is the actual cost.
+
 ## The precondition
 
 Assigning a profile to a division means nothing until three holes are closed.
