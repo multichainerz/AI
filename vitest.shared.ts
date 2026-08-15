@@ -53,6 +53,24 @@ export const DATABASE_SUITE_HOOK_TIMEOUT_MS = 120_000;
  * the thing somebody has to remember. Whole packages have no such hole: the
  * price is that the pure unit tests living beside the database ones in these
  * four packages report a hang in 30s instead of 5s.
+ *
+ * If you are here because `apps/web` tests timed out at 5000ms, check what else
+ * was running first. Three separate observers hit exactly that in one session --
+ * `app-dashboard-metrics`, `front-page` and `recovery-kit-dialog`, all at the
+ * default -- while several full suites ran *concurrently with each other* on one
+ * workstation. Every one passed alone and on rerun. CI does not reproduce that
+ * condition: it runs `pnpm -r test` once, which is the four-vCPU budget the 2.3s
+ * measurement above was taken under. Widening the dashboard's ceiling on that
+ * evidence would triple the time a real hang takes to surface in exchange for
+ * quieting an artifact of how the machine was being driven.
+ *
+ * Worth distinguishing from a genuine race, which looks different and is a real
+ * bug: `corpus-view.test.tsx` asserted a fetch it never awaited and passed only
+ * by luck -- measured inside `waitFor`, the call count was zero in 10 of 10 runs
+ * on an idle machine. It failed as an AssertionError in under a second, nowhere
+ * near any budget, and adding load did not change its rate. A timeout says the
+ * machine was busy; an assertion failure half a second in says the test was
+ * wrong.
  */
 export const databaseBackedPackage = defineConfig({
   test: {

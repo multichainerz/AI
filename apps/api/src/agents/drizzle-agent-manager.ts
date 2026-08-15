@@ -304,17 +304,32 @@ export class DrizzleAgentManager implements AgentManager {
     private readonly boundaryVerifier?: AgentBoundaryVerifier,
   ) {}
 
+  /*
+   * The list, and whether anything on it may execute.
+   *
+   * `executionEnabled` is answered here rather than composed in the route so
+   * that no caller can return a profile list without it. The enterprise route
+   * is the reason: it is the only agent read an `agents:use` session has, and
+   * the boundary's own route is `adminOnly`, so a dashboard that could not read
+   * the flag here would go back to assuming execution was on. Only the boolean
+   * crosses over -- `getRuntimeControl`'s reason and operator stay on the admin
+   * route that returns them.
+   */
   async listProfiles(_principal: AgentPrincipal, includeInactive: boolean): Promise<AgentProfileList> {
-    const profiles = await this.database.query.agentProfile.findMany({
-      ...(includeInactive
-        ? {}
-        : { where: and(eq(agentProfile.status, "ACTIVE"), isNotNull(agentProfile.activeVersion)) }),
-      with: profileWith(),
-      orderBy: [desc(agentProfile.updatedAt)],
-      limit: 100,
-    });
+    const [profiles, runtime] = await Promise.all([
+      this.database.query.agentProfile.findMany({
+        ...(includeInactive
+          ? {}
+          : { where: and(eq(agentProfile.status, "ACTIVE"), isNotNull(agentProfile.activeVersion)) }),
+        with: profileWith(),
+        orderBy: [desc(agentProfile.updatedAt)],
+        limit: 100,
+      }),
+      this.getRuntimeControl(),
+    ]);
     return {
       items: (profiles as LoadedProfile[]).map((profile) => profileDto(storedProfile(profile), includeInactive)),
+      executionEnabled: runtime.enabled,
     };
   }
 

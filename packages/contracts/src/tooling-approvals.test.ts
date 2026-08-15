@@ -1,13 +1,20 @@
-import { decideToolApprovalSchema, toolApprovalListSchema, type ToolApproval } from "@orcasynapse/contracts";
+import { decideToolApprovalSchema, toolApprovalListSchema, type ToolApproval } from "./tooling.js";
 import { describe, expect, it } from "vitest";
 
 /**
- * The approvals panel is driven by data that arrives in an effect, and
- * `renderToStaticMarkup` does not run effects — an earlier version of this file
- * asserted against markup where the panel had never rendered, and passed
- * because an unrelated word happened to appear elsewhere. These test the
- * contract the panel and the API agree on instead, which is the part that can
- * actually break silently.
+ * The approval wire format, tested where it lives.
+ *
+ * This began in `apps/web` as a test of the approvals panel. Two things then
+ * happened to it. It stopped asserting against markup, because
+ * `renderToStaticMarkup` runs no effects and the panel it was "checking" had
+ * never rendered — it passed on an unrelated word appearing elsewhere. Then the
+ * panel itself was deleted in v5.1.0.
+ *
+ * What survived both is the part that was always doing the work: the contract
+ * the API still enforces on `POST /approvals/:approvalId/decision`, which is
+ * live whether or not a screen drives it. An audit read the file's location and
+ * called it orphaned; it was misfiled, which is a different thing, so it moved
+ * here rather than being deleted.
  */
 
 const approval: ToolApproval = {

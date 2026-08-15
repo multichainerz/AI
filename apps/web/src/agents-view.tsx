@@ -97,6 +97,31 @@ function draftFromProfile(profile: AgentProfile): CreateAgentProfile {
 
 export function AgentsView({ unlocked, session, administrator, activationReady, activationMessage, oidcConfigured, onSignIn, onConfigure, onOpenChat, onOpenReadiness, onSessionExpired }: AgentsViewProps) {
   const [profiles, setProfiles] = useState<AgentProfile[]>([]);
+  /*
+   * The deployment-wide execution boundary, as the profile list reports it.
+   *
+   * `null` is "not read yet" and is not the same as `false`: the button below
+   * distinguishes an unloaded screen from one that has been told execution is
+   * off, and only the second may say so.
+   *
+   * Read from the profile list rather than from `runtime` because
+   * `GET /admin/agents/runtime` is `adminOnly` -- see `runtime` below.
+   */
+  const [executionEnabled, setExecutionEnabled] = useState<boolean | null>(null);
+  /*
+   * The boundary's full administrative record: why, by whom, when.
+   *
+   * Fetched only for administrators, because its route is `adminOnly`, so it is
+   * `null` for everyone else. Read in exactly two places, both of which an
+   * enterprise identity can never reach: the `ExecutionBoundary` panel, and
+   * `verifyProfileForChat`'s decision to switch the boundary on, which is
+   * behind `agents:manage`.
+   *
+   * Nothing that decides whether a control is *offered* may read it. That was
+   * the defect: `administrator ? runtime?.enabled === true : true` is
+   * permissive for exactly the identity that cannot fetch it, so use
+   * `executionEnabled` above for any such question.
+   */
   const [runtime, setRuntime] = useState<AgentRuntimeControl | null>(null);
   const [metrics, setMetrics] = useState<AgentMetrics | null>(null);
   const [runs, setRuns] = useState<AgentRun[]>([]);
@@ -172,6 +197,13 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
   const loadProfiles = async () => {
     const profileList = await getAgentProfiles(administrator);
     setProfiles(profileList.items);
+    // Both identity modes take the boundary from here, so the gate below has one
+    // source rather than one per role -- the shape that let the two disagree.
+    // `?? null` rather than `?? true`: an API too old to send the flag is an API
+    // this dashboard cannot ask about the boundary, and the safe reading of "I
+    // do not know" is to withhold the session rather than offer one the run
+    // would refuse.
+    setExecutionEnabled(profileList.executionEnabled ?? null);
     setSelectedProfileId((current) => current || profileList.items.find(({ status }) => status === "ACTIVE")?.id || "");
     if (administrator) setRuntime(await getAgentRuntime());
   };
@@ -180,7 +212,7 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
 
   useEffect(() => {
     if (!unlocked) {
-      setProfiles([]); setRuntime(null); setMetrics(null); setRuns([]); runsRef.current = [];
+      setProfiles([]); setExecutionEnabled(null); setRuntime(null); setMetrics(null); setRuns([]); runsRef.current = [];
       return;
     }
     let active = true;
@@ -362,8 +394,27 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
     );
   }
 
-  const chatAvailable = profiles.some(({ status }) => status === "ACTIVE")
-    && (administrator ? runtime?.enabled === true : true);
+  /*
+   * Both halves of "can this reader start a session", gated identically for
+   * both identity modes.
+   *
+   * It used to fall back to `true` for a non-administrator, because the only
+   * source of the boundary was the admin-only route they cannot call. An
+   * enterprise user was shown an enabled Open Session while execution was
+   * switched off, and their run was refused at submission -- after they had
+   * typed the message.
+   */
+  const chatAvailable = profiles.some(({ status }) => status === "ACTIVE") && executionEnabled === true;
+  /*
+   * Which half is missing, said out loud. "Session not ready" reads as a
+   * complaint about the Profile, and when the boundary is off the Profile is the
+   * one thing in order -- and the one thing an enterprise reader could not fix
+   * anyway. The boundary wins when both are missing: it is the outer gate, and
+   * no Profile change clears it.
+   *
+   * `null` is still "not read yet", so an unloaded screen makes neither claim.
+   */
+  const chatLabel = chatAvailable ? "Open Session" : executionEnabled === false ? "Execution is off" : "Session not ready";
 
   return (
     <div className="grid gap-5">
@@ -377,7 +428,7 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
           ? "Immutable Profile Distributions and their verified activation, the runs each one has produced, and the global boundary deciding whether any of it may execute."
           : "Immutable Profile Distributions and their verified activation, and the runs you have produced against them."}
         actions={<>
-          <Button disabled={!chatAvailable} onClick={onOpenChat}>{chatAvailable ? "Open Session" : "Session not ready"}</Button>
+          <Button disabled={!chatAvailable} onClick={onOpenChat}>{chatLabel}</Button>
           {/* `.catch(fail)` like every other call site here: without it an
               idled-out session rejects unhandled, so neither the Alert nor the
               re-auth path fires and the screen keeps its stale data. */}

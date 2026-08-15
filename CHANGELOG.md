@@ -5,6 +5,58 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v5.5.0 — 2026-08-15
+
+Tells an enterprise user the truth about whether a session will run, fixes a
+test that only ever passed by luck, and records why the dashboard suite's
+timeouts are not what they look like.
+
+**An enterprise user was offered a session the deployment was going to refuse.**
+The agent-execution boundary lives behind `agents:read`, which an enterprise
+session can never hold, so the dashboard could not read it and assumed
+permissively — the run was then refused at submission, after the message had
+been typed.
+
+- carry `executionEnabled` on the profile list, the one agent route both
+  identity modes can read, and gate the session button on it for both
+- derive it in the manager rather than the route, so no route can return a list
+  without it and the enterprise route gained no admin-scoped read
+- carry only that bit: why execution was switched off, by whom and when stay on
+  the boundary's own record behind `agents:read`, pinned by a test comparing the
+  exact key sets
+- make the field optional on the wire and fail closed when it is absent. It
+  shipped required and broke a live deployment on the first dashboard load: the
+  API there was two majors behind, omitted it, and the whole Agents screen threw
+  a Zod issue rather than degrading. Every in-place upgrade restarts web and api
+  at slightly different moments, so meeting an older API is a normal state — and
+  `AGENT_RUN_EVENT_TYPES` already states that principle a few lines above.
+  Optional is not permissive here: the reader requires `=== true`, so silence
+  withholds the session rather than granting it, which is stricter than the
+  default it replaced
+
+**A test that could not have caught its own subject.** `corpus-view.test.tsx`
+asserted that a revisions fetch had happened, synchronously, in the same commit
+that triggered the effect making it. Measured inside `waitFor`, the call count
+was zero in 10 of 10 runs on an idle machine: the assertion had no happens-before
+relationship with the fetch and passed only when the event loop happened to
+oblige. It is awaited now — 40 consecutive full-suite runs green, and reverting
+it brings the failure back at 2 in 20.
+
+- move the tool-approval wire-format tests into `packages/contracts`, where the
+  schemas they exercise live. An audit called the file orphaned because its name
+  referenced a deleted panel; the panel is gone but the contract is still
+  enforced on a live route, so deleting it would have removed real coverage
+
+**Why the dashboard suite's 5s timeouts are not a budget problem.** Three
+observers hit `app-dashboard-metrics`, `front-page` and `recovery-kit-dialog`
+timing out in one session, while several full suites ran concurrently with each
+other on one workstation. CI does not reproduce that: it runs `pnpm -r test`
+once, the four-vCPU budget the existing 2.3s measurement was taken under.
+`vitest.shared.ts` now records the distinction, because widening the ceiling on
+that evidence would triple the time a real hang takes to surface.
+
+Also adds `docs/DIVISIONS_PLAN.md` — a plan only, nothing implemented.
+
 ## v5.4.0 — 2026-08-15
 
 Increment 3 of `docs/IN_DASHBOARD_UPDATE_PLAN.md`, the upgrade harness that

@@ -210,7 +210,20 @@ describe("CorpusView", () => {
 
     expect(await screen.findByText("Metadata-only access")).toBeTruthy();
     expect(api.getHermesCorpusEntries).toHaveBeenCalledWith(expect.objectContaining({ includeContent: false }));
-    expect(api.getHermesCorpusRevisions).toHaveBeenCalledWith(ENTRY_ID, false);
+    /*
+     * Awaited, not read. The revisions fetch is a second effect rather than
+     * part of the render that put "Metadata-only access" on screen: it fires
+     * when `selected` first becomes an entry, in the passive effect of that
+     * same commit. `findByText` resolves off the DOM mutation and React
+     * flushes passive effects after it, so measured at the instant the text
+     * appears this mock had been called zero times in 10 of 10 runs. What
+     * used to carry the synchronous read was the drain Testing Library runs
+     * after `waitFor`: its 0ms timer and the scheduler's `setImmediate` sit
+     * in different event-loop phases, so an idle loop reaches the effect
+     * first and a loaded one reaches the timer first. That coin landed wrong
+     * in 2 of 20 full-suite runs, reporting "Number of calls: 0".
+     */
+    await waitFor(() => expect(api.getHermesCorpusRevisions).toHaveBeenCalledWith(ENTRY_ID, false));
     expect(api.getHermesCorpusMutations).not.toHaveBeenCalled();
     expect(screen.queryByText("Keep responses concise.")).toBeNull();
   });

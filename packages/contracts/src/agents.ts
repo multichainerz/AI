@@ -163,7 +163,38 @@ export const agentProfileSchema = z.object({
   updatedAt: z.iso.datetime(),
 });
 
-export const agentProfileListSchema = z.object({ items: z.array(agentProfileSchema) });
+export const agentProfileListSchema = z.object({
+  items: z.array(agentProfileSchema),
+  /**
+   * Whether the deployment-wide execution boundary currently admits runs.
+   *
+   * The boundary's own record lives behind `agents:read` on
+   * `GET /admin/agents/runtime`, which an enterprise session cannot call: its
+   * scopes are `chat:use` and `agents:use` and never an `AdminScope`. So the
+   * dashboard could not tell a non-administrator whether execution was on, and
+   * offered them a session anyway -- the run was then refused at submission
+   * with `AgentRuntimeDisabledError`, after they had typed the message.
+   *
+   * This is the one bit of that record every caller is already subject to, so
+   * it rides on the list both identity modes can read. Deliberately only the
+   * bit: why it was switched off, by whom and when describe an operator's
+   * decision rather than this caller's permission, and stay on
+   * `agentRuntimeControlSchema` behind the admin scope.
+   *
+   * Optional on the wire, and the reason is the same one stated for the event
+   * types above: a dashboard can meet an API that predates a field. This one
+   * shipped as required and immediately broke a live deployment whose API was
+   * two majors behind -- the whole Agents screen threw on a Zod issue rather
+   * than degrading, and every in-place upgrade restarts web and api at slightly
+   * different moments, so that skew is a normal state rather than an accident.
+   *
+   * Optional does not mean permissive here, which is the trap this replaces.
+   * The consumer requires `=== true`, so an absent flag reads as "not known to
+   * be enabled" and the session is withheld -- strictly safer than the boolean
+   * default it used to guess. The API always sends it; only the reader forgives.
+   */
+  executionEnabled: z.boolean().optional(),
+});
 
 export const submitAgentRunSchema = z.object({
   profileId: z.uuid(),

@@ -129,8 +129,14 @@ interface ApiState {
   metrics?: Partial<{ queuedRuns: number; runningRuns: number; completedRuns: number; failedRuns: number }>;
 }
 
+/*
+ * `enabled` drives both, because on the API both come from one
+ * `getRuntimeControl()` read: the boundary's own admin-only route, and the
+ * `executionEnabled` flag the enterprise-readable profile list carries so a
+ * non-administrator can be told the same fact.
+ */
 function setupApi({ profiles: profileList = profiles, runs: runList = runs, enabled = true, metrics = {} }: ApiState = {}) {
-  api.getAgentProfiles.mockResolvedValue({ items: profileList });
+  api.getAgentProfiles.mockResolvedValue({ items: profileList, executionEnabled: enabled });
   api.getAgentRuns.mockResolvedValue({ items: runList });
   api.getAgentRunEvents.mockResolvedValue({ items: events });
   api.getAgentRuntime.mockResolvedValue({ enabled, reason: "Verified against Hermes on node vm2-a." });
@@ -572,6 +578,85 @@ describe("agents", () => {
     // The wording that implied a runtime consequence, gone. A plain substring
     // check over the whole dialog, so no element boundary can hide it.
     expect(dialog.textContent).not.toContain("Runtime installation remains evidence-gated");
+  });
+
+  it("withholds the session when the API is too old to say whether execution is on", async () => {
+    /*
+     * A live deployment hit this on the first dashboard load: the API was two
+     * majors behind, omitted `executionEnabled`, and the field was required, so
+     * the whole screen threw a Zod issue instead of degrading. Every in-place
+     * upgrade restarts web and api at slightly different moments, so meeting an
+     * older API is normal rather than exceptional.
+     *
+     * Two claims here, and the second is the one that matters: the screen still
+     * renders, and it does not read silence as permission.
+     */
+    api.getAgentProfiles.mockResolvedValue({ items: profiles });
+    await view({ administrator: false });
+
+    // Rendered, not thrown -- and the Profile is ACTIVE, so the button below is
+    // withheld by the unknown boundary rather than by a missing profile.
+    expect(screen.getByText("2 profiles")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Open Session" })).toBeNull();
+  });
+
+  it("does not offer an enterprise user a session the boundary is going to refuse", async () => {
+    /*
+     * The defect this file was opened for. `GET /admin/agents/runtime` is
+     * `adminOnly`, an enterprise session holds `agents:use` and no `AdminScope`,
+     * so the boundary was simply never fetched for them and the gate read
+     * `administrator ? runtime?.enabled === true : true` -- permissive for
+     * exactly the identity that could not check. They pressed Open Session and
+     * the run was refused at submission with `AgentRuntimeDisabledError`.
+     */
+    setupApi({ enabled: false });
+    await view({ administrator: false });
+    // The Profile is ACTIVE and the screen is fully loaded, so the button below
+    // is withheld by the boundary rather than missing from an unrendered page.
+    expect(screen.getByText("2 profiles")).toBeTruthy();
+    expect(screen.getByText("active")).toBeTruthy();
+
+    expect(screen.queryByRole("button", { name: "Open Session" })).toBeNull();
+    const withheld = screen.getByRole("button", { name: "Execution is off" });
+    expect(withheld.hasAttribute("disabled")).toBe(true);
+    // "Session not ready" blamed the Profile, which is the one thing here that
+    // is in order -- and the one thing this reader could do nothing about.
+    expect(screen.queryByText("Session not ready")).toBeNull();
+
+    // The same fixture with the boundary on offers it, which is what makes the
+    // absence above a judgement about the boundary.
+    cleanup();
+    setupApi({ enabled: true });
+    await view({ administrator: false });
+    expect(screen.getByRole("button", { name: "Open Session" }).hasAttribute("disabled")).toBe(false);
+  });
+
+  it("gates an administrator's Open Session on the same flag, not a second source", async () => {
+    // The other identity mode. It was already gated -- on `runtime?.enabled`
+    // from a second call -- so the assertion worth making is that moving both
+    // onto the profile list's flag did not quietly ungate this one.
+    setupApi({ enabled: false });
+    await view();
+    expect(within(boundary()).getByText("OFF")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Execution is off" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.queryByRole("button", { name: "Open Session" })).toBeNull();
+
+    cleanup();
+    setupApi({ enabled: true });
+    await view();
+    expect(screen.getByRole("button", { name: "Open Session" }).hasAttribute("disabled")).toBe(false);
+  });
+
+  it("still blames the Profile when the Profile really is what is missing", async () => {
+    /*
+     * Execution is on and there is no ACTIVE Profile: the boundary wording would
+     * be a false statement, and this is the case the old copy was written for.
+     * Both readings have to survive, or the fix has only moved the wrong answer.
+     */
+    setupApi({ enabled: true, profiles: [profiles[1]!], runs: [] });
+    await view({ administrator: false });
+    expect(screen.getByRole("button", { name: "Session not ready" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.queryByRole("button", { name: /Execution is off/ })).toBeNull();
   });
 
   it("keeps both halves behind an authenticated workspace", () => {

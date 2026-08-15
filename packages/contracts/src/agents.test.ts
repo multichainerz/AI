@@ -3,7 +3,9 @@ import {
   AGENT_RUN_ENDED_EVENT_TYPE,
   AGENT_RUN_EVENT_TYPES,
   AGENT_RUN_STATUSES,
+  agentProfileListSchema,
   agentRunSchema,
+  agentRuntimeControlSchema,
   createAgentProfileSchema,
   isAgentRunEndedEventType,
   updateAgentRuntimeControlSchema,
@@ -33,6 +35,47 @@ describe("agent contracts", () => {
   it("requires an operator reason for runtime changes", () => {
     expect(updateAgentRuntimeControlSchema.safeParse({ enabled: true, reason: "Acceptance checks passed." }).success).toBe(true);
     expect(updateAgentRuntimeControlSchema.safeParse({ enabled: false, reason: "x" }).success).toBe(false);
+  });
+
+  it("makes a profile list state whether execution is switched on", () => {
+    expect(agentProfileListSchema.parse({ items: [], executionEnabled: false }).executionEnabled).toBe(false);
+    expect(agentProfileListSchema.parse({ items: [], executionEnabled: true }).executionEnabled).toBe(true);
+  });
+
+  it("still parses a list from an API too old to send the flag", () => {
+    /*
+     * This shipped as required and broke a live deployment on the first
+     * dashboard load: the API was two majors behind, omitted the field, and the
+     * whole Agents screen threw a Zod issue instead of degrading. Every in-place
+     * upgrade restarts web and api at slightly different moments, so meeting an
+     * older API is a normal state.
+     *
+     * Absent must therefore parse -- and must not read as permitted. The
+     * consumer requires `=== true`, so `undefined` withholds the session, which
+     * is stricter than the permissive default this whole field replaced.
+     */
+    const list = agentProfileListSchema.parse({ items: [] });
+    expect(list.executionEnabled).toBeUndefined();
+    expect(list.executionEnabled === true).toBe(false);
+  });
+
+  it("keeps the boundary's administrative record off the list every caller reads", () => {
+    /*
+     * The scope line. `reason`, `updatedAt` and `updatedBy` say who switched
+     * execution off and why; they belong to the administrator's boundary record
+     * behind `agents:read`, and the enterprise-readable list carries only the
+     * bit that changes what its reader may do.
+     */
+    const boundary = agentRuntimeControlSchema.parse({
+      enabled: false, reason: "Suspended pending acceptance.",
+      updatedAt: "2026-07-30T00:00:00.000Z", updatedBy: "ac369dab-cad5-4fd9-83ed-b4fbf528028a",
+    });
+    // Those three exist on the boundary, so their absence below is a boundary
+    // that was drawn rather than a record that was empty.
+    expect(Object.keys(boundary).sort()).toEqual(["enabled", "reason", "updatedAt", "updatedBy"]);
+
+    const list = agentProfileListSchema.parse({ items: [], executionEnabled: false, ...boundary });
+    expect(Object.keys(list).sort()).toEqual(["executionEnabled", "items"]);
   });
 
   it("accepts native Hermes run provenance", () => {

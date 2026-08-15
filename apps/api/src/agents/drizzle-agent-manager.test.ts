@@ -397,6 +397,33 @@ describe("DrizzleAgentManager runtime control", () => {
     expect(await manager().getRuntimeControl()).toMatchObject({ enabled: false });
   });
 
+  it("states the boundary on the profile list, which is all an enterprise caller can read", async () => {
+    /*
+     * `GET /admin/agents/runtime` is `adminOnly`, and an enterprise session
+     * holds `chat:use` and `agents:use` -- never an `AdminScope`. So the flag
+     * has to arrive on the profile list or the dashboard cannot know, and what
+     * it did instead was assume execution was on and offer a session the
+     * submission then refused.
+     *
+     * Fail-closed first: with no control row at all the list must say `false`,
+     * matching `getRuntimeControl`'s own default rather than a cheerful one.
+     */
+    await activeProfile();
+    expect(await manager().getRuntimeControl()).toMatchObject({ enabled: false });
+    expect((await manager().listProfiles(principal, false)).executionEnabled).toBe(false);
+
+    // And it tracks the row rather than being a constant: same profiles, other
+    // answer, once execution is really switched on.
+    await enableRuntime();
+    const live = await manager().listProfiles(principal, false);
+    expect(live.items).toHaveLength(1);
+    expect(live.executionEnabled).toBe(true);
+
+    // The administrator's wider listing reports the same deployment-wide fact:
+    // the boundary is not a property of which profiles you asked for.
+    expect((await manager().listProfiles(principal, true)).executionEnabled).toBe(true);
+  });
+
   it("enables and disables execution through the same upsert", async () => {
     const enabled = await manager(passingBoundary)
       .updateRuntimeControl(principal, { enabled: true, reason: "First release" } as never);
