@@ -23,7 +23,7 @@ inventing one.
 | VM2 signed desired-state channel, 60s timer, pinned control-plane key | built |
 | VM2 installer pins Hermes by 40-char commit, stores `commit-pin` | built |
 | VM1 unattended in-place upgrade (`ORCASYNAPSE_EXISTING_INSTALL_ACTION=upgrade`) | built |
-| VM1 source rollback on failed install (`.backup.$$`, auto-restored) | built |
+| VM1 source rollback on failed install (`.backup.$$`, auto-restored) | **only during the swap** |
 | Release tag lookup and comparison (`platform-updates.ts`) | built |
 | **Database backup before migrate** | **missing** |
 | **Down migrations / schema rollback** | **absent by design (forward-only)** |
@@ -32,12 +32,19 @@ inventing one.
 
 ## The failure that shapes everything
 
-`install.sh` backs up the *source directory* and restores it automatically when
-an install fails. It does not back up the database, and the four migrations are
-forward-only. So:
+`install.sh` backs up the *source directory* before replacing it — but
+`upgrade_source_tree` deletes that backup the instant the swap succeeds, so the
+EXIT handler's restore covers only the few milliseconds between the two `mv`
+calls. Nothing restores the source after the handoff, and the handoff is where
+migrations run. The database is not backed up by the swap at all, and the four
+migrations are forward-only. So:
 
-- fails **before** migrating → recovers itself today
-- fails **after** migrating → new schema, old code, no way back
+- fails **before** migrating → the database is untouched, so the upgrade can
+  simply be re-run (the *source* is already on the new tree either way)
+- fails **after** migrating → new schema, new code that could not start, and the
+  pre-upgrade dump as the only way back — restored by an operator at a shell
+
+Both branches are asserted by `scripts/test-orcasynapse-installer-upgrade.sh`.
 
 Today an operator at a shell absorbs that. This feature removes the shell, so it
 must not ship before the database can be restored. That is why increment 1 is
@@ -144,13 +151,41 @@ to apply to VM2 until VM1 reports the new version.
 ## Testing
 
 The largest line item, and the one that is usually underestimated. The existing
-VM1 smoke test **refuses to run when an install already exists**, so there is no
-A→B upgrade harness today.
+VM1 smoke test **refuses to run when an install already exists**, so it can
+never exercise an upgrade.
 
-Needed: install v_old → set a target → run the agent → assert data survived,
-assert the version moved, then induce a post-migration failure and assert the
-rollback. The WSL bed (`OrcaSynapse-VM1`, `OrcaSynapse-VM2`) is the place for it,
-and it needs a reset step the smoke test currently lacks.
+`scripts/test-orcasynapse-installer-upgrade.sh` is the A→B harness, and it is
+the precondition for increment 4:
+
+```sh
+sudo bash scripts/test-orcasynapse-installer-upgrade.sh
+```
+
+Root and a Docker daemon; no images are built and a run takes about 35 seconds.
+It installs a control plane at version A through the real `install.sh`, seeds
+rows, upgrades it to B with `ORCASYNAPSE_EXISTING_INSTALL_ACTION=upgrade`, and
+asserts that the rows survived, that all four version surfaces moved together,
+and that the pre-upgrade dump exists and — read out of the dump's own contents
+— predates the migration. It then fails an upgrade *after* its migrations have
+committed and drives the recovery in
+[DATABASE_RESTORE_RUNBOOK.md](DATABASE_RESTORE_RUNBOOK.md) back to A. The
+documented recovery is also the reset step between scenarios, which is how the
+harness gets an installation back to A without tearing the database down.
+
+Three limits, stated in the file at more length:
+
+- **No images are built and no application container runs.** Nothing here says
+  the application boots on B's schema.
+- **Version B is a staged tarball**, differing from A in its version constant,
+  commit, and migration set — not a real release. This proves the mechanism, not
+  that two real releases are compatible.
+- **The recovery is driven by the harness**, because nothing in the product
+  performs it. The assertion named *"install.sh restored nothing by itself"* is
+  the one increment 4 has to flip.
+
+Still needed for increment 4 itself: the same round trip driven by the update
+agent rather than by the harness, on the WSL bed (`OrcaSynapse-VM1`,
+`OrcaSynapse-VM2`), with the approved-target record supplying the version.
 
 Every gate here follows the house protocol: write the test, watch it fail for
 the stated reason, fix, then mutate the fix and watch it fail again. An updater

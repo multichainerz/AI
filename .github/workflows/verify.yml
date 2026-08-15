@@ -76,6 +76,14 @@ jobs:
         run: |
           bash scripts/test-public-installer-recovery.sh
           bash scripts/test-agentic-installer-recovery.sh
+      # The VM2 desired-state client's commit handling, extracted from the
+      # installer heredoc and driven with stubbed systemctl/git. Root, because
+      # the client writes into the node state root. The smoke test below runs
+      # the installer for real but its canned desired-state document carries no
+      # commit, so it exercises the "older control plane says nothing" path --
+      # this is what covers a node actually moving, and refusing to.
+      - name: Verify the runtime node follows its recorded commit
+        run: sudo bash scripts/test-agentic-desired-state-commit.sh
       # Sources install-orcasynapse.sh and runs its real preflight with the host
       # CPU count faked in both directions. The alternative to a preflight is an
       # operator learning the floor from a half-created stack, which is exactly
@@ -159,10 +167,33 @@ jobs:
       - name: Install a fresh control plane end to end
         run: sudo bash scripts/test-orcasynapse-installer-smoke.sh
       # The upgrade path's database dump, which is the only thing standing
-      # between a migration that fails halfway and an unrecoverable install:
-      # the source tree is restored automatically on failure, the database is
-      # not, and the migrations are forward-only. Lives in this job because it
-      # needs root and a Docker daemon; it builds no images and takes ~90s, so
-      # it is far cheaper than the smoke test above it.
+      # between a migration that fails halfway and an unrecoverable install.
+      #
+      # It is the only thing because nothing else recovers either: the source
+      # backup `install.sh` takes is deleted the instant the swap succeeds, so
+      # its EXIT restore covers the two lines between moving the old tree aside
+      # and removing it -- not the migrate step, and not anything after it. A
+      # failure past that point leaves the new source over the new schema, and
+      # the migrations are forward-only. The dump is the way back, which is why
+      # a dump that cannot be trusted aborts the upgrade before it starts.
+      #
+      # Lives in this job because it needs root and a Docker daemon; it builds
+      # no images and takes ~90s, so it is far cheaper than the smoke test.
       - name: Verify the upgrade backs the database up before migrating
         run: sudo bash scripts/test-orcasynapse-installer-backup.sh
+      # The A -> B -> A round trip: a control plane installed at one version
+      # with rows in it, upgraded to another whose migrations run against those
+      # rows, and then the same upgrade again failing *after* those migrations
+      # have committed -- the state an in-dashboard updater has to survive,
+      # because it is the one that removes the shell an operator would recover
+      # from. The suite above stops at the dump and stubs the handoff, so no
+      # migration has ever run in either of them.
+      #
+      # In this job rather than a cheaper one for the same two reasons the
+      # backup suite is: it needs root and a live Docker daemon. It is cheaper
+      # still than that one -- no images, one postgres:17-bookworm and ~35s for
+      # six installs -- and this job already pays for the daemon, so the
+      # marginal cost of running it here is the 35 seconds and nothing else. A
+      # separate job would spend longer on the runner than on the test.
+      - name: Verify an A to B upgrade and its recovery
+        run: sudo bash scripts/test-orcasynapse-installer-upgrade.sh

@@ -21,6 +21,7 @@ import type {
   RuntimeDesiredState,
   RuntimeDesiredStateDocument,
 } from "@orcasynapse/contracts";
+import { DEFAULT_HERMES_COMMIT } from "@orcasynapse/contracts";
 import {
   auditEvent,
   configurationRevision,
@@ -122,7 +123,27 @@ export function inferenceGatewayBaseUrl(controlPlaneUrl: string): string {
   return url.toString().replace(/\/$/, "");
 }
 
-function summarize(node: StoredNode): HermesRuntimeNode {
+/**
+ * A value usable as a Hermes pin, or null.
+ *
+ * Both inputs it guards are free text: the enrollment column is `text`, and a
+ * node reports `hermesVersion` as whatever `git rev-parse` gave it — "unknown"
+ * when it could not resolve one. Anything that is not a full commit is not an
+ * installable target, and passing it on would put a value in the signed
+ * document that the node is required to refuse.
+ */
+function installableCommit(value: string | null | undefined): string | null {
+  const normalized = value?.trim().toLowerCase() ?? "";
+  return /^[0-9a-f]{40}$/.test(normalized) ? normalized : null;
+}
+
+/**
+ * @param expectedHermesCommit the commit the control plane recorded for this
+ * node. Required rather than defaulted: every caller knows the answer or can
+ * look it up, and a default of null would quietly report "no target recorded"
+ * for a node that has one.
+ */
+function summarize(node: StoredNode, expectedHermesCommit: string | null): HermesRuntimeNode {
   const capabilities = Array.isArray(node.capabilities)
     ? node.capabilities.filter((value): value is string => typeof value === "string")
     : [];
@@ -139,6 +160,7 @@ function summarize(node: StoredNode): HermesRuntimeNode {
     status,
     identityFingerprint: node.identityFingerprint,
     hermesVersion: node.hermesVersion,
+    expectedHermesCommit: installableCommit(expectedHermesCommit),
     installerVersion: node.installerVersion,
     capabilities,
     serviceConnectionId: node.serviceConnectionId,
@@ -315,8 +337,44 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
       .from(hermesRuntimeNode)
       .leftJoin(serviceConnection, eq(hermesRuntimeNode.serviceConnectionId, serviceConnection.id))
       .orderBy(asc(hermesRuntimeNode.displayName));
+    const pins = await this.recordedHermesCommits(nodes.map(({ node }) => node.id));
     return nodes.map(({ node, connectionStatus }) =>
-      summarize({ ...node, serviceConnection: connectionStatus ? { status: connectionStatus } : null } as StoredNode));
+      summarize(
+        { ...node, serviceConnection: connectionStatus ? { status: connectionStatus } : null } as StoredNode,
+        pins.get(node.id) ?? null,
+      ));
+  }
+
+  /**
+   * The Hermes commit each of these nodes was pinned to, from its enrolment.
+   *
+   * One implementation for two callers on purpose. `desiredState` tells the
+   * node what to run and `list` tells the dashboard what to expect; if they
+   * read the pin differently the screen would report drift the node was never
+   * asked to close, or hide drift it was.
+   *
+   * Read ascending and overwritten as it goes, so the newest row for a node
+   * wins. A node has one enrolment that matters — `createInvitation` refuses to
+   * issue a second claim for an enrolled node, and an unenrolled one has no
+   * identity to authenticate with — but ordering makes that an observation
+   * rather than an assumption.
+   */
+  private async recordedHermesCommits(nodeIds: string[]): Promise<Map<string, string>> {
+    if (nodeIds.length === 0) return new Map();
+    const rows = await this.database
+      .select({ nodeId: hermesNodeEnrollment.nodeId, hermesCommit: hermesNodeEnrollment.hermesCommit })
+      .from(hermesNodeEnrollment)
+      .where(and(
+        inArray(hermesNodeEnrollment.nodeId, nodeIds),
+        isNotNull(hermesNodeEnrollment.hermesCommit),
+      ))
+      .orderBy(asc(hermesNodeEnrollment.createdAt), asc(hermesNodeEnrollment.id));
+    const pins = new Map<string, string>();
+    for (const row of rows) {
+      const commit = installableCommit(row.hermesCommit);
+      if (commit) pins.set(row.nodeId, commit);
+    }
+    return pins;
   }
 
   private async runtimePrerequisites(): Promise<RuntimePrerequisites> {
@@ -433,7 +491,7 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
         return pending;
       });
       return {
-        node: summarize(node as StoredNode),
+        node: summarize(node as StoredNode, input.hermesCommit),
         bundle: {
           format: "orcasynapse-hermes-enrollment/v1",
           nodeId: node.id,
@@ -671,7 +729,7 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
           metadata: { kind: "HERMES", environment, managedBy: "HermesRuntimeNode" },
         },
       ]);
-      return { expired: false as const, node: updated, modelBootstrap };
+      return { expired: false as const, node: updated, modelBootstrap, hermesCommit: enrollment.hermesCommit };
     }).catch((error: unknown) => {
       if (error instanceof RuntimeNodeEnrollmentError) throw error;
       if (isUniqueViolation(error)) {
@@ -690,7 +748,7 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
     }
     const { publicKeyPem } = await this.controlPlanePublicKey();
     return {
-      node: summarize(enrolled.node as StoredNode),
+      node: summarize(enrolled.node as StoredNode, enrolled.hermesCommit),
       heartbeatPath: `/api/v1/runtime-nodes/${enrolled.node.id}/heartbeat`,
       controlPlanePublicKeyPem: publicKeyPem,
       desiredStatePath: `/api/v1/runtime-nodes/${enrolled.node.id}/desired-state`,
@@ -817,22 +875,44 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
    * is refused by `authenticate` before any document is produced.
    */
   async desiredState(nodeId: string, headers: NodeSignatureHeaders): Promise<RuntimeDesiredState> {
-    await this.authenticate(
+    const node = await this.authenticate(
       nodeId,
       { method: "GET", path: `/api/v1/runtime-nodes/${nodeId}/desired-state` },
       headers,
       null,
     );
-    const admissions = await this.database
-      .select({ toolsetName: runtimeToolsetAdmission.toolsetName })
-      .from(runtimeToolsetAdmission)
-      .where(eq(runtimeToolsetAdmission.admitted, true))
-      .orderBy(asc(runtimeToolsetAdmission.toolsetName));
+    const [admissions, pins] = await Promise.all([
+      this.database
+        .select({ toolsetName: runtimeToolsetAdmission.toolsetName })
+        .from(runtimeToolsetAdmission)
+        .where(eq(runtimeToolsetAdmission.admitted, true))
+        .orderBy(asc(runtimeToolsetAdmission.toolsetName)),
+      this.recordedHermesCommits([nodeId]),
+    ]);
     const document: RuntimeDesiredStateDocument = {
       format: "orcasynapse-runtime-desired-state/v1",
       nodeId,
       generatedAt: new Date().toISOString(),
       admittedToolsets: admissions.map((row) => row.toolsetName),
+      /*
+       * This node's own recorded target, in preference order.
+       *
+       * A node deliberately pinned at enrolment must not be moved by a global
+       * constant, so the enrolment pin comes first. Enrolments predating that
+       * column have none; echoing what the node last reported running is the
+       * one answer that is guaranteed to be a no-op for it, which is the right
+       * default when the control plane has no target of its own to state.
+       * `DEFAULT_HERMES_COMMIT` is the last resort, reached only by a node that
+       * never resolved a commit to report either — the document must still
+       * carry an installable one, because an absent instruction and a real one
+       * must not be confusable.
+       *
+       * This is a Hermes commit. `PlatformReleaseTarget.desiredCommit` is a
+       * commit of OrcaSynapse itself and must never be read here.
+       */
+      hermesCommit: pins.get(nodeId)
+        ?? installableCommit(node.hermesVersion)
+        ?? DEFAULT_HERMES_COMMIT,
     };
     return this.signNodeDocument(document);
   }
@@ -923,7 +1003,7 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
       });
       return applied;
     });
-    return summarize(result as StoredNode);
+    return summarize(result as StoredNode, (await this.recordedHermesCommits([nodeId])).get(nodeId) ?? null);
   }
 
   async remove(principal: AdminPrincipal, nodeId: string, input: RemoveHermesRuntimeNode): Promise<void> {

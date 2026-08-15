@@ -46,7 +46,7 @@ const hermesCommitSchema = z.string().trim().toLowerCase().regex(
  * A real, installable commit rather than a moving reference: the whole point of
  * the pin is that two nodes enrolled a month apart run identical code.
  */
-const DEFAULT_HERMES_COMMIT = "c015663b215c0e14de4295346b0727db602cbb1d";
+export const DEFAULT_HERMES_COMMIT = "c015663b215c0e14de4295346b0727db602cbb1d";
 export const hermesRuntimeNodeSchema = z.object({
   id: z.uuid(),
   slug: nodeSlugSchema,
@@ -57,6 +57,18 @@ export const hermesRuntimeNodeSchema = z.object({
   status: hermesRuntimeNodeStatusSchema,
   identityFingerprint: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
   hermesVersion: z.string().nullable(),
+  /**
+   * The commit the control plane recorded for this node, against which the
+   * reported `hermesVersion` above is drift.
+   *
+   * Two separate facts kept separate on purpose: `hermesVersion` is what the
+   * node last said it was running, this is what it was told to run. A screen
+   * carrying only the first cannot show a node that quietly failed to move.
+   *
+   * Null for a node enrolled before the pin was recorded — an unknown target,
+   * which is not the same as agreement and must not be rendered as either.
+   */
+  expectedHermesCommit: z.string().regex(/^[0-9a-f]{40}$/).nullable(),
   installerVersion: z.string().nullable(),
   capabilities: z.array(z.string().min(1).max(120)).max(100),
   serviceConnectionId: z.uuid().nullable(),
@@ -141,12 +153,25 @@ export const hermesNodeEnrollmentResultSchema = z.object({
  * these and nothing else. An empty array is a real instruction — disable
  * everything — not an absence of one, which is why the document is always
  * served rather than omitted when nothing is admitted.
+ *
+ * `hermesCommit` is the same shape of instruction about the runtime itself:
+ * the Hermes revision this node should be running. It is required for the same
+ * reason the array is always present — an absent instruction and a real one
+ * must not be confusable. The node compares it against its own
+ * `${STATE_ROOT}/commit-pin` and re-installs when they differ, so an optional
+ * field would let a control-plane bug read as "stay where you are".
+ *
+ * It is a commit of the *Hermes runtime*, and has nothing to do with
+ * `PlatformReleaseTarget.desiredCommit`, which is a commit of OrcaSynapse
+ * itself that VM1 runs. Wiring that one in here would tell VM2 to install this
+ * repository as though it were Hermes.
  */
 export const runtimeDesiredStateDocumentSchema = z.object({
   format: z.literal("orcasynapse-runtime-desired-state/v1"),
   nodeId: z.uuid(),
   generatedAt: z.iso.datetime(),
   admittedToolsets: z.array(z.string().trim().min(1).max(120)).max(200),
+  hermesCommit: hermesCommitSchema,
 }).strict();
 
 /**

@@ -3,7 +3,9 @@ import {
   createHermesNodeInvitationSchema,
   enrollHermesNodeSchema,
   hermesNodeHeartbeatSchema,
+  hermesRuntimeNodeSchema,
   mutateHermesRuntimeNodeSchema,
+  runtimeDesiredStateDocumentSchema,
 } from "./runtime-nodes.js";
 
 describe("Hermes runtime-node contracts", () => {
@@ -87,5 +89,92 @@ describe("Hermes runtime-node contracts", () => {
       reason: "Replace the compromised runtime identity.",
       expectedRevision: 3,
     }).success).toBe(true);
+  });
+});
+
+describe("the signed runtime desired-state document", () => {
+  const document = {
+    format: "orcasynapse-runtime-desired-state/v1",
+    nodeId: "9de260d7-bc51-4558-9d20-06916d393072",
+    generatedAt: "2026-08-15T00:00:00.000Z",
+    admittedToolsets: ["clarify"],
+    hermesCommit: "c015663b215c0e14de4295346b0727db602cbb1d",
+  };
+
+  it("names the Hermes commit the node should be running", () => {
+    expect(runtimeDesiredStateDocumentSchema.parse(document).hermesCommit)
+      .toBe("c015663b215c0e14de4295346b0727db602cbb1d");
+    // Uppercase is the same commit; the node compares it against a lowercase
+    // `commit-pin` file, so normalizing here is what keeps them comparable.
+    expect(runtimeDesiredStateDocumentSchema.parse({
+      ...document,
+      hermesCommit: "c015663b215c0e14de4295346b0727db602cbb1d".toUpperCase(),
+    }).hermesCommit).toBe("c015663b215c0e14de4295346b0727db602cbb1d");
+  });
+
+  it("refuses a document that says nothing about the commit", () => {
+    // Required, not optional. An absent instruction and a real one must not be
+    // confusable: a node that reads no commit leaves itself where it is, so an
+    // optional field would let a control-plane bug look like "stay put".
+    const { hermesCommit, ...withoutCommit } = document;
+    expect(runtimeDesiredStateDocumentSchema.safeParse(withoutCommit).success).toBe(false);
+    expect(runtimeDesiredStateDocumentSchema.safeParse({ ...document, hermesCommit: null }).success).toBe(false);
+    expect(runtimeDesiredStateDocumentSchema.safeParse({ ...document, hermesCommit: "" }).success).toBe(false);
+  });
+
+  it("refuses anything that is not a full commit SHA", () => {
+    // The node re-runs the Hermes installer at whatever this says, so a moving
+    // reference here would be an unpinned root install on VM2.
+    expect(runtimeDesiredStateDocumentSchema.safeParse({ ...document, hermesCommit: "main" }).success).toBe(false);
+    expect(runtimeDesiredStateDocumentSchema.safeParse({
+      ...document,
+      hermesCommit: "c015663b215c0e14de4295346b0727db602cbb1d".slice(0, 12),
+    }).success).toBe(false);
+    expect(runtimeDesiredStateDocumentSchema.safeParse({
+      ...document,
+      hermesCommit: `${"c015663b215c0e14de4295346b0727db602cbb1d".slice(0, 39)}z`,
+    }).success).toBe(false);
+  });
+});
+
+describe("the runtime node summary", () => {
+  const summary = {
+    id: "9de260d7-bc51-4558-9d20-06916d393072",
+    slug: "hermes-runtime-01",
+    displayName: "Hermes Runtime 01",
+    baseUrl: "http://10.0.0.12:8642",
+    expectedHostname: null,
+    hostname: "hermes-01.internal",
+    status: "ONLINE",
+    identityFingerprint: null,
+    hermesVersion: "c015663b215c0e14de4295346b0727db602cbb1d",
+    expectedHermesCommit: "c015663b215c0e14de4295346b0727db602cbb1d",
+    installerVersion: "v5.3.0",
+    capabilities: [],
+    serviceConnectionId: null,
+    serviceConnectionStatus: null,
+    lastSeenAt: null,
+    enrolledAt: null,
+    revokedAt: null,
+    revision: 0,
+    createdAt: "2026-08-15T00:00:00.000Z",
+    updatedAt: "2026-08-15T00:00:00.000Z",
+  };
+
+  it("reports the commit the control plane expects alongside the one the node runs", () => {
+    // Two different facts: `hermesVersion` is what the node last said it was
+    // running, `expectedHermesCommit` is what the control plane recorded for it.
+    // A screen with only the first cannot show a node that failed to move.
+    expect(hermesRuntimeNodeSchema.parse(summary).expectedHermesCommit)
+      .toBe("c015663b215c0e14de4295346b0727db602cbb1d");
+    const { expectedHermesCommit, ...withoutExpected } = summary;
+    expect(hermesRuntimeNodeSchema.safeParse(withoutExpected).success).toBe(false);
+  });
+
+  it("allows no recorded commit, but not a half-recorded one", () => {
+    // Null is a node enrolled before the pin was recorded. A truncated SHA is a
+    // bug, and rendering it as the expected commit would invent drift.
+    expect(hermesRuntimeNodeSchema.parse({ ...summary, expectedHermesCommit: null }).expectedHermesCommit).toBeNull();
+    expect(hermesRuntimeNodeSchema.safeParse({ ...summary, expectedHermesCommit: "c015663b" }).success).toBe(false);
   });
 });

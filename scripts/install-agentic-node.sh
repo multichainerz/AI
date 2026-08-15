@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="v5.3.0"
+INSTALLER_VERSION="v5.4.0"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 HERMES_HOME_DIR="${STATE_ROOT}/home"
 RUNTIME_SERVICE="orcasynapse-hermes"
@@ -1295,7 +1295,8 @@ write_desired_state_client() {
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Applies the toolset allowlist OrcaSynapse has admitted for this installation.
+# Applies what OrcaSynapse has admitted for this installation: the toolset
+# allowlist, and the Hermes revision this node should be running.
 #
 # The document is carried base64-encoded and signed over those exact bytes, so
 # this never has to reproduce a canonical JSON serialization to check the
@@ -1305,6 +1306,16 @@ STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 CONTROL_PLANE_KEY="${STATE_ROOT}/control-plane-key.pem"
 MANAGED_CONFIG="${ORCASYNAPSE_HERMES_MANAGED_DIR:-/etc/hermes}/config.yaml"
 RUNTIME_SERVICE="${ORCASYNAPSE_HERMES_SERVICE:-orcasynapse-hermes}"
+# The same three values the installer used, so a node installed with an
+# override reconciles against what it actually has rather than the defaults.
+HERMES_INSTALL_DIR="${ORCASYNAPSE_HERMES_INSTALL_DIR:-/usr/local/lib/hermes-agent}"
+HERMES_INSTALL_URL="${ORCASYNAPSE_HERMES_INSTALL_URL:-https://hermes-agent.nousresearch.com/install.sh}"
+HERMES_HEALTH_URL="${ORCASYNAPSE_HERMES_HEALTH_URL:-http://127.0.0.1:8642/health}"
+COMMIT_PIN="${STATE_ROOT}/commit-pin"
+# A failed runtime move is reported at the very end rather than by aborting
+# here, so a node that could not take a new commit does not also stop being
+# governed by the toolset allowlist.
+COMMIT_RECONCILE_STATUS=0
 
 # A node enrolled before the control plane could sign has nothing to verify
 # against. Applying an unverified document would be worse than applying none.
@@ -1367,6 +1378,21 @@ document_node="$(jq -r '.nodeId // empty' "${WORK}/document.json")"
 [[ "$(jq -r '.format // empty' "${WORK}/document.json")" == "orcasynapse-runtime-desired-state/v1" ]] \
   || { echo "orcasynapse: unrecognized desired-state format; nothing applied" >&2; exit 1; }
 
+# The Hermes commit this node should be running, validated before anything is
+# applied. This is a commit of the *Hermes runtime*; the OrcaSynapse release
+# VM1 runs is a different thing entirely and never appears in this document.
+#
+# Absent means a control plane older than the field: silence, not an
+# instruction, so the node stays where it is. Present but malformed is a
+# document this node cannot act on at all -- and since whatever it names would
+# be handed to a root install script, "looks like a commit" is the only form
+# worth accepting.
+DESIRED_COMMIT="$(jq -r '.hermesCommit // empty' "${WORK}/document.json")"
+if [[ -n "${DESIRED_COMMIT}" && ! "${DESIRED_COMMIT}" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "orcasynapse: desired state names a Hermes commit that is not a 40-character SHA; nothing applied" >&2
+  exit 1
+fi
+
 # Recorded after verification and before anything is applied, so the installer
 # and an operator reading the host can both see what the control plane last
 # admitted -- including the empty set, which is a real instruction.
@@ -1377,6 +1403,97 @@ document_node="$(jq -r '.nodeId // empty' "${WORK}/document.json")"
 # `set -e`.
 jq -r '.admittedToolsets[]?' "${WORK}/document.json" > "${WORK}/admitted-toolsets"
 install -m 0644 -o root -g root "${WORK}/admitted-toolsets" "${STATE_ROOT}/admitted-toolsets"
+
+# The commit actually checked out, read back rather than assumed: `--commit` is
+# silently ignored when it would roll an existing install backwards, so the
+# requested SHA is not proof of the installed one.
+installed_hermes_commit() {
+  git -C "${HERMES_INSTALL_DIR}" rev-parse HEAD 2>/dev/null
+}
+
+# The node's own claim about what it is running -- the heartbeat sends this
+# file verbatim -- so it is written only from a commit read back off disk.
+record_commit_pin() {
+  printf '%s' "$1" > "${WORK}/commit-pin"
+  install -m 0600 -o root -g root "${WORK}/commit-pin" "${COMMIT_PIN}"
+}
+
+install_hermes_at() {
+  # Relaxed umask in a subshell, exactly as the installer does it: this script
+  # runs under the unit's default and Hermes is code under /usr/local, not a
+  # secret -- installed too tightly, the service account cannot execute its own
+  # runtime. `--force-commit` because upstream ignores `--commit` when the
+  # checkout is already newer, which would leave the node on a revision
+  # OrcaSynapse never approved.
+  (
+    umask 022
+    curl -fsSL "${HERMES_INSTALL_URL}" \
+      | bash -s -- --skip-browser --skip-setup --non-interactive --commit "$1" --force-commit
+  ) >&2
+}
+
+# Ninety attempts at two seconds, the same three-minute budget the installer
+# gives a fresh runtime. Counted in attempts rather than off a deadline so a
+# stopped or stepped clock cannot end the wait early.
+start_hermes_runtime() {
+  systemctl start "${RUNTIME_SERVICE}" >/dev/null 2>&1 || return 1
+  local attempt
+  for attempt in {1..90}; do
+    curl --fail --silent --max-time 5 "${HERMES_HEALTH_URL}" >/dev/null 2>&1 && return 0
+    sleep 2
+  done
+  journalctl -u "${RUNTIME_SERVICE}" -n 50 --no-pager >&2 || true
+  return 1
+}
+
+# Moves the runtime to ${1}, leaving the node on ${2} if anything goes wrong.
+move_hermes_runtime() {
+  local target="$1" previous="$2" actual
+  echo "orcasynapse: moving the Hermes runtime from ${previous:-an unrecorded commit} to ${target}" >&2
+
+  # Drained, not killed. `systemctl stop` sends SIGTERM and waits for the unit
+  # to exit, which is how this installer stops the runtime everywhere else --
+  # and the unit is Restart=always, so it has to be stopped rather than left to
+  # be restarted underneath a checkout that is being rewritten.
+  systemctl stop "${RUNTIME_SERVICE}" >/dev/null 2>&1 || {
+    echo "orcasynapse: the Hermes runtime would not stop; the node stays on ${previous:-its current commit}" >&2
+    return 1
+  }
+
+  if install_hermes_at "${target}" \
+    && [[ "$(installed_hermes_commit || true)" == "${target}" ]] \
+    && start_hermes_runtime; then
+    # Written only now, after the checkout has been read back and the runtime
+    # has answered: the pin must never claim a commit that is not installed.
+    record_commit_pin "${target}"
+    echo "orcasynapse: the Hermes runtime is now at ${target}" >&2
+    return 0
+  fi
+
+  echo "orcasynapse: Hermes could not be brought up at ${target}; restoring ${previous:-the previous checkout}" >&2
+  if [[ -n "${previous}" ]]; then
+    install_hermes_at "${previous}" \
+      || echo "orcasynapse: the previous Hermes commit ${previous} could not be reinstalled" >&2
+  fi
+  start_hermes_runtime \
+    || echo "orcasynapse: the Hermes runtime did not come back up after the failed move" >&2
+  # A rollback that also failed leaves some third commit on disk, and a pin
+  # still naming the previous one would hide that from every heartbeat.
+  actual="$(installed_hermes_commit || true)"
+  if [[ "${actual}" =~ ^[0-9a-f]{40}$ && "${actual}" != "${previous}" ]]; then
+    record_commit_pin "${actual}"
+    echo "orcasynapse: the Hermes checkout is at ${actual}; the recorded pin now says so" >&2
+  fi
+  return 1
+}
+
+# Two runs of this script cannot overlap into two installs: the timer's oneshot
+# service is a single systemd job, and the only other caller is the installer's
+# own preseed, which runs while the local pin still equals the enrolled commit.
+LOCAL_COMMIT="$(cat "${COMMIT_PIN}" 2>/dev/null || true)"
+if [[ -n "${DESIRED_COMMIT}" && "${DESIRED_COMMIT}" != "${LOCAL_COMMIT}" ]]; then
+  move_hermes_runtime "${DESIRED_COMMIT}" "${LOCAL_COMMIT}" || COMMIT_RECONCILE_STATUS=1
+fi
 
 # Admitted names drive two settings, because one is not enough.
 #
@@ -1459,18 +1576,21 @@ if disabled:
 open(output_path, "w").write(text)
 RECONCILE
 
-if cmp -s "${WORK}/config.yaml" "${MANAGED_CONFIG}"; then
-  exit 0
+if ! cmp -s "${WORK}/config.yaml" "${MANAGED_CONFIG}"; then
+  install -m 0644 -o root -g root "${WORK}/config.yaml" "${MANAGED_CONFIG}"
+  echo "orcasynapse: applied toolset allowlist ($(jq -r '.admittedToolsets | length' "${WORK}/document.json") admitted); restarting Hermes" >&2
+  systemctl restart "${RUNTIME_SERVICE}" >/dev/null
 fi
 
-install -m 0644 -o root -g root "${WORK}/config.yaml" "${MANAGED_CONFIG}"
-echo "orcasynapse: applied toolset allowlist ($(jq -r '.admittedToolsets | length' "${WORK}/document.json") admitted); restarting Hermes" >&2
-systemctl restart "${RUNTIME_SERVICE}" >/dev/null
+# Reported last, and only after the allowlist has been applied. A runtime that
+# refused to move must not also stop being governed, but the failure still has
+# to leave the unit failed rather than reporting a quiet success every tick.
+exit "${COMMIT_RECONCILE_STATUS}"
 DESIREDSTATE
 
   write_file_from_stdin 0644 root root "/etc/systemd/system/${DESIRED_STATE_SERVICE}.service" <<EOF
 [Unit]
-Description=Apply the OrcaSynapse toolset allowlist to the Hermes runtime
+Description=Apply the OrcaSynapse toolset allowlist and runtime revision to Hermes
 After=network-online.target orcasynapse-hermes.service
 Wants=network-online.target
 
@@ -1484,12 +1604,17 @@ Type=oneshot
 Environment=ORCASYNAPSE_HERMES_STATE_ROOT=${STATE_ROOT}
 Environment=ORCASYNAPSE_HERMES_MANAGED_DIR=${HERMES_MANAGED_DIR}
 Environment=ORCASYNAPSE_HERMES_SERVICE=${RUNTIME_SERVICE}
+# Same reasoning as the state root above: the client re-installs Hermes from
+# these when the control plane names a new commit, and a host installed with an
+# override would otherwise reconcile against a runtime it does not have.
+Environment=ORCASYNAPSE_HERMES_INSTALL_DIR=${HERMES_INSTALL_DIR}
+Environment=ORCASYNAPSE_HERMES_INSTALL_URL=${HERMES_INSTALL_URL}
 ExecStart=/usr/local/lib/orcasynapse/hermes-desired-state.sh
 EOF
 
   write_file_from_stdin 0644 root root "/etc/systemd/system/${DESIRED_STATE_SERVICE}.timer" <<EOF
 [Unit]
-Description=Reconcile the OrcaSynapse toolset allowlist every five minutes
+Description=Reconcile the OrcaSynapse desired runtime state every five minutes
 
 [Timer]
 OnBootSec=90s

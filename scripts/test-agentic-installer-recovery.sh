@@ -37,20 +37,30 @@ printf '%s==' "${signature_value}" \
   | tr '_-' '/+' \
   | openssl base64 -d -A \
   > "${TEST_ROOT}/signature-bytes"
-# The verdict is read from the output, not the exit code. `openssl pkeyutl
-# -verify` returns 0 for a signature it has just rejected -- confirmed on
-# OpenSSL 3.0.13, where a deliberately corrupted message prints "Signature
-# Verification Failure" and still exits 0. Every previous release ran this
-# assertion under `set -e` believing the exit code carried it, so it verified
-# nothing at all; the node check below is what has actually been guarding this.
+# Both the verdict text and the exit code are checked, and the reason is a
+# correction rather than caution.
+#
+# This was changed once on the belief that `openssl pkeyutl -verify` returns 0
+# for a signature it had rejected. It does not. Measured on OpenSSL 3.0.13 in
+# the VM2 bed, it exits 1 on a corrupted message under all three forms --
+# stdout inherited, redirected to /dev/null, and captured through `$( )` with
+# `2>&1` -- and prints its verdict in each. The earlier reading came from a
+# probe that reported the calling shell's status instead of openssl's, and the
+# claim survived into a comment, a commit message and a changelog before anyone
+# re-measured it.
+#
+# So the exit code was load-bearing all along and the text is belt and braces.
+# Keep both: whichever is redundant, the pair cannot pass a rejected signature.
+openssl_status=0
 openssl_verdict="$(openssl pkeyutl -verify -rawin -pubin \
   -inkey "${STATE_ROOT}/identity/node.pub" \
   -in "${TEST_ROOT}/signature-message" \
-  -sigfile "${TEST_ROOT}/signature-bytes" 2>&1)"
-[[ "${openssl_verdict}" == *"Signature Verified Successfully"* ]] || {
-  printf 'the installer signature did not verify with openssl: %s\n' "${openssl_verdict}" >&2
+  -sigfile "${TEST_ROOT}/signature-bytes" 2>&1)" || openssl_status=$?
+if (( openssl_status != 0 )) || [[ "${openssl_verdict}" != *"Signature Verified Successfully"* ]]; then
+  printf 'the installer signature did not verify with openssl (exit %d): %s\n' \
+    "${openssl_status}" "${openssl_verdict}" >&2
   exit 1
-}
+fi
 SIGNATURE_BODY="${signature_body}" \
 SIGNATURE_TIMESTAMP="${signature_timestamp}" \
 SIGNATURE_NONCE="${signature_nonce}" \

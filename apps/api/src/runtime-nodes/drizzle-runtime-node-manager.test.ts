@@ -16,6 +16,7 @@ import {
   type TestDatabase,
 } from "@orcasynapse/database";
 import { EnvelopeEncryption } from "@orcasynapse/security";
+import { DEFAULT_HERMES_COMMIT, runtimeDesiredStateDocumentSchema } from "@orcasynapse/contracts";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { canonicalize } from "../canonical-json.js";
 import type { AdminPrincipal } from "../auth/admin-session.js";
@@ -116,15 +117,23 @@ function enrollInput(nodeId: string, token: string, publicKeyPem: string, overri
 }
 
 /** Takes a node all the way through invitation and enrollment. */
-async function enrolledNode() {
+async function enrolledNode(
+  invitationOverrides: Record<string, unknown> = {},
+  enrollOverrides: Record<string, unknown> = {},
+) {
   await seedPrerequisites();
-  const invitation = await manager().createInvitation(principal, invitationInput());
+  const invitation = await manager().createInvitation(principal, invitationInput(invitationOverrides));
   const identity = nodeIdentity();
   const result = await manager().enroll(
-    enrollInput(invitation.bundle.nodeId, invitation.bundle.token, identity.publicKeyPem),
+    enrollInput(invitation.bundle.nodeId, invitation.bundle.token, identity.publicKeyPem, enrollOverrides),
     "203.0.113.10",
   );
   return { ...result, identity, invitation };
+}
+
+/** The document bytes a node would verify, decoded the way the shell client does. */
+function documentOf(state: { documentBase64: string }): Record<string, unknown> {
+  return JSON.parse(Buffer.from(state.documentBase64, "base64").toString("utf8"));
 }
 
 describe("DrizzleHermesRuntimeNodeManager readiness", () => {
@@ -623,6 +632,83 @@ describe("runtime node pure helpers", () => {
       const state = await manager().desiredState(node.id, signedHeaders(identity.privateKey, null, desiredStateOf(node.id)));
       const document = JSON.parse(Buffer.from(state.documentBase64, "base64").toString("utf8"));
       expect(document.admittedToolsets).toEqual(["clarify"]);
+    });
+
+    /*
+     * The commit in this document is a commit of the *Hermes runtime*, not of
+     * OrcaSynapse. `PlatformReleaseTarget.desiredCommit` is the release VM1
+     * should run and has no business here: emitting it would tell VM2 to
+     * install this repository as though it were Hermes.
+     */
+    it("names the Hermes commit this node was enrolled at, not a global default", async () => {
+      const pinned = "9f".repeat(20);
+      expect(pinned).not.toBe(DEFAULT_HERMES_COMMIT);
+      const { node, identity } = await enrolledNode({ hermesCommit: pinned });
+
+      const state = await manager().desiredState(node.id, signedHeaders(identity.privateKey, null, desiredStateOf(node.id)));
+      const document = documentOf(state);
+
+      expect(document.hermesCommit).toBe(pinned);
+      // Parsed through the contract the node's client is written against, so a
+      // document this manager can produce but no node can accept fails here.
+      expect(runtimeDesiredStateDocumentSchema.parse(document).hermesCommit).toBe(pinned);
+    });
+
+    it("does not move a node whose enrolment recorded no commit", async () => {
+      // Enrolments predating the pin column carry no target. Answering with the
+      // release default would silently upgrade a node nobody asked to move, so
+      // the document echoes what the node itself last reported running.
+      const running = "3c".repeat(20);
+      const { node, identity } = await enrolledNode({}, { hermesVersion: running });
+      await context.database
+        .update(hermesNodeEnrollment)
+        .set({ hermesCommit: null })
+        .where(eq(hermesNodeEnrollment.nodeId, node.id));
+
+      const state = await manager().desiredState(node.id, signedHeaders(identity.privateKey, null, desiredStateOf(node.id)));
+
+      expect(documentOf(state).hermesCommit).toBe(running);
+    });
+
+    it("falls back to the release's own Hermes commit only when nothing else is known", async () => {
+      // Neither a recorded pin nor a resolvable reported version: the node said
+      // "unknown" at enrolment. This is the one case with no node-specific
+      // answer, and the document must still carry a real installable commit.
+      const { node, identity } = await enrolledNode({}, { hermesVersion: "unknown" });
+      await context.database
+        .update(hermesNodeEnrollment)
+        .set({ hermesCommit: null })
+        .where(eq(hermesNodeEnrollment.nodeId, node.id));
+
+      const state = await manager().desiredState(node.id, signedHeaders(identity.privateKey, null, desiredStateOf(node.id)));
+
+      expect(documentOf(state).hermesCommit).toBe(DEFAULT_HERMES_COMMIT);
+    });
+
+    it("reports the same expected commit on the fleet list as it serves to the node", async () => {
+      // The dashboard's drift indicator compares the reported version against
+      // this value. If the two paths disagreed the screen would show drift a
+      // node was never asked to close, or hide one it was.
+      const pinned = "7a".repeat(20);
+      const { node, identity } = await enrolledNode({ hermesCommit: pinned });
+
+      const [listed] = await manager().list();
+      const state = await manager().desiredState(node.id, signedHeaders(identity.privateKey, null, desiredStateOf(node.id)));
+
+      expect(listed?.expectedHermesCommit).toBe(pinned);
+      expect(listed?.expectedHermesCommit).toBe(documentOf(state).hermesCommit);
+    });
+
+    it("reports no expected commit rather than a guess when none was recorded", async () => {
+      const { node } = await enrolledNode();
+      await context.database
+        .update(hermesNodeEnrollment)
+        .set({ hermesCommit: null })
+        .where(eq(hermesNodeEnrollment.nodeId, node.id));
+
+      const [listed] = await manager().list();
+
+      expect(listed?.expectedHermesCommit).toBeNull();
     });
 
     it("refuses to tell an unauthenticated caller what a node should run", async () => {

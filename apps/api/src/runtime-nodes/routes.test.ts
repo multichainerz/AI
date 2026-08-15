@@ -33,6 +33,7 @@ const node: HermesRuntimeNode = {
   status: "PENDING",
   identityFingerprint: null,
   hermesVersion: null,
+  expectedHermesCommit: "c015663b215c0e14de4295346b0727db602cbb1d",
   installerVersion: null,
   capabilities: [],
   serviceConnectionId: null,
@@ -206,6 +207,23 @@ describe("Hermes runtime-node routes", () => {
       NODE_ID,
       payload,
     );
+  });
+
+  it("carries the commit the control plane expects through to the fleet list", async () => {
+    // The dashboard's drift indicator compares this against the version the
+    // node reports. The response schema is strict, so a field the manager
+    // produces but the contract does not carry is a 500 here rather than a
+    // silently missing column on the screen.
+    const { app } = await testApp();
+    const listed = await app.inject({
+      method: "GET",
+      url: "/api/v1/admin/runtime-nodes/",
+      headers: { cookie: `${ADMIN_SESSION_COOKIE}=${TOKEN}` },
+    });
+    expect(listed.statusCode, listed.body).toBe(200);
+    expect(listed.json().items[0]).toMatchObject({
+      expectedHermesCommit: "c015663b215c0e14de4295346b0727db602cbb1d",
+    });
   });
 
   it("protects fleet administration while allowing one-time node enrollment", async () => {

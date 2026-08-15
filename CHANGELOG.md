@@ -5,6 +5,52 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v5.4.0 — 2026-08-15
+
+Increment 3 of `docs/IN_DASHBOARD_UPDATE_PLAN.md`, the upgrade harness that
+increment 4 is gated on, and two corrections to claims this changelog published
+as fact.
+
+**Two corrections, because both were stated here and both were wrong.**
+
+v5.2.2 said `openssl pkeyutl -verify` prints "Signature Verification Failure"
+and exits 0, and that the assertion resting on its exit code had therefore
+verified nothing in every release that shipped it. That is false. Measured on
+OpenSSL 3.0.13 with stdout inherited, redirected and captured, it exits 1 on a
+corrupted message in all three and prints its verdict in each. The original
+reading came from a probe that reported the calling shell's status rather than
+openssl's. The assertion was sound all along; it now checks the exit code and
+the verdict together, and the file records why.
+
+v5.3.0 said `install.sh` restored the source tree on a failed upgrade and only
+the database was missing. Also wrong. The source backup is deleted the moment
+the swap succeeds, so the EXIT restore covers the two lines between moving the
+old tree aside and removing it — not the migration, and not anything after it.
+Nothing recovered a post-migration failure. The plan and the upgrade harness now
+state that, and increment 4 has to build the rollback rather than trigger one.
+
+**VM2 follows its recorded Hermes commit.**
+
+- carry a required `hermesCommit` on the signed desired-state document, a Hermes
+  commit and explicitly not the release commit that drives VM1
+- resolve it from the node's enrolment pin, falling back to the commit the node
+  itself reports and only then to the release default, so a node deliberately
+  pinned at enrolment is never moved by a global constant
+- move the runtime only after the document's signature verifies, drain rather
+  than kill it, health-gate the new checkout, and write `commit-pin` only once
+  the install is verified
+- reinstall the previous commit when a move fails, and if that also fails record
+  whatever is actually on disk, so the pin can never lie to the heartbeat
+- report a failed move after applying the toolset allowlist: a runtime that will
+  not move must not also stop being governed
+- show commit drift on the runtime nodes panel, with no apply button — the
+  operator decision stays in Settings → Application
+
+**An A→B upgrade harness.** Eight scenarios through the real `install.sh`,
+including an upgrade that fails after its migrations have committed, which is
+the case nothing could exercise before. It asserts the pre-upgrade dump predates
+the migration by reading the dump's own bytes rather than trusting a log line.
+
 ## v5.3.0 — 2026-08-15
 
 The first two increments of updating the deployment from the dashboard, planned

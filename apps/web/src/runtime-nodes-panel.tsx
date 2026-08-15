@@ -64,6 +64,38 @@ function humanize(value: string): string {
   return value.replaceAll("_", " ").toLowerCase().replace(/^./, (first) => first.toUpperCase());
 }
 
+/**
+ * Whether this node is running something other than the commit recorded for it.
+ *
+ * Three states, not two. `hermesVersion` is what the node last reported and
+ * `expectedHermesCommit` is what the control plane told it to run, and either
+ * can be unknown: a node enrolled before the pin was recorded has no target,
+ * and a node whose install could not resolve a commit reports "unknown". An
+ * unknown is not a disagreement, and drawing it as one would put a fault on
+ * the screen that no operator action can clear.
+ */
+function commitDrift(node: HermesRuntimeNode): boolean {
+  const running = node.hermesVersion?.trim().toLowerCase() ?? "";
+  if (!node.expectedHermesCommit || !/^[0-9a-f]{40}$/.test(running)) return false;
+  return running !== node.expectedHermesCommit;
+}
+
+/**
+ * The runtime revision line under a node: what it runs, and what it should.
+ *
+ * The expected commit is named only when it differs. A node that is where it
+ * was put needs one commit on the screen, not two.
+ */
+function runtimeRevision(node: HermesRuntimeNode): string {
+  if (!node.hermesVersion) return "Version pending";
+  const running = /^[0-9a-f]{40}$/i.test(node.hermesVersion.trim())
+    ? node.hermesVersion.trim().toLowerCase().slice(0, 12)
+    : node.hermesVersion;
+  return commitDrift(node) && node.expectedHermesCommit
+    ? `${running} · expects ${node.expectedHermesCommit.slice(0, 12)}`
+    : running;
+}
+
 function saveFile(fileName: string, content: string, contentType: string): void {
   const url = URL.createObjectURL(new Blob([content], { type: contentType }));
   const link = document.createElement("a");
@@ -378,7 +410,14 @@ export function RuntimeNodesPanel({
 
       {nodes.length === 0 && !inferenceReady ? <EmptyState title="AI Inference must be ready first" action={<Button onClick={onConfigureInference}>Configure AI Inference</Button>}>Connect and activate one served model. OrcaSynapse will then prepare the VM2 installer with the approved route.</EmptyState> : nodes.length === 0 && !targetKnown ? <EmptyState title="The architecture decision has not loaded">Enrolment inputs depend on the target environment: Production requires a commit-pinned Hermes runtime and an HTTPS OrcaSynapse origin. OrcaSynapse will not offer an installer it cannot hold to the right standard.</EmptyState> : nodes.length === 0 ? <EmptyState title="Install the Agentic System on VM2" action={<Button variant="primary" onClick={() => setEditorOpen(true)}>Generate VM2 installer</Button>}>Generate one secure command, run it on the isolated VM, and paste the one-time claim when prompted. Hermes is installed, registered, and bound to the approved inference route.</EmptyState> : <div className="runtime-node-list">{nodes.map((node) => <article key={node.id}>
         <div className={`runtime-node-state ${nodeTone(node.status)}`}><span /></div>
-        <div className="runtime-node-copy"><div><strong>{node.displayName}</strong><span className={`runtime-status ${nodeTone(node.status)}`}>{humanize(node.status)}</span></div><p>{node.baseUrl}</p><small>{node.hostname ?? node.expectedHostname ?? "Awaiting hostname"} · {node.hermesVersion ?? "Version pending"}</small></div>
+        {/*
+          * Drift is drawn beside the status, not instead of it. A node that
+          * failed to take a new commit keeps heartbeating and stays Online, so
+          * the status alone cannot show it — and this increment deliberately
+          * stops at making that visible: the operator decision stays in
+          * Settings → Application, and there is no apply button here.
+          */}
+        <div className="runtime-node-copy"><div><strong>{node.displayName}</strong><span className={`runtime-status ${nodeTone(node.status)}`}>{humanize(node.status)}</span>{commitDrift(node) && <span className="runtime-status quarantined" title="This node is not running the Hermes commit OrcaSynapse recorded for it.">Commit drift</span>}</div><p>{node.baseUrl}</p><small>{node.hostname ?? node.expectedHostname ?? "Awaiting hostname"} · {runtimeRevision(node)}</small></div>
         <dl><div><dt>Last heartbeat</dt><dd>{node.lastSeenAt ? new Date(node.lastSeenAt).toLocaleString() : "Never"}</dd></div><div><dt>OrcaSynapse → Hermes</dt><dd>{node.serviceConnectionStatus ? humanize(node.serviceConnectionStatus) : "Pending"}</dd></div><div><dt>Identity</dt><dd>{node.identityFingerprint ? `${node.identityFingerprint.slice(0, 12)}…` : "Not enrolled"}</dd></div></dl>
         <div className="runtime-node-actions">
           {node.status === "DRAINING" || node.status === "SUSPENDED" ? <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => void act(node, "RESUME")}>Resume</Button> : <Button variant="ghost" size="sm" disabled={busy !== null || node.status === "PENDING" || node.status === "OFFLINE"} onClick={() => void act(node, "DRAIN")}>Drain</Button>}

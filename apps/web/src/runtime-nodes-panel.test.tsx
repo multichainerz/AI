@@ -306,6 +306,66 @@ describe("the hand-off to VM2", () => {
   });
 });
 
+describe("a node that did not take the commit it was given", () => {
+  /*
+   * The control plane now tells each node which Hermes commit to run, and the
+   * node reports back what it is actually running. A node that quietly failed
+   * to move is the failure mode worth seeing: it stays Online, it heartbeats,
+   * and nothing else on this screen distinguishes it from one that moved.
+   */
+  const RUNNING = "1f".repeat(20);
+  const EXPECTED = "9c".repeat(20);
+
+  async function fleet(node: HermesRuntimeNode) {
+    api.getHermesRuntimeNodes.mockResolvedValue({ items: [node] });
+    render(
+      <main>
+        <RuntimeNodesPanel
+          targetEnvironment="DEVELOPMENT"
+          inferenceReady
+          onConfigureInference={vi.fn()}
+          onSessionExpired={vi.fn()}
+        />
+      </main>,
+    );
+    await waitFor(() => screen.getByText("Hermes Runtime 01"));
+  }
+
+  it("says so, and names both commits", async () => {
+    await fleet(runtimeNode({ hermesVersion: RUNNING, expectedHermesCommit: EXPECTED }));
+
+    expect(screen.getByText("Commit drift")).toBeTruthy();
+    expect(screen.getByText(new RegExp(`${RUNNING.slice(0, 12)}.*expects ${EXPECTED.slice(0, 12)}`))).toBeTruthy();
+  });
+
+  it("stays quiet when the node is running what it was told to", async () => {
+    await fleet(runtimeNode({ hermesVersion: EXPECTED, expectedHermesCommit: EXPECTED }));
+
+    // Positive first: a null `queryByText` proves nothing if the card never
+    // rendered at all.
+    expect(screen.getByText(new RegExp(EXPECTED.slice(0, 12)))).toBeTruthy();
+    expect(screen.queryByText("Commit drift")).toBeNull();
+  });
+
+  it("does not call an unrecorded target drift", async () => {
+    // A node enrolled before the pin was recorded has no target. Unknown and
+    // disagreeing are different facts, and only one of them is a fault.
+    await fleet(runtimeNode({ hermesVersion: RUNNING, expectedHermesCommit: null }));
+
+    expect(screen.getByText(new RegExp(RUNNING.slice(0, 12)))).toBeTruthy();
+    expect(screen.queryByText("Commit drift")).toBeNull();
+  });
+
+  it("does not call an unreadable running version drift", async () => {
+    // "unknown" is what a node reports when it could not resolve a commit of
+    // its own. It is not evidence that the node is on the wrong one.
+    await fleet(runtimeNode({ hermesVersion: "unknown", expectedHermesCommit: EXPECTED }));
+
+    expect(screen.getByText(/unknown/)).toBeTruthy();
+    expect(screen.queryByText("Commit drift")).toBeNull();
+  });
+});
+
 describe("the node poll", () => {
   /*
    * Nothing in the product polled before this. VM2 enrolment hands off to

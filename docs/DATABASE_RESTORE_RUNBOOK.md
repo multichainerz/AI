@@ -150,3 +150,13 @@ truncated or empty dump aborts the upgrade before the handoff that would run the
 migrations, that retention keeps three, that the dump is not world-readable, and
 that the restore command in section 2 above actually brings a deleted row back.
 It needs root and a Docker daemon.
+
+`scripts/test-orcasynapse-installer-upgrade.sh` verifies the other half: that
+the procedure on this page actually returns a deployment to where it was. It
+installs a control plane at one version, seeds rows, upgrades it to another
+whose migration adds a column and backfills it, then fails an upgrade *after*
+that migration has committed — and runs sections 2 and 3 above, in that order,
+asserting afterwards that the column is gone, the rows are back, and the source
+tree and its commit are the ones the backup record named as `fromCommit`. It
+also asserts, from the dump's own contents rather than from the installer's log,
+that the dump predates the migration it is meant to undo.
