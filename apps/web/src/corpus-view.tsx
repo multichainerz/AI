@@ -178,7 +178,7 @@ export function CorpusView({ session, scope, onConfigure, onSessionExpired }: Co
 
   const fail = (cause: unknown) => {
     if (cause instanceof OrcaSynapseApiError && cause.status === 401) onSessionExpired();
-    setError(cause instanceof Error ? cause.message : "OrcaSynapse could not load the Hermes corpus.");
+    setError(cause instanceof Error ? cause.message : `OrcaSynapse could not load ${copy.title}.`);
   };
 
   const loadOverview = async () => {

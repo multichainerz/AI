@@ -5,6 +5,22 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v5.2.1 — 2026-08-15
+
+The residue a post-release sweep found: three user-visible strings still naming
+surfaces that no longer exist, and two structural leftovers no gate could see.
+
+- rename the locked-service messages that told operators "Governed tooling" and
+  "Hermes corpus" services were unavailable, neither of which has been a tab
+  since v5.1.0
+- name the actual screen when Skills or Memory fails to load, rather than the
+  storage mechanism behind both
+- delete `packages/knowledge`, which had lost its manifest at v4.6.0 and
+  survived as two orphaned tsconfigs that pnpm, the version check and the
+  Docker closure check all silently skipped
+- declare `*.svg` as `eol=lf`, so a generated asset cannot read as brand drift
+  on a checkout with `core.autocrlf` enabled
+
 ## v5.2.0 — 2026-08-15
 
 A twelve-lane read-only audit of the whole tree, and the repairs it found. Three

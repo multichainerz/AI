@@ -143,7 +143,7 @@ async function requireAdmin(request: FastifyRequest, reply: FastifyReply, option
 
 function managerOrLocked(options: ToolingRouteOptions, reply: FastifyReply): ToolingManager | null {
   if (options.manager) return options.manager;
-  void reply.code(423).send({ error: "PLATFORM_LOCKED", message: "Governed tooling services are not ready." });
+  void reply.code(423).send({ error: "PLATFORM_LOCKED", message: "Tool services are not ready." });
   return null;
 }
 

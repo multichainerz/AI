@@ -45,7 +45,7 @@ function signatureHeaders(request: FastifyRequest): NodeSignatureHeaders {
 
 function managerOrLocked(options: CorpusRouteOptions, reply: FastifyReply): HermesCorpusManager | null {
   if (options.manager) return options.manager;
-  void reply.code(423).send({ error: "PLATFORM_LOCKED", message: "Hermes corpus services are not ready." });
+  void reply.code(423).send({ error: "PLATFORM_LOCKED", message: "Skills and memory services are not ready." });
   return null;
 }
 
