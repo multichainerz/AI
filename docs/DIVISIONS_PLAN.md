@@ -141,27 +141,59 @@ GPUs. Note the asymmetry with the paragraph above: VM1's *inference gateway* is
 deliberately exposed to enrolled nodes; VM1's *database* is deliberately exposed
 to nothing. "Point it at VM1" is right for one and disqualifying for the other.
 
-**3. The scoping key is missing on our side, and that is the linchpin.**
-`ensureNativeSession` creates a Hermes session with exactly
-`{ id, model, source }` — no user identity. Hermes threads a `user_id` from its
-gateway to plugins, but we never populate it, so every session would land in
-Hindsight's static `bank_id` default of `"hermes"`: one bank for the whole
-deployment, and the same non-tenancy as the files.
+**3. Hindsight's scoping is richer than a static field — and unreachable from
+here.** This is the finding that decides the whole option, so it is recorded in
+full.
 
-So the work is not the install. It is: confirm the gateway's session API accepts
-an identity, thread one from the worker (which already carries `ownerSubject`),
-and only then does a bank mean anything.
+Hindsight resolves its bank from a template, not a constant:
 
-**And the identity to send is the division, not the user.** Per-user buckets are
-finer than this plan wants: a division's agent should accumulate knowledge its
-whole division benefits from, and per-user memory would give each person a
-private agent that learns nothing from its colleagues — a different product.
-`bank_id` per division is the mapping; `ownerSubject` is the wrong key even
-though it is the one already to hand.
+```
+bank_id_template — "Optional template to derive bank_id dynamically.
+Placeholders: {profile}, {workspace}, {platform}, {user}, {session}."
+```
 
-None of this changes the ordering. It sharpens what "adopt Hindsight" would mean:
-one field threaded through the session API, one Postgres on VM2, and then the
-mirroring project that is the actual cost.
+and populates them from provider state:
+
+```python
+self._bank_id = _resolve_bank_id_template(
+    self._bank_id_template, fallback=static_bank_id,
+    profile=self._agent_identity, workspace=self._agent_workspace,
+    platform=self._platform, user=self._user_id, session=self._session_id,
+)
+```
+
+The plumbing above it is real too. `MemoryManager.initialize_all(session_id,
+**kwargs)` forwards its kwargs to every provider verbatim and injects
+`hermes_home` — which is why grepping `memory_manager.py` for `user_id` finds
+nothing while Hermes' own test still asserts the identity arrives. It travels
+anonymously.
+
+**But the identity cannot get in.** `user_id` appears exactly **once** in
+`gateway/platforms/api_server.py`, as a column name in a `SELECT` list.
+`_handle_create_session`, behind `POST /api/sessions`, does not read one from the
+request body. `hermes_state.py` has the column and `create_session` takes the
+parameter — the storage layer supports it; the HTTP surface does not expose it.
+
+So at the pinned commit `c015663b`, a caller cannot tell Hermes who is asking.
+Every session on a node resolves the same `{user}`, the same `{profile}`, the
+same everything — and therefore the same bank.
+
+**The consequence, stated plainly: Hindsight does not escape the home boundary.**
+Adopting it on one node gives a better store with exactly the tenancy the files
+have, which is none. Reaching per-division memory through a provider needs an
+upstream change to Hermes' session API first — not a configuration, a change to
+software we pin and do not own.
+
+That is not a reason to avoid Hindsight forever. It is the reason **a home per
+division is not merely the first answer but the only one currently available**,
+and it should be weighed knowing that the alternative depends on upstream.
+
+**When the API does carry an identity, send the division, not the user.**
+Per-user buckets are finer than this plan wants: a division's agent should
+accumulate knowledge its whole division benefits from, and per-user memory would
+give each person a private agent that learns nothing from its colleagues — a
+different product. `{user}` would be populated with a division id;
+`ownerSubject` is the wrong key even though it is the one already to hand.
 
 ## The precondition
 
