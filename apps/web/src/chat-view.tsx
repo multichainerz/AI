@@ -1228,7 +1228,7 @@ export function ChatView({
             placeholder="Search conversations"
           />
         </label>
-        <div className="grid min-h-0 flex-1 content-start gap-1 overflow-x-hidden overflow-y-auto pr-0.5" aria-label="Conversation history">
+        <div className="grid min-h-0 flex-1 content-start gap-1.5 overflow-x-hidden overflow-y-auto pr-0.5" aria-label="Conversation history">
           {visibleConversations.length === 0 && !loading && (
             <div className="grid justify-items-center gap-2 px-4 py-10 text-center">
               <span aria-hidden="true" className="grid h-9 w-9 place-items-center rounded bg-raised text-faint">
@@ -1246,13 +1246,13 @@ export function ChatView({
             </div>
           )}
           {groupConversationsByDate(visibleConversations, new Date()).map((group) => (
-            <section key={group.key} className="grid content-start gap-1">
+            <section key={group.key} className="grid content-start gap-1.5">
               {/*
                 * Level 3, deliberately. The sr-only h1 in this rail is what
                 * closes an open menu when clicked, and a second level-1 heading
                 * would make that target ambiguous.
                 */}
-              <h3 className="sticky top-0 z-[1] flex items-center gap-2 bg-bg px-1.5 pb-1.5 pt-3 text-micro font-semibold uppercase tracking-[0.1em] text-faint">
+              <h3 className="sticky top-0 z-[1] flex items-center gap-2 bg-bg px-1.5 pb-2 pt-4 text-micro font-semibold uppercase tracking-[0.1em] text-faint">
                 <span>{group.label}</span>
                 <span aria-hidden="true" className="h-px flex-1 bg-border" />
               </h3>
@@ -1260,9 +1260,22 @@ export function ChatView({
             <Button
               variant="ghost"
               key={conversation.id}
+              /*
+               * `size="auto"` is what makes this row two lines tall, and it was
+               * missing. The default size is `h-9`, height and padding are
+               * different properties, so no `py-*` written here ever competed
+               * with it: the row stayed clamped at 36px while its title and
+               * preview needed ~67px, and the rail read as cramped because the
+               * rows were clipped rather than because they were tight. That is
+               * exactly the case the `auto` size exists for -- see its comment
+               * in `components/ui/button.tsx` -- and it is invisible to both a
+               * diff and the suite, since jsdom implements no layout and
+               * reports the padding as applied.
+               */
+              size="auto"
               aria-current={active?.id === conversation.id ? "true" : undefined}
               className={cn(
-                "relative grid w-full grid-cols-1 items-start gap-1 rounded-card border px-2.5 py-2 text-left transition-all duration-150",
+                "relative grid w-full grid-cols-1 items-start gap-1.5 rounded-card border px-2.5 py-3 text-left transition-all duration-150",
                 active?.id === conversation.id
                   ? "border-accent/30 bg-soft shadow-card"
                   : "border-transparent hover:border-border hover:bg-raised/70",
@@ -1283,6 +1296,20 @@ export function ChatView({
                 * The timestamp is the only fixed-width thing here, so it goes to
                 * the end of the title line where it costs the title a known
                 * amount and costs the preview nothing.
+                *
+                * The vertical rhythm is set in four places at once -- row
+                * padding, the row's own line gap, the gap between rows and the
+                * date heading -- because raising any one of them alone changes
+                * a proportion rather than the density. Padding on its own makes
+                * taller rows no further apart; gap on its own spreads rows that
+                * are each still cramped. All four move together, so a row goes
+                * from ~55px to ~66px and the distance between two rows from
+                * 20px to 30px while the 5:1 ratio between them is preserved.
+                *
+                * The proportion is what an unselected row has instead of a
+                * border: it draws `border-transparent`, so nothing marks where
+                * one conversation ends except the fact that its two lines sit
+                * closer to each other than to anything else.
                 */}
               <span className="flex min-w-0 items-baseline gap-2">
                 <strong className={cn(
@@ -1293,7 +1320,7 @@ export function ChatView({
                   {conversation.status === "ARCHIVED" ? "Archived" : formatConversationTime(conversation.lastMessageAt)}
                 </span>
               </span>
-              <span className="min-w-0 truncate text-[10.5px] leading-[1.45] text-faint">
+              <span className="min-w-0 truncate text-[10.5px] leading-[1.5] text-faint">
                 {conversation.lastMessagePreview ?? conversation.profileName ?? conversation.modelAlias}
               </span>
             </Button>

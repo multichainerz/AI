@@ -5,6 +5,37 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v5.6.2 — 2026-08-15
+
+Unclamps the conversation rail's rows, which is why it read as cramped. The row
+is a `Button`, whose default size is `h-9`; height and padding are different
+properties, so no `py-*` written on that row had ever competed with it. Every
+row was pinned at 36px while its title and preview needed 67px, and the two
+lines were clipped rather than merely tight. The `auto` size exists for exactly
+this case — its own comment says the single-line sizes "would clip a title and
+caption" — and the rail had simply never used it.
+
+The previous release's spacing work was therefore inert, so it is redone on top:
+row padding, the row's internal line gap, the gap between rows and the date
+heading all move together, since raising one alone changes a proportion rather
+than the density.
+
+Measured in a browser rather than read off the diff, because jsdom implements no
+layout and reports a clamped row's padding as applied — the same reason the
+suite was green through the whole defect.
+
+- give the conversation rail's rows `size="auto"`, so a row's height follows its
+  content instead of being clipped at 36px
+- raise the rail's vertical rhythm: 12px row padding, 6px between a row's two
+  lines, 6px between rows and more room around the date heading — 67px rows at
+  32px apart, against 36px rows at 6px
+- cover the rail with `apps/web/src/chat-rail.test.tsx`: date grouping, the
+  title/time/preview split, the archived label that replaces a timestamp, and
+  the agent-name fallback for a conversation with no preview — none of which any
+  test reached, since the existing chat tests render a one-item list
+- give that test a `RAIL_PREVIEW_OUT` dump, so a populated rail can be looked at
+  without a signed-in session
+
 ## v5.6.1 — 2026-08-15
 
 Makes the conversation rail readable. Every row spent 40px of a narrow rail on a
