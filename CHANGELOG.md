@@ -5,6 +5,46 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v6.0.2 — 2026-08-16
+
+Recalibrates `docs/DIVISIONS_PLAN.md` against the tree and settles the memory
+question it left open. Documentation only; no product change.
+
+The plan was written at v5.5.0 and held. Every citation in it has been re-checked
+rather than assumed — the 27 `AdminScope`s, the five tables it extends, the nine
+files it touches, the seeded profile's empty `skills`, and all three
+preconditions, which are all still open. The increments, their order and the
+estimate are unchanged.
+
+What it did not say, and now does, is why memory cannot be divided. Verified
+against the pinned Hermes commit `c015663b`: `load_on_disk_store()` takes no
+arguments and `MemoryStore.__init__` takes only character limits, so the built-in
+store has nothing to key a tenant on — Hermes' own docstring calls the directory
+"profile-scoped", profile meaning the home. The gateway does carry a `user_id`,
+and Hermes' own test says it reaches *plugins*; the arrow stops before the file
+store. And `user_id` appears exactly once in `gateway/platforms/api_server.py`,
+as a column in a `SELECT` list, so a caller cannot tell Hermes who is asking.
+
+The consequence is recorded plainly: a memory provider cannot escape the home
+boundary either, because the identity cannot get in. A home per division is not
+merely the first answer but the only one currently available.
+
+- record that memory is bounded by the node — `HermesCorpusEntry` is unique on
+  `(nodeId, path)` — so one VM2 is a scoping choice rather than a constraint
+- evaluate Hindsight (MIT, PostgreSQL with pgvector, `bank_id_template`) and
+  record why it is blocked upstream, that its PostgreSQL would run on VM2 and
+  never VM1's, and that providers are additive so adopting one costs the
+  observability guarantee until a bank is mirrored
+- add increment F: scoped memory on SQLite behind a tool that takes no division
+  parameter, because the tool must filter and the prompt never can. Deliberately
+  outside the A–E total
+- make administrators deployment-wide, so every administration screen is
+  super-admin by construction — which closes a gap the plan did not cover, since
+  Memory and Skills are shared per node and cannot be filtered for a
+  division-scoped admin
+- drop `LocalAdministrator.divisionId` rather than leave a nullable column for a
+  feature that is not being built
+
 ## v6.0.1 — 2026-08-15
 
 Moves the connection form off the right edge of the screen.
