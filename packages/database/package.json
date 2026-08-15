@@ -1,6 +1,6 @@
 {
   "name": "@orcasynapse/database",
-  "version": "5.6.0",
+  "version": "5.6.1",
   "description": "Drizzle schema, migrations, and database tooling for OrcaSynapse",
   "license": "BUSL-1.1",
   "private": true,

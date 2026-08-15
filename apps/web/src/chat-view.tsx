@@ -1262,40 +1262,39 @@ export function ChatView({
               key={conversation.id}
               aria-current={active?.id === conversation.id ? "true" : undefined}
               className={cn(
-                "relative grid w-full grid-cols-[30px_minmax(0,1fr)] items-start gap-2.5 rounded-card border px-2.5 py-2.5 text-left transition-all duration-150",
+                "relative grid w-full grid-cols-1 items-start gap-1 rounded-card border px-2.5 py-2 text-left transition-all duration-150",
                 active?.id === conversation.id
                   ? "border-accent/30 bg-soft shadow-card"
                   : "border-transparent hover:border-border hover:bg-raised/70",
               )}
               onClick={() => void selectConversation(conversation.id)}
             >
-              <span
-                aria-hidden="true"
-                className={cn(
-                  "grid h-[30px] w-[30px] place-items-center rounded border",
-                  active?.id === conversation.id
-                    ? "border-accent/25 bg-accent/10 text-accent"
-                    : "border-border bg-bg text-faint",
-                )}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M5 6.5A2.5 2.5 0 0 1 7.5 4h9A2.5 2.5 0 0 1 19 6.5v7a2.5 2.5 0 0 1-2.5 2.5H11l-4.5 3v-3A2.5 2.5 0 0 1 4 13.5v-7Z" />
-                </svg>
-              </span>
-              <span className="grid min-w-0 gap-1">
+              {/*
+                * Title and time share the first line, preview owns the second.
+                *
+                * This rail is narrow, and the row used to spend 40px of it on a
+                * 30px speech-bubble that was `aria-hidden` and identical on every
+                * item -- decoration priced in the one dimension the content was
+                * short of. The title truncated at roughly two dozen characters,
+                * and the line beneath it packed a fixed-width timestamp, a dot
+                * and the preview into what was left, so the preview arrived at
+                * about twenty. Two truncated strings, stacked, neither readable.
+                *
+                * The timestamp is the only fixed-width thing here, so it goes to
+                * the end of the title line where it costs the title a known
+                * amount and costs the preview nothing.
+                */}
+              <span className="flex min-w-0 items-baseline gap-2">
                 <strong className={cn(
-                  "truncate text-[12.5px] text-text",
+                  "min-w-0 flex-1 truncate text-[12.5px] text-text",
                   active?.id === conversation.id ? "font-semibold" : "font-medium",
                 )}>{conversation.title}</strong>
-                <span className="flex min-w-0 items-center gap-1.5 text-[10.5px] text-faint">
-                  <span className="shrink-0 font-mono tabular-nums">
-                    {conversation.status === "ARCHIVED" ? "Archived" : formatConversationTime(conversation.lastMessageAt)}
-                  </span>
-                  <span aria-hidden="true" className="h-[2.5px] w-[2.5px] shrink-0 rounded-full bg-faint" />
-                  <span className="truncate">
-                    {conversation.lastMessagePreview ?? conversation.profileName ?? conversation.modelAlias}
-                  </span>
+                <span className="shrink-0 font-mono text-[10.5px] tabular-nums text-faint">
+                  {conversation.status === "ARCHIVED" ? "Archived" : formatConversationTime(conversation.lastMessageAt)}
                 </span>
+              </span>
+              <span className="min-w-0 truncate text-[10.5px] leading-[1.45] text-faint">
+                {conversation.lastMessagePreview ?? conversation.profileName ?? conversation.modelAlias}
               </span>
             </Button>
           ))}

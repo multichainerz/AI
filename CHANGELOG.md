@@ -5,6 +5,20 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v5.6.1 — 2026-08-15
+
+Makes the conversation rail readable. Every row spent 40px of a narrow rail on a
+30px speech-bubble that was `aria-hidden` and identical on every item —
+decoration priced in the one dimension the content was short of. The title
+truncated at roughly two dozen characters, and the line beneath packed a
+fixed-width timestamp, a separator dot and the message preview into what was
+left, so the preview arrived at about twenty. Two truncated strings, stacked,
+neither readable.
+
+- drop the per-row icon and give the title the full width
+- move the timestamp to the end of the title line, where it costs the title a
+  known amount and costs the preview nothing, and give the preview its own line
+
 ## v5.6.0 — 2026-08-15
 
 Increment 4, the last one in `docs/IN_DASHBOARD_UPDATE_PLAN.md`: VM1 upgrades
