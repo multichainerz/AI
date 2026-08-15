@@ -13,7 +13,7 @@ import {
   mutateHermesRuntimeNode,
   removeHermesRuntimeNode,
 } from "./api.js";
-import { Button, Dialog, Drawer, EmptyState, Input, MicroLabel, StatusText, Tile, cn } from "./ui/index.js";
+import { Button, Dialog, EmptyState, Input, MicroLabel, StatusText, Tile, cn } from "./ui/index.js";
 import { Switch } from "@/components/ui/switch";
 
 /**
@@ -473,7 +473,17 @@ export function RuntimeNodesPanel({
       <div className="runtime-network-note"><strong>The installer does not manage your firewall.</strong><p>Apply customer network policy before Production activation. Do not expose port 8642 to user or internet networks.</p></div>
     </aside>
 
-    {editorOpen && inferenceReady && targetKnown && <Drawer
+    {/*
+      * A centred dialog, matching step 1's connection form and the removal
+      * confirmation below it. As a right-hand drawer this slid in over the very
+      * setup step it belongs to, so the instructions and the form could not be
+      * read together — and the enrolment copy here is long enough that reading
+      * it beside its own step is the point.
+      *
+      * Drawer is OverlayChrome with one flag, so the focus trap, escape
+      * handling and scroll lock are unchanged.
+      */}
+    {editorOpen && inferenceReady && targetKnown && <Dialog
       open
       kicker="Agentic System"
       title={invitation ? "Run this on VM2" : "Generate the VM2 installer"}
@@ -511,7 +521,7 @@ export function RuntimeNodesPanel({
         <ol><li><span>1</span><div><strong>Run one command on VM2</strong><small>OrcaSynapse serves the installer directly; it connects back only to this control-plane origin.</small><code>{agenticNodeInstallCommand(invitation.bundle.controlPlaneUrl)}</code></div></li><li><span>2</span><div><strong>Paste the claim when prompted</strong><small>The installer reads it from the terminal with hidden input and sends it in a redacted POST body—not in the URL or shell history.</small><code>{invitation.bundle.token}</code><Button onClick={() => void navigator.clipboard.writeText(invitation.bundle.token)}>Copy claim</Button></div></li><li><span>3</span><div><strong>Watch the node come online</strong><small>OrcaSynapse installs Hermes, applies the approved route and policy, then starts signed health reporting.</small><Button onClick={downloadBundle}>Download JSON fallback</Button></div></li></ol>
         <div className="runtime-network-note"><strong>What happens next</strong><p>VM2 generates its own private identity, installs Hermes, exchanges the claim once, and appears Online here. OrcaSynapse never receives the private signing key or a reusable VM credential.</p></div>
       </div>}
-    </Drawer>}
+    </Dialog>}
 
     {removalNode && <Dialog
       open

@@ -5,6 +5,25 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v6.0.3 — 2026-08-16
+
+Moves the last panel off the right edge of Setup. v6.0.1 did this for step 1's
+connection form; step 2's installer generator was still a drawer.
+
+It slid in over the very step it belongs to, so the enrolment instructions and
+the form could not be read together — and that copy is long: a one-time claim,
+the command to run on VM2, and what happens over the following twenty minutes.
+Reading it beside its own step is the entire point of it being there.
+
+Step 3 needs no change: its action navigates to Agents, which has no drawer. No
+`<Drawer>` usage remains anywhere in the dashboard.
+
+`Drawer` is `OverlayChrome` with one flag set, so the focus trap, escape handling
+and scroll lock are untouched — only where the panel appears changed.
+
+- render the VM2 installer generator as a centred dialog, matching step 1 and the
+  node-removal confirmation beside it
+
 ## v6.0.2 — 2026-08-16
 
 Recalibrates `docs/DIVISIONS_PLAN.md` against the tree and settles the memory
