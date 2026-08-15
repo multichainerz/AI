@@ -9,6 +9,7 @@ import {
   configurationRevisionListSchema,
   platformMetaSchema,
   platformReleaseTargetSchema,
+  platformUpdateActivitySchema,
   platformUpdateSchema,
   serviceConnectionListSchema,
   serviceConnectionSummarySchema,
@@ -41,6 +42,7 @@ import {
   type PlatformMeta,
   type PlatformReleaseTarget,
   type PlatformUpdate,
+  type PlatformUpdateActivity,
   type ServiceConnectionList,
   type ServiceConnectionSummary,
   type RollbackConfigurationResult,
@@ -307,6 +309,22 @@ export async function getPlatformUpdate(): Promise<PlatformUpdate> {
     cache: "no-store",
   });
   return platformUpdateSchema.parse(await parsedResponse(response));
+}
+
+/**
+ * What the VM1 update agent has been doing, including the installer log.
+ *
+ * Apart from `getPlatformUpdate` because that one reaches GitHub and this reads
+ * two local rows. An operator watching an upgrade land polls this while the
+ * deployment is least able to make an outbound request, and a combined call
+ * would make the local answer depend on the remote one.
+ */
+export async function getPlatformUpdateActivity(): Promise<PlatformUpdateActivity> {
+  const response = await fetch("/api/v1/admin/updates/activity", {
+    credentials: "same-origin",
+    cache: "no-store",
+  });
+  return platformUpdateActivitySchema.parse(await parsedResponse(response));
 }
 
 export async function approveReleaseTarget(input: ApproveReleaseTarget): Promise<PlatformReleaseTarget> {

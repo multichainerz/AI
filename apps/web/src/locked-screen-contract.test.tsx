@@ -83,7 +83,7 @@ const cases: LockedCase[] = [
    * than after someone notices it says something different.
    */
   {
-    name: "Application",
+    name: "System",
     render: ({ elevate, navigate }) => {
       render(<ApplicationView
         session={signedOut}

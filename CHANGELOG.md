@@ -5,6 +5,56 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v5.7.0 — 2026-08-15
+
+Makes an in-dashboard update something an operator can watch and check, and
+renames the tab it lives on from Application to **System**.
+
+Approving a release already worked: the VM1 agent picks the record up, applies
+it, gates it on readiness, and restores the previous release if the new one does
+not serve. What none of that reached was the dashboard. The agent recorded every
+phase and the installer's own log into two root-owned files the container cannot
+read, so an operator's only way to find out whether their upgrade worked was a
+shell on VM1 — the thing in-dashboard updates exist to remove.
+
+The agent now also writes that record to PostgreSQL, which it already connects to
+in order to read the approval, and Settings → System shows it: the outcome in
+plain words, the release moved from and to, and the installer log behind a
+control.
+
+**It captures `UI_LOG_FILE`, never the installer's stdout.** `install.sh` prints
+the Offline recovery key with a bare `printf` that deliberately never reaches
+that log — "printed, never logged" is an invariant the installer states at the
+line that prints it — so capturing terminal output would have published the key
+into a database table and then onto a web page. The suite asserts the key is
+absent from the stored log on both the success and the rollback path.
+
+The screen also stopped contradicting itself. It said "Recorded, not applied —
+the upgrade still runs on VM1 with the command above" one sentence before saying
+the hosts read the record and apply it themselves, and `automaticUpdateSupported`
+was a `z.literal(false)` whose reason — the container has no host-root or Docker
+control — is still true but no longer implies the conclusion. Both dated from
+before the agent shipped, and a test pinning the wrong half is what kept them.
+
+- record every agent phase and the installer log to PostgreSQL, best-effort and
+  after the durable files, so an agent can never fail an upgrade because it could
+  not describe one
+- capture every log the attempt produced, not the newest: a failed upgrade writes
+  two, and the newest describes the recovery rather than the failure
+- add `PlatformUpdateAgent` (liveness) and `PlatformUpdateRun` (attempts),
+  separate so an idle tick ten minutes later cannot erase the upgrade it follows
+- report the agent's absence explicitly — without it, "no agent installed" and
+  "installed and idle" both look like an empty list, which is the state a VM1
+  installed before v5.6.0 is in
+- distinguish "the control plane is being replaced" from "the upgrade stalled",
+  using the unavailability budget the agent writes down before taking the stack
+  down
+- compute `automaticUpdateSupported` from whether an agent has actually reported,
+  and demote the shell command to a fallback when it has
+- rename Settings → Application to Settings → System, keeping `#settings/system`
+  as the address and both former hashes resolving
+- grow the update-agent suite from 67 assertions to 83
+
 ## v5.6.2 — 2026-08-15
 
 Unclamps the conversation rail's rows, which is why it read as cramped. The row

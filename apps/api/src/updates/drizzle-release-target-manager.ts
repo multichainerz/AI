@@ -1,7 +1,20 @@
-import type { ApproveReleaseTarget, PlatformReleaseTarget, PlatformUpdate } from "@orcasynapse/contracts";
-import { ORCASYNAPSE_VERSION } from "@orcasynapse/contracts";
-import { auditEvent, platformReleaseTarget, type OrcaSynapseDatabase } from "@orcasynapse/database";
-import { eq } from "drizzle-orm";
+import type {
+  ApproveReleaseTarget,
+  PlatformReleaseTarget,
+  PlatformUpdate,
+  PlatformUpdateActivity,
+  PlatformUpdateAgent,
+  PlatformUpdatePhase,
+} from "@orcasynapse/contracts";
+import { ORCASYNAPSE_VERSION, platformUpdateActivitySchema, platformUpdatePhaseSchema } from "@orcasynapse/contracts";
+import {
+  auditEvent,
+  platformReleaseTarget,
+  platformUpdateAgent,
+  platformUpdateRun,
+  type OrcaSynapseDatabase,
+} from "@orcasynapse/database";
+import { desc, eq } from "drizzle-orm";
 import type { AdminPrincipal } from "../auth/admin-session.js";
 import { advisoryLock, increment } from "../database-support.js";
 import {
@@ -26,6 +39,39 @@ export interface PlatformReleaseTargetOptions {
 }
 
 type StoredTarget = typeof platformReleaseTarget.$inferSelect;
+type StoredRun = typeof platformUpdateRun.$inferSelect;
+
+const KNOWN_PHASES: ReadonlySet<string> = new Set(platformUpdatePhaseSchema.options);
+
+/**
+ * The column is free text as far as the database is concerned, and it is
+ * written by a root program on the host rather than by this process. Text this
+ * release does not recognise becomes `unknown` instead of failing to parse: an
+ * operator opens this screen because an upgrade went wrong, and a 500 here
+ * would take away the only account of it they have.
+ */
+function phaseOf(value: string): PlatformUpdatePhase {
+  return KNOWN_PHASES.has(value) ? (value as PlatformUpdatePhase) : "unknown";
+}
+
+/** Everything a run carries except its log, which only the newest one returns. */
+function runFields(row: StoredRun) {
+  return {
+    id: row.id,
+    phase: phaseOf(row.phase),
+    detail: row.detail,
+    targetVersion: row.targetVersion,
+    targetCommit: row.targetCommit,
+    installedVersion: row.installedVersion,
+    installedCommit: row.installedCommit,
+    rollback: row.rollback,
+    logTruncated: row.logTruncated,
+    startedAt: row.startedAt.toISOString(),
+    apiUnavailableUntil: row.apiUnavailableUntil?.toISOString() ?? null,
+    completedAt: row.completedAt?.toISOString() ?? null,
+    recordedAt: row.recordedAt.toISOString(),
+  };
+}
 
 /**
  * The stored row is "approved" or it is empty; the database constraint refuses
@@ -57,14 +103,33 @@ export class DrizzlePlatformReleaseTargetManager implements PlatformReleaseTarge
   }
 
   async snapshot(): Promise<PlatformUpdate> {
-    const stored = await this.storedTarget();
+    const [stored, agent] = await Promise.all([this.storedTarget(), this.storedAgent()]);
     try {
-      return await checkForPlatformUpdate(this.currentVersion, this.fetchImplementation, stored);
+      return await checkForPlatformUpdate(this.currentVersion, this.fetchImplementation, stored, agent);
     } catch (error) {
       throw new ReleaseTargetUnavailableError(
         error instanceof Error ? error.message : "The release service returned an unknown error.",
       );
     }
+  }
+
+  async activity(): Promise<PlatformUpdateActivity> {
+    // Eleven, so the newest can be lifted out with its log and ten summaries
+    // remain. One query rather than two, because a run that finishes between
+    // them would otherwise appear in neither.
+    const [agent, rows] = await Promise.all([
+      this.storedAgent(),
+      this.database
+        .select().from(platformUpdateRun)
+        .orderBy(desc(platformUpdateRun.startedAt), desc(platformUpdateRun.recordedAt))
+        .limit(11),
+    ]);
+    const [newest, ...older] = rows;
+    return platformUpdateActivitySchema.parse({
+      agent,
+      latest: newest ? { ...runFields(newest), log: newest.log } : null,
+      recent: older.map((row) => ({ ...runFields(row), hasLog: row.log !== null })),
+    });
   }
 
   async approve(principal: AdminPrincipal, input: ApproveReleaseTarget): Promise<PlatformReleaseTarget> {
@@ -187,6 +252,21 @@ export class DrizzlePlatformReleaseTargetManager implements PlatformReleaseTarge
       .select().from(platformReleaseTarget)
       .where(eq(platformReleaseTarget.id, "global")).limit(1);
     return row ? targetDto(row) : null;
+  }
+
+  private async storedAgent(): Promise<PlatformUpdateAgent | null> {
+    const [row] = await this.database
+      .select().from(platformUpdateAgent)
+      .where(eq(platformUpdateAgent.id, "global")).limit(1);
+    if (!row) return null;
+    return {
+      phase: phaseOf(row.phase),
+      detail: row.detail,
+      installedVersion: row.installedVersion,
+      installedCommit: row.installedCommit,
+      currentRunId: row.currentRunId,
+      checkedAt: row.checkedAt.toISOString(),
+    };
   }
 
   /** A lookup failure is not a refusal, so the two reach the operator apart. */

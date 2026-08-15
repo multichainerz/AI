@@ -71,7 +71,7 @@ export const primaryNavigationGroups: ReadonlyArray<{
     label: "System",
     placement: "bottom",
     items: [
-      { area: "Settings", icon: "settings", target: "Deployment", description: "Setup, models, prompts, guardrails and application updates" },
+      { area: "Settings", icon: "settings", target: "Deployment", description: "Setup, models, prompts, guardrails and system updates" },
     ],
   },
 ];
@@ -136,17 +136,22 @@ const sectionNavigation: Partial<Record<ProductArea, ReadonlyArray<SectionNaviga
     { label: "Audit trail", view: "Audit" },
   ],
   /*
-   * Setup is the bring-up sequence and nothing else. "Application" is the tab
-   * the update check moved to: checking for a release has no ordering relation
-   * to connecting an inference server, and sitting between two setup steps was
-   * the only thing that ever made it look like one.
+   * Setup is the bring-up sequence and nothing else. "System" is the tab the
+   * update check moved to: checking for a release has no ordering relation to
+   * connecting an inference server, and sitting between two setup steps was the
+   * only thing that ever made it look like one.
+   *
+   * It was called "Application" until it also began reporting what the host
+   * update agent is doing. "Application" named the software; the tab now covers
+   * the deployment running it -- the release, the approved target, and the
+   * upgrade as it happens on VM1 -- which is a machine, not an application.
    */
   Settings: [
     { label: "Setup", view: "Deployment" },
     { label: "Models", view: "Models" },
     { label: "Prompts", view: "Prompts" },
     { label: "Guardrails", view: "Guardrails" },
-    { label: "Application", view: "Application" },
+    { label: "System", view: "Application" },
   ],
 };
 
@@ -174,7 +179,7 @@ const pathByView: Record<ActiveView, string> = {
   Memory: "#agents/memory",
   Integrations: "#agents/tools",
   Deployment: "#settings/setup",
-  Application: "#settings/application",
+  Application: "#settings/system",
   Models: "#settings/models",
   Prompts: "#settings/prompts",
   Guardrails: "#settings/guardrails",
@@ -295,6 +300,19 @@ export function viewFromHash(hash: string): ActiveView {
     case "#settings/setup/runtime":
     case "#settings/setup/profile":
       return "Deployment";
+    /*
+     * The tab is "System"; the routing token stays `Application` for the reason
+     * given at the top of this file, and the hash follows the label the way
+     * `Deployment` is addressed as `#settings/setup`.
+     *
+     * The two former spellings are kept rather than dropped. This screen went
+     * from "the update check" to the place an operator watches an upgrade run,
+     * so it is the one Settings tab somebody has reason to have bookmarked
+     * mid-incident, and a retired hash that falls through would drop them on
+     * the Dashboard at exactly the wrong moment.
+     */
+    case "#settings/system":
+    case "#system":
     case "#settings/application":
     case "#application":
       return "Application";

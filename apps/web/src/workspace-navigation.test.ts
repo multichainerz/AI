@@ -93,7 +93,7 @@ describe("workspace navigation", () => {
       Session: "Governed conversations",
       Agents: "Profiles and runs, skills, memory and tools",
       Operations: "Health, incidents and the audit trail",
-      Settings: "Setup, models, prompts, guardrails and application updates",
+      Settings: "Setup, models, prompts, guardrails and system updates",
     });
 
     for (const [area, description] of Object.entries(described) as Array<[ProductArea, string]>) {
@@ -245,9 +245,14 @@ describe("workspace navigation", () => {
       { label: "Models", view: "Models" },
       { label: "Prompts", view: "Prompts" },
       { label: "Guardrails", view: "Guardrails" },
-      { label: "Application", view: "Application" },
+      { label: "System", view: "Application" },
     ]);
-    expect(pathForView("Application")).toBe("#settings/application");
+    // The hash follows the label and the routing token does not, the same way
+    // `Deployment` is addressed as `#settings/setup` two lines above.
+    expect(pathForView("Application")).toBe("#settings/system");
+    expect(viewFromHash("#settings/system")).toBe("Application");
+    expect(viewFromHash("#system")).toBe("Application");
+    // Both spellings from when the tab was called Application still resolve.
     expect(viewFromHash("#settings/application")).toBe("Application");
     expect(viewFromHash("#application")).toBe("Application");
     expect(productAreaForView("Application")).toBe("Settings");

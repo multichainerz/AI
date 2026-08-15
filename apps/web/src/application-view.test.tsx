@@ -1,7 +1,7 @@
 /**
  * @vitest-environment jsdom
  *
- * Settings → Application. The update check used to sit inside Setup, between
+ * Settings → System. The update check used to sit inside Setup, between
  * "enroll the agent runtime" and "record activation", where it read as a step
  * toward finishing an installation rather than as maintenance that outlives
  * one. These cases pin that it moved intact and that it is governed like every
@@ -27,7 +27,7 @@ function view(overrides: Partial<Parameters<typeof ApplicationView>[0]> = {}) {
   };
 }
 
-describe("the Application tab", () => {
+describe("the System tab", () => {
   it("hosts the update check that used to interrupt setup", () => {
     render(<ApplicationView {...view()} />);
 

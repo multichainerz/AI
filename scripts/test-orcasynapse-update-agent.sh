@@ -303,6 +303,18 @@ printf '{"version":"%s","commit":"%s","completedAt":"%s","publicScheme":"http"}\
 chmod 0600 "${stub_root}/.local/state/install-complete.json"
 printf '%s\n' 'hermes-native-v1' > "${stub_root}/.local/state/schema-epoch"
 chmod 0600 "${stub_root}/.local/state/schema-epoch"
+# The real installer's two output channels, modelled, because the agent has to
+# capture exactly one of them. install-orcasynapse.sh appends every ui_* line to
+# UI_LOG_FILE and prints the Offline recovery key with a bare printf that never
+# reaches it -- "printed, never logged", stated at the line that prints it. The
+# stub does both, so the assertions can require that the log carries the steps
+# and that it does not carry the key.
+ui_log="${stub_root}/.local/state/install-$(date -u +%Y%m%dT%H%M%S)-$$.log"
+printf 'stub installer log for %s\nSTEP bring the stack up\nSTEP apply migrations\nSTEP verify readiness\n' \
+  "${version}" > "${ui_log}"
+chmod 0600 "${ui_log}"
+printf 'Offline recovery key      %s\n' 'ORCA-RECOVERY-KEY-MUST-NOT-BE-LOGGED'
+
 printf 'ORCASYNAPSE IS READY (stub host installer, %s)\n' "${version}"
 STUB
   chmod 0755 "$1"
@@ -509,6 +521,38 @@ display_name_columns() {
     where table_name = 'harness_account' and column_name = 'display_name'"
 }
 
+# The rows a dashboard reads. Containment is asked of PostgreSQL rather than
+# compared in the shell: the log is multi-line and psql_value flattens it, so a
+# shell-side match would silently pass on a log that had been mangled in
+# transport -- and the most important assertion in this file is a *negative*
+# one about that log's contents.
+agent_field() {
+  psql_value "select coalesce(\"$1\"::text, '') from \"PlatformUpdateAgent\" where \"id\" = 'global'"
+}
+
+latest_run_id() {
+  psql_value "select coalesce(\"id\"::text, '') from \"PlatformUpdateRun\"
+    order by \"startedAt\" desc, \"recordedAt\" desc limit 1"
+}
+
+run_field() {
+  psql_value "select coalesce(\"$1\"::text, '') from \"PlatformUpdateRun\"
+    where \"id\" = (select \"id\" from \"PlatformUpdateRun\"
+      order by \"startedAt\" desc, \"recordedAt\" desc limit 1)"
+}
+
+run_count() {
+  psql_value "select count(*) from \"PlatformUpdateRun\""
+}
+
+# 'yes' or 'no'. The needle is a literal from this file, never a value read back
+# out of the database.
+latest_log_contains() {
+  psql_value "select case when position('$1' in coalesce((select \"log\"
+      from \"PlatformUpdateRun\" order by \"startedAt\" desc, \"recordedAt\" desc limit 1),
+      '')) > 0 then 'yes' else 'no' end"
+}
+
 # ---------------------------------------------------------------------------
 # 1. An installation at A, with rows and an approved-target table
 # ---------------------------------------------------------------------------
@@ -538,7 +582,37 @@ psql_run "create table if not exists \"PlatformReleaseTarget\" (
   \"approvedAt\" timestamptz,
   \"revision\" integer not null default 0);" \
   || { bad "the approved-target table could not be created"; exit 1; }
-pass "four rows seeded and the approved-target table created"
+# This increment's two, same shape as packages/database/src/drizzle/schema.ts.
+psql_run "create table if not exists \"PlatformUpdateAgent\" (
+  \"id\" varchar(32) primary key,
+  \"phase\" varchar(32) not null,
+  \"detail\" text not null,
+  \"installedVersion\" varchar(64),
+  \"installedCommit\" varchar(40),
+  \"currentRunId\" uuid,
+  \"checkedAt\" timestamptz not null,
+  \"createdAt\" timestamptz not null default now(),
+  \"updatedAt\" timestamptz not null default now());" \
+  || { bad "the agent-status table could not be created"; exit 1; }
+psql_run "create table if not exists \"PlatformUpdateRun\" (
+  \"id\" uuid primary key,
+  \"phase\" varchar(32) not null,
+  \"detail\" text not null,
+  \"targetVersion\" varchar(64),
+  \"targetCommit\" varchar(40),
+  \"installedVersion\" varchar(64),
+  \"installedCommit\" varchar(40),
+  \"rollback\" text,
+  \"log\" text,
+  \"logTruncated\" boolean not null default false,
+  \"startedAt\" timestamptz not null,
+  \"apiUnavailableUntil\" timestamptz,
+  \"completedAt\" timestamptz,
+  \"recordedAt\" timestamptz not null,
+  \"createdAt\" timestamptz not null default now(),
+  \"updatedAt\" timestamptz not null default now());" \
+  || { bad "the update-run table could not be created"; exit 1; }
+pass "four rows seeded and the approved-target, agent-status and update-run tables created"
 
 # The state every scenario below starts from: A's schema, A's rows, A's source.
 #
@@ -597,6 +671,22 @@ run_agent
 [[ "$(installed_commit)" == "${COMMIT_A}" ]] \
   && pass "nothing was installed" \
   || bad "the installed commit moved to '$(installed_commit)' with no target approved"
+# The row that separates "no agent is installed" from "the agent is installed
+# and there is nothing to do". Both have no runs, and an operator who has just
+# approved a release and is watching nothing happen needs to know which one
+# they are looking at.
+[[ "$(agent_field phase)" == "idle" ]] \
+  && pass "the idle tick recorded itself in PlatformUpdateAgent" \
+  || bad "PlatformUpdateAgent reports phase '$(agent_field phase)'"
+[[ -n "$(agent_field checkedAt)" ]] \
+  && pass "the idle tick stamped a check time a dashboard can age" \
+  || bad "PlatformUpdateAgent carries no checkedAt"
+[[ -z "$(agent_field currentRunId)" ]] \
+  && pass "an idle tick points at no run" \
+  || bad "an idle tick claimed run '$(agent_field currentRunId)'"
+[[ "$(run_count)" == "0" ]] \
+  && pass "an idle tick invented no update run" \
+  || bad "an idle tick wrote $(run_count) update run(s)"
 
 set_target "" ""
 run_agent
@@ -671,6 +761,42 @@ grep -Fq 'AGENT FETCHED install.sh FROM main' "${agent_output}" \
   && pass "the release tree the agent replaced carried no copy of the agent to run from" \
   || bad "the agent could have been running from inside the replaced tree"
 
+# What the dashboard reads. Everything above proves the machine moved; this
+# proves an operator can see that it did without a shell.
+upgrade_run_id="$(latest_run_id)"
+[[ "$(run_count)" == "1" ]] \
+  && pass "the upgrade wrote exactly one update run, not one row per phase" \
+  || bad "the upgrade wrote $(run_count) update runs"
+[[ "$(run_field phase)" == "healthy" ]] \
+  && pass "the update run reports healthy" \
+  || bad "the update run reports '$(run_field phase)'"
+[[ "$(run_field targetCommit)" == "${COMMIT_B}" ]] \
+  && pass "the update run names the commit it applied" \
+  || bad "the update run names '$(run_field targetCommit)'"
+[[ -n "$(run_field completedAt)" ]] \
+  && pass "a terminal phase stamped completedAt" \
+  || bad "the update run reached healthy without a completedAt"
+[[ "$(agent_field currentRunId)" == "${upgrade_run_id}" ]] \
+  && pass "PlatformUpdateAgent points at the run it performed" \
+  || bad "PlatformUpdateAgent points at '$(agent_field currentRunId)', not ${upgrade_run_id}"
+
+# The log, and the reason this feature reads UI_LOG_FILE rather than the
+# installer's terminal output. The stub prints the Offline recovery key exactly
+# the way install-orcasynapse.sh does -- a bare printf, never through a ui_*
+# helper -- so an agent that captured stdout would put it in this column and
+# then on a web page. This pair of assertions is the whole guarantee.
+[[ "$(latest_log_contains "STEP apply migrations")" == "yes" ]] \
+  && pass "the installer log reached the database" \
+  || bad "the update run carries no installer log"
+[[ "$(latest_log_contains "ORCA-RECOVERY-KEY-MUST-NOT-BE-LOGGED")" == "no" ]] \
+  && pass "the Offline recovery key the installer printed is NOT in the stored log" \
+  || bad "the stored log contains the Offline recovery key -- this would publish it to the dashboard"
+# ::text on a boolean is PostgreSQL spelling it out; psql -tA would have said
+# "f", and the cast in run_field happens first.
+[[ "$(run_field logTruncated)" == "false" ]] \
+  && pass "a short log is not marked truncated" \
+  || bad "logTruncated is '$(run_field logTruncated)' for a short log"
+
 # ---------------------------------------------------------------------------
 # 5. The upgrade fails after its migrations have committed -- and stays failed
 # ---------------------------------------------------------------------------
@@ -698,6 +824,22 @@ run_agent "AGENT_TEST_FAIL_AFTER_MIGRATE=${VERSION_B}"
 [[ "$(durable_record)" == *'install.sh: rolled-back'* ]] \
   && pass "the record repeats what install.sh recorded about its own rollback" \
   || bad "the record does not carry install.sh's rollback outcome: $(durable_record)"
+# The run an operator most needs to read, and the one whose log is hardest to
+# keep: install.sh restores the previous tree and runs *its* installer, so by
+# the time anything has concluded the upgrade failed, the failing tree is gone.
+# The agent copies the log out before either branch decides anything.
+[[ "$(run_field phase)" == "rolled-back" ]] \
+  && pass "the update run reports the rollback" \
+  || bad "the update run reports '$(run_field phase)'"
+[[ "$(run_field rollback)" == *"install.sh"* ]] \
+  && pass "the update run carries install.sh's own rollback outcome" \
+  || bad "the update run's rollback field is '$(run_field rollback)'"
+[[ "$(latest_log_contains "STEP apply migrations")" == "yes" ]] \
+  && pass "the failed run kept a log, which is the run whose log matters most" \
+  || bad "the rolled-back run carries no installer log"
+[[ "$(latest_log_contains "ORCA-RECOVERY-KEY-MUST-NOT-BE-LOGGED")" == "no" ]] \
+  && pass "the rollback path did not leak the Offline recovery key either" \
+  || bad "the rolled-back run's log contains the Offline recovery key"
 
 # The timer fires again in ten minutes, and the row it reads has not changed.
 # Without a block that is a loop: upgrade, fail, restore the database from the

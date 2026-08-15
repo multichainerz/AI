@@ -77,7 +77,7 @@ const stepStatusLabel = { done: "Done", current: "In progress", blocked: "Waitin
  *    its own step removes that class of mismatch by construction — there is no
  *    count to disagree with a list.
  * 2. **Nothing that is not one of the three steps stays.** The update check
- *    moved to Settings → Application, the activation record to Operations, the
+ *    moved to Settings → System, the activation record to Operations, the
  *    Governed Chat promo was deleted (it duplicated step 3 and its only button
  *    was a disabled instruction), and recovery became a footer action, which is
  *    what it always was.

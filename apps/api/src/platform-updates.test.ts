@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  UPDATE_AGENT_STALE_AFTER_MS,
   checkForPlatformUpdate,
   latestReleaseVersion,
   parseReleaseVersion,
   resolveReleaseTarget,
+  updateAgentPresence,
 } from "./platform-updates.js";
 
 /*
@@ -64,6 +66,8 @@ describe("platform update checks", () => {
     expect(update.updateAvailable).toBe(true);
     expect(update.latestVersion).toBe("v4.8.3");
     expect(update.updateCommand).toContain("ORCASYNAPSE_REF=v4.8.3");
+    // No agent argument, so no agent has reported: false is the fail-closed
+    // answer, not a statement that the product cannot do it.
     expect(update.automaticUpdateSupported).toBe(false);
     expect(update.target).toBeNull();
   });
@@ -109,5 +113,69 @@ describe("resolving an approved tag to a commit", () => {
       .rejects.toThrow(/commit/i);
     await expect(resolveReleaseTarget("v4.8.3", vi.fn(async () => new Response("", { status: 502 }))))
       .rejects.toThrow(/502/);
+  });
+});
+
+/*
+ * Whether an approval will actually be acted on, which is the question the
+ * panel's most prominent copy answered wrongly. It was a `z.literal(false)` --
+ * true about the container, and read by an operator as true about the product --
+ * for several releases after the host agent shipped.
+ */
+describe("whether this deployment can apply an approval itself", () => {
+  const NOW = Date.parse("2026-08-15T20:00:00.000Z");
+  const agentAt = (checkedAt: string) => ({ checkedAt });
+
+  it("says no when no agent has ever reported", () => {
+    const presence = updateAgentPresence(null, NOW);
+
+    expect(presence.supported).toBe(false);
+    // The operator's next move has to be in the sentence: this is the case a
+    // VM1 installed before v5.6.0 is in, and one command fixes it for good.
+    expect(presence.reason).toContain("v5.6.0");
+  });
+
+  it("says yes when the agent checked in recently", () => {
+    expect(updateAgentPresence(agentAt(new Date(NOW - 60_000).toISOString()), NOW).supported).toBe(true);
+  });
+
+  it("still says yes at the edge of the staleness window", () => {
+    const edge = new Date(NOW - UPDATE_AGENT_STALE_AFTER_MS + 1_000).toISOString();
+
+    expect(updateAgentPresence(agentAt(edge), NOW).supported).toBe(true);
+  });
+
+  /*
+   * An upgrade holds the agent for far longer than its ten-minute timer, so a
+   * tight window would report the agent as gone during exactly the run it is
+   * performing -- telling an operator their approval will never be applied
+   * while it is being applied.
+   */
+  it("tolerates an agent busy for longer than several of its own timer intervals", () => {
+    const busyFor = 45 * 60 * 1000;
+
+    expect(updateAgentPresence(agentAt(new Date(NOW - busyFor).toISOString()), NOW).supported).toBe(true);
+  });
+
+  it("says no once the agent has been silent past the window", () => {
+    const silent = new Date(NOW - UPDATE_AGENT_STALE_AFTER_MS - 1_000).toISOString();
+
+    const presence = updateAgentPresence(agentAt(silent), NOW);
+
+    expect(presence.supported).toBe(false);
+    expect(presence.reason).toContain("orcasynapse-update.timer");
+  });
+
+  it("carries the presence answer through the update check", async () => {
+    const fetchImplementation = vi.fn(async () => new Response(JSON.stringify([{ name: "v5.6.2" }]), { status: 200 }));
+
+    const update = await checkForPlatformUpdate(
+      "v5.6.2", fetchImplementation, null, agentAt(new Date().toISOString()),
+    );
+
+    expect(update.automaticUpdateSupported).toBe(true);
+    // The command stays either way: it is the fallback when the agent is not
+    // reporting, and the value a reader compares against what it says it ran.
+    expect(update.updateCommand).toContain("ORCASYNAPSE_REF=v5.6.2");
   });
 });

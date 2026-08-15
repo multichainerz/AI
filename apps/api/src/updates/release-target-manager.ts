@@ -1,4 +1,9 @@
-import type { ApproveReleaseTarget, PlatformReleaseTarget, PlatformUpdate } from "@orcasynapse/contracts";
+import type {
+  ApproveReleaseTarget,
+  PlatformReleaseTarget,
+  PlatformUpdate,
+  PlatformUpdateActivity,
+} from "@orcasynapse/contracts";
 import type { AdminPrincipal } from "../auth/admin-session.js";
 
 /**
@@ -15,6 +20,16 @@ export interface PlatformReleaseTargetManager {
   snapshot(): Promise<PlatformUpdate>;
   approve(principal: AdminPrincipal, input: ApproveReleaseTarget): Promise<PlatformReleaseTarget>;
   clear(principal: AdminPrincipal): Promise<void>;
+  /**
+   * What the VM1 agent has been doing: its liveness, the newest run with the
+   * installer log, and a short history without one.
+   *
+   * A separate call from `snapshot()` rather than a field on it, because
+   * `snapshot()` reaches GitHub and this reads two local rows. Folding them
+   * together would make watching an upgrade depend on an outbound request —
+   * during the one window when the deployment is least able to make one.
+   */
+  activity(): Promise<PlatformUpdateActivity>;
 }
 
 /** The operator asked for something that is not a release this may move to. */

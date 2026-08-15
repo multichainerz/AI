@@ -11,22 +11,25 @@ interface ApplicationViewProps {
 }
 
 /**
- * Settings → Application: the installation's own lifecycle.
+ * Settings → System: the installation's own lifecycle.
  *
  * The update check used to sit in the middle of Setup, between "enroll the
  * agent runtime" and "record activation", where it had no ordering relation to
  * either — you do not update an installation as a step toward finishing one.
  * It is maintenance that outlives bring-up, so it gets the tab the
  * documentation had already been sending people to.
+ *
+ * The routing token is still `Application`; only what an operator reads changed.
+ * See the note at the top of `workspace-navigation.tsx`.
  */
 export function ApplicationView({ session, currentVersion, onConfigure, onOpenOperations }: ApplicationViewProps) {
   const { unlocked, can } = adminAccess(session);
 
   if (!unlocked) {
     return <LockedScreen
-      kicker="Application settings"
-      title="Application"
-      mark="A"
+      kicker="System settings"
+      title="System"
+      mark="S"
       reason="Sign in as an administrator to check for releases and read this installation's version."
       actionLabel="Open platform settings"
       onAction={onConfigure}
@@ -36,7 +39,7 @@ export function ApplicationView({ session, currentVersion, onConfigure, onOpenOp
   return (
     <div className="grid gap-5">
       <PageHeader
-        kicker="Application settings"
+        kicker="System settings"
         title="This installation"
         description="Version, releases, the approved target, and the update command VM1 runs. Nothing here changes how the workspace is configured."
       />

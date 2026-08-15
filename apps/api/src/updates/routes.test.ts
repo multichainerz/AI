@@ -3,6 +3,7 @@ import {
   type AdministratorSession,
   type PlatformReleaseTarget,
   type PlatformUpdate,
+  type PlatformUpdateActivity,
 } from "@orcasynapse/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.js";
@@ -44,6 +45,25 @@ const update: PlatformUpdate = {
   checkedAt: NOW, target: null,
 };
 
+const RUN_ID = "6b1f0a2c-3d4e-4f5a-8b6c-7d8e9f0a1b2c";
+
+const activity: PlatformUpdateActivity = {
+  agent: {
+    phase: "healthy", detail: "this deployment is running v5.3.0",
+    installedVersion: "v5.3.0", installedCommit: COMMIT,
+    currentRunId: RUN_ID, checkedAt: NOW,
+  },
+  latest: {
+    id: RUN_ID, phase: "healthy", detail: "this deployment is running v5.3.0",
+    targetVersion: "v5.3.0", targetCommit: COMMIT,
+    installedVersion: "v5.3.0", installedCommit: COMMIT,
+    rollback: null, log: "STEP apply migrations\nSTEP verify readiness\n",
+    logTruncated: false, startedAt: NOW, apiUnavailableUntil: null,
+    completedAt: NOW, recordedAt: NOW,
+  },
+  recent: [],
+};
+
 class Sessions implements AdminSessionManager {
   constructor(private readonly principal: AdministratorSession = session) {}
   async createInstallationKeySession() { return null; }
@@ -54,6 +74,7 @@ class Sessions implements AdminSessionManager {
 function manager(): PlatformReleaseTargetManager {
   return {
     snapshot: vi.fn(async () => update),
+    activity: vi.fn(async () => activity),
     approve: vi.fn(async () => target),
     clear: vi.fn(async () => undefined),
   };
@@ -216,5 +237,45 @@ describe("approved release target routes", () => {
 
     expect(response.statusCode).toBe(423);
     expect(response.json()).toMatchObject({ error: "PLATFORM_LOCKED" });
+  });
+});
+
+describe("update activity route", () => {
+  it("reports what the host agent did, log and all", async () => {
+    const { app } = await testApp();
+
+    const response = await app.inject({ method: "GET", url: "/api/v1/admin/updates/activity", headers });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as PlatformUpdateActivity;
+    expect(body.agent?.phase).toBe("healthy");
+    expect(body.latest?.id).toBe(RUN_ID);
+    expect(body.latest?.log).toContain("STEP apply migrations");
+  });
+
+  // The screen an operator opens when an upgrade went wrong is not the place to
+  // require the scope that performs upgrades.
+  it("is readable by a role that cannot approve a release", async () => {
+    const { app } = await testApp(manager(), readOnly);
+
+    const response = await app.inject({ method: "GET", url: "/api/v1/admin/updates/activity", headers });
+
+    expect(response.statusCode).toBe(200);
+  });
+
+  it("refuses an unauthenticated caller", async () => {
+    const { app } = await testApp();
+
+    const response = await app.inject({ method: "GET", url: "/api/v1/admin/updates/activity" });
+
+    expect(response.statusCode).toBe(401);
+  });
+
+  it("does not cache, because it is polled while a deployment is changing", async () => {
+    const { app } = await testApp();
+
+    const response = await app.inject({ method: "GET", url: "/api/v1/admin/updates/activity", headers });
+
+    expect(response.headers["cache-control"]).toBe("no-store");
   });
 });

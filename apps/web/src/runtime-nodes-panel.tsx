@@ -415,7 +415,7 @@ export function RuntimeNodesPanel({
           * failed to take a new commit keeps heartbeating and stays Online, so
           * the status alone cannot show it — and this increment deliberately
           * stops at making that visible: the operator decision stays in
-          * Settings → Application, and there is no apply button here.
+          * Settings → System, and there is no apply button here.
           */}
         <div className="runtime-node-copy"><div><strong>{node.displayName}</strong><span className={`runtime-status ${nodeTone(node.status)}`}>{humanize(node.status)}</span>{commitDrift(node) && <span className="runtime-status quarantined" title="This node is not running the Hermes commit OrcaSynapse recorded for it.">Commit drift</span>}</div><p>{node.baseUrl}</p><small>{node.hostname ?? node.expectedHostname ?? "Awaiting hostname"} · {runtimeRevision(node)}</small></div>
         <dl><div><dt>Last heartbeat</dt><dd>{node.lastSeenAt ? new Date(node.lastSeenAt).toLocaleString() : "Never"}</dd></div><div><dt>OrcaSynapse → Hermes</dt><dd>{node.serviceConnectionStatus ? humanize(node.serviceConnectionStatus) : "Pending"}</dd></div><div><dt>Identity</dt><dd>{node.identityFingerprint ? `${node.identityFingerprint.slice(0, 12)}…` : "Not enrolled"}</dd></div></dl>

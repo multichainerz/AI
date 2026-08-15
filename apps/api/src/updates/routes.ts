@@ -1,6 +1,7 @@
 import {
   approveReleaseTargetSchema,
   platformReleaseTargetSchema,
+  platformUpdateActivitySchema,
   platformUpdateSchema,
 } from "@orcasynapse/contracts";
 import type { FastifyInstance, FastifyReply } from "fastify";
@@ -67,6 +68,30 @@ export async function registerAdminUpdateRoutes(
     void reply.header("cache-control", "no-store");
     try {
       return platformUpdateSchema.parse(await manager.snapshot());
+    } catch (error) {
+      return sendError(error, reply);
+    }
+  });
+
+  /*
+   * What the host agent has been doing. `readiness:read` like the check above:
+   * it reports on this deployment's own maintenance, not on anything an
+   * operator could act on, and every administrator role can already read the
+   * approval it describes the outcome of.
+   *
+   * A route of its own rather than a field on the check, because the check
+   * reaches GitHub and this reads two local rows. An operator watching an
+   * upgrade land is refreshing during the window when this deployment is least
+   * able to make an outbound request, and the answer they need is entirely
+   * local.
+   */
+  app.get("/activity", async (request, reply) => {
+    const principal = await requireAdmin(request, reply, options.sessionManager, "readiness:read");
+    const manager = managerOrLocked(options, reply);
+    if (!principal || !manager) return reply;
+    void reply.header("cache-control", "no-store");
+    try {
+      return platformUpdateActivitySchema.parse(await manager.activity());
     } catch (error) {
       return sendError(error, reply);
     }

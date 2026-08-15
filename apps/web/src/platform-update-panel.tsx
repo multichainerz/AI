@@ -1,6 +1,7 @@
 import type { PlatformUpdate } from "@orcasynapse/contracts";
 import { useState } from "react";
 import { approveReleaseTarget, clearReleaseTarget, getPlatformUpdate } from "./api.js";
+import { PlatformUpdateActivityPanel } from "./platform-update-activity.js";
 import { Button, MicroLabel, Panel, StatusText } from "./ui/index.js";
 import { CopyIcon } from "./ui/relay-icons.js";
 
@@ -43,6 +44,13 @@ export function PlatformUpdatePanel({ currentVersion, canApprove }: PlatformUpda
   const [pending, setPending] = useState<"approve" | "withdraw" | null>(null);
   const [decisionError, setDecisionError] = useState<string | null>(null);
   const busy = pending !== null;
+  /*
+   * Bumped after a decision so the activity panel re-reads immediately. The
+   * agent will not have acted yet — its timer is ten minutes — but an operator
+   * who has just approved a release is owed the agent's own liveness on the
+   * spot, since that is what decides whether anything will happen at all.
+   */
+  const [activityToken, setActivityToken] = useState(0);
 
   const check = async () => {
     setCopied(false);
@@ -65,6 +73,7 @@ export function PlatformUpdatePanel({ currentVersion, canApprove }: PlatformUpda
     try {
       await decision();
       setState({ status: "ready", update: await getPlatformUpdate() });
+      setActivityToken((token) => token + 1);
     } catch (error) {
       setDecisionError(failureMessage(error, fallback));
     } finally {
@@ -98,7 +107,7 @@ export function PlatformUpdatePanel({ currentVersion, canApprove }: PlatformUpda
   const statusTone = state.status === "error" ? "bad" : available ? "warn" : state.status === "ready" ? "good" : "neutral";
 
   return (
-    <Panel className="overflow-hidden p-0" aria-label="Application update">
+    <Panel className="overflow-hidden p-0" aria-label="System update">
       <div className="flex flex-wrap items-start justify-between gap-4 p-5">
         <div className="flex min-w-0 items-start gap-3">
           {/*
@@ -120,7 +129,7 @@ export function PlatformUpdatePanel({ currentVersion, canApprove }: PlatformUpda
             <img src="/brand/sivali-mark.svg" alt="" width={22} height={22} className="block shrink-0 brightness-0 invert" />
           </span>
           <div className="min-w-0">
-            <MicroLabel className="block">Application update</MicroLabel>
+            <MicroLabel className="block">System update</MicroLabel>
             <h2 className="m-0 mt-1 font-display text-[15px] font-semibold tracking-[-0.01em] text-text">OrcaSynapse {currentVersion}</h2>
             <p className="mb-0 mt-1 text-body leading-relaxed text-muted">
               Check the official release tags without granting this container control of the VM1 host.
@@ -169,7 +178,9 @@ export function PlatformUpdatePanel({ currentVersion, canApprove }: PlatformUpda
                   : `${state.update.currentVersion} is the latest release`}
               </strong>
               <span className="mt-1 block text-caption text-muted">
-                Run the pinned command on VM1. Existing installer upgrade safeguards remain in force.
+                {state.update.automaticUpdateSupported
+                  ? "Approve it and the agent on VM1 applies it, gates it on readiness, and restores this release if the new one does not serve."
+                  : "Run the pinned command on VM1. Existing installer upgrade safeguards remain in force."}
               </span>
             </div>
             <div className="flex items-center gap-2">
@@ -181,7 +192,16 @@ export function PlatformUpdatePanel({ currentVersion, canApprove }: PlatformUpda
               >
                 View release
               </a>
-              <Button variant={state.update.updateAvailable ? "primary" : "ghost"} onClick={() => void copyCommand(state.update.updateCommand)}>
+              {/*
+                * `primary` only when the command is the way this deployment
+                * actually updates. It was the loudest control on the screen next
+                * to the approve button that had already made it unnecessary,
+                * which sent operators looking for a shell they no longer need.
+                */}
+              <Button
+                variant={state.update.updateAvailable && !state.update.automaticUpdateSupported ? "primary" : "ghost"}
+                onClick={() => void copyCommand(state.update.updateCommand)}
+              >
                 <CopyIcon size={16} />
                 {copied ? "Copied" : "Copy update command"}
               </Button>
@@ -201,10 +221,18 @@ export function PlatformUpdatePanel({ currentVersion, canApprove }: PlatformUpda
               <strong className="block text-label font-semibold text-text">
                 {target.desiredVersion} is approved as this deployment's target
               </strong>
+              {/*
+                * This said "Recorded, not applied — the upgrade still runs on
+                * VM1 with the command above" and then, one sentence later, that
+                * the hosts read the record themselves. Both halves were written
+                * at different times and they contradict each other; the second
+                * is the true one since the host update agent shipped. What is
+                * still true either way is the boundary: the host pulls, and
+                * nothing is pushed to it from a browser.
+                */}
               <span className="mt-1 block text-caption text-muted">
-                Approved by {target.approvedBySubject} on {approvedAt(target.approvedAt)}. Recorded, not applied — the
-                upgrade still runs on VM1 with the command above. The hosts read this record themselves and pick up the
-                pinned commit; nothing is ever pushed to them from the browser.
+                Approved by {target.approvedBySubject} on {approvedAt(target.approvedAt)}. The hosts read this record
+                themselves and pick up the pinned commit; nothing is ever pushed to them from the browser.
               </span>
             </div>
             {canApprove && (
@@ -227,6 +255,8 @@ export function PlatformUpdatePanel({ currentVersion, canApprove }: PlatformUpda
           </code>
         </div>
       )}
+
+      <PlatformUpdateActivityPanel refreshToken={activityToken} />
     </Panel>
   );
 }

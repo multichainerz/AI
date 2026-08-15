@@ -888,6 +888,73 @@ export const platformReleaseTarget = pgTable("PlatformReleaseTarget", {
 	check("PlatformReleaseTarget_approval_check", sql`(("desiredVersion" IS NULL) AND ("desiredCommit" IS NULL) AND ("approvedAt" IS NULL) AND ("approvedBySubject" IS NULL)) OR ((length(btrim(("desiredVersion")::text)) > 0) AND (("desiredCommit")::text ~ '^[0-9a-f]{40}$'::text) AND ("approvedAt" IS NOT NULL) AND (length(btrim(("approvedBySubject")::text)) > 0))`),
 ]);
 
+/**
+ * The host update agent's own liveness, written on every timer tick.
+ *
+ * Separate from PlatformUpdateRun because it answers a different question, and
+ * the two must not overwrite each other. This row says "the agent is installed
+ * and it checked at 14:02"; a run row says "an upgrade was attempted and here is
+ * what happened". Folding them together would mean the next idle tick, ten
+ * minutes after an upgrade, erases the record of the upgrade.
+ *
+ * Without this row an absent agent is indistinguishable from a deployment that
+ * has never been upgraded: both have no runs. That is the failure an operator
+ * actually hits - approving a release on a VM1 installed before the agent
+ * existed, and waiting for something that is never going to read the approval.
+ */
+export const platformUpdateAgent = pgTable("PlatformUpdateAgent", {
+	id: varchar({ length: 32 }).default('global').primaryKey().notNull(),
+	phase: varchar({ length: 32 }).notNull(),
+	detail: text().notNull(),
+	installedVersion: varchar({ length: 64 }),
+	installedCommit: varchar({ length: 40 }),
+	currentRunId: uuid(),
+	checkedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull(),
+	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
+});
+
+/**
+ * One row per upgrade attempt, with the log the operator reads afterwards.
+ *
+ * `log` is the installer's UI log, never its stdout. install-orcasynapse.sh
+ * prints the Offline recovery key through ui_panel_kv, which is a bare printf
+ * that deliberately never reaches UI_LOG_FILE - "printed, never logged" is an
+ * invariant that file maintains on purpose. Capturing stdout here would publish
+ * that key into this table and then into a browser, so the boundary the
+ * installer already draws is the one this column is on the safe side of.
+ *
+ * apiUnavailableUntil is written before the API stops answering, so a dashboard
+ * that cannot reach the control plane can tell a restart from a crash rather
+ * than guessing. The agent records it at the top of the attempt for that reason.
+ *
+ * Rows are retained rather than replaced: the interesting run is usually the one
+ * that failed, and the tick after it reports something else entirely.
+ */
+export const platformUpdateRun = pgTable("PlatformUpdateRun", {
+	id: uuid().primaryKey().notNull(),
+	phase: varchar({ length: 32 }).notNull(),
+	detail: text().notNull(),
+	targetVersion: varchar({ length: 64 }),
+	targetCommit: varchar({ length: 40 }),
+	installedVersion: varchar({ length: 64 }),
+	installedCommit: varchar({ length: 40 }),
+	// A sentence, not a commit: the agent records what recovery did
+	// ("install.sh: RESTORED", "impossible: no previous commit recorded"),
+	// because the useful thing to show is what happened, not what it moved to.
+	rollback: text(),
+	log: text(),
+	logTruncated: boolean().default(false).notNull(),
+	startedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull(),
+	apiUnavailableUntil: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
+	completedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
+	recordedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull(),
+	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
+}, (table) => [
+	index("PlatformUpdateRun_startedAt_idx").using("btree", table.startedAt.desc().nullsLast()),
+]);
+
 export const hermesRuntimeNode = pgTable("HermesRuntimeNode", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	slug: varchar({ length: 64 }).notNull(),

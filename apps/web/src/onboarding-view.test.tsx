@@ -315,7 +315,7 @@ describe("the setup wizard", () => {
     await open(everythingDone);
     const markup = document.body.innerHTML;
 
-    // The update check moved to Settings → Application.
+    // The update check moved to Settings → System.
     expect(markup).not.toContain("Check for updates");
     // The activation record moved to Operations.
     expect(markup).not.toContain("Activate installation");

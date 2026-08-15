@@ -64,6 +64,10 @@ ORCASYNAPSE_UPDATE_UNAVAILABLE_BUDGET="${ORCASYNAPSE_UPDATE_UNAVAILABLE_BUDGET:-
 # stubbing it out; the systemd unit sets no such variable and this script is
 # root-only, so it is a seam for the tests and not a channel into production.
 ORCASYNAPSE_UPDATE_SOURCE_BASE="${ORCASYNAPSE_UPDATE_SOURCE_BASE:-https://raw.githubusercontent.com}"
+# How much of the installer's log is kept for the dashboard. The tail, not the
+# head: a run that failed says why at the end, and an operator reading this has
+# already been told the phase.
+ORCASYNAPSE_UPDATE_LOG_BYTES="${ORCASYNAPSE_UPDATE_LOG_BYTES:-131072}"
 
 AGENT_WORK=""
 AGENT_PHASE="idle"
@@ -78,6 +82,10 @@ AGENT_DATABASE_NAME=""
 AGENT_STARTED_AT=""
 AGENT_UNAVAILABLE_UNTIL=""
 AGENT_ROLLBACK=""
+# Empty on an idle tick. Set once, at the moment this agent decides to upgrade,
+# so every phase of one attempt updates one row instead of appending a new one.
+AGENT_RUN_ID=""
+AGENT_LOG_TRUNCATED="false"
 
 log() { printf 'orcasynapse-update: %s\n' "$1" >&2; }
 
@@ -118,12 +126,13 @@ json_escape() {
 write_record() {
   local now body
   now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  body="$(printf '{"phase":"%s","detail":"%s","targetVersion":"%s","targetCommit":"%s","installedVersion":"%s","installedCommit":"%s","startedAt":"%s","apiUnavailableUntil":"%s","rollback":"%s","recordedAt":"%s"}' \
+  body="$(printf '{"phase":"%s","detail":"%s","targetVersion":"%s","targetCommit":"%s","installedVersion":"%s","installedCommit":"%s","startedAt":"%s","apiUnavailableUntil":"%s","rollback":"%s","runId":"%s","logTruncated":%s,"recordedAt":"%s"}' \
     "$(json_escape "${AGENT_PHASE}")" "$(json_escape "${AGENT_DETAIL}")" \
     "$(json_escape "${AGENT_TARGET_VERSION}")" "$(json_escape "${AGENT_TARGET_COMMIT}")" \
     "$(json_escape "${AGENT_INSTALLED_VERSION}")" "$(json_escape "${AGENT_INSTALLED_COMMIT}")" \
     "$(json_escape "${AGENT_STARTED_AT}")" "$(json_escape "${AGENT_UNAVAILABLE_UNTIL}")" \
-    "$(json_escape "${AGENT_ROLLBACK}")" "${now}")"
+    "$(json_escape "${AGENT_ROLLBACK}")" "$(json_escape "${AGENT_RUN_ID}")" \
+    "${AGENT_LOG_TRUNCATED}" "${now}")"
   install -d -m 0700 "${ORCASYNAPSE_UPDATE_STATE_DIR}"
   printf '%s\n' "${body}" > "${ORCASYNAPSE_UPDATE_STATE_DIR}/last-run.json"
   chmod 0600 "${ORCASYNAPSE_UPDATE_STATE_DIR}/last-run.json"
@@ -132,6 +141,125 @@ write_record() {
     printf '%s\n' "${body}" > "${ORCASYNAPSE_INSTALL_DIR}/.local/state/last-update-agent.json"
     chmod 0600 "${ORCASYNAPSE_INSTALL_DIR}/.local/state/last-update-agent.json"
   fi
+  # The files above are the durable record and are written first, unconditionally.
+  # PostgreSQL is where a dashboard can actually see it, and it is best-effort by
+  # necessity: for most of an upgrade the database is being stopped, migrated and
+  # started again, so a failed write here is the expected case and not an error.
+  # The phases that matter are the terminal ones, and by then the stack is up --
+  # or it is not, and no record written anywhere would be reachable either.
+  publish_record "${body}" || true
+}
+
+# The installer's log, copied out of the tree before that tree can be replaced.
+#
+# UI_LOG_FILE and not stdout. install-orcasynapse.sh prints the Offline recovery
+# key through ui_panel_kv, which is a bare printf that never reaches UI_LOG_FILE
+# -- "printed, never logged", stated at the line that prints it. Capturing the
+# installer's terminal output instead of its log would put that key in the
+# database and then on a web page, so this reads the channel the installer
+# already keeps free of secrets.
+capture_installer_log() {
+  local candidate size
+  local marker="${AGENT_WORK}/log-since"
+  local snapshot="${ORCASYNAPSE_UPDATE_STATE_DIR}/last-install.log"
+  local combined="${AGENT_WORK}/install-log-combined"
+  : > "${combined}" || return 0
+  # Every log this attempt produced, not the newest one.
+  #
+  # A failed upgrade writes two: install.sh runs the new tree's installer, that
+  # one fails, and install.sh then restores the old tree and runs *its* installer
+  # to come back up. The newest of those describes the recovery, so an agent that
+  # took it would answer "what happened" with the log of the thing that worked.
+  #
+  # Glob order is chronological without a sort: install.sh names its log
+  # install-<UTC timestamp>.log, so the shell's lexical ordering is time order.
+  for candidate in "${ORCASYNAPSE_INSTALL_DIR}"/.local/state/install-*.log; do
+    [[ -f "${candidate}" && -r "${candidate}" ]] || continue
+    [[ ! -e "${marker}" || "${candidate}" -nt "${marker}" ]] || continue
+    printf -- '--- %s
+' "${candidate##*/}" >> "${combined}"
+    cat -- "${candidate}" >> "${combined}" || true
+  done
+  [[ -s "${combined}" ]] || return 0
+  install -d -m 0700 "${ORCASYNAPSE_UPDATE_STATE_DIR}"
+  size="$(wc -c < "${combined}" 2>/dev/null)" || size=0
+  [[ "${size}" =~ ^[0-9]+$ ]] || size=0
+  if (( size > ORCASYNAPSE_UPDATE_LOG_BYTES )); then
+    AGENT_LOG_TRUNCATED="true"
+    tail -c "${ORCASYNAPSE_UPDATE_LOG_BYTES}" -- "${combined}" > "${snapshot}" || return 0
+  else
+    AGENT_LOG_TRUNCATED="false"
+    cp -- "${combined}" "${snapshot}" || return 0
+  fi
+  chmod 0600 "${snapshot}"
+}
+
+# Both rows, from one JSON document, base64-encoded.
+#
+# base64 is [A-Za-z0-9+/=] and nothing else, so it passes through a single-quoted
+# SQL literal with no escaping and no way for a detail string, a version, or a
+# log full of quotes and newlines to end the literal. PostgreSQL decodes it back
+# on the other side. The alternative -- interpolating those values into SQL -- is
+# the shape this program must not have, since some of them come from a database
+# row and a file an installer wrote.
+publish_record() {
+  local body="$1" record_b64 log_b64="" sql
+  local snapshot="${ORCASYNAPSE_UPDATE_STATE_DIR}/last-install.log"
+  [[ -n "${AGENT_DATABASE_USER}" && -n "${AGENT_DATABASE_NAME}" ]] || return 0
+  record_b64="$(printf '%s' "${body}" | base64 -w0)" || return 0
+  # No log yet on an in-flight phase; decode('', 'base64') is the empty string,
+  # which nullif turns into NULL and the upsert below leaves alone.
+  [[ -r "${snapshot}" ]] && log_b64="$(base64 -w0 -- "${snapshot}")"
+
+  # Unquoted heredocs: only $ and backticks are special in one, so every quote
+  # the SQL needs -- double for the camel-cased identifiers, single for the
+  # literals -- is written as itself. There is no $ in the SQL other than the
+  # substitutions.
+  sql="$(cat <<SQL
+with r as (select convert_from(decode('${record_b64}', 'base64'), 'UTF8')::jsonb as d)
+insert into "PlatformUpdateAgent" ("id", "phase", "detail", "installedVersion", "installedCommit", "currentRunId", "checkedAt", "updatedAt")
+select 'global', r.d->>'phase', r.d->>'detail',
+       nullif(r.d->>'installedVersion', ''), nullif(r.d->>'installedCommit', ''),
+       nullif(r.d->>'runId', '')::uuid, now(), now()
+  from r
+on conflict ("id") do update set
+  "phase" = excluded."phase", "detail" = excluded."detail",
+  "installedVersion" = excluded."installedVersion", "installedCommit" = excluded."installedCommit",
+  "currentRunId" = excluded."currentRunId", "checkedAt" = excluded."checkedAt",
+  "updatedAt" = excluded."updatedAt"
+SQL
+  )"
+  psql_exec "${sql}" || return 0
+
+  # An idle tick has no run to record, and must not invent one.
+  [[ -n "${AGENT_RUN_ID}" ]] || return 0
+  sql="$(cat <<SQL
+with r as (select convert_from(decode('${record_b64}', 'base64'), 'UTF8')::jsonb as d)
+insert into "PlatformUpdateRun" ("id", "phase", "detail", "targetVersion", "targetCommit", "installedVersion", "installedCommit", "rollback", "log", "logTruncated", "startedAt", "apiUnavailableUntil", "completedAt", "recordedAt", "updatedAt")
+select (r.d->>'runId')::uuid, r.d->>'phase', r.d->>'detail',
+       nullif(r.d->>'targetVersion', ''), nullif(r.d->>'targetCommit', ''),
+       nullif(r.d->>'installedVersion', ''), nullif(r.d->>'installedCommit', ''),
+       nullif(r.d->>'rollback', ''),
+       nullif(convert_from(decode('${log_b64}', 'base64'), 'UTF8'), ''),
+       coalesce((r.d->>'logTruncated')::boolean, false),
+       coalesce(nullif(r.d->>'startedAt', '')::timestamptz, now()),
+       nullif(r.d->>'apiUnavailableUntil', '')::timestamptz,
+       case when r.d->>'phase' in ('healthy', 'rolled-back', 'failed') then now() end,
+       now(), now()
+  from r
+on conflict ("id") do update set
+  "phase" = excluded."phase", "detail" = excluded."detail",
+  "targetVersion" = excluded."targetVersion", "targetCommit" = excluded."targetCommit",
+  "installedVersion" = excluded."installedVersion", "installedCommit" = excluded."installedCommit",
+  "rollback" = excluded."rollback",
+  "log" = coalesce(excluded."log", "PlatformUpdateRun"."log"),
+  "logTruncated" = case when excluded."log" is not null then excluded."logTruncated" else "PlatformUpdateRun"."logTruncated" end,
+  "apiUnavailableUntil" = excluded."apiUnavailableUntil",
+  "completedAt" = coalesce(excluded."completedAt", "PlatformUpdateRun"."completedAt"),
+  "recordedAt" = excluded."recordedAt", "updatedAt" = excluded."updatedAt"
+SQL
+  )"
+  psql_exec "${sql}" || return 0
 }
 
 set_phase() {
@@ -175,6 +303,20 @@ psql_value() {
     orcasynapse-update-agent "${AGENT_DATABASE_USER}" "${AGENT_DATABASE_NAME}" "$1" \
     </dev/null 2>/dev/null)" || return 1
   printf '%s' "${out//[$'\r\n']/}"
+}
+
+# A statement rather than a value, and it is allowed to fail.
+#
+# ON_ERROR_STOP so a rejected statement is a non-zero exit rather than a message
+# on a stream nothing reads. Output is discarded and the caller ignores the
+# status on purpose: this only ever writes the record of what the agent is
+# doing, and an agent that aborted an upgrade because it could not describe
+# itself would have turned a reporting problem into an outage.
+psql_exec() {
+  docker compose --project-directory "${ORCASYNAPSE_INSTALL_DIR}" exec -T postgres \
+    sh -c 'PGPASSWORD="$(cat /run/secrets/postgres_password)" exec psql --username="$1" --dbname="$2" --no-password -v ON_ERROR_STOP=1 -qAtc "$3"' \
+    orcasynapse-update-agent "${AGENT_DATABASE_USER}" "${AGENT_DATABASE_NAME}" "$1" \
+    </dev/null >/dev/null 2>&1
 }
 
 # No `sed … | head -n 1` in any of these, which is what the first draft used and
@@ -468,6 +610,14 @@ main() {
   fi
 
   AGENT_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  # From here on this invocation is an attempt with an identity, so every phase
+  # it reports updates one row. Taken from the kernel rather than uuidgen, which
+  # is packaged separately and would be a new dependency on an installer path
+  # that currently needs only docker and curl.
+  AGENT_RUN_ID="$(cat /proc/sys/kernel/random/uuid 2>/dev/null)" || AGENT_RUN_ID=""
+  # The cut-off capture_installer_log compares against. Created before the
+  # installer runs, so every log file it writes is strictly newer.
+  : > "${AGENT_WORK}/log-since"
   # Trap 2. The API is about to stop answering, and a panel that cannot tell
   # that from a crash will report a healthy restart as a stalled machine. The
   # moment the budget expires is written down before the first byte moves, so
@@ -477,6 +627,12 @@ main() {
 
   local status=0
   run_installer_at "${AGENT_TARGET_COMMIT}" "upgrade" || status=$?
+
+  # Before either branch below, and before any recovery runs. The installer
+  # writes its log inside the tree it just replaced, and a rollback puts a
+  # different tree back -- so the log explaining a failure is gone by the time
+  # anything has decided the run failed. This is the last moment it exists.
+  capture_installer_log || true
 
   if (( status == 90 )); then
     fail "install.sh could not be fetched at ${AGENT_TARGET_COMMIT:0:12}; nothing on this host was changed"

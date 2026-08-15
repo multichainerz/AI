@@ -115,24 +115,60 @@ export async function resolveReleaseTarget(
   return { tag: desired.tag, commit };
 }
 
+/**
+ * How stale the agent's last check may be before this stops calling it present.
+ *
+ * Six times its timer. The unit fires every ten minutes with up to ten seconds
+ * of jitter, and an upgrade it is performing holds the lock for far longer than
+ * one interval — so a window of one or two would report the agent as gone
+ * during precisely the run it is executing.
+ */
+export const UPDATE_AGENT_STALE_AFTER_MS = 60 * 60 * 1000;
+
+export function updateAgentPresence(
+  agent: { checkedAt: string } | null,
+  now: number = Date.now(),
+): { supported: boolean; reason: string } {
+  if (!agent) {
+    return {
+      supported: false,
+      reason: "No update agent has reported on this host. It is installed by install.sh from v5.6.0; a deployment installed before that runs the command below once to gain it, and updates from the dashboard after.",
+    };
+  }
+  if (now - new Date(agent.checkedAt).getTime() > UPDATE_AGENT_STALE_AFTER_MS) {
+    return {
+      supported: false,
+      reason: "The update agent on this host has not checked in for over an hour, so an approval would not be picked up. Confirm orcasynapse-update.timer is enabled on VM1.",
+    };
+  }
+  return {
+    supported: true,
+    reason: "The update agent on VM1 applies an approved release, gates it on readiness, and restores the previous one if it does not serve. The dashboard still has no host-root or Docker control: the host reads the approval, nothing is pushed to it.",
+  };
+}
+
 export async function checkForPlatformUpdate(
   currentTag: string,
   fetchImplementation: typeof fetch = fetch,
   target: PlatformReleaseTarget | null = null,
+  agent: { checkedAt: string } | null = null,
 ): Promise<PlatformUpdate> {
   const current = parseReleaseVersion(currentTag);
   if (!current) throw new Error(`The installed version '${currentTag}' is not a release tag.`);
 
   const latest = latestReleaseVersion(await fetchReleaseTags(fetchImplementation));
+  const presence = updateAgentPresence(agent);
   return platformUpdateSchema.parse({
     currentVersion: current.tag,
     latestVersion: latest.tag,
     updateAvailable: compareReleaseVersions(latest, current) > 0,
     releaseUrl: `https://github.com/multichainerz/AI/tree/${latest.tag}`,
+    // Still returned when the agent is present. It is what an operator falls
+    // back to when the agent is not reporting, and what a reader compares
+    // against the commit the agent says it applied.
     updateCommand: `curl -fsSL ${INSTALLER_URL} | sudo ORCASYNAPSE_REF=${latest.tag} bash`,
-    automaticUpdateSupported: false,
-    automaticUpdateReason:
-      "The dashboard runs inside the application container and intentionally has no host-root or Docker control.",
+    automaticUpdateSupported: presence.supported,
+    automaticUpdateReason: presence.reason,
     checkedAt: new Date().toISOString(),
     target,
   });

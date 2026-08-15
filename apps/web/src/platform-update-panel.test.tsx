@@ -31,6 +31,10 @@ const approved: PlatformUpdate["target"] = {
 
 vi.mock("./api.js", () => ({
   getPlatformUpdate: vi.fn(async () => update),
+  // Null agent: this file is about the check and the approval, and a deployment
+  // with no agent is the state these cases were written against. The agent's own
+  // reporting has its own file.
+  getPlatformUpdateActivity: vi.fn(async () => ({ agent: null, latest: null, recent: [] })),
   approveReleaseTarget: vi.fn(async () => approved),
   clearReleaseTarget: vi.fn(async () => undefined),
 }));
@@ -85,11 +89,18 @@ describe("PlatformUpdatePanel", () => {
     expect(screen.getByText(COMMIT)).toBeTruthy();
   });
 
-  it("keeps saying updates are applied on VM1, and that a target is only recorded", async () => {
+  it("keeps saying the host reads the approval rather than being pushed to", async () => {
     /*
-     * The panel's existing honesty is load-bearing. This increment records
-     * intent and nothing acts on it, so the copy must not start reading as
-     * though approving performs the update.
+     * The boundary is load-bearing and unchanged: the container has no
+     * host-root or Docker control, and the host agent works precisely because
+     * it pulls the approval rather than receiving anything.
+     *
+     * What this case no longer requires is "Recorded, not applied — the upgrade
+     * still runs on VM1 with the command above". That sentence sat immediately
+     * before one saying the hosts read the record and apply it themselves, so
+     * the panel contradicted itself in consecutive lines for several releases
+     * after the agent shipped. A test asserting the wrong half is what kept it
+     * there, which is why this comment is longer than the assertion.
      */
     checked.mockResolvedValue({ ...update, target: approved });
     const user = userEvent.setup();
@@ -97,9 +108,39 @@ describe("PlatformUpdatePanel", () => {
 
     await user.click(screen.getByRole("button", { name: "Check for updates" }));
 
-    expect(await screen.findByText(/Recorded, not applied/)).toBeTruthy();
-    expect(screen.getByText(/still runs on VM1/)).toBeTruthy();
+    expect(await screen.findByText(/read this record themselves/)).toBeTruthy();
+    expect(screen.getByText(/nothing is ever pushed to them from the browser/)).toBeTruthy();
+    expect(screen.queryByText(/Recorded, not applied/)).toBeNull();
     expect(screen.getByText("The dashboard has no host control.")).toBeTruthy();
+  });
+
+  /*
+   * `automaticUpdateSupported` decides how loud the shell command is. When this
+   * deployment can apply an approval itself, a `primary` "Copy update command"
+   * is the most prominent control on the screen -- next to the approve button
+   * that has already made it unnecessary -- which is what sent an operator
+   * looking for a shell they no longer needed.
+   */
+  it("demotes the shell command once this deployment can apply an approval itself", async () => {
+    checked.mockResolvedValue({ ...update, automaticUpdateSupported: true });
+    const user = userEvent.setup();
+    render(<PlatformUpdatePanel currentVersion="v4.8.2" canApprove />);
+
+    await user.click(screen.getByRole("button", { name: "Check for updates" }));
+
+    expect(await screen.findByText(/the agent on VM1 applies it/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Copy update command/ }).className).not.toContain("bg-accent-fill");
+  });
+
+  it("keeps the shell command prominent when nothing on the host would apply it", async () => {
+    checked.mockResolvedValue({ ...update, automaticUpdateSupported: false });
+    const user = userEvent.setup();
+    render(<PlatformUpdatePanel currentVersion="v4.8.2" canApprove />);
+
+    await user.click(screen.getByRole("button", { name: "Check for updates" }));
+
+    expect(await screen.findByText(/Run the pinned command on VM1/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Copy update command/ }).className).toContain("bg-accent-fill");
   });
 
   it("shows a target approved in an earlier session on the first check after a reload", async () => {
