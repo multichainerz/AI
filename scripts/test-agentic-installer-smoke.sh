@@ -144,6 +144,13 @@ class H(http.server.BaseHTTPRequestHandler):
             heartbeat = json.loads(raw or b"{}")
             if "corpus-sync-v1" not in heartbeat.get("capabilities", []):
                 return self._json({"error": "installed corpus capability missing"}, 400)
+            # Kept so the assertions can read what the node actually sent. The
+            # signature is verified over these exact bytes upstream, so what
+            # lands here is what a real control plane would have to parse.
+            record = os.environ.get("HEARTBEAT_RECORD")
+            if record:
+                with open(record, "w", encoding="utf-8") as handle:
+                    json.dump(heartbeat, handle)
             return self._json({"accepted": True})
         if self.path == CORPUS_SNAPSHOT_PATH:
             return self._json({"accepted": True, "snapshotId": "20fbc05f-6e6c-4b43-9dde-ab48d6baac07", "serverTime": "2026-08-07T00:00:00Z"})
@@ -215,6 +222,7 @@ CORPUS_SIG_B64="$(base64 -w0 "${WORK}/corpus-desired.sig")" \
 CP_FINGERPRINT="$(openssl pkey -pubin -in "${WORK}/cp.pub" -outform DER 2>/dev/null | sha256sum | awk '{print $1}')" \
 CORPUS_CLIENT="${ROOT}/scripts/hermes-corpus-reconciler.py" \
 NODE_ID="${NODE_ID}" \
+HEARTBEAT_RECORD="${WORK}/heartbeat.json" \
   python3 "${WORK}/controlplane.py" "${CONTROL_PLANE_PORT}" >/dev/null 2>&1 &
 STUB_PID=$!
 for _ in 1 2 3 4 5 6 7 8 9 10; do
@@ -372,6 +380,42 @@ done
 systemctl is-active orcasynapse-hermes.service >/dev/null 2>&1 \
   && pass "the node target restored the runtime for the rest of this suite" \
   || bad "the runtime did not come back after the target round trip"
+
+# ---------------------------------------------------------------------------
+# What the heartbeat tells the control plane about this node's units
+# ---------------------------------------------------------------------------
+# Fired directly rather than waiting out the timer, and read from what the stub
+# received: the payload is signed over exactly these bytes, so this is what a
+# real control plane would have to parse.
+systemctl start orcasynapse-hermes-heartbeat.service >/dev/null 2>&1 || true
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  [[ -s "${WORK}/heartbeat.json" ]] && break
+  sleep 1
+done
+if [[ -s "${WORK}/heartbeat.json" ]]; then
+  pass "the heartbeat reached the control plane"
+  jq -e '.units | type == "array" and length == 4' "${WORK}/heartbeat.json" >/dev/null 2>&1 \
+    && pass "the heartbeat reports all four of this node's units" \
+    || bad "the heartbeat units array is $(jq -c '.units' "${WORK}/heartbeat.json" 2>/dev/null)"
+  # Booleans, not the strings "true"/"false" -- jq --argjson is what keeps them
+  # that way, and the contract refuses a string.
+  jq -e 'all(.units[]; (.active | type) == "boolean" and (.enabled | type) == "boolean")' \
+    "${WORK}/heartbeat.json" >/dev/null 2>&1 \
+    && pass "unit state is reported as JSON booleans" \
+    || bad "unit state is not boolean-typed, so the control plane would refuse it"
+  # The runtime is up at this point in the suite, so this is the one unit whose
+  # answer is known and therefore the one that proves the values are real rather
+  # than a fixed shape.
+  jq -e '.units[] | select(.name == "orcasynapse-hermes.service") | .active == true' \
+    "${WORK}/heartbeat.json" >/dev/null 2>&1 \
+    && pass "the running runtime is reported as active" \
+    || bad "the heartbeat reports the running runtime as inactive"
+  jq -e '.capabilities | index("unit-health-v1")' "${WORK}/heartbeat.json" >/dev/null 2>&1 \
+    && pass "the node advertises unit-health-v1" \
+    || bad "the node does not advertise unit-health-v1"
+else
+  bad "no heartbeat was recorded, so nothing about its payload could be checked"
+fi
 
 # The v1.4.0 preseed: the node must already hold the admitted allowlist
 # rather than waiting out the first timer tick.

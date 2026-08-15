@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="v5.8.0"
+INSTALLER_VERSION="v5.9.0"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 HERMES_HOME_DIR="${STATE_ROOT}/home"
 RUNTIME_SERVICE="orcasynapse-hermes"
@@ -1751,12 +1751,48 @@ hermes_status="DEGRADED"
 if curl --fail --silent --max-time 5 http://127.0.0.1:8642/health >/dev/null; then
   hermes_status="ONLINE"
 fi
+
+# This node's own systemd units, so an operator can be told *which* one is
+# broken rather than only that the node went quiet.
+#
+# `is-active` and `is-enabled` exit non-zero for anything that is not, which
+# under `set -e` would end the heartbeat -- so each is asked inside an `if`.
+# That matters more here than anywhere else in this script: the heartbeat is the
+# one thing that must not stop because something else has, and a version of this
+# that aborted on the first stopped timer would have removed the very signal it
+# was added to carry.
+#
+# Two questions, not one. A unit that is enabled but inactive failed or was
+# stopped; one that is active but not enabled will be gone at the next reboot.
+# They need different fixes, so they are reported separately.
+unit_state() {
+  local unit="$1" active="false" enabled="false"
+  if systemctl is-active --quiet "${unit}" 2>/dev/null; then active="true"; fi
+  if systemctl is-enabled --quiet "${unit}" 2>/dev/null; then enabled="true"; fi
+  jq -cn --arg name "${unit}" --argjson active "${active}" --argjson enabled "${enabled}" \
+    '{name:$name,active:$active,enabled:$enabled}'
+}
+
+# The heartbeat's own timer is in this list on purpose. It cannot report that
+# timer being *inactive* -- nothing would be running to say so, and a node whose
+# heartbeat has stopped is reported OFFLINE by the control plane's staleness
+# window instead. It can report it being active but not enabled, which is a real
+# node that will go silent at its next reboot and nothing else would catch.
+units_json="[]"
+if [[ -n "${ORCASYNAPSE_HERMES_REPORTED_UNITS:-}" ]]; then
+  units_json="$(
+    for unit in ${ORCASYNAPSE_HERMES_REPORTED_UNITS}; do
+      unit_state "${unit}"
+    done | jq -cs '.'
+  )" || units_json="[]"
+fi
 observed_at="$(date --utc '+%Y-%m-%dT%H:%M:%SZ')"
 payload="$(jq -cS -n \
   --arg observedAt "${observed_at}" \
   --arg status "${hermes_status}" \
   --arg version "${COMMIT_PIN}" \
-  '{observedAt:$observedAt,status:$status,hermesVersion:$version,capabilities:["gateway-api","native-sessions","native-memory","signed-heartbeat","corpus-sync-v1","corpus-crud-v1"]}')"
+  --argjson units "${units_json}" \
+  '{observedAt:$observedAt,status:$status,hermesVersion:$version,units:$units,capabilities:["gateway-api","native-sessions","native-memory","signed-heartbeat","corpus-sync-v1","corpus-crud-v1","unit-health-v1"]}')"
 timestamp="${observed_at}"
 nonce="$(cat /proc/sys/kernel/random/uuid)"
 signature="$(sign_request "${timestamp}" "${nonce}" "${payload}" 'POST' "${HEARTBEAT_PATH}")"
@@ -1779,6 +1815,11 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 Environment=ORCASYNAPSE_HERMES_STATE_ROOT=${STATE_ROOT}
+# The units this node reports on. Passed rather than hard-coded for the reason
+# the desired-state unit gives about its own paths: the runtime service name is
+# overridable, and a client that assumed the default would report on a unit that
+# does not exist -- which reads as "down" and would be worse than not reporting.
+Environment=ORCASYNAPSE_HERMES_REPORTED_UNITS=${RUNTIME_SERVICE}.service ${HEARTBEAT_SERVICE}.timer ${DESIRED_STATE_SERVICE}.timer ${CORPUS_SERVICE}.timer
 ExecStart=/usr/local/lib/orcasynapse/hermes-heartbeat.sh
 User=root
 Group=root

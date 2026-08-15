@@ -5,6 +5,41 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v5.9.0 — 2026-08-15
+
+Teaches the VM2 heartbeat to say which of the node's systemd units is broken.
+v5.8.0 taught the control plane to accept that; this is the half that sends it.
+
+**Upgrade VM1 to v5.8.0 or later before taking any VM2 to this release.**
+`hermesNodeHeartbeatSchema` is `.strict()`, so a node sending `units` to a
+control plane that does not know the key is refused on every beat, goes stale,
+and is marked OFFLINE — the failure would look exactly like the one this feature
+exists to explain. That is the only reason the two halves are separate releases.
+
+`is-active` and `is-enabled` exit non-zero for anything that is not, and this
+script runs under `set -e`. Each is asked inside an `if` for that reason: the
+heartbeat is the one thing on the node that must not stop because something else
+has, and a version of this that aborted on the first stopped timer would have
+removed the signal it was added to carry, at the moment it mattered.
+
+The heartbeat's own timer is in the list it reports. It cannot report that timer
+being *inactive* — nothing would be running to say so, and the control plane's
+staleness window covers that — but it can report it active and not enabled,
+which is a node that will go silent at its next reboot and nothing else catches.
+
+- report each unit's `active` and `enabled` state in the signed heartbeat payload
+- pass the unit names in through the unit's environment rather than hard-coding
+  them, since the runtime service name is overridable and a client that guessed
+  would report on a unit that does not exist — which reads as "down"
+- advertise `unit-health-v1` so the control plane can tell a node that reports
+  nothing from one that has nothing to report
+- assert the payload end to end in the VM2 smoke test: four units, booleans
+  rather than the strings "true"/"false", and the running runtime reported active
+
+Verified against real systemd in WSL VM2 by extracting the shipped client from
+the installer rather than retyping it, across an active unit, a genuinely failed
+one and one that does not exist: all three reported, none aborted the script.
+
 ## v5.8.0 — 2026-08-15
 
 Gives VM2's four systemd units one handle, and teaches the control plane to say
