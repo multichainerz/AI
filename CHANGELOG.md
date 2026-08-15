@@ -5,6 +5,22 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v6.0.1 — 2026-08-15
+
+Moves the connection form off the right edge of the screen.
+
+It opened as a drawer that slid in over Setup and covered the very step it was
+serving, so the form and the instructions it belongs to could not be read
+together, and the screen was left split down the middle with the wizard dimmed
+behind it. The architecture decision on that same screen has always been a
+centred dialog; this now matches the surface it is launched from rather than
+arriving from the edge.
+
+`Drawer` is `OverlayChrome` with a single flag, so the focus trap, escape
+handling and scroll lock are untouched — only where the panel appears changed.
+
+- render the connection form as a centred dialog instead of a right-hand drawer
+
 ## v6.0.0 — 2026-08-15
 
 Replaces the static synapse graph behind sign-in, boot and the error screen with

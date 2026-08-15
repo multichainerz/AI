@@ -13,7 +13,7 @@ import type {
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { slugAsTyped, slugify } from "./slug.js";
 import { connectionDefinitions, inferenceEndpointPresets } from "./connection-definitions.js";
-import { Button, Drawer, Input, Select } from "./ui/index.js";
+import { Button, Dialog, Input, Select } from "./ui/index.js";
 import { Switch } from "@/components/ui/switch";
 
 export interface ConnectionDraft extends CreateServiceConnection {
@@ -181,8 +181,21 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
     });
   };
 
+  /*
+   * A centred dialog, not the right-hand drawer this used to be.
+   *
+   * The drawer slid in over the setup wizard and covered the very step it was
+   * serving, so the form and the instructions it belongs to could not be read
+   * together — and it left the screen split down the middle with the wizard
+   * dimmed behind it. The architecture decision on that same screen is already
+   * a centred dialog, so this now matches the surface it is launched from
+   * instead of arriving from the edge.
+   *
+   * Same primitive either way: Drawer is OverlayChrome with one flag set, so
+   * the focus trap, escape handling and scroll lock are untouched.
+   */
   return (
-    <Drawer
+    <Dialog
       open={props.open}
       onClose={props.onClose}
       kicker="Application settings"
@@ -566,6 +579,6 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
           </form>
         )}
       </div>
-    </Drawer>
+    </Dialog>
   );
 }
