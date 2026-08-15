@@ -334,7 +334,112 @@ describe("Home", () => {
     const figure = (label: string) =>
       within(pipeline.getByText(label).parentElement as HTMLElement).getAllByRole("definition")[0]?.textContent;
     expect(figure("Awaiting approval")).toBe("2");
-    expect(figure("Denied")).toBe("7");
+    expect(figure("Denied calls")).toBe("7");
+  });
+
+  /*
+   * Six figures in one strip, drawn from three contracts covering two different
+   * periods, and nothing on the screen said which was which: "Responses 12" sat
+   * beside "Tool calls 8,431" as though they described the same day. The cases
+   * below hold each figure to the window its label claims.
+   */
+  it("names the window every figure covers, so a day's count is not read as an all-time one", () => {
+    render(<HomeView {...props()} />);
+    const strip = within(screen.getByLabelText("Operational activity"));
+    // The tile, not the label: the window rides beside the name in the same
+    // `<dt>`, so the claim is about what that whole pair says.
+    const tile = (label: string) => strip.getByText(label).closest("div")?.textContent ?? "";
+
+    for (const chat of ["Sessions", "Responses", "Avg response", "Tokens", "Rated helpful"]) {
+      expect(tile(chat), `${chat} does not state its window`).toContain("24h");
+    }
+    // Tool counts have no window at all — they are every call since install.
+    expect(tile("Tool calls")).toContain("all time");
+    expect(tile("Tool calls")).not.toContain("24h");
+
+    // Same mix inside the execution column: agent runs are all-time, the
+    // response outcomes beneath them are the same 24 hours as the strip.
+    const execution = within(screen.getByRole("region", { name: "Run pipeline" }));
+    expect(execution.getByText(/all time/i)).toBeTruthy();
+    expect(execution.getByText(/Response outcomes \/ 24h/i)).toBeTruthy();
+  });
+
+  it("states the hour the 24-hour window opened, not only its date", () => {
+    /*
+     * A trailing window that opened at 09:00 yesterday read "since 14 August",
+     * which is the one thing it is not: the window covers a *quarter* of the
+     * 14th and three quarters of the 15th. The spelling is still the locale's
+     * — only the presence of a clock time is asserted.
+     */
+    render(<HomeView {...props()} />);
+    expect(screen.getByText(/^since \w/).textContent).toMatch(/\d{1,2}[:.]\d{2}/);
+  });
+
+  it("counts every tool call the ledger holds, not only the completed ones", () => {
+    /*
+     * "Tool calls 940" beside "Denied 7" invites a subtraction that gives the
+     * wrong answer, because the 940 never included the 7 — or the 4 failures,
+     * which were fetched on every poll and drawn nowhere at all.
+     */
+    render(<HomeView {...props()} />);
+    const strip = within(screen.getByLabelText("Operational activity"));
+
+    // 940 completed + 7 denied + 4 failed.
+    expect(strip.getByText("951")).toBeTruthy();
+    expect(strip.queryByText("940")).toBeNull();
+
+    const execution = within(screen.getByRole("region", { name: "Run pipeline" }));
+    const figure = (label: string) =>
+      within(execution.getByText(label).parentElement as HTMLElement).getAllByRole("definition")[0]?.textContent;
+    expect(figure("Failed calls")).toBe("4");
+    expect(figure("Denied calls")).toBe("7");
+  });
+
+  it("does not call the pipeline bars a share of all runs, because three statuses are in no bucket", () => {
+    /*
+     * `AGENT_RUN_STATUSES` carries CANCELLED, TIMED_OUT and DENIED as well, and
+     * `AgentMetrics` reports none of them — so the denominator is the four
+     * stages drawn here and nothing wider. A bar announcing "share of all runs"
+     * is a claim the contract cannot support.
+     */
+    render(<HomeView {...props()} />);
+    const bars = within(screen.getByRole("region", { name: "Run pipeline" })).getAllByRole("progressbar");
+
+    // Length first: `[].every()` is true, so a missing bar would pass silently.
+    expect(bars.length).toBeGreaterThan(0);
+    expect(bars.map((bar) => bar.getAttribute("aria-label") ?? "").join(" ")).not.toMatch(/all runs/i);
+    expect(bars[0]?.getAttribute("aria-label")).toMatch(/these four stages/i);
+  });
+
+  it("does not call one unhappy rating a failing satisfaction score", () => {
+    /*
+     * `helpfulShare < 0.5` with no minimum sample: a single not-helpful rating
+     * makes the tile read 0% in warn colour, which is a verdict on the
+     * deployment drawn from one click. Nothing in the product writes chat
+     * feedback today, so the honest states are "nothing rated" and "too few to
+     * judge" — never "failing".
+     */
+    const single = { ...chatMetrics, feedback: { helpful: 0, notHelpful: 1 } } as ChatMetrics;
+    render(<HomeView {...props({ chatMetrics: single })} />);
+
+    const bar = screen.getByLabelText("Rated helpful: proportion of the total");
+    expect(bar.className).not.toContain("is-warn");
+
+    cleanup();
+    // And with a real sample behind it, the warning still fires.
+    const poor = { ...chatMetrics, feedback: { helpful: 4, notHelpful: 46 } } as ChatMetrics;
+    render(<HomeView {...props({ chatMetrics: poor })} />);
+    expect(screen.getByLabelText("Rated helpful: proportion of the total").className).toContain("is-warn");
+  });
+
+  it("says nothing was rated rather than drawing a zero score", () => {
+    // The state every deployment is actually in: no surface writes chat
+    // feedback, so this tile is structurally 0 of 0 and must not read as 0%.
+    const unrated = { ...chatMetrics, feedback: { helpful: 0, notHelpful: 0 } } as ChatMetrics;
+    render(<HomeView {...props({ chatMetrics: unrated })} />);
+
+    expect(screen.getByText("no ratings yet")).toBeTruthy();
+    expect(screen.queryByLabelText("Rated helpful: proportion of the total")).toBeNull();
   });
 
   it("compacts a seven-figure token total into the width a column has", () => {

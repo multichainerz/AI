@@ -64,17 +64,27 @@ export const primaryNavigationGroups: ReadonlyArray<{
     label: "Administration",
     placement: "top",
     items: [
-      { area: "Operations", icon: "operations", target: "Operations", description: "Health, release gates and the audit trail" },
+      { area: "Operations", icon: "operations", target: "Operations", description: "Health, incidents and the audit trail" },
     ],
   },
   {
     label: "System",
     placement: "bottom",
     items: [
-      { area: "Settings", icon: "settings", target: "Deployment", description: "Application setup, governance, and updates" },
+      { area: "Settings", icon: "settings", target: "Deployment", description: "Setup, models, prompts, guardrails and application updates" },
     ],
   },
 ];
+
+/*
+ * These descriptions are the rail's tooltips, and they are the one piece of
+ * navigation copy nothing renders on the screen it describes -- so a tab that
+ * goes away leaves its name here. "Health, release gates and the audit trail"
+ * survived the commit that deleted Release gates by a whole release, because
+ * the only assertion touching a description was `toBeTruthy()`, which passes
+ * for every string ever written. `workspace-navigation.test.ts` pins the text
+ * against the tab lists below instead.
+ */
 
 /**
  * The rail's rows for one placement, in menu order. The rail draws the `"top"`
@@ -252,7 +262,17 @@ export function viewFromHash(hash: string): ActiveView {
     case "#corpus":
     case "#skills":
       return "Skills";
+    /*
+     * `#platform/memory` is the one retired hash that was not carried over when
+     * Platform became Settings at v4.9.0. It mattered more than its siblings,
+     * not less: up to v4.6.0 it was the address `pathForView` *generated* for
+     * Memory, so it is the spelling that is actually in address bars and
+     * bookmarks, while `#memory` -- kept -- was only ever the short alias. The
+     * screen still exists at `#agents/memory`, so the old link has a correct
+     * destination rather than a silent fall-through to the Dashboard.
+     */
     case "#agents/memory":
+    case "#platform/memory":
     case "#memory":
       return "Memory";
     case "#agents/tools":

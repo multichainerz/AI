@@ -8,7 +8,7 @@ and complex OrcaSynapse surfaces remain deliberately product-specific.
 
 ## Source boundaries
 
-- `src/components/ui/` contains canonical, reusable controls: button, card, input, textarea, select, switch, dialog, sheet, alert, badge, avatar, separator, skeleton, and table.
+- `src/components/ui/` contains canonical, reusable controls: alert, avatar, badge, button, card, dialog, input, label, native-select, separator, sheet, skeleton, switch, table, and textarea. (This list named a non-existent `select` — the file is `native-select.tsx`, exporting `NativeSelect` — and omitted `label`, which exists and is consumed by `src/ui/field.tsx`.)
 - `src/ui/` contains product-level compositions such as readiness panels, metrics, locked states, and temporary compatibility exports. These compose `components/ui`; they must not create competing control styles.
 - Route files may use Tailwind for layout and domain-specific presentation, but interactive controls must come from `components/ui` or an OrcaSynapse composition built from them.
 - Lucide supplies functional interface icons. The Sivali orca and synapse artwork remain product assets.
@@ -36,7 +36,15 @@ All non-circular surfaces resolve to `--radius-component`. `rounded-full` is res
 
 ## Adding a component
 
-Use shadcn conventions, adapt colors to the semantic RGB variables, export it from `src/components/ui/index.ts`, and add focused interaction/SSR coverage. Run the web build, web test suite, and CSP closure check before handoff.
+Use shadcn conventions, adapt colors to the semantic RGB variables, and add focused interaction/SSR coverage. Run the web build, web test suite, and CSP closure check before handoff.
+
+Import it from its own module — `@/components/ui/<name>` — the way all sixteen
+existing consumers do. **Do not add it to `src/components/ui/index.ts`.** That
+barrel re-exports all fifteen modules and has no importers at all: this document
+instructed contributors to maintain an export nobody consumes. Leaving it out
+costs nothing, and a barrel is actively wrong for this app, whose views are code
+split per route — one import through it would pull the whole control kit into
+every chunk that touches a single button. The file itself should be deleted.
 
 ```bash
 pnpm --filter @orcasynapse/web build

@@ -23,6 +23,21 @@ const session: AdministratorSession = {
   absoluteExpiresAt: "2026-08-07T08:00:00.000Z",
 };
 
+/*
+ * Two rows, because the card has two shapes. The open one is the automatic
+ * observation an operator acts on; the resolved one is the only way to see the
+ * operator note, which no fixture reached while every incident here carried
+ * `resolutionNote: null`.
+ *
+ * They are separate constants because the two endpoints do not return the same
+ * thing, and the fixture used to pretend they did: `GET /ai-ops` carries the
+ * twenty most recent *open* incidents, while `GET /ai-ops/incidents` returns
+ * the last two hundred of any status. Stubbing the second with the first's
+ * items made the ledger's only source look redundant.
+ */
+const openIncident = { id: "i1", title: "Hermes node vm2-b unreachable", severity: "CRITICAL", status: "OPEN", detectedAt: "2026-08-07T10:40:00.000Z", lastObservedAt: "2026-08-07T10:59:00.000Z", component: "hermes-vm2", owner: null, summary: "No heartbeat for 19 minutes.", automated: true, resolutionNote: null };
+const resolvedIncident = { id: "i2", title: "Chat latency above budget", severity: "WARNING", status: "RESOLVED", detectedAt: "2026-08-07T09:10:00.000Z", lastObservedAt: "2026-08-07T09:40:00.000Z", component: "chat-gateway", owner: "platform-admin", summary: "Median answer time crossed the six-second budget for twenty minutes.", automated: false, resolutionNote: "Restarted the inference node; latency returned to 3.1s." };
+
 const overview = {
   status: "DEGRADED",
   generatedAt: "2026-08-07T11:00:00.000Z",
@@ -33,20 +48,7 @@ const overview = {
   guardrails: [
     { layer: "APPLICATION", label: "Chat boundary", status: "ENFORCED", summary: "Size and credential checks active.", evidence: "policy:baseline-chat v2.0" },
   ],
-  incidents: {
-    open: 1,
-    critical: 1,
-    /*
-     * Two rows, because the card has two shapes. The open one is the automatic
-     * observation an operator acts on; the resolved one is the only way to see
-     * the operator note, which no fixture reached while every incident here
-     * carried `resolutionNote: null`.
-     */
-    items: [
-      { id: "i1", title: "Hermes node vm2-b unreachable", severity: "CRITICAL", status: "OPEN", detectedAt: "2026-08-07T10:40:00.000Z", lastObservedAt: "2026-08-07T10:59:00.000Z", component: "hermes-vm2", owner: null, summary: "No heartbeat for 19 minutes.", automated: true, resolutionNote: null },
-      { id: "i2", title: "Chat latency above budget", severity: "WARNING", status: "RESOLVED", detectedAt: "2026-08-07T09:10:00.000Z", lastObservedAt: "2026-08-07T09:40:00.000Z", component: "chat-gateway", owner: "platform-admin", summary: "Median answer time crossed the six-second budget for twenty minutes.", automated: false, resolutionNote: "Restarted the inference node; latency returned to 3.1s." },
-    ],
-  },
+  incidents: { open: 1, critical: 1, items: [openIncident] },
   metrics: {
     chat: { responses: 1_284, failureRate: 0.012, averageLatencyMs: 4_120 },
     agents: { runningRuns: 1, queuedRuns: 0, failedRuns: 2 },
@@ -64,7 +66,7 @@ vi.mock("./api.js", async () => {
   return {
     ...actual,
     getAiOpsOverview: vi.fn(async () => overview),
-    getOperationalIncidents: vi.fn(async () => ({ items: overview.incidents.items })),
+    getOperationalIncidents: vi.fn(async () => ({ items: [openIncident, resolvedIncident] })),
     /*
      * `getProductionReadiness` used to be stubbed here too, and so did the
      * evaluation reads before the whole evaluation subsystem was removed.
@@ -76,7 +78,7 @@ vi.mock("./api.js", async () => {
 });
 
 const { OperationsView } = await import("./operations-view.js");
-const { getAiOpsOverview } = await import("./api.js");
+const { getAiOpsOverview, getOperationalIncidents } = await import("./api.js");
 
 async function view() {
   render(<main><OperationsView session={session} onConfigure={vi.fn()} onSessionExpired={vi.fn()} /></main>);
@@ -134,6 +136,36 @@ describe("operations control room", () => {
     expect(screen.queryByText("Production pilot readiness")).toBeNull();
     expect(screen.queryByText("Release gates")).toBeNull();
     expect(screen.queryByText("Release evidence")).toBeNull();
+  });
+
+  it("draws the whole ledger, which only the incident endpoint has", async () => {
+    /*
+     * The two reads look redundant and are not. `GET /ai-ops` carries the
+     * open/critical counts the hero draws plus its own twenty most recent
+     * *open* rows; the ledger below needs resolved incidents too, and only
+     * `GET /ai-ops/incidents` returns them. Nothing said so, and the fixture
+     * stubbed the second endpoint with the first's items -- so deleting the
+     * second fetch and reading `overview.incidents.items` instead would have
+     * silently emptied the resolved half of the ledger with every test green.
+     */
+    await view();
+
+    expect(overview.incidents.items.map(({ id }) => id)).toEqual(["i1"]);
+    expect(screen.getByText("Hermes node vm2-b unreachable")).toBeTruthy();
+    expect(screen.getByText("Chat latency above budget")).toBeTruthy();
+    expect(vi.mocked(getOperationalIncidents)).toHaveBeenCalled();
+  });
+
+  it("labels the workflow figures by what they count", async () => {
+    // "Agent tools" named the tab this figure came from -- and that tab is
+    // called Tools now -- rather than the number under it, which is executing
+    // calls, exactly as its neighbours are responses and runs.
+    await view();
+    const workflows = screen.getByText("24-hour and retained workload signals").closest("section")!;
+    expect(within(workflows).getByText("Chat responses / 24h")).toBeTruthy();
+    expect(within(workflows).getByText("Hermes runs")).toBeTruthy();
+    expect(within(workflows).getByText("Tool calls")).toBeTruthy();
+    expect(within(workflows).queryByText("Agent tools")).toBeNull();
   });
 
   it("marks a failed workload count without recolouring the healthy ones", async () => {

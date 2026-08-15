@@ -62,6 +62,9 @@ const api = vi.hoisted(() => ({
 vi.mock("./api.js", async (load) => ({ ...(await load<typeof import("./api.js")>()), ...api }));
 
 const { ToolingView } = await import("./tooling-view.js");
+/* The real class: the mock factory spreads the real module and overrides four
+   functions, so this is the same identity `tooling-view.tsx` narrows against. */
+const { OrcaSynapseApiError } = await import("./api.js");
 
 interface Setup {
   tools?: GovernedTool[];
@@ -256,6 +259,44 @@ describe("the toggle", () => {
   });
 });
 
+describe("what the headline counts", () => {
+  it("counts what the runtime has switched on, not what was decided here", async () => {
+    /*
+     * A permitted tool the runtime has not switched on is not a tool an agent
+     * can use, and every row says so -- "off at the runtime", "decision on
+     * record only" -- under a headline that used to count the decisions and
+     * announce the opposite. The panel's own subtitle already concedes the
+     * point: the runtime's policy decides whether a permitted tool is on.
+     */
+    await view({
+      catalogue: catalogue({ name: "web_search", enabled: false }),
+      admissions: [
+        { toolsetName: "web_search", admitted: true, reason: "Reviewed." },
+        { toolsetName: "clarify", admitted: true, reason: "Staged ahead of the runtime." },
+      ],
+    });
+    expect(within(screen.getByLabelText("web_search")).getByText(/off at the runtime/i)).toBeTruthy();
+    expect(within(screen.getByLabelText("clarify")).getByText(/decision on record only/i)).toBeTruthy();
+    expect(screen.getByText(/Agents can use built-in memory only\./)).toBeTruthy();
+    // ...and says where the two allowed-but-idle tools went, so the headline
+    // does not read as a contradiction of the rows beneath it.
+    expect(screen.getByText(/2 tools allowed here \(clarify, web_search\)/)).toBeTruthy();
+    // The decision counter still counts decisions. That is what "allowed"
+    // means, and redefining it in place would be a different bug.
+    expect(screen.getByText(/2 of 2 allowed/)).toBeTruthy();
+  });
+
+  it("counts a tool the runtime is actually running", async () => {
+    // The other direction, so the headline cannot be satisfied by a component
+    // that always says "memory only".
+    await view({
+      catalogue: catalogue({ name: "web_search", enabled: true }),
+      admissions: [{ toolsetName: "web_search", admitted: true, reason: "Reviewed." }],
+    });
+    expect(screen.getByText(/built-in memory and 1 other tool\./)).toBeTruthy();
+  });
+});
+
 describe("runtime drift", () => {
   it("names the tools that are blocking every run", async () => {
     await view({ catalogue: catalogue({ name: "code_execution", enabled: true }) });
@@ -329,6 +370,24 @@ describe("access", () => {
     render(<ToolingView {...props} session={{ ...session, passwordChangeRequired: true }} />);
     expect(screen.getByRole("heading", { name: "Tools" })).toBeTruthy();
     expect(api.getToolsetAdmissions).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a failed Refresh instead of leaving stale data on screen", async () => {
+    /*
+     * The admin session idles out after fifteen minutes. Every other call site
+     * in this file attaches `.catch(fail)`; Refresh did not, so its rejection
+     * was unhandled -- no Alert, no `onSessionExpired`, and a screen still
+     * showing what the runtime offered a quarter of an hour ago.
+     */
+    const user = userEvent.setup();
+    await view({ catalogue: catalogue({ name: "code_execution", enabled: false }) });
+    api.getToolsetAdmissions.mockRejectedValue(
+      new OrcaSynapseApiError(401, "The administrator session has expired."),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(await screen.findByText("The administrator session has expired.")).toBeTruthy();
+    expect(props.onSessionExpired).toHaveBeenCalled();
   });
 
   it("draws the locked screen with no session", () => {

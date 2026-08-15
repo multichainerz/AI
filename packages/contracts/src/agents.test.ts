@@ -71,7 +71,7 @@ describe("the marker that ends a run's event log", () => {
     expect(AGENT_RUN_EVENT_TYPES.filter(isAgentRunEndedEventType)).toEqual([AGENT_RUN_ENDED_EVENT_TYPE]);
   });
 
-  it("is not a name Hermes reports", () => {
+  it("is not one of the run-ending names Hermes reports", () => {
     /*
      * The reason the marker is not called RUN_COMPLETED. Hermes announces its
      * own view of a run ending on the event stream, and the worker stores that
@@ -80,8 +80,12 @@ describe("the marker that ends a run's event log", () => {
      * one of those it would deliver an empty answer and stop, which is a worse
      * failure than the one ending-on-a-marker exists to fix.
      *
-     * So: every name the runtime can produce, checked against the one name only
-     * the control plane may write.
+     * Scope, stated because this test used to be cited as the guard and is not:
+     * the list below is written by hand, so it pins the *predicate* against the
+     * names that exist today and cannot see a new Hermes name being mapped
+     * tomorrow. The assertion that reads the real map lives in
+     * `packages/runtime-clients/src/hermes-client.test.ts`, next to
+     * `SAFE_EVENT_TYPES`, which this package cannot import.
      */
     const reportedByHermes = ["RUN_STARTED", "RUN_COMPLETED", "RUN_FAILED", "RUN_CANCELLED"];
     for (const type of reportedByHermes) expect(isAgentRunEndedEventType(type)).toBe(false);

@@ -1,6 +1,7 @@
+import { AGENT_RUN_ENDED_EVENT_TYPE } from "@orcasynapse/contracts";
 import { describe, expect, it, vi } from "vitest";
 import type { DrizzleRuntimeConnectionResolver } from "./connection-resolver.js";
-import { HermesClient } from "./hermes-client.js";
+import { HermesClient, SAFE_EVENT_TYPES } from "./hermes-client.js";
 
 function resolver(): DrizzleRuntimeConnectionResolver {
   return {
@@ -20,6 +21,14 @@ const capabilities = {
   runtime: { mode: "server_agent", tool_execution: "server", split_runtime: false },
   features: { run_submission: true, run_status: true, run_events_sse: true, run_stop: true },
 };
+
+/** The error a call raised, so an assertion can be made about which one it is. */
+function rejection(promise: Promise<unknown>): Promise<Error> {
+  return promise.then(
+    () => { throw new Error("The call resolved where a rejection was expected."); },
+    (error: unknown) => error as Error,
+  );
+}
 
 function sseStream(chunks: string[]): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
@@ -93,5 +102,49 @@ describe("HermesClient native sessions", () => {
     const client = new HermesClient(resolver(), fetcher);
     await expect(client.forkSession("source", "target")).resolves.toBe("forked");
     await expect(client.deleteSession("target")).resolves.toBeUndefined();
+  });
+
+  /*
+   * A native session turn is delivered exactly once, to the process that
+   * submitted it. A worker that inherits somebody else's run therefore has to
+   * be able to tell "this turn is gone with its worker" from "that is not an id
+   * I ever issued": the first means Hermes still holds the exchange and the
+   * transcript the reader sees is now short of it, and the second is a
+   * programming error. Both used to raise the same sentence.
+   */
+  it("tells a run it never started apart from an id it never issued", async () => {
+    const client = new HermesClient(resolver(), vi.fn<typeof fetch>());
+
+    const detached = await rejection(client.status(`hermes-native-${"a".repeat(64)}`));
+    const unknown = await rejection(client.status("run-from-some-other-surface"));
+
+    expect(detached.name).toBe("HermesRunDetachedError");
+    expect(unknown.name).not.toBe("HermesRunDetachedError");
+    expect(detached.message).not.toBe(unknown.message);
+  });
+
+  it("reports a detached event stream the same way it reports a detached status", async () => {
+    const client = new HermesClient(resolver(), vi.fn<typeof fetch>());
+    const streamed = await rejection(
+      client.events(`hermes-native-${"b".repeat(64)}`, () => undefined, new AbortController().signal),
+    );
+
+    expect(streamed.name).toBe("HermesRunDetachedError");
+  });
+});
+
+describe("the run-ended marker", () => {
+  /*
+   * Invariant 3 of the chat event log, asserted where the map is visible.
+   *
+   * `agent-processor.recordSafeEvent` inserts `event.type` verbatim, and a
+   * subscriber ends its stream on `RUN_ENDED` and on nothing else. So a wire
+   * name projecting onto that marker would let a Hermes build end a turn while
+   * the answer is still unstored -- the reader would be told the run finished
+   * and never receive it. The contract states this invariant; only this package
+   * can check it, because only this package can see the map.
+   */
+  it("is a name no Hermes event maps to", () => {
+    expect([...SAFE_EVENT_TYPES.values()]).not.toContain(AGENT_RUN_ENDED_EVENT_TYPE);
   });
 });

@@ -62,7 +62,7 @@ The installer refuses to overwrite any partial secret set. A complete existing s
 
 ## Enroll an isolated Agentic System VM
 
-For Control-plane only or Segmented production, prepare a second Ubuntu systemd VM with private network reachability in both directions. First replace the temporary administrator password and configure exactly one healthy AI Inference route with a discovered model. Then open **Platform > Agentic System**, enter the VM2 API address and the OrcaSynapse address visible from VM2, and issue the short-lived enrollment claim.
+For Control-plane only or Segmented production, prepare a second Ubuntu systemd VM with private network reachability in both directions. First replace the temporary administrator password and configure exactly one healthy AI Inference route with a discovered model. Then open **Settings → Setup** and select step 2, *Install the agent runtime* — addressable directly at `#settings/setup/runtime` — enter the VM2 API address and the OrcaSynapse address visible from VM2, and issue the short-lived enrollment claim. (There is no Platform area; it became Settings at v4.9.0.)
 
 The VM2 installer is not a permanently public static asset. OrcaSynapse serves the non-secret script through a readiness-gated API only after dashboard setup is complete and AI Inference is healthy and seedable. The script remains available after enrollment so an interrupted VM2 can resume with its protected local recovery state; a live one-time claim is still required to begin a new enrollment.
 
@@ -109,7 +109,7 @@ The generator writes the following files under the Git-ignored `.local/secrets` 
 - `orcasynapse_master_key`
 - `orcasynapse_installation_key` (permanent, offline local-account recovery credential)
 
-After first sign-in, use **Platform > Installation recovery** to export the encrypted recovery kit, move it off the OrcaSynapse host, and verify the retained copy in the workspace. The local password, Installation Key, and credential-encryption master key have separate purposes: possession of either authentication credential never decrypts stored connector secrets. The recovery kit and its passphrase must be held separately according to customer policy.
+After first sign-in, open **Settings → Setup** and use the **Installation recovery** button there to export the encrypted recovery kit, move it off the OrcaSynapse host, and verify the retained copy in the workspace. The local password, Installation Key, and credential-encryption master key have separate purposes: possession of either authentication credential never decrypts stored connector secrets. The recovery kit and its passphrase must be held separately according to customer policy.
 
 Routine service endpoints, API keys, model aliases, operational settings, and connectors are entered through the dashboard and encrypted in PostgreSQL. OrcaSynapse does not deploy HashiCorp Vault, use environment files for routine connectors, accept reusable server credentials, or store Hermes-native memory content.
 

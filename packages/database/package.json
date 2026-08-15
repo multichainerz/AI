@@ -1,6 +1,6 @@
 {
   "name": "@orcasynapse/database",
-  "version": "5.1.0",
+  "version": "5.2.0",
   "description": "Drizzle schema, migrations, and database tooling for OrcaSynapse",
   "license": "BUSL-1.1",
   "private": true,
@@ -16,7 +16,7 @@
   "scripts": {
     "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run --exclude=dist/**",
     "verify:postgres": "node ./scripts/verify-postgres-integration.mjs",
     "db:generate": "drizzle-kit generate",
     "db:check": "drizzle-kit check",

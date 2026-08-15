@@ -103,9 +103,10 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
   //
   // App re-renders on its own poll and passes a fresh `onSessionExpired` arrow
   // every few seconds. Depending on that identity propagated through
-  // handleError -> refresh -> the load effect, so Operations refetched all four
+  // handleError -> refresh -> the load effect, so Operations refetched both
   // endpoints on a loop: each cycle set `busy`, which disables every submit
-  // button, and cleared the error an operator was still reading.
+  // button, and cleared the error an operator was still reading. It was four
+  // endpoints when release gates and pilot readiness were sub-tabs here.
   const latestOnSessionExpired = useRef(onSessionExpired);
   useEffect(() => {
     latestOnSessionExpired.current = onSessionExpired;
@@ -121,6 +122,15 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
     setBusy(true);
     setError(null);
     try {
+      /*
+       * Two reads, not one, and they are not interchangeable. The overview's
+       * `incidents` carries the open/critical counts drawn in the hero plus its
+       * own `items` -- the twenty most recent *open* rows -- while the ledger
+       * below needs the full history, resolved rows included, which is what
+       * `getOperationalIncidents` returns (200 most recent, any status). Only
+       * the counts are taken from the overview; its `items` are unused here on
+       * purpose, because rendering them would print the open incidents twice.
+       */
       const [nextOverview, nextIncidents] = await Promise.all([
         getAiOpsOverview(),
         getOperationalIncidents(),
@@ -300,7 +310,11 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
           <MetricRow className="border-b-0 pb-0 lg:grid-cols-3">
             <Metric label="Chat responses / 24h" value={metrics?.chat?.responses ?? "--"} caption={`${percentage(metrics?.chat?.failureRate ?? null)} failed / ${metrics?.chat?.averageLatencyMs ?? "--"} ms average`} />
             <Metric label="Hermes runs" value={metrics?.agents?.runningRuns ?? "--"} caption={`${metrics?.agents?.queuedRuns ?? 0} queued / ${metrics?.agents?.failedRuns ?? 0} retained failures`} />
-            <Metric label="Agent tools" value={metrics?.tools?.executingCalls ?? "--"} caption={`${metrics?.tools?.pendingApprovals ?? 0} pending review / ${metrics?.tools?.deniedCalls ?? 0} denied`} />
+            {/* "Agent tools" was the tab's name before it became Agents ->
+                Tools, and it named the surface rather than the figure: the
+                value is executing calls, like its two neighbours count
+                responses and runs. */}
+            <Metric label="Tool calls" value={metrics?.tools?.executingCalls ?? "--"} caption={`${metrics?.tools?.pendingApprovals ?? 0} pending review / ${metrics?.tools?.deniedCalls ?? 0} denied`} />
           </MetricRow>
         </Panel>
 

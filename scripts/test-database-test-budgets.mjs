@@ -152,6 +152,30 @@ for (const packagePath of workspacePackages()) {
       `${name}: declares the database timeout profile but no test file calls createTestDatabase. Delete ${name}/vitest.config.ts so a hang in this package still reports in five seconds.`,
     );
   }
+
+  // The config's own header, checked against the files it describes.
+  //
+  // These headers are the only place the scale that justifies a whole-package
+  // profile is written down, and they were the only claim about these suites
+  // that nothing ran: apps/api's said "Twenty-one of this package's fifty test
+  // files" against a package with 45 files of which 18 are database-backed, and
+  // packages/database's named wake.test.ts alone for the entire life of
+  // chat-wake.test.ts sitting beside it.
+  //
+  // Only the database-backed count is asserted, and only where the sentence is
+  // written. Asserting a package's *total* test count would make every new test
+  // file anywhere a two-file change for a number that justifies nothing, and
+  // demanding the sentence would be this script inventing a house style rather
+  // than checking a claim. A config that makes the claim has to be right about
+  // it; one that stays silent is not lying.
+  if (present) {
+    const stated = /(\d+) of this package's test files/.exec(readFileSync(configurationPath, 'utf8'));
+    if (stated && Number(stated[1]) !== databaseBackedFiles.length) {
+      problems.push(
+        `${name}/vitest.config.ts says "${stated[1]} of this package's test files" provision a database, but ${databaseBackedFiles.length} call createTestDatabase.`,
+      );
+    }
+  }
 }
 
 if (problems.length > 0) {

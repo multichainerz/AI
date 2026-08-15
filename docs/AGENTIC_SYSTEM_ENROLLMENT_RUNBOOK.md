@@ -8,10 +8,17 @@ VM2 runs exactly one agent runtime plane: the Hermes gateway/API server, install
 
 ## Prerequisites
 
+These are the three conditions `runtimePrerequisites` in
+`apps/api/src/runtime-nodes/drizzle-runtime-node-manager.ts` actually enforces
+before it will issue an invitation, plus the network facts the installer needs.
+There is deliberately no model-route prerequisite: this list used to demand "an
+evaluated Agent model route is active", which was wrong twice over — no
+evaluation gate exists anywhere in the product any more, and enrolment does not
+require an active Agent route at all.
+
 - OrcaSynapse is installed and the temporary local-administrator password has been replaced.
 - PostgreSQL is healthy.
-- exactly one AI Inference connection is enabled, healthy, and has a selected served model;
-- an evaluated Agent model route is active;
+- exactly one AI Inference connection is enabled, healthy, and has a selected served model — *exactly* one, because `seedableInferenceModelAlias()` refuses to guess between two healthy connections;
 - VM2 is a clean Ubuntu systemd VM on x86_64 or aarch64 with outbound access to OrcaSynapse and the artifact sources during installation;
 - OrcaSynapse can reach the VM2 Hermes address on TCP 8642;
 - the invitation uses a hostname/address that matches customer DNS and TLS policy.

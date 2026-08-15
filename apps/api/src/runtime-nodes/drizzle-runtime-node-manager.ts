@@ -158,10 +158,44 @@ function connectionEnvironment(target: "DEVELOPMENT" | "PILOT" | "PRODUCTION") {
   return "DEVELOPMENT" as const;
 }
 
-function productionArtifactViolation(
+/**
+ * Whether a control-plane origin is reachable only from the machine itself.
+ *
+ * The transport rule below exempts these because a loopback origin has no
+ * network path to sit on, so a single-box development install stays workable
+ * without weakening anything that is actually exposed.
+ */
+function isLoopbackOrigin(url: string | null): boolean {
+  if (!url) return false;
+  try {
+    const { hostname } = new URL(url);
+    const host = hostname.replace(/^\[|\]$/g, "");
+    // Anchored at both ends: a prefix test lets `127.0.0.1.attacker.example`
+    // resolve as loopback and re-open the plain-HTTP path this rule closes.
+    return host === "localhost" || host === "::1" || /^127(?:\.\d{1,3}){3}$/.test(host);
+  } catch {
+    return false;
+  }
+}
+
+export function enrollmentArtifactViolation(
   target: "DEVELOPMENT" | "PILOT" | "PRODUCTION" | undefined,
   artifacts: { hermesCommit: string | null; controlPlaneUrl: string | null },
 ): string | null {
+  /*
+   * The transport rule applies to every target, not just PRODUCTION.
+   *
+   * Enrollment hands VM2 a one-time claim, its Hermes API key and a minted
+   * inference gateway key, and the dashboard prints an installer command of the
+   * form `curl -fsSL <origin>/install/agentic-node.sh | sudo bash`. That route
+   * is necessarily unauthenticated and the script carries no signature, so over
+   * plain HTTP anyone on the path can substitute the body and take root on VM2.
+   * PRODUCTION was refused; DEVELOPMENT and PILOT were not, which made the
+   * weakest deployments the ones handing out root.
+   */
+  if (!isLoopbackOrigin(artifacts.controlPlaneUrl) && !artifacts.controlPlaneUrl?.startsWith("https://")) {
+    return "Agentic System enrollment requires an HTTPS OrcaSynapse origin, or a loopback address for a single-machine install.";
+  }
   if (target !== "PRODUCTION") return null;
   // A 40-character commit SHA, not a container digest: VM2 installs Hermes
   // natively and pins with `--commit`. The guarantee is unchanged -- an
@@ -187,12 +221,49 @@ function parseIdentity(publicKeyPem: string): { normalizedPem: string; fingerpri
   }
 }
 
-function signatureMessage(timestamp: string, nonce: string, body: unknown): string {
-  return `${timestamp}\n${nonce}\n${checksum(body)}`;
+/**
+ * The bytes a node signs, and the reason the first two lines exist.
+ *
+ * The message used to be `timestamp\nnonce\nchecksum(body)`, which bound
+ * everything about a request except which request it was. Two live endpoints
+ * authenticate over an identical `null` body — this module's `/desired-state`
+ * and the corpus plane's — so one valid header triple was byte-valid on the
+ * other path. An attacker positioned to capture a runtime desired-state poll
+ * *and prevent it arriving* (the nonce is single-use deployment-wide, so the
+ * legitimate request would otherwise burn it) could replay it against the
+ * corpus endpoint, which leases the next queued mutation, returns its full
+ * content, and marks it DISPATCHED.
+ *
+ * Binding the method and path makes a signature mean "this node authorised
+ * this operation" rather than "this node authorised something". The path is
+ * the resolved request path with no query string; neither side ever signs a
+ * host, so a control-plane origin change does not invalidate an enrolled node.
+ */
+function signatureMessage(
+  method: string,
+  path: string,
+  timestamp: string,
+  nonce: string,
+  body: unknown,
+): string {
+  return `${method.toUpperCase()}\n${path}\n${timestamp}\n${nonce}\n${checksum(body)}`;
+}
+
+/**
+ * The request a signature is bound to.
+ *
+ * Deliberately a required parameter in second position rather than an optional
+ * one appended last: an optional operation would let a new call site omit it
+ * and silently return to signing "something" instead of "this".
+ */
+export interface NodeRequestOperation {
+  method: string;
+  path: string;
 }
 
 export function verifyNodeRequestSignature(
   publicKeyPem: string,
+  operation: NodeRequestOperation,
   headers: NodeSignatureHeaders,
   body: unknown,
   now = Date.now(),
@@ -213,7 +284,7 @@ export function verifyNodeRequestSignature(
   const signatureBytes = Buffer.from(signature, "base64url");
   const valid = signatureBytes.length === 64 && verify(
     null,
-    Buffer.from(signatureMessage(timestamp, nonce, body), "utf8"),
+    Buffer.from(signatureMessage(operation.method, operation.path, timestamp, nonce, body), "utf8"),
     publicKeyPem,
     signatureBytes,
   );
@@ -301,7 +372,7 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
       throw new RuntimeNodeConflictError("Configure and test exactly one healthy AI Inference route with a served model before enrolling Hermes.");
     }
     const architecture = await this.architectureTarget();
-    const productionViolation = productionArtifactViolation(architecture, input);
+    const productionViolation = enrollmentArtifactViolation(architecture, input);
     if (productionViolation) throw new RuntimeNodeConflictError(productionViolation);
     const token = randomBytes(32).toString("base64url");
     const tokenHash = digest(token);
@@ -512,7 +583,7 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
         .from(platformArchitectureDecision)
         .where(eq(platformArchitectureDecision.id, "global"))
         .limit(1);
-      const productionViolation = productionArtifactViolation(architecture?.targetEnvironment, enrollment);
+      const productionViolation = enrollmentArtifactViolation(architecture?.targetEnvironment, enrollment);
       if (productionViolation) {
         throw new RuntimeNodeEnrollmentError(productionViolation, "INVALID");
       }
@@ -627,7 +698,12 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
     };
   }
 
-  private async authenticate(nodeId: string, headers: NodeSignatureHeaders, body: unknown) {
+  private async authenticate(
+    nodeId: string,
+    operation: NodeRequestOperation,
+    headers: NodeSignatureHeaders,
+    body: unknown,
+  ) {
     const nonce = headers.nonce;
     if (!nonce) {
       throw new RuntimeNodeAuthenticationError();
@@ -637,7 +713,7 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
     if (!node?.identityPublicKeyPem) {
       throw new RuntimeNodeAuthenticationError();
     }
-    verifyNodeRequestSignature(node.identityPublicKeyPem, headers, body);
+    verifyNodeRequestSignature(node.identityPublicKeyPem, operation, headers, body);
     // Only disclose lifecycle state after possession of the enrolled private
     // key has been proven. This keeps enumeration fail-closed while giving a
     // legitimate VM2 operator an actionable recovery reason.
@@ -706,9 +782,19 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
     return { publicKeyPem, fingerprint };
   }
 
-  /** Shared enrolled-node authentication for adjacent VM2-owned planes. */
-  async authenticateNodeRequest(nodeId: string, headers: NodeSignatureHeaders, body: unknown): Promise<void> {
-    await this.authenticate(nodeId, headers, body);
+  /**
+   * Shared enrolled-node authentication for adjacent VM2-owned planes.
+   *
+   * The caller passes its own method and path so its signatures cannot be
+   * replayed here, and this module's cannot be replayed there.
+   */
+  async authenticateNodeRequest(
+    nodeId: string,
+    operation: NodeRequestOperation,
+    headers: NodeSignatureHeaders,
+    body: unknown,
+  ): Promise<void> {
+    await this.authenticate(nodeId, operation, headers, body);
   }
 
   /** Sign an opaque JSON document with the identity VM2 pinned at enrollment. */
@@ -731,7 +817,12 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
    * is refused by `authenticate` before any document is produced.
    */
   async desiredState(nodeId: string, headers: NodeSignatureHeaders): Promise<RuntimeDesiredState> {
-    await this.authenticate(nodeId, headers, null);
+    await this.authenticate(
+      nodeId,
+      { method: "GET", path: `/api/v1/runtime-nodes/${nodeId}/desired-state` },
+      headers,
+      null,
+    );
     const admissions = await this.database
       .select({ toolsetName: runtimeToolsetAdmission.toolsetName })
       .from(runtimeToolsetAdmission)
@@ -747,7 +838,12 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
   }
 
   async heartbeat(nodeId: string, headers: NodeSignatureHeaders, input: HermesNodeHeartbeat): Promise<HermesNodeHeartbeatResult> {
-    const current = await this.authenticate(nodeId, headers, input);
+    const current = await this.authenticate(
+      nodeId,
+      { method: "POST", path: `/api/v1/runtime-nodes/${nodeId}/heartbeat` },
+      headers,
+      input,
+    );
     const effectiveStatus = current.status === "DRAINING" ? "DRAINING" : input.status;
     const receivedAt = new Date();
     await this.database

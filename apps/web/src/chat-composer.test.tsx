@@ -18,8 +18,8 @@
  */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import type { AgentProfile, ChatConversation } from "@orcasynapse/contracts";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { AgentProfile, ChatConversation, ModelDeployment } from "@orcasynapse/contracts";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -46,22 +46,69 @@ const profile = {
   activeVersionConfiguration: { displayName: "Support agent v1" },
 } as unknown as AgentProfile;
 
-const mocks = vi.hoisted(() => ({ submitChatMessage: vi.fn() }));
+/**
+ * A conversation whose last answer measured a prompt.
+ *
+ * That measurement is the readout's only number, and it belongs to the turn
+ * that already finished — which is the whole reason the label has to say so.
+ */
+const measured = (inputTokens: number) => ({
+  ...conversation,
+  messages: [{
+    id: "3d4e5f60-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+    role: "ASSISTANT",
+    content: "Done.",
+    status: "COMPLETED",
+    createdAt: "2026-08-01T00:00:00.000Z",
+    modelAlias: "hermes-agent",
+    totalTokens: inputTokens + 12,
+    inputTokens,
+    outputTokens: 12,
+    reasoningTokens: null,
+    latencyMs: 1_000,
+    firstTokenLatencyMs: 200,
+    finishReason: "STOP",
+    errorCode: null,
+    agentRunId: null,
+    runStatus: null,
+    lastEventCursor: null,
+    approvals: [],
+    runtimeEvents: [],
+    feedback: null,
+  }],
+} as unknown as ChatConversation);
+
+const deployment = (contextWindowTokens: number) => ({
+  id: "0f6a3b1c-4d5e-4f60-9a1b-2c3d4e5f6071",
+  modelAlias: "hermes-agent",
+  status: "ACTIVE",
+  contextWindowTokens,
+} as unknown as ModelDeployment);
+
+const mocks = vi.hoisted(() => ({
+  submitChatMessage: vi.fn(),
+  cancelChatRun: vi.fn(),
+  getChatConversation: vi.fn(),
+  getModelDeployments: vi.fn(),
+}));
 
 vi.mock("./api.js", async () => {
   const actual = await vi.importActual<typeof import("./api.js")>("./api.js");
   return {
     ...actual,
     getChatConversations: vi.fn(async () => ({ items: [{ ...conversation, messages: undefined }] })),
-    getChatConversation: vi.fn(async () => conversation),
+    getChatConversation: mocks.getChatConversation,
     getAgentProfiles: vi.fn(async () => ({ items: [profile] })),
+    getModelDeployments: mocks.getModelDeployments,
     submitChatMessage: mocks.submitChatMessage,
+    cancelChatRun: mocks.cancelChatRun,
   };
 });
 
 // jsdom implements no layout, so the transcript's scroll-into-view is a no-op.
 Element.prototype.scrollIntoView = () => undefined;
 
+const { OrcaSynapseApiError } = await import("./api.js");
 const { ChatView } = await import("./chat-view.js");
 
 // `import.meta.url` is not a file URL under the jsdom environment, so the
@@ -86,9 +133,21 @@ async function composer(): Promise<HTMLTextAreaElement> {
   return await screen.findByLabelText("Chat message") as HTMLTextAreaElement;
 }
 
+/** A submit that never settles, which is the whole of the `submitting` window. */
+const neverSettles = () => new Promise<never>(() => undefined);
+
 beforeEach(() => {
   mocks.submitChatMessage.mockReset();
   mocks.submitChatMessage.mockRejectedValue(new Error("The Hermes route is unavailable."));
+  mocks.cancelChatRun.mockReset();
+  mocks.cancelChatRun.mockResolvedValue(conversation);
+  mocks.getChatConversation.mockReset();
+  mocks.getChatConversation.mockResolvedValue(conversation);
+  // `models:read` is an administrator scope. The empty catalogue is what an
+  // employee identity actually gets, and it is the default here so the cases
+  // that care about the context readout can say which of the two they mean.
+  mocks.getModelDeployments.mockReset();
+  mocks.getModelDeployments.mockResolvedValue({ items: [] });
 });
 afterEach(cleanup);
 
@@ -165,6 +224,89 @@ describe("the chat composer", () => {
     expect(mocks.submitChatMessage.mock.calls[0]?.[1]).toBe("Line one\nLine two");
   });
 
+  it("lets an IME candidate be confirmed without sending the half-converted draft", async () => {
+    /*
+     * Enter is how a Japanese, Chinese or Korean reader accepts the candidate
+     * the IME is offering, and it arrives as a keydown like any other. With no
+     * composition guard every candidate confirmation sent the message — the
+     * draft leaving mid-conversion, several times per sentence.
+     *
+     * jsdom runs no IME, so the two readings a browser gives are dispatched
+     * directly: `isComposing` on the native event, which is what Chromium and
+     * Firefox set, and the legacy `keyCode === 229`, which is what Safari and
+     * older Chromium report while a composition is open.
+     */
+    const field = await composer();
+    const user = userEvent.setup();
+    await user.click(field);
+    await user.paste("にほんご");
+
+    fireEvent.keyDown(field, { key: "Enter", isComposing: true });
+    fireEvent.keyDown(field, { key: "Enter", keyCode: 229 });
+
+    expect(mocks.submitChatMessage).not.toHaveBeenCalled();
+    expect(field.value).toBe("にほんご");
+
+    // The same key once the candidate has been accepted still sends.
+    fireEvent.keyDown(field, { key: "Enter" });
+    await waitFor(() => expect(mocks.submitChatMessage).toHaveBeenCalledTimes(1));
+  });
+
+  it("stays typable for the whole turn and offers a way to stop it", async () => {
+    /*
+     * Two failures in one window. `disabled` was `working || !chatReady`, so
+     * the box went dead the instant Enter was pressed: a disabled control loses
+     * focus, and every turn ended with the caret gone. And between `submitting`
+     * turning true and the stream setting `busy`, Send was rendered-but-dead
+     * while Stop was not rendered at all — a submitted run with no cancel.
+     *
+     * jsdom does not blur a control when it is disabled, so `disabled` is the
+     * assertion carrying the focus claim here; the paste after it is what
+     * proves the box still takes text.
+     */
+    mocks.submitChatMessage.mockReset();
+    mocks.submitChatMessage.mockImplementation(neverSettles);
+    const field = await composer();
+    const user = userEvent.setup();
+    await user.click(field);
+    await user.paste("Summarise the incident runbook");
+    await user.keyboard("{Enter}");
+
+    await waitFor(() => expect(mocks.submitChatMessage).toHaveBeenCalledTimes(1));
+    const live = screen.getByLabelText("Chat message") as HTMLTextAreaElement;
+    expect(live.disabled).toBe(false);
+    expect(document.activeElement).toBe(live);
+    await user.paste("and the escalation path");
+    expect(live.value).toBe("and the escalation path");
+
+    await user.click(screen.getByRole("button", { name: "Stop" }));
+    await waitFor(() => expect(mocks.cancelChatRun).toHaveBeenCalledTimes(1));
+  });
+
+  it("sends once when two submits land in the same tick", async () => {
+    /*
+     * `working` is read from state, so two submits dispatched before React
+     * commits both read it as false. The second reached the server, came back
+     * 409, and its catch restored the draft — leaving the message sent *and*
+     * back in the composer. A ref is the only guard that closes in the same
+     * tick it is set.
+     */
+    mocks.submitChatMessage.mockReset();
+    mocks.submitChatMessage.mockImplementation(neverSettles);
+    const field = await composer();
+    const user = userEvent.setup();
+    await user.click(field);
+    await user.paste("Only once");
+    const form = field.closest("form") as HTMLFormElement;
+
+    await act(async () => {
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+
+    expect(mocks.submitChatMessage).toHaveBeenCalledTimes(1);
+  });
+
   it("recedes when setup is incomplete instead of dimming the reason", async () => {
     render(
       <ChatView
@@ -193,6 +335,42 @@ describe("the chat composer", () => {
     expect(form?.classList.contains("bg-bg")).toBe(true);
     expect(form?.classList.contains("is-off")).toBe(true);
     expect(styles).toMatch(/\.chat-composer\.is-off\s*\{/);
+  });
+
+  it("reports the prompt it measured, overshoot and all", async () => {
+    /*
+     * `Math.min(100, …)` turned an overshoot into exactly "100%", which reads
+     * as a window that is genuinely full — and the number it hid is the one
+     * that says the *configured* window is stale. 5,000 against a configured
+     * 4,096 is 122%, and 122% is the fact.
+     */
+    mocks.getChatConversation.mockResolvedValue(measured(5_000));
+    mocks.getModelDeployments.mockResolvedValue({ items: [deployment(4_096)] });
+    render(<ChatView {...props} />);
+
+    const readout = await screen.findByLabelText("Context usage 122%");
+    expect(readout.textContent).toContain("122%");
+    // And it is the previous turn's prompt, which the bare word "Context" let
+    // a reader take for the state of the box they are typing into.
+    expect(readout.textContent).toContain("last turn");
+    expect(readout.getAttribute("title")).toContain("5,000 of 4,096 tokens");
+    expect(readout.getAttribute("title")).toContain("out of date");
+  });
+
+  it("separates a window size nobody may read from one nobody has", async () => {
+    /*
+     * `getModelDeployments` needs `models:read`, an administrator scope, so an
+     * employee identity 401s into the empty catalogue every single time. "The
+     * configured context window is not available" reported that authorization
+     * result as missing data — and it is the only state most people ever saw.
+     */
+    mocks.getChatConversation.mockResolvedValue(measured(902));
+    mocks.getModelDeployments.mockRejectedValue(new OrcaSynapseApiError(401, "Administrator scope models:read is required."));
+    render(<ChatView {...props} identityMode="ENTERPRISE" />);
+
+    const readout = await screen.findByLabelText(/^Context usage 902 tokens; the context window size needs administrator access$/);
+    expect(readout.getAttribute("title")).toMatch(/administrator/i);
+    expect(readout.getAttribute("title")).not.toContain("not available");
   });
 
   it("keeps its accessible names and ships no inline style attribute", async () => {

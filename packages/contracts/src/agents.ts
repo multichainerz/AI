@@ -74,8 +74,14 @@ export const AGENT_RUN_EVENT_TYPES = [
 /**
  * The one event type that ends a subscriber's stream.
  *
- * Guarded by a test asserting no Hermes event name maps to it. If that ever
- * becomes false, a runtime could end a turn before the answer is stored.
+ * If a Hermes event name ever mapped to it, a runtime could end a turn before
+ * the answer was stored. The assertion that none does lives in
+ * `packages/runtime-clients/src/hermes-client.test.ts`, because the map it has
+ * to read — `SAFE_EVENT_TYPES` — is in that package and cannot be imported
+ * here. This comment used to claim the guard without saying where it was, and
+ * the test in *this* package that looked like it (`agents.test.ts`) iterates a
+ * hardcoded list of names rather than the real map: it pins the predicate,
+ * which is worth keeping, but it never sees a new mapping.
  */
 export const AGENT_RUN_ENDED_EVENT_TYPE = "RUN_ENDED";
 

@@ -1,5 +1,6 @@
 import { and, asc, eq, inArray, isNull, isNotNull, lt, notInArray, or } from "drizzle-orm";
 import { agentRun, workerNode, type OrcaSynapseDatabase } from "@orcasynapse/database";
+import { PROCESSOR_ELIGIBLE_STATUSES } from "./agent-processor.js";
 
 export interface WorkerIdentity {
   id: string;
@@ -88,10 +89,19 @@ export class DrizzlePendingRunSource implements PendingRunSource {
       .where(
         and(
           isNotNull(agentRun.jobId),
-          // WAITING_FOR_APPROVAL is durable state, not a transient in-process
-          // phase. Omitting it stranded any run whose worker restarted while an
-          // approval was outstanding.
-          inArray(agentRun.status, ["QUEUED", "RUNNING", "WAITING_FOR_APPROVAL", "CANCEL_REQUESTED"]),
+          /*
+           * The processor's own list, not a second one that agrees with it by
+           * hand. This carried `WAITING_FOR_APPROVAL` as well, on the reasoning
+           * that it is durable state rather than a transient in-process phase
+           * and that omitting it stranded a run whose worker restarted while an
+           * approval was outstanding -- true of the status, but offering it
+           * here never rescued anything: `process` refuses it before taking a
+           * lease, so every reconcile tick claimed the same run and discarded
+           * it again. A run that outlives its own timeout with nobody executing
+           * it is ended server-side instead, by the abandoned-run reconcile in
+           * the API's DrizzleOperationsManager, which does cover that status.
+           */
+          inArray(agentRun.status, [...PROCESSOR_ELIGIBLE_STATUSES]),
           ...(excludeIds.length > 0 ? [notInArray(agentRun.id, excludeIds)] : []),
           or(
             isNull(agentRun.processorLeaseExpiresAt),

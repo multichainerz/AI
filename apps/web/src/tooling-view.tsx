@@ -146,7 +146,29 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
   }, [catalogue, admissions]);
 
   const others = useMemo(() => rows.filter(({ baseline }) => !baseline), [rows]);
+  /** Decisions on record. This is what "N of M allowed" counts, and only that. */
   const allowed = useMemo(() => others.filter(({ permitted }) => permitted), [others]);
+  /**
+   * What an agent can actually reach: permitted here *and* switched on there.
+   *
+   * The headline counted decisions, so it read "Agents can use built-in memory
+   * and 2 other tools" over rows that all said "off at the runtime" -- and over
+   * this panel's own subtitle, which concedes that the runtime's policy decides
+   * whether a permitted tool is on. A decision is not a capability.
+   */
+  const usable = useMemo(
+    () => others.filter((row) => row.reported && row.enabled && row.permitted),
+    [others],
+  );
+  /**
+   * Allowed here and out of reach anyway: switched off at the runtime, or never
+   * reported by it. Naming them is what keeps "built-in memory only" from
+   * reading as a contradiction of the row beneath it marked Allowed.
+   */
+  const dormant = useMemo(
+    () => others.filter((row) => row.permitted && !(row.reported && row.enabled)).map(({ name }) => name),
+    [others],
+  );
   // What the boundary is refusing runs over. The baseline cannot appear here:
   // it is permitted by construction.
   const drifted = useMemo(
@@ -183,14 +205,17 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
         detail: "The list below is this installation's own record of past decisions, not what the runtime is running now. Check the Hermes connection under Settings.",
       };
     }
+    const call = "The runtime runs these tools itself, so OrcaSynapse records that a tool ran but never sees the call.";
     return {
-      tone: allowed.length > 0 ? "warn" : "good",
-      headline: allowed.length > 0
-        ? `Agents can use built-in memory and ${plural(allowed.length, "other tool")}.`
+      tone: usable.length > 0 ? "warn" : "good",
+      headline: usable.length > 0
+        ? `Agents can use built-in memory and ${plural(usable.length, "other tool")}.`
         : "Agents can use built-in memory only.",
-      detail: "The runtime runs these tools itself, so OrcaSynapse records that a tool ran but never sees the call.",
+      detail: dormant.length === 0 ? call : `${call} ${plural(dormant.length, "tool")} allowed here (${dormant.join(", ")}) ${
+        dormant.length === 1 ? "is" : "are"
+      } not switched on at the runtime, so no run can reach ${dormant.length === 1 ? "it" : "them"} yet.`,
     };
-  }, [loaded, drifted, catalogueRead, allowed]);
+  }, [loaded, drifted, catalogueRead, usable, dormant]);
 
   const fail = (cause: unknown) => {
     if (cause instanceof OrcaSynapseApiError && cause.status === 401) onSessionExpired();
@@ -269,7 +294,10 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
       kicker="Agents"
       title="Tools"
       description="What your agents are allowed to use. The runtime runs these tools itself, so OrcaSynapse permits or refuses a whole tool group rather than an individual call."
-      actions={<Button onClick={() => void load()}>Refresh</Button>}
+      /* `.catch(fail)` like every other call site here: without it an idled-out
+         session rejects unhandled, and the screen keeps showing what the
+         runtime offered fifteen minutes ago with no Alert and no re-auth. */
+      actions={<Button onClick={() => void load().catch(fail)}>Refresh</Button>}
     />
 
     {error && <Alert onDismiss={() => setError(null)}>{error}</Alert>}

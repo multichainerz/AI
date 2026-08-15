@@ -352,8 +352,13 @@ export function CorpusView({ session, scope, onConfigure, onSessionExpired }: Co
 
       <div className="grid min-h-[590px] gap-4 xl:grid-cols-[300px_minmax(0,1fr)_340px]">
         <Panel className="min-w-0 p-3">
+          {/* `node?.writable`, like every other write on this screen: it means
+              the node advertised the corpus capability and is neither REVOKED
+              nor SUSPENDED, and `createMutation` answers those two with a 409.
+              Without it the operator authors a whole SKILL.md on a
+              pre-corpus-sync-v1 node and the draft is discarded on submit. */}
           <PanelHeading className="px-1 pt-1" kicker="Repository" title={memoryScope ? "Memory files" : "Skill files"}
-            actions={canWrite && !memoryScope ? <Button size="sm" onClick={() => { setSelectedId(""); setDraft(initialDraft("SKILL_CREATE")); }}>New skill</Button> : undefined} />
+            actions={canWrite && !memoryScope && node?.writable ? <Button size="sm" onClick={() => { setSelectedId(""); setDraft(initialDraft("SKILL_CREATE")); }}>New skill</Button> : undefined} />
           {/* The two native memory files can be created before Hermes has ever
               written them, which is the one write this tab offers up front. */}
           {memoryScope && canWrite && node?.writable ? <div className="mb-3 grid grid-cols-2 gap-2">
@@ -361,9 +366,18 @@ export function CorpusView({ session, scope, onConfigure, onSessionExpired }: Co
             <Button size="sm" onClick={() => setDraft({ ...initialDraft("MEMORY_ADD"), path: "memories/USER.md" })}>Add user profile</Button>
           </div> : null}
           <div className="grid max-h-[520px] gap-1.5 overflow-y-auto pr-1">
+            {/*
+              * `size="auto"` and an explicit single column, for the reason
+              * `agent-run-ledger.tsx` and `agents-view.tsx` already carry: a
+              * row is three stacked lines, every other size is a fixed
+              * single-line height, and the Button base is
+              * `inline-flex items-center justify-center` -- so the default
+              * drew filename, path and kind side by side inside 36px. jsdom
+              * sees none of it.
+              */}
             {entries.map((entry) => (
-              <Button key={entry.id} variant="ghost" onClick={() => setSelectedId(entry.id)}
-                className={cn("rounded border p-3 text-left transition-colors", selected?.id === entry.id ? "border-accent/50 bg-soft" : "border-transparent hover:border-border hover:bg-raised", entry.deletedAt && "opacity-55")}>
+              <Button key={entry.id} variant="ghost" size="auto" onClick={() => setSelectedId(entry.id)}
+                className={cn("grid w-full grid-cols-1 rounded border p-3 text-left transition-colors", selected?.id === entry.id ? "border-accent/50 bg-soft" : "border-transparent hover:border-border hover:bg-raised", entry.deletedAt && "opacity-55")}>
                 <span className="flex items-center gap-2 text-label font-semibold text-text"><StorageIcon size={14} /><span className="truncate">{entry.path.split("/").at(-1)}</span></span>
                 <span className="mt-1 block truncate font-mono text-micro text-faint">{entry.path}</span>
                 <span className="mt-2 flex items-center justify-between"><MicroLabel>{entry.kind.replaceAll("_", " ")}</MicroLabel><span className="text-micro text-muted">r{entry.revision}</span></span>

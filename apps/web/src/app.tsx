@@ -502,18 +502,22 @@ function App() {
   const agentsUnlocked = unlocked || enterpriseSession?.scopes.includes("agents:use") === true;
 
   const refreshWorkspaceState = useCallback(async () => {
-    const [connections, runtime, profiles, nodes, metrics] = await Promise.all([
+    const [connections, runtime, profiles, nodes, metrics, agents, tools] = await Promise.all([
       getConnections(),
       getAgentRuntime(),
       getAgentProfiles(true),
       getHermesRuntimeNodes(),
       getChatMetrics().catch(() => null),
+      getAgentMetrics().catch(() => null),
+      getToolMetrics().catch(() => null),
     ]);
     setManagedConnections(connections.items);
     setAgentRuntime(runtime);
     setAgentProfiles(profiles.items);
     setRuntimeNodes(nodes.items);
     if (metrics) setChatMetrics(metrics);
+    if (agents) setAgentMetrics(agents);
+    if (tools) setToolMetrics(tools);
   }, []);
 
   /*
@@ -547,17 +551,32 @@ function App() {
       setAgentRuntime(null);
       setAgentProfiles([]);
       setRuntimeNodes([]);
+      /*
+       * The figures go with the state they describe. They used to survive a
+       * lock, so an expired session left the Dashboard drawing the previous
+       * administrator's tool and run counts beside em dashes for everything
+       * else — the one arrangement that reads as live.
+       */
+      setChatMetrics(null);
+      setAgentMetrics(null);
+      setToolMetrics(null);
       return;
     }
     let active = true;
     const refresh = async () => {
       try {
-        const [connections, runtime, profiles, nodes, metrics] = await Promise.all([
+        const [connections, runtime, profiles, nodes, metrics, agents, tools] = await Promise.all([
           getConnections(),
           getAgentRuntime(),
           getAgentProfiles(true),
           getHermesRuntimeNodes(),
           getChatMetrics().catch(() => null),
+          // Fetched here rather than only at mount. `setAgentMetrics` and
+          // `setToolMetrics` had one call site each, inside the session restore
+          // that returns early when there is no cookie to restore, so half the
+          // panel stayed blank for anyone who signed in inside the app.
+          getAgentMetrics().catch(() => null),
+          getToolMetrics().catch(() => null),
         ]);
         if (!active) return;
         setManagedConnections(connections.items);
@@ -565,6 +584,8 @@ function App() {
         setAgentProfiles(profiles.items);
         setRuntimeNodes(nodes.items);
         if (metrics) setChatMetrics(metrics);
+        if (agents) setAgentMetrics(agents);
+        if (tools) setToolMetrics(tools);
       } catch {
         // Individual workspaces surface actionable errors. This background
         // reconciler must never sign the operator out because of a transient VM2 gap.
@@ -714,6 +735,14 @@ function App() {
       setManagedConnections(response.items);
       void getConnectionMonitoring().then(setConnectionMonitoring).catch(() => setConnectionMonitoring(null));
       void getChatMetrics().then(setChatMetrics).catch(() => setChatMetrics(null));
+      /*
+       * Read here as well as in the reconciler, exactly as the chat figures
+       * are. The reconciler gathers seven calls with `Promise.all`, so it
+       * cannot paint anything until the slowest of them lands — and one of
+       * them is the agent runtime, which is the call that hangs when VM2 does.
+       */
+      void getAgentMetrics().then(setAgentMetrics).catch(() => setAgentMetrics(null));
+      void getToolMetrics().then(setToolMetrics).catch(() => setToolMetrics(null));
       return true;
     } catch (error) {
       if (createdSession) await revokeAdministratorSession().catch(() => undefined);
@@ -753,6 +782,8 @@ function App() {
         setManagedConnections(response.items);
         void getConnectionMonitoring().then(setConnectionMonitoring).catch(() => setConnectionMonitoring(null));
         void getChatMetrics().then(setChatMetrics).catch(() => setChatMetrics(null));
+        void getAgentMetrics().then(setAgentMetrics).catch(() => setAgentMetrics(null));
+        void getToolMetrics().then(setToolMetrics).catch(() => setToolMetrics(null));
       } catch {
         setSettingsError("The password was saved, but connection state could not be refreshed.");
       }
@@ -935,6 +966,8 @@ function App() {
     setAdminSession(null);
     setEnterpriseSession(null);
     setChatMetrics(null);
+    setAgentMetrics(null);
+    setToolMetrics(null);
     setManagedConnections([]);
     setConnectionMonitoring(null);
     setRevisionHistory(null);
@@ -1220,6 +1253,11 @@ function App() {
           Agents: () => (
             <AgentsView
               unlocked={agentsUnlocked}
+              // The session itself, not only a boolean drawn from it: the view
+              // gates six mutating controls on the scopes it carries, and
+              // without this prop that gating falls back to the old
+              // all-or-nothing boolean and does nothing at all.
+              session={adminSession}
               // `unlocked` from `adminAccess`, not `adminSession !== null`: a
               // session pending a forced password change is signed in and
               // refused by every admin route, so the two are not the same test.

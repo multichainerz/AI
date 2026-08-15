@@ -6,7 +6,18 @@ const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 const markPath = path.join(repositoryRoot, "apps/web/public/brand/sivali-mark.svg");
 const bannerPath = path.join(repositoryRoot, "docs/assets/orcasynapse-wordmark.svg");
 
-const mark = await readFile(markPath, "utf8");
+/*
+ * Both files are compared and written as LF regardless of how they were checked
+ * out. `.gitattributes` declares `* text=auto`, so the index is always LF, but
+ * the working tree follows the developer's `core.autocrlf` -- true by default in
+ * Git for Windows. Comparing the bytes as read therefore reported a CRLF
+ * checkout of an otherwise identical file as brand drift, telling the developer
+ * to regenerate an asset that was already correct. Harmless while this check
+ * only ran on a Linux runner; a hard block the moment `pnpm verify` runs it.
+ */
+const toLf = (text) => text.replaceAll("\r\n", "\n");
+
+const mark = toLf(await readFile(markPath, "utf8"));
 const match = mark.match(/<svg\b[^>]*>([\s\S]*)<\/svg>\s*$/u);
 if (!match?.[1]) throw new Error(`Unable to read the SVG body from ${markPath}`);
 
@@ -27,7 +38,7 @@ ${markBody}
 `;
 
 if (process.argv.includes("--check")) {
-  const current = await readFile(bannerPath, "utf8").catch(() => "");
+  const current = toLf(await readFile(bannerPath, "utf8").catch(() => ""));
   if (current !== banner) {
     console.error("docs/assets/orcasynapse-wordmark.svg is out of sync with the application Orca mark.");
     console.error("Run: node scripts/sync-doc-brand.mjs");

@@ -9,9 +9,10 @@
  * server change that moves a gate fails here rather than in production.
  */
 import type { HermesRuntimeNode, ServiceConnectionSummary } from "@orcasynapse/contracts";
+import type { AgentProfile, AgentRuntimeControl } from "@orcasynapse/contracts";
 import { describe, expect, it } from "vitest";
 import { deriveSetupSteps, type SetupStepsInput } from "./setup-steps.js";
-import type { WorkspaceReadiness } from "./platform-readiness.js";
+import { deriveWorkspaceReadiness, type WorkspaceReadiness } from "./platform-readiness.js";
 
 function readiness(overrides: Partial<WorkspaceReadiness> = {}): WorkspaceReadiness {
   return {
@@ -39,7 +40,10 @@ function inference(overrides: Partial<ServiceConnectionSummary> = {}): ServiceCo
 }
 
 function node(overrides: Partial<HermesRuntimeNode> = {}): HermesRuntimeNode {
-  return { status: "ONLINE", revokedAt: null, ...overrides } as HermesRuntimeNode;
+  // `lastSeenAt` is part of what ONLINE means: the API demotes a node whose
+  // last heartbeat is older than `NODE_STALE_AFTER_MS`, so a fixture without
+  // one describes a payload the server would never send.
+  return { status: "ONLINE", revokedAt: null, lastSeenAt: new Date().toISOString(), ...overrides } as HermesRuntimeNode;
 }
 
 function input(overrides: Partial<SetupStepsInput> = {}): SetupStepsInput {
@@ -107,6 +111,47 @@ describe("step 1 — the inference server", () => {
 
   it("names the absence of a connection rather than reporting a bare failure", () => {
     expect(blockers(deriveSetupSteps(input()), "inference").join(" ")).toMatch(/no inference connection/i);
+  });
+
+  it("names the missing served model however many connections are healthy", () => {
+    /*
+     * The guard clause with the hole: `healthy.length === 1 && alias === null`
+     * sat after a branch that had already caught `length === 0`, so the `=== 1`
+     * only *excluded* the multi-connection case. Two healthy endpoints with no
+     * served model on either produced no step-1 blocker at all — the one state
+     * where the operator most needs to be told which of the two to fix.
+     */
+    const steps = deriveSetupSteps(input({
+      readiness: readiness({ inferenceReady: true }),
+      connections: [
+        inference({ configuration: {} as ServiceConnectionSummary["configuration"] }),
+        inference({ configuration: {} as ServiceConnectionSummary["configuration"] }),
+      ],
+    }));
+
+    expect(blockers(steps, "inference").join(" ")).toMatch(/served model/i);
+    expect(steps[0]?.status).not.toBe("done");
+  });
+
+  it("does not flip step 1 backwards when the spare connection is disabled", () => {
+    /*
+     * The symptom the hole produced: with two model-less healthy connections
+     * step 1 read Done, and *disabling* one of them — strictly less deployment,
+     * strictly no new fault — moved it back to blocked. A step that walks
+     * backwards is read as the product losing state, not as a reason.
+     */
+    const modelless = { configuration: {} as ServiceConnectionSummary["configuration"] };
+    const both = deriveSetupSteps(input({
+      readiness: readiness({ inferenceReady: true }),
+      connections: [inference(modelless), inference(modelless)],
+    }));
+    const one = deriveSetupSteps(input({
+      readiness: readiness({ inferenceReady: true }),
+      connections: [inference(modelless), inference({ ...modelless, enabled: false })],
+    }));
+
+    expect(both[0]?.status).toBe(one[0]?.status);
+    expect(blockers(both, "inference")).toEqual(blockers(one, "inference"));
   });
 });
 
@@ -214,5 +259,66 @@ describe("step 3 — the agent profile", () => {
     expect(runtime.length).toBeGreaterThan(0);
     expect(profile).toEqual(["Enrol the agent runtime first."]);
     expect(profile.join(" ")).not.toMatch(/inference|heartbeat/i);
+  });
+});
+
+/**
+ * The two screens, asked the same question about the same deployment.
+ *
+ * They used to answer it three different ways: the Dashboard took the first
+ * connection matching a kind and stopped at HEALTHY, Setup counted the enabled
+ * healthy ones and read the served model off them, and the API did the second.
+ * So clearing a model alias produced "3/3 ready — Open Session" on one screen
+ * and "0 of 3 — blocked" on the other, from one poll of one payload.
+ *
+ * These cases are the contract between them: whatever the derivation says, both
+ * screens say the same thing, in both directions.
+ */
+describe("the Dashboard and Setup on one deployment", () => {
+  const hermes = () => ({ kind: "HERMES", enabled: true, status: "HEALTHY", configuration: {} }) as ServiceConnectionSummary;
+  const profiles = [{ status: "ACTIVE" } as AgentProfile];
+  const runtimeControl = { enabled: true } as AgentRuntimeControl;
+
+  function bothScreens(connections: ServiceConnectionSummary[], runtimeNodes: HermesRuntimeNode[]) {
+    const workspace = deriveWorkspaceReadiness({ connections, runtimeNodes, profiles, runtime: runtimeControl });
+    const steps = deriveSetupSteps({ readiness: workspace, connections, runtimeNodes, targetEnvironment: "DEVELOPMENT" });
+    return { workspace, steps, allDone: steps.length === 3 && steps.every((step) => step.status === "done") };
+  }
+
+  it("agree that a fully enrolled deployment is ready", () => {
+    // Both directions matter: a rule strict enough to catch the two failures
+    // below is worthless if it also refuses the deployment that works.
+    const { workspace, allDone } = bothScreens([inference(), hermes()], [node()]);
+
+    expect(workspace.chatReady).toBe(true);
+    expect(allDone).toBe(true);
+  });
+
+  it("agree that a cleared served model blocks the path", () => {
+    const { workspace, steps, allDone } = bothScreens(
+      [inference({ configuration: {} as ServiceConnectionSummary["configuration"] }), hermes()],
+      [node()],
+    );
+
+    expect(workspace.chatReady).toBe(false);
+    expect(allDone).toBe(false);
+    expect(steps.flatMap((step) => step.blockedBy).join(" ")).toMatch(/served model/i);
+  });
+
+  it("agree that a second healthy inference connection blocks the path", () => {
+    const { workspace, steps, allDone } = bothScreens([inference(), inference(), hermes()], [node()]);
+
+    expect(workspace.chatReady).toBe(false);
+    expect(allDone).toBe(false);
+    expect(steps.flatMap((step) => step.blockedBy).join(" ")).toMatch(/exactly one/i);
+  });
+
+  it("agree that a node which stopped beating is not answering", () => {
+    const quiet = node({ lastSeenAt: new Date(Date.now() - 4 * 60_000).toISOString() });
+    const { workspace, steps, allDone } = bothScreens([inference(), hermes()], [quiet]);
+
+    expect(workspace.runtimeNodeReady).toBe(false);
+    expect(allDone).toBe(false);
+    expect(steps.flatMap((step) => step.blockedBy).join(" ")).toMatch(/heartbeat/i);
   });
 });

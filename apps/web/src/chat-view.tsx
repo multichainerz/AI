@@ -147,6 +147,23 @@ const COMPOSER_LIMIT = 32_000;
 const COMPOSER_COUNTER_FROM = Math.round(COMPOSER_LIMIT * 0.2);
 const COMPOSER_COUNTER_WARN = Math.round(COMPOSER_LIMIT * 0.05);
 
+/**
+ * How many times a dropped stream is worth re-opening before saying so.
+ *
+ * The loop had no bound and no error surface: every non-401 failure wrote
+ * `Connection interrupted · retrying (N)` into the activity line and went round
+ * again, forever, while the message stayed PENDING. Not every failure is
+ * transient — the chat manager answers "The Hermes run is no longer available"
+ * for a message whose `AgentRun` has been deleted, and it will answer that
+ * every time — so a reader watched a small grey line count upwards with no way
+ * to learn that the answer was never coming.
+ *
+ * Six, against a backoff that caps at five seconds: roughly twenty seconds of
+ * genuinely transient trouble is absorbed, and anything past that is reported
+ * rather than retried.
+ */
+export const STREAM_RECONNECT_LIMIT = 6;
+
 function formatLatency(value: number | null): string {
   if (value === null) return "—";
   return value < 1_000 ? `${value} ms` : `${(value / 1_000).toFixed(2)} s`;
@@ -494,6 +511,9 @@ export function ChatView({
   const [streamElapsedMs, setStreamElapsedMs] = useState(0);
   const [profiles, setProfiles] = useState<AgentProfile[]>([]);
   const [modelDeployments, setModelDeployments] = useState<ModelDeployment[]>([]);
+  // Whether the empty catalogue above is a refusal rather than an absence. See
+  // the context readout, which is the only thing that reads it.
+  const [modelCatalogueDenied, setModelCatalogueDenied] = useState(false);
   const [selectedProfileId, setSelectedProfileId] = useState("");
   const [currentActivity, setCurrentActivity] = useState<string | null>(null);
   const [renaming, setRenaming] = useState(false);
@@ -508,6 +528,9 @@ export function ChatView({
    */
   const [pinned, setPinned] = useState(true);
   const abortController = useRef<AbortController | null>(null);
+  // Whether a submit is in flight, held where a same-tick second submit can
+  // see it. See `submit` for why the state flag beside it is not enough.
+  const sending = useRef(false);
   const messageScroller = useRef<HTMLDivElement>(null);
   const moreMenu = useRef<HTMLDivElement>(null);
 
@@ -578,6 +601,7 @@ export function ChatView({
       setError(null);
       setProfiles([]);
       setModelDeployments([]);
+      setModelCatalogueDenied(false);
       return;
     }
     let current = true;
@@ -585,7 +609,18 @@ export function ChatView({
     void Promise.all([
       getChatConversations(),
       getAgentProfiles(false),
-      getModelDeployments().catch(() => ({ items: [] })),
+      /*
+       * Optional, and refused far more often than it fails: `models:read` is an
+       * administrator scope, so every employee identity lands in this catch.
+       * Swallowed as before — a Session must not end because a footnote was
+       * denied — but no longer indistinguishable from a catalogue that is
+       * simply empty, which is what the composer used to report it as.
+       */
+      getModelDeployments().catch((cause) => {
+        const denied = cause instanceof OrcaSynapseApiError && (cause.status === 401 || cause.status === 403);
+        if (current) setModelCatalogueDenied(denied);
+        return { items: [] };
+      }),
     ])
       .then(async ([{ items }, profileList, modelList]) => {
         if (!current) return;
@@ -730,6 +765,17 @@ export function ChatView({
             await refreshList().catch(() => undefined);
             return;
           }
+          if (retry >= STREAM_RECONNECT_LIMIT) {
+            // The message is still PENDING and the transport still will not
+            // hold, which after this many rounds is a condition that does not
+            // clear itself. Whatever the server said is the useful half.
+            setCurrentActivity(null);
+            setError(`Lost contact with this Hermes run after ${STREAM_RECONNECT_LIMIT} attempts. ${
+              cause instanceof Error ? cause.message : "The event stream could not be re-opened."
+            } Reopen the conversation to pick the answer up from where it stopped.`);
+            await refreshList().catch(() => undefined);
+            return;
+          }
           cursor = pending.lastEventCursor;
           await new Promise((resolve) => window.setTimeout(resolve, Math.min(5_000, 500 * 2 ** Math.min(retry, 4))));
         }
@@ -797,7 +843,14 @@ export function ChatView({
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     const content = draft.trim();
-    if (!content || working || !unlocked || active?.status === "ARCHIVED") return;
+    /*
+     * `sending` is a ref because `working` is state. Two submits dispatched
+     * before React commits — a double Enter, or a keystroke racing a click —
+     * both read `working` as false, and the second came back 409 whose catch
+     * restored the draft: the message was sent *and* back in the composer. A
+     * ref closes in the same tick it is set, which is the only thing that can.
+     */
+    if (!content || sending.current || working || !unlocked || active?.status === "ARCHIVED") return;
     if (administratorReadiness?.ready === false) {
       setError(administratorReadiness.detail);
       return;
@@ -806,6 +859,7 @@ export function ChatView({
       setError("Create and activate an Agent Profile before starting a Session.");
       return;
     }
+    sending.current = true;
     setSubmitting(true);
     setError(null);
     setDraft("");
@@ -816,6 +870,10 @@ export function ChatView({
         const created = await createChatConversation({ profileId: selectedProfileId });
         conversation = await getChatConversation(created.id);
         setConversations((items) => [created, ...items]);
+        // Adopted before the message is sent, so Stop has something to cancel
+        // for the first turn too. It carries no pending message yet, so the
+        // stream effect looks at it and does nothing.
+        setActive(conversation);
       }
       setCurrentActivity("Hermes run queued");
       const submission = await submitChatMessage(conversation.id, content);
@@ -839,12 +897,15 @@ export function ChatView({
         await refreshList().catch(() => undefined);
       }
     } finally {
+      sending.current = false;
       setSubmitting(false);
     }
   };
 
   const requestStop = async () => {
-    if (!active || !busy || currentActivity === "Cancellation requested") return;
+    // `working` rather than `busy`, matching the control: a run submitted but
+    // not yet streaming is exactly the one an operator most wants back.
+    if (!active || !working || currentActivity === "Cancellation requested") return;
     setError(null);
     setCurrentActivity("Cancellation requested");
     for (let attempt = 0; attempt < 6; attempt += 1) {
@@ -1036,9 +1097,45 @@ export function ChatView({
     modelAlias === active?.modelAlias && status === "ACTIVE"
   )) ?? modelDeployments.find(({ modelAlias }) => modelAlias === active?.modelAlias);
   const contextWindowTokens = contextDeployment?.contextWindowTokens ?? null;
+  /*
+   * Unclamped. `Math.min(100, …)` turned every overshoot into exactly "100%",
+   * which reads as a window that is genuinely full — and what it hid is the
+   * one number that says the *configured* window is stale, since a prompt
+   * cannot really exceed the window the model accepted it into.
+   */
   const contextUsagePercent = contextTokens !== null && contextWindowTokens !== null
-    ? Math.min(100, Math.round((contextTokens / contextWindowTokens) * 100))
+    ? Math.round((contextTokens / contextWindowTokens) * 100)
     : null;
+  /*
+   * The other two overstatements, both in the words rather than the number.
+   *
+   * `contextTokens` is the prompt the *previous* turn measured, so it always
+   * understates the message being typed — and the label said only "Context",
+   * which a reader can only take for the state of the box in front of them.
+   *
+   * And the window size comes from the model catalogue, which needs the
+   * `models:read` administrator scope: an employee identity 401s into the empty
+   * catalogue every time, so "not available" was the only state most people
+   * ever saw, reporting an authorization result as missing data.
+   */
+  const contextWindowUnreadable = contextWindowTokens === null && modelCatalogueDenied;
+  const contextUsageLabel = contextTokens === null
+    ? "Context usage is not available"
+    : contextUsagePercent !== null
+      ? `Context usage ${contextUsagePercent}%`
+      : `Context usage ${contextTokens.toLocaleString()} tokens; the context window size ${
+        contextWindowUnreadable ? "needs administrator access" : "is unavailable"}`;
+  const contextUsageTitle = contextTokens === null
+    ? "Hermes has not reported prompt token usage for a completed response."
+    : contextWindowTokens === null
+      ? `Last turn's prompt measured ${contextTokens.toLocaleString()} tokens. ${contextWindowUnreadable
+        ? "The context window size comes from the model catalogue, which needs an administrator scope this session does not hold."
+        : "The configured context window is not available."}`
+      : `Last turn's prompt measured ${contextTokens.toLocaleString()} of ${contextWindowTokens.toLocaleString()} tokens (${contextUsagePercent}%).${
+        (contextUsagePercent ?? 0) > 100
+          ? " That is larger than the configured window, so the configured size is out of date."
+          : ""
+      } It measures the prompt of the previous turn, not the draft below it, and not Hermes persistent memory.`;
   const profileAvailable = profiles.length > 0;
   const routeReady = administratorReadiness?.ready !== false && profileAvailable;
   const chatReady = routeReady && active?.status !== "ARCHIVED";
@@ -1737,6 +1834,18 @@ export function ChatView({
                 value={draft}
                 onChange={(event) => setDraft(event.target.value)}
                 onKeyDown={(event) => {
+                  /*
+                   * Enter means "accept the candidate" while an IME is open,
+                   * and it arrives as an ordinary keydown. Without this guard a
+                   * Japanese, Chinese or Korean draft left mid-conversion on
+                   * every candidate confirmation — several times per sentence.
+                   *
+                   * Both readings, because browsers disagree: Chromium and
+                   * Firefox set `isComposing` on the native event, while Safari
+                   * and older Chromium report the legacy `keyCode === 229` for
+                   * the whole composition.
+                   */
+                  if (event.nativeEvent.isComposing || event.keyCode === 229) return;
                   if (event.key === "Enter" && !event.shiftKey) {
                     event.preventDefault();
                     event.currentTarget.form?.requestSubmit();
@@ -1745,7 +1854,16 @@ export function ChatView({
                 placeholder={active?.status === "ARCHIVED" ? "Restore this conversation to continue" : chatReady ? `Message ${selectedAgentName}` : "Finish the required setup to start a Session"}
                 rows={1}
                 maxLength={COMPOSER_LIMIT}
-                disabled={working || !chatReady}
+                /*
+                 * Dead only while the route is, never while a turn is running.
+                 * `working` used to be in here, and a disabled control loses
+                 * focus: the caret left the composer the instant Enter was
+                 * pressed and every turn ended with nowhere to type. The turn
+                 * is still protected — `submit` refuses while one is in flight
+                 * — so the box stays live and the next message can be written
+                 * while the answer arrives.
+                 */
+                disabled={!chatReady}
                 aria-label="Chat message"
               />
             </div>
@@ -1761,19 +1879,11 @@ export function ChatView({
                 <span aria-hidden="true" className="hidden h-1 w-1 shrink-0 rounded-full bg-border-strong sm:block" />
                 <span
                   className="hidden min-w-0 items-center gap-1.5 sm:flex"
-                  aria-label={contextUsagePercent !== null
-                    ? `Context usage ${contextUsagePercent}%`
-                    : contextTokens !== null
-                      ? `Context usage ${contextTokens.toLocaleString()} tokens; percentage unavailable`
-                      : "Context usage is not available"}
-                  title={contextTokens === null
-                    ? "Hermes has not reported prompt token usage for a completed response."
-                    : contextWindowTokens === null
-                      ? `Latest prompt context: ${contextTokens.toLocaleString()} tokens. The configured context window is not available.`
-                      : `Latest prompt context: ${contextTokens.toLocaleString()} of ${contextWindowTokens.toLocaleString()} tokens. This measures the current model prompt, not Hermes persistent memory.`}
+                  aria-label={contextUsageLabel}
+                  title={contextUsageTitle}
                 >
                   <LayersIcon size={12} aria-hidden="true" className="shrink-0 text-faint" />
-                  <span>Context</span>
+                  <span>Context (last turn)</span>
                   <strong className={cn(
                     "font-mono font-semibold tabular-nums",
                     contextUsagePercent !== null && contextUsagePercent >= 80 ? "text-warn" : "text-muted",
@@ -1814,7 +1924,13 @@ export function ChatView({
                     {charactersLeft.toLocaleString()} left
                   </span>
                 )}
-                {busy ? (
+                {/*
+                  * `working`, not `busy`. Between the submit leaving and the
+                  * stream attaching, `submitting` is true and `busy` is not:
+                  * Send rendered disabled and Stop did not render at all, so a
+                  * message already on its way to Hermes had no cancel.
+                  */}
+                {working ? (
                   <Button
                     variant="danger"
                     size="sm"

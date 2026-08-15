@@ -137,7 +137,12 @@ export function GuardrailsView({
           blockCredentialPatterns: draft.blockCredentialPatterns,
           expectedRevision: editing.revision,
         });
-        setMessage("Policy updated. Material changes now require matching promoted safety evidence.");
+        // What the server actually does with a material change: it demands a
+        // new version number and resets the policy to DRAFT. There is no
+        // evidence check in `DrizzleGuardrailManager` and there has not been
+        // one since the evaluation subsystem was removed, so the old wording
+        // promised operators a gate that would never appear.
+        setMessage("Policy updated. A material change resets it to Draft under its new version, so activate that version to enforce it.");
       } else {
         await createGuardrailPolicy({ ...draft, slug: slugify(draft.slug) });
         setMessage("Draft guardrail policy created.");
@@ -190,7 +195,7 @@ export function GuardrailsView({
       kicker="Policy control"
       title="Guardrails"
       mark="G"
-      reason="Sign in as an administrator to inspect policy versions and activation evidence; the workspace session you already have stays active."
+      reason="Sign in as an administrator to inspect policy versions and their activation history; the workspace session you already have stays active."
       actionLabel="Open platform settings"
       onAction={onConfigureInference}
     />;

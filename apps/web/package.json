@@ -1,6 +1,6 @@
 {
   "name": "@orcasynapse/web",
-  "version": "5.1.0",
+  "version": "5.2.0",
   "description": "OrcaSynapse operator workspace for governed sessions, agents, settings, and operations",
   "license": "BUSL-1.1",
   "private": true,
@@ -9,7 +9,7 @@
     "build": "tsc -p tsconfig.json --noEmit && vite build",
     "dev": "vite",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run"
   },
   "dependencies": {
     "@orcasynapse/contracts": "workspace:*",

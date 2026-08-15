@@ -780,6 +780,54 @@ export function expiredSessionCookie(secure: boolean): string {
   ].join("; ");
 }
 
+/**
+ * The result of resolving an administrator session, with "refused" separated
+ * from "absent" so a caller cannot conflate them.
+ *
+ * Modules that accept an enterprise identity as well need all three: an absent
+ * admin session means "try the other identity", while a refused one means a
+ * reply has already been sent and the request is over.
+ */
+export type AdminAuthentication =
+  | { outcome: "ADMINISTRATOR"; principal: AdminPrincipal }
+  | { outcome: "NO_SESSION" }
+  | { outcome: "REFUSED" };
+
+/**
+ * Resolve an administrator session and apply the forced-rotation gate.
+ *
+ * `authenticate` deliberately returns a principal whose password change is
+ * still pending, because the change and recovery endpoints in `auth/routes.ts`
+ * have to accept exactly that session — they are the only two call sites that
+ * may use the manager directly. Every other surface must refuse it: the
+ * installer prints the temporary password to a terminal and a log, so a
+ * session holding it is a credential in transit rather than an administrator.
+ *
+ * The gate used to be written out at each call site, and two of the four
+ * forgot it — `agents/routes.ts` and `chat/routes.ts` accepted a pending
+ * session, so the temporary password could flip the agent-execution kill
+ * switch, activate a profile, and run a real turn. It lives here now, and
+ * `admin-session.gate.test.ts` fails if a new module resolves a session
+ * without it.
+ */
+export async function authenticateAdministrator(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  manager: AdminSessionManager | undefined,
+  requiredScope?: AdminScope,
+): Promise<AdminAuthentication> {
+  const principal = await manager?.authenticate(adminSessionToken(request), requiredScope);
+  if (!principal) return { outcome: "NO_SESSION" };
+  if (principal.passwordChangeRequired) {
+    await reply.code(403).send({
+      error: "PASSWORD_CHANGE_REQUIRED",
+      message: "Change or recover the local administrator password before using OrcaSynapse administration.",
+    });
+    return { outcome: "REFUSED" };
+  }
+  return { outcome: "ADMINISTRATOR", principal };
+}
+
 export async function requireAdmin(
   request: FastifyRequest,
   reply: FastifyReply,
@@ -793,21 +841,16 @@ export async function requireAdmin(
     });
     return null;
   }
-  const principal = await manager.authenticate(adminSessionToken(request));
-  if (!principal) {
+  const authentication = await authenticateAdministrator(request, reply, manager);
+  if (authentication.outcome === "REFUSED") return null;
+  if (authentication.outcome === "NO_SESSION") {
     await reply.code(401).send({
       error: "UNAUTHORIZED",
       message: "An active administrator session with the required scope is required.",
     });
     return null;
   }
-  if (principal.passwordChangeRequired) {
-    await reply.code(403).send({
-      error: "PASSWORD_CHANGE_REQUIRED",
-      message: "Change or recover the local administrator password before using OrcaSynapse administration.",
-    });
-    return null;
-  }
+  const { principal } = authentication;
   if (!principal.scopes.includes(requiredScope)) {
     await reply.code(403).send({
       error: "FORBIDDEN",

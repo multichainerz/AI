@@ -5,6 +5,62 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v5.2.0 — 2026-08-15
+
+A twelve-lane read-only audit of the whole tree, and the repairs it found. Three
+patterns account for most of it: a rule implemented more than once and drifting,
+a control built and never wired to anything that reads it, and a gate that had
+quietly stopped being able to fail.
+
+**Enrollment is a breaking change for already-enrolled nodes.** The signed
+message now binds the HTTP method and path as well as the body, so any VM2
+enrolled before this release will be refused with 401 on every heartbeat until
+its installer is re-run. Before, the runtime and corpus desired-state polls both
+authenticated over an identical `null` body, so one poll's signature was
+byte-valid on the other endpoint.
+
+- refuse a session still holding the installer's temporary password on the agent
+  and chat routes, which accepted one and would flip the execution kill switch,
+  activate a profile and run a real turn; the gate is one shared helper now, and
+  a test fails if any module resolves a session without it
+- require HTTPS for Agentic System enrollment on every target rather than only
+  PRODUCTION, exempting loopback, so a pilot install no longer prints a
+  `curl … | sudo bash` command over a channel anyone on the path can rewrite
+- bind the method and path into the node request signature across the verifier
+  and all three client signers, and pin the five implementations against drift
+- refuse a link-local destination in connection diagnostics; private and
+  loopback endpoints stay allowed, because they are what this product connects to
+- reconcile abandoned agent runs server-side, ending a conversation that used to
+  hang forever and then refuse every further message for 65 minutes
+- end a run whose worker restarted as `HERMES_RUN_DETACHED` rather than a generic
+  failure, naming the divergence between the visible transcript and the Hermes
+  session that still holds the exchange
+- derive inference, Hermes and runtime-node readiness once and share it, so the
+  Dashboard can no longer report a deployment ready while Setup blocks it
+- ignore the disabled connection a revoked node leaves behind, which could pin
+  the Dashboard on a dead runtime and make chat permanently unavailable
+- fetch agent and tool metrics on every path that fetches chat metrics, instead
+  of once at mount, leaving half the Dashboard blank after an in-app sign-in
+- gate every Profiles write control on the scope the API requires, so roles that
+  would be refused no longer see the controls
+- stop Enter submitting mid-IME-composition, which sent a half-converted draft on
+  every candidate confirmation in Japanese, Chinese and Korean
+- keep the composer typable for the whole turn and give a submitted run a Stop
+  button, and refuse a second submit dispatched in the same tick
+- cancel the SSE reader on an unrecognised frame, which leaked a connection per
+  retry, and bound the reconnect loop with a real error instead of retrying forever
+- replace the one inline-style write with a class, and teach the CSP gate to see
+  the `.style.` spelling it was blind to
+- label every Dashboard figure with the window it measures, and count tool calls
+  and run outcomes as their labels claim
+- state what the prompt, approved-skills and readiness surfaces actually do
+  today, none of which reaches the runtime
+- make `pnpm verify` run the static gates and the CSP check it claimed to cover,
+  and assert its own wiring
+- fix gates that could not fail: the CSP check passing with no bundle to read,
+  `--passWithNoTests` on two packages, the Operations tab collapse asserted
+  nowhere, and a readiness test that compared a constant to itself
+
 ## v5.1.0 — 2026-08-15
 
 Agents is four tabs and Operations is two. Runtime folds back into Profiles as

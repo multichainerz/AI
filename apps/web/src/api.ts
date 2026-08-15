@@ -496,7 +496,30 @@ export async function streamChatEvents(
       .map((line) => line.slice(5).trimStart())
       .join("\n");
     if (!data) return;
-    const event = chatStreamEventSchema.parse(JSON.parse(data) as unknown);
+    /*
+     * A frame this build cannot read is skipped, not fatal.
+     *
+     * Version skew reaches here as a matter of course: a rolling deploy with a
+     * tab left open sends frame types, or `state.status` values, that this
+     * bundle was not compiled with. (`activity` is deliberately an open string,
+     * so new *runtime* event types were already safe; new *frame* types were
+     * not.) Throwing abandoned the reader mid-request and lost every frame
+     * after it, while the run carried on with nobody reading it — and the
+     * reconnect above opened a second request without closing the first.
+     *
+     * The cursor is not advanced for a skipped frame, so the server resends
+     * from the last frame this client actually understood, and the refetch once
+     * the stream ends reconciles the transcript either way.
+     */
+    let event: ChatStreamEvent;
+    try {
+      event = chatStreamEventSchema.parse(JSON.parse(data) as unknown);
+    } catch (cause) {
+      // Skipped, not swallowed. Nothing else in the client can report that this
+      // tab is behind the control plane it is talking to.
+      console.warn("OrcaSynapse skipped an unreadable chat stream frame", data.slice(0, 500), cause);
+      return;
+    }
     if (event.type === "stream_error") {
       // Held rather than dispatched: the run may still be going, and the
       // reducer has no state to change for a transport that dropped.
@@ -506,15 +529,31 @@ export async function streamChatEvents(
     onEvent(event);
   };
 
-  while (true) {
-    const { value, done } = await reader.read();
-    buffer += decoder.decode(value, { stream: !done });
-    const frames = buffer.split(/\r?\n\r?\n/);
-    buffer = frames.pop() ?? "";
-    for (const frame of frames) consumeFrame(frame);
-    if (done) break;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value, { stream: !done });
+      const frames = buffer.split(/\r?\n\r?\n/);
+      buffer = frames.pop() ?? "";
+      for (const frame of frames) consumeFrame(frame);
+      if (done) break;
+    }
+    if (buffer.trim()) consumeFrame(buffer);
+  } finally {
+    /*
+     * The reader is the only handle on an open request. Leaving the loop any
+     * other way than through `done` — a throwing consumer, a read that rejects
+     * — used to leave the connection established: the server's
+     * `request.raw.once("close")` never fired, its `subscribe()` kept polling,
+     * and the view's reconnect opened another alongside it. Browsers allow
+     * roughly six per origin, so a handful of rounds stalled the application.
+     *
+     * Cancelling a stream that already finished is a no-op, and cancelling one
+     * that already errored rejects; neither is worth reporting over whatever
+     * sent us here.
+     */
+    await reader.cancel().catch(() => undefined);
   }
-  if (buffer.trim()) consumeFrame(buffer);
   if (streamError) throw new OrcaSynapseApiError(502, streamError);
 }
 

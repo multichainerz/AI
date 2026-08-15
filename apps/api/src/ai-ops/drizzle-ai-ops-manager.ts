@@ -479,7 +479,7 @@ export class DrizzleAiOpsManager implements AiOpsManager {
         id: `guardrail:${activeGuardrail.id}`,
         label: activeGuardrail.displayName,
         status: "HEALTHY",
-        summary: `OrcaSynapse-native runtime limits and ${Number(activeGuardrail.blockControlCharacters) + Number(activeGuardrail.blockCredentialPatterns)} content checks are active with promoted policy evidence.`,
+        summary: `OrcaSynapse-native runtime limits and ${Number(activeGuardrail.blockControlCharacters) + Number(activeGuardrail.blockCredentialPatterns)} content checks are active at version ${activeGuardrail.version}.`,
         source: "CONFIGURATION",
         observedAt: activeGuardrail.updatedAt.toISOString(),
         latencyMs: null,
@@ -492,7 +492,9 @@ export class DrizzleAiOpsManager implements AiOpsManager {
         id: `prompt:${prompt.id}`,
         label: prompt.displayName,
         status: "HEALTHY",
-        summary: `Chat-system prompt v${prompt.version} is active with promoted CHAT and SAFETY evidence; checksum ${prompt.contentChecksum.slice(0, 12)}.`,
+        // Says "released", not "active in chat": no runtime component reads a
+        // prompt template — the worker builds system text from the Profile.
+        summary: `Chat-system prompt v${prompt.version} is the released version; checksum ${prompt.contentChecksum.slice(0, 12)}.`,
         source: "CONFIGURATION",
         observedAt: prompt.updatedAt.toISOString(),
         latencyMs: null,

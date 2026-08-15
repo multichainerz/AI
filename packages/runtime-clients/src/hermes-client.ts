@@ -367,6 +367,50 @@ function isTerminalStatus(status: string): boolean {
   return ["completed", "failed", "cancelled", "canceled"].includes(status.toLowerCase());
 }
 
+/**
+ * A native session turn this process did not start, and cannot pick up.
+ *
+ * Hermes' native session surface delivers a turn exactly once: as the SSE body
+ * of the POST to `/api/sessions/:id/chat/stream` that carried the message, to
+ * the process that issued that POST. The id in `nativeRunId` is derived here
+ * from the idempotency key and is never sent to the runtime, so there is
+ * nothing on Hermes keyed by it to ask about and no half-finished response to
+ * resume; re-issuing the POST would submit the same message to the session a
+ * second time, which is exactly what persisting `externalRunId` exists to
+ * prevent. The Runs API the capability gate requires is a different surface
+ * that `start` deliberately does not submit through -- attaching through it
+ * would mean giving up native sessions, and with them Hermes owning the
+ * transcript and its MEMORY.md / USER.md lifecycle.
+ *
+ * So this is not a retryable condition, and callers are told which absence it
+ * is rather than being left to guess. It matters because the two have opposite
+ * consequences: an id this client never issued is a programming error, while a
+ * detached run means Hermes holds an exchange the reader's transcript does not,
+ * and every later answer in that conversation is informed by it.
+ */
+export class HermesRunDetachedError extends Error {
+  constructor(readonly runId: string) {
+    super(
+      "The Hermes native session run was started by a worker process that is gone. "
+      + "Hermes still holds that exchange in its session transcript; it cannot be re-attached or resumed.",
+    );
+    this.name = "HermesRunDetachedError";
+  }
+}
+
+/**
+ * Which of the two absences a missing run is.
+ *
+ * Both answers used to be the same sentence, which told a worker holding a
+ * perfectly good id that its run had detached and a worker holding a detached
+ * run nothing it could act on differently.
+ */
+function absentRun(runId: string): Error {
+  return runId.startsWith(NATIVE_RUN_PREFIX)
+    ? new HermesRunDetachedError(runId)
+    : new Error("Hermes was asked about a run id this client never issued.");
+}
+
 export class HermesClient {
   private readonly nativeRuns = new Map<string, NativeSessionRun>();
 
@@ -765,10 +809,7 @@ export class HermesClient {
   async status(runId: string): Promise<HermesRunState> {
     const native = this.nativeRuns.get(runId);
     if (native) return { ...native.state };
-    if (runId.startsWith(NATIVE_RUN_PREFIX)) {
-      throw new Error("Hermes native session run is no longer attached to this worker; its transcript remains in Hermes.");
-    }
-    throw new Error("Hermes native session run is no longer attached to this worker; its transcript remains in Hermes.");
+    throw absentRun(runId);
   }
 
   async decideApproval(runId: string, choice: "once" | "deny"): Promise<void> {
@@ -808,7 +849,16 @@ export class HermesClient {
       }
       return;
     }
-    return;
+    /*
+     * A detached run is not stopped, and saying so would not help.
+     *
+     * The abort above works on this process' own stream; a turn owned by a
+     * process that is gone has no handle here and no endpoint keyed by this id.
+     * Every caller stops best-effort and then finalises regardless -- see the
+     * cancel paths in the worker's agent-processor -- so raising here would be
+     * swallowed at every site while inviting a future caller to treat a stop
+     * that was never possible as a failure worth reporting to a user.
+     */
   }
 
   async events(
@@ -822,10 +872,7 @@ export class HermesClient {
       await this.consumeNativeEvents(native, onEvent, signal, lastEventId);
       return;
     }
-    if (runId.startsWith(NATIVE_RUN_PREFIX)) {
-      throw new Error("Hermes native session event stream is no longer attached to this worker.");
-    }
-    throw new Error("Hermes native session event stream is no longer attached to this worker.");
+    throw absentRun(runId);
   }
 
   private async consumeNativeEvents(

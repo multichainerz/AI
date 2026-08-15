@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { AdministratorSession, HermesCorpusEntry, HermesCorpusMutation } from "@orcasynapse/contracts";
+import type {
+  AdministratorSession, HermesCorpusEntry, HermesCorpusMutation, HermesCorpusStatus,
+} from "@orcasynapse/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const api = vi.hoisted(() => ({
@@ -56,10 +58,11 @@ const pendingSkill: HermesCorpusMutation = {
   path: "skills/research/SKILL.md", oldText: null, reason: "Remove retired skill.",
 };
 
-function setupApi() {
+function setupApi(over: { node?: Partial<HermesCorpusStatus> } = {}) {
   api.getHermesCorpusOverview.mockResolvedValue({ nodes: [{
     nodeId: NODE_ID, nodeSlug: "vm2", nodeDisplayName: "Hermes VM2", available: true, writable: true,
     entryCount: 2, totalBytes: 70, rootHash: HASH, lastSyncedAt: NOW, stale: false,
+    ...over.node,
   }] });
   api.getHermesCorpusEntries.mockResolvedValue({ items: [memoryEntry, skillEntry] });
   api.getHermesCorpusMutations.mockResolvedValue({ items: [pending, pendingSkill] });
@@ -145,6 +148,55 @@ describe("CorpusView", () => {
     render(<CorpusView scope="SKILLS" session={session} onConfigure={vi.fn()} onSessionExpired={vi.fn()} />);
     expect(await screen.findByRole("button", { name: "New skill" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Add agent memory" })).toBeNull();
+  });
+
+  it("withholds New skill from a node that cannot accept one", async () => {
+    /*
+     * `writable` is "advertised the corpus capability and is neither REVOKED
+     * nor SUSPENDED", and `createMutation` answers those two with a 409. Every
+     * other write here already carries the gate; New skill did not, so on a
+     * pre-corpus-sync-v1 node the operator got the control, authored a whole
+     * SKILL.md, and lost the draft to "This node has not advertised corpus
+     * synchronization support" -- on the screen already telling them to run
+     * the installer with --repair.
+     */
+    setupApi({ node: { available: false, writable: false } });
+    render(<CorpusView scope="SKILLS" session={session} onConfigure={vi.fn()} onSessionExpired={vi.fn()} />);
+
+    // The panel that would carry the control, and the warning that explains
+    // its absence, are both on screen -- so the absence below is a judgement
+    // about the button rather than about a screen that never rendered.
+    expect(await screen.findByText("Skill files")).toBeTruthy();
+    expect(screen.getByText(/predates corpus-sync-v1/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "New skill" })).toBeNull();
+  });
+
+  it("draws a file row at content height rather than inside a single-line control", async () => {
+    /*
+     * Each row is three stacked lines -- filename, full path, kind and
+     * revision -- and `Button` defaults to `h-9 px-4` over a base of
+     * `inline-flex items-center justify-center`. That is 36px of height for
+     * three lines, laid out side by side rather than stacked. jsdom computes
+     * no layout, so this asserts the contract the two sibling components
+     * already keep: `agent-run-ledger.tsx` and `agents-view.tsx` both carry
+     * `size="auto"` and a single-column grid, and both carry a comment saying
+     * why. Asserting the classes is the honest test; asserting a height here
+     * would measure nothing.
+     */
+    for (const scope of ["MEMORY", "SKILLS"] as const) {
+      setupApi();
+      render(<CorpusView scope={scope} session={session} onConfigure={vi.fn()} onSessionExpired={vi.fn()} />);
+      const path = scope === "MEMORY" ? "memories/MEMORY.md" : "skills/research/SKILL.md";
+      const row = await screen.findByRole("button", { name: new RegExp(path.replace(/[/.]/g, "\\$&")) });
+      expect(row.className).toContain("h-auto");
+      expect(row.className).not.toContain("h-9");
+      // The base sets `justify-center`, which centres an implicit track on its
+      // own widest line; an explicit single column is what keeps the three
+      // lines left-aligned under one another.
+      expect(row.className).toContain("grid-cols-1");
+      cleanup();
+      vi.clearAllMocks();
+    }
   });
 
   it("honors metadata-only corpus access without fetching concealed content or mutations", async () => {

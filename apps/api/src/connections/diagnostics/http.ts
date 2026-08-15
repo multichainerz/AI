@@ -57,6 +57,29 @@ export function stringConfiguration(
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+/*
+ * Cloud instance-metadata services, which are never an inference server.
+ *
+ * The deliberate non-rule here: RFC1918 and loopback are *not* blocked. This is
+ * a self-hosted product whose inference server normally is on a private
+ * network — the dashboard's own placeholder is `http://gpu-server.internal:8000`
+ * and a single-box install runs vLLM on localhost — so refusing private
+ * destinations would block the primary use case rather than an attack. The
+ * link-local range is different: 169.254.169.254 and its siblings serve cloud
+ * credentials and cannot be a legitimate target of a connection test, so it is
+ * the one range where blocking costs nothing and prevents an operator-supplied
+ * URL from turning a diagnostic into a credential read.
+ */
+const LINK_LOCAL_IPV4 = /^169\.254(?:\.\d{1,3}){2}$/;
+const LINK_LOCAL_IPV6 = /^fe[89ab][0-9a-f]:/i;
+
+function assertRoutableDestination(host: string): void {
+  const bare = host.replace(/^\[|\]$/g, "");
+  if (LINK_LOCAL_IPV4.test(bare) || LINK_LOCAL_IPV6.test(bare)) {
+    throw new Error("Connection endpoint must not target a link-local metadata address.");
+  }
+}
+
 export function endpointUrl(baseUrl: string | null, path: string): URL {
   if (!baseUrl) throw new Error("Connection endpoint URL is not configured.");
   const base = new URL(baseUrl);
@@ -66,6 +89,7 @@ export function endpointUrl(baseUrl: string | null, path: string): URL {
   if (base.username || base.password) {
     throw new Error("Connection endpoint must not contain credentials.");
   }
+  assertRoutableDestination(base.hostname);
 
   const endpoint = new URL(path, `${base.origin}/`);
   if (endpoint.origin !== base.origin) throw new Error("Health path must remain on the service origin.");

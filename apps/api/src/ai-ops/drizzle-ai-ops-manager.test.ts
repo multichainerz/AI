@@ -4,6 +4,7 @@ import {
   createTestDatabase,
   operationalIncident,
   productionReadinessApproval,
+  productionReadinessApprovalRole,
   productionReadinessControl,
   type TestDatabase,
 } from "@orcasynapse/database";
@@ -20,6 +21,27 @@ afterAll(async () => { await context?.drop(); }, 120_000);
 beforeEach(async () => { await context.reset(); });
 
 const principal = { id: randomUUID(), subject: "local-admin:operator" } as AdminPrincipal;
+
+/**
+ * The sign-offs a deployment cannot go to production without, in the order the
+ * blockers name them.
+ *
+ * Written out here rather than read back from the manager, because the two
+ * readiness cases below used to derive their expectation from the very list
+ * they were meant to pin: they counted the blockers the code produced and
+ * compared that to `summary.requiredApprovals`, which *is*
+ * `READINESS_APPROVAL_ROLES.length`, then looped over exactly the roles the
+ * code had just named and approved each one. Both reduced to `n === n`.
+ * Reducing the constant to `["SECURITY"]` -- deleting the infrastructure,
+ * product and business sign-offs from the production go-live gate -- left the
+ * whole API suite green.
+ *
+ * `READINESS_APPROVAL_ROLES` is module-private, so there is nothing to import;
+ * an independent pin is a literal one, and that is the point. The database
+ * enum below is a second, separately-authored copy of the same set, so a change
+ * to either without the other is also caught.
+ */
+const GOVERNANCE_SIGN_OFFS = ["SECURITY", "INFRASTRUCTURE", "PRODUCT", "BUSINESS"] as const;
 
 function forwarding(status: "NOT_CONFIGURED" | "HEALTHY" | "BEHIND" | "FAILING", summary = "state") {
   return {
@@ -142,14 +164,27 @@ describe("DrizzleAiOpsManager incidents", () => {
 });
 
 describe("DrizzleAiOpsManager production readiness", () => {
-  it("reports not ready with no controls recorded", async () => {
+  it("names every governance sign-off the deployment is missing", async () => {
     const readiness = await manager().productionReadiness();
 
     expect(readiness.status).toBe("NOT_READY");
-    expect(readiness.summary).toMatchObject({ totalControls: 0, verifiedControls: 0, approvedRoles: 0 });
-    // Every required role is named as a blocker.
-    expect(readiness.blockers.filter((blocker) => blocker.includes("not recorded")).length)
-      .toBe(readiness.summary.requiredApprovals);
+    expect(readiness.summary).toMatchObject({
+      totalControls: 0,
+      verifiedControls: 0,
+      approvedRoles: 0,
+      requiredApprovals: GOVERNANCE_SIGN_OFFS.length,
+    });
+    // The whole list, spelled out and in order. Counting these against
+    // `summary.requiredApprovals` compared the constant with itself.
+    expect(readiness.blockers).toEqual(GOVERNANCE_SIGN_OFFS.map((role) => `${role} approval not recorded`));
+  });
+
+  it("requires the same four roles the schema enumerates", () => {
+    // Two independently-authored copies of one governance decision: the
+    // manager's required-approval list and the column type any approval has to
+    // fit. A role added to one and not the other is either an approval that can
+    // never be recorded or a sign-off that is never required.
+    expect([...productionReadinessApprovalRole.enumValues].sort()).toEqual([...GOVERNANCE_SIGN_OFFS].sort());
   });
 
   it("guards a control update with its revision", async () => {
@@ -233,27 +268,44 @@ describe("DrizzleAiOpsManager production readiness", () => {
     expect(await context.database.select().from(productionReadinessApproval)).toHaveLength(2);
   });
 
-  it("reaches READY only when every control and every role is satisfied", async () => {
+  it("reaches READY only when every control and every named role is satisfied", async () => {
     const control = await seedControl("backup-restore");
     await manager().updateReadinessControl(principal, control.key, {
       status: "VERIFIED", owner: "Security", evidenceRefs: ["runbook-9"], note: "Done.",
       expectedRevision: control.revision,
     } as never);
-    const { summary } = await manager().productionReadiness();
-    const roles = (await manager().productionReadiness()).blockers
-      .filter((blocker) => blocker.includes("not recorded"))
-      .map((blocker) => blocker.split(" ")[0]!);
-    expect(roles).toHaveLength(summary.requiredApprovals);
 
-    for (const role of roles) {
-      await manager().recordReadinessApproval(principal, {
-        role, decision: "APPROVED", authority: "Authority", evidenceRef: `memo-${role}`, reason: "Signed off.",
-      } as never);
-    }
+    const approve = (role: string) => manager().recordReadinessApproval(principal, {
+      role, decision: "APPROVED", authority: "Authority", evidenceRef: `memo-${role}`, reason: "Signed off.",
+    } as never);
+
+    /*
+     * Every sign-off but the last, so the case proves each one is load-bearing
+     * rather than that the code agrees with itself. The old version read the
+     * roles out of the blockers the manager had just produced and approved
+     * exactly those, so a required-approval list cut from four roles to one
+     * still ended READY with nothing to report.
+     */
+    const last = GOVERNANCE_SIGN_OFFS.at(-1)!;
+    for (const role of GOVERNANCE_SIGN_OFFS.slice(0, -1)) await approve(role);
+
+    const partial = await manager().productionReadiness();
+    expect(partial.status).toBe("NOT_READY");
+    expect(partial.blockers).toEqual([`${last} approval not recorded`]);
+    expect(partial.summary).toMatchObject({
+      requiredApprovals: GOVERNANCE_SIGN_OFFS.length,
+      approvedRoles: GOVERNANCE_SIGN_OFFS.length - 1,
+    });
+
+    await approve(last);
 
     const readiness = await manager().productionReadiness();
     expect(readiness.status).toBe("READY");
     expect(readiness.blockers).toEqual([]);
+    expect(readiness.summary).toMatchObject({
+      requiredApprovals: GOVERNANCE_SIGN_OFFS.length,
+      approvedRoles: GOVERNANCE_SIGN_OFFS.length,
+    });
   });
 });
 

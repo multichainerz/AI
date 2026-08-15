@@ -381,7 +381,11 @@ export function ModelsView({
             </strong>
             <span className="mt-1 block text-body text-muted">
               {decision.action === "activate"
-                ? `Requires promoted target model:${model.slug} version ${model.version}.`
+                // The one precondition `DrizzleModelManager.activate` actually
+                // enforces. "Requires promoted target model:..." described the
+                // evaluation gate that was removed with the subsystem behind
+                // it, so it named evidence an operator could not produce.
+                ? `Routes ${model.workload.toLowerCase()} to target model:${model.slug} version ${model.version}. The serving connection must be enabled and healthy.`
                 : "Existing conversations or profiles may stop accepting new work."}
             </span>
           </div>

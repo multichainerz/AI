@@ -8,7 +8,9 @@ import {
   workerNode,
   type TestDatabase,
 } from "@orcasynapse/database";
+import { AGENT_RUN_STATUSES } from "@orcasynapse/contracts";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { PROCESSOR_ELIGIBLE_STATUSES } from "./agent-processor.js";
 import { DrizzlePendingRunSource, DrizzleWorkerRegistry } from "./worker-registry.js";
 
 let context: TestDatabase;
@@ -118,13 +120,27 @@ describe("DrizzlePendingRunSource", () => {
     expect(claimable.map(({ id: runId }) => runId)).toEqual([id]);
   });
 
-  it("rediscovers a run left waiting on an approval decision", async () => {
-    // The defining regression: a worker that restarted while an approval was
-    // outstanding used to leave the run stranded forever.
-    const id = await run({ status: "WAITING_FOR_APPROVAL" });
+  it("offers exactly the statuses the processor will execute", async () => {
+    /*
+     * The two lists have to agree, and only one of them decides anything.
+     *
+     * `claimable` also offered WAITING_FOR_APPROVAL, to rescue a run whose
+     * worker restarted while an approval was outstanding. `process` refuses
+     * any status outside its own list before it takes a lease, so that run was
+     * not rescued: it was claimed and discarded again on every reconcile tick
+     * for as long as the row existed. Asserting one list against the other,
+     * over every status the contract admits, is what keeps a widening on
+     * either side from silently becoming that loop again.
+     */
+    const runs = new Map<string, string>();
+    for (const status of AGENT_RUN_STATUSES) runs.set(status, await run({ status }));
 
-    const claimable = await new DrizzlePendingRunSource(context.database).claimable(5, []);
-    expect(claimable.map(({ id: runId }) => runId)).toEqual([id]);
+    const claimable = await new DrizzlePendingRunSource(context.database).claimable(AGENT_RUN_STATUSES.length, []);
+
+    const offered = [...runs]
+      .filter(([, id]) => claimable.some(({ id: claimedId }) => claimedId === id))
+      .map(([status]) => status);
+    expect(offered.toSorted()).toEqual([...PROCESSOR_ELIGIBLE_STATUSES].toSorted());
   });
 
   it("ignores a run whose lease has not expired", async () => {

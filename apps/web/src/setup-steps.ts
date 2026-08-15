@@ -1,5 +1,9 @@
 import type { HermesRuntimeNode, ServiceConnectionSummary } from "@orcasynapse/contracts";
-import type { WorkspaceReadiness } from "./platform-readiness.js";
+import {
+  deriveInferenceReadiness,
+  deriveRuntimeNodeReadiness,
+  type WorkspaceReadiness,
+} from "./platform-readiness.js";
 
 export type SetupStepKey = "inference" | "runtime" | "profile";
 export type SetupStepStatus = "done" | "current" | "blocked";
@@ -24,18 +28,6 @@ export interface SetupStepsInput {
   controlPlaneUrl?: string | null;
 }
 
-/** The connections the enrolment seed actually counts: enabled and HEALTHY. */
-function healthyInference(connections: ServiceConnectionSummary[]): ServiceConnectionSummary[] {
-  return connections.filter((c) => c.kind === "INFERENCE" && c.enabled && c.status === "HEALTHY");
-}
-
-function servedModel(connection: ServiceConnectionSummary | undefined): string | null {
-  const configuration = connection?.configuration as { modelAlias?: unknown } | undefined;
-  return typeof configuration?.modelAlias === "string" && configuration.modelAlias.trim().length > 0
-    ? configuration.modelAlias.trim()
-    : null;
-}
-
 /**
  * The three steps between a fresh install and a working session, with every
  * unmet condition attached to the step it actually blocks.
@@ -44,26 +36,39 @@ function servedModel(connection: ServiceConnectionSummary | undefined): string |
  * screen this replaces inferred ordering from the order of its cards. Where a
  * guard lives in the API, the comment names it — a gate that moves upstream
  * should break a test here, not surprise an operator at the point of use.
+ *
+ * The two facts the API itself gates on — the seedable inference connection and
+ * the beating node — are derived by `platform-readiness.ts` and read here, so
+ * this screen and the Dashboard cannot answer the same question differently.
+ * The `readiness` argument still carries what only it knows (Hermes health, the
+ * profile, the execution boundary).
  */
 export function deriveSetupSteps(input: SetupStepsInput): SetupStep[] {
   const { readiness, connections, runtimeNodes, targetEnvironment } = input;
 
-  const healthy = healthyInference(connections);
-  const alias = servedModel(healthy[0]);
-  const enrolled = runtimeNodes.filter((node) => node.revokedAt === null);
-  const online = enrolled.some((node) => node.status === "ONLINE");
+  const inference = deriveInferenceReadiness(connections);
+  const healthy = inference.healthy;
+  const { enrolled, online } = deriveRuntimeNodeReadiness(runtimeNodes);
 
   const inferenceBlockers: string[] = [];
   if (connections.every((c) => c.kind !== "INFERENCE")) {
     inferenceBlockers.push("No inference connection is registered.");
   } else if (healthy.length === 0) {
     inferenceBlockers.push("The inference connection has not passed a health test.");
-  } else if (healthy.length === 1 && alias === null) {
-    // HEALTHY is necessary but not sufficient: `seedableInferenceModelAlias`
-    // also requires a served model to seed VM2's route.
+  } else if (inference.serving.length === 0) {
+    /*
+     * HEALTHY is necessary but not sufficient: `seedableInferenceModelAlias`
+     * also requires a served model to seed VM2's route.
+     *
+     * Asked of every healthy connection, not of the first one. This read
+     * `healthy.length === 1 && alias === null` after a branch that had already
+     * caught `length === 0`, so the count clause could only *exclude* the
+     * multi-connection case: two model-less endpoints raised no blocker at all,
+     * and disabling one of them walked the step backwards from Done to blocked.
+     */
     inferenceBlockers.push("No served model is selected on the inference connection.");
   }
-  const inferenceDone = readiness.inferenceReady && inferenceBlockers.length === 0;
+  const inferenceDone = inferenceBlockers.length === 0;
 
   const runtimeBlockers: string[] = [];
   if (!inferenceDone) {
@@ -87,9 +92,10 @@ export function deriveSetupSteps(input: SetupStepsInput): SetupStep[] {
   if (inferenceDone) {
     if (enrolled.length === 0) {
       runtimeBlockers.push("No VM2 node is enrolled.");
-    } else if (!online) {
+    } else if (online.length === 0) {
       // Enrolment leaves the node PENDING; only its own signed heartbeat
-      // promotes it, so "enrolled" and "answering" are different facts.
+      // promotes it, so "enrolled" and "answering" are different facts — and a
+      // beat older than `NODE_STALE_AFTER_MS` has stopped being an answer.
       runtimeBlockers.push("VM2 is enrolled but has not sent a healthy heartbeat yet.");
     }
     if (!readiness.hermesReady && enrolled.length > 0) {

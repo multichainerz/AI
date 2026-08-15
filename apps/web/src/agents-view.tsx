@@ -1,9 +1,10 @@
 import { DEFAULT_AGENT_PROFILE } from "@orcasynapse/contracts";
 import type {
-  AgentMetrics, AgentProfile, AgentRun, AgentRunEvent, AgentRuntimeControl,
-  AgentSkillReference, CreateAgentProfile,
+  AdminScope, AdministratorSession, AgentMetrics, AgentProfile, AgentRun, AgentRunEvent,
+  AgentRuntimeControl, AgentSkillReference, CreateAgentProfile,
 } from "@orcasynapse/contracts";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { adminAccess } from "./admin-access.js";
 import { ExecutionBoundary, RunDetail, RunLedger } from "./agent-run-ledger.js";
 import { runningStatuses, statusTone } from "./agent-status.js";
 import {
@@ -28,6 +29,21 @@ import {
 
 interface AgentsViewProps {
   unlocked: boolean;
+  /**
+   * The administrator session, when there is one.
+   *
+   * Every sibling admin view takes this and derives its controls through
+   * `adminAccess`. Profiles took only the boolean below, so every write on the
+   * screen was gated on "has a session that is not pending a password change"
+   * -- the one thing the API never asks. AUDITOR and OPERATIONS_ADMIN both
+   * satisfy it, neither holds `agents:manage`, and navigation is unfiltered.
+   *
+   * Optional only because `app.tsx` does not pass it yet: adding it as required
+   * would fail the build of a file this change does not own. Until
+   * `session={adminSession}` is wired there, `granted` below falls back to the
+   * boolean and the gating is exactly as permissive as it was.
+   */
+  session?: AdministratorSession | null;
   administrator: boolean;
   activationReady: boolean | null;
   activationMessage: string | null;
@@ -79,7 +95,7 @@ function draftFromProfile(profile: AgentProfile): CreateAgentProfile {
   };
 }
 
-export function AgentsView({ unlocked, administrator, activationReady, activationMessage, oidcConfigured, onSignIn, onConfigure, onOpenChat, onOpenReadiness, onSessionExpired }: AgentsViewProps) {
+export function AgentsView({ unlocked, session, administrator, activationReady, activationMessage, oidcConfigured, onSignIn, onConfigure, onOpenChat, onOpenReadiness, onSessionExpired }: AgentsViewProps) {
   const [profiles, setProfiles] = useState<AgentProfile[]>([]);
   const [runtime, setRuntime] = useState<AgentRuntimeControl | null>(null);
   const [metrics, setMetrics] = useState<AgentMetrics | null>(null);
@@ -97,6 +113,30 @@ export function AgentsView({ unlocked, administrator, activationReady, activatio
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [readinessRequired, setReadinessRequired] = useState(false);
+
+  const { can } = adminAccess(session ?? null);
+  /*
+   * One place for the fallback, so every call site below reads as the scope it
+   * needs rather than as a ternary. `administrator` keeps its one honest job --
+   * choosing the `/admin/` read surface, which all four roles may use because
+   * all four hold `agents:read` -- and stops standing in for the rest.
+   */
+  const granted = (scope: AdminScope) => (session === undefined ? administrator : can(scope));
+  /** Create, new version, activate, suspend: `POST`/`PATCH /admin/agents/profiles`. */
+  const canManage = granted("agents:manage");
+  /** The execution boundary's switch, and cancelling a run as an administrator. */
+  const canControl = granted("agents:control");
+  /*
+   * Verify & activate calls `POST /admin/onboarding/validate` before it touches
+   * a Profile, and that route wants `readiness:manage` -- so the button needs
+   * both scopes or it fails on its first step with the Profile untouched.
+   */
+  const canActivate = canManage && granted("readiness:manage");
+  /*
+   * The enterprise cancel route authorises the caller against their own run
+   * rather than by scope, so this is an administrator's question only.
+   */
+  const canCancelRuns = administrator ? canControl : true;
 
   /*
    * Held in a ref, and read through it, so the poll below survives a fresh
@@ -330,11 +370,19 @@ export function AgentsView({ unlocked, administrator, activationReady, activatio
       <PageHeader
         kicker="Immutable configuration"
         title="Hermes Profiles"
-        description="Immutable Profile Distributions and their verified activation, the runs each one has produced, and the global boundary deciding whether any of it may execute."
+        /* The boundary clause only where the boundary panel is: it is drawn for
+           administrators, and describing a control the reader will not find is
+           the same failure as pointing at one on another tab. */
+        description={administrator
+          ? "Immutable Profile Distributions and their verified activation, the runs each one has produced, and the global boundary deciding whether any of it may execute."
+          : "Immutable Profile Distributions and their verified activation, and the runs you have produced against them."}
         actions={<>
           <Button disabled={!chatAvailable} onClick={onOpenChat}>{chatAvailable ? "Open Session" : "Session not ready"}</Button>
-          <Button onClick={() => void load()}>Refresh</Button>
-          {administrator && <Button variant="primary" onClick={() => void openNewProfile()}>{activationReady === false ? "Create draft" : "Create agent"}</Button>}
+          {/* `.catch(fail)` like every other call site here: without it an
+              idled-out session rejects unhandled, so neither the Alert nor the
+              re-auth path fires and the screen keeps its stale data. */}
+          <Button onClick={() => void load().catch(fail)}>Refresh</Button>
+          {canManage && <Button variant="primary" onClick={() => void openNewProfile()}>{activationReady === false ? "Create draft" : "Create agent"}</Button>}
         </>}
       />
 
@@ -348,7 +396,9 @@ export function AgentsView({ unlocked, administrator, activationReady, activatio
         {notice}
         {chatAvailable && <Button variant="ghost" size="sm" className="ml-3" onClick={onOpenChat}>Open Session</Button>}
       </Alert>}
-      {administrator && activationReady === false && <Panel className="flex items-center gap-4 border-l-2 border-l-warn" role="status">
+      {/* "Profiles can be drafted now" is a claim about the reader, so it is
+          addressed to the role that can actually draft one. */}
+      {canManage && activationReady === false && <Panel className="flex items-center gap-4 border-l-2 border-l-warn" role="status">
         <div className="min-w-0 flex-1">
           <strong className="block text-label font-semibold text-text">Profiles can be drafted now</strong>
           <span className="mt-1 block text-body text-muted">
@@ -371,6 +421,8 @@ export function AgentsView({ unlocked, administrator, activationReady, activatio
         busy={busy}
         onToggle={(enabled, reason) => void action("runtime", () => updateAgentRuntime(enabled, reason))}
         hasProfiles={profiles.length > 0}
+        canControl={canControl}
+        canManage={canManage}
       />}
 
       <Panel>
@@ -384,7 +436,7 @@ export function AgentsView({ unlocked, administrator, activationReady, activatio
           {profiles.length === 0 && (
             <EmptyState
               title="Create your first agent"
-              action={administrator ? <Button variant="primary" onClick={() => void openNewProfile()}>Create starter agent</Button> : undefined}
+              action={canManage ? <Button variant="primary" onClick={() => void openNewProfile()}>Create starter agent</Button> : undefined}
             >
               OrcaSynapse will verify Hermes, activate the Profile, and enable Chat in one guided action.
             </EmptyState>
@@ -427,25 +479,35 @@ export function AgentsView({ unlocked, administrator, activationReady, activatio
                 * a figure derived from it is a window count and says so rather
                 * than posing as a lifetime total -- the deployment-wide totals
                 * are on the boundary above, where the API can back them.
+                *
+                * "by you" is the same honesty about the other axis.
+                * `GET /agents/runs` returns a non-administrator only their own
+                * runs, against a Profile that belongs to the whole deployment,
+                * so an unqualified "no recent runs" beside a Profile colleagues
+                * have run fifty times describes the reader, not the Profile.
                 */}
               <div className="grid justify-items-end gap-1">
                 <StatusText dot tone={toneFor(statusTone(profile.status))}>{profile.status.toLowerCase()}</StatusText>
                 {runsFor(profile.id).some(({ status }) => runningStatuses.has(status))
                   ? <StatusText tone="accent">
                     {runsFor(profile.id).filter(({ status }) => runningStatuses.has(status)).length} running
+                    {administrator ? "" : " for you"}
                   </StatusText>
                   : <StatusText>
                     {runsFor(profile.id).length === 0
                       ? "no recent runs"
                       : `${runsFor(profile.id).length} recent run${runsFor(profile.id).length === 1 ? "" : "s"}`}
+                    {administrator ? "" : " by you"}
                   </StatusText>}
               </div>
             </Button>
-            {administrator && <div className="flex justify-end gap-1.5">
+            {canManage && <div className="flex justify-end gap-1.5">
               <Button size="sm" onClick={() => editProfile(profile)}>New version</Button>
               {profile.status === "ACTIVE"
                 ? <Button variant="danger" size="sm" disabled={busy !== null} onClick={() => void action(`suspend-${profile.id}`, () => setAgentProfileState(profile.id, "suspend"))}>Suspend</Button>
-                : <Button variant="primary" size="sm" disabled={busy !== null} onClick={() => void activateForChat(profile)}>
+                /* Verification runs before activation and needs `readiness:manage`
+                   as well, so the button is withheld unless both are held. */
+                : canActivate && <Button variant="primary" size="sm" disabled={busy !== null} onClick={() => void activateForChat(profile)}>
                     {busy === `activate-${profile.id}` ? "Verifying Hermes..." : "Verify & activate"}
                   </Button>}
             </div>}
@@ -465,6 +527,7 @@ export function AgentsView({ unlocked, administrator, activationReady, activatio
           total={runs.length}
           profileName={selectedProfile?.version.displayName ?? null}
           scoped={ledgerScoped}
+          administrator={administrator}
           selectedRunId={selectedRun?.id ?? null}
           onSelectRun={setSelectedRunId}
           onScopeChange={setRunsScoped}
@@ -480,6 +543,7 @@ export function AgentsView({ unlocked, administrator, activationReady, activatio
           run={selectedRun}
           events={runEvents}
           busy={busy}
+          canCancel={canCancelRuns}
           onCancel={(run) => void action(`cancel-${run.id}`, () => cancelAgentRun(run.id, administrator))}
         />}
       </div>
@@ -491,7 +555,7 @@ export function AgentsView({ unlocked, administrator, activationReady, activatio
         * tabbing out of it mid-edit is the worst place for that to happen.
         */}
       <Dialog
-        open={editorOpen && administrator}
+        open={editorOpen && canManage}
         onClose={() => setEditorOpen(false)}
         kicker={editingId ? "Immutable revision" : "New bounded profile"}
         title={editingId ? "Create a new profile version" : "Create agent profile"}
@@ -515,9 +579,19 @@ export function AgentsView({ unlocked, administrator, activationReady, activatio
           <Field label="System instructions">
             <Textarea className="min-h-[160px]" required minLength={10} maxLength={32_000} value={profileDraft.instructions} onChange={(event) => setProfileDraft({ ...profileDraft, instructions: event.target.value })} />
           </Field>
+          {/*
+            * The label and hint say what the field does, which is less than it
+            * used to imply. The triples are recorded on the version and folded
+            * into `distributionDigest`; the run payload carries no skills
+            * field, and nothing in `apps/worker` or `packages/runtime-clients`
+            * reads `version.skills`. Whether that stays true is a product
+            * decision and not this file's to make -- reading the field as
+            * "this Profile is bound to that Skill" is the part that has to
+            * stop.
+            */}
           <Field
-            label="Approved Skills"
-            hint="Only secret-free, reviewed Skill references are included in the distribution source. Runtime installation remains evidence-gated."
+            label="Approved Skills (recorded, not delivered)"
+            hint="A reviewed, secret-free record of the Skills this version expects. It is folded into the distribution digest and never sent to Hermes: OrcaSynapse does not install, pin, or verify a Skill from here, and a run loads whatever the node already holds. Govern the node's own Skills under Agents → Skills."
           >
             <Textarea className="font-mono" value={skillsDraft} placeholder={`One per line: name@version ${"a".repeat(64)}`} onChange={(event) => setSkillsDraft(event.target.value)} />
           </Field>

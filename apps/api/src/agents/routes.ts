@@ -14,7 +14,7 @@ import {
   type AdminScope,
 } from "@orcasynapse/contracts";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { adminSessionToken, type AdminSessionManager } from "../auth/admin-session.js";
+import { authenticateAdministrator, type AdminSessionManager } from "../auth/admin-session.js";
 import { enterpriseSessionToken, type EnterpriseIdentityManager } from "../identity/enterprise-session.js";
 import {
   AgentConflictError,
@@ -36,13 +36,19 @@ async function requirePrincipal(
   options: AgentRouteOptions,
   settings: { adminOnly?: boolean; adminScope?: AdminScope } = {},
 ): Promise<AgentPrincipal | null> {
-  const administrator = await options.sessionManager?.authenticate(adminSessionToken(request));
-  if (administrator) {
-    if (settings.adminScope && !administrator.scopes.includes(settings.adminScope)) {
+  const administrator = await authenticateAdministrator(request, reply, options.sessionManager);
+  // A session still holding the installer's temporary password is refused here
+  // rather than falling through to the enterprise branch: it is an administrator
+  // token, so treating "not usable yet" as "not an administrator" would hand it
+  // the anonymous path instead of the 403 the dashboard routes on.
+  if (administrator.outcome === "REFUSED") return null;
+  if (administrator.outcome === "ADMINISTRATOR") {
+    const { principal } = administrator;
+    if (settings.adminScope && !principal.scopes.includes(settings.adminScope)) {
       await reply.code(403).send({ error: "FORBIDDEN", message: `The administrator session does not grant '${settings.adminScope}'.` });
       return null;
     }
-    return { id: administrator.id, subject: administrator.subject, identityMode: "ADMINISTRATOR_PREVIEW", scopes: administrator.scopes };
+    return { id: principal.id, subject: principal.subject, identityMode: "ADMINISTRATOR_PREVIEW", scopes: principal.scopes };
   }
   if (!settings.adminOnly) {
     const enterprise = await options.identityManager?.authenticate(enterpriseSessionToken(request.headers.cookie));

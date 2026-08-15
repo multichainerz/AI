@@ -458,7 +458,12 @@ export class DrizzleHermesCorpusManager implements HermesCorpusManager {
   }
 
   async uploadSnapshot(nodeId: string, headers: NodeSignatureHeaders, input: HermesCorpusSnapshotUpload): Promise<HermesCorpusSnapshotReceipt> {
-    await this.nodeTrust.authenticateNodeRequest(nodeId, headers, input);
+    await this.nodeTrust.authenticateNodeRequest(
+      nodeId,
+      { method: "POST", path: `/api/v1/runtime-nodes/${nodeId}/corpus/snapshot` },
+      headers,
+      input,
+    );
     if (snapshotRoot(input.entries) !== input.rootHash) throw new CorpusValidationError("The corpus snapshot root hash is invalid.");
     for (const entry of input.entries) assertSnapshotEntry(entry);
     assertSnapshotTopology(input.entries);
@@ -553,7 +558,15 @@ export class DrizzleHermesCorpusManager implements HermesCorpusManager {
   }
 
   async desiredState(nodeId: string, headers: NodeSignatureHeaders): Promise<HermesCorpusSignedDesiredState> {
-    await this.nodeTrust.authenticateNodeRequest(nodeId, headers, null);
+    // The path is what separates this from the runtime plane's desired-state
+    // poll: both authenticate over an identical `null` body, so before the
+    // signature bound the path, one node's poll was replayable as the other.
+    await this.nodeTrust.authenticateNodeRequest(
+      nodeId,
+      { method: "GET", path: `/api/v1/runtime-nodes/${nodeId}/corpus/desired-state` },
+      headers,
+      null,
+    );
     const leaseBefore = new Date(Date.now() - MUTATION_LEASE_MS);
     const mutation = await this.database.transaction(async (transaction) => {
       await transaction.execute(advisoryLock(`corpus-dispatch:${nodeId}`));
@@ -580,7 +593,12 @@ export class DrizzleHermesCorpusManager implements HermesCorpusManager {
   }
 
   async completeMutation(nodeId: string, headers: NodeSignatureHeaders, input: HermesCorpusMutationResult): Promise<{ accepted: true; serverTime: string }> {
-    await this.nodeTrust.authenticateNodeRequest(nodeId, headers, input);
+    await this.nodeTrust.authenticateNodeRequest(
+      nodeId,
+      { method: "POST", path: `/api/v1/runtime-nodes/${nodeId}/corpus/mutation-result` },
+      headers,
+      input,
+    );
     const now = new Date();
     await this.database.transaction(async (transaction) => {
       await transaction.execute(advisoryLock(`corpus-mutation:${input.mutationId}`));

@@ -48,12 +48,32 @@ interface DashboardHeroProps {
 
 interface DashboardMetric {
   label: string;
+  /**
+   * The period the figure covers, stated beside its name.
+   *
+   * Not decoration: this strip draws chat figures from a trailing 24-hour
+   * window next to tool figures that are every call since the install, and
+   * with neither labelled "Responses 12" read as the same day's work as
+   * "Tool calls 8,431". `operations-view.tsx` has always said "/ 24h" on the
+   * same data; this is that treatment, applied to all six cells.
+   */
+  window: "24h" | "all time";
   icon: ReactNode;
   value: string;
   detail: string;
   fill?: number | undefined;
   failing?: boolean;
 }
+
+/**
+ * Ratings needed before a satisfaction score is allowed to read as a verdict.
+ *
+ * `helpfulShare < 0.5` with no floor turns one not-helpful click into a
+ * warn-coloured 0% for the whole deployment. Nothing in the product writes chat
+ * feedback today — there is no surface for it — so this tile is structurally
+ * 0 of 0, and the two honest states are "nothing rated" and "too few to judge".
+ */
+const RATINGS_BEFORE_A_VERDICT = 20;
 
 /** A figure the deployment has not produced yet is absent, never zero. */
 function count(value: number | null | undefined, unlocked: boolean): string {
@@ -82,19 +102,26 @@ function share(part: number | undefined, whole: number | undefined): number | un
 }
 
 /**
- * The window a usage figure covers, said in words.
+ * The moment a usage window opened, said in words.
  *
  * "342 sessions" is not a fact until you know over what -- an hour and a quarter
  * reads very differently from a quarter. The runtime reports `windowStartedAt`,
  * so the caption states it rather than the panel implying a period it does not
  * know.
+ *
+ * With the clock time, not only the date: the window is a trailing 24 hours, so
+ * one that opened at 09:00 yesterday used to read "since 14 August" -- which
+ * claims the whole of a day the figure covers a quarter of, and says nothing
+ * about the three quarters of today that it also covers.
  */
 function since(startedAt: string | undefined, unlocked: boolean): string {
   if (!unlocked) return "sign in to view";
   if (!startedAt) return "awaiting the first run";
   const started = new Date(startedAt);
   if (Number.isNaN(started.getTime())) return "over the reported window";
-  return `since ${started.toLocaleDateString(undefined, { day: "numeric", month: "long" })}`;
+  return `since ${started.toLocaleString(undefined, {
+    day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
+  })}`;
 }
 
 function cadence(seconds: number): string {
@@ -407,7 +434,13 @@ function PipelineRow({
           )}
           max={100}
           value={Math.round(fraction * 100)}
-          aria-label={`${label} share of all runs`}
+          /*
+            "Share of all runs" was a claim the contract cannot support:
+            `AGENT_RUN_STATUSES` also carries CANCELLED, TIMED_OUT and DENIED,
+            and `AgentMetrics` reports none of the three, so a cancelled run is
+            in no bucket here and the denominator is these four stages alone.
+          */
+          aria-label={`${label}: share of the runs in these four stages`}
         />
       )}
     </div>
@@ -492,15 +525,30 @@ export function DashboardHero(props: DashboardHeroProps) {
     { label: "Failed", value: runs?.failedRuns, tone: "bad" as const },
   ];
 
+  /*
+   * Every tool call the ledger holds an outcome for.
+   *
+   * The headline used to be `completedCalls` alone, sitting beside a Denied
+   * figure that was never part of it — so the obvious subtraction gave the
+   * wrong answer, and `failedCalls` arrived on every poll and reached no pixel.
+   * Executing calls are deliberately out: they have not finished, so they
+   * belong to no outcome yet, and including them would break the subtraction
+   * again in the other direction.
+   */
+  const tools = props.toolMetrics;
+  const recordedCalls = tools ? tools.completedCalls + tools.deniedCalls + tools.failedCalls : undefined;
+
   const metrics: DashboardMetric[] = [
     {
       label: "Sessions",
+      window: "24h",
       icon: <TerminalIcon size={14} />,
       value: count(props.chatMetrics?.conversations, props.unlocked),
       detail: since(props.chatMetrics?.windowStartedAt, props.unlocked),
     },
     {
       label: "Responses",
+      window: "24h",
       icon: <SyncIcon size={14} />,
       value: count(props.chatMetrics?.responses, props.unlocked),
       /*
@@ -519,28 +567,34 @@ export function DashboardHero(props: DashboardHeroProps) {
     },
     {
       label: "Avg response",
+      window: "24h",
       icon: <MonitorIcon size={14} />,
       value: latency(props.chatMetrics?.averageLatencyMs, props.unlocked),
       detail: props.unlocked ? "end to end" : "sign in to view",
     },
     {
       label: "Tokens",
+      window: "24h",
       icon: <LayersIcon size={14} />,
       value: compact(props.chatMetrics?.totalTokens, props.unlocked),
       detail: props.unlocked ? "prompt and completion" : "sign in to view",
     },
     {
       label: "Tool calls",
+      // The one cell here the runtime reports without a window: every call
+      // since the install, not the last day's.
+      window: "all time",
       icon: <GearIcon size={14} />,
-      value: count(props.toolMetrics?.completedCalls, props.unlocked),
+      value: count(recordedCalls, props.unlocked),
       detail: protectedDetail(
         props.unlocked,
-        props.toolMetrics ? `${props.toolMetrics.activeGrants.toLocaleString()} grants` : undefined,
+        tools ? `${tools.activeGrants.toLocaleString()} grants` : undefined,
         "default deny",
       ),
     },
     {
       label: "Rated helpful",
+      window: "24h",
       icon: <ThumbsUpIcon size={14} />,
       value: helpfulShare === undefined ? "—" : `${Math.round(helpfulShare * 100)}%`,
       detail: protectedDetail(
@@ -549,7 +603,10 @@ export function DashboardHero(props: DashboardHeroProps) {
         "no ratings yet",
       ),
       fill: helpfulShare,
-      failing: helpfulShare !== undefined && helpfulShare < 0.5,
+      // A verdict needs a sample. Below the floor the tile still states the
+      // share and the count it came from; it just does not paint one click as
+      // a deployment-wide failure.
+      failing: helpfulShare !== undefined && rated >= RATINGS_BEFORE_A_VERDICT && helpfulShare < 0.5,
     },
   ];
   const openReadiness = (check: HomeReadinessCheck) => {
@@ -643,11 +700,19 @@ export function DashboardHero(props: DashboardHeroProps) {
         >
           {metrics.map((metric) => (
             <div className="min-w-0 bg-surface px-3 py-2.5" key={metric.label}>
-              <dt className="flex items-center gap-1.5 truncate text-micro uppercase tracking-[0.13em] text-faint">
+              <dt className="flex items-center gap-1.5 text-micro uppercase tracking-[0.13em] text-faint">
                 <span aria-hidden="true" className="flex shrink-0">
                   {metric.icon}
                 </span>
+                {/*
+                  The window is `shrink-0` and the name is what truncates. Six
+                  cells across a desktop column leave about 120px of label, and
+                  the period is the half a reader cannot infer: "SESSIONS" is
+                  legible from its own figure, "/ 24h" is not recoverable from
+                  anything else on the tile.
+                */}
                 <span className="truncate">{metric.label}</span>
+                <span className="shrink-0">/ {metric.window}</span>
               </dt>
               <dd className="m-0 mt-1 truncate font-display text-[21px] font-semibold leading-none tabular-nums text-text">
                 {metric.value}
@@ -857,6 +922,14 @@ export function DashboardHero(props: DashboardHeroProps) {
               >
                 Run pipeline
               </h2>
+              {/*
+                Stated because this column mixes two periods too: the run
+                stages are every run since the install, and the response
+                outcomes below them are the same trailing day as the strip
+                above. `AgentMetrics` carries no window at all, so a caption is
+                the only place this can be said.
+              */}
+              <span className="mt-1 block text-micro text-muted">All time</span>
             </div>
 
             <div className="grid content-start gap-2.5">
@@ -874,7 +947,7 @@ export function DashboardHero(props: DashboardHeroProps) {
 
             <div className="border-t border-border pt-3">
               <div className="flex items-baseline justify-between gap-3">
-                <span className="text-micro uppercase tracking-[0.13em] text-faint">Response outcomes</span>
+                <span className="text-micro uppercase tracking-[0.13em] text-faint">Response outcomes / 24h</span>
                 <span className="font-mono text-micro tabular-nums text-muted">
                   {count(props.chatMetrics?.responses, props.unlocked)}
                 </span>
@@ -902,17 +975,32 @@ export function DashboardHero(props: DashboardHeroProps) {
               </div>
             </div>
 
-            <dl className="mt-auto grid grid-cols-3 gap-3 border-t border-border pt-3">
-              <MiniStat label="Tools live" value={count(props.toolMetrics?.activeTools, props.unlocked)} />
+            {/*
+              Two columns rather than three, because there are four figures now.
+
+              `failedCalls` arrived on every poll and was drawn nowhere, which
+              is also what made the headline Tool calls figure unreadable —
+              there was no way to see what the total was missing. Both call
+              outcomes name the noun: "Failed" alone would sit in the same
+              column as the failed *run* count above it, meaning something
+              else entirely.
+            */}
+            <dl className="mt-auto grid grid-cols-2 gap-x-3 gap-y-2.5 border-t border-border pt-3">
+              <MiniStat label="Tools live" value={count(tools?.activeTools, props.unlocked)} />
               <MiniStat
                 label="Awaiting approval"
-                value={count(props.toolMetrics?.pendingApprovals, props.unlocked)}
-                {...((props.toolMetrics?.pendingApprovals ?? 0) > 0 && props.unlocked ? { tone: "warn" as const } : {})}
+                value={count(tools?.pendingApprovals, props.unlocked)}
+                {...((tools?.pendingApprovals ?? 0) > 0 && props.unlocked ? { tone: "warn" as const } : {})}
               />
               <MiniStat
-                label="Denied"
-                value={count(props.toolMetrics?.deniedCalls, props.unlocked)}
-                {...((props.toolMetrics?.deniedCalls ?? 0) > 0 && props.unlocked ? { tone: "bad" as const } : {})}
+                label="Denied calls"
+                value={count(tools?.deniedCalls, props.unlocked)}
+                {...((tools?.deniedCalls ?? 0) > 0 && props.unlocked ? { tone: "bad" as const } : {})}
+              />
+              <MiniStat
+                label="Failed calls"
+                value={count(tools?.failedCalls, props.unlocked)}
+                {...((tools?.failedCalls ?? 0) > 0 && props.unlocked ? { tone: "bad" as const } : {})}
               />
             </dl>
           </section>

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { SetupStepKey } from "./setup-steps.js";
 import {
+  type ProductArea,
   pathForView,
   primaryNavigationGroups,
   primaryNavigationItems,
@@ -9,6 +10,27 @@ import {
   setupStepFromHash,
   viewFromHash,
 } from "./workspace-navigation.js";
+
+/**
+ * Surfaces this product used to have and no longer does.
+ *
+ * A deleted screen leaves its name behind in the copy that describes it, and
+ * that copy is the last place anyone looks: the rail's tooltips render nowhere
+ * near the screens they name, so "Health, release gates and the audit trail"
+ * outlived Release gates by a whole release with 409 tests green. Each entry
+ * here was a real tab or area, and none of them may be named by navigation copy
+ * again without this failing and someone deciding on purpose.
+ */
+const RETIRED_SURFACES = [
+  "release gate",
+  "evaluation",
+  "benchmark",
+  "pilot readiness",
+  "evidence",
+  "corpus",
+  "runtime",
+  "platform",
+] as const;
 
 describe("workspace navigation", () => {
   it("puts Settings last in the one primary navigation menu", () => {
@@ -45,6 +67,57 @@ describe("workspace navigation", () => {
     for (const item of primaryNavigationItems("top").concat(primaryNavigationItems("bottom"))) {
       expect(item.icon).toBeTruthy();
       expect(item.description).toBeTruthy();
+    }
+  });
+
+  it("says on the rail what each area actually contains", () => {
+    /*
+     * `toBeTruthy()` was the only assertion these descriptions ever had, and it
+     * is true of every string anyone will ever write -- so Operations kept
+     * advertising "Health, release gates and the audit trail" through the
+     * release that deleted Release gates, and Settings described itself in
+     * terms of an "Application setup" that is two different tabs. The rail's
+     * tooltip is the one piece of navigation copy that renders nowhere near the
+     * screen it describes, which is exactly why nothing caught either.
+     *
+     * Pinned three ways: the literal text, so changing it is a decision; the
+     * tab labels, so an area cannot advertise less than it has; and the retired
+     * vocabulary, so it cannot advertise more.
+     */
+    const described = Object.fromEntries(
+      primaryNavigationGroups.flatMap((group) => group.items).map((item) => [item.area, item.description]),
+    ) as Record<ProductArea, string>;
+
+    expect(described).toEqual({
+      Dashboard: "Activity, readiness and next actions",
+      Session: "Governed conversations",
+      Agents: "Profiles and runs, skills, memory and tools",
+      Operations: "Health, incidents and the audit trail",
+      Settings: "Setup, models, prompts, guardrails and application updates",
+    });
+
+    for (const [area, description] of Object.entries(described) as Array<[ProductArea, string]>) {
+      // An area with a tab strip names every tab in it. Deleting a tab without
+      // touching this copy leaves the rail promising a screen that is gone;
+      // adding one without touching it leaves the rail hiding a screen that
+      // exists.
+      for (const tab of sectionNavigationFor(area)) {
+        expect(description.toLowerCase(), `${area} does not mention its "${tab.label}" tab`)
+          .toContain(tab.label.toLowerCase());
+      }
+      for (const retired of RETIRED_SURFACES) {
+        expect(description.toLowerCase(), `${area} still advertises the retired "${retired}"`)
+          .not.toContain(retired);
+      }
+    }
+
+    // The tab labels themselves, for the same reason and against the same list.
+    for (const area of Object.keys(described) as ProductArea[]) {
+      for (const { label } of sectionNavigationFor(area)) {
+        for (const retired of RETIRED_SURFACES) {
+          expect(label.toLowerCase(), `${area} still has a "${label}" tab`).not.toContain(retired);
+        }
+      }
     }
   });
 
@@ -178,6 +251,75 @@ describe("workspace navigation", () => {
     expect(viewFromHash("#settings/application")).toBe("Application");
     expect(viewFromHash("#application")).toBe("Application");
     expect(productAreaForView("Application")).toBe("Settings");
+  });
+
+  it("gives Operations two tabs after both evidence surfaces were removed", () => {
+    /*
+     * This area was one tab called "Health & evidence" holding four sub-tabs.
+     * Release gates went with the evaluation subsystem it governed; Pilot
+     * readiness was deleted rather than moved, because `ProductionReadinessControl`
+     * has no create route and no seed anywhere in the repository, so the screen
+     * could never show a row.
+     *
+     * Nothing pinned this list, so reviving either as a tab -- or renaming
+     * "Audit trail" back to something the area no longer has -- was a change
+     * every test agreed with. It is the same literal assertion Agents and
+     * Settings already carry, for the same reason: a tab strip is the only
+     * place this structure is visible.
+     */
+    expect(sectionNavigationFor("Operations")).toEqual([
+      { label: "Health", view: "Operations" },
+      { label: "Audit trail", view: "Audit" },
+    ]);
+
+    expect(pathForView("Operations")).toBe("#operations/health");
+    expect(pathForView("Audit")).toBe("#operations/audit");
+    for (const view of ["Operations", "Audit"] as const) {
+      expect(productAreaForView(view)).toBe("Operations");
+      expect(viewFromHash(pathForView(view))).toBe(view);
+    }
+  });
+
+  it("lands every retired Operations bookmark on Health rather than the dashboard", () => {
+    /*
+     * `#operations` addressed the whole area when it was one screen with four
+     * sub-tabs, and `#operations/releases`, `#operations/evaluations` and
+     * `#releases` addressed the one that is gone. Health is the surface that
+     * absorbed what Operations still does, so that is where an old link goes.
+     *
+     * These cases were added by the release that removed Release gates and
+     * asserted by nothing: deleting all three left the suite green while every
+     * saved link silently redirected out of the area to the Dashboard.
+     */
+    for (const hash of ["#operations", "#operations/health", "#health", "#operations/releases", "#operations/evaluations", "#releases"]) {
+      expect(viewFromHash(hash), `${hash} no longer resolves to Health`).toBe("Operations");
+    }
+    expect(viewFromHash("#audit")).toBe("Audit");
+  });
+
+  it("keeps the address bar's own Memory link pointing at the tab that still has it", () => {
+    /*
+     * `#platform/memory` is the retired hash that mattered most and was the one
+     * dropped. Up to v4.6.0 it was the address `pathForView` *generated* for
+     * Memory -- the spelling that is in address bars and bookmarks -- while
+     * `#memory`, which survived the move into Settings, was only ever the short
+     * alias. Memory is still a screen, at `#agents/memory`, so falling the old
+     * link through to the Dashboard dropped the operator out of the area for no
+     * reason the other `#platform/...` hashes were spared.
+     */
+    expect(viewFromHash("#platform/memory")).toBe("Memory");
+    expect(viewFromHash("#memory")).toBe("Memory");
+    expect(viewFromHash("#agents/memory")).toBe("Memory");
+    expect(pathForView("Memory")).toBe("#agents/memory");
+    expect(productAreaForView("Memory")).toBe("Agents");
+
+    // Every other Platform-era address that survived the rename, so the set
+    // stays symmetrical rather than being one screen short again.
+    expect(viewFromHash("#platform")).toBe("Deployment");
+    expect(viewFromHash("#platform/setup")).toBe("Deployment");
+    expect(viewFromHash("#platform/models")).toBe("Models");
+    expect(viewFromHash("#platform/prompts")).toBe("Prompts");
+    expect(viewFromHash("#platform/guardrails")).toBe("Guardrails");
   });
 
   it("keeps a bookmarked corpus link pointing at a real screen", () => {

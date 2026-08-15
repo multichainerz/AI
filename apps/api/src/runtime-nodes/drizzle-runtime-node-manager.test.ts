@@ -21,6 +21,7 @@ import { canonicalize } from "../canonical-json.js";
 import type { AdminPrincipal } from "../auth/admin-session.js";
 import {
   DrizzleHermesRuntimeNodeManager,
+  enrollmentArtifactViolation,
   inferenceGatewayBaseUrl,
   seedableInferenceModelAlias,
   verifyNodeRequestSignature,
@@ -46,10 +47,21 @@ function manager() {
 }
 
 /** Signs a request the way an enrolled VM2 node would. */
-function signedHeaders(privateKey: ReturnType<typeof generateKeyPairSync>["privateKey"], body: unknown) {
+const HEARTBEAT = { method: "POST", path: "/api/v1/runtime-nodes/n/heartbeat" };
+const heartbeatOf = (nodeId: string) => ({ method: "POST", path: `/api/v1/runtime-nodes/${nodeId}/heartbeat` });
+const desiredStateOf = (nodeId: string) => ({ method: "GET", path: `/api/v1/runtime-nodes/${nodeId}/desired-state` });
+
+function signedHeaders(
+  privateKey: ReturnType<typeof generateKeyPairSync>["privateKey"],
+  body: unknown,
+  operation: { method: string; path: string } = HEARTBEAT,
+) {
   const timestamp = new Date().toISOString();
   const nonce = randomUUID();
-  const message = `${timestamp}\n${nonce}\n${createHash("sha256").update(canonicalize(body)).digest("hex")}`;
+  const digest = createHash("sha256").update(canonicalize(body)).digest("hex");
+  // Built independently of the implementation rather than by calling it, so a
+  // change to the signed field order fails here instead of agreeing with itself.
+  const message = `${operation.method}\n${operation.path}\n${timestamp}\n${nonce}\n${digest}`;
   return {
     timestamp,
     nonce,
@@ -308,7 +320,7 @@ describe("DrizzleHermesRuntimeNodeManager signed requests", () => {
     const { node, identity } = await enrolledNode();
     const body = { status: "ONLINE", hermesVersion: "1.0.1", capabilities: ["runs"] };
 
-    const result = await manager().heartbeat(node.id, signedHeaders(identity.privateKey, body), body as never);
+    const result = await manager().heartbeat(node.id, signedHeaders(identity.privateKey, body, heartbeatOf(node.id)), body as never);
 
     expect(result.accepted).toBe(true);
     const [stored] = await context.database
@@ -321,7 +333,7 @@ describe("DrizzleHermesRuntimeNodeManager signed requests", () => {
   it("rejects a replayed nonce", async () => {
     const { node, identity } = await enrolledNode();
     const body = { status: "ONLINE", hermesVersion: "1.0.0", capabilities: [] };
-    const headers = signedHeaders(identity.privateKey, body);
+    const headers = signedHeaders(identity.privateKey, body, heartbeatOf(node.id));
 
     await manager().heartbeat(node.id, headers, body as never);
 
@@ -334,7 +346,7 @@ describe("DrizzleHermesRuntimeNodeManager signed requests", () => {
     const { node } = await enrolledNode();
     const body = { status: "ONLINE", hermesVersion: "1.0.0", capabilities: [] };
 
-    await expect(manager().heartbeat(node.id, signedHeaders(nodeIdentity().privateKey, body), body as never))
+    await expect(manager().heartbeat(node.id, signedHeaders(nodeIdentity().privateKey, body, heartbeatOf(node.id)), body as never))
       .rejects.toBeInstanceOf(RuntimeNodeAuthenticationError);
   });
 
@@ -352,7 +364,7 @@ describe("DrizzleHermesRuntimeNodeManager signed requests", () => {
     await manager().mutate(principal, node.id, { action: "DRAIN", reason: "Maintenance", expectedRevision: node.revision } as never);
     const body = { status: "ONLINE", hermesVersion: "1.0.0", capabilities: [] };
 
-    await manager().heartbeat(node.id, signedHeaders(identity.privateKey, body), body as never);
+    await manager().heartbeat(node.id, signedHeaders(identity.privateKey, body, heartbeatOf(node.id)), body as never);
 
     const [stored] = await context.database
       .select().from(hermesRuntimeNode).where(eq(hermesRuntimeNode.id, node.id));
@@ -364,7 +376,7 @@ describe("DrizzleHermesRuntimeNodeManager signed requests", () => {
     await manager().mutate(principal, node.id, { action: "REVOKE", reason: "Compromised", expectedRevision: node.revision } as never);
     const body = { status: "ONLINE", hermesVersion: "1.0.0", capabilities: [] };
 
-    await expect(manager().heartbeat(node.id, signedHeaders(identity.privateKey, body), body as never))
+    await expect(manager().heartbeat(node.id, signedHeaders(identity.privateKey, body, heartbeatOf(node.id)), body as never))
       .rejects.toThrow(/revoked/);
   });
 });
@@ -373,7 +385,7 @@ describe("DrizzleHermesRuntimeNodeManager lifecycle", () => {
   it("marks a node offline once its heartbeat goes stale", async () => {
     const { node, identity } = await enrolledNode();
     const body = { status: "ONLINE", hermesVersion: "1.0.0", capabilities: [] };
-    await manager().heartbeat(node.id, signedHeaders(identity.privateKey, body), body as never);
+    await manager().heartbeat(node.id, signedHeaders(identity.privateKey, body, heartbeatOf(node.id)), body as never);
     expect((await manager().list())[0]?.status).toBe("ONLINE");
 
     await context.database
@@ -393,7 +405,7 @@ describe("DrizzleHermesRuntimeNodeManager lifecycle", () => {
     const { node, identity } = await enrolledNode();
     const body = { status: "ONLINE", hermesVersion: "1.0.1", capabilities: ["runs"] };
 
-    await manager().heartbeat(node.id, signedHeaders(identity.privateKey, body), body as never);
+    await manager().heartbeat(node.id, signedHeaders(identity.privateKey, body, heartbeatOf(node.id)), body as never);
 
     const [afterHeartbeat] = await context.database
       .select().from(hermesRuntimeNode).where(eq(hermesRuntimeNode.id, node.id));
@@ -476,6 +488,44 @@ describe("DrizzleHermesRuntimeNodeManager lifecycle", () => {
 });
 
 describe("runtime node pure helpers", () => {
+  /*
+   * Enrollment hands VM2 a one-time claim, the Hermes API key and a minted
+   * inference gateway key, and the dashboard prints an installer command that
+   * pipes an unauthenticated, unsigned script from this origin into `sudo bash`.
+   * Over plain HTTP that is root on VM2 for anyone on the path. Only PRODUCTION
+   * used to be refused, which left the weakest deployments handing out root.
+   */
+  it("requires HTTPS for enrollment on every target, not only production", () => {
+    const pinned = { hermesCommit: "a".repeat(40) };
+
+    for (const target of ["DEVELOPMENT", "PILOT", "PRODUCTION"] as const) {
+      expect(
+        enrollmentArtifactViolation(target, { ...pinned, controlPlaneUrl: "http://vm1.internal" }),
+        `${target} must refuse a plain-HTTP origin`,
+      ).toMatch(/requires an HTTPS OrcaSynapse origin/);
+      expect(enrollmentArtifactViolation(target, { ...pinned, controlPlaneUrl: "https://vm1.internal" })).toBeNull();
+    }
+  });
+
+  it("still allows a loopback origin, which has no network path to sit on", () => {
+    const pinned = { hermesCommit: "a".repeat(40) };
+
+    expect(enrollmentArtifactViolation("DEVELOPMENT", { ...pinned, controlPlaneUrl: "http://localhost:8080" })).toBeNull();
+    expect(enrollmentArtifactViolation("DEVELOPMENT", { ...pinned, controlPlaneUrl: "http://127.0.0.1:8080" })).toBeNull();
+    // A host that merely starts with the same characters is not loopback.
+    expect(enrollmentArtifactViolation("DEVELOPMENT", { ...pinned, controlPlaneUrl: "http://localhost.evil.example" }))
+      .toMatch(/requires an HTTPS OrcaSynapse origin/);
+    expect(enrollmentArtifactViolation("DEVELOPMENT", { ...pinned, controlPlaneUrl: "http://127.0.0.1.evil.example" }))
+      .toMatch(/requires an HTTPS OrcaSynapse origin/);
+  });
+
+  it("keeps the production commit pin on top of the transport rule", () => {
+    expect(enrollmentArtifactViolation("PRODUCTION", { hermesCommit: "short", controlPlaneUrl: "https://vm1.internal" }))
+      .toMatch(/commit-pinned Hermes runtime/);
+    expect(enrollmentArtifactViolation("DEVELOPMENT", { hermesCommit: "short", controlPlaneUrl: "https://vm1.internal" }))
+      .toBeNull();
+  });
+
   it("seeds a model alias only from exactly one usable inference route", () => {
     expect(seedableInferenceModelAlias([])).toBeNull();
     expect(seedableInferenceModelAlias([
@@ -497,8 +547,8 @@ describe("runtime node pure helpers", () => {
     const body = { status: "ONLINE" };
     const headers = signedHeaders(privateKey, body);
 
-    expect(() => verifyNodeRequestSignature(publicKeyPem, headers, body)).not.toThrow();
-    expect(() => verifyNodeRequestSignature(publicKeyPem, headers, body, Date.now() + 10 * 60 * 1_000))
+    expect(() => verifyNodeRequestSignature(publicKeyPem, HEARTBEAT, headers, body)).not.toThrow();
+    expect(() => verifyNodeRequestSignature(publicKeyPem, HEARTBEAT, headers, body, Date.now() + 10 * 60 * 1_000))
       .toThrow(/timestamp is outside the allowed window/);
   });
 
@@ -507,10 +557,31 @@ describe("runtime node pure helpers", () => {
     const body = { status: "ONLINE" };
 
     expect(() => verifyNodeRequestSignature(
-      publicKeyPem, { ...signedHeaders(privateKey, body), nonce: "not-a-uuid" }, body,
+      publicKeyPem, HEARTBEAT, { ...signedHeaders(privateKey, body), nonce: "not-a-uuid" }, body,
     )).toBeInstanceOf(Function);
     expect(() => verifyNodeRequestSignature(
-      publicKeyPem, { ...signedHeaders(privateKey, body), nonce: "not-a-uuid" }, body,
+      publicKeyPem, HEARTBEAT, { ...signedHeaders(privateKey, body), nonce: "not-a-uuid" }, body,
+    )).toThrow(RuntimeNodeAuthenticationError);
+  });
+
+  /*
+   * The two desired-state polls — this module's and the corpus plane's — both
+   * authenticate over a literal `null`, so before the signature bound the path
+   * a triple captured from one was byte-valid on the other. Replayed against
+   * the corpus endpoint it leased the next queued mutation, returned its full
+   * content, and marked it DISPATCHED.
+   */
+  it("refuses a signature minted for a different endpoint or a different method", () => {
+    const { privateKey, publicKeyPem } = nodeIdentity();
+    const runtimeDesiredState = { method: "GET", path: "/api/v1/runtime-nodes/n/desired-state" };
+    const corpusDesiredState = { method: "GET", path: "/api/v1/runtime-nodes/n/corpus/desired-state" };
+    const headers = signedHeaders(privateKey, null, runtimeDesiredState);
+
+    expect(() => verifyNodeRequestSignature(publicKeyPem, runtimeDesiredState, headers, null)).not.toThrow();
+    expect(() => verifyNodeRequestSignature(publicKeyPem, corpusDesiredState, headers, null))
+      .toThrow(RuntimeNodeAuthenticationError);
+    expect(() => verifyNodeRequestSignature(
+      publicKeyPem, { ...runtimeDesiredState, method: "POST" }, headers, null,
     )).toThrow(RuntimeNodeAuthenticationError);
   });
 
@@ -521,7 +592,7 @@ describe("runtime node pure helpers", () => {
         toolsetName: "clarify", admitted: true, reason: "Safe to enable.",
       });
 
-      const state = await manager().desiredState(node.id, signedHeaders(identity.privateKey, null));
+      const state = await manager().desiredState(node.id, signedHeaders(identity.privateKey, null, desiredStateOf(node.id)));
       const { publicKeyPem } = await manager().controlPlanePublicKey();
       const bytes = Buffer.from(state.documentBase64, "base64");
 
@@ -538,7 +609,7 @@ describe("runtime node pure helpers", () => {
       // "Enable nothing" is an instruction. A node that received no list must
       // not be free to keep whatever it already had running.
       const { node, identity } = await enrolledNode();
-      const state = await manager().desiredState(node.id, signedHeaders(identity.privateKey, null));
+      const state = await manager().desiredState(node.id, signedHeaders(identity.privateKey, null, desiredStateOf(node.id)));
       const document = JSON.parse(Buffer.from(state.documentBase64, "base64").toString("utf8"));
       expect(document.admittedToolsets).toEqual([]);
     });
@@ -549,14 +620,14 @@ describe("runtime node pure helpers", () => {
         { toolsetName: "clarify", admitted: true, reason: "Safe to enable." },
         { toolsetName: "code_execution", admitted: false, reason: "Withdrawn." },
       ]);
-      const state = await manager().desiredState(node.id, signedHeaders(identity.privateKey, null));
+      const state = await manager().desiredState(node.id, signedHeaders(identity.privateKey, null, desiredStateOf(node.id)));
       const document = JSON.parse(Buffer.from(state.documentBase64, "base64").toString("utf8"));
       expect(document.admittedToolsets).toEqual(["clarify"]);
     });
 
     it("refuses to tell an unauthenticated caller what a node should run", async () => {
       const { node } = await enrolledNode();
-      await expect(manager().desiredState(node.id, signedHeaders(nodeIdentity().privateKey, null)))
+      await expect(manager().desiredState(node.id, signedHeaders(nodeIdentity().privateKey, null, desiredStateOf(node.id))))
         .rejects.toBeInstanceOf(RuntimeNodeAuthenticationError);
     });
 

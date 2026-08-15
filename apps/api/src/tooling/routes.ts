@@ -19,7 +19,7 @@ import {
   type AdminScope,
 } from "@orcasynapse/contracts";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { adminSessionToken, type AdminSessionManager } from "../auth/admin-session.js";
+import { authenticateAdministrator, type AdminSessionManager } from "../auth/admin-session.js";
 import {
   MCP_LEGACY_VERSION,
   MCP_MODERN_VERSION,
@@ -121,21 +121,17 @@ async function validateMcpTransport(
 }
 
 async function requireAdmin(request: FastifyRequest, reply: FastifyReply, options: ToolingRouteOptions, scope: AdminScope): Promise<ToolingPrincipal | null> {
-  const administrator = await options.sessionManager?.authenticate(adminSessionToken(request), scope);
-  if (administrator) {
-    // This module resolves its own principal rather than using the shared
-    // `requireAdmin`, and so has to repeat its forced-rotation gate. Without it
-    // the installer's temporary password reached POST /credentials, which
-    // returns a plaintext, non-expiring MCP bearer token — a permanent
-    // credential minted by the very password the gate exists to make unusable.
-    if (administrator.passwordChangeRequired) {
-      await reply.code(403).send({
-        error: "PASSWORD_CHANGE_REQUIRED",
-        message: "Change or recover the local administrator password before using OrcaSynapse administration.",
-      });
-      return null;
-    }
-    return { id: administrator.id, subject: administrator.subject };
+  // This module resolves its own principal rather than using the shared
+  // `requireAdmin`, because a tooling caller may also be a runtime identity.
+  // The forced-rotation gate used to be copied out here by hand — without it
+  // the installer's temporary password reached POST /credentials, which returns
+  // a plaintext, non-expiring MCP bearer token, a permanent credential minted
+  // by the very password the gate exists to make unusable. The copy is gone;
+  // `authenticateAdministrator` owns the rule for every module that needs it.
+  const administrator = await authenticateAdministrator(request, reply, options.sessionManager, scope);
+  if (administrator.outcome === "REFUSED") return null;
+  if (administrator.outcome === "ADMINISTRATOR") {
+    return { id: administrator.principal.id, subject: administrator.principal.subject };
   }
   if (!options.sessionManager) {
     await reply.code(423).send({ error: "PLATFORM_LOCKED", message: "Tooling identity services are not ready." });

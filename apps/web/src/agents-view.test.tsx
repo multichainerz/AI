@@ -15,7 +15,10 @@
  * `VIEW_PREVIEW_OUT` writes the rendered markup so it can be looked at without
  * a session; see `chat-transcript.test.tsx`.
  */
-import type { AgentProfile, AgentRun, AgentRunEvent } from "@orcasynapse/contracts";
+import { ADMIN_SCOPES } from "@orcasynapse/contracts";
+import type {
+  AdminScope, AdministratorSession, AgentProfile, AgentRun, AgentRunEvent,
+} from "@orcasynapse/contracts";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { writeFileSync } from "node:fs";
@@ -60,6 +63,29 @@ const runs = [
   },
 ] as unknown as AgentRun[];
 
+/** Something to press Cancel on. The fixture runs above are all terminal. */
+const runningRun = {
+  ...runs[0]!, id: "r3", status: "RUNNING", output: null, completedAt: null,
+} as unknown as AgentRun;
+
+function sessionWith(role: AdministratorSession["role"], scopes: AdminScope[]): AdministratorSession {
+  return {
+    id: "ac369dab-cad5-4fd9-83ed-b4fbf528028a", subject: "admin", role, scopes,
+    createdAt: "2026-08-07T00:00:00.000Z",
+    idleExpiresAt: "2026-08-07T00:15:00.000Z", absoluteExpiresAt: "2026-08-07T08:00:00.000Z",
+  };
+}
+
+/*
+ * The agent-relevant slice of `ROLE_SCOPES` in
+ * `apps/api/src/auth/admin-session.ts`, copied rather than derived: these
+ * tests are about what this screen offers a role the API has already decided
+ * about, so the two files disagreeing is the thing worth catching.
+ */
+const auditor = sessionWith("AUDITOR", ["agents:read"]);
+const operations = sessionWith("OPERATIONS_ADMIN", ["agents:read", "agents:control", "readiness:manage"]);
+const platform = sessionWith("PLATFORM_ADMIN", [...ADMIN_SCOPES]);
+
 const events = [
   { id: "e1", type: "RUN_STARTED", summary: null, toolName: null, childSessionId: null, status: null, occurredAt: "2026-08-07T09:00:01.000Z", durationMs: null, inputTokens: null, outputTokens: null },
   { id: "e2", type: "RUN_COMPLETED", summary: "Answered from one source.", toolName: null, childSessionId: null, status: null, occurredAt: "2026-08-07T09:00:06.000Z", durationMs: 5_100, inputTokens: 880, outputTokens: 260 },
@@ -79,6 +105,9 @@ const api = vi.hoisted(() => ({
 vi.mock("./api.js", async (load) => ({ ...(await load<typeof import("./api.js")>()), ...api }));
 
 const { AgentsView } = await import("./agents-view.js");
+/* Real: the mock factory spreads the real module, so this is the same class
+   `agents-view.tsx` narrows against when it decides a 401 ended the session. */
+const { OrcaSynapseApiError } = await import("./api.js");
 
 const props = {
   unlocked: true,
@@ -115,7 +144,12 @@ function setupApi({ profiles: profileList = profiles, runs: runList = runs, enab
   api.updateAgentRuntime.mockResolvedValue({ enabled: !enabled, reason: "Manual." });
 }
 
-async function view(over: Partial<typeof props> = {}) {
+/*
+ * `session` is deliberately absent from `props` above: `app.tsx` does not pass
+ * it yet, so leaving it off here is what keeps every other test in this file
+ * covering the boolean fallback the product is still running on.
+ */
+async function view(over: Partial<typeof props> & { session?: AdministratorSession | null } = {}) {
   render(<main><AgentsView {...props} {...over} /></main>);
   await waitFor(() => screen.getByLabelText("Execution ledger"));
   if (process.env.VIEW_PREVIEW_OUT) {
@@ -373,6 +407,171 @@ describe("agents", () => {
 
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("shows an AUDITOR the screen and none of the controls that would 403", async () => {
+    /*
+     * `ROLE_SCOPES` gives AUDITOR `agents:read` and nothing else, and
+     * navigation is unfiltered, so they reach this screen. Every write here was
+     * gated on `administrator` -- which is `adminAccess(session).unlocked`, and
+     * answers "may this session call admin routes at all" rather than which --
+     * so every one of them rendered and every one of them 403'd.
+     */
+    setupApi({ runs: [runningRun] });
+    await view({ session: auditor });
+    // The reads they do hold, first, so the absences below are judgements
+    // about the controls rather than about a screen that never rendered.
+    expect(screen.getByText("2 profiles")).toBeTruthy();
+    expect(screen.getByLabelText("Hermes execution boundary")).toBeTruthy();
+
+    expect(screen.queryByRole("button", { name: "Create agent" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "New version" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Suspend" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Verify & activate" })).toBeNull();
+    // Inside a closed `<details>`, so it is in the tree if it is rendered at
+    // all -- the disclosure hides nothing from this query.
+    expect(screen.queryByRole("button", { name: /Disable execution|Enable manually/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Cancel run" })).toBeNull();
+  });
+
+  it("lets an OPERATIONS_ADMIN work the boundary without authoring a Profile", async () => {
+    // `agents:control` and no `agents:manage`: the switch and Cancel are
+    // theirs, and the API refuses every profile write.
+    setupApi({ runs: [runningRun] });
+    await view({ session: operations });
+    expect(screen.getByRole("button", { name: "Disable execution" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Cancel run" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Create agent" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "New version" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Suspend" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Verify & activate" })).toBeNull();
+  });
+
+  it("takes nothing away from the role that holds every scope", async () => {
+    // The other direction. Gating that hides a control from a PLATFORM_ADMIN
+    // is the same defect wearing the opposite sign, and is the failure a
+    // scope-derived boolean makes easy.
+    setupApi({ runs: [runningRun] });
+    await view({ session: platform });
+    expect(screen.getByRole("button", { name: "Create agent" })).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: "New version" })).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "Suspend" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Verify & activate" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Disable execution" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Cancel run" })).toBeTruthy();
+  });
+
+  it("surfaces a failed Refresh instead of leaving stale profiles on screen", async () => {
+    /*
+     * The admin session idles out after fifteen minutes. Every other call site
+     * in this file attaches `.catch(fail)`; Refresh did not, so its rejection
+     * was unhandled -- no Alert, no `onSessionExpired`, and a screen still
+     * showing the profiles and runs of a quarter of an hour ago.
+     */
+    setupApi();
+    const user = userEvent.setup();
+    await view();
+    api.getAgentProfiles.mockRejectedValue(
+      new OrcaSynapseApiError(401, "The administrator session has expired."),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(await screen.findByText("The administrator session has expired.")).toBeTruthy();
+    expect(props.onSessionExpired).toHaveBeenCalled();
+  });
+
+  it("does not promise a boundary a non-administrator never sees", async () => {
+    // The header described "the global boundary deciding whether any of it may
+    // execute" on a screen whose boundary panel is administrator-only.
+    setupApi();
+    await view({ administrator: false });
+    expect(screen.getByRole("heading", { name: "Hermes Profiles" })).toBeTruthy();
+    expect(screen.queryByLabelText("Hermes execution boundary")).toBeNull();
+    expect(screen.queryByText(/boundary deciding whether any of it may execute/)).toBeNull();
+
+    cleanup();
+    setupApi();
+    await view();
+    expect(screen.getByLabelText("Hermes execution boundary")).toBeTruthy();
+    expect(screen.getByText(/boundary deciding whether any of it may execute/)).toBeTruthy();
+  });
+
+  it("says whose runs the per-profile counter counted", async () => {
+    /*
+     * `GET /agents/runs` returns a non-administrator their own runs, against a
+     * Profile that belongs to the whole deployment. "no recent runs" beside a
+     * Profile colleagues have run fifty times is a statement about the reader.
+     */
+    setupApi();
+    await view({ administrator: false });
+    expect(screen.getAllByText("1 recent run by you")).toHaveLength(2);
+
+    cleanup();
+    setupApi({ runs: [] });
+    await view({ administrator: false });
+    expect(screen.getAllByText("no recent runs by you")).toHaveLength(2);
+  });
+
+  it("says whose runs the ledger is showing", async () => {
+    /*
+     * `GET /admin/agents/runs` returns every run in the window; `GET
+     * /agents/runs` filters to the calling subject. Both render this one
+     * component with the same shape, so nothing but the copy distinguishes
+     * them -- and "Across every Profile, newest first." over one person's runs
+     * is a claim about the deployment the list cannot support. Same axis the
+     * Profile rows above already qualify with "by you".
+     */
+    setupApi();
+    const user = userEvent.setup();
+    await view({ administrator: false });
+    expect(within(ledger()).getByText("Your runs produced by Support analyst, newest first.")).toBeTruthy();
+
+    // The widened view is the one that made the deployment-wide claim.
+    await user.click(within(ledger()).getByRole("button", { name: "Show all runs (2)" }));
+    await waitFor(() => expect(
+      within(ledger()).getByText("Your runs across every Profile, newest first."),
+    ).toBeTruthy());
+
+    // An administrator's ledger really is deployment-wide, and still says so.
+    cleanup();
+    setupApi();
+    await view();
+    expect(within(ledger()).getByText("Produced by Support analyst, newest first.")).toBeTruthy();
+  });
+
+  it("does not tell a non-administrator that nothing has run under a Profile others use", async () => {
+    /*
+     * The emptiest case is the one the wording gets most wrong: a second
+     * enterprise user opening a Profile colleagues have run fifty times was
+     * told "Nothing has run under Support analyst", which is not a hedge but a
+     * false statement about the deployment.
+     */
+    setupApi({ runs: [] });
+    await view({ administrator: false });
+    const panel = ledger();
+    expect(within(panel).getByText("You have not run Support analyst")).toBeTruthy();
+    expect(within(panel).queryByText("Nothing has run under Support analyst")).toBeNull();
+    expect(within(panel).getByText(/colleagues started against it are not shown/)).toBeTruthy();
+  });
+
+  it("says the Approved Skills field records references nothing delivers", async () => {
+    /*
+     * The triples are stored on the version and folded into
+     * `distributionDigest`, and no run payload carries them: nothing in
+     * `apps/worker` or `packages/runtime-clients` reads `version.skills`.
+     * Keeping the field is a product decision; letting it read as "this
+     * Profile is bound to that Skill" is not.
+     */
+    setupApi();
+    const user = userEvent.setup();
+    await view();
+    await user.click(screen.getByRole("button", { name: "Create agent" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/never sent to Hermes/i)).toBeTruthy();
+    // The wording that implied a runtime consequence, gone. A plain substring
+    // check over the whole dialog, so no element boundary can hide it.
+    expect(dialog.textContent).not.toContain("Runtime installation remains evidence-gated");
   });
 
   it("keeps both halves behind an authenticated workspace", () => {

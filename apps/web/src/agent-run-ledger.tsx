@@ -48,6 +48,10 @@ interface ExecutionBoundaryProps {
   onToggle: (enabled: boolean, reason: string) => void;
   /** Decides which of the two fixes the disabled state names. */
   hasProfiles: boolean;
+  /** `agents:control`: whether this session may throw the switch at all. */
+  canControl: boolean;
+  /** `agents:manage`: whether Verify & activate and Create exist on their screen. */
+  canManage: boolean;
 }
 
 /**
@@ -67,9 +71,24 @@ interface ExecutionBoundaryProps {
  * screen-wide control, where it reads as the boundary's own record rather than
  * as a statistic about whichever profile happens to be selected.
  */
-export function ExecutionBoundary({ runtime, metrics, runs, busy, onToggle, hasProfiles }: ExecutionBoundaryProps) {
+export function ExecutionBoundary({ runtime, metrics, runs, busy, onToggle, hasProfiles, canControl, canManage }: ExecutionBoundaryProps) {
   const [reason, setReason] = useState("Runtime and Profile Distribution boundaries verified by the platform administrator.");
   const enabled = runtime?.enabled === true;
+
+  /*
+   * The sentence names a fix the reader can actually reach. Without
+   * `agents:manage` there is no Verify & activate and no Create anywhere on
+   * their screen, so either wording would be an instruction to press something
+   * that is not there -- which is the whole failure mode the cross-tab "Open
+   * Profiles" button had, moved inside one screen.
+   */
+  const disabledFix = canManage
+    ? hasProfiles
+      ? "Use Verify & activate on a Profile below; OrcaSynapse will test Hermes and enable this boundary automatically."
+      : "Create a Profile below; OrcaSynapse will test Hermes and enable this boundary automatically."
+    : canControl
+      ? "Enable it under Manual control below, or ask an administrator who can manage Profiles to verify one."
+      : "An administrator who can manage Profiles must verify and activate one before anything here can run.";
 
   const totals = [
     {
@@ -125,13 +144,14 @@ export function ExecutionBoundary({ runtime, metrics, runs, busy, onToggle, hasP
             * four calls to action for one job.
             */}
           <p className="mb-0 mt-1 text-body text-muted">
-            {enabled
-              ? runtime?.reason
-              : hasProfiles
-                ? "Use Verify & activate on a Profile below; OrcaSynapse will test Hermes and enable this boundary automatically."
-                : "Create a Profile below; OrcaSynapse will test Hermes and enable this boundary automatically."}
+            {enabled ? runtime?.reason : disabledFix}
           </p>
-          <details className="mt-3">
+          {/*
+            * `PATCH /admin/agents/runtime` wants `agents:control`, which
+            * AUDITOR does not hold. The state above is an `agents:read` fact
+            * and stays; the control is withheld rather than left to 403.
+            */}
+          {canControl && <details className="mt-3">
             <summary className="cursor-pointer text-micro font-semibold uppercase tabular-nums text-faint">Manual control</summary>
             <form
               className="mt-2.5 flex flex-wrap items-end gap-2.5"
@@ -148,7 +168,7 @@ export function ExecutionBoundary({ runtime, metrics, runs, busy, onToggle, hasP
                 {busy === "runtime" ? "Applying..." : enabled ? "Disable execution" : "Enable manually"}
               </Button>
             </form>
-          </details>
+          </details>}
         </div>
       </div>
 
@@ -175,6 +195,14 @@ interface RunLedgerProps {
   total: number;
   profileName: string | null;
   scoped: boolean;
+  /**
+   * Whether this ledger is the deployment's or the reader's own.
+   *
+   * `GET /admin/agents/runs` returns every run in the window; `GET /agents/runs`
+   * filters to the calling subject. Both render this component with the same
+   * shape, so nothing but the copy can tell the two apart.
+   */
+  administrator: boolean;
   selectedRunId: string | null;
   onSelectRun: (runId: string) => void;
   onScopeChange: (scoped: boolean) => void;
@@ -194,25 +222,52 @@ interface RunLedgerProps {
  * unreachable. It appears only when scoping is actually hiding something, which
  * on a single-profile deployment is never.
  */
-export function RunLedger({ runs, total, profileName, scoped, selectedRunId, onSelectRun, onScopeChange }: RunLedgerProps) {
+export function RunLedger({ runs, total, profileName, scoped, administrator, selectedRunId, onSelectRun, onScopeChange }: RunLedgerProps) {
   const hidden = total - runs.length;
+  /* Truthiness, not `!== null`: the four sentences below name the Profile, and
+     an empty name would put "Produced by , newest first." on the panel. */
+  const named = scoped && Boolean(profileName);
+
+  /*
+   * Every sentence here describes the same list, so they agree on whose it is.
+   *
+   * The API filters a non-administrator's runs to their own subject against a
+   * Profile that belongs to the whole deployment, so "Across every Profile" and
+   * "Nothing has run under X" are claims about the deployment made from one
+   * person's window -- the second is not even a hedge, it is false the moment a
+   * colleague has used the Profile. Written out in full rather than assembled
+   * from fragments: this is the copy, and it should read as copy.
+   */
+  const description = administrator
+    ? named
+      ? `Produced by ${profileName}, newest first.`
+      : "Across every Profile, newest first."
+    : named
+      ? `Your runs produced by ${profileName}, newest first.`
+      : "Your runs across every Profile, newest first.";
+
+  const emptyTitle = administrator
+    ? named ? `Nothing has run under ${profileName}` : "No runs yet"
+    : named ? `You have not run ${profileName}` : "You have no runs yet";
+
+  const emptyBody = administrator
+    ? named
+      ? "Runs appear here with their complete lifecycle as soon as this Profile is used."
+      : "Queued work will appear here with its complete lifecycle."
+    : named
+      ? `Runs appear here with their complete lifecycle as soon as you use ${profileName}. Runs your colleagues started against it are not shown.`
+      : "Work you queue will appear here with its complete lifecycle. Runs your colleagues started are not shown.";
 
   return (
     <Panel aria-label="Execution ledger">
       <PanelHeading
         kicker="Execution ledger"
         title="Recent runs"
-        description={scoped && profileName ? `Produced by ${profileName}, newest first.` : "Across every Profile, newest first."}
+        description={description}
         actions={<StatusText>{runs.length} shown</StatusText>}
       />
       <div className="grid max-h-[520px] gap-1 overflow-y-auto">
-        {runs.length === 0 && (
-          <EmptyState title={scoped && profileName ? `Nothing has run under ${profileName}` : "No runs yet"}>
-            {scoped && profileName
-              ? "Runs appear here with their complete lifecycle as soon as this Profile is used."
-              : "Queued work will appear here with its complete lifecycle."}
-          </EmptyState>
-        )}
+        {runs.length === 0 && <EmptyState title={emptyTitle}>{emptyBody}</EmptyState>}
         {/*
           * `size="auto"` because a run row is four stacked lines, and every
           * other size is a fixed 28-44px single-line control. Runtime shipped
@@ -261,11 +316,20 @@ interface RunDetailProps {
   run: AgentRun | null;
   events: readonly AgentRunEvent[];
   busy: string | null;
+  /**
+   * Whether cancelling is this session's to do.
+   *
+   * The admin route wants `agents:control`; the enterprise route authorises the
+   * caller against their own run instead, so this is a scope question only for
+   * an administrator. Reading a run is `agents:read` either way, which is why
+   * it gates the one button rather than the pane.
+   */
+  canCancel: boolean;
   onCancel: (run: AgentRun) => void;
 }
 
 /** One run: its lifecycle, its bounded activity timeline, and what it produced. */
-export function RunDetail({ run, events, busy, onCancel }: RunDetailProps) {
+export function RunDetail({ run, events, busy, canCancel, onCancel }: RunDetailProps) {
   if (!run) {
     return (
       <Panel aria-label="Run detail">
@@ -360,7 +424,7 @@ export function RunDetail({ run, events, busy, onCancel }: RunDetailProps) {
         <strong className="block text-micro font-semibold uppercase tabular-nums text-bad">{run.failureCode}</strong>
         <p className="mb-0 mt-1.5 text-body leading-relaxed text-muted">{run.failureMessage}</p>
       </div>}
-      {runningStatuses.has(run.status) && <Button
+      {canCancel && runningStatuses.has(run.status) && <Button
         variant="danger"
         className="mt-3"
         disabled={busy !== null || run.status === "CANCEL_REQUESTED"}

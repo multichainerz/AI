@@ -5,6 +5,40 @@ import { cn } from "@/lib/utils";
 
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
+/**
+ * How many dialogs currently want the page held still.
+ *
+ * Counted rather than saved-and-restored. The previous value of
+ * `body.style.overflow` was read and written back on close, which is correct
+ * for one dialog and wrong for two: a dialog opened over another restored
+ * "hidden" on its own close and left the page locked, or restored "" and let it
+ * scroll under a modal that was still open. The count is module-level because
+ * that is the scope the lock has — the document, not a component.
+ */
+let scrollLocks = 0;
+
+/**
+ * Hold the page still while a modal owns the screen.
+ *
+ * A class, not `body.style.overflow`. The property write was not a CSP failure
+ * — `style-src` does not police CSSOM property writes, and it never broke at
+ * runtime — but it put `style="overflow: hidden"` on `<body>` in a codebase
+ * that ships no inline styles, in the one spot the closure check cannot see:
+ * it greps for `setAttribute("style")`, and every runtime assertion reads
+ * `document.body.innerHTML`, which cannot contain body's own attributes.
+ *
+ * `overflow-hidden` is Tailwind's, and this file is inside the content globs,
+ * so the utility is emitted whether or not any JSX still uses it.
+ */
+function lockPageScroll(): () => void {
+  scrollLocks += 1;
+  document.body.classList.add("overflow-hidden");
+  return () => {
+    scrollLocks = Math.max(0, scrollLocks - 1);
+    if (scrollLocks === 0) document.body.classList.remove("overflow-hidden");
+  };
+}
+
 interface DialogContextValue {
   open: boolean;
   setOpen: (open: boolean) => void;
@@ -70,8 +104,7 @@ export const DialogContent = React.forwardRef<HTMLDivElement, React.HTMLAttribut
     React.useEffect(() => {
       if (!open) return;
       const previousFocus = document.activeElement as HTMLElement | null;
-      const previousOverflow = document.body.style.overflow;
-      document.body.style.overflow = "hidden";
+      const releaseScroll = lockPageScroll();
       const onKeyDown = (event: KeyboardEvent) => {
         if (event.key === "Escape") {
           event.preventDefault();
@@ -102,7 +135,7 @@ export const DialogContent = React.forwardRef<HTMLDivElement, React.HTMLAttribut
       // navigation escape the modal before the trap owns focus.
       localRef.current?.querySelector<HTMLElement>(FOCUSABLE)?.focus();
       return () => {
-        document.body.style.overflow = previousOverflow;
+        releaseScroll();
         document.removeEventListener("keydown", onKeyDown);
         document.removeEventListener("focusin", containFocus);
         previousFocus?.focus();

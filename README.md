@@ -35,7 +35,9 @@ There is no control-plane vector store, embedding model, document library, exter
 
 ## Install
 
-v4.6.0 established the greenfield `hermes-native-v1` schema generation. v4.7.0 added the Corpus companion; subsequent v4.7.x patches hardened its privilege transition and ensure every mirrored Skill support tree has an observed parent. Existing v4.6.0 or v4.7.x VM1 installations update in place; rerun the current generated VM2 installer with `--repair` to install the current companion. Databases from before v4.6.0 still require a clean installation.
+v4.6.0 established the greenfield `hermes-native-v1` schema generation. v4.7.0 added the Corpus companion; subsequent v4.7.x patches hardened its privilege transition and ensure every mirrored Skill support tree has an observed parent.
+
+**Any VM1 installation carrying the `hermes-native-v1` schema epoch updates in place**, whichever release it was installed from. `install.sh` reads the literal marker at `.local/state/schema-epoch` and compares it to that string; it parses no version number anywhere in the decision. Rerun the current generated VM2 installer with `--repair` to install the current companion. A database from before v4.6.0 carries no marker and still requires a clean installation.
 
 On a clean Debian or Ubuntu VM1:
 
@@ -43,7 +45,7 @@ On a clean Debian or Ubuntu VM1:
 curl -fsSL https://raw.githubusercontent.com/multichainerz/AI/main/install.sh | sudo bash
 ```
 
-The installer provisions Docker, stock PostgreSQL 17, the API, worker, workspace, protected secrets, and the first administrator. Open the address it prints, connect inference, then use **Settings → Agentic System** to generate the one-time VM2 enrollment command.
+The installer provisions Docker, stock PostgreSQL 17, the API, worker, workspace, protected secrets, and the first administrator. Open the address it prints, connect inference, then use **Settings → Setup**, step 2 (*Install the agent runtime*), to generate the one-time VM2 enrollment command.
 
 VM2 installs vanilla Hermes at the approved commit, applies the managed native-memory and toolset baseline, enrolls its node identity, reports signed heartbeats, and publishes a signed allowlisted corpus snapshot. OrcaSynapse does not require SSH credentials or a remote shell channel.
 
@@ -51,8 +53,8 @@ VM2 installs vanilla Hermes at the approved commit, applies the managed native-m
 
 - **Dashboard:** one-screen readiness and operations command center.
 - **Session:** durable conversations over Hermes’ native session API, with streaming, cancellation, telemetry, feedback, archive, export, and audit projections.
-- **Agents:** immutable Profile Distributions, run history, governed tools, and a repository-style view of Hermes-native memory and Skills.
-- **Settings:** application updates, inference routes, Hermes enrollment, enterprise identity, prompts, guardrails, runtime toolset admissions, and encrypted connections.
+- **Agents:** immutable Profile Distributions and run history (Profiles), a repository-style view of Hermes-native Skills and memory, and runtime toolset admissions (Tools).
+- **Settings:** bring-up and Hermes enrollment (Setup), inference routes, prompts, guardrails, enterprise identity, encrypted connections, and application updates.
 - **Operations:** health and incidents, the audit trail, and optional SIEM forwarding.
 
 ## Memory and audit

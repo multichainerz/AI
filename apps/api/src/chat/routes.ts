@@ -21,7 +21,7 @@ import {
   AgentRuntimeDisabledError,
 } from "../agents/agent-manager.js";
 import {
-  adminSessionToken,
+  authenticateAdministrator,
   requireAdmin,
   type AdminSessionManager,
 } from "../auth/admin-session.js";
@@ -51,13 +51,17 @@ async function requireChatPrincipal(
   reply: FastifyReply,
   options: ChatRouteOptions,
 ): Promise<ChatPrincipal | null> {
-  const administrator = await options.sessionManager?.authenticate(adminSessionToken(request));
-  if (administrator?.scopes.includes("chat:use")) {
+  const administrator = await authenticateAdministrator(request, reply, options.sessionManager);
+  // Refused before the scope test, not after: a pending password change must
+  // not be reportable as "this session lacks chat:use", and must not fall
+  // through to the enterprise branch on the same cookie.
+  if (administrator.outcome === "REFUSED") return null;
+  if (administrator.outcome === "ADMINISTRATOR" && administrator.principal.scopes.includes("chat:use")) {
     return {
-      id: administrator.id,
-      subject: administrator.subject,
+      id: administrator.principal.id,
+      subject: administrator.principal.subject,
       identityMode: "ADMINISTRATOR_PREVIEW",
-      scopes: administrator.scopes,
+      scopes: administrator.principal.scopes,
     };
   }
 

@@ -118,7 +118,9 @@ export function PromptsView({ session, onOpenOperations, onOpenSettings, onSessi
           content: draft.content,
           expectedRevision: editing.revision,
         });
-        setMessage("Prompt revision saved. Content or version changes require new promoted evidence.");
+        // `DrizzlePromptManager` requires a new version for a content change
+        // and resets the record to DRAFT; nothing anywhere asks for evidence.
+        setMessage("Prompt revision saved. A content change resets it to Draft under its new version, so activate that version to release it.");
       } else {
         await createPromptTemplate({ ...draft, slug: slugify(draft.slug) });
         setMessage("Draft chat-system prompt created.");
@@ -150,9 +152,18 @@ export function PromptsView({ session, onOpenOperations, onOpenSettings, onSessi
         expectedRevision: prompt.revision,
         reason: decision.reason.trim(),
       });
+      /*
+       * Both of these described a runtime that does not exist. Nothing under
+       * apps/api/src/chat or apps/worker/src reads PromptTemplate -- the only
+       * non-CRUD consumer is one status tile in the Operations overview -- so
+       * "new requests use this exact version" was untrue and "chat now fails
+       * closed" would have sent an operator hunting a fault that is not there.
+       * The fail-closed rule they were both borrowing from belongs to
+       * guardrails. See docs/PROMPT_CONTROL_RUNBOOK.md.
+       */
       setMessage(decision.action === "activate"
-        ? "Chat-system prompt activated. New requests use this exact version."
-        : "Prompt suspended. Because governance was previously adopted, chat now fails closed.");
+        ? "Chat-system prompt activated and recorded in the audit trail. Chat still takes its system text from the active agent profile."
+        : "Prompt suspended and recorded. Chat is unaffected: no runtime component reads the active prompt.");
       setDecision(null);
       await load();
     } catch (cause) {
@@ -168,23 +179,22 @@ export function PromptsView({ session, onOpenOperations, onOpenSettings, onSessi
 
   if (!unlocked) {
     return <LockedScreen
-      kicker="Release governance"
+      kicker="Prompt control"
       title="Prompts"
       mark="P"
-      reason="Sign in as an administrator to review prompt content, checksums, and release evidence; the workspace session you already have stays active."
+      reason="Sign in as an administrator to review prompt content, checksums, and activation history; the workspace session you already have stays active."
       actionLabel="Open platform settings"
       onAction={onOpenSettings}
     />;
   }
 
   const active = prompts.find(({ status }) => status === "ACTIVE");
-  const activatedBefore = prompts.some(({ firstActivatedAt }) => firstActivatedAt !== null);
 
   return <div className="grid gap-5">
     <PageHeader
-      kicker="Release governance"
+      kicker="Prompt control"
       title="Prompts"
-      description="Author and release the exact system instruction used by OrcaSynapse chat."
+      description="Author, version and release the reviewed chat system instruction. Activation records the decision; it does not yet change what a model receives."
       actions={<>
         <Button onClick={onOpenOperations}>Open Operations</Button>
         {canManage && <Button variant="primary" onClick={startCreate}>New prompt</Button>}
@@ -193,11 +203,14 @@ export function PromptsView({ session, onOpenOperations, onOpenSettings, onSessi
 
     <MetricRow className="lg:grid-cols-4" aria-label="Prompt governance summary">
       <Metric label="Prompt records" value={prompts.length} caption="Chat-system purpose" />
+      {/* "Fail closed" and "Legacy mode" were the two states of a governed
+          mode that was never wired: no active prompt breaks nothing, because
+          nothing resolves one. */}
       <Metric
         label="Active release"
         value={active ? "1" : "0"}
-        tone={active ? "good" : activatedBefore ? "bad" : "neutral"}
-        caption={active ? `v${active.version}` : activatedBefore ? "Fail closed" : "Legacy mode"}
+        tone={active ? "good" : "neutral"}
+        caption={active ? `v${active.version}` : "None released"}
       />
       <Metric
         label="Draft records"
@@ -211,25 +224,25 @@ export function PromptsView({ session, onOpenOperations, onOpenSettings, onSessi
       />
     </MetricRow>
 
-    {/* The left rule carries the state: a paused prompt means chat fails
-        closed, which is not something to discover by reading the sentence. */}
+    {/* The left rule carries whether a release is on record. It used to carry
+        a red "fails closed" state for a runtime consequence that does not
+        exist -- suspending the active prompt changes nothing anywhere. */}
     <Panel className={cn(
       "flex items-center gap-4 border-l-2",
-      active ? "border-l-good" : activatedBefore ? "border-l-bad" : "border-l-border-strong",
+      active ? "border-l-good" : "border-l-border-strong",
     )}>
       <div className="min-w-0 flex-1">
-        <MicroLabel className="block">Runtime assignment</MicroLabel>
+        <MicroLabel className="block">Release record</MicroLabel>
         <strong className="mt-1.5 block text-label font-semibold text-text">
           {active
-            ? `${active.displayName} v${active.version} is bound to chat.`
-            : activatedBefore
-              ? "Prompt enforcement is paused and chat fails closed."
-              : "Drafts do not change the built-in chat instruction."}
+            ? `${active.displayName} v${active.version} is the released version.`
+            : "No version is currently released."}
         </strong>
         <p className="mb-0 mt-1 text-body text-muted">
-          OrcaSynapse resolves one active <code className="rounded border border-border bg-raised px-1 font-mono text-accent">CHAT_SYSTEM</code> prompt
-          before model or guardrail routing. Audit events retain the version and SHA-256 checksum, never a duplicate of
-          the prompt body.
+          OrcaSynapse keeps one <code className="rounded border border-border bg-raised px-1 font-mono text-accent">CHAT_SYSTEM</code> prompt
+          active at a time and audits every lifecycle decision with its version and SHA-256 checksum, never a duplicate
+          of the prompt body. No runtime component reads it yet: chat and agent runs take their system text from the
+          active agent profile.
         </p>
       </div>
       {active && (

@@ -1,6 +1,6 @@
 {
   "name": "orcasynapse",
-  "version": "5.1.0",
+  "version": "5.2.0",
   "description": "OrcaSynapse - on-premises agentic intelligence and governed execution control plane",
   "license": "BUSL-1.1",
   "private": true,
@@ -31,7 +31,8 @@
     "pretypecheck": "pnpm --filter @orcasynapse/contracts --filter @orcasynapse/database --filter @orcasynapse/security --filter @orcasynapse/runtime-clients build",
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",
-    "verify": "pnpm build && pnpm typecheck && pnpm test && pnpm db:validate",
+    "verify:static": "bash scripts/test-static-conformance.sh",
+    "verify": "pnpm verify:static && node scripts/test-database-test-budgets.mjs && pnpm build && pnpm typecheck && pnpm test && pnpm db:validate && bash scripts/test-csp-closure.sh",
     "security:audit": "pnpm audit --prod --audit-level high",
     "docs:brand": "node scripts/sync-doc-brand.mjs",
     "admin:provision": "node scripts/provision-local-admin.mjs",

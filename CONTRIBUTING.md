@@ -27,9 +27,37 @@ Day-to-day commands:
 ```bash
 pnpm dev            # API + operator workspace
 pnpm dev:worker     # background worker
-pnpm verify         # build && typecheck && test && db:validate — the merge gate
+pnpm verify         # the merge gate — see below for exactly what it covers
+pnpm verify:static  # just the static gates; needs no node_modules, runs in seconds
 pnpm verify:postgres  # full-migration integration proof (needs ORCASYNAPSE_INTEGRATION_DATABASE_URL)
 ```
+
+`pnpm verify` runs, in order: `scripts/test-static-conformance.sh` (installer
+scripts parse, shell scripts are declared `eol=lf`, both generated-asset
+`--check`s, Dockerfile copy closure, and the release version surfaces), the
+database timeout-budget guard, `build`, `typecheck`, the whole test suite,
+`db:validate`, and finally `scripts/test-csp-closure.sh` against the dashboard
+it just built.
+
+**On Windows, run it from Git Bash, not PowerShell.** Two of those gates are
+shell scripts, and PowerShell has no `bash` on its PATH by default, so the
+chain stops at the first one with `'bash' is not recognized`. Git Bash ships
+with Git for Windows and needs no extra setup. The individual `pnpm test` and
+`pnpm typecheck` targets are shell-independent and run anywhere.
+
+What it does **not** cover, because each needs root, a systemd host or a live
+Docker daemon, and making them a local requirement would only make the merge
+gate unrunnable:
+
+| CI-only gate | Needs |
+| --- | --- |
+| `scripts/test-hermes-corpus-reconciler.py` | root |
+| `scripts/test-deployment-limits.mjs` | the `docker` CLI (daemon-less; run it in WSL on Windows) |
+| `scripts/test-public-installer-recovery.sh`, `scripts/test-agentic-installer-recovery.sh` | a Linux host |
+| `scripts/test-installer-host-sizing.sh` | a Linux host |
+| `scripts/test-installer-public-scheme.sh`, `scripts/test-installer-secret-permissions.sh` | real `sudo` |
+| `scripts/test-agentic-installer-smoke.sh`, `scripts/test-orcasynapse-installer-smoke.sh` | root, systemd and Docker |
+| `pnpm security:audit` | network access to the advisory database |
 
 ## Code expectations
 
@@ -49,9 +77,12 @@ pnpm verify:postgres  # full-migration integration proof (needs ORCASYNAPSE_INTE
 - The canonical Orca mark lives at `apps/web/public/brand/sivali-mark.svg`.
   After changing it, run `pnpm docs:brand`; CI checks that the generated
   `docs/assets/orcasynapse-wordmark.svg` remains identical.
-- Static conformance guards run in CI and locally:
-  `bash scripts/test-release-consistency.sh` and
-  `bash scripts/test-docker-build-closure.sh`.
+- Static conformance guards are part of `pnpm verify` via
+  `bash scripts/test-static-conformance.sh`; run that alone as `pnpm verify:static`
+  for a few seconds of feedback without a build. That script also asserts its
+  own wiring — that `pnpm verify` still reaches it, the database budget guard
+  and the CSP closure check, and that the workflow still runs it before install
+  — because the gap it closes is exactly a gate quietly leaving the merge gate.
 
 ## Release convention
 
@@ -82,7 +113,13 @@ Every release is one commit on `main`:
   `--follow-tags` pushes none of them: use `git push origin main` then
   `git push origin vX.Y.Z`.
 
-`pnpm verify` must be green before any release commit.
+`pnpm verify` must be green before any release commit, and running it is not a
+formality: a release goes straight to `main` rather than through a pull request,
+so `.github/workflows/verify.yml`'s `pull_request` trigger never fires for one
+and its `push` run reports after the tag is already public. For the gates in the
+CI-only table above — the installer suites and the dependency audit — that is
+the only signal there is, so a release is worth waiting for that run to finish
+before announcing.
 
 ## Reporting issues
 

@@ -85,11 +85,18 @@ def read_state(name: str) -> str:
     return value
 
 
-def signed_headers(body: Any) -> dict[str, str]:
+def signed_headers(method: str, path: str, body: Any) -> dict[str, str]:
+    """Sign one operation, not any operation carrying the same body.
+
+    The control plane rebuilds these bytes in `signatureMessage`. Before the
+    method and path were part of them, this reconciler's desired-state poll and
+    the runtime plane's were byte-identical requests — both authenticate over a
+    literal ``null`` — so a signature captured from one was valid on the other.
+    """
     timestamp = utc_now()
     nonce = str(uuid.uuid4())
     digest = hashlib.sha256(canonical(body)).hexdigest()
-    message = f"{timestamp}\n{nonce}\n{digest}".encode("utf-8")
+    message = f"{method.upper()}\n{path}\n{timestamp}\n{nonce}\n{digest}".encode("utf-8")
     with tempfile.NamedTemporaryFile() as message_file, tempfile.NamedTemporaryFile() as signature_file:
         message_file.write(message)
         message_file.flush()
@@ -111,7 +118,7 @@ def signed_headers(body: Any) -> dict[str, str]:
 def request_json(method: str, path: str, body: Any = None) -> Any:
     base = read_state("control-plane-url").rstrip("/")
     payload = None if method == "GET" else canonical(body)
-    headers = signed_headers(body)
+    headers = signed_headers(method, path, body)
     if payload is not None:
         headers["content-type"] = "application/json"
     request = urllib.request.Request(f"{base}{path}", data=payload, headers=headers, method=method)

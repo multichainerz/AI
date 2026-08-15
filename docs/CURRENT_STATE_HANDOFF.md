@@ -14,9 +14,23 @@ remain product compositions rather than being forced into generic cards.
 `v5.0.0` reorganises the workspace around the question each surface
 answers. Setup is a three-step wizard — inference, agent runtime, Agent Profile
 — with one step open at a time and every blocker stated inside the step it
-blocks. Operations is two flat tabs (Health, Audit trail)
-rather than two tabs over four sub-tabs, and Agents is five (Profiles, Runtime,
-Skills, Memory, Agent Tools). Application updates have their own Settings tab.
+blocks. Application updates have their own Settings tab.
+
+`v5.1.0` settles the tab strips. **Agents is four tabs — Profiles, Skills,
+Memory, Tools** — after Runtime folded back into Profiles, which now owns what
+an agent is, what it is doing, and whether it may run at all; `#agents/runtime`
+stays alive as a redirect. **Operations is two — Health and Audit trail** —
+after Release gates went with the evaluation subsystem it governed and Pilot
+readiness was deleted outright (below); `#operations/releases`,
+`#operations/evaluations` and `#releases` redirect to Health.
+
+The five areas and their tabs, in menu order, are: Dashboard; Session; Agents
+(Profiles, Skills, Memory, Tools); Operations (Health, Audit trail); Settings
+(Setup, Models, Prompts, Guardrails, Application).
+`apps/web/src/workspace-navigation.tsx` is the source of truth, and
+`workspace-navigation.test.ts` pins every one of those strips literally —
+this paragraph said "Agents is five (Profiles, Runtime, Skills, Memory, Agent
+Tools)" for a release because nothing did.
 
 Pilot readiness is removed from the console. `ProductionReadinessControl` has
 no create route and no seed, so that screen could never display a row; the
@@ -68,7 +82,7 @@ The earlier product generation is preserved on the `backup/pgvector` branch. Do 
 
 ## Install and recovery
 
-- Existing v4.6.0 and v4.7.x VM1 installations update in place; rerun the current generated VM2 installer with `--repair` to install or replace the corpus companion. Pre-v4.6.0 databases still require clean hosts.
+- Any VM1 installation carrying the `hermes-native-v1` schema epoch updates in place, whichever release installed it. `install.sh` reads the literal marker at `.local/state/schema-epoch` and compares it to that string — no version is parsed or compared anywhere in the decision, so "v4.6.0 and v4.7.x" was an inaccurate proxy for the real gate. Rerun the current generated VM2 installer with `--repair` to install or replace the corpus companion. A pre-v4.6.0 database carries no marker and still requires a clean host.
 - **Settings → Application** can check official release tags and copy the version-pinned VM1 installer command. Running that command remains an explicit host-administrator action; it does not update VM2.
 - Re-running an interrupted installer is supported when its protected completion or enrollment state is intact.
 - Do not point this release at an older OrcaSynapse database; the migrator refuses it before mutation.

@@ -1,10 +1,17 @@
 /**
  * @vitest-environment jsdom
  *
- * Prompts and Guardrails, populated. Both release an artefact into the chat
- * path and both fail closed when a previously-active one is suspended, so the
- * cases below are about whether the screen says which of those three states it
- * is in.
+ * Prompts and Guardrails, populated. The two screens look like siblings and are
+ * not: **Guardrails releases an artefact into the chat path and fails closed
+ * when a previously-active policy is suspended; Prompts does neither.** Nothing
+ * under `apps/api/src/chat` or `apps/worker/src` reads `PromptTemplate` -- its
+ * only non-CRUD consumer is one status tile in the Operations overview -- so a
+ * prompt release is a recorded decision and nothing more, and the screen now
+ * says so. See `docs/PROMPT_CONTROL_RUNBOOK.md`.
+ *
+ * The cases below are about whether each screen states its own state honestly,
+ * which is why the prompts ones assert the absence of the chat-binding language
+ * as well as the presence of the release language.
  *
  * As with `models-view.test.tsx`, `VIEW_PREVIEW_OUT` writes the rendered markup
  * to a file so the screen can be looked at without a session.
@@ -96,9 +103,22 @@ async function guardrailsView() {
 afterEach(cleanup);
 
 describe("prompts", () => {
-  it("names the exact release bound to chat, not merely that one exists", async () => {
+  it("names the exact released version, and does not claim chat is using it", async () => {
     await promptsView();
-    expect(screen.getByText("Governed chat instruction v4.2 is bound to chat.")).toBeTruthy();
+    expect(screen.getByText("Governed chat instruction v4.2 is the released version.")).toBeTruthy();
+
+    /*
+     * The screen said "…is bound to chat", offered "Fail closed" as the state
+     * with no active prompt, and headed the panel "Runtime assignment" -- three
+     * claims about a runtime that has never read this table. An operator acting
+     * on the second one would have gone looking for a chat outage that is not
+     * there. Asserted as absences because the failure mode is the sentence
+     * coming back, not this one going away.
+     */
+    const body = document.body.textContent ?? "";
+    for (const claim of ["bound to chat", "fails closed", "Fail closed", "Legacy mode", "Runtime assignment"]) {
+      expect(body, `the prompts screen still claims "${claim}"`).not.toContain(claim);
+    }
   });
 
   it("shows the instruction verbatim, because that is the artefact under review", async () => {

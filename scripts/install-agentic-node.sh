@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="v5.1.0"
+INSTALLER_VERSION="v5.2.0"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 HERMES_HOME_DIR="${STATE_ROOT}/home"
 RUNTIME_SERVICE="orcasynapse-hermes"
@@ -1191,12 +1191,17 @@ resolve_bundle_from_orcasynapse() {
   RESOLVED_BUNDLE="${response_file}"
 }
 
+# The signed message binds the method and path as well as the body, so a
+# signature authorises one operation rather than any operation carrying the
+# same payload. The control plane rebuilds these exact bytes in
+# `signatureMessage`; keep the field order and the absent trailing newline
+# identical on both sides.
 sign_node_payload() {
-  local body="$1" timestamp="$2" nonce="$3"
+  local body="$1" timestamp="$2" nonce="$3" method="$4" path="$5"
   local body_digest message_file signature sign_status=0
   body_digest="$(printf '%s' "${body}" | sha256sum | awk '{print $1}')"
   message_file="$(mktemp /tmp/orcasynapse-node-signature.XXXXXX)"
-  printf '%s\n%s\n%s' "${timestamp}" "${nonce}" "${body_digest}" > "${message_file}"
+  printf '%s\n%s\n%s\n%s\n%s' "${method}" "${path}" "${timestamp}" "${nonce}" "${body_digest}" > "${message_file}"
   signature="$(
     openssl pkeyutl -sign -rawin \
       -inkey "${STATE_ROOT}/identity/node.key" \
@@ -1236,7 +1241,7 @@ verify_enrolled_identity() {
     --arg version "${hermes_commit}" \
     '{observedAt:$observedAt,status:$status,hermesVersion:$version,capabilities:["gateway-api","signed-heartbeat"]}')"
   nonce="$(cat /proc/sys/kernel/random/uuid)"
-  signature="$(sign_node_payload "${payload}" "${observed_at}" "${nonce}")"
+  signature="$(sign_node_payload "${payload}" "${observed_at}" "${nonce}" 'POST' "${heartbeat_path}")"
   response_file="$(mktemp)"
   TEMPORARY_FILES+=("${response_file}")
   http_status="$(curl --silent --show-error --output "${response_file}" --write-out '%{http_code}' --max-time 30 \
@@ -1320,10 +1325,13 @@ PRIVATE_KEY="${STATE_ROOT}/identity/node.key"
 WORK="$(mktemp -d /tmp/orcasynapse-desired-state.XXXXXX)"
 trap 'rm -rf -- "${WORK}"' EXIT
 
+# The method and path are signed alongside the body so this poll's signature
+# cannot be replayed against the corpus plane's desired-state endpoint, which
+# authenticates over the same literal `null`.
 sign_request() {
-  local timestamp="$1" nonce="$2" body="$3" body_digest
+  local timestamp="$1" nonce="$2" body="$3" method="$4" path="$5" body_digest
   body_digest="$(printf '%s' "${body}" | sha256sum | awk '{print $1}')"
-  printf '%s\n%s\n%s' "${timestamp}" "${nonce}" "${body_digest}" > "${WORK}/message"
+  printf '%s\n%s\n%s\n%s\n%s' "${method}" "${path}" "${timestamp}" "${nonce}" "${body_digest}" > "${WORK}/message"
   openssl pkeyutl -sign -rawin -inkey "${PRIVATE_KEY}" -in "${WORK}/message" \
     | openssl base64 -A | tr '+/' '-_' | tr -d '='
 }
@@ -1331,7 +1339,7 @@ sign_request() {
 timestamp="$(date --utc '+%Y-%m-%dT%H:%M:%SZ')"
 nonce="$(cat /proc/sys/kernel/random/uuid)"
 # A GET carries no body; the control plane checksums the literal JSON null.
-signature="$(sign_request "${timestamp}" "${nonce}" 'null')"
+signature="$(sign_request "${timestamp}" "${nonce}" 'null' 'GET' "${DESIRED_STATE_PATH}")"
 
 http_status="$(curl --silent --show-error --max-time 20 \
   --output "${WORK}/response.json" --write-out '%{http_code}' \
@@ -1539,12 +1547,14 @@ fi
 PRIVATE_KEY="${STATE_ROOT}/identity/node.key"
 COMMIT_PIN="$(<"${STATE_ROOT}/commit-pin")"
 
+# Binds the method and path as well as the body — see `signatureMessage` on the
+# control plane. The five fields and the absent trailing newline must match.
 sign_request() {
-  local timestamp="$1" nonce="$2" body="$3"
+  local timestamp="$1" nonce="$2" body="$3" method="$4" path="$5"
   local body_digest message_file signature sign_status=0
   body_digest="$(printf '%s' "${body}" | sha256sum | awk '{print $1}')"
   message_file="$(mktemp /tmp/orcasynapse-heartbeat-signature.XXXXXX)"
-  printf '%s\n%s\n%s' "${timestamp}" "${nonce}" "${body_digest}" > "${message_file}"
+  printf '%s\n%s\n%s\n%s\n%s' "${method}" "${path}" "${timestamp}" "${nonce}" "${body_digest}" > "${message_file}"
   signature="$(
     openssl pkeyutl -sign -rawin \
       -inkey "${PRIVATE_KEY}" \
@@ -1573,7 +1583,7 @@ payload="$(jq -cS -n \
   '{observedAt:$observedAt,status:$status,hermesVersion:$version,capabilities:["gateway-api","native-sessions","native-memory","signed-heartbeat","corpus-sync-v1","corpus-crud-v1"]}')"
 timestamp="${observed_at}"
 nonce="$(cat /proc/sys/kernel/random/uuid)"
-signature="$(sign_request "${timestamp}" "${nonce}" "${payload}")"
+signature="$(sign_request "${timestamp}" "${nonce}" "${payload}" 'POST' "${HEARTBEAT_PATH}")"
 
 curl --fail --silent --show-error --max-time 15 \
   -H 'Content-Type: application/json' \
