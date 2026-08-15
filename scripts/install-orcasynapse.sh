@@ -6,6 +6,15 @@ umask 077
 ORCASYNAPSE_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 ORCASYNAPSE_HTTP_PORT="${ORCASYNAPSE_HTTP_PORT:-8080}"
 ORCASYNAPSE_SECRET_DIR="${ORCASYNAPSE_ROOT}/.local/secrets"
+# Where the update agent is fetched from later, carried so that a fork or a
+# mirror installs an agent that updates from the same place this came from.
+ORCASYNAPSE_GITHUB_REPOSITORY="${ORCASYNAPSE_GITHUB_REPOSITORY:-multichainerz/AI}"
+# The first host units VM1 has ever had. Named through variables with production
+# defaults so the smoke test can install and remove its own copy on a host that
+# may be running a real deployment -- the whole code path runs either way, which
+# is the difference between a containment seam and a skipped branch.
+ORCASYNAPSE_UPDATE_UNIT="${ORCASYNAPSE_UPDATE_UNIT:-orcasynapse-update}"
+ORCASYNAPSE_UPDATE_AGENT_DIR="${ORCASYNAPSE_UPDATE_AGENT_DIR:-/usr/local/lib/orcasynapse}"
 ORCASYNAPSE_APPLICATION_SECRET_GID=1000
 # The host floor deploy/BOOTSTRAP.md documents, kept here so the preflight and
 # the document cannot drift apart.
@@ -298,6 +307,101 @@ write_completion_marker() {
   chmod 0600 "${ORCASYNAPSE_ROOT}/.local/state/schema-epoch"
 }
 
+# Replaces a managed file by rename rather than by writing through it.
+#
+# This is not tidiness. During an upgrade driven by the update agent, the file
+# installed below is the program executing this installer's grandparent -- and
+# bash reads a script incrementally, so writing new bytes into the inode it is
+# part-way through executing makes it resume at an offset into different text.
+# `install`, `cp` and a plain redirect all write through the existing inode. A
+# rename leaves the running process on the old one and every later run on the new
+# one, which is the only version of this that is safe to do to yourself.
+replace_managed_file() {
+  local mode="$1" destination="$2" parent temporary
+  parent="$(dirname -- "${destination}")"
+  install -d -m 0755 "${parent}"
+  temporary="$(mktemp "${parent}/.orcasynapse-write.XXXXXX")" \
+    || fail "could not stage a replacement for ${destination}"
+  cat > "${temporary}" || fail "could not write ${destination}"
+  chmod "${mode}" "${temporary}"
+  chown root:root "${temporary}"
+  mv -f -- "${temporary}" "${destination}" || fail "could not atomically replace ${destination}"
+}
+
+# The host side of in-dashboard updates. VM1 had no units of its own before this;
+# these are the first, and they follow the conventions the VM2 installer already
+# uses for its three timers.
+#
+# The agent lives outside ${ORCASYNAPSE_ROOT} because it is running while that
+# directory is renamed away. It reads the approved target straight from
+# PostgreSQL: the host already has root and the Docker socket, so a poller adds
+# no listener and no authenticated surface that did not exist a moment ago.
+install_update_agent() {
+  local source="${ORCASYNAPSE_ROOT}/scripts/orcasynapse-update-agent.sh"
+  local agent="${ORCASYNAPSE_UPDATE_AGENT_DIR}/orcasynapse-update-agent.sh"
+  if [[ ! -r "${source}" ]]; then
+    warning "This release carries no update agent; in-dashboard updates were not installed."
+    return 0
+  fi
+  if [[ ! -d /run/systemd/system ]]; then
+    info "This host does not run systemd, so the update timer was not installed; upgrades stay manual here."
+    return 0
+  fi
+  replace_managed_file 0700 "${agent}" < "${source}"
+
+  replace_managed_file 0644 "/etc/systemd/system/${ORCASYNAPSE_UPDATE_UNIT}.service" <<EOF
+[Unit]
+Description=OrcaSynapse in-dashboard update agent
+Documentation=https://github.com/${ORCASYNAPSE_GITHUB_REPOSITORY}
+After=network-online.target docker.service
+Wants=network-online.target docker.service
+# Proof of ownership, the same marker the VM2 units carry.
+X-OrcaSynapse-Managed=true
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+Environment=ORCASYNAPSE_INSTALL_DIR=${ORCASYNAPSE_ROOT}
+Environment=ORCASYNAPSE_HTTP_PORT=${ORCASYNAPSE_HTTP_PORT}
+Environment=ORCASYNAPSE_GITHUB_REPOSITORY=${ORCASYNAPSE_GITHUB_REPOSITORY}
+ExecStart=${agent}
+# An upgrade is an image build, a migration and a cold start. A default
+# TimeoutStartSec would kill this unit part-way through one; the upgrade itself
+# survives that -- it runs in a transient scope of its own -- but the health gate
+# and the rollback that follow it would not, which is the half that matters.
+TimeoutStartSec=3600
+# Deliberately not hardened the way the VM2 units are. This service exists to
+# replace ${ORCASYNAPSE_ROOT}, drive the Docker socket and rewrite these very
+# unit files; ProtectSystem=strict and ReadOnlyPaths would each break one of
+# those outright. What confines it is that it listens on nothing, takes no
+# input but one row of an approved target, and is reachable only by its timer.
+EOF
+
+  replace_managed_file 0644 "/etc/systemd/system/${ORCASYNAPSE_UPDATE_UNIT}.timer" <<EOF
+[Unit]
+Description=Check for an approved OrcaSynapse release every ten minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=10min
+RandomizedDelaySec=60s
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target
+EOF
+
+  systemctl daemon-reload || fail "systemd could not reload after the update units were written"
+  # The timer, and only the timer. `systemctl start ${ORCASYNAPSE_UPDATE_UNIT}`
+  # here would kill the agent that is running this installer during an upgrade
+  # -- systemd would treat the new job as a restart of the unit whose cgroup the
+  # whole upgrade is descended from. Nothing in this installer may ever start or
+  # restart that service.
+  systemctl enable --now "${ORCASYNAPSE_UPDATE_UNIT}.timer" >/dev/null \
+    || fail "the update timer could not be enabled"
+}
+
 provision_local_administrator() {
   local temporary_password result
   temporary_password="$(openssl rand -base64 24 | tr -d '\n=' | tr '+/' '-_')"
@@ -387,6 +491,11 @@ main() {
   start_stack
   run_with_progress "Wait for control-plane readiness" wait_for_orcasynapse \
     || fail "control-plane readiness checks failed"
+  # After readiness, because the agent it installs is the thing that will drive
+  # the next upgrade and there is no point arming it against a deployment that
+  # never came up.
+  run_with_progress "Install the in-dashboard update agent" install_update_agent \
+    || fail "the in-dashboard update agent could not be installed"
 
   step 6 "${TOTAL_STEPS}" "Provision administrator access"
   provision_local_administrator

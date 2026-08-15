@@ -57,6 +57,7 @@ gate unrunnable:
 | `scripts/test-installer-host-sizing.sh` | a Linux host |
 | `scripts/test-installer-public-scheme.sh`, `scripts/test-installer-secret-permissions.sh` | real `sudo` |
 | `scripts/test-agentic-installer-smoke.sh`, `scripts/test-orcasynapse-installer-smoke.sh` | root, systemd and Docker |
+| `scripts/test-orcasynapse-installer-backup.sh`, `scripts/test-orcasynapse-installer-upgrade.sh`, `scripts/test-orcasynapse-update-agent.sh` | root and a live Docker daemon (no image build; each contains itself to its own Compose project and asserts the host is unchanged afterwards) |
 | `pnpm security:audit` | network access to the advisory database |
 
 ## Code expectations

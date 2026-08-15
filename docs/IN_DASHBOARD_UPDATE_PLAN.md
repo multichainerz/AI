@@ -23,32 +23,66 @@ inventing one.
 | VM2 signed desired-state channel, 60s timer, pinned control-plane key | built |
 | VM2 installer pins Hermes by 40-char commit, stores `commit-pin` | built |
 | VM1 unattended in-place upgrade (`ORCASYNAPSE_EXISTING_INSTALL_ACTION=upgrade`) | built |
-| VM1 source rollback on failed install (`.backup.$$`, auto-restored) | **only during the swap** |
+| VM1 source rollback on failed install (`.backup.$$`) | built (increment 4) |
+| VM1 database rollback on failed install | built (increment 4) |
 | Release tag lookup and comparison (`platform-updates.ts`) | built |
-| **Database backup before migrate** | **missing** |
+| Database backup before migrate | built (increment 1) |
 | **Down migrations / schema rollback** | **absent by design (forward-only)** |
-| VM1 host-side systemd units | none exist |
-| Approved-target record | missing |
+| VM1 host-side systemd units | built (increment 4) |
+| Approved-target record | built (increment 2) |
 
-## The failure that shapes everything
+## The failure that shaped everything
 
-`install.sh` backs up the *source directory* before replacing it — but
-`upgrade_source_tree` deletes that backup the instant the swap succeeds, so the
-EXIT handler's restore covers only the few milliseconds between the two `mv`
-calls. Nothing restores the source after the handoff, and the handoff is where
-migrations run. The database is not backed up by the swap at all, and the four
+`install.sh` backed up the *source directory* before replacing it — and
+`upgrade_source_tree` deleted that backup the instant the swap succeeded, so the
+EXIT handler's restore covered only the few milliseconds between the two `mv`
+calls. Nothing restored the source after the handoff, and the handoff is where
+migrations run. The database was not backed up by the swap at all, and the
 migrations are forward-only. So:
 
-- fails **before** migrating → the database is untouched, so the upgrade can
-  simply be re-run (the *source* is already on the new tree either way)
+- fails **before** migrating → the database is untouched
 - fails **after** migrating → new schema, new code that could not start, and the
   pre-upgrade dump as the only way back — restored by an operator at a shell
 
-Both branches are asserted by `scripts/test-orcasynapse-installer-upgrade.sh`.
+Increment 1 made the dump exist. Increment 4 made both branches recover without
+that operator; both are asserted by
+`scripts/test-orcasynapse-installer-upgrade.sh`.
 
-Today an operator at a shell absorbs that. This feature removes the shell, so it
-must not ship before the database can be restored. That is why increment 1 is
-first and is independently valuable.
+## Where the rollback lives, and why
+
+**In `install.sh`.** It retains the pre-upgrade tree past the swap, restores it
+when the handoff fails, restores the database when — and only when — the schema
+moved, and then re-runs the restored tree's own installer so the deployment
+comes back up. The update agent supervises, but does not own the retention.
+
+The alternative was to have the agent take its own copy of the tree and drive
+the restore. Three things decided it:
+
+- **Only `install.sh` knows the instant of the swap.** A copy taken outside it
+  is taken at a different moment and can disagree with what was actually
+  replaced. The backup already existed at exactly the right instant; the whole
+  change is to stop deleting it two lines later.
+- **`install.sh` is run by humans, and that path is the one used during an
+  incident.** Putting the rollback in the agent would leave the hand-run path
+  exactly as dangerous as it was. Putting it in `install.sh` improves both.
+- **The code that takes the backup is the code that restores it** — one process,
+  one run, no version skew between the two halves. Note what this does *not*
+  mean: the installer that runs is always the **target** release's, fetched at
+  its commit, so a future release that removed the rollback would be unprotected
+  on the way in. That is a property of any bootstrap fetched at the version
+  being installed, and the agent inherits it; what removes the risk is that the
+  rollback is asserted in the `install` job, which is required.
+
+Two things follow, and both are asserted:
+
+- `ORCASYNAPSE_UPGRADE_ROLLBACK=off` restores the old behaviour exactly, for the
+  operator who wants the failed state left in place to inspect.
+- The database restore is gated on a **schema fingerprint** taken beside the
+  dump. The commonest upgrade failure by far is an image build that never
+  reached the database; restoring a dump for one of those would discard every
+  write taken while the build ran. What that gate cannot see is a data-only
+  migration, which is stated in the runbook and overridable with
+  `ORCASYNAPSE_UPGRADE_RESTORE_DATABASE=always`.
 
 ---
 
@@ -113,33 +147,62 @@ which commit is actually running.
 
 ## Increment 4 — VM1 updates itself
 
-The dangerous one. Do not start before increments 1 and 2 are shipped.
+The dangerous one. Built in two halves, the rollback first.
 
-- New `scripts/orcasynapse-update-agent.sh` plus a systemd timer, installed by
-  `install-orcasynapse.sh`. VM1 currently has no units of its own; this is the
-  first.
+**Part 1, in `install.sh`.** The retention and the rollback described above. It
+ships independently of the agent and improves the hand-run path on its own.
+
+**Part 2, `scripts/orcasynapse-update-agent.sh`** plus
+`orcasynapse-update.service` and `.timer`, installed by
+`install-orcasynapse.sh`. VM1's first host units; they follow the conventions
+`install-agentic-node.sh` uses for VM2's three.
+
 - The agent reads the approved target directly from Postgres
-  (`docker compose exec -T postgres psql`) rather than through a new endpoint.
-  The host is already the trusted party — it has root and Docker — so this adds
-  no authenticated surface and no new listener.
-- On a difference it: takes the increment-1 dump, downloads `install.sh` **at
-  the approved tag** (not from `main`), and runs it with
-  `ORCASYNAPSE_EXISTING_INSTALL_ACTION=upgrade`.
+  (`docker compose exec -T postgres psql` against the `PlatformReleaseTarget`
+  singleton) rather than through a new endpoint. The host is already the trusted
+  party — it has root and Docker — so this adds no authenticated surface and no
+  new listener. The database password is read inside the container from
+  `/run/secrets/postgres_password`; nothing puts it on the host's process list.
+- It does nothing when the target is null or already installed.
+- On a difference it downloads `install.sh` **at the approved commit** — the
+  commit increment 2 resolved and stored at approval time, never `main` and
+  never the tag, because a tag can be re-pointed after approval — and runs it
+  with `ORCASYNAPSE_EXISTING_INSTALL_ACTION=upgrade`.
+- It then health-gates against `/readyz` with a bounded wait.
 
-Three self-referential traps, each of which has to be handled explicitly:
+The three self-referential traps, and how each is answered:
 
-1. **The agent replaces itself mid-run.** It must execute from a copy outside
-   the install tree (`/usr/local/lib/orcasynapse/`) and detach from the units it
-   restarts, or it is killed partway through its own upgrade.
-2. **The API goes down during its own update**, so the dashboard cannot report
-   progress. The panel must say it is blind rather than appear stalled.
-3. **The escape hatch is the thing being removed.** A health gate after the
-   upgrade is mandatory: if `/healthz` does not answer within a bounded window,
-   restore the source backup and the database dump, and record why.
+1. **The agent replaces itself mid-run.** It executes from
+   `/usr/local/lib/orcasynapse/`, outside the tree the upgrade renames away, and
+   `install-orcasynapse.sh` replaces that file by rename rather than by writing
+   through the inode a running bash is reading. The upgrade itself is launched
+   in a **transient systemd scope**, so it is in its own cgroup and stopping or
+   restarting `orcasynapse-update.service` cannot kill it. The installer
+   enables the *timer* and never starts the service, for the same reason.
+2. **The API goes down during its own update.** The record carries the phase and
+   `apiUnavailableUntil`; a reader seeing `upgrading` before that moment is
+   looking at a restart, not a stall. The EXIT handler rewrites `upgrading` to
+   `failed` on an abnormal exit, so no finished run is ever left claiming to
+   still be going.
+3. **The escape hatch is the thing being removed.** Two gates, not one.
+   `install.sh` rolls back the failures it can see. The agent covers the one it
+   cannot — a release that installs cleanly, returns zero, and then never
+   answers `/readyz` — by performing the documented recovery from the backup
+   record. Whatever fails, the reason is on disk in two places:
+   `.local/state/last-update-agent.json` inside the tree, and
+   `/var/lib/orcasynapse-update/last-run.json` outside it, where a source swap
+   or a rollback cannot take it.
 
-**Done when:** an induced failure after migration restores both source and
-database automatically, and the deployment comes back on the previous version
-without anyone opening a shell.
+**Done, and asserted:** `scripts/test-orcasynapse-installer-upgrade.sh` (105
+assertions, 8 scenarios) and `scripts/test-orcasynapse-update-agent.sh` (62
+assertions, 11 scenarios), both in the `install` job.
+
+**What is still not proven.** No application image is built in either suite, so
+nothing here says the product boots on the new schema. The releases are staged
+fixtures, not real tarballs. Nothing has run this against a real full
+installation end to end — the first real unattended upgrade will be the first
+one anybody has seen. And the record the agent writes is a host file: no API
+route reads it yet, so the dashboard still cannot show what the agent did.
 
 ## Ordering and skew
 
@@ -179,13 +242,20 @@ Three limits, stated in the file at more length:
 - **Version B is a staged tarball**, differing from A in its version constant,
   commit, and migration set — not a real release. This proves the mechanism, not
   that two real releases are compatible.
-- **The recovery is driven by the harness**, because nothing in the product
-  performs it. The assertion named *"install.sh restored nothing by itself"* is
-  the one increment 4 has to flip.
+- **The recovery used to be driven by the harness**, because nothing in the
+  product performed it. `install.sh` performs it now, and the assertion that
+  read *"install.sh restored nothing by itself"* has been flipped to assert that
+  it did. What is left of the manual driver is the two cases nothing automates:
+  deliberately downgrading a healthy deployment, and recovering from a run
+  started with `ORCASYNAPSE_UPGRADE_ROLLBACK=off`.
 
-Still needed for increment 4 itself: the same round trip driven by the update
-agent rather than by the harness, on the WSL bed (`OrcaSynapse-VM1`,
-`OrcaSynapse-VM2`), with the approved-target record supplying the version.
+`scripts/test-orcasynapse-update-agent.sh` is the same round trip driven by the
+agent, with the approved-target row supplying the version. It adds the two
+things the upgrade harness cannot reach: a release that installs cleanly and
+then fails its health gate, and a direct proof that work launched in a transient
+systemd scope survives its unit being stopped — with the un-scoped control run
+beside it, because a marker that appears proves nothing unless the same marker
+is absent when the scope is removed.
 
 Every gate here follows the house protocol: write the test, watch it fail for
 the stated reason, fix, then mutate the fix and watch it fail again. An updater

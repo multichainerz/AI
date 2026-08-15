@@ -4,6 +4,11 @@ set -Eeuo pipefail
 umask 077
 
 ORCASYNAPSE_GITHUB_REPOSITORY="${ORCASYNAPSE_GITHUB_REPOSITORY:-multichainerz/AI}"
+# Exported so the host installer can bake it into the update agent's unit. An
+# installation that came from a fork or a mirror must keep updating from there,
+# not silently start pulling install.sh from upstream on its first unattended
+# upgrade.
+export ORCASYNAPSE_GITHUB_REPOSITORY
 ORCASYNAPSE_REF="${ORCASYNAPSE_REF:-main}"
 ORCASYNAPSE_INSTALL_DIR="${ORCASYNAPSE_INSTALL_DIR:-/opt/orcasynapse}"
 ORCASYNAPSE_ARCHIVE_SHA256="${ORCASYNAPSE_ARCHIVE_SHA256:-}"
@@ -13,6 +18,29 @@ staging_dir=""
 backup_dir=""
 database_backup_path=""
 existing_install_action=""
+
+# The pre-upgrade source tree, retained *past* the swap so that a failure at the
+# handoff -- which is where the forward-only migrations run -- has something to
+# put back. Until this existed the backup was deleted the instant the swap
+# succeeded, so the EXIT handler's restore covered the two rename calls and
+# nothing after them.
+#
+# It is cleared in exactly two places: the rollback, which consumes it, and the
+# success path, which discards it. Anything else reaching the EXIT handler with
+# it still set means the run was interrupted, and that handler puts the source
+# back rather than leaving a half-upgraded tree behind.
+upgrade_backup_dir=""
+# Everything the rollback needs, captured while the installation being replaced
+# is still the one on disk. Read after the swap they would describe the new tree.
+upgrade_database_user=""
+upgrade_database_name=""
+upgrade_schema_fingerprint=""
+upgrade_from_version=""
+upgrade_from_commit=""
+upgrade_to_commit=""
+# Set once a rollback has run, so the EXIT handler can tell "there is a dump and
+# you must restore it yourself" apart from "this already restored itself".
+upgrade_rollback_outcome=""
 
 # >>> ORCASYNAPSE-INSTALLER-UI v1 - generated from scripts/lib/installer-ui.sh; edit the library, then run: bash scripts/sync-installer-ui.sh >>>
 # shellcheck shell=bash
@@ -508,6 +536,36 @@ cleanup() {
       warning "A protected source backup remains at ${backup_dir}; inspect it before removal."
     fi
   fi
+  # A retained pre-upgrade tree that reaches this handler is one the supervised
+  # rollback never got to: the run was interrupted, or it died before the
+  # handoff was even reached. Putting the *source* back here is cheap and always
+  # correct -- the tree is byte-for-byte what was replaced -- so it is done
+  # rather than left to an operator who, once the dashboard owns updates, may
+  # have no shell to do it from. The database is deliberately not touched from a
+  # trap: that restore is destructive and takes minutes, and a signal handler is
+  # the wrong place to start it. The panel below names the dump instead.
+  #
+  # Gated on a failing status, and that gate is not decoration: a successful run
+  # that somehow still holds a backup must discard it, never undo itself. A
+  # mutation that removed the success path's discard proved the point -- without
+  # this gate the EXIT handler rolled a *successful* upgrade back to the previous
+  # release, which is a worse defect than the one being mutated.
+  if [[ -n "${upgrade_backup_dir}" && -d "${upgrade_backup_dir}" ]]; then
+    if (( status == 0 )); then
+      warning "A retained pre-upgrade source tree was left at ${upgrade_backup_dir} by a successful run; removing it."
+      rm -rf --one-file-system -- "${upgrade_backup_dir}" || true
+    elif restore_retained_source_backup; then
+      warning "The interrupted upgrade's source tree was restored; the database was left as it was."
+    else
+      warning "The pre-upgrade source tree is at ${upgrade_backup_dir} and could not be restored automatically."
+    fi
+  fi
+  # An upgrade that rolled itself back has already said so, at length, with the
+  # outcome it reached. Repeating "the dump is intact, go and restore it" under
+  # that would tell an operator to redo work the installer just did.
+  if [[ -n "${upgrade_rollback_outcome}" ]]; then
+    return
+  fi
   # The source tree restores itself; the database does not, because the
   # migrations are forward-only and have no down step. An upgrade that fails
   # after they ran leaves a new schema under old code, and this dump is the only
@@ -930,6 +988,239 @@ record_database_backup() {
   chmod 0600 "${receipt}"
 }
 
+# The schema as one value, so "did the migrations actually move anything" is a
+# question with an answer instead of an assumption.
+#
+# Column level, not table level: the migration that cannot be undone is the one
+# that adds a column and backfills it, and a digest of table names alone would
+# call that no change at all. Ordered inside string_agg rather than by an ORDER
+# BY on the subquery, because aggregate input order is only guaranteed when the
+# aggregate itself is told to sort.
+#
+# Read inside the container for the same two reasons the dump is: the database
+# listens only on Compose's internal `data` network, and its password is a
+# container-mounted secret that must never appear in the host's process list.
+#
+# Returns non-zero rather than calling fail -- it runs inside a command
+# substitution, where fail would end only the subshell.
+database_schema_fingerprint() {
+  local db_user="$1" db_name="$2" value=""
+  value="$(docker compose --project-directory "${ORCASYNAPSE_INSTALL_DIR}" exec -T postgres \
+    sh -c 'PGPASSWORD="$(cat /run/secrets/postgres_password)" exec psql --username="$1" --dbname="$2" --no-password -tAc "$3"' \
+    orcasynapse-pg-fingerprint "${db_user}" "${db_name}" \
+    "select coalesce(md5(string_agg(table_name || '.' || column_name || ':' || data_type, ',' order by table_name, column_name)), 'empty-schema') from information_schema.columns where table_schema = 'public'" \
+    </dev/null 2>/dev/null)" || return 1
+  value="${value//[[:space:]]/}"
+  [[ -n "${value}" ]] || return 1
+  printf '%s' "${value}"
+}
+
+# Restores the pre-upgrade dump over the database it was taken from.
+#
+# The password is read inside the container, never passed in; --clean
+# --if-exists in the dump means this does not need an empty database; and
+# ON_ERROR_STOP=1 is the difference between a restore and a psql run that
+# reports success after skipping every statement it could not apply.
+restore_database_from_dump() {
+  local dump="$1" db_user="$2" db_name="$3"
+  gzip -cd -- "${dump}" \
+    | docker compose --project-directory "${ORCASYNAPSE_INSTALL_DIR}" exec -T postgres \
+        sh -c 'PGPASSWORD="$(cat /run/secrets/postgres_password)" exec psql --username="$1" --dbname="$2" --no-password -v ON_ERROR_STOP=1 -q' \
+        orcasynapse-pg-restore "${db_user}" "${db_name}" >/dev/null
+}
+
+# The retained tree goes back where the installation lives.
+#
+# The failed tree is moved aside first and removed only once the old one is in
+# place, so the window in which the installation directory does not exist is one
+# rename long -- and for that window `backup_dir` is set, which is what makes the
+# EXIT handler's own restore the safety net for a failure in the next line.
+#
+# The failed run's installer log is carried across before its tree goes. An
+# upgrade that put itself back has, by definition, removed the evidence of why
+# it failed; that log is the only place the reason survives.
+restore_retained_source_backup() {
+  local install_parent install_name failed_dir diagnostics stamp
+  [[ -n "${upgrade_backup_dir}" && -d "${upgrade_backup_dir}" ]] || return 1
+  install_parent="$(dirname -- "${ORCASYNAPSE_INSTALL_DIR}")"
+  install_name="$(basename -- "${ORCASYNAPSE_INSTALL_DIR}")"
+  stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  failed_dir="${install_parent}/.${install_name}.failed.$$"
+  [[ ! -e "${failed_dir}" ]] || rm -rf --one-file-system -- "${failed_dir}"
+  if [[ -e "${ORCASYNAPSE_INSTALL_DIR}" ]]; then
+    mv -- "${ORCASYNAPSE_INSTALL_DIR}" "${failed_dir}" || return 1
+  fi
+  backup_dir="${upgrade_backup_dir}"
+  mv -- "${upgrade_backup_dir}" "${ORCASYNAPSE_INSTALL_DIR}" || return 1
+  backup_dir=""
+  upgrade_backup_dir=""
+  if [[ -d "${failed_dir}/.local/state" ]]; then
+    diagnostics="${ORCASYNAPSE_INSTALL_DIR}/.local/state/failed-upgrade-${stamp}"
+    install -d -m 0700 "${diagnostics}"
+    # Guarded by the -d above and tolerant of an empty match: an unmatched glob
+    # expands to itself, and a cp that fails on it must not end the rollback
+    # that is already most of the way through putting the machine back.
+    cp -a -- "${failed_dir}/.local/state/"*.log "${diagnostics}/" 2>/dev/null || true
+  fi
+  [[ ! -d "${failed_dir}" ]] || rm -rf --one-file-system -- "${failed_dir}"
+  return 0
+}
+
+# Discarded, not kept: a retained tree per upgrade would accumulate a full copy
+# of the source for every release the machine ever took.
+discard_retained_source_backup() {
+  [[ -n "${upgrade_backup_dir}" ]] || return 0
+  [[ ! -d "${upgrade_backup_dir}" ]] || rm -rf --one-file-system -- "${upgrade_backup_dir}"
+  upgrade_backup_dir=""
+}
+
+# What happened, on disk, in the restored tree.
+#
+# This is the third self-referential trap answered: when the update agent drives
+# an upgrade there is no terminal to read, and if the rollback was needed there
+# may be no dashboard either. Whatever else fails, the reason has to be findable
+# by a human who logged in afterwards and found the machine on its old version.
+record_upgrade_rollback() {
+  local outcome="$1" reason="$2" database_restored="$3" handoff_status="$4"
+  local receipt="${ORCASYNAPSE_INSTALL_DIR}/.local/state/last-upgrade-rollback.json"
+  local escaped_reason="${reason//\\/\\\\}"
+  escaped_reason="${escaped_reason//\"/\\\"}"
+  # Only into an installation directory that already exists. A rollback that
+  # failed between its two renames leaves that path deliberately absent, and the
+  # EXIT handler's restore is a `mv` that requires it to stay that way -- so
+  # creating it here to hold a record would block the last line of defence with
+  # a note explaining why it was needed.
+  [[ -d "${ORCASYNAPSE_INSTALL_DIR}" ]] || return 0
+  install -d -m 0700 "${ORCASYNAPSE_INSTALL_DIR}/.local/state"
+  printf '{"outcome":"%s","reason":"%s","databaseRestored":%s,"handoffStatus":%s,"fromVersion":"%s","fromCommit":"%s","toCommit":"%s","databaseBackup":"%s","at":"%s"}\n' \
+    "${outcome}" "${escaped_reason}" "${database_restored}" "${handoff_status}" \
+    "${upgrade_from_version}" "${upgrade_from_commit}" "${upgrade_to_commit}" \
+    "${database_backup_path}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "${receipt}"
+  chmod 0600 "${receipt}"
+}
+
+# Whether the forward-only migrations moved the schema between the dump and now.
+#
+# This is the gate on the destructive half of the rollback, and it exists because
+# the most likely upgrade failure by far is an image build that never reached the
+# database at all. Restoring a dump unconditionally would throw away every write
+# taken during the minutes that build ran -- on a deployment whose data was never
+# in danger. Two fingerprints answer it: same means the migrations did not run,
+# and the old code will find the database exactly as it left it.
+#
+# What this deliberately does not catch: a migration that changes only data and
+# no column. Nothing about the schema moves for one of those, so the source is
+# restored and the data is not. That is stated in docs/DATABASE_RESTORE_RUNBOOK.md
+# rather than papered over, and ORCASYNAPSE_UPGRADE_RESTORE_DATABASE=always is
+# the escape for a release known to carry one.
+upgrade_needs_database_restore() {
+  local now=""
+  case "${ORCASYNAPSE_UPGRADE_RESTORE_DATABASE:-auto}" in
+    always) info "A database restore was requested unconditionally."; return 0 ;;
+    never)  warning "ORCASYNAPSE_UPGRADE_RESTORE_DATABASE=never: the database will not be restored."; return 1 ;;
+  esac
+  [[ -n "${upgrade_schema_fingerprint}" ]] || return 1
+  now="$(database_schema_fingerprint "${upgrade_database_user}" "${upgrade_database_name}" || printf '')"
+  if [[ -z "${now}" ]]; then
+    # Unreadable is not the same as unchanged. The database could not be asked,
+    # so the safe answer is the one that puts the dump back.
+    warning "The database schema could not be read after the failure, so the pre-upgrade dump will be restored."
+    return 0
+  fi
+  [[ "${now}" != "${upgrade_schema_fingerprint}" ]]
+}
+
+# The whole point of increment 4: an upgrade that failed after the swap puts the
+# machine back on the release it came from, without a shell.
+#
+# Order is deliberate. The database goes first, while the failed tree -- and so
+# the compose file whose containers are actually running -- is still in place.
+# The source follows, and only then is the restored tree's own installer re-run,
+# because the images the failed upgrade built carry the new code under the same
+# tags: restoring source files alone would leave the previous release's
+# compose.yaml starting the next release's images.
+roll_back_failed_upgrade() {
+  local handoff_status="$1"
+  local database_restored=false outcome="rolled-back" reason="the upgrade failed after the source tree was replaced"
+  local restore_status=0
+
+  ui_panel_begin "${UI_RED}" "THE UPGRADE FAILED -- RESTORING THE PREVIOUS RELEASE" "="
+  ui_panel_kv 'Failed at' "the host installer handoff (exit ${handoff_status})"
+  ui_panel_kv 'Restoring' "${upgrade_from_version:-the previous release} (${upgrade_from_commit:0:12})"
+  ui_panel_kv 'Source backup' "${upgrade_backup_dir:-none retained}"
+  ui_panel_kv 'Database dump' "${database_backup_path:-none taken}"
+  ui_panel_end "${UI_RED}" "="
+
+  if [[ -n "${database_backup_path}" && -f "${database_backup_path}" \
+    && -n "${upgrade_database_user}" && -n "${upgrade_database_name}" ]] \
+    && command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    if upgrade_needs_database_restore; then
+      # Everything that writes is stopped first, for the reason the runbook
+      # gives: an api or worker still running would write during the restore.
+      # Tolerant of services this deployment does not define -- the failure of
+      # `stop` on a name that is not in the compose file is not a reason to
+      # abandon a rollback.
+      docker compose --project-directory "${ORCASYNAPSE_INSTALL_DIR}" stop api worker web \
+        >/dev/null 2>&1 || true
+      docker compose --project-directory "${ORCASYNAPSE_INSTALL_DIR}" up -d --no-build postgres \
+        >/dev/null 2>&1 || true
+      if run_with_progress "Wait for PostgreSQL before restoring" \
+          wait_for_database "${upgrade_database_user}" "${upgrade_database_name}" \
+        && run_with_progress "Restore ${upgrade_database_name} from the pre-upgrade dump" \
+          restore_database_from_dump "${database_backup_path}" "${upgrade_database_user}" "${upgrade_database_name}"; then
+        database_restored=true
+        success "The database was restored from ${database_backup_path}."
+      else
+        outcome="database-restore-failed"
+        reason="the forward-only migrations had run and the pre-upgrade dump could not be restored over them"
+        warning "The database could not be restored automatically; the dump is still at ${database_backup_path}."
+      fi
+    else
+      info "The schema is unchanged since the dump, so the database is left alone and no writes are discarded."
+    fi
+  else
+    info "No usable pre-upgrade dump, so only the source tree is restored."
+  fi
+
+  if restore_retained_source_backup; then
+    success "The previous release's source tree is back at ${ORCASYNAPSE_INSTALL_DIR}."
+  else
+    outcome="source-restore-failed"
+    reason="the retained pre-upgrade source tree could not be moved back into place"
+    warning "The pre-upgrade source tree could not be restored automatically."
+  fi
+  # Written before the restart is attempted, so the reason survives even if the
+  # restart is what hangs or is what the operator interrupts.
+  upgrade_rollback_outcome="${outcome}"
+  record_upgrade_rollback "${outcome}" "${reason}" "${database_restored}" "${handoff_status}"
+
+  if [[ "${outcome}" == "source-restore-failed" ]]; then
+    return 1
+  fi
+
+  info "Bringing the deployment back up on ${upgrade_from_version:-the previous release}."
+  set +e
+  bash "${ORCASYNAPSE_INSTALL_DIR}/scripts/install-orcasynapse.sh"
+  restore_status=$?
+  set -e
+  if (( restore_status != 0 )); then
+    outcome="restored-but-not-running"
+    reason="the previous release was put back but its installer exited ${restore_status}, so the deployment is not serving"
+    upgrade_rollback_outcome="${outcome}"
+    record_upgrade_rollback "${outcome}" "${reason}" "${database_restored}" "${handoff_status}"
+  fi
+
+  ui_panel_begin "${UI_AMBER}" "ROLLED BACK TO THE PREVIOUS RELEASE" "="
+  ui_panel_kv 'Outcome' "${outcome}"
+  ui_panel_kv 'Release' "${upgrade_from_version:-unknown} (${upgrade_from_commit:0:12})"
+  ui_panel_kv 'Database restored' "${database_restored}"
+  ui_panel_kv 'Dump' "${database_backup_path:-none}"
+  ui_panel_kv 'Record' "${ORCASYNAPSE_INSTALL_DIR}/.local/state/last-upgrade-rollback.json"
+  ui_panel_kv 'Restore guide' "${ORCASYNAPSE_INSTALL_DIR}/docs/DATABASE_RESTORE_RUNBOOK.md"
+  ui_panel_end "${UI_AMBER}" "="
+  [[ "${outcome}" == "rolled-back" ]]
+}
+
 # The gate this whole path exists for: the four migrations under
 # packages/database/drizzle/migrations are forward-only and have no down step,
 # so an upgrade that fails after they run leaves a new schema under old code
@@ -1034,6 +1325,17 @@ back_up_database_before_upgrade() {
   mv -- "${partial}" "${target}"
   chmod 0600 "${target}"
   database_backup_path="${target}"
+  # Held for the rollback, which runs after the swap has replaced the tree these
+  # were read from. The fingerprint is taken here, immediately after the dump, so
+  # that it describes the same schema the dump holds -- the pair is what lets a
+  # failed upgrade answer "did the migrations actually move anything" rather than
+  # assume they did and destroy writes that happened while the images built.
+  upgrade_database_user="${db_user}"
+  upgrade_database_name="${db_name}"
+  upgrade_from_version="${version}"
+  upgrade_schema_fingerprint="$(database_schema_fingerprint "${db_user}" "${db_name}" || printf '')"
+  [[ -n "${upgrade_schema_fingerprint}" ]] \
+    || fail "the database schema could not be fingerprinted before the upgrade, so a failed upgrade could not tell whether the forward-only migrations had run; nothing has been changed"
   # Exported for the host installer and for the update agent that will drive
   # this path without an operator at a terminal.
   export ORCASYNAPSE_DATABASE_BACKUP_PATH="${target}"
@@ -1054,13 +1356,38 @@ upgrade_source_tree() {
     cp -a -- "${ORCASYNAPSE_INSTALL_DIR}/.local" "${staging_dir}/.local"
   fi
 
+  if [[ -r "${ORCASYNAPSE_INSTALL_DIR}/.orcasynapse-source-commit" ]]; then
+    upgrade_from_commit="$(<"${ORCASYNAPSE_INSTALL_DIR}/.orcasynapse-source-commit")"
+  fi
+  # `|| printf ''` because existing_install_version reads through `sed | head`,
+  # and under pipefail a successful read whose head closes first is reported as a
+  # failure -- which errexit would turn into an abort one line before the swap.
+  if [[ -z "${upgrade_from_version}" ]]; then
+    upgrade_from_version="$(existing_install_version || printf '')"
+  fi
+
   backup_dir="${install_parent}/.${install_name}.backup.$$"
   [[ ! -e "${backup_dir}" ]] || fail "temporary source-backup path already exists: ${backup_dir}"
   mv -- "${ORCASYNAPSE_INSTALL_DIR}" "${backup_dir}"
   mv -- "${staging_dir}" "${ORCASYNAPSE_INSTALL_DIR}"
   staging_dir=""
-  rm -rf --one-file-system -- "${backup_dir}"
-  backup_dir=""
+  # The two lines that used to be here deleted this backup and cleared the
+  # variable, which is what left the restore window exactly one rename wide.
+  # Ownership is handed over instead: `backup_dir` still means "restore me if the
+  # installation directory is missing", which is only true between the renames
+  # above, and `upgrade_backup_dir` means "the previous release, kept until this
+  # upgrade is known to be healthy".
+  #
+  # ORCASYNAPSE_UPGRADE_ROLLBACK=off restores the old behaviour exactly, for the
+  # operator at a terminal who wants the failed state left in place to look at.
+  if [[ "${ORCASYNAPSE_UPGRADE_ROLLBACK:-on}" == "off" ]]; then
+    rm -rf --one-file-system -- "${backup_dir}"
+    backup_dir=""
+    warning "ORCASYNAPSE_UPGRADE_ROLLBACK=off: a failed upgrade will not restore the previous release."
+  else
+    upgrade_backup_dir="${backup_dir}"
+    backup_dir=""
+  fi
   success "Application source updated; PostgreSQL volumes and protected local secrets were preserved."
 }
 
@@ -1087,6 +1414,7 @@ install_source_tree() {
         clean_existing_install
         ;;
       upgrade)
+        upgrade_to_commit="${commit}"
         # Before anything is staged, copied or moved. The dump is the only way
         # back from a forward-only migration, so an upgrade that cannot produce
         # one must not start -- at this point failing costs the operator
@@ -1142,16 +1470,37 @@ main() {
   success "Verified source installed at ${ORCASYNAPSE_INSTALL_DIR}."
   info "Handing off to the host installer. Builds can take several minutes."
   export ORCASYNAPSE_BOOTSTRAP_BRANDED=1
-  # An upgrade that took a dump is supervised rather than exec'd. `exec`
-  # replaces this process, and with it the EXIT handler holding the only
-  # pointer to that dump -- so the one run that most needs to print a restore
-  # path, a migration that fails after it has already altered the schema, would
-  # be the one run unable to. Nothing else changes: exported variables cross a
-  # child exactly as they cross an exec, and errexit hands the child's status
-  # straight back out of this script.
-  if [[ -n "${database_backup_path}" ]]; then
+  # An upgrade is supervised rather than exec'd. `exec` replaces this process,
+  # and with it the EXIT handler holding the only pointer to the dump and the
+  # only pointer to the retained source tree -- so the one run that most needs
+  # both, a handoff that fails after the migrations have already altered the
+  # schema, would be the one run unable to reach either. Nothing else changes:
+  # exported variables cross a child exactly as they cross an exec.
+  #
+  # A fresh install still execs. It has no backup to hold and nothing to roll
+  # back to, so there is no reason to keep a second process alive for it.
+  if [[ -n "${upgrade_backup_dir}" || -n "${database_backup_path}" ]]; then
+    local handoff_status=0
+    set +e
     bash "${ORCASYNAPSE_INSTALL_DIR}/scripts/install-orcasynapse.sh"
-    return
+    handoff_status=$?
+    set -e
+    if (( handoff_status == 0 )); then
+      # Only here, with the handoff's own readiness wait already satisfied, is
+      # the previous release safe to throw away.
+      discard_retained_source_backup
+      return 0
+    fi
+    if [[ -z "${upgrade_backup_dir}" ]]; then
+      # Nothing was retained -- ORCASYNAPSE_UPGRADE_ROLLBACK=off, or this was
+      # not an upgrade at all. The EXIT handler's dump panel is the whole of the
+      # recovery story, exactly as it was before increment 4.
+      fail "the host installer exited ${handoff_status}; the previous release was not restored"
+    fi
+    if roll_back_failed_upgrade "${handoff_status}"; then
+      fail "the upgrade failed (host installer exit ${handoff_status}) and this deployment was restored to ${upgrade_from_version:-the previous release}"
+    fi
+    fail "the upgrade failed (host installer exit ${handoff_status}) and the rollback did not complete; read ${ORCASYNAPSE_INSTALL_DIR}/.local/state/last-upgrade-rollback.json"
   fi
   exec bash "${ORCASYNAPSE_INSTALL_DIR}/scripts/install-orcasynapse.sh"
 }

@@ -18,6 +18,12 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 WORK="$(mktemp -d /var/tmp/orcasynapse-vm1-smoke.XXXXXX)"
 RELEASE="${WORK}/release"
 HTTP_PORT="${ORCASYNAPSE_SMOKE_PORT:-8399}"
+# The installer now writes host systemd units. Names of this test's own, because
+# this host may be running a real deployment whose units must not be rewritten to
+# point at a temporary tree that is about to be deleted. The installer's code
+# path is identical either way -- only the names differ.
+UPDATE_UNIT="orcasynapse-update-smoke"
+UPDATE_AGENT_DIR="${WORK}/usr-local-lib/orcasynapse"
 failures=0
 
 pass() { printf '  [PASS] %s\n' "$1"; }
@@ -26,6 +32,13 @@ bad()  { printf '  [FAIL] %s\n' "$1" >&2; failures=$((failures + 1)); }
 cleanup() {
   if [[ -d "${RELEASE}" ]]; then
     docker compose --project-directory "${RELEASE}" down --volumes --remove-orphans >/dev/null 2>&1 || true
+  fi
+  # Only ever this test's own unit names, so a real orcasynapse-update.timer on
+  # the same host is not in reach of any expression here.
+  if [[ -d /run/systemd/system ]]; then
+    systemctl disable --now "${UPDATE_UNIT}.timer" >/dev/null 2>&1 || true
+    rm -f -- "/etc/systemd/system/${UPDATE_UNIT}.service" "/etc/systemd/system/${UPDATE_UNIT}.timer"
+    systemctl daemon-reload >/dev/null 2>&1 || true
   fi
   # The captured stdout holds the Installation Key and the temporary password.
   # It is shredded rather than merely unlinked, and never printed.
@@ -53,6 +66,8 @@ install -d -m 0700 "${WORK}"
 chmod 0600 "${WORK}/install.out"
 set +e
 ORCASYNAPSE_HTTP_PORT="${HTTP_PORT}" \
+  ORCASYNAPSE_UPDATE_UNIT="${UPDATE_UNIT}" \
+  ORCASYNAPSE_UPDATE_AGENT_DIR="${UPDATE_AGENT_DIR}" \
   bash "${RELEASE}/scripts/install-orcasynapse.sh" >"${WORK}/install.out" 2>&1
 installer_status=$?
 set -e
@@ -129,6 +144,42 @@ fi
 # Structural check only: the surrounding panel holds the Installation Key.
 grep -q 'ORCASYNAPSE IS READY' "${WORK}/install.out" \
   && pass "completion panel rendered" || bad "completion panel did not render"
+
+# The first host units VM1 has ever had. Asserted here rather than in the agent
+# suite because this is the only test that runs the real host installer.
+printf '\n=== the in-dashboard update agent was installed ===\n'
+if [[ -d /run/systemd/system ]]; then
+  agent="${UPDATE_AGENT_DIR}/orcasynapse-update-agent.sh"
+  [[ -x "${agent}" && "$(stat -c '%a' "${agent}")" == "700" ]] \
+    && pass "the agent is installed outside the release tree and is root-only" \
+    || bad "the agent is missing or unprotected at ${agent}"
+  # The point of installing it outside ${RELEASE}: an upgrade renames that tree
+  # away while the agent is executing from this copy.
+  [[ "${agent}" != "${RELEASE}"/* ]] \
+    && pass "the agent does not live inside the tree an upgrade replaces" \
+    || bad "the agent was installed inside the release tree"
+  [[ -f "/etc/systemd/system/${UPDATE_UNIT}.service" ]] \
+    && pass "the update service unit was written" \
+    || bad "no update service unit was written"
+  grep -Fqx 'X-OrcaSynapse-Managed=true' "/etc/systemd/system/${UPDATE_UNIT}.service" \
+    && pass "the unit carries the managed-ownership marker" \
+    || bad "the unit does not carry X-OrcaSynapse-Managed=true"
+  grep -Fq "ExecStart=${agent}" "/etc/systemd/system/${UPDATE_UNIT}.service" \
+    && pass "the unit runs the agent copy outside the tree" \
+    || bad "the unit's ExecStart does not name ${agent}"
+  systemctl is-enabled "${UPDATE_UNIT}.timer" >/dev/null 2>&1 \
+    && pass "the update timer is enabled" \
+    || bad "the update timer was not enabled"
+  # The service must be armed but never started by the installer: starting it
+  # during an upgrade would kill the agent driving that upgrade.
+  if systemctl is-active "${UPDATE_UNIT}.service" >/dev/null 2>&1; then
+    bad "the installer started the update service, which during an upgrade would kill the agent running it"
+  else
+    pass "the installer armed the timer without starting the service"
+  fi
+else
+  pass "this host has no systemd, so the update units were correctly skipped"
+fi
 
 printf '\n'
 if (( failures > 0 )); then

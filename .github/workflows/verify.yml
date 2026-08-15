@@ -166,16 +166,13 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install a fresh control plane end to end
         run: sudo bash scripts/test-orcasynapse-installer-smoke.sh
-      # The upgrade path's database dump, which is the only thing standing
-      # between a migration that fails halfway and an unrecoverable install.
-      #
-      # It is the only thing because nothing else recovers either: the source
-      # backup `install.sh` takes is deleted the instant the swap succeeds, so
-      # its EXIT restore covers the two lines between moving the old tree aside
-      # and removing it -- not the migrate step, and not anything after it. A
-      # failure past that point leaves the new source over the new schema, and
-      # the migrations are forward-only. The dump is the way back, which is why
-      # a dump that cannot be trusted aborts the upgrade before it starts.
+      # The upgrade path's database dump, which is what everything else here
+      # recovers from. The migrations are forward-only, so a failure past the
+      # migrate step leaves a new schema under old code and this dump is the
+      # only way back -- which is why a dump that cannot be trusted aborts the
+      # upgrade before it starts. install.sh now restores it automatically on a
+      # failed upgrade (the suite below proves that); this one proves the dump
+      # it would restore from is real, complete and taken before the migration.
       #
       # Lives in this job because it needs root and a Docker daemon; it builds
       # no images and takes ~90s, so it is far cheaper than the smoke test.
@@ -191,9 +188,25 @@ jobs:
       #
       # In this job rather than a cheaper one for the same two reasons the
       # backup suite is: it needs root and a live Docker daemon. It is cheaper
-      # still than that one -- no images, one postgres:17-bookworm and ~35s for
-      # six installs -- and this job already pays for the daemon, so the
-      # marginal cost of running it here is the 35 seconds and nothing else. A
+      # still than that one -- no images, one postgres:17-bookworm and ~1min for
+      # eight installs -- and this job already pays for the daemon, so the
+      # marginal cost of running it here is that minute and nothing else. A
       # separate job would spend longer on the runner than on the test.
       - name: Verify an A to B upgrade and its recovery
         run: sudo bash scripts/test-orcasynapse-installer-upgrade.sh
+      # The same round trip again, driven by the host update agent instead of by
+      # a harness: the approved target read out of PostgreSQL, install.sh
+      # downloaded at that commit, the readiness gate afterwards, and the two
+      # recoveries -- install.sh's own after a failure it can see, and the
+      # agent's after a release that installs cleanly and then does not serve.
+      #
+      # It is the suite that has to be believed before an operator is told they
+      # no longer need a shell, so it also asserts the two self-referential
+      # traps directly: that a transient systemd scope survives its unit being
+      # stopped, and that the agent binary is not inside the tree it replaces.
+      #
+      # Same job for the same reason as the two above -- root and a live Docker
+      # daemon, no image build. ~2 minutes, dominated by the readiness waits it
+      # deliberately allows to expire.
+      - name: Verify the host update agent applies an approved target
+        run: sudo bash scripts/test-orcasynapse-update-agent.sh

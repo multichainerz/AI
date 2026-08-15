@@ -36,6 +36,10 @@ sudo env ORCASYNAPSE_REF=<40-character-commit> ORCASYNAPSE_ARCHIVE_SHA256=<sha25
 
 When `/opt/orcasynapse` already exists, the installer distinguishes a verified installation with the current `hermes-native-v1` schema epoch from older or unknown state. Only a current-epoch installation can use the in-place source update that preserves PostgreSQL volumes, protected secrets, and recovery material. Pre-v4.6.0 installations require a clean reinstall, after a separate `ERASE` confirmation because it permanently removes the Compose stack, named data volumes, accounts, and local secrets. Non-interactive automation must explicitly set `ORCASYNAPSE_EXISTING_INSTALL_ACTION=upgrade|erase|abort`; automated erase additionally requires `ORCASYNAPSE_CONFIRM_ERASE=ERASE`.
 
+An upgrade takes a verified PostgreSQL dump before any file is staged and keeps the release it is replacing until the upgrade is confirmed healthy. If the upgrade then fails, the installer restores that release — the source tree always, and the database when the forward-only migrations have actually moved the schema — restarts the deployment on it, and records what it did in `.local/state/last-upgrade-rollback.json`. Set `ORCASYNAPSE_UPGRADE_ROLLBACK=off` to leave a failed upgrade in place for inspection instead, and see [docs/DATABASE_RESTORE_RUNBOOK.md](../docs/DATABASE_RESTORE_RUNBOOK.md) for the manual procedure and for the one case the schema comparison cannot see.
+
+On a systemd host the installer also enables `orcasynapse-update.timer`, which runs `/usr/local/lib/orcasynapse/orcasynapse-update-agent.sh` every ten minutes. It does nothing until an administrator approves a release in the dashboard; on an approved target it re-runs this bootstrap at that exact commit, health-gates the result, and restores the previous release if the deployment does not come back. It listens on nothing and adds no credential to the host.
+
 From an intact local release bundle, the equivalent host command is:
 
 ```bash

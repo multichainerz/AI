@@ -5,6 +5,58 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v5.6.0 — 2026-08-15
+
+Increment 4, the last one in `docs/IN_DASHBOARD_UPDATE_PLAN.md`: VM1 upgrades
+itself from the release an administrator approved, and an upgrade that fails is
+undone rather than survived.
+
+**An upgrade is reversible now, which it was not.** `install.sh` deleted its
+source backup the instant the swap succeeded, so the restore window was the two
+lines between moving the old tree aside and removing it — never the migration,
+never anything after it. The tree is retained past the swap and discarded only
+once the upgrade is confirmed.
+
+- restore the source and re-run the restored tree's own installer when the
+  handoff fails, so the deployment comes back up rather than merely back
+- restore the database **only when the schema actually moved**, decided by an
+  md5 of `information_schema.columns` taken beside the dump. The commonest
+  failure is an image build that never touched the database, and restoring
+  unconditionally would discard every write taken while it ran. A data-only
+  migration is the case the fingerprint cannot see; `always` overrides it
+- keep the rollback in `install.sh` rather than in the agent: only the installer
+  knows the instant of the swap, it is also the hand-run path used during an
+  incident, and the code that takes the backup is the code that restores it
+- `ORCASYNAPSE_UPGRADE_ROLLBACK=off` restores the previous behaviour for an
+  operator who wants the failed state to inspect
+
+**VM1 gains its first systemd units.** `orcasynapse-update.timer` reads the
+approved target from Postgres, fetches `install.sh` at the approved **commit**
+rather than the tag — a tag can be re-pointed after approval — and health-gates
+`/readyz` afterwards.
+
+- run the agent from `/usr/local/lib/orcasynapse/`, replace it by rename so a
+  running shell keeps its own inode, and launch the upgrade in a transient
+  systemd scope so stopping the unit cannot kill it mid-upgrade
+- record `apiUnavailableUntil` and rewrite `upgrading` to `failed` on abnormal
+  exit, so a finished run never reads as still going while the API is down
+- recover from the failure `install.sh` cannot see — an install that returns 0
+  and then never serves — by performing the runbook from the backup record
+- block a target that has already failed, keyed on commit and revision. Without
+  it the ten-minute timer is a loop that restores the database from the dump
+  every tick, and the rollback becomes the thing that destroys the data
+
+**Testing.** 106 assertions across 8 upgrade scenarios and 67 for the agent, and
+19 mutations — nine against `install.sh`, ten against the agent — every one
+caught. The post-migration case asserts the discrimination from both directions:
+a row written *during* the upgrade must be gone when the schema moved and must
+survive when it did not, so a rollback that restored unconditionally fails.
+
+Not proven: no application image is built anywhere in it, so nothing here says
+the product boots on the new schema; and no real deployment has been upgraded by
+this agent. The first genuine unattended upgrade will be the first one anyone
+has watched.
+
 ## v5.5.0 — 2026-08-15
 
 Tells an enterprise user the truth about whether a session will run, fixes a

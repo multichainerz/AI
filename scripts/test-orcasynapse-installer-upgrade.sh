@@ -48,43 +48,59 @@
 # ---------------------------------------------------------------------------
 # Design decision 2: how a post-migration failure is induced reproducibly
 # ---------------------------------------------------------------------------
-# UPGRADE_TEST_FAIL_AFTER_MIGRATE=1 makes the stub exit 1 -- but only after it
+# UPGRADE_TEST_FAIL_AFTER_MIGRATE=<version> makes that tree's stub exit 1 -- but only after it
 # has re-queried information_schema on a fresh connection and confirmed that the
 # column B's migration adds is actually there. If it is not, the stub exits 3
 # instead, and the harness treats a 3 as a broken test rather than a caught
 # regression. The failure therefore cannot race the migration it is supposed to
 # follow: the injection point is asserted from inside the injector.
 #
-# UPGRADE_TEST_FAIL_BEFORE_MIGRATE=1 is the contrast case, injected after the
+# UPGRADE_TEST_FAIL_BEFORE_MIGRATE is the contrast case, injected after the
 # database is up but before a single migration is applied.
 #
-# ---------------------------------------------------------------------------
-# Design decision 3: what "restored" can mean today
-# ---------------------------------------------------------------------------
-# install.sh does not restore anything after a post-migration failure, and this
-# harness asserts that out loud rather than passing over it. Its source backup
-# (.backup.$$) is deleted by upgrade_source_tree the instant the swap succeeds,
-# so the EXIT handler's restore covers only the few milliseconds between the two
-# mv calls. A failure at the handoff -- which is where migrations run -- leaves
-# the new source in place, the new schema in the database, and a dump on disk
-# with a panel naming it.
+# Both name the version they apply to rather than being booleans, because the
+# rollback re-runs the *restored* tree's own host installer: an inherited `=1`
+# would fail that run too, and the machine would never come back.
 #
-# So recovery is operator-driven, and the harness drives it exactly as
-# docs/DATABASE_RESTORE_RUNBOOK.md tells an operator to: restore the dump, then
-# reinstall the commit the receipt names as fromCommit through the real
-# install.sh. The assertions that follow -- source back at A, schema back at A,
-# rows back at A -- are the acceptance test increment 4's update agent has to
-# pass unchanged once it performs those two steps itself. The assertion named
-# "install.sh did not restore anything by itself" is the one increment 4 must
-# flip; until it does, it is the honest description of the product.
+# ---------------------------------------------------------------------------
+# Design decision 3: what "restored" means now
+# ---------------------------------------------------------------------------
+# Until increment 4, install.sh restored nothing after a post-migration failure:
+# its source backup was deleted by upgrade_source_tree the instant the swap
+# succeeded, so the EXIT handler's restore covered the few milliseconds between
+# the two mv calls and a failure at the handoff -- which is where migrations run
+# -- left the new source over the new schema. Recovery was operator-driven, and
+# this harness drove it by hand out of docs/DATABASE_RESTORE_RUNBOOK.md.
+#
+# install.sh now retains that backup until the handoff has succeeded, and rolls
+# it back when the handoff fails: dump restored if the schema moved, previous
+# source tree moved back, previous release restarted through its own installer.
+# Scenario 5 is that, asserted end to end, and the assertion that used to read
+# "install.sh restored nothing by itself" now reads that it did.
+#
+# The one judgement in it, asserted from two directions rather than trusted:
+# the database is restored only when the schema fingerprint moved. Scenario 5
+# fails after migrating, so it moved, so the dump goes back and a row written
+# during the upgrade is lost -- the accepted cost, asserted so that it is a
+# decision and not a surprise. Scenario 6 fails before migrating, so it did not
+# move, so the database is untouched and that same row survives. A rollback that
+# restored unconditionally would pass scenario 5 and fail scenario 6, which is
+# the point: the most likely upgrade failure of all is an image build that never
+# reached the database, and discarding a customer's writes for one of those
+# would be the feature doing more harm than the bug.
+#
+# Scenario 7 keeps the operator's escape hatch honest by asserting that
+# ORCASYNAPSE_UPGRADE_ROLLBACK=off still leaves the failed state in place, and
+# then recovers from it exactly as the runbook says -- which is also how this
+# harness gets an installation back to A without tearing the database down.
 #
 # ---------------------------------------------------------------------------
 # Design decision 4: where this runs
 # ---------------------------------------------------------------------------
 # The `install` job in .github/workflows/verify.yml, beside the smoke and backup
 # suites, because it needs root and a live Docker daemon and that job already
-# has both. It builds no image: one postgres:17-bookworm and roughly 35 seconds
-# for six installs, which is less than a separate job would spend starting a
+# has both. It builds no image: one postgres:17-bookworm and roughly a minute
+# for eight installs, which is less than a separate job would spend starting a
 # runner. Nothing cheaper can host it -- without a real database there is no
 # migration to fail after.
 #
@@ -304,7 +320,30 @@ until dc exec -T postgres pg_isready -h 127.0.0.1 -U orcasynapse -d orcasynapse 
   sleep 2
 done
 
-if [[ "${UPGRADE_TEST_FAIL_BEFORE_MIGRATE:-0}" == "1" ]]; then
+# A write taken while the upgrade is in flight, standing in for the traffic a
+# real deployment serves for the minutes `docker compose build` runs. It is the
+# only thing that can tell "the database was restored" apart from "the database
+# was left alone" when the schema is identical either way, which is exactly the
+# case the rollback's fingerprint gate has to get right.
+#
+# Version-scoped for the same reason the failure injections below are: the
+# rollback re-runs the *restored* tree's installer, and a flag that fired for
+# every tree would have that run re-create the row whose absence is the
+# assertion.
+if [[ "${UPGRADE_TEST_WRITE_DURING_UPGRADE:-}" == "${version}" ]]; then
+  printf 'stub host installer: writing live row %s while %s installs\n' "${UPGRADE_TEST_WRITE_ID:-0}" "${version}"
+  psql_run -c "insert into harness_live_write (id, note)
+    values (${UPGRADE_TEST_WRITE_ID:-0}, 'written while ${version} was installing')
+    on conflict (id) do nothing;" </dev/null
+fi
+
+# Named by version rather than set to 1. The rollback introduced by increment 4
+# re-runs the restored tree's own host installer, so a boolean flag inherited
+# from the environment would fail that run too and the machine would never come
+# back -- a test artefact indistinguishable from the bug the rollback exists to
+# prevent. Naming the release makes the failure a property of that release,
+# which is what it is meant to model.
+if [[ "${UPGRADE_TEST_FAIL_BEFORE_MIGRATE:-}" == "${version}" ]]; then
   printf 'stub host installer: inducing a failure before any migration ran\n' >&2
   exit 1
 fi
@@ -328,7 +367,7 @@ for sql in "${stub_root}/.orcasynapse-migrations"/*.sql; do
 done
 shopt -u nullglob
 
-if [[ "${UPGRADE_TEST_FAIL_AFTER_MIGRATE:-0}" == "1" ]]; then
+if [[ "${UPGRADE_TEST_FAIL_AFTER_MIGRATE:-}" == "${version}" ]]; then
   # The injection point is asserted from inside the injector: the column B's
   # migration adds is read back on a fresh connection before the failure is
   # raised, so "after the migrations have run" is a checked fact rather than a
@@ -365,10 +404,20 @@ stage_release_tree() {
     > "${dir}/packages/contracts/src/version.ts"
   printf '%s\n' "${version}" > "${dir}/release-marker"
   # In both trees. The baseline is what an installation at A is made of.
+  #
+  # harness_live_write exists at the baseline, in both trees, so that a row
+  # written into it during an upgrade changes the data and not the schema. That
+  # separation is the whole instrument for the rollback's fingerprint gate: a
+  # probe that created its own table would move the fingerprint and make every
+  # failure look like a migration.
   cat > "${dir}/.orcasynapse-migrations/001-baseline.sql" <<'SQL'
 create table if not exists harness_account (
   id integer primary key,
   email text not null
+);
+create table if not exists harness_live_write (
+  id integer primary key,
+  note text not null
 );
 SQL
 }
@@ -505,6 +554,38 @@ applied_migrations() {
   psql_value "select coalesce(string_agg(name, ',' order by name), '') from _harness_schema_migrations"
 }
 
+# The row the stub writes while an upgrade is in flight. 1 means the database
+# was left alone; 0 means the pre-upgrade dump went back over it.
+live_write_rows() {
+  psql_value "select count(*) from harness_live_write where id = $1"
+}
+
+# install.sh's rollback record, or the empty string when it never wrote one.
+rollback_record() {
+  local path="${INSTALL_DIR}/.local/state/last-upgrade-rollback.json"
+  [[ -r "${path}" ]] || { printf ''; return 0; }
+  tr -d '\r\n' < "${path}"
+}
+
+# Working directories left beside the installation. A successful upgrade must
+# leave no retained source backup: one per release would put a full copy of
+# every version the machine ever ran next to the one it is running.
+#
+# Built the same way list_dumps is, and for the same two reasons: `find` on a
+# missing parent exits 1 even with its stderr discarded, and a `| wc -l` would
+# make that failure the pipeline's under pipefail -- the trap that once skipped
+# sixty assertions in the backup suite.
+leftover_directories() {
+  local pattern="$1" line
+  local -a found=()
+  if [[ -d "${INSTALL_PARENT}" ]]; then
+    while IFS= read -r line; do
+      if [[ -n "${line}" ]]; then found+=("${line}"); fi
+    done < <(find "${INSTALL_PARENT}" -maxdepth 1 -type d -name "${pattern}" 2>/dev/null || true)
+  fi
+  printf '%d' "${#found[@]}"
+}
+
 # Every assertion that a deployment "is at version X" asks all four surfaces,
 # because they are written by four different steps: the tarball's own file, the
 # marker install.sh stages, the receipt the handoff writes, and the schema the
@@ -609,6 +690,23 @@ fi
 [[ -f "${INSTALL_DIR}/.local/state/harness-handoff.log" ]] \
   && pass "after upgrading to B: the host installer ran, so migrations really ran" \
   || bad "after upgrading to B: the host installer never ran"
+# The other half of retaining the previous release past the swap. A successful
+# upgrade has to throw it away, or every release the machine ever takes leaves a
+# full copy of the source tree beside the one it is running.
+[[ "$(leftover_directories '.orcasynapse.backup.*')" == "0" ]] \
+  && pass "after upgrading to B: the retained pre-upgrade source tree was discarded" \
+  || bad "after upgrading to B: $(leftover_directories '.orcasynapse.backup.*') retained source backup(s) remain, which would accumulate one per release"
+# Which of the two things that discard it actually did. The EXIT handler removes
+# a backup a successful run somehow still holds, as a last resort -- and that
+# safety net makes the assertion above pass even when the success path's discard
+# is gone entirely, which a mutation proved by surviving it. The net announces
+# itself, so its silence is what says the success path did the work.
+grep -Fq 'retained pre-upgrade source tree was left' "${installer_output}" \
+  && bad "after upgrading to B: the EXIT handler had to clean up after the success path, which means the success path no longer discards its own backup" \
+  || pass "after upgrading to B: the success path discarded the backup itself, without the EXIT handler's safety net"
+[[ -z "$(rollback_record)" ]] \
+  && pass "after upgrading to B: a successful upgrade wrote no rollback record" \
+  || bad "after upgrading to B: a rollback record was written for an upgrade that succeeded: $(rollback_record)"
 
 printf '\n=== the pre-upgrade dump exists and predates the migration ===\n'
 upgrade_dump="$(newest_dump)"
@@ -656,9 +754,13 @@ fi
 # 4. The documented recovery, driven exactly as the runbook writes it
 # ---------------------------------------------------------------------------
 # Two steps, in the runbook's order: restore the dump, then reinstall the commit
-# the record names. Nothing in the product performs these; increment 4's update
-# agent is what will. Used here as the reset step the smoke test lacks, which is
-# how the harness gets an installation back at A between scenarios without
+# the record names.
+#
+# This is no longer what a *failed* upgrade needs -- install.sh performs that
+# itself now, and scenario 5 asserts it. What is left here is the case nothing
+# automates and nothing should: deliberately putting a healthy deployment back
+# onto an earlier release. It is also the reset step the smoke test lacks, which
+# is how this harness gets an installation back to A between scenarios without
 # tearing the database down and losing the point of the exercise.
 recover_to_a() {
   local label="$1" dump="$2"
@@ -692,12 +794,26 @@ assert_deployment_at "after recovering to A" "${VERSION_A}" "${COMMIT_A}" "001-b
 assert_seeded_data_intact "after recovering to A"
 
 # ---------------------------------------------------------------------------
-# 5. An upgrade that fails AFTER its migrations have run
+# 5. An upgrade that fails AFTER its migrations have run -- and restores itself
 # ---------------------------------------------------------------------------
-printf '\n=== an upgrade that fails after migrating leaves the dangerous state ===\n'
+# The scenario the whole increment exists for, and the one an operator used to
+# absorb at a shell. Nothing below drives a recovery: install.sh is expected to
+# have done all of it before it returned.
+printf '\n=== an upgrade that fails after migrating restores the previous release ===\n'
 dump_before_failure="$(newest_dump)"
+# Counted, not merely looked for. "The deployment came back on the previous
+# release" means its host installer ran again *after* the failure, and the
+# restored tree's handoff log already ends with a line from A -- the recovery in
+# scenario 4 put it there. Only the count moves when the rollback restarts the
+# stack, so only the count can tell a rollback that restarted it apart from one
+# that put the files back and walked away.
+handoff_log="${INSTALL_DIR}/.local/state/harness-handoff.log"
+handoffs_before=0
+if [[ -r "${handoff_log}" ]]; then handoffs_before="$(grep -c . "${handoff_log}" || true)"; fi
 run_installer "${ARCHIVE_B}" "${SHA_B}" "${COMMIT_B}" \
-  ORCASYNAPSE_EXISTING_INSTALL_ACTION=upgrade UPGRADE_TEST_FAIL_AFTER_MIGRATE=1
+  ORCASYNAPSE_EXISTING_INSTALL_ACTION=upgrade \
+  "UPGRADE_TEST_FAIL_AFTER_MIGRATE=${VERSION_B}" \
+  "UPGRADE_TEST_WRITE_DURING_UPGRADE=${VERSION_B}" UPGRADE_TEST_WRITE_ID=5
 if (( installer_status == 3 )); then
   bad "the failure was injected before the migration was visible, so this scenario proved nothing"
   report_installer_output
@@ -707,79 +823,163 @@ else
   bad "the installer exited 0 despite the induced post-migration failure"
   report_installer_output
 fi
-[[ "$(display_name_columns)" == "1" ]] \
-  && pass "the migration really had run: the forward-only schema change is committed" \
-  || bad "the schema did not move, so the failure was not a post-migration failure"
-[[ "$(applied_migrations)" == "001-baseline.sql,002-add-display-name.sql" ]] \
-  && pass "the migration ledger records B's migration as applied" \
-  || bad "the migration ledger reads '$(applied_migrations)'"
+# Read out of the transcript rather than out of the database, because the
+# database has by now been put back: this is the proof that the failure really
+# was after the migration, which the database can no longer show.
+grep -Fq 'inducing a failure after the migrations have run' "${installer_output}" \
+  && pass "the failure was injected after B's migration had been read back as visible" \
+  || { bad "the transcript does not show the post-migration injection, so the scenario proved nothing"; report_installer_output; }
 
-# The characterization that increment 4 has to change. install.sh's source
-# backup is deleted by upgrade_source_tree the moment the swap succeeds, so its
-# EXIT handler restores nothing here; what the operator is left with is a new
-# tree, a migrated database, and a dump.
-if [[ "$(installed_marker)" == "${VERSION_B}" && "$(installed_commit)" == "${COMMIT_B}" ]]; then
-  pass "install.sh restored nothing by itself: the deployment sits on B's source over B's schema (this is the assertion increment 4 must flip)"
+# The assertion this increment had to flip. It used to read "install.sh restored
+# nothing by itself", and it was the honest description of the product.
+assert_deployment_at "after the automatic rollback" "${VERSION_A}" "${COMMIT_A}" "001-baseline.sql" "0"
+assert_seeded_data_intact "after the automatic rollback"
+[[ "$(display_name_columns)" == "0" ]] \
+  && pass "install.sh restored the database itself: B's forward-only column is gone" \
+  || bad "B's column survived, so install.sh did not restore the database"
+[[ "$(live_write_rows 5)" == "0" ]] \
+  && pass "the row written during the upgrade is gone, which is the stated cost of restoring a migrated database" \
+  || bad "the row written during the upgrade survived, so the pre-upgrade dump was not restored"
+
+handoffs_after=0
+if [[ -r "${handoff_log}" ]]; then handoffs_after="$(grep -c . "${handoff_log}" || true)"; fi
+if (( handoffs_after == handoffs_before + 1 )); then
+  pass "the rollback restarted the deployment through ${VERSION_A}'s own host installer"
 else
-  bad "the deployment is at '$(installed_marker)' / '$(installed_commit)' -- if install.sh now rolls the source back on its own, this scenario needs rewriting rather than deleting"
+  bad "the restored tree's host installer ran ${handoffs_before} -> ${handoffs_after} times; the rollback restored files without bringing the deployment back"
 fi
-[[ "$(receipt_version)" == "${VERSION_A}" ]] \
-  && pass "the completion receipt still reports ${VERSION_A}, because the handoff never finished" \
-  || bad "the completion receipt reports '$(receipt_version)' after a failed upgrade"
+[[ "$(tail -n 1 "${handoff_log}" 2>/dev/null || true)" == "handoff ${VERSION_A} ${COMMIT_A}" ]] \
+  && pass "the last handoff on this machine is ${VERSION_A}, not the release that failed" \
+  || bad "the last handoff reads '$(tail -n 1 "${handoff_log}" 2>/dev/null || true)'"
+
+record="$(rollback_record)"
+if [[ -n "${record}" ]]; then
+  pass "install.sh wrote a rollback record an operator can find without a terminal"
+  [[ "${record}" == *'"outcome":"rolled-back"'* ]] \
+    && pass "the record reports a completed rollback" \
+    || bad "the record reports '${record}'"
+  [[ "${record}" == *'"databaseRestored":true'* ]] \
+    && pass "the record states that the database was restored" \
+    || bad "the record does not state that the database was restored: ${record}"
+  [[ "${record}" == *"\"fromCommit\":\"${COMMIT_A}\""* ]] \
+    && pass "the record names ${COMMIT_A:0:12} as the release restored to" \
+    || bad "the record does not name ${COMMIT_A:0:12} as fromCommit: ${record}"
+  [[ "${record}" == *"\"toCommit\":\"${COMMIT_B}\""* ]] \
+    && pass "the record names ${COMMIT_B:0:12} as the release that failed" \
+    || bad "the record does not name ${COMMIT_B:0:12} as toCommit: ${record}"
+else
+  bad "no rollback record was written, so nothing on disk says why the machine went back"
+fi
 
 failure_dump="$(newest_dump)"
 if [[ -n "${failure_dump}" && -f "${failure_dump}" && "${failure_dump}" != "${dump_before_failure}" ]]; then
-  pass "the failed upgrade left a new pre-upgrade dump intact"
+  pass "the rollback kept the pre-upgrade dump it restored from"
 else
-  bad "the failed upgrade did not leave a usable pre-upgrade dump"
+  bad "the rollback did not leave the pre-upgrade dump behind"
 fi
-grep -Fq 'THE PRE-UPGRADE DATABASE DUMP IS INTACT' "${installer_output}" \
-  && pass "the failure printed the restore notice" \
-  || { bad "the failure printed no restore notice, so an operator is not told a way back exists"; report_installer_output; }
-# Scoped to the notice, not the whole transcript: the successful-dump line names
+grep -Fq 'ROLLED BACK TO THE PREVIOUS RELEASE' "${installer_output}" \
+  && pass "the failure printed the rollback panel" \
+  || { bad "the failure printed no rollback panel"; report_installer_output; }
+# Scoped to the panel, not the whole transcript: the successful-dump line names
 # the same path earlier in the run, so a whole-file grep would pass with the
-# notice deleted entirely -- asserting that a dump happened, not that anyone was
-# told where it is.
-notice="$(grep -A 8 -F 'THE PRE-UPGRADE DATABASE DUMP IS INTACT' "${installer_output}" || true)"
+# panel deleted entirely -- asserting that a dump happened, not that anyone was
+# told what became of it.
+notice="$(grep -A 8 -F 'ROLLED BACK TO THE PREVIOUS RELEASE' "${installer_output}" || true)"
 if [[ -n "${failure_dump}" && "${notice}" == *"${failure_dump}"* ]]; then
-  pass "the restore notice names the dump an operator has to restore"
+  pass "the rollback panel names the dump it restored from"
 else
-  bad "the restore notice does not name the dump path"
+  bad "the rollback panel does not name the dump path"
 fi
+[[ "$(leftover_directories '.orcasynapse.backup.*')" == "0" ]] \
+  && pass "the rollback consumed the retained source backup rather than leaving it" \
+  || bad "$(leftover_directories '.orcasynapse.backup.*') retained source backup(s) remain after the rollback"
+[[ "$(leftover_directories '.orcasynapse.failed.*')" == "0" ]] \
+  && pass "the failed tree was removed rather than left beside the installation" \
+  || bad "$(leftover_directories '.orcasynapse.failed.*') failed tree(s) remain beside the installation"
+# The reason has to outlive the tree that produced it. An upgrade that puts
+# itself back has, by definition, deleted the evidence of what went wrong.
+diagnostics=()
+while IFS= read -r line; do
+  if [[ -n "${line}" ]]; then diagnostics+=("${line}"); fi
+done < <(find "${INSTALL_DIR}/.local/state" -maxdepth 2 -type f -path '*/failed-upgrade-*' 2>/dev/null || true)
+(( ${#diagnostics[@]} > 0 )) \
+  && pass "the failed run's installer log was carried into the restored tree (${#diagnostics[@]} file(s))" \
+  || bad "the failed run's log was deleted with its tree, so nothing on disk says what went wrong"
 
 # ---------------------------------------------------------------------------
-# 6. Recovering from that failure -- source and database both
+# 6. An upgrade that fails BEFORE its migrations run
 # ---------------------------------------------------------------------------
-printf '\n=== recovering from the post-migration failure ===\n'
-recover_to_a "recovery from a post-migration failure" "${failure_dump}" || true
-assert_deployment_at "after recovering from the failure" "${VERSION_A}" "${COMMIT_A}" "001-baseline.sql" "0"
-assert_seeded_data_intact "after recovering from the failure"
-[[ "$(psql_value "select count(*) from information_schema.columns
-  where table_name = 'harness_account' and column_name = 'display_name'")" == "0" ]] \
-  && pass "the forward-only schema change is gone: the database is genuinely back at A" \
-  || bad "B's column survived the restore, so the database is not back at A"
-
-# ---------------------------------------------------------------------------
-# 7. The contrast: an upgrade that fails BEFORE its migrations run
-# ---------------------------------------------------------------------------
-# The case the plan calls recoverable. Worth an assertion of its own because it
-# is what proves the injection point in scenario 5 was real: the same harness,
-# the same trees, one flag moved, and the schema stays where it was.
-printf '\n=== an upgrade that fails before migrating leaves the schema at %s ===\n' "${VERSION_A}"
+# The contrast, and the one that decides whether the rollback is a feature or a
+# hazard. Nothing touched the database, so nothing may be restored over it: the
+# row written while the upgrade was in flight has to still be there afterwards.
+# A rollback that restored unconditionally would pass every assertion in
+# scenario 5 and fail this one.
+printf '\n=== an upgrade that fails before migrating restores the source and not the database ===\n'
 run_installer "${ARCHIVE_B}" "${SHA_B}" "${COMMIT_B}" \
-  ORCASYNAPSE_EXISTING_INSTALL_ACTION=upgrade UPGRADE_TEST_FAIL_BEFORE_MIGRATE=1
+  ORCASYNAPSE_EXISTING_INSTALL_ACTION=upgrade \
+  "UPGRADE_TEST_FAIL_BEFORE_MIGRATE=${VERSION_B}" \
+  "UPGRADE_TEST_WRITE_DURING_UPGRADE=${VERSION_B}" UPGRADE_TEST_WRITE_ID=6
 (( installer_status != 0 )) \
   && pass "the installer reported the failed upgrade (exit ${installer_status})" \
   || { bad "the installer exited 0 despite the induced pre-migration failure"; report_installer_output; }
 [[ "$(display_name_columns)" == "0" ]] \
   && pass "no migration ran, so the database is still on A's schema" \
   || bad "the schema moved despite a failure injected before the migrations"
+assert_deployment_at "after a pre-migration failure" "${VERSION_A}" "${COMMIT_A}" "001-baseline.sql" "0"
 assert_seeded_data_intact "after a pre-migration failure"
+[[ "$(live_write_rows 6)" == "1" ]] \
+  && pass "the row written during the upgrade survived, so an untouched database was left untouched" \
+  || bad "the row written during the upgrade was destroyed by a restore that was not needed"
+record="$(rollback_record)"
+[[ "${record}" == *'"databaseRestored":false'* ]] \
+  && pass "the record states that the database was deliberately not restored" \
+  || bad "the record does not state that the database was left alone: ${record}"
 
 # ---------------------------------------------------------------------------
-# 8. Retrying that upgrade succeeds
+# 7. The operator's escape hatch, and the runbook it leaves them with
 # ---------------------------------------------------------------------------
-printf '\n=== retrying the upgrade after a pre-migration failure ===\n'
+# install.sh is run by hand as well as by the update agent, and an operator
+# debugging a failed upgrade has to be able to keep the failed state. This is
+# that switch, exercised: the same post-migration failure with the rollback
+# turned off must leave exactly what it left before increment 4 -- new source,
+# new schema, a dump, and a panel naming it -- and the documented recovery must
+# still put it back.
+printf '\n=== ORCASYNAPSE_UPGRADE_ROLLBACK=off leaves the failed state in place ===\n'
+run_installer "${ARCHIVE_B}" "${SHA_B}" "${COMMIT_B}" \
+  ORCASYNAPSE_EXISTING_INSTALL_ACTION=upgrade ORCASYNAPSE_UPGRADE_ROLLBACK=off \
+  "UPGRADE_TEST_FAIL_AFTER_MIGRATE=${VERSION_B}"
+if (( installer_status == 3 )); then
+  bad "the failure was injected before the migration was visible, so this scenario proved nothing"
+  report_installer_output
+elif (( installer_status != 0 )); then
+  pass "the installer reported the failed upgrade (exit ${installer_status})"
+else
+  bad "the installer exited 0 despite the induced post-migration failure"
+  report_installer_output
+fi
+[[ "$(installed_marker)" == "${VERSION_B}" && "$(installed_commit)" == "${COMMIT_B}" ]] \
+  && pass "with the rollback off the deployment is left on B's source, as it was before increment 4" \
+  || bad "the rollback ran despite ORCASYNAPSE_UPGRADE_ROLLBACK=off: the deployment is at '$(installed_marker)'"
+[[ "$(display_name_columns)" == "1" ]] \
+  && pass "with the rollback off the migrated schema is left in place for inspection" \
+  || bad "the database was restored despite ORCASYNAPSE_UPGRADE_ROLLBACK=off"
+grep -Fq 'THE PRE-UPGRADE DATABASE DUMP IS INTACT' "${installer_output}" \
+  && pass "the operator is still told where the dump is" \
+  || { bad "no restore notice was printed, so an operator who turned the rollback off is left with nothing"; report_installer_output; }
+[[ "$(leftover_directories '.orcasynapse.backup.*')" == "0" ]] \
+  && pass "with the rollback off no source backup is retained, exactly as before" \
+  || bad "$(leftover_directories '.orcasynapse.backup.*') source backup(s) were retained despite the rollback being off"
+
+printf '\n=== the documented recovery still works from that state ===\n'
+escape_dump="$(newest_dump)"
+recover_to_a "recovery with the rollback turned off" "${escape_dump}" || true
+assert_deployment_at "after the documented recovery" "${VERSION_A}" "${COMMIT_A}" "001-baseline.sql" "0"
+assert_seeded_data_intact "after the documented recovery"
+
+# ---------------------------------------------------------------------------
+# 8. Retrying the upgrade succeeds
+# ---------------------------------------------------------------------------
+printf '\n=== retrying the upgrade after all of that ===\n'
 run_installer "${ARCHIVE_B}" "${SHA_B}" "${COMMIT_B}" ORCASYNAPSE_EXISTING_INSTALL_ACTION=upgrade
 (( installer_status == 0 )) \
   && pass "the retried upgrade completed" \
@@ -791,9 +991,9 @@ assert_seeded_data_intact "after retrying"
 # <version>-<second> and two runs from the same version inside one second
 # collapse to one file -- so an equality here would be a flake waiting for a
 # fast machine. The ceiling is what retention actually promises, and it still
-# fires if pruning is removed: six upgrades would leave at least four files.
+# fires if pruning is removed: eight upgrades would leave at least four files.
 [[ "$(dump_count)" -le 3 && "$(dump_count)" -ge 1 ]] \
-  && pass "retention never let the backups directory past three dumps across six upgrades" \
+  && pass "retention never let the backups directory past three dumps across every upgrade in this run" \
   || bad "the backups directory holds $(dump_count) dump(s), which retention should never allow"
 
 # ---------------------------------------------------------------------------
