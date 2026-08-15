@@ -56,8 +56,10 @@ import {
   updateConnection,
   updateConnectionMonitoring,
 } from "./api.js";
+import { adminAccess } from "./admin-access.js";
 import { AdminSignInDialog } from "./admin-sign-in-dialog.js";
 import { ConnectionDrawer, type ConnectionDraft } from "./connection-drawer.js";
+import type { SetupStepKey } from "./setup-steps.js";
 import { connectionReadiness } from "./connection-readiness.js";
 import { FrontPage } from "./front-page.js";
 import { HomeView, type HomeLayer, type HomeReadinessCheck } from "./home-view.js";
@@ -69,24 +71,36 @@ import { ThemeToggle } from "./ui/theme-toggle.js";
 import { persistRailCollapsed, storedRailCollapsed } from "./shell-preferences.js";
 import {
   pathForView,
-  primaryNavigationGroups,
+  primaryNavigationItems,
   productAreaForView,
-  settingsNavigationItem,
+  setupStepFromHash,
   viewFromHash,
   WorkspaceContextBar,
   type ActiveView,
+  type PrimaryNavigationItem,
   type ProductArea,
 } from "./workspace-navigation.js";
 
 const OperationsView = lazy(() => import("./operations-view.js").then((module) => ({ default: module.OperationsView })));
+const ReleaseGatesView = lazy(() => import("./release-gates-view.js").then((module) => ({ default: module.ReleaseGatesView })));
 const ChatView = lazy(() => import("./chat-view.js").then((module) => ({ default: module.ChatView })));
 const AgentsView = lazy(() => import("./agents-view.js").then((module) => ({ default: module.AgentsView })));
+const AgentRuntimeView = lazy(() => import("./agent-runtime-view.js").then((module) => ({ default: module.AgentRuntimeView })));
+/*
+ * Skills and Memory are one module rendered at two scopes rather than two
+ * modules, because they are one governed mirror partitioned by file kind:
+ * the node selector, the signed-snapshot status, the revision history and the
+ * conflict-safe mutation dialog are identical on both, and duplicating four
+ * hundred lines to change a noun is how two screens start disagreeing about
+ * what an expected hash means.
+ */
 const CorpusView = lazy(() => import("./corpus-view.js").then((module) => ({ default: module.CorpusView })));
 const ToolingView = lazy(() => import("./tooling-view.js").then((module) => ({ default: module.ToolingView })));
 const ModelsView = lazy(() => import("./models-view.js").then((module) => ({ default: module.ModelsView })));
 const GuardrailsView = lazy(() => import("./guardrails-view.js").then((module) => ({ default: module.GuardrailsView })));
 const PromptsView = lazy(() => import("./prompts-view.js").then((module) => ({ default: module.PromptsView })));
 const OnboardingView = lazy(() => import("./onboarding-view.js").then((module) => ({ default: module.OnboardingView })));
+const ApplicationView = lazy(() => import("./application-view.js").then((module) => ({ default: module.ApplicationView })));
 const AuditView = lazy(() => import("./audit-view.js").then((module) => ({ default: module.AuditView })));
 
 /**
@@ -305,11 +319,14 @@ function App() {
   const [sessionRestored, setSessionRestored] = useState(false);
   const [minimumBootElapsed, setMinimumBootElapsed] = useState(false);
   const [drawerKind, setDrawerKind] = useState<ServiceKind>("INFERENCE");
-  const [deploymentInitialTab, setDeploymentInitialTab] = useState<"journey" | "nodes" | "readiness">("journey");
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [diagnostic, setDiagnostic] = useState<ConnectionTestResult | null>(null);
   const [activeView, setActiveView] = useState<ActiveView>(() => viewFromHash(window.location.hash));
+  // Setup's open step is part of the address, not component state. It used to
+  // be `deploymentInitialTab` here, which is why Back from the nodes panel left
+  // Settings and a reload mid-enrolment returned to the overview.
+  const [setupStep, setSetupStep] = useState<SetupStepKey | null>(() => setupStepFromHash(window.location.hash));
   const [revisionHistory, setRevisionHistory] = useState<ConfigurationRevisionList | null>(null);
   const [revisionConnectionId, setRevisionConnectionId] = useState<string | null>(null);
   const sessionGeneration = useRef(0);
@@ -339,7 +356,10 @@ function App() {
   }, [activeView]);
 
   useEffect(() => {
-    const synchronizeRoute = () => setActiveView(viewFromHash(window.location.hash));
+    const synchronizeRoute = () => {
+      setActiveView(viewFromHash(window.location.hash));
+      setSetupStep(setupStepFromHash(window.location.hash));
+    };
     window.addEventListener("hashchange", synchronizeRoute);
     return () => window.removeEventListener("hashchange", synchronizeRoute);
   }, []);
@@ -436,7 +456,10 @@ function App() {
 
   const bootstrapState = platform?.bootstrapState ?? (apiAvailable ? "REQUIRED" : "LOCKED");
   const passwordChangePending = adminSession?.passwordChangeRequired === true;
-  const unlocked = adminSession !== null && adminSession.passwordChangeRequired !== true;
+  // One definition of "may call admin routes", shared with every governed
+  // view. The inline copy that used to live here was the same expression by
+  // hand, which is how a shell and a screen start disagreeing about a session.
+  const { unlocked } = adminAccess(adminSession);
   /*
    * One error cell serves three surfaces — the front page, the connection
    * drawer and the elevation dialog — and only one of them is ever visible.
@@ -614,14 +637,14 @@ function App() {
       detail: readiness.inferenceReady ? "Approved model serving is reachable" : "Connect and verify model serving",
       ready: readiness.inferenceReady,
       action: "Deployment" as ActiveView,
-      deploymentTab: "journey" as const,
+      setupStep: "inference" as const,
     },
     {
       label: "Isolated agent runtime",
       detail: readiness.runtimeNodeReady && readiness.hermesReady ? "VM2 is online and Hermes is reachable" : "Enroll VM2 and verify Hermes health",
       ready: readiness.runtimeNodeReady && readiness.hermesReady,
       action: "Deployment" as ActiveView,
-      deploymentTab: "nodes" as const,
+      setupStep: "runtime" as const,
     },
     {
       label: "Active Agent Profile",
@@ -644,7 +667,7 @@ function App() {
     if (kind === "HERMES") {
       setSettingsError(null);
       setDrawerOpen(false);
-      selectView("Deployment", "nodes");
+      selectView("Deployment", "runtime");
       return;
     }
     setDrawerKind(kind);
@@ -851,9 +874,9 @@ function App() {
     }
   };
 
-  const selectView = (view: ActiveView, deploymentTab: "journey" | "nodes" | "readiness" = "journey") => {
-    if (view === "Deployment") setDeploymentInitialTab(deploymentTab);
+  const selectView = (view: ActiveView, step?: SetupStepKey) => {
     setActiveView(view);
+    setSetupStep(view === "Deployment" ? step ?? null : null);
 
     /*
      * `pathForView` for every view, including Overview.
@@ -864,7 +887,7 @@ function App() {
      * `#dashboard`, the table changed and the address bar did not. Tests passed:
      * they exercise `pathForView`, which was right all along.
      */
-    const target = `${window.location.pathname}${pathForView(view)}`;
+    const target = `${window.location.pathname}${pathForView(view, view === "Deployment" ? step : null)}`;
     // pushState, not replaceState: replacing left no history entry, so Back from
     // anywhere in the dashboard exited the application entirely rather than
     // returning to the previous screen. The existing hashchange listener picks
@@ -938,6 +961,73 @@ function App() {
    */
   const navigationCounts: Partial<Record<ProductArea, number>> =
     chatMetrics && chatMetrics.conversations > 0 ? { Session: chatMetrics.conversations } : {};
+
+  /*
+   * One row, drawn the same way wherever it sits in the rail.
+   *
+   * Settings was the exception and the exception is what went wrong with it:
+   * its own markup, its own height, its own muted white, and a second copy for
+   * the phone dock. A single renderer means "Settings looks like the others"
+   * is not a thing anyone has to keep true — the collapsed rail's
+   * `.sidebar nav button` rules and the dock's `.nav-app-icon` tile already
+   * reach every row in here, and now they reach that one too.
+   */
+  const renderNavigationRow = ({ area, icon, target, description }: PrimaryNavigationItem) => {
+    const active = area === activeArea;
+    const count = navigationCounts[area];
+    return (
+      <Button
+        variant="ghost"
+        /*
+         * White on the brand violet, per the design: the active row is a soft
+         * white fill at full white and semibold; inactive rows keep a
+         * near-white label and lose their weight. Tokens would be wrong for
+         * the text — the rail's background never themes, so its foreground
+         * must not either. The description lives in the tooltip; the row
+         * itself is one line.
+         */
+        className={cn(
+          "h-10 w-full justify-start gap-3 border-transparent px-3 text-left font-sans text-[14.5px]",
+          active
+            ? "bg-white/10 font-semibold text-white"
+            : "font-medium text-white/85 hover:bg-white/[0.06] hover:text-white",
+        )}
+        key={area}
+        ref={active ? activeNavigationItem : undefined}
+        aria-current={active ? "page" : undefined}
+        type="button"
+        title={description}
+        onClick={() => selectView(target)}
+      >
+        {/*
+          * The glyph is the one thing on the row that is *not* the label's
+          * colour: bright accent when the row is active, muted lavender when
+          * it is not, so the icon column reads as a second, quieter rank.
+          *
+          * The two descendant selectors put the Relay set's cyan "live node"
+          * back on `currentColor` for the duration of the rail. That accent is
+          * meant to appear once per composition; one on every row stacked down
+          * the sidebar was the loudest thing on the screen, and it also
+          * defeated the active/muted tinting, because the dot stayed cyan
+          * whether the row was selected or not.
+          */}
+        <span
+          className={cn(
+            "nav-app-icon flex shrink-0 [&_.fill-node]:fill-current [&_.stroke-node]:stroke-current",
+            active ? "text-accent" : "text-white/45",
+          )}
+        >
+          <Glyph name={icon} />
+        </span>
+        <span className="min-w-0 flex-1 truncate">{area}</span>
+        {count === undefined ? null : (
+          <span className="shrink-0 text-[12px] tabular-nums text-white/45" title="Conversations in the last 24 hours">
+            {count}
+          </span>
+        )}
+      </Button>
+    );
+  };
 
   /*
    * Three mutually exclusive surfaces, decided only once the session probes
@@ -1027,119 +1117,24 @@ function App() {
         <nav aria-label="Primary navigation">
           {/*
             * One flat list of primary work areas, not two labelled groups: the
-            * design draws them as a single run. Settings is intentionally
-            * anchored below. The grouping still lives in
+            * design draws them as a single run. The grouping still lives in
             * `workspace-navigation.tsx` because that is where the product
             * split is described — this only declines to draw a heading for it.
             */}
-          <div className="nav-group">
-            {primaryNavigationGroups.flatMap((group) => group.items).map(({ area, icon, target, description }) => {
-              const active = area === activeArea;
-              const count = navigationCounts[area];
-              return (
-                <Button
-                  variant="ghost"
-                  /*
-                   * White on the brand violet, per the design: the active row
-                   * is a soft white fill at full white and semibold; inactive
-                   * rows keep a near-white label and lose their weight. Tokens
-                   * would be wrong for the text — the rail's background never
-                   * themes, so its foreground must not either. The description
-                   * lives in the tooltip; the row itself is one line.
-                   */
-                  className={cn(
-                    "h-10 w-full justify-start gap-3 border-transparent px-3 text-left font-sans text-[14.5px]",
-                    active
-                      ? "bg-white/10 font-semibold text-white"
-                      : "font-medium text-white/85 hover:bg-white/[0.06] hover:text-white",
-                  )}
-                  key={area}
-                  ref={active ? activeNavigationItem : undefined}
-                  aria-current={active ? "page" : undefined}
-                  type="button"
-                  title={description}
-                  onClick={() => selectView(target)}
-                >
-                  {/*
-                    * The glyph is the one thing on the row that is *not* the
-                    * label's colour: bright accent when the row is active,
-                    * muted lavender when it is not, so the icon column reads
-                    * as a second, quieter rank.
-                    *
-                    * The two descendant selectors put the Relay set's cyan
-                    * "live node" back on `currentColor` for the duration of
-                    * the rail. That accent is meant to appear once per
-                    * composition; one on every row stacked down the sidebar was the
-                    * loudest thing on the screen, and it also defeated the
-                    * active/muted tinting, because the dot stayed cyan whether
-                    * the row was selected or not.
-                    */}
-                  <span
-                    className={cn(
-                      "nav-app-icon flex shrink-0 [&_.fill-node]:fill-current [&_.stroke-node]:stroke-current",
-                      active ? "text-accent" : "text-white/45",
-                    )}
-                  >
-                    <Glyph name={icon} />
-                  </span>
-                  <span className="min-w-0 flex-1 truncate">{area}</span>
-                  {count === undefined ? null : (
-                    <span className="shrink-0 text-[12px] tabular-nums text-white/45" title="Conversations in the last 24 hours">
-                      {count}
-                    </span>
-                  )}
-                </Button>
-              );
-            })}
-          </div>
-          <div className="nav-settings-mobile">
-            <Button
-              variant="ghost"
-              className={cn(
-                "h-10 w-full justify-start gap-3 border-transparent px-3 text-left font-sans text-[14.5px]",
-                activeArea === settingsNavigationItem.area
-                  ? "bg-white/10 font-semibold text-white"
-                  : "font-medium text-white/85 hover:bg-white/[0.06] hover:text-white",
-              )}
-              ref={activeArea === settingsNavigationItem.area ? activeNavigationItem : undefined}
-              aria-current={activeArea === settingsNavigationItem.area ? "page" : undefined}
-              type="button"
-              title={settingsNavigationItem.description}
-              onClick={() => selectView(settingsNavigationItem.target)}
-            >
-              <span className={cn(
-                "nav-app-icon flex shrink-0 [&_.fill-node]:fill-current [&_.stroke-node]:stroke-current",
-                activeArea === settingsNavigationItem.area ? "text-accent" : "text-white/45",
-              )}>
-                <Glyph name={settingsNavigationItem.icon} />
-              </span>
-              <span className="min-w-0 flex-1 truncate">{settingsNavigationItem.area}</span>
-            </Button>
-          </div>
+          <div className="nav-group">{primaryNavigationItems("top").map(renderNavigationRow)}</div>
+          {/*
+            * Settings, last in the same menu rather than a slab bolted beneath
+            * it. It used to be drawn twice — an edge-to-edge footer row for the
+            * rail, plus a duplicate hidden inside this nav that only the phone
+            * dock revealed — so it was the one area whose height, padding,
+            * hover and active fill were maintained in two places, and while it
+            * was the active area both copies claimed `activeNavigationItem`.
+            * The only thing this group still does differently is sit at the
+            * bottom, and it does that in CSS, through one auto margin.
+            */}
+          <div className="nav-group nav-group--bottom">{primaryNavigationItems("bottom").map(renderNavigationRow)}</div>
         </nav>
         <div className="sidebar-bottom">
-          <Button
-            variant="ghost"
-            className={cn(
-              "sidebar-settings-button min-h-12 w-full justify-start gap-3 rounded-none border-transparent px-4 text-left font-sans text-[14px]",
-              activeArea === settingsNavigationItem.area
-                ? "bg-white/10 font-semibold text-white"
-                : "font-medium text-white/75 hover:bg-white/[0.06] hover:text-white",
-            )}
-            ref={activeArea === settingsNavigationItem.area ? activeNavigationItem : undefined}
-            aria-current={activeArea === settingsNavigationItem.area ? "page" : undefined}
-            type="button"
-            title={settingsNavigationItem.description}
-            onClick={() => selectView(settingsNavigationItem.target)}
-          >
-            <span className={cn(
-              "nav-app-icon flex shrink-0 [&_.fill-node]:fill-current [&_.stroke-node]:stroke-current",
-              activeArea === settingsNavigationItem.area ? "text-accent" : "text-white/45",
-            )}>
-              <Glyph name={settingsNavigationItem.icon} />
-            </span>
-            <span className="min-w-0 flex-1 truncate">{settingsNavigationItem.area}</span>
-          </Button>
           {/*
             * The control that sets the rail's width lives in the rail.
             *
@@ -1237,12 +1232,41 @@ function App() {
                 void refreshWorkspaceState().catch(() => undefined);
                 selectView("Chat");
               }}
-              onOpenReadiness={() => selectView("Deployment", "nodes")}
+              onOpenReadiness={() => selectView("Deployment", "runtime")}
               onSessionExpired={forgetAnySession}
             />
           ),
-          Corpus: () => (
+          Runtime: () => (
+            <AgentRuntimeView
+              unlocked={agentsUnlocked}
+              administrator={adminSession !== null}
+              oidcConfigured={oidcStatus?.configured === true}
+              onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23agents%2Fruntime")}
+              onConfigure={() => openConnectionSettings("HERMES")}
+              onOpenProfiles={() => selectView("Agents")}
+              onSessionExpired={forgetAnySession}
+            />
+          ),
+          /*
+           * `key` is what makes the scope change a remount rather than a prop
+           * update. Both entries render the same component at the same position,
+           * so React would otherwise keep the mounted instance and hold the
+           * previous tab's entries and selection on screen until the debounced
+           * refetch landed.
+           */
+          Skills: () => (
             <CorpusView
+              key="corpus-skills"
+              scope="SKILLS"
+              session={adminSession}
+              onConfigure={() => openConnectionSettings()}
+              onSessionExpired={forgetAdminSession}
+            />
+          ),
+          Memory: () => (
+            <CorpusView
+              key="corpus-memory"
+              scope="MEMORY"
               session={adminSession}
               onConfigure={() => openConnectionSettings()}
               onSessionExpired={forgetAdminSession}
@@ -1271,20 +1295,28 @@ function App() {
           ),
           Deployment: () => (
             <OnboardingView
-              currentVersion={platform?.version ?? "unknown"}
+              session={adminSession}
               connections={managedConnections}
               agentRuntime={agentRuntime}
               profiles={agentProfiles}
               runtimeNodes={runtimeNodes}
-              unlocked={unlocked}
               oidcConfigured={oidcStatus?.administratorSignIn === true}
-              initialTab={deploymentInitialTab}
+              initialStep={setupStep}
+              onSelectStep={(step) => selectView("Deployment", step)}
               onConfigure={(kind) => openConnectionSettings(kind)}
               onOpenWorkspace={(workspace) => selectView(workspace)}
               onRuntimeNodesChange={setRuntimeNodes}
               onOpenOperations={() => selectView("Operations")}
               onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23settings%2Fsetup")}
               onSessionExpired={forgetAdminSession}
+            />
+          ),
+          Application: () => (
+            <ApplicationView
+              session={adminSession}
+              currentVersion={platform?.version ?? "unknown"}
+              onConfigure={() => openConnectionSettings()}
+              onOpenOperations={() => selectView("Operations")}
             />
           ),
           Audit: () => (
@@ -1295,6 +1327,13 @@ function App() {
           ),
           Operations: () => (
             <OperationsView
+              session={adminSession}
+              onConfigure={() => openConnectionSettings()}
+              onSessionExpired={forgetAdminSession}
+            />
+          ),
+          Releases: () => (
+            <ReleaseGatesView
               session={adminSession}
               onConfigure={() => openConnectionSettings()}
               onSessionExpired={forgetAdminSession}

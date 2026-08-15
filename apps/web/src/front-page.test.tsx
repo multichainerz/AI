@@ -66,10 +66,27 @@ describe("signing in from the front page", () => {
 
     expect(screen.getByRole("heading", { name: "Dynamic intelligence, orchestrated into action." })).toBeTruthy();
     expect(screen.getByText(/Hermes-native sessions, agent profiles, models, policy, and tools/i)).toBeTruthy();
-    expect(screen.getByLabelText(/agentic workflow coordinates intelligence and action/i)).toBeTruthy();
-    expect(container.textContent).toContain("AGENTIC HARNESS");
     expect(container.textContent).not.toContain("OCR + RETRIEVAL");
     expect(container.textContent).not.toMatch(/Governed agentic workflows|Plan and reason|Use governed tools|Retain context|Act with oversight/);
+  });
+
+  /*
+   * The diagram is the deployment, not a metaphor. It names the two machines
+   * and the boundary they sit in, and the drawing it replaced — an orbit of
+   * abstractions around a "plan · reason" core — must not creep back, because
+   * the whole point of the redesign was that it said less than it appeared to.
+   */
+  it("draws the real deployment: operator, control plane, isolated Hermes runtime", () => {
+    const { container } = render(<FrontPage {...base} {...handlers()} />);
+
+    expect(screen.getByLabelText(/intent enters the OrcaSynapse control plane/i)).toBeTruthy();
+    expect(container.textContent).toContain("INFRASTRUCTURE YOU CONTROL");
+    expect(container.textContent).toContain("OPERATOR");
+    expect(container.textContent).toContain("CONTROL PLANE");
+    expect(container.textContent).toContain("HERMES");
+    expect(container.textContent).toContain("Approved inference");
+    expect(container.textContent).toContain("Audit · Evidence");
+    expect(container.textContent).not.toMatch(/AGENTIC HARNESS|PLAN . REASON|TOOLS \+ ACTIONS|CONTROLLED ENVIRONMENT/);
   });
 
   it("keeps the sign-in card compact and removes decorative framing copy", () => {
@@ -163,12 +180,36 @@ describe("enterprise SSO", () => {
 });
 
 describe("the forced password change", () => {
+  /*
+   * Sign-in and recovery open straight onto their fields and carry their name
+   * as the form's aria-label. This state used to be the one exception, leading
+   * with an icon, a kicker, a heading and a paragraph — so the card visibly
+   * changed shape between two steps of the same sign-in. It now matches, which
+   * means the accessible name has to move to the label the other two use
+   * rather than simply being dropped with the heading.
+   */
+  it("opens on its fields like sign-in and recovery, naming the form instead", () => {
+    const { unmount } = render(<FrontPage {...base} {...handlers()} session={changeSession("LOCAL_PASSWORD")} />);
+
+    expect(screen.getByRole("form", { name: "Change temporary password" })).toBeTruthy();
+    expect(screen.queryByText("Credential update")).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Change temporary password" })).toBeNull();
+    expect(screen.queryByText(/Set a permanent password before entering the workspace/i)).toBeNull();
+    unmount();
+
+    render(<FrontPage {...base} {...handlers()} session={changeSession("INSTALLATION_KEY_RECOVERY")} />);
+
+    expect(screen.getByRole("form", { name: "Reset local administrator" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Reset local administrator" })).toBeNull();
+    expect(screen.queryByText(/The recovery key has been verified/i)).toBeNull();
+  });
+
   it("changes a temporary password through the change handler", async () => {
     const user = userEvent.setup();
     const on = handlers();
     render(<FrontPage {...base} {...on} session={changeSession("LOCAL_PASSWORD")} />);
 
-    await user.type(screen.getByLabelText(/temporary password/i), "the-temporary-one");
+    await user.type(screen.getByLabelText(/^temporary password$/i), "the-temporary-one");
     await user.type(screen.getByLabelText(/^new password$/i), "the-permanent-one!");
     await user.type(screen.getByLabelText(/confirm new password/i), "the-permanent-one!");
     await user.click(screen.getByRole("button", { name: /change password/i }));
@@ -182,7 +223,7 @@ describe("the forced password change", () => {
     const on = handlers();
     render(<FrontPage {...base} {...on} session={changeSession("LOCAL_PASSWORD")} />);
 
-    await user.type(screen.getByLabelText(/temporary password/i), "the-temporary-one");
+    await user.type(screen.getByLabelText(/^temporary password$/i), "the-temporary-one");
     await user.type(screen.getByLabelText(/^new password$/i), "the-permanent-one!");
     await user.type(screen.getByLabelText(/confirm new password/i), "a-different-one!!");
 

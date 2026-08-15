@@ -136,6 +136,21 @@ describe("chat composer", () => {
     expect(screen.queryByLabelText("Current session identity")).toBeNull();
   });
 
+  it("renders four prompt cards that fill the composer without clipping", async () => {
+    const user = userEvent.setup();
+    render(<ChatView {...props} />);
+
+    const group = await screen.findByRole("group", { name: "Suggested prompts" });
+    const cards = within(group).getAllByRole("button");
+    expect(cards).toHaveLength(4);
+    expect(cards[0]?.className).toContain("h-auto");
+    expect(cards[0]?.className).toContain("whitespace-normal");
+
+    await user.click(cards[0]!);
+    const composer = screen.getByLabelText("Chat message") as HTMLTextAreaElement;
+    expect(composer.value.length).toBeGreaterThan(0);
+  });
+
   it("keeps the message when the send fails, since nothing else can recover it", async () => {
     // The draft was cleared before the request. A failed submit creates no
     // assistant row, so Retry prompt has nothing to read back from - a long

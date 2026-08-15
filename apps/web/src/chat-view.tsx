@@ -22,15 +22,18 @@ import {
 import { COMPOSER_ZONE, THREAD_MEASURE, THREAD_SCROLLER } from "./chat/measure.js";
 import { shouldStickToBottom } from "./chat/stick-to-bottom.js";
 import { usePacedStream } from "./chat/use-paced-stream.js";
+import { pickChatSuggestions } from "./chat/suggestions.js";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
+  ArrowUp,
+  ArrowUpRight,
   Bot as RobotIcon,
   BrainCircuit,
   Copy as CopyIcon,
   Layers3 as LayersIcon,
   Monitor as MonitorIcon,
   Network as NodeIcon,
-  Send,
+  Plus,
   SquareTerminal as TerminalIcon,
 } from "lucide-react";
 import {
@@ -129,6 +132,20 @@ function formatTokenCount(value: number | null): string {
 function formatCompactTokenCount(value: number): string {
   return new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(value);
 }
+
+/**
+ * The composer's message cap, and the two points on the way to it where saying
+ * so is worth the room.
+ *
+ * A counter that is always on is a number nobody reads: a draft of forty
+ * characters against a thirty-two thousand character allowance carries no
+ * information, and it sat beside the send control on every single turn. These
+ * are the last fifth and the last twentieth of the allowance — the span where
+ * the figure changes what someone does next.
+ */
+const COMPOSER_LIMIT = 32_000;
+const COMPOSER_COUNTER_FROM = Math.round(COMPOSER_LIMIT * 0.2);
+const COMPOSER_COUNTER_WARN = Math.round(COMPOSER_LIMIT * 0.05);
 
 function formatLatency(value: number | null): string {
   if (value === null) return "—";
@@ -466,6 +483,7 @@ export function ChatView({
   const [conversations, setConversations] = useState<ChatConversationSummary[]>([]);
   const [active, setActive] = useState<ChatConversation | null>(null);
   const [draft, setDraft] = useState("");
+  const [suggestions, setSuggestions] = useState(() => pickChatSuggestions());
   const [busy, setBusy] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -749,6 +767,7 @@ export function ChatView({
   const newConversation = () => {
     setActive(null);
     setDraft("");
+    setSuggestions(pickChatSuggestions());
     setError(null);
     setHistoryOpen(false);
     setCurrentActivity(null);
@@ -1023,6 +1042,8 @@ export function ChatView({
   const profileAvailable = profiles.length > 0;
   const routeReady = administratorReadiness?.ready !== false && profileAvailable;
   const chatReady = routeReady && active?.status !== "ARCHIVED";
+  const charactersLeft = COMPOSER_LIMIT - draft.length;
+  const sendable = draft.trim().length > 0 && chatReady;
   const normalizedHistoryFilter = historyFilter.trim().toLowerCase();
   const visibleConversations = normalizedHistoryFilter
     ? conversations.filter((conversation) => [conversation.title, conversation.profileName, conversation.lastMessagePreview]
@@ -1069,7 +1090,7 @@ export function ChatView({
     <section className="m-0 grid h-full w-full max-w-none grid-cols-1 bg-bg lg:grid-cols-[288px_minmax(0,1fr)]">
       <aside
         className={cn(
-          "min-w-0 flex-col overflow-x-hidden border-r border-border bg-surface px-3 pb-3 pt-3",
+          "min-w-0 flex-col overflow-x-hidden border-r border-border bg-bg px-3 pb-3 pt-3",
           historyOpen ? "flex" : "hidden lg:flex",
         )}
       >
@@ -1086,18 +1107,9 @@ export function ChatView({
             {conversations.length}
           </span>
         </div>
-        <Button
-          variant="primary"
-          className="mb-2.5 h-10 w-full justify-between px-3.5 shadow-card"
-          onClick={newConversation}
-        >
-          <span className="flex items-center gap-2.5">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M5 6.5A2.5 2.5 0 0 1 7.5 4h9A2.5 2.5 0 0 1 19 6.5v7a2.5 2.5 0 0 1-2.5 2.5H11l-4.5 3v-3A2.5 2.5 0 0 1 4 13.5v-7Z" />
-            </svg>
-            New conversation
-          </span>
-          <span aria-hidden="true" className="grid h-5 w-5 place-items-center rounded-pill border border-current/20 text-[15px] leading-none">+</span>
+        <Button variant="default" className="mb-2.5 w-full" onClick={newConversation}>
+          <Plus aria-hidden="true" />
+          New conversation
         </Button>
         <label className="relative mb-2 block">
           <span className="sr-only">Search conversations</span>
@@ -1137,7 +1149,7 @@ export function ChatView({
                 * closes an open menu when clicked, and a second level-1 heading
                 * would make that target ambiguous.
                 */}
-              <h3 className="sticky top-0 z-[1] flex items-center gap-2 bg-surface px-1.5 pb-1.5 pt-3 text-micro font-semibold uppercase tracking-[0.1em] text-faint">
+              <h3 className="sticky top-0 z-[1] flex items-center gap-2 bg-bg px-1.5 pb-1.5 pt-3 text-micro font-semibold uppercase tracking-[0.1em] text-faint">
                 <span>{group.label}</span>
                 <span aria-hidden="true" className="h-px flex-1 bg-border" />
               </h3>
@@ -1422,29 +1434,22 @@ export function ChatView({
                     </Button>
                   </div>
                 )}
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {[
-                    {
-                      label: "Outline an on-premise AI deployment",
-                      sub: "Main considerations, stated concisely",
-                      prompt: "Summarize the main considerations for an on-premise AI deployment.",
-                    },
-                    {
-                      label: "Create an AI risk checklist",
-                      sub: "For an internal assistant rollout",
-                      prompt: "Create a concise risk checklist for deploying an internal AI assistant.",
-                    },
-                  ].map((suggestion) => (
+                <div className="grid gap-3 sm:grid-cols-2" role="group" aria-label="Suggested prompts">
+                  {suggestions.map((suggestion) => (
                     <Button
                       variant="outline"
-                      className="grid gap-1.5 rounded-lg border border-border bg-surface px-4 py-3.5 text-left transition-colors hover:border-accent hover:bg-raised/60 disabled:cursor-not-allowed disabled:opacity-40"
+                      size="auto"
+                      className="w-full flex-col items-start justify-start gap-2 whitespace-normal border-border bg-raised text-left font-normal hover:border-accent hover:bg-soft hover:text-text"
                       key={suggestion.label}
                       type="button"
                       disabled={!routeReady}
                       onClick={() => setDraft(suggestion.prompt)}
                     >
-                      <span className="text-body font-semibold leading-snug text-text">{suggestion.label}</span>
-                      <span className="text-caption leading-snug text-faint">{suggestion.sub}</span>
+                      <span className="flex w-full items-start justify-between gap-3">
+                        <span className="min-w-0 text-body font-semibold leading-snug text-text">{suggestion.label}</span>
+                        <ArrowUpRight aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-muted" />
+                      </span>
+                      <span className="text-caption font-medium leading-snug text-muted">{suggestion.sub}</span>
                     </Button>
                   ))}
                 </div>
@@ -1677,40 +1682,82 @@ export function ChatView({
           <form
             className={cn(
               THREAD_MEASURE,
-              "group grid gap-2 rounded-card border px-3 pb-2.5 pt-3 shadow-card transition-colors",
+              /*
+               * One surface, not a bordered box with a control strip bolted
+               * under it. The shell holds no padding above the field at all:
+               * the textarea and its hidden measuring copy carry a matched
+               * inset of their own (`.chat-composer-field`, `styles.css`), so
+               * the click target reaches the top edge and the caret still sits
+               * where the placeholder did.
+               */
+              "chat-composer group grid gap-1 rounded-card border px-1.5 pb-1.5 pt-1",
               /*
                * A control that is off should look off. This one was genuinely
                * disabled and entirely normal-looking, so the only way to find
                * out was to click it and watch nothing happen; the reason lived
                * in placeholder text, which vanishes the moment anyone types.
-               * The strip below the composer states the reason in words.
+               *
+               * Off is stated in tokens rather than as `opacity-60` on the
+               * shell. The veil dimmed the placeholder that carries the reason
+               * along with everything else: measured in a browser it came to
+               * 2.6:1 in both themes, against the 4.5:1 this palette is built
+               * to clear. Dropping to the page colour and casting nothing says
+               * the same thing to the eye and leaves the words legible.
                */
               chatReady
-                ? "border-border-strong bg-surface focus-within:border-accent"
-                : "cursor-not-allowed border-border bg-surface opacity-60",
+                ? "border-border-strong bg-surface"
+                : "is-off cursor-not-allowed border-border bg-bg",
             )}
             onSubmit={submit}
           >
-            <Textarea
-              className="max-h-[180px] min-h-[54px] w-full resize-y border-0 bg-transparent px-1 py-1 text-read text-text outline-0 placeholder:text-faint disabled:cursor-not-allowed"
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  event.currentTarget.form?.requestSubmit();
-                }
-              }}
-              placeholder={active?.status === "ARCHIVED" ? "Restore this conversation to continue" : chatReady ? `Message ${selectedAgentName}` : "Finish the required setup to start a Session"}
-              rows={1}
-              maxLength={32_000}
-              disabled={working || !chatReady}
-              aria-label="Chat message"
-            />
-            <div className="flex min-w-0 items-center justify-between gap-3">
-              <div className="flex min-w-0 items-center gap-2 px-1 text-micro text-faint">
-                <RobotIcon size={14} className="text-accent" />
-                <span className="max-w-[180px] truncate font-medium text-muted">{selectedAgentName}</span>
+            {/*
+              * The grid that grows with the draft. `data-composer-value` is the
+              * whole mechanism: the stylesheet renders it as a hidden copy of
+              * the text, and the copy is what has a height a textarea cannot
+              * report without an inline style the CSP forbids.
+              */}
+            <div className="chat-composer-field text-read" data-composer-value={draft}>
+              <Textarea
+                /*
+                 * The utility layer deliberately states no box here — `p-0`,
+                 * `min-h-0`, `resize-none`. The textarea and the hidden copy
+                 * that measures it have to be the same box down to the wrap
+                 * points, and a pseudo-element cannot take classes, so one rule
+                 * in `styles.css` sizes both. Delete that rule and this control
+                 * collapses visibly rather than drifting a few pixels.
+                 *
+                 * `disabled:opacity-100` for the same reason the shell above
+                 * no longer dims: the primitive's `disabled:opacity-50` lands
+                 * on the placeholder, and the placeholder is the only thing on
+                 * screen that says why the box is dead. Measured in a browser
+                 * on the dead composer: half-strength `faint` comes to 2.19:1
+                 * against the surface behind it, full strength to 5.25.
+                 */
+                className="w-full min-h-0 resize-none border-0 bg-transparent p-0 text-read text-text shadow-none placeholder:text-faint focus-visible:outline-none focus-visible:ring-0 disabled:cursor-not-allowed disabled:opacity-100"
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    event.currentTarget.form?.requestSubmit();
+                  }
+                }}
+                placeholder={active?.status === "ARCHIVED" ? "Restore this conversation to continue" : chatReady ? `Message ${selectedAgentName}` : "Finish the required setup to start a Session"}
+                rows={1}
+                maxLength={COMPOSER_LIMIT}
+                disabled={working || !chatReady}
+                aria-label="Chat message"
+              />
+            </div>
+            {/* `pl-3` puts the agent name on the same left edge as the first
+                character of the draft: the field's own inset is 12px and the
+                shell adds 6px, so anything less reads as a second margin. */}
+            <div className="flex min-w-0 items-center justify-between gap-3 pl-3">
+              <div className="flex min-w-0 items-center gap-2 text-caption text-faint">
+                <span className="flex min-w-0 items-center gap-1.5" title={`This Session runs on ${selectedAgentName}`}>
+                  <RobotIcon size={14} aria-hidden="true" className="shrink-0 text-accent" />
+                  <span className="max-w-[11rem] truncate font-medium text-muted">{selectedAgentName}</span>
+                </span>
                 <span aria-hidden="true" className="hidden h-1 w-1 shrink-0 rounded-full bg-border-strong sm:block" />
                 <span
                   className="hidden min-w-0 items-center gap-1.5 sm:flex"
@@ -1725,7 +1772,7 @@ export function ChatView({
                       ? `Latest prompt context: ${contextTokens.toLocaleString()} tokens. The configured context window is not available.`
                       : `Latest prompt context: ${contextTokens.toLocaleString()} of ${contextWindowTokens.toLocaleString()} tokens. This measures the current model prompt, not Hermes persistent memory.`}
                 >
-                  <LayersIcon size={13} className="text-faint" />
+                  <LayersIcon size={12} aria-hidden="true" className="shrink-0 text-faint" />
                   <span>Context</span>
                   <strong className={cn(
                     "font-mono font-semibold tabular-nums",
@@ -1738,18 +1785,40 @@ export function ChatView({
                         : "—"}
                   </strong>
                 </span>
-                <span aria-hidden="true" className="hidden h-1 w-1 shrink-0 rounded-full bg-border-strong sm:block" />
-                <span className="hidden sm:inline">Shift + Enter for new line</span>
-              </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <span className="hidden font-mono text-micro tabular-nums text-faint opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 sm:inline">
-                  {draft.length.toLocaleString()} / 32,000
+                {/*
+                  * The keyboard contract, offered while someone is typing and
+                  * out of the way the rest of the time. It is the least
+                  * important thing on the row and was competing with the agent
+                  * identity for the same eye.
+                  */}
+                <span className="hidden items-center gap-2 opacity-0 transition-opacity duration-200 group-focus-within:opacity-100 md:flex">
+                  <span aria-hidden="true" className="h-1 w-1 shrink-0 rounded-full bg-border-strong" />
+                  <span>Shift + Enter for a new line</span>
                 </span>
+              </div>
+              <div className="flex shrink-0 items-center gap-2.5">
+                {/*
+                  * A cap nobody is near is not information. The old counter sat
+                  * on every draft reading "0 / 32,000"; this one appears for
+                  * the last fifth of the allowance and turns amber for the last
+                  * twentieth, which is the only span where it changes anything.
+                  */}
+                {charactersLeft <= COMPOSER_COUNTER_FROM && (
+                  <span
+                    aria-label={`${charactersLeft.toLocaleString()} characters left before the message limit`}
+                    className={cn(
+                      "font-mono text-micro tabular-nums",
+                      charactersLeft <= COMPOSER_COUNTER_WARN ? "text-warn" : "text-faint",
+                    )}
+                  >
+                    {charactersLeft.toLocaleString()} left
+                  </span>
+                )}
                 {busy ? (
                   <Button
                     variant="danger"
                     size="sm"
-                    className="h-9"
+                    className="h-9 px-3.5"
                     disabled={currentActivity === "Cancellation requested"}
                     onClick={() => void requestStop()}
                   >
@@ -1759,11 +1828,21 @@ export function ChatView({
                   <Button
                     variant="primary"
                     type="submit"
-                    className="h-9 w-9 shrink-0 p-0"
-                    disabled={!draft.trim() || !chatReady}
+                    size="icon"
+                    /*
+                     * A faded violet disc reads as a violet disc that needs a
+                     * better monitor. With nothing to send the control steps
+                     * back to the surface it sits on instead of dimming, which
+                     * is the difference between "not yet" and "broken".
+                     */
+                    className={cn(
+                      "shrink-0 rounded-full",
+                      !sendable && "border-border-strong bg-raised text-faint hover:bg-raised disabled:opacity-100",
+                    )}
+                    disabled={!sendable}
                     aria-label="Send message"
                   >
-                    <Send aria-hidden="true" className="h-4 w-4" />
+                    <ArrowUp aria-hidden="true" className="h-4 w-4" />
                   </Button>
                 )}
               </div>
@@ -1786,7 +1865,12 @@ export function ChatView({
             * and attribution make a wrong answer easier to catch, which is a
             * reason to check the sources, not a reason to skip it.
             */}
-          <p className={cn(THREAD_MEASURE, "mb-0 mt-1.5 text-center text-micro leading-relaxed text-faint")}>
+          {/*
+            * `text-caption` rather than `text-micro`: the micro step carries
+            * 0.08em of tracking because it is for labels sitting over figures,
+            * and a full sentence set in it reads as spaced-out fine print.
+            */}
+          <p className={cn(THREAD_MEASURE, "mb-0 mt-2 text-center text-caption leading-relaxed text-faint")}>
             Answers are generated and can be wrong or incomplete. Verify important results before you rely on them.
           </p>
         </div>

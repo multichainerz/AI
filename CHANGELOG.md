@@ -5,6 +5,33 @@ tagged with the same name. Entries below are newest first. Releases before
 ai-v1.25.0 predate this file and are backfilled from the commit bodies; releases
 before ai-v1.19.0 are summarized per series.
 
+## ai-v3.20.0 — 2026-08-15
+
+Settings → Setup is a three-step wizard instead of six unrelated blocks and
+nine buttons. Connect an inference server, install the agent runtime, create an
+Agent Profile: one step open at a time, every blocker rendered inside the step
+it blocks, and the VM2 hand-off treated as the fifteen-minute wait on another
+machine that it actually is. Two enrolment traps the product never stated are
+now stated — a second healthy inference connection removes the ability to
+enrol, and a connection that tests healthy without a selected model cannot seed
+anything.
+
+Operations is three flat tabs rather than two tabs over four sub-tabs. Health
+answers what is degraded now, Release gates answers what evidence an activation
+carries, and the audit trail answers what happened. Pilot readiness is removed:
+nothing in the product can create a readiness control, so the screen could never
+show a row. Application updates move to their own Settings tab.
+
+Agents becomes five tabs, one job each — Profiles, Runtime, Skills, Memory and
+Agent Tools — and Agent Tools separates the two governance planes it had been
+interleaving, stating each prerequisite beside the control it blocks.
+
+The Dashboard draws the run pipeline, response outcomes and tool decisions that
+every poll already carried and no surface rendered. The session composer grows
+with its draft, the sidebar carries Settings as its last row, and record cards
+across Operations are composed from the design system rather than left as
+unstyled markup.
+
 ## ai-v3.19.0 — 2026-08-15
 
 The operator workspace now uses a single source-owned shadcn and Tailwind

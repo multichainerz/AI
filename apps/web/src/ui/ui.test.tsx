@@ -72,6 +72,16 @@ describe("Button", () => {
     expect(html).toContain("h-16");
     expect(html).not.toContain("h-9");
   });
+
+  it("fills default and primary with the AA-safe accent, not the light accent token", () => {
+    // Dark `--primary` is the lavender tuned to sit *on* a surface. White over
+    // it fails AA, so the filled variants use `--accent-fill` and white ink.
+    const filled = markup(<Button variant="default">Go</Button>);
+    expect(filled).toContain("bg-accent-fill");
+    expect(filled).toContain("text-white");
+    expect(filled).not.toContain("bg-primary");
+    expect(markup(<Button variant="primary">Go</Button>)).toContain("bg-accent-fill");
+  });
 });
 
 describe("LockedScreen", () => {

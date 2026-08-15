@@ -9,20 +9,59 @@
  * `VIEW_PREVIEW_OUT` dumps the rendered markup, as elsewhere.
  */
 import type { HermesRuntimeNode } from "@orcasynapse/contracts";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { writeFileSync } from "node:fs";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const nodes: HermesRuntimeNode[] = [];
 
+/*
+ * Hoisted so each case can decide what the fleet read answers with. The panel
+ * now polls, so "what does the list return" is a per-call question rather than
+ * a fixture: the staleness demotion the poll exists to catch only shows up in
+ * the *second* response.
+ */
+const api = vi.hoisted(() => ({
+  getHermesRuntimeNodes: vi.fn(),
+  mutateHermesRuntimeNode: vi.fn(),
+  createHermesNodeInvitation: vi.fn(),
+}));
+
 vi.mock("./api.js", async () => {
   const actual = await vi.importActual<typeof import("./api.js")>("./api.js");
-  return { ...actual, getHermesRuntimeNodes: vi.fn(async () => ({ items: nodes })) };
+  return { ...actual, ...api };
 });
 
 const { RuntimeNodesPanel } = await import("./runtime-nodes-panel.js");
 
-async function panel(inferenceReady = true, targetEnvironment: "DEVELOPMENT" | "PRODUCTION" = "DEVELOPMENT") {
+function runtimeNode(overrides: Partial<HermesRuntimeNode> = {}): HermesRuntimeNode {
+  return {
+    id: "3f1d1b9c-5a5c-4a58-9a1e-8b7f3c2d1e00",
+    slug: "hermes-runtime-01",
+    displayName: "Hermes Runtime 01",
+    baseUrl: "http://10.0.0.12:8642",
+    status: "ONLINE",
+    revision: 3,
+    enrolledAt: "2026-08-15T00:00:00.000Z",
+    revokedAt: null,
+    lastSeenAt: "2026-08-15T00:00:00.000Z",
+    hostname: "hermes-01.internal",
+    ...overrides,
+  } as HermesRuntimeNode;
+}
+
+beforeEach(() => {
+  api.getHermesRuntimeNodes.mockReset();
+  api.getHermesRuntimeNodes.mockResolvedValue({ items: nodes });
+  api.mutateHermesRuntimeNode.mockReset();
+  api.mutateHermesRuntimeNode.mockResolvedValue(undefined);
+  api.createHermesNodeInvitation.mockReset();
+});
+
+async function panel(
+  inferenceReady = true,
+  targetEnvironment: "DEVELOPMENT" | "PRODUCTION" | null = "DEVELOPMENT",
+) {
   render(
     <main>
       <RuntimeNodesPanel
@@ -33,7 +72,9 @@ async function panel(inferenceReady = true, targetEnvironment: "DEVELOPMENT" | "
       />
     </main>,
   );
-  await waitFor(() => screen.getByText(/Install the Agentic System on VM2|AI Inference must be ready first/));
+  await waitFor(() => screen.getByText(
+    /Install the Agentic System on VM2|AI Inference must be ready first|architecture decision has not loaded/,
+  ));
   if (process.env.VIEW_PREVIEW_OUT) {
     writeFileSync(process.env.VIEW_PREVIEW_OUT, document.body.innerHTML, "utf8");
   }
@@ -161,5 +202,182 @@ describe("the production artifact pin", () => {
     fireEvent.change(commit, { target: { value: "C015663B215C0E14DE4295346B0727DB602CBB1D" } });
     // Uppercase is the same commit; the field lowercases rather than refusing.
     expect(within(dialog).queryByText(/not pinned to a 40-character commit/)).toBeNull();
+  });
+});
+
+describe("an unknown target environment", () => {
+  /*
+   * The panel used to be handed `snapshot?.architecture.targetEnvironment ??
+   * "DEVELOPMENT"`. A PRODUCTION install whose snapshot has not loaded — or
+   * whose load failed — therefore got the development path: the "development
+   * release defaults" note, and a Generate button that would happily issue an
+   * unpinned, plain-HTTP enrolment the API is about to refuse. Guessing
+   * DEVELOPMENT is the one guess that removes a guard, so the panel now refuses
+   * to guess at all.
+   */
+  it("refuses to offer enrolment before it knows what it is enrolling into", async () => {
+    await panel(true, null);
+
+    const generate = screen.getByRole("button", { name: "Generate installer" });
+    expect(generate).toHaveProperty("disabled", true);
+    expect(screen.getByText(/architecture decision has not loaded/)).toBeTruthy();
+  });
+
+  it("does not claim development defaults are selected", async () => {
+    await panel(true, null);
+
+    // Positive first: a `queryByText(...)` that is null because the whole
+    // screen failed to render would pass this vacuously.
+    expect(screen.getByText("Agentic System")).toBeTruthy();
+    expect(screen.queryByText(/Development release defaults are selected/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Generate VM2 installer" })).toBeNull();
+  });
+});
+
+describe("the hand-off to VM2", () => {
+  /*
+   * Step 2 gives work to another machine for 15-20 minutes with long silent
+   * stretches, and everything needed during that silence used to live inside
+   * the drawer that issued the claim — so closing it lost the command, the
+   * claim and any sense of how long it had been running. This is the designed
+   * waiting state: the command, a clock, the claim's remaining life, the node's
+   * own status, and what the installer is doing while it says nothing.
+   */
+  const pending = runtimeNode({ status: "PENDING", lastSeenAt: null, enrolledAt: null, hostname: null });
+
+  async function issue() {
+    api.createHermesNodeInvitation.mockResolvedValue({
+      node: pending,
+      bundle: {
+        format: "orcasynapse-hermes-enrollment/v1",
+        nodeId: pending.id,
+        nodeSlug: pending.slug,
+        token: "a-one-time-claim-that-never-reaches-the-command",
+        controlPlaneUrl: "https://orcasynapse.internal",
+        hermesBaseUrl: pending.baseUrl,
+        hermesCommit: "c015663b215c0e14de4295346b0727db602cbb1d",
+        expiresAt: new Date(Date.now() + 27 * 60_000).toISOString(),
+      },
+    });
+    // Empty until the claim is issued: the record appears with the invitation,
+    // which is what `load()` re-reads immediately afterwards.
+    api.getHermesRuntimeNodes.mockResolvedValue({ items: [] });
+    await panel();
+    fireEvent.click(screen.getByRole("button", { name: "Generate installer" }));
+    await screen.findByRole("dialog");
+    api.getHermesRuntimeNodes.mockResolvedValue({ items: [pending] });
+    fireEvent.click(screen.getByRole("button", { name: "Generate install command" }));
+    return waitFor(() => screen.getByRole("article", { name: "VM2 enrollment in progress" }));
+  }
+
+  it("keeps the command, the clock and the claim's life on the screen", async () => {
+    const waiting = within(await issue());
+
+    // The command the operator runs — and it carries no claim, which is the
+    // property that lets it be pasted into a shared terminal at all.
+    const command = waiting.getByText(/curl -fsSL https:\/\/orcasynapse.internal\/install\/agentic-node.sh/);
+    expect(command.textContent).not.toContain("a-one-time-claim");
+    expect(waiting.getByText(/The command contains no claim/)).toBeTruthy();
+
+    // A clock that moves, so a silent stretch reads as running rather than hung.
+    expect(waiting.getByText(/^\d+:\d{2}$/)).toBeTruthy();
+    // The claim's remaining life, in the units the invitation form sets it in.
+    expect(waiting.getByText(/^in 2[67] min$/)).toBeTruthy();
+    // What the installer is doing during the silence.
+    expect(waiting.getByText(/15–20 minutes on a first install/)).toBeTruthy();
+    expect(waiting.getByText(/180,000 objects/)).toBeTruthy();
+  });
+
+  it("reports the node's own status rather than assuming it arrived", async () => {
+    const waiting = within(await issue());
+    // Enrolment leaves the node PENDING; only its own signed heartbeat promotes
+    // it, so "the claim was issued" and "VM2 answered" are different facts.
+    expect(waiting.getByText("Pending")).toBeTruthy();
+    expect(waiting.getByText("None yet")).toBeTruthy();
+  });
+
+  it("stops watching once the node is online, rather than waiting forever", async () => {
+    await issue();
+    api.getHermesRuntimeNodes.mockResolvedValue({ items: [runtimeNode({ status: "ONLINE" })] });
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+
+    await waitFor(() => expect(screen.queryByRole("article", { name: "VM2 enrollment in progress" })).toBeNull());
+    expect(screen.getByText("Online")).toBeTruthy();
+  });
+});
+
+describe("the node poll", () => {
+  /*
+   * Nothing in the product polled before this. VM2 enrolment hands off to
+   * another machine for 15-20 minutes and the node's status is written by its
+   * own heartbeat, so without a poll the screen that says "watch the node come
+   * online" could only be made to say it by pressing Refresh.
+   */
+  it("re-reads the fleet without a manual refresh", async () => {
+    vi.useFakeTimers();
+    try {
+      render(
+        <main>
+          <RuntimeNodesPanel
+            targetEnvironment="DEVELOPMENT"
+            inferenceReady
+            onConfigureInference={vi.fn()}
+            onSessionExpired={vi.fn()}
+          />
+        </main>,
+      );
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(api.getHermesRuntimeNodes).toHaveBeenCalledTimes(1);
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+      expect(api.getHermesRuntimeNodes.mock.calls.length).toBeGreaterThan(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("acts on the revision the last poll returned, not the one it first drew", async () => {
+    /*
+     * `list()` bumps a node's `revision` when it demotes one that has gone
+     * quiet past NODE_STALE_AFTER_MS (180 s). A panel that holds the revision
+     * it first rendered therefore sends a stale `expectedRevision` and every
+     * Drain, Suspend and Revoke answers 409 — the failure mode a poll
+     * introduces if its result is diffed away instead of written through.
+     */
+    api.getHermesRuntimeNodes
+      .mockResolvedValueOnce({ items: [runtimeNode({ revision: 3 })] })
+      .mockResolvedValue({ items: [runtimeNode({ revision: 4, status: "OFFLINE" })] });
+
+    vi.useFakeTimers();
+    try {
+      render(
+        <main>
+          <RuntimeNodesPanel
+            targetEnvironment="DEVELOPMENT"
+            inferenceReady
+            onConfigureInference={vi.fn()}
+            onSessionExpired={vi.fn()}
+          />
+        </main>,
+      );
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(screen.getByText("Hermes Runtime 01")).toBeTruthy();
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+
+      // The demotion is on screen, which is what proves the second response was
+      // adopted rather than discarded as "the same node".
+      expect(screen.getByText("Offline")).toBeTruthy();
+
+      const confirmed = vi.spyOn(window, "confirm").mockReturnValue(true);
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
+      });
+      confirmed.mockRestore();
+      const [, body] = api.mutateHermesRuntimeNode.mock.calls[0] ?? [];
+      expect(body).toMatchObject({ action: "REVOKE", expectedRevision: 4 });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

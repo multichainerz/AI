@@ -1,15 +1,18 @@
 /**
  * @vitest-environment jsdom
  *
- * Agents, populated — and its first test of any kind. It is the screen that
- * decides what an agent may do and carries the operator kill switch, and it had
- * no coverage.
+ * Profiles, populated. It is the screen that decides what an agent may do.
+ *
+ * The kill switch and the execution ledger used to be here too, under a tab
+ * called "Profiles & runs"; they now live on Runtime and are covered by
+ * `agent-runtime-view.test.tsx`. What this file keeps is the configuration
+ * half, plus one assertion that the execution half really left.
  *
  * `VIEW_PREVIEW_OUT` writes the rendered markup so it can be looked at without
  * a session; see `chat-transcript.test.tsx`.
  */
-import type { AgentProfile, AgentRun, AgentRunEvent } from "@orcasynapse/contracts";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import type { AgentProfile } from "@orcasynapse/contracts";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { writeFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -35,30 +38,12 @@ const profiles = [
   },
 ] as unknown as AgentProfile[];
 
-const runs = [
-  {
-    id: "r1", profileName: "Support analyst", profileSlug: "support-analyst", profileVersion: 3,
-    status: "COMPLETED", input: "What should we check before promoting?", output: "Three things: migrations, runtime, signature.",
-    createdAt: "2026-08-07T09:00:00.000Z", queuedAt: "2026-08-07T09:00:00.000Z",
-    startedAt: "2026-08-07T09:00:01.000Z", completedAt: "2026-08-07T09:00:06.000Z",
-    profileDistributionDigest: "9f2c4a1b7e5d3086f4a2b1c0d9e8f7a6", failureCode: null, failureMessage: null,
-  },
-] as unknown as AgentRun[];
-
-const events = [
-  { id: "e1", type: "RUN_STARTED", summary: null, toolName: null, childSessionId: null, status: null, occurredAt: "2026-08-07T09:00:01.000Z", durationMs: null, inputTokens: null, outputTokens: null },
-  { id: "e2", type: "RUN_COMPLETED", summary: "Answered from one source.", toolName: null, childSessionId: null, status: null, occurredAt: "2026-08-07T09:00:06.000Z", durationMs: 5_100, inputTokens: 880, outputTokens: 260 },
-] as unknown as AgentRunEvent[];
-
 vi.mock("./api.js", async () => {
   const actual = await vi.importActual<typeof import("./api.js")>("./api.js");
   return {
     ...actual,
     getAgentProfiles: vi.fn(async () => ({ items: profiles })),
-    getAgentRuns: vi.fn(async () => ({ items: runs })),
-    getAgentRunEvents: vi.fn(async () => ({ items: events })),
     getAgentRuntime: vi.fn(async () => ({ enabled: true, reason: "Verified against Hermes on node vm2-a." })),
-    getAgentMetrics: vi.fn(async () => ({ profiles: 2, activeProfiles: 1, queuedRuns: 0, runningRuns: 0, completedRuns: 1 })),
   };
 });
 
@@ -88,13 +73,20 @@ async function view(over: Partial<typeof props> = {}) {
 afterEach(cleanup);
 
 describe("agents", () => {
-  it("states the execution boundary as a word, not only a colour", async () => {
-    // This is the kill switch. An operator reaching for it is already dealing
-    // with a problem and should not have to infer the state from a hue.
+  it("leaves execution to the Runtime tab and keeps only configuration", async () => {
+    /*
+     * The seam. Everything about a run -- the kill switch, the counters, the
+     * ledger, the run detail -- belongs to Runtime now, and the only way to
+     * state that from here is to assert their absence. A split that leaves the
+     * old content behind under a narrower label is the failure mode this
+     * catches.
+     */
     await view();
-    expect(screen.getByText("ON")).toBeTruthy();
-    expect(screen.getByText("Ready for Chat")).toBeTruthy();
-    expect(screen.getByText("Verified against Hermes on node vm2-a.")).toBeTruthy();
+    expect(screen.getByText("Profiles")).toBeTruthy();
+    expect(screen.queryByText("Recent runs")).toBeNull();
+    expect(screen.queryByText("ON")).toBeNull();
+    expect(screen.queryByText("Hermes execution")).toBeNull();
+    expect(screen.queryByLabelText("Hermes run summary")).toBeNull();
   });
 
   it("shows the distribution digest on the row, since that is what VM2 admits", async () => {
@@ -110,14 +102,19 @@ describe("agents", () => {
     expect(screen.getByRole("button", { name: "Verify & activate" })).toBeTruthy();
   });
 
-  it("says what the activity timeline deliberately omits", async () => {
-    // A bounded list read as a complete one would make absent tool arguments
-    // look like tool calls that never happened.
+  it("points at the tab that now owns Hermes memory", async () => {
+    /*
+     * The editor's memory note used to say "Agents → Hermes corpus", a tab
+     * that no longer exists. A stale cross-reference in a form that governs an
+     * agent is worse than none: it sends the operator looking for a screen and
+     * leaves them assuming the capability went away with the label.
+     */
     const user = userEvent.setup();
     await view();
-    await user.click(screen.getAllByText("Support analyst")[0]!);
-    const timeline = await screen.findByLabelText("Safe Hermes activity timeline");
-    expect(within(timeline).getByText(/never retained here/)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Create agent" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.textContent).toContain("Agents → Memory");
+    expect(dialog.textContent).not.toContain("Hermes corpus");
   });
 
   it("keeps drafting possible while telling the operator activation is not", async () => {
