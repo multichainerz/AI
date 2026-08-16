@@ -1,0 +1,32 @@
+---
+description: How chat, Hermes, inference, and corpus actually run — including documented-vs-code gaps
+alwaysApply: true
+---
+
+# Runtime wiring (source of truth is code)
+
+## Chat turn
+
+UI `submitChatMessage` → API 202 inserts USER + PENDING ASSISTANT → `agents.submitRun({ sessionId: conversationId })` → `NOTIFY orcasynapse_agent_run` → worker claims `AgentRun` (PostgreSQL queue, 90s lease, max 5) → `HermesClient` `POST /api/sessions/:id/chat/stream` with **current message only**. SSE to UI ends on `AgentRunEvent` type `RUN_ENDED`, not on `AgentRun.status`. Cancel sets `CANCEL_REQUESTED`; worker sees it in-loop or on 1s reconcile.
+
+## Auth
+
+Admin cookie `orcasynapse_admin_session` (Strict); enterprise `orcasynapse_user_session` (Lax). Tokens hashed SHA-256. `requireAdmin(scope)` on `/api/v1/admin/*`. Chat accepts admin `chat:use` or enterprise session. Installation-key recovery is `sessions:manage` only until password change.
+
+## Inference
+
+VM2 Bearer `inferenceGatewayKey` → `/internal/v1`. Gateway pins AGENT default `modelAlias`, rate-limits, inspects input, forwards to VM1 INFERENCE connection. Upstream `apiKey` never goes to VM2.
+
+## Governance gaps (do not “fix” by assuming runbooks)
+
+- Chat model comes from **active Agent Profile `modelAlias`**, not the default CHAT `ModelDeployment`.
+- `PromptTemplate` CRUD and activate exist; **nothing at runtime reads the active prompt**. Its only non-CRUD consumer is one read-only tile in the Operations overview. Worker `hardenedInstructions()` builds the system text from profile `soulMd`/`instructions`. There is no evaluation subsystem left to promote evidence through — it was removed outright, along with every activation gate that depended on it.
+- Native Hermes interactive approval is denied (`NATIVE_APPROVAL_UNSUPPORTED`). Chat `decideApproval` updates PostgreSQL only.
+
+## Corpus / enrollment
+
+Exactly one enrolled Hermes node. Snapshots are signed, allowlisted, bounded; mutations are expected-hash commands (two-person for destructive). Signed VM2→VM1 JSON bodies must not contain JSON numbers. Node private key never leaves VM2.
+
+## Easy to break
+
+Do not replay PG history into Hermes. Do not treat heartbeat `ONLINE` as “runs work”. Do not mutate corpus rows expecting VM2 to change. Do not add a second enrolled node. After first model/guardrail activation, missing default AGENT route or missing unique ACTIVE policy fail-closes the gateway/chat.

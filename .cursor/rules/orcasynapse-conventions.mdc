@@ -1,0 +1,44 @@
+---
+description: OrcaSynapse product map, ownership invariants, and coding conventions
+alwaysApply: true
+---
+
+# OrcaSynapse
+
+<!--
+No version in this heading on purpose. It read "ai-v3.19.0" long after that
+prefix was retired and that numbering scheme abandoned, and because this rule is
+`alwaysApply: true` it told every session the wrong release. A version here is a
+thirteenth thing a release commit has to remember to bump; the twelve that
+matter are enforced by `scripts/test-release-consistency.sh`.
+-->
+
+
+
+On-premises control plane around vanilla Hermes. OrcaSynapse governs identity, models, profiles, prompts, guardrails, tool admission, corpus observability, operations, and audit. Hermes alone owns session context and canonical `MEMORY.md` / `USER.md` / Skills on VM2.
+
+Read `docs/CURRENT_STATE_HANDOFF.md` and `docs/ARCHITECTURE.md` before changing ownership, schema, installers, or the memory contract.
+
+## Layout
+
+- `apps/web` — React workspace. Six areas and their tabs: **Dashboard**; **Session**; **Agents** (Profiles, Skills, Memory, Tools); **Gateway** (Models, Prompts, Guardrails); **Operations** (Health, Audit trail); **Settings** (Setup, System). `ActiveView` tokens deliberately do not match the on-screen names — `Integrations` is the Tools tab, `Deployment` is Setup, `Overview` is Dashboard; see `apps/web/src/workspace-navigation.tsx`, which is the only source of truth for this list. There is no Corpus screen (it became Skills and Memory) and no Platform area (it became Settings at v4.9.0). Models, Prompts and Guardrails left Settings for Gateway at v6.6.0; their `#settings/*` and `#platform/*` hashes still resolve.
+- `apps/api` — Fastify control plane. Domain folders with `routes.ts` + `drizzle-*-manager.ts`. Prefixes: `/api/v1`, `/api/v1/admin`, `/internal/v1`, `/install`.
+- `apps/worker` — PostgreSQL-backed run claiming and Hermes dispatch (no Redis/queue broker).
+- `packages/contracts` — shared Zod schemas; `packages/database` — Drizzle source of truth; `packages/runtime-clients` — Hermes + inference; `packages/security` — envelope encryption.
+
+## Invariants (do not violate)
+
+1. Conversation UUID = Hermes native session ID. Never replay PostgreSQL chat or corpus as model context.
+2. VM2 is canonical for memory/Skills; VM1 holds a signed bounded lexical mirror only.
+3. No pgvector, embeddings, Redis, object store, LiteLLM, or remote-shell/SSH to VM2.
+4. Schema epoch `hermes-native-v1` is greenfield-only. Edit `packages/database/src/drizzle/schema.ts`, then `pnpm db:generate`. Never introspect the DB back over the schema.
+5. Native toolsets default-deny except built-in memory. Upstream inference credentials stay on VM1.
+6. Web CSP is `style-src 'self'`: no JSX `style=`, no runtime stylesheets. Controls from `apps/web/src/components/ui` (see `DESIGN_SYSTEM.md`).
+
+## How to change code
+
+- TypeScript is strict (`noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `verbatimModuleSyntax`). Match surrounding idiom.
+- Shared types live in `@orcasynapse/contracts`. Managers talk to Drizzle; routes stay thin.
+- Data-layer tests use real migrated PostgreSQL (`packages/database/src/testing.ts`), not query-builder fakes.
+- Merge gate: `pnpm verify`. After schema edits also `pnpm db:validate`. After installer-UI edits: `bash scripts/sync-installer-ui.sh`.
+- Do not add a second theme, primitive kit, or vector/memory subsystem.

@@ -46,6 +46,7 @@ describe("workspace navigation", () => {
       "Dashboard",
       "Session",
       "Agents",
+      "Gateway",
       "Operations",
       "Settings",
     ]);
@@ -53,6 +54,7 @@ describe("workspace navigation", () => {
       "Dashboard",
       "Session",
       "Agents",
+      "Gateway",
       "Operations",
     ]);
     expect(primaryNavigationItems("bottom").map((item) => item.area)).toEqual(["Settings"]);
@@ -92,8 +94,9 @@ describe("workspace navigation", () => {
       Dashboard: "Activity, readiness and next actions",
       Session: "Governed conversations",
       Agents: "Profiles and runs, skills, memory and tools",
+      Gateway: "Models, prompts and guardrails for the governed inference path",
       Operations: "Health, incidents and the audit trail",
-      Settings: "Setup, models, prompts, guardrails and system updates",
+      Settings: "Setup and system updates",
     });
 
     for (const [area, description] of Object.entries(described) as Array<[ProductArea, string]>) {
@@ -129,7 +132,7 @@ describe("workspace navigation", () => {
 
   it("maps every internal screen to one product area", () => {
     expect(productAreaForView("Integrations")).toBe("Agents");
-    expect(productAreaForView("Models")).toBe("Settings");
+    expect(productAreaForView("Models")).toBe("Gateway");
   });
 
   it("renames the two areas without stranding their old links", () => {
@@ -152,10 +155,27 @@ describe("workspace navigation", () => {
 
   it("moves Platform into Settings without breaking saved links", () => {
     expect(pathForView("Deployment")).toBe("#settings/setup");
-    expect(pathForView("Models")).toBe("#settings/models");
-    expect(viewFromHash("#settings/guardrails")).toBe("Guardrails");
     expect(viewFromHash("#platform/setup")).toBe("Deployment");
     expect(viewFromHash("#platform/models")).toBe("Models");
+  });
+
+  it("moves the governed inference tabs into Gateway without stranding their old links", () => {
+    // Generated paths follow the navigation, so the address bar cannot
+    // contradict the rail.
+    expect(pathForView("Models")).toBe("#gateway/models");
+    expect(pathForView("Prompts")).toBe("#gateway/prompts");
+    expect(pathForView("Guardrails")).toBe("#gateway/guardrails");
+
+    // Two moves have now passed over these three screens. A bookmark from
+    // either era still resolves -- the Platform spelling, the Settings
+    // spelling, and the short alias.
+    expect(viewFromHash("#settings/models")).toBe("Models");
+    expect(viewFromHash("#platform/models")).toBe("Models");
+    expect(viewFromHash("#settings/guardrails")).toBe("Guardrails");
+    expect(viewFromHash("#guardrails")).toBe("Guardrails");
+
+    // The bare area lands on its first tab, as `#settings` lands on Setup.
+    expect(viewFromHash("#gateway")).toBe("Models");
   });
 
   it("names the areas the way the product does", () => {
@@ -242,10 +262,14 @@ describe("workspace navigation", () => {
   it("gives the update check its own tab rather than a slot inside setup", () => {
     expect(sectionNavigationFor("Settings")).toEqual([
       { label: "Setup", view: "Deployment" },
+      { label: "System", view: "Application" },
+    ]);
+    // What Settings is left holding is what it was always really about:
+    // bringing the deployment up, and keeping the machine it runs on current.
+    expect(sectionNavigationFor("Gateway")).toEqual([
       { label: "Models", view: "Models" },
       { label: "Prompts", view: "Prompts" },
       { label: "Guardrails", view: "Guardrails" },
-      { label: "System", view: "Application" },
     ]);
     // The hash follows the label and the routing token does not, the same way
     // `Deployment` is addressed as `#settings/setup` two lines above.

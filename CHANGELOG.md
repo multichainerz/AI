@@ -5,6 +5,38 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v6.6.0 — 2026-08-16
+
+Gives Models, Prompts and Guardrails their own rail area, **Gateway**, and
+leaves Settings holding Setup and System.
+
+Settings had become a drawer. Models, prompts and guardrails are not setup
+steps — they are the running configuration of the governed inference path, and
+the runbooks are explicit that the internal gateway is what enforces the active
+guardrail policy and pins the model alias. Filing them under "install this" put
+five unrelated tabs in one row and made Settings mean nothing in particular.
+
+- add the `Gateway` product area, between Agents and Operations: configure the
+  inference path, then watch it
+- move Models, Prompts and Guardrails out of the Settings tab row
+- give it the joined-waypoints glyph — a shield would have overweighted
+  guardrails against the other two
+- move the generated hashes to `#gateway/*`, so the address bar follows the
+  navigation rather than contradicting it
+- keep `#settings/*`, `#platform/*` and the short aliases resolving: two moves
+  have now passed over these screens and a bookmark from either era still works
+- update the rail tooltips, which a test requires to name every tab in their own
+  area, so a description cannot drift from the tabs it summarises
+
+Gateway is ungated, exactly like Settings. The rail has never filtered by scope
+— each screen draws its own locked state — and all four admin roles carry
+`models:read`, `prompts:read` and `guardrails:read` anyway, so no role could see
+an empty section. Gating one area and not the others would have been new
+machinery and an inconsistent rail.
+
+Also corrects the navigation copy in `.cursor/rules/orcasynapse-conventions.mdc`
+and `docs/CURRENT_STATE_HANDOFF.md`, which both still described five areas.
+
 ## v6.5.0 — 2026-08-16
 
 Profiles now carry a tool set and a skill set, and a run reproduces exactly the

@@ -6,7 +6,7 @@ Written at v5.5.0; recalibrated at v6.0.1; **re-verified against v6.0.4**. Every
 citation was re-checked against the tree rather than assumed. Most held: the 27
 `AdminScope`s, the two-literal enterprise tuple, the seven migrations, the
 `(nodeId, path)` unique index, `EnterpriseUser`'s `(issuer, subject)` key and
-`NOT NULL lastLoginAt`, the five Settings tabs, both line-number citations, and
+`NOT NULL lastLoginAt`, the Settings tab row, both line-number citations, and
 all three preconditions — still open, unchanged.
 
 **Three did not hold.** The v6.0.1 pass checked that the *names* it cited
@@ -615,8 +615,9 @@ passes unchanged. **4–5 days.**
 ### E — the super admin's screens, and the honest statements
 
 - New Settings tab **People**: create users, set or change a division,
-  enable/disable. Divisions managed alongside. It becomes the sixth tab in that
-  row — Setup, Models, Prompts, Guardrails, System — where "System" is what
+  enable/disable. Divisions managed alongside. Settings became a two-tab row at
+  v6.6.0, when Models, Prompts and Guardrails left for the new Gateway area, so
+  People is the third tab there — Setup, System, People — where "System" is what
   "Application" was renamed to at v5.7.0.
 - Agents → Profiles: division selector plus the tool-set and skill-set pickers,
   and a division column in the list. The confirm dialog says that assigning a

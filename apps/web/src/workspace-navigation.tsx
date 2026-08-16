@@ -22,7 +22,7 @@ export type ActiveView =
  * internal routing names and deliberately did not follow: renaming those would
  * churn every view module, test fixture and CSS class for no reader's benefit.
  */
-export type ProductArea = "Dashboard" | "Session" | "Agents" | "Settings" | "Operations";
+export type ProductArea = "Dashboard" | "Session" | "Agents" | "Gateway" | "Settings" | "Operations";
 
 export interface PrimaryNavigationItem {
   area: ProductArea;
@@ -64,6 +64,13 @@ export const primaryNavigationGroups: ReadonlyArray<{
     label: "Administration",
     placement: "top",
     items: [
+      /*
+       * Ahead of Operations: you configure the governed inference path, then you
+       * watch it. The description must literally contain every tab label in this
+       * area -- workspace-navigation.test.ts asserts exactly that, which is what
+       * stops a tooltip drifting away from the tabs it summarises.
+       */
+      { area: "Gateway", icon: "gateway", target: "Models", description: "Models, prompts and guardrails for the governed inference path" },
       { area: "Operations", icon: "operations", target: "Operations", description: "Health, incidents and the audit trail" },
     ],
   },
@@ -71,7 +78,7 @@ export const primaryNavigationGroups: ReadonlyArray<{
     label: "System",
     placement: "bottom",
     items: [
-      { area: "Settings", icon: "settings", target: "Deployment", description: "Setup, models, prompts, guardrails and system updates" },
+      { area: "Settings", icon: "settings", target: "Deployment", description: "Setup and system updates" },
     ],
   },
 ];
@@ -146,12 +153,22 @@ const sectionNavigation: Partial<Record<ProductArea, ReadonlyArray<SectionNaviga
    * the deployment running it -- the release, the approved target, and the
    * upgrade as it happens on VM1 -- which is a machine, not an application.
    */
+  /*
+   * The three governed-inference tabs moved out to Gateway. What is left is what
+   * Settings has always actually been about: bringing the deployment up, and
+   * keeping the machine it runs on current. Models, prompts and guardrails are
+   * not setup steps -- they are the running configuration of the inference path,
+   * and grouping them under the same roof as "install this" made Settings read
+   * as a drawer rather than a place.
+   */
   Settings: [
     { label: "Setup", view: "Deployment" },
+    { label: "System", view: "Application" },
+  ],
+  Gateway: [
     { label: "Models", view: "Models" },
     { label: "Prompts", view: "Prompts" },
     { label: "Guardrails", view: "Guardrails" },
-    { label: "System", view: "Application" },
   ],
 };
 
@@ -164,9 +181,9 @@ const areaByView: Record<ActiveView, ProductArea> = {
   Integrations: "Agents",
   Deployment: "Settings",
   Application: "Settings",
-  Models: "Settings",
-  Prompts: "Settings",
-  Guardrails: "Settings",
+  Models: "Gateway",
+  Prompts: "Gateway",
+  Guardrails: "Gateway",
   Operations: "Operations",
   Audit: "Operations",
 };
@@ -180,9 +197,9 @@ const pathByView: Record<ActiveView, string> = {
   Integrations: "#agents/tools",
   Deployment: "#settings/setup",
   Application: "#settings/system",
-  Models: "#settings/models",
-  Prompts: "#settings/prompts",
-  Guardrails: "#settings/guardrails",
+  Models: "#gateway/models",
+  Prompts: "#gateway/prompts",
+  Guardrails: "#gateway/guardrails",
   Operations: "#operations/health",
   Audit: "#operations/audit",
 };
@@ -316,14 +333,23 @@ export function viewFromHash(hash: string): ActiveView {
     case "#settings/application":
     case "#application":
       return "Application";
+    /*
+     * `#gateway` bare lands on Models, the first tab, the same way `#settings`
+     * lands on Deployment. `#settings/*` and `#platform/*` stay: two moves have
+     * now passed over these screens and a bookmark from either era still works.
+     */
+    case "#gateway":
+    case "#gateway/models":
     case "#settings/models":
     case "#platform/models":
     case "#models":
       return "Models";
+    case "#gateway/prompts":
     case "#settings/prompts":
     case "#platform/prompts":
     case "#prompts":
       return "Prompts";
+    case "#gateway/guardrails":
     case "#settings/guardrails":
     case "#platform/guardrails":
     case "#guardrails":

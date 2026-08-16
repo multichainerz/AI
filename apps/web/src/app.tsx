@@ -27,6 +27,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Settings,
+  Waypoints,
 } from "lucide-react";
 import {
   OrcaSynapseApiError,
@@ -112,8 +113,11 @@ const AuditView = lazy(() => import("./audit-view.js").then((module) => ({ defau
  * held open for a dispatch that never happened.
  *
  * Each drawing is the one the design reference names for that area: a monitor
- * for Dashboard, a terminal window for Session, a robot for Agents, a gear for
- * Settings, and a node graph for Operations.
+ * for Dashboard, a terminal window for Session, a robot for Agents, joined
+ * waypoints for Gateway, a gear for Settings, and a node graph for Operations.
+ *
+ * Waypoints rather than a shield or a route marker: Gateway holds models,
+ * prompts and guardrails, and a shield would overweight one of the three.
  */
 function Glyph({ name }: { name: string }) {
   const glyphs: Record<string, ReactNode> = {
@@ -121,6 +125,7 @@ function Glyph({ name }: { name: string }) {
     chat: <MessageSquareText size={20} strokeWidth={1.8} />,
     agents: <Bot size={20} strokeWidth={1.8} />,
     settings: <Settings size={20} strokeWidth={1.8} />,
+    gateway: <Waypoints size={20} strokeWidth={1.8} />,
     operations: <Activity size={20} strokeWidth={1.8} />,
   };
 

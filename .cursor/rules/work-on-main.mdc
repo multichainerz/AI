@@ -1,0 +1,13 @@
+---
+description: Always work on branch main in this repository
+alwaysApply: true
+---
+
+# Work on `main`
+
+This repository ships from `main`. Do not create feature branches, worktrees, or PRs from other branches unless the user explicitly asks.
+
+- Before editing, confirm `git branch --show-current` is `main`. If it is not, check out `main`.
+- Leave existing uncommitted work on `main`; do not stash-and-switch or reset to “clean up” onto another branch.
+- Do not merge `backup/pgvector` into this generation.
+- Releases are one commit on `main` with subject `vX.Y.Z` — no `ai-` prefix; it is fully retired and no tag in this repository uses it (see `CONTRIBUTING.md`). Only create that commit when asked.

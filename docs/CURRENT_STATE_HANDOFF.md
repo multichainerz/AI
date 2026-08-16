@@ -24,9 +24,9 @@ after Release gates went with the evaluation subsystem it governed and Pilot
 readiness was deleted outright (below); `#operations/releases`,
 `#operations/evaluations` and `#releases` redirect to Health.
 
-The five areas and their tabs, in menu order, are: Dashboard; Session; Agents
-(Profiles, Skills, Memory, Tools); Operations (Health, Audit trail); Settings
-(Setup, Models, Prompts, Guardrails, Application).
+The six areas and their tabs, in menu order, are: Dashboard; Session; Agents
+(Profiles, Skills, Memory, Tools); Gateway (Models, Prompts, Guardrails);
+Operations (Health, Audit trail); Settings (Setup, System).
 `apps/web/src/workspace-navigation.tsx` is the source of truth, and
 `workspace-navigation.test.ts` pins every one of those strips literally —
 this paragraph said "Agents is five (Profiles, Runtime, Skills, Memory, Agent
@@ -50,7 +50,7 @@ The earlier product generation is preserved on the `backup/pgvector` branch. Do 
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/web` | operator workspace: Dashboard, Session, Agents, Operations, Settings |
+| `apps/web` | operator workspace: Dashboard, Session, Agents, Gateway, Operations, Settings |
 | `apps/web/src/components/ui` | canonical shadcn-style controls consumed across routes |
 | `apps/web/DESIGN_SYSTEM.md` | web token, component, CSP, and accessibility contract |
 | `apps/api` | authenticated control-plane API, enrollment, inference gateway, audit |
