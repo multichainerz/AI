@@ -65,6 +65,71 @@ async function seedDefaultAgentProfile(pool: Pool): Promise<void> {
   );
 }
 
+/**
+ * Carries a changed default profile to installs that never customised it.
+ *
+ * `seedDefaultAgentProfile` is `ON CONFLICT DO NOTHING` on both rows, which is
+ * right — it must never overwrite an operator's work — but it means a change to
+ * `DEFAULT_AGENT_PROFILE` reaches new installs only. v8.4.0 made that visible:
+ * the shipped prompt told the agent to call `remember` and `recall`, tools it
+ * cannot reach, and the correction would have stopped at the installs that did
+ * not have the problem yet.
+ *
+ * Version 1 is never rewritten. A version is immutable so a past run can
+ * reproduce exactly what it was given, and a prompt edited underneath a
+ * completed run would make its transcript unexplainable. This mints version 2
+ * instead, which is what editing the profile in the dashboard does.
+ *
+ * **The guard is `currentVersion = 1`**: editing a profile mints a version, so
+ * a profile still on its first has never been touched. Deliberately
+ * conservative — an install that has taken ownership keeps what it chose, and
+ * the failure mode is an upgrade that does not happen rather than an operator's
+ * prompt being replaced.
+ *
+ * Note for the next time the default changes: this will not fire twice, because
+ * an install upgraded here is left on version 2. Carrying a second change needs
+ * the digests this project has shipped to be recorded, so "untouched" can be
+ * recognised at any version rather than only at the first.
+ */
+async function upgradeDefaultAgentProfile(pool: Pool): Promise<void> {
+  const profile = DEFAULT_AGENT_PROFILE;
+  const [existing] = (await pool.query<{ id: string; currentVersion: number; digest: string | null }>(
+    `SELECT p."id", p."currentVersion", v."distributionDigest" AS "digest"
+       FROM "AgentProfile" p
+       LEFT JOIN "AgentProfileVersion" v ON v."profileId" = p."id" AND v."version" = 1
+      WHERE p."slug" = $1
+      LIMIT 1`,
+    [profile.slug],
+  )).rows;
+  // Absent: the seed above will have created it at the current content.
+  // Customised, or already current: nothing to carry.
+  if (!existing || existing.currentVersion !== 1) return;
+  if (existing.digest === defaultAgentProfileDigest()) return;
+
+  await pool.query(
+    `INSERT INTO "AgentProfileVersion" (
+       "profileId", "version", "displayName", "purpose", "instructions", "soulMd",
+       "skills", "distributionDigest", "modelAlias", "maxTurns", "timeoutSeconds",
+       "maxConcurrentRuns", "safeMode"
+     ) VALUES ($1, 2, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12)
+     ON CONFLICT ("profileId", "version") DO NOTHING`,
+    [
+      existing.id, profile.displayName, profile.purpose, profile.instructions, profile.soulMd,
+      JSON.stringify(profile.skills), defaultAgentProfileDigest(), profile.modelAlias,
+      profile.maxTurns, profile.timeoutSeconds, profile.maxConcurrentRuns, profile.safeMode,
+    ],
+  );
+  // Activated, not merely created. An operator who never chose a prompt is not
+  // choosing to stay on a superseded one, and a version nothing points at would
+  // leave the defect in place while looking as though it had been fixed.
+  await pool.query(
+    `UPDATE "AgentProfile"
+        SET "currentVersion" = 2, "activeVersion" = 2, "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "id" = $1 AND "currentVersion" = 1`,
+    [existing.id],
+  );
+}
+
 /** The slugs the seeded defaults own. Exported so tests can name them. */
 export const DEFAULT_TOOL_SET_SLUG = "default-tool-set";
 export const DEFAULT_SKILL_SET_SLUG = "default-skill-set";
@@ -247,6 +312,10 @@ export async function runMigrations(connectionString: string): Promise<void> {
     const database = drizzle(pool);
     await migrate(database, { migrationsFolder: migrationsFolder() });
     await seedDefaultAgentProfile(pool);
+    // After the seed, so a fresh install is already current and this is a no-op
+    // there; before the two below, so the version it may mint is claimed by the
+    // set backfill and the memory grants like any other.
+    await upgradeDefaultAgentProfile(pool);
     // After the profile, never before: the backfill claims every version that
     // has no set, and the seeded profile's version must be one of them.
     await seedDefaultConfigurationSets(pool);

@@ -5,6 +5,43 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v8.5.0 — 2026-08-16
+
+Carries a corrected default profile to installs that already exist, and tests
+the extraction client that v8.4.0 shipped untested.
+
+The seed is `ON CONFLICT DO NOTHING`, correctly — it must never overwrite an
+operator's prompt. The consequence was the wrong half: v8.4.0's correction, that
+the agent cannot call `remember` or `recall`, reached new installs only, and an
+existing deployment is precisely the one carrying the defect.
+
+- mint version 2 rather than rewriting version 1, since a version is immutable
+  so a past run can reproduce what it was given
+- guard on `currentVersion = 1`, because editing a profile mints a version, so a
+  profile still on its first has never been touched
+- activate the new version, not merely create it — one nothing points at leaves
+  the defect in place while looking as though it had been fixed
+- note in the code that this cannot fire twice, and what recording shipped
+  digests would take, rather than leaving the next person to find out
+
+The extractor's own tests, which v8.4.0 stubbed out at the processor boundary:
+
+- assert that an unapproved model catalogue produces **no request at all**,
+  checked on the fetcher rather than the return value — discarding the answer
+  would also return no notes, having already posted a division's conversation
+  somewhere nobody evaluated
+- cover the ways the endpoint disappoints: a refusal, a reply that is not JSON,
+  a missing inference connection, non-string entries, and more notes than the cap
+
+Two of these were found by mutation rather than by writing them:
+
+- the customised-profile test passed with the `currentVersion` guard removed,
+  because `ON CONFLICT DO NOTHING` was doing the protecting and the operator's
+  edit happened to be version 2. A profile whose history skips 2 has no conflict
+  to hit, and that case now pins the guard
+- the fixture restored only version 2 between tests, so the gap case leaked a
+  version 3 into the fresh-install case
+
 ## v8.4.0 — 2026-08-16
 
 Memory fills itself. After a run is finalised, the control plane reads the
