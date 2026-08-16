@@ -18,6 +18,7 @@ import {
   type TestDatabase,
 } from "@orcasynapse/database";
 import { HermesRunDetachedError } from "@orcasynapse/runtime-clients";
+import { RunCapabilityIssuer } from "@orcasynapse/security";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { DrizzleAgentProcessor, type AgentHermesRuntime } from "./agent-processor.js";
 
@@ -28,6 +29,13 @@ afterAll(async () => { await context?.drop(); }, 120_000);
 beforeEach(async () => { await context.reset(); });
 
 const WORKER_ID = randomUUID();
+/*
+ * A fixed key, because every test that is not about the capability still needs
+ * one: the processor requires an issuer so that forgetting to wire it in
+ * production is a compile error rather than a run that silently cannot call
+ * tools. Tests asserting the capability itself construct their own.
+ */
+const CAPABILITIES = new RunCapabilityIssuer(Buffer.alloc(32, 3));
 
 interface Fixture {
   runId: string;
@@ -197,10 +205,82 @@ describe("DrizzleAgentProcessor tool boundary", () => {
         submitted = input.admittedToolsets;
         return "hermes-native-boundary";
       },
-    }) as never);
+    }) as never, CAPABILITIES);
     await processor.process({ runId }, jobId, WORKER_ID);
 
     expect([...(submitted ?? [])].sort()).toEqual(["bfl", "clarify", "memory"]);
+  });
+});
+
+/*
+ * The gap this closes, and why it is asserted here rather than against the
+ * tooling manager.
+ *
+ * Every MCP call is authorized by `<runId>.<capability>`, and
+ * `assertRunIsExecutable` refuses any run whose `toolCapabilityTokenHash` is
+ * null. Nothing ever wrote one. `RunCapabilityIssuer` existed, had its own unit
+ * test, and was constructed nowhere in production -- so every governed tool
+ * call, for every run, was refused. The seeded `remember` and `recall` tools
+ * were unreachable by construction rather than by configuration, which is why
+ * no amount of installer work on VM2 would have made them callable.
+ *
+ * The capability is observed *during* the run, through the runtime's `start`
+ * hook, because it must not outlive the run and the finaliser clears it. A test
+ * reading the row after `process` returns would see null and prove nothing.
+ */
+describe("DrizzleAgentProcessor run capability", () => {
+  it("mints the capability the tool gateway re-derives, at the moment it claims the run", async () => {
+    const { runId, jobId } = await seed();
+    const issuer = new RunCapabilityIssuer(Buffer.alloc(32, 3));
+    // An array rather than a nullable local: the assignment happens inside a
+    // callback, and control-flow analysis narrows a `let` to its initializer.
+    const observed: Array<{ hash: Uint8Array | null; expiresAt: Date | null }> = [];
+    const processor = new DrizzleAgentProcessor(context.database, runtime({
+      start: async () => {
+        const [row] = await context.database
+          .select({ hash: agentRun.toolCapabilityTokenHash, expiresAt: agentRun.toolCapabilityExpiresAt })
+          .from(agentRun).where(eq(agentRun.id, runId)).limit(1);
+        observed.push({ hash: row?.hash ?? null, expiresAt: row?.expiresAt ?? null });
+        return "hermes-native-capability";
+      },
+    }) as never, issuer);
+
+    await processor.process({ runId }, jobId, WORKER_ID);
+
+    expect(observed).toHaveLength(1);
+    expect(observed[0]!.hash).not.toBeNull();
+    // The gateway hashes the token it is handed and compares. Deriving the same
+    // token from the same key and run id is what makes a retry safe, and it is
+    // the property that lets PostgreSQL hold only the digest.
+    expect(Buffer.from(observed[0]!.hash!)).toEqual(Buffer.from(issuer.issue(runId).tokenHash));
+    // The run deadline, not the lease: a lease is 90s and renews, while a run
+    // may legitimately last `timeoutSeconds`. The fixture's version sets 60.
+    const expiresAt = observed[0]!.expiresAt!.getTime();
+    expect(expiresAt).toBeGreaterThan(Date.now());
+    expect(expiresAt).toBeLessThanOrEqual(Date.now() + 61_000);
+  });
+
+  /*
+   * A capability outliving its run is a token that authorizes tool calls for a
+   * run that has already answered. The finaliser has always cleared it; this
+   * pins that minting did not quietly change what "cleared" means.
+   */
+  it("does not let the capability outlive the run", async () => {
+    const { runId, jobId } = await seed();
+    const processor = new DrizzleAgentProcessor(
+      context.database,
+      runtime() as never,
+      new RunCapabilityIssuer(Buffer.alloc(32, 3)),
+    );
+
+    await processor.process({ runId }, jobId, WORKER_ID);
+
+    const [row] = await context.database
+      .select({ hash: agentRun.toolCapabilityTokenHash, expiresAt: agentRun.toolCapabilityExpiresAt, status: agentRun.status })
+      .from(agentRun).where(eq(agentRun.id, runId)).limit(1);
+    expect(row!.status).toBe("COMPLETED");
+    expect(row!.hash).toBeNull();
+    expect(row!.expiresAt).toBeNull();
   });
 });
 
@@ -232,7 +312,7 @@ describe("DrizzleAgentProcessor finalisation", () => {
           occurredAt: new Date(),
         });
       },
-    }));
+    }), CAPABILITIES);
 
     expect(await processor.process({ runId }, jobId, WORKER_ID)).toMatchObject({ status: "COMPLETED" });
 
@@ -263,7 +343,7 @@ describe("DrizzleAgentProcessor finalisation", () => {
         await stealLease(runId);
         return completedState();
       },
-    }));
+    }), CAPABILITIES);
 
     expect(await processor.process({ runId }, jobId, WORKER_ID)).toEqual({ skipped: true, reason: "lease-lost" });
 
@@ -286,7 +366,7 @@ describe("DrizzleAgentProcessor finalisation", () => {
         await stealLease(runId);
         return completedState({ status: "cancelled", output: null, finishReason: "cancelled" });
       },
-    }));
+    }), CAPABILITIES);
 
     expect(await processor.process({ runId }, jobId, WORKER_ID)).toEqual({ skipped: true, reason: "lease-lost" });
 
@@ -322,7 +402,7 @@ describe("DrizzleAgentProcessor inheriting a run", () => {
       start: async () => { throw new Error("A run with an external id must never be submitted twice."); },
       status: detached,
       events: detached,
-    }));
+    }), CAPABILITIES);
 
     expect(await processor.process({ runId }, jobId, WORKER_ID)).toMatchObject({ status: "FAILED" });
 

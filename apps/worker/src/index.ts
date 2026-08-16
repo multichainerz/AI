@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 import { ORCASYNAPSE_VERSION } from "@orcasynapse/contracts";
 import { createDrizzleClient, listenForAgentRunWake, readBootstrapSecret } from "@orcasynapse/database";
-import { decodeMasterKey, EnvelopeEncryption } from "@orcasynapse/security";
+import { decodeMasterKey, EnvelopeEncryption, RunCapabilityIssuer } from "@orcasynapse/security";
 import { DrizzleRuntimeConnectionResolver, HermesClient } from "@orcasynapse/runtime-clients";
 import { WorkerRuntime } from "./worker-runtime.js";
 import { DrizzlePendingRunSource, DrizzleWorkerRegistry } from "./worker-registry.js";
@@ -29,7 +29,11 @@ const runtime = new WorkerRuntime(
     error: (message, error) => console.error(message, error),
   },
   15_000,
-  new DrizzleAgentProcessor(database, new HermesClient(connectionResolver)),
+  new DrizzleAgentProcessor(
+    database,
+    new HermesClient(connectionResolver),
+    new RunCapabilityIssuer(masterKey),
+  ),
   1_000,
   5,
 );

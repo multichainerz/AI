@@ -5,6 +5,34 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v8.1.0 — 2026-08-16
+
+Issues the run capability every governed tool call is authorized by. Nothing
+ever minted one, so every tool call from every run was refused — including the
+`remember` and `recall` tools seeded at v7.9.0.
+
+`RunCapabilityIssuer` was written, unit-tested, and constructed nowhere in
+production. `assertRunIsExecutable` refuses any run whose
+`toolCapabilityTokenHash` is null, and the only three places that wrote the
+column set it to `null`. So the governed-tool plane was unreachable by
+construction — not by configuration, and not only from VM2. No amount of
+installer work would have made a tool callable.
+
+- mint the capability in the same statement that claims the run and makes it
+  `RUNNING`, since a run may call tools exactly while it is executing
+- expire it on the run's own deadline rather than on the processor lease, which
+  is 90 seconds and renews while a run may legitimately last `timeoutSeconds`
+- store only the digest, and re-derive the token from the master key and run id,
+  so a worker that crashes and retries reproduces the same value
+- require the issuer in the processor's constructor rather than accepting an
+  optional one, so failing to wire it is a compile error instead of a run that
+  silently cannot call tools
+
+This is the prerequisite `docs/MCP_ENABLEMENT_PLAN.md` did not name, and it is
+necessary under every option for reaching the agent on VM2. It is not
+sufficient: see the same document for the transport gap found at the pinned
+Hermes commit.
+
 ## v8.0.2 — 2026-08-16
 
 Re-verifies `docs/MCP_ENABLEMENT_PLAN.md` against the tree and corrects two

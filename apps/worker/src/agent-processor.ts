@@ -19,6 +19,7 @@ import {
   type OrcaSynapseDatabase,
 } from "@orcasynapse/database";
 import { HermesClient, HermesRunDetachedError, type HermesSafeRunEvent } from "@orcasynapse/runtime-clients";
+import type { RunCapabilityIssuer } from "@orcasynapse/security";
 
 type TransactionExecutor = Parameters<Parameters<OrcaSynapseDatabase["transaction"]>[0]>[0];
 
@@ -151,9 +152,19 @@ export function hardenedInstructions(run: LoadedRun): string {
 }
 
 export class DrizzleAgentProcessor {
+  /**
+   * The issuer is required rather than optional, and deliberately so.
+   *
+   * A run with no capability is refused by every tool gate, silently and at
+   * call time -- `assertRunIsExecutable` treats a null hash as "not eligible",
+   * which is indistinguishable from a revoked grant. An optional issuer would
+   * make forgetting to wire it a runtime no-op discovered by nobody; required,
+   * it is a compile error at the one construction site that matters.
+   */
   constructor(
     private readonly database: OrcaSynapseDatabase,
     private readonly hermes: AgentHermesRuntime | HermesClient,
+    private readonly capabilities: RunCapabilityIssuer,
   ) {}
 
   async process(payload: AgentRunJobPayload, jobId: string, workerId: string): Promise<object> {
@@ -213,10 +224,29 @@ export class DrizzleAgentProcessor {
         return { runId: original.id, status: "DENIED" };
       }
 
+      /*
+       * The capability is minted with the claim, in the same statement that
+       * makes the run RUNNING, because those are the two halves of one fact:
+       * a run may call tools exactly while it is executing.
+       *
+       * It expires on the run's own deadline rather than on the lease. A lease
+       * is 90 seconds and renews; a run may legitimately last `timeoutSeconds`,
+       * and a capability expiring under a still-running agent would surface as
+       * a tool refusal mid-answer. This is the same deadline the poll loop
+       * below computes, deliberately -- if they diverge, one of them is wrong.
+       *
+       * Only the digest is stored. The token is re-derived from the master key
+       * and the run id whenever it is needed, which is what makes a retry after
+       * a worker crash reproduce the same value rather than orphan the run.
+       */
+      const startedAt = original.startedAt ?? new Date();
+      const capability = this.capabilities.issue(original.id);
       const claimed = await this.database.update(agentRun).set({
         status: "RUNNING",
         jobId,
-        startedAt: original.startedAt ?? new Date(),
+        startedAt,
+        toolCapabilityTokenHash: capability.tokenHash,
+        toolCapabilityExpiresAt: new Date(startedAt.getTime() + original.version.timeoutSeconds * 1_000),
         failureCode: null,
         failureMessage: null,
       }).where(and(
