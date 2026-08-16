@@ -5,6 +5,46 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v8.8.7 — 2026-08-17
+
+Adds `docs/OPENROUTER_INFERENCE_PLAN.md`. Documentation only; nothing is built.
+
+**OpenRouter is routable today with no code change**, verified by executing the
+real modules rather than reading them. The configuration is
+`CUSTOM_OPENAI_COMPATIBLE`, base `https://openrouter.ai`, with `/api/v1` in the
+paths — **not** in the base URL, because `endpointUrl` joins against
+`base.origin` and silently discards a base path. The naive configuration
+resolves to `/v1/chat/completions` and fails quietly, since openrouter.ai
+answers 200 with HTML for unknown paths.
+
+Two defects the plan found by running code, both present today and neither
+specific to OpenRouter:
+
+- **A connection tests HEALTHY with no API key at all** when the models endpoint
+  is public. `HEALTHY` is the model-activation gate, so a mistyped key goes
+  green, activates, and 502s on the first real turn
+- **`discoveredModelIds` truncates to 50.** OpenRouter serves 413 models, so 363
+  cannot be activated — demonstrated with two adjacent real models either side
+  of the boundary
+
+And one that is independent of any of this: **non-string message content
+bypasses every guardrail check** (`inference-gateway.ts:79-82`) and is forwarded
+unexamined. Guardrails cover input length, control characters and four
+credential patterns; there is no output inspection and no PII detection.
+
+The positioning problem is recorded rather than solved. `DEFAULT_AGENT_PROFILE`
+tells every user *"Nothing you receive or produce leaves this environment"*,
+which a remote route makes false — and editing the constant fixes nothing,
+because it is a migration seed that only reaches installs still on version 1.
+Any customer who has edited their prompt keeps the false sentence forever, so
+the sentence has to be composed at runtime from the resolved route. The proposed
+wording ends with *"Do not tell the user their data stays on-premise"*, because
+the rest of the prompt would otherwise lead the model to reassure them.
+
+The enrolment runbook's allowlist has no VM1 egress row at all, and its claim
+that steady-state traffic is "the two rows above and nothing else" stops being
+true. The VM1/VM2 boundary itself survives: VM2 never sees the upstream key.
+
 ## v8.8.6 — 2026-08-17
 
 Spells out `nulls last` on the division-memory recency query, which is the
