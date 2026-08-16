@@ -176,9 +176,17 @@ import {
   type DivisionList,
   type UpdateDivision,
   skillSetListSchema,
+  skillSetSchema,
   toolSetListSchema,
+  toolSetSchema,
+  type CreateSkillSet,
+  type CreateToolSet,
+  type SkillSet,
   type SkillSetList,
+  type ToolSet,
   type ToolSetList,
+  type UpdateSkillSet,
+  type UpdateToolSet,
 } from "@orcasynapse/contracts";
 
 export class OrcaSynapseApiError extends Error {
@@ -1210,4 +1218,46 @@ export async function getToolSets(): Promise<ToolSetList> {
 export async function getSkillSets(): Promise<SkillSetList> {
   const response = await fetch("/api/v1/admin/configuration/skill-sets", { credentials: "same-origin" });
   return skillSetListSchema.parse(await parsedResponse(response));
+}
+
+export async function createToolSet(input: CreateToolSet): Promise<ToolSet> {
+  const response = await fetch("/api/v1/admin/configuration/tool-sets", {
+    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return toolSetSchema.parse(await parsedResponse(response));
+}
+
+export async function updateToolSet(id: string, input: UpdateToolSet): Promise<ToolSet> {
+  const response = await fetch(`/api/v1/admin/configuration/tool-sets/${encodeURIComponent(id)}`, {
+    method: "PATCH", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return toolSetSchema.parse(await parsedResponse(response));
+}
+
+export async function deleteToolSet(id: string): Promise<void> {
+  const response = await fetch(`/api/v1/admin/configuration/tool-sets/${encodeURIComponent(id)}`, {
+    method: "DELETE", credentials: "same-origin",
+  });
+  if (!response.ok) await parsedResponse(response);
+}
+
+export async function createSkillSet(input: CreateSkillSet): Promise<SkillSet> {
+  const response = await fetch("/api/v1/admin/configuration/skill-sets", {
+    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return skillSetSchema.parse(await parsedResponse(response));
+}
+
+export async function updateSkillSet(id: string, input: UpdateSkillSet): Promise<SkillSet> {
+  const response = await fetch(`/api/v1/admin/configuration/skill-sets/${encodeURIComponent(id)}`, {
+    method: "PATCH", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return skillSetSchema.parse(await parsedResponse(response));
+}
+
+export async function deleteSkillSet(id: string): Promise<void> {
+  const response = await fetch(`/api/v1/admin/configuration/skill-sets/${encodeURIComponent(id)}`, {
+    method: "DELETE", credentials: "same-origin",
+  });
+  if (!response.ok) await parsedResponse(response);
 }

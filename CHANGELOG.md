@@ -5,6 +5,32 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v7.0.0 — 2026-08-16
+
+Gives tool sets and skill sets their screens, on the tabs that own each. This
+closes the last "the API exists but nothing calls it" gap in the divisions work:
+every increment from A to D is now complete, enforced and operable.
+
+One component serves both, because they are the same shape with a different
+payload and two near-identical panels would drift apart.
+
+The distinction it exists to make legible is **tracking** versus **named**. A
+tracking set means "everything", resolved when it is read; a named set lists its
+members. They cannot be edited into one another, so the seeded defaults are
+drawn as fixed rows with no Retire or Delete rather than as something that looks
+editable and then refuses.
+
+- add the panel to Agents → Tools, below deployment admission, because a set is
+  a selection *of* what is admitted — naming a toolset nobody admitted would be
+  a promise the runtime never keeps
+- add it to Agents → Skills, and deliberately not to Memory: a set names a
+  reusable selection, and there are two memory files per node with nothing to
+  select between
+- offer only admitted toolsets as choices, and say so when none are
+- state the tracking default as "Everything this deployment admits — nothing is
+  admitted yet", keeping the promise and the present answer visible together, so
+  an empty list on a fresh install reads as correct rather than broken
+
 ## v6.9.0 — 2026-08-16
 
 Puts the pickers on Agents → Profiles. A profile can now be assigned to a

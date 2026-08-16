@@ -14,6 +14,7 @@ import {
   getToolsetAdmissions,
 } from "./api.js";
 import { adminAccess } from "./admin-access.js";
+import { ConfigurationSetsPanel } from "./configuration-sets-panel.js";
 import {
   Alert, Button, EmptyState, Field, Input, LockedScreen, MicroLabel,
   PageHeader, Panel, PanelHeading, StatusText, Tile, cn,
@@ -524,6 +525,22 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
           with the platform team before relying on them.
         </p>
       </Panel>
+    )}
+
+    {/*
+      * Below deployment admission, because a set is a selection *of* what is
+      * admitted: naming a toolset here that nobody has admitted would be a
+      * promise the runtime never keeps. The two decisions stay visibly separate
+      * for the same reason -- admitting is what a node may enable, and a set is
+      * which of those a profile declares.
+      */}
+    {unlocked && (
+      <ConfigurationSetsPanel
+        kind="tools"
+        canManage={canManage}
+        availableToolsets={rows.filter(({ permitted }) => permitted).map(({ name }) => name)}
+        onSessionExpired={onSessionExpired}
+      />
     )}
   </div>;
 }

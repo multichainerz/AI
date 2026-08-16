@@ -16,6 +16,7 @@ import {
   getHermesCorpusOverview,
   getHermesCorpusRevisions,
 } from "./api.js";
+import { ConfigurationSetsPanel } from "./configuration-sets-panel.js";
 import { SnapshotIcon, StorageIcon, SyncIcon, TerminalIcon } from "./ui/relay-icons.js";
 import {
   Alert, Button, Dialog, EmptyState, Field, Input, LockedScreen, MicroLabel, PageHeader,
@@ -490,6 +491,15 @@ export function CorpusView({ session, scope, onConfigure, onSessionExpired }: Co
           {revisionFocus.mutationId ? <span className="font-mono text-micro text-faint">Mutation {revisionFocus.mutationId}</span> : null}
         </div> : null}
       </Dialog>
+
+      {/*
+        * Skills only. Memory has no set concept and never will: a set names a
+        * reusable selection, and there are exactly two memory files per node
+        * with nothing to select between.
+        */}
+      {!memoryScope && (
+        <ConfigurationSetsPanel kind="skills" canManage={canWrite} onSessionExpired={onSessionExpired} />
+      )}
     </div>
   );
 }
