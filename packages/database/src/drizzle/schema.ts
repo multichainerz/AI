@@ -1406,6 +1406,40 @@ export const localUser = pgTable("LocalUser", {
 		}).onUpdate("cascade").onDelete("cascade"),
 ]);
 
+/**
+ * Division-scoped agent memory.
+ *
+ * Written and read only by the governed `remember` / `recall` tools, whose
+ * division comes from the run authorization rather than from anything the agent
+ * sent. See `DrizzleToolingManager.runScope`.
+ *
+ * `divisionId` is nullable and null is a real scope -- a run against a
+ * deployment-wide profile -- not the absence of one. Reading it as "no filter"
+ * would hand every division's rows to a run that belongs to none of them, so
+ * every query here matches null explicitly rather than omitting the predicate.
+ *
+ * It lives in VM1's database because the tool executes on VM1: the MCP plane is
+ * the API. Nothing on VM2 reads or writes this table, so no SQL credential goes
+ * anywhere near the runtime, and the Memory screen can show these rows directly
+ * instead of reconciling a copy.
+ */
+export const scopedMemoryEntry = pgTable("ScopedMemoryEntry", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	divisionId: uuid(),
+	content: text().notNull(),
+	/** Which run wrote it, for the audit trail and for the Memory screen. */
+	runId: uuid(),
+	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+	index("ScopedMemoryEntry_divisionId_createdAt_idx").using("btree", table.divisionId.asc().nullsLast(), table.createdAt.desc().nullsLast()),
+	index("ScopedMemoryEntry_search_idx").using("gin", sql`to_tsvector('simple', ${table.content})`),
+	foreignKey({
+			columns: [table.divisionId],
+			foreignColumns: [division.id],
+			name: "ScopedMemoryEntry_divisionId_fkey"
+		}).onUpdate("cascade").onDelete("cascade"),
+]);
+
 export const agentRun = pgTable("AgentRun", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	profileId: uuid().notNull(),

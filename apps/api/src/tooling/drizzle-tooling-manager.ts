@@ -26,11 +26,12 @@ import {
   governedToolCall,
   mcpGatewayCredential,
   runtimeToolsetAdmission,
+  scopedMemoryEntry,
   toolApproval,
   toolRuntimeControl,
   type OrcaSynapseDatabase,
 } from "@orcasynapse/database";
-import { and, asc, count, desc, eq, gt, isNull } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, isNull, sql } from "drizzle-orm";
 import {
   ToolingConflictError,
   ToolingDeniedError,
@@ -424,7 +425,16 @@ export class DrizzleToolingManager implements ToolingManager {
     }
 
     try {
-      const data = await this.executeHandler(tool.handlerKey, sanitizedArguments);
+      /*
+       * The scope is handed to the handler, never taken from the arguments.
+       *
+       * `run` came from the authorization, which `assertRunIsExecutable` has
+       * already verified above. `sanitizedArguments` is whatever the agent
+       * sent. Passing the first and not the second is the entire boundary.
+       */
+      const data = await this.executeHandler(tool.handlerKey, sanitizedArguments, {
+        runId, divisionId: run!.divisionId,
+      });
       await this.completeCall(callId, data);
       return { callId, status: "COMPLETED", data, isError: false };
     } catch (error) {
@@ -914,7 +924,52 @@ export class DrizzleToolingManager implements ToolingManager {
     return (enterprise?.groups ?? []).some((group) => groups.includes(group));
   }
 
-  private async executeHandler(handlerKey: string, _arguments: Record<string, unknown>): Promise<Record<string, unknown>> {
+  private async executeHandler(
+    handlerKey: string,
+    _arguments: Record<string, unknown>,
+    scope: { runId: string; divisionId: string | null },
+  ): Promise<Record<string, unknown>> {
+    /*
+     * Increment F's two handlers, and the first executors this build registers.
+     *
+     * Neither takes a division. The scope is a parameter of the *handler*, not
+     * of the tool's input schema, so there is nothing in the JSON an agent sends
+     * that could name another division -- and no wording in a prompt that could
+     * either, since the division never travels through one.
+     */
+    if (handlerKey === "orcasynapse.memory.remember") {
+      const text = typeof _arguments.text === "string" ? _arguments.text.trim() : "";
+      if (!text) throw new ToolingConflictError("Nothing to remember: 'text' is required.");
+      const [written] = await this.database
+        .insert(scopedMemoryEntry)
+        .values({ divisionId: scope.divisionId, content: text.slice(0, 4_000), runId: scope.runId })
+        .returning({ id: scopedMemoryEntry.id });
+      return { remembered: true, id: written?.id ?? null };
+    }
+
+    if (handlerKey === "orcasynapse.memory.recall") {
+      const query = typeof _arguments.query === "string" ? _arguments.query.trim() : "";
+      /*
+       * `is null` rather than an omitted predicate. A deployment-wide run reads
+       * deployment-wide rows and no others; treating null as "match anything"
+       * is the one mistake that would quietly undo the whole increment.
+       */
+      const scopePredicate = scope.divisionId === null
+        ? isNull(scopedMemoryEntry.divisionId)
+        : eq(scopedMemoryEntry.divisionId, scope.divisionId);
+      const rows = await this.database
+        .select({ content: scopedMemoryEntry.content, createdAt: scopedMemoryEntry.createdAt })
+        .from(scopedMemoryEntry)
+        .where(query
+          ? and(scopePredicate, sql`to_tsvector('simple', ${scopedMemoryEntry.content}) @@ plainto_tsquery('simple', ${query})`)
+          : scopePredicate)
+        .orderBy(desc(scopedMemoryEntry.createdAt))
+        .limit(20);
+      return {
+        entries: rows.map(({ content, createdAt }) => ({ content, at: createdAt.toISOString() })),
+      };
+    }
+
     throw new ToolingConflictError(`No local executor is registered for handler '${handlerKey}'.`);
   }
 

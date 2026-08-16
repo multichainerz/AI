@@ -5,6 +5,36 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v7.7.0 — 2026-08-16
+
+Division-scoped agent memory works. `ScopedMemoryEntry` plus the `remember` and
+`recall` handlers — the first executors this build registers — mean a run in one
+division cannot recall what another wrote.
+
+**Neither handler takes a division.** The scope is a parameter of the handler,
+passed from the run the authorization resolved to; the tool's input schema has
+no such field. So there is nothing in the JSON an agent sends that could name
+another division, and no wording in a prompt that could either, because the
+division never travels through one. That is increment F's rule — *the tool
+filters, the prompt never does* — as a property of the code rather than a claim
+about it.
+
+- add `ScopedMemoryEntry` in VM1's database, where the tool executes
+- register `orcasynapse.memory.remember` and `orcasynapse.memory.recall`
+- match a null division with `IS NULL`, never an omitted predicate: null is a
+  real scope — a deployment-wide run — and reading it as "match anything" is the
+  single misreading that would hand every division's rows to a profile belonging
+  to none
+- keep the write's division from the authorization, so arguments naming one are
+  arguments the handler does not read
+
+Verified by mutation on both guarantees: treating null as a wildcard, and
+letting the write trust `arguments.divisionId`, each failed the tests that exist
+for them. The isolation test asserts the tool's own result, never a model reply.
+
+Increment F now needs only its Memory-screen read. Nothing on VM2 changed, and
+no SQL credential goes anywhere near the runtime.
+
 ## v7.6.0 — 2026-08-16
 
 Corrects increment F's store, which removes most of what was left of it.

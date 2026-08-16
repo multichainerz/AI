@@ -9,6 +9,7 @@ import {
   auditEvent,
   createTestDatabase,
   division,
+  scopedMemoryEntry,
   governedTool,
   governedToolCall,
   mcpGatewayCredential,
@@ -566,5 +567,118 @@ describe("run scope", () => {
     await enableGateway();
     await expect(manager().runScope(undefined)).rejects.toBeInstanceOf(ToolingDeniedError);
     await expect(manager().runScope("not-an-authorization")).rejects.toBeInstanceOf(ToolingDeniedError);
+  });
+});
+
+describe("division-scoped memory", () => {
+  async function memoryTools() {
+    return {
+      remember: await seedTool({ slug: `remember-${randomUUID().slice(0, 8)}`, handlerKey: "orcasynapse.memory.remember" }),
+      recall: await seedTool({ slug: `recall-${randomUUID().slice(0, 8)}`, handlerKey: "orcasynapse.memory.recall" }),
+    };
+  }
+
+  async function runIn(divisionId: string | null) {
+    const seeded = await seedRunnableAgent();
+    if (divisionId) {
+      await context.database.update(agentProfile)
+        .set({ divisionId }).where(eq(agentProfile.id, seeded.profile.id));
+    }
+    return seeded;
+  }
+
+  /*
+   * Increment F's Done-when, and the reason the increment exists: a run in one
+   * division cannot recall what another wrote.
+   *
+   * Asserted against the tool's own result rather than a model reply, and note
+   * what the recall call sends -- only a query string. There is no division in
+   * the arguments to tamper with, because the handler takes its scope from the
+   * authorization.
+   */
+  it("does not let a run recall another division's rows", async () => {
+    await enableGateway();
+    const [alpha] = await context.database.insert(division)
+      .values({ slug: "alpha", displayName: "Alpha" }).returning();
+    const [beta] = await context.database.insert(division)
+      .values({ slug: "beta", displayName: "Beta" }).returning();
+    const tools = await memoryTools();
+    const first = await runIn(alpha!.id);
+    const second = await runIn(beta!.id);
+    await grantTool(first.version.id, tools.remember.id);
+    await grantTool(first.version.id, tools.recall.id);
+    await grantTool(second.version.id, tools.recall.id);
+
+    await manager().invoke(tools.remember.slug, {
+      authorization: first.authorization, requestId: randomUUID(),
+      arguments: { text: "the alpha quarterly close is on the ninth" },
+    });
+
+    const mine = await manager().invoke(tools.recall.slug, {
+      authorization: first.authorization, requestId: randomUUID(), arguments: { query: "quarterly" },
+    });
+    const theirs = await manager().invoke(tools.recall.slug, {
+      authorization: second.authorization, requestId: randomUUID(), arguments: { query: "quarterly" },
+    });
+
+    expect((mine.data as { entries: unknown[] }).entries).toHaveLength(1);
+    expect((theirs.data as { entries: unknown[] }).entries).toHaveLength(0);
+  });
+
+  /*
+   * The row lands under the division the authorization resolves to, not under
+   * anything the arguments claim. A caller passing `divisionId` is passing an
+   * argument the handler does not read.
+   */
+  it("ignores a division the agent tries to name in the arguments", async () => {
+    await enableGateway();
+    const [alpha] = await context.database.insert(division)
+      .values({ slug: "alpha", displayName: "Alpha" }).returning();
+    const [beta] = await context.database.insert(division)
+      .values({ slug: "beta", displayName: "Beta" }).returning();
+    const tools = await memoryTools();
+    const run = await runIn(alpha!.id);
+    await grantTool(run.version.id, tools.remember.id);
+
+    await manager().invoke(tools.remember.slug, {
+      authorization: run.authorization, requestId: randomUUID(),
+      arguments: { text: "written by alpha", divisionId: beta!.id, division: "Beta" },
+    });
+
+    const rows = await context.database.select().from(scopedMemoryEntry);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.divisionId).toBe(alpha!.id);
+  });
+
+  /*
+   * A deployment-wide run reads deployment-wide rows and no others. Null is a
+   * scope, so it must not behave as "match anything" -- that single misreading
+   * would hand every division's memory to a profile that belongs to none.
+   */
+  it("keeps a deployment-wide run out of every division's rows", async () => {
+    await enableGateway();
+    const [alpha] = await context.database.insert(division)
+      .values({ slug: "alpha", displayName: "Alpha" }).returning();
+    const tools = await memoryTools();
+    const scoped = await runIn(alpha!.id);
+    const wide = await runIn(null);
+    await grantTool(scoped.version.id, tools.remember.id);
+    await grantTool(wide.version.id, tools.remember.id);
+    await grantTool(wide.version.id, tools.recall.id);
+
+    await manager().invoke(tools.remember.slug, {
+      authorization: scoped.authorization, requestId: randomUUID(), arguments: { text: "alpha only" },
+    });
+    await manager().invoke(tools.remember.slug, {
+      authorization: wide.authorization, requestId: randomUUID(), arguments: { text: "everyone" },
+    });
+
+    const seen = await manager().invoke(tools.recall.slug, {
+      authorization: wide.authorization, requestId: randomUUID(), arguments: {},
+    });
+
+    const entries = (seen.data as { entries: Array<{ content: string }> }).entries;
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.content).toBe("everyone");
   });
 });
