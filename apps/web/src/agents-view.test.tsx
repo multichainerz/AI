@@ -446,6 +446,24 @@ describe("agents", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
+  it("keeps Save in the dialog footer instead of below the fold", async () => {
+    // The editor is a long form. OverlayChrome used to be a content-sized grid
+    // with overflow hidden, so Cancel and Save sat under 86vh and were clipped.
+    setupApi();
+    const user = userEvent.setup();
+    await view();
+    await user.click(screen.getByRole("button", { name: "Create agent" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Create agent profile")).toBeTruthy();
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeTruthy();
+    const save = within(dialog).getByRole("button", { name: "Create & activate" });
+    expect(save.getAttribute("form")).toBe("agent-profile-editor");
+    expect(dialog.className).toMatch(/\bflex\b/);
+    expect(dialog.className).toMatch(/\bflex-col\b/);
+    expect(dialog.className).toMatch(/\boverflow-hidden\b/);
+  });
+
   it("shows an AUDITOR the screen and none of the controls that would 403", async () => {
     /*
      * `ROLE_SCOPES` gives AUDITOR `agents:read` and nothing else, and
@@ -695,7 +713,11 @@ describe("agents", () => {
     // onto the profile list's flag did not quietly ungate this one.
     setupApi({ enabled: false });
     await view();
-    expect(within(boundary()).getByText("OFF")).toBeTruthy();
+    // Ledger can land before the profile list writes `executionEnabled`, so
+    // the header still says "Session not ready" for a frame. Wait for the
+    // flag, not for the ledger.
+    await waitFor(() => expect(within(boundary()).getByText("OFF")).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Execution is off" })).toBeTruthy());
     expect(screen.getByRole("button", { name: "Execution is off" }).hasAttribute("disabled")).toBe(true);
     expect(screen.queryByRole("button", { name: "Open Session" })).toBeNull();
 

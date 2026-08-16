@@ -1,5 +1,20 @@
 import type { ReactNode } from "react";
+import {
+  Boxes,
+  Brain,
+  FileText,
+  HeartPulse,
+  ListChecks,
+  ScrollText,
+  Server,
+  Shield,
+  Sparkles,
+  UserRound,
+  Users,
+  Wrench,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { cn } from "./ui/cn.js";
 import type { SetupStepKey } from "./setup-steps.js";
 
 export type ActiveView =
@@ -35,15 +50,14 @@ export interface PrimaryNavigationItem {
 export interface SectionNavigationItem {
   label: string;
   view: ActiveView;
+  /** Lucide key drawn beside the label in the header strip. */
+  icon: string;
 }
 
 /**
- * Where in the rail a group's rows sit. Settings is the only thing that has
- * ever wanted `"bottom"`, and it used to get there by being excluded from this
- * model entirely and hand-written into the rail's footer -- which cost a
- * duplicated row, a second set of styles, and a phone-only third copy to put
- * it back in the menu at dock widths. Placement is a property of the group
- * now, so the same renderer draws every row and only the position differs.
+ * Where in the rail a group's rows sit. `"bottom"` remains so a future group
+ * can pin itself above the collapse control without a second renderer; nothing
+ * uses it today. Settings is the last `"top"` row, immediately after Operations.
  */
 export type NavigationPlacement = "top" | "bottom";
 
@@ -73,12 +87,6 @@ export const primaryNavigationGroups: ReadonlyArray<{
        */
       { area: "Gateway", icon: "gateway", target: "Models", description: "Models, prompts and guardrails for the governed inference path" },
       { area: "Operations", icon: "operations", target: "Operations", description: "Health, incidents and the audit trail" },
-    ],
-  },
-  {
-    label: "System",
-    placement: "bottom",
-    items: [
       { area: "Settings", icon: "settings", target: "Deployment", description: "Setup, divisions, people and system updates" },
     ],
   },
@@ -119,10 +127,10 @@ const sectionNavigation: Partial<Record<ProductArea, ReadonlyArray<SectionNaviga
    * it is doing, and whether it may run at all.
    */
   Agents: [
-    { label: "Profiles", view: "Agents" },
-    { label: "Skills", view: "Skills" },
-    { label: "Memory", view: "Memory" },
-    { label: "Tools", view: "Integrations" },
+    { label: "Profiles", view: "Agents", icon: "profiles" },
+    { label: "Skills", view: "Skills", icon: "skills" },
+    { label: "Memory", view: "Memory", icon: "memory" },
+    { label: "Tools", view: "Integrations", icon: "tools" },
   ],
   /*
    * Two tabs: is it broken *now*, and what happened *then*.
@@ -140,8 +148,8 @@ const sectionNavigation: Partial<Record<ProductArea, ReadonlyArray<SectionNaviga
    * depended on it. In both cases the tables outlived the screen.
    */
   Operations: [
-    { label: "Health", view: "Operations" },
-    { label: "Audit trail", view: "Audit" },
+    { label: "Health", view: "Operations", icon: "health" },
+    { label: "Audit trail", view: "Audit", icon: "audit" },
   ],
   /*
    * Setup is the bring-up sequence and nothing else. "System" is the tab the
@@ -177,14 +185,14 @@ const sectionNavigation: Partial<Record<ProductArea, ReadonlyArray<SectionNaviga
    * of at v5.1.0, two releases later, for tidiness.
    */
   Settings: [
-    { label: "Setup", view: "Deployment" },
-    { label: "People", view: "People" },
-    { label: "System", view: "Application" },
+    { label: "Setup", view: "Deployment", icon: "setup" },
+    { label: "People", view: "People", icon: "people" },
+    { label: "System", view: "Application", icon: "system" },
   ],
   Gateway: [
-    { label: "Models", view: "Models" },
-    { label: "Prompts", view: "Prompts" },
-    { label: "Guardrails", view: "Guardrails" },
+    { label: "Models", view: "Models", icon: "models" },
+    { label: "Prompts", view: "Prompts", icon: "prompts" },
+    { label: "Guardrails", view: "Guardrails", icon: "guardrails" },
   ],
 };
 
@@ -425,6 +433,29 @@ export function viewFromHash(hash: string): ActiveView {
   }
 }
 
+/**
+ * Drawings for the section strip. Keys live on the navigation model the same
+ * way area glyphs do, so a tab cannot ship a label without a mark, and the
+ * header cannot invent a second map that drifts from this one.
+ */
+function SectionGlyph({ name }: { name: string }) {
+  const glyphs: Record<string, ReactNode> = {
+    profiles: <UserRound size={15} strokeWidth={1.8} />,
+    skills: <Sparkles size={15} strokeWidth={1.8} />,
+    memory: <Brain size={15} strokeWidth={1.8} />,
+    tools: <Wrench size={15} strokeWidth={1.8} />,
+    models: <Boxes size={15} strokeWidth={1.8} />,
+    prompts: <FileText size={15} strokeWidth={1.8} />,
+    guardrails: <Shield size={15} strokeWidth={1.8} />,
+    health: <HeartPulse size={15} strokeWidth={1.8} />,
+    audit: <ScrollText size={15} strokeWidth={1.8} />,
+    setup: <ListChecks size={15} strokeWidth={1.8} />,
+    people: <Users size={15} strokeWidth={1.8} />,
+    system: <Server size={15} strokeWidth={1.8} />,
+  };
+  return glyphs[name] ?? null;
+}
+
 interface WorkspaceContextBarProps {
   area: ProductArea;
   activeView: ActiveView;
@@ -438,29 +469,39 @@ export function WorkspaceContextBar({ area, activeView, onSelect, trailing }: Wo
 
   return (
     /*
-     * Pill tabs on the workspace surface, per the design's tab treatment: the
-     * selected pill takes the accent-soft fill, the rest are quiet until
-     * hovered. The old bar carried its own dark background, which survived the
-     * theme switch as a black slab on a white page.
+     * A second row of the sticky band, not a pill strip on the page.
+     *
+     * Nested in `.workspace-header` so it sticks with the title. The row
+     * restores the page text ramp -- without that it would inherit the band's
+     * white-on-violet remap and stay dark in both appearances. The negative
+     * inline margin lines it up with the band's edges.
      */
-    <div className="mb-7 flex min-h-[44px] items-center justify-between gap-4">
-      <nav aria-label={`${area} sections`} className="flex min-w-0 items-center gap-1.5 overflow-x-auto">
-        {items.map((item) => (
-          <Button
-            key={item.view}
-            size="sm"
-            variant={item.view === activeView ? "secondary" : "ghost"}
-            className={
-              item.view === activeView
-                ? "h-8 whitespace-nowrap border-accent/30 bg-soft px-4 text-caption text-accent hover:bg-soft"
-                : "h-8 whitespace-nowrap px-4 text-caption font-medium"
-            }
-            aria-current={item.view === activeView ? "page" : undefined}
-            onClick={() => onSelect(item.view)}
-          >
-            {item.label}
-          </Button>
-        ))}
+    <div className="workspace-header__sections -mx-[var(--workspace-inline)] flex items-stretch justify-between gap-4 px-[var(--workspace-inline)]">
+      <nav aria-label={`${area} sections`} className="flex min-w-0 items-stretch overflow-x-auto">
+        {items.map((item) => {
+          const current = item.view === activeView;
+          return (
+            <Button
+              key={item.view}
+              variant="ghost"
+              size="sm"
+              className={cn(
+                "relative h-10 gap-2 rounded-none border-0 bg-transparent px-3.5 text-caption shadow-none",
+                "hover:bg-soft hover:text-text focus-visible:ring-offset-0",
+                current
+                  ? "font-semibold text-text after:absolute after:inset-x-3 after:bottom-0 after:h-0.5 after:bg-text"
+                  : "font-medium text-muted",
+              )}
+              aria-current={current ? "page" : undefined}
+              onClick={() => onSelect(item.view)}
+            >
+              <span aria-hidden="true" className="flex shrink-0 empty:hidden">
+                <SectionGlyph name={item.icon} />
+              </span>
+              {item.label}
+            </Button>
+          );
+        })}
       </nav>
       {trailing}
     </div>

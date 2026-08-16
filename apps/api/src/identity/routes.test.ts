@@ -4,6 +4,7 @@ import { createApp } from "../app.js";
 import { ADMIN_SESSION_COOKIE } from "../auth/admin-session.js";
 import {
   ENTERPRISE_SESSION_COOKIE,
+  EnterpriseIdentityError,
   OIDC_STATE_COOKIE,
   type EnterpriseIdentityManager,
   type EnterprisePrincipal,
@@ -42,6 +43,7 @@ function memoryIdentityManager(): EnterpriseIdentityManager {
       message: "Enterprise sign-in is configured.",
     })),
     signInWithPassword: vi.fn(async () => { throw new Error("Not used"); }) as never,
+    changeLocalPassword: vi.fn(async () => { throw new Error("Not used"); }) as never,
     startLogin: vi.fn(async () => ({
       authorizationUrl: "https://identity.orcasynapse.example/authorize?client_id=orcasynapse",
       stateToken: STATE,
@@ -219,6 +221,49 @@ describe("enterprise identity routes", () => {
     ]));
   });
 
+  it("signs in a locally created person and sets the enterprise session cookie", async () => {
+    const manager = memoryIdentityManager();
+    manager.signInWithPassword = vi.fn(async () => ({
+      token: SESSION_TOKEN,
+      returnTo: "/",
+      principal,
+    }));
+    const app = await identityApp(manager);
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/local/login",
+      payload: { username: "Ayu", password: "a-long-enough-password" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ displayName: "Pilot User" });
+    expect(response.headers["set-cookie"]).toContain(`${ENTERPRISE_SESSION_COOKIE}=${SESSION_TOKEN}`);
+    expect(manager.signInWithPassword).toHaveBeenCalledWith(
+      "ayu",
+      "a-long-enough-password",
+      expect.any(Object),
+    );
+  });
+
+  it("answers one refusal for a rejected local person sign-in", async () => {
+    const manager = memoryIdentityManager();
+    manager.signInWithPassword = vi.fn(async () => {
+      throw new EnterpriseIdentityError("USER_LOGIN_REJECTED", "That username and password do not match an account.", 401);
+    });
+    const app = await identityApp(manager);
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/local/login",
+      payload: { username: "ayu", password: "wrong-password-here" },
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toEqual({
+      error: "USER_LOGIN_REJECTED",
+      message: "That username and password do not match an account.",
+    });
+  });
+
   it("restores and revokes an enterprise session", async () => {
     const manager = memoryIdentityManager();
     const app = await identityApp(manager);
@@ -237,5 +282,88 @@ describe("enterprise identity routes", () => {
     });
     expect(revoked.statusCode).toBe(204);
     expect(manager.revoke).toHaveBeenCalledWith(SESSION_TOKEN);
+  });
+
+  it("replaces a locally created person's password and sets a new session cookie", async () => {
+    const manager = memoryIdentityManager();
+    const replacement = "v".repeat(43);
+    manager.changeLocalPassword = vi.fn(async () => ({
+      token: replacement,
+      returnTo: "/",
+      principal: {
+        ...principal,
+        session: { ...session, passwordChangeRequired: false },
+      },
+    }));
+    const app = await identityApp(manager);
+    const response = await app.inject({
+      method: "PUT",
+      url: "/api/v1/auth/local/password",
+      headers: { cookie: `${ENTERPRISE_SESSION_COOKIE}=${SESSION_TOKEN}` },
+      payload: { currentPassword: "temporary-password", newPassword: "a-much-stronger-password" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ ...session, passwordChangeRequired: false });
+    expect(response.headers["set-cookie"]).toContain(`${ENTERPRISE_SESSION_COOKIE}=${replacement}`);
+    expect(manager.changeLocalPassword).toHaveBeenCalledWith(
+      SESSION_TOKEN,
+      "temporary-password",
+      "a-much-stronger-password",
+      expect.any(Object),
+    );
+  });
+
+  it("blames an expired cookie before blaming the current password", async () => {
+    const manager = memoryIdentityManager();
+    manager.authenticate = vi.fn(async () => null);
+    const app = await identityApp(manager);
+    const response = await app.inject({
+      method: "PUT",
+      url: "/api/v1/auth/local/password",
+      payload: { currentPassword: "temporary-password", newPassword: "a-much-stronger-password" },
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toEqual({
+      error: "SESSION_EXPIRED",
+      message: "This session expired. Sign in again to set a new password.",
+    });
+    expect(manager.changeLocalPassword).not.toHaveBeenCalled();
+  });
+
+  it("reports a wrong current password after the session is confirmed live", async () => {
+    const manager = memoryIdentityManager();
+    manager.changeLocalPassword = vi.fn(async () => {
+      throw new EnterpriseIdentityError("UNAUTHORIZED", "The current password is incorrect.", 401);
+    });
+    const app = await identityApp(manager);
+    const response = await app.inject({
+      method: "PUT",
+      url: "/api/v1/auth/local/password",
+      headers: { cookie: `${ENTERPRISE_SESSION_COOKIE}=${SESSION_TOKEN}` },
+      payload: { currentPassword: "not-the-current-one", newPassword: "a-much-stronger-password" },
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toEqual({
+      error: "UNAUTHORIZED",
+      message: "The current password is incorrect.",
+    });
+  });
+
+  it("refuses a password change whose body fails the contract", async () => {
+    const manager = memoryIdentityManager();
+    const app = await identityApp(manager);
+    const response = await app.inject({
+      method: "PUT",
+      url: "/api/v1/auth/local/password",
+      headers: { cookie: `${ENTERPRISE_SESSION_COOKIE}=${SESSION_TOKEN}` },
+      payload: { currentPassword: "short", newPassword: "also-short" },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: "INVALID_PASSWORD_CHANGE" });
+    expect(manager.changeLocalPassword).not.toHaveBeenCalled();
   });
 });

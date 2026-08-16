@@ -2,8 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   OrcaSynapseApiError,
   changeLocalAdministratorPassword,
+  changeLocalPersonPassword,
   createInstallationKeyRecoverySession,
   createLocalAdministratorSession,
+  createLocalPersonSession,
   recoverLocalAdministrator,
   approveReleaseTarget,
   clearReleaseTarget,
@@ -60,6 +62,66 @@ describe("OrcaSynapse browser API", () => {
     expect(options).toMatchObject({ method: "POST", credentials: "same-origin" });
     expect(new Headers(options?.headers).has("x-orcasynapse-installation-key")).toBe(false);
     expect(JSON.parse(String(options?.body))).toEqual({ username: "admin", password: "temporary-password" });
+  });
+
+  it("signs a locally created person in through the enterprise session cookie", async () => {
+    const session = {
+      id: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb",
+      identityMode: "ENTERPRISE" as const,
+      user: {
+        id: "fb8c1e58-10d6-4ac7-aafe-e259763a6f63",
+        displayName: "Ayu Rahman",
+        email: "ayu@orcasynapse.example",
+      },
+      scopes: ["chat:use", "agents:use"] as ["chat:use", "agents:use"],
+      createdAt: "2026-07-30T00:00:00.000Z",
+      idleExpiresAt: "2026-07-30T08:00:00.000Z",
+      absoluteExpiresAt: "2026-07-30T12:00:00.000Z",
+    };
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse({ displayName: "Ayu Rahman" }))
+      .mockResolvedValueOnce(jsonResponse(session));
+
+    await expect(createLocalPersonSession("ayu", "a-long-enough-password")).resolves.toEqual(session);
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "/api/v1/auth/local/login",
+      "/api/v1/session",
+    ]);
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: "POST", credentials: "same-origin" });
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      username: "ayu",
+      password: "a-long-enough-password",
+    });
+  });
+
+  it("replaces a locally created person's temporary password through the enterprise session", async () => {
+    const session = {
+      id: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb",
+      identityMode: "ENTERPRISE" as const,
+      user: {
+        id: "fb8c1e58-10d6-4ac7-aafe-e259763a6f63",
+        displayName: "Ayu Rahman",
+        email: "ayu@orcasynapse.example",
+      },
+      scopes: ["chat:use", "agents:use"] as ["chat:use", "agents:use"],
+      createdAt: "2026-07-30T00:00:00.000Z",
+      idleExpiresAt: "2026-07-30T08:00:00.000Z",
+      absoluteExpiresAt: "2026-07-30T12:00:00.000Z",
+    };
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(session));
+
+    await expect(changeLocalPersonPassword("temporary-password", "a-much-stronger-password"))
+      .resolves.toEqual(session);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/auth/local/password",
+      expect.objectContaining({ method: "PUT", credentials: "same-origin" }),
+    );
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      currentPassword: "temporary-password",
+      newPassword: "a-much-stronger-password",
+    });
   });
 
   it("keeps Installation Key use and password maintenance on recovery-specific endpoints", async () => {

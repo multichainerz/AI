@@ -548,10 +548,15 @@ describe("local sign-in", () => {
 
     expect(issued.token).toHaveLength(43);
     expect(issued.principal).toMatchObject({ identityMode: "ENTERPRISE", displayName: "Ayu Pratama" });
+    expect(issued.principal.session.passwordChangeRequired).toBe(true);
     const [row] = await context.database.select().from(enterpriseUser).where(eq(enterpriseUser.id, user.id)).limit(1);
     expect(row?.lastLoginAt).not.toBeNull();
-    // The session it minted authenticates like any other.
-    await expect(manager(randomUUID()).authenticate(issued.token)).resolves.toMatchObject({ displayName: "Ayu Pratama" });
+    // The session it minted authenticates like any other, and still carries
+    // the flag — GET /session is what the front page polls while they type.
+    await expect(manager(randomUUID()).authenticate(issued.token)).resolves.toMatchObject({
+      displayName: "Ayu Pratama",
+      session: { passwordChangeRequired: true },
+    });
   });
 
   /*
@@ -610,5 +615,86 @@ describe("local sign-in", () => {
     const [credential] = await context.database.select().from(localUser)
       .where(eq(localUser.userId, user.id)).limit(1);
     expect(credential?.failedLoginCount).toBe(0);
+  });
+});
+
+describe("local password change", () => {
+  const password = "correct-horse-battery";
+  const replacement = "a-much-stronger-password";
+
+  async function seedPerson() {
+    const [user] = await context.database.insert(enterpriseUser).values({
+      issuer: "orcasynapse:local",
+      subject: "ayu",
+      displayName: "Ayu Pratama",
+      lastLoginAt: null,
+    }).returning();
+    await context.database.insert(localUser).values({
+      userId: user!.id,
+      username: "ayu",
+      passwordHash: await hashLocalPassword(password),
+    });
+    return user!;
+  }
+
+  it("clears the flag, burns every other session, and authenticates the replacement", async () => {
+    const user = await seedPerson();
+    const first = await manager(randomUUID()).signInWithPassword("ayu", password, {});
+    const second = await manager(randomUUID()).signInWithPassword("ayu", password, {});
+
+    const issued = await manager(randomUUID())
+      .changeLocalPassword(first.token, password, replacement, {});
+
+    expect(issued.principal.session.passwordChangeRequired).toBeUndefined();
+    expect(issued.token).not.toBe(first.token);
+    expect(await manager(randomUUID()).authenticate(first.token)).toBeNull();
+    expect(await manager(randomUUID()).authenticate(second.token)).toBeNull();
+    await expect(manager(randomUUID()).authenticate(issued.token)).resolves.toMatchObject({
+      displayName: "Ayu Pratama",
+    });
+    expect((await manager(randomUUID()).authenticate(issued.token))?.session.passwordChangeRequired)
+      .toBeUndefined();
+
+    const [credential] = await context.database.select().from(localUser)
+      .where(eq(localUser.userId, user.id)).limit(1);
+    expect(credential?.passwordChangeRequired).toBe(false);
+    const changes = (await context.database.select().from(auditEvent))
+      .filter(({ action }) => action === "user.local_password_changed");
+    expect(changes).toHaveLength(1);
+  });
+
+  it("refuses a wrong current password without burning the session", async () => {
+    await seedPerson();
+    const issued = await manager(randomUUID()).signInWithPassword("ayu", password, {});
+
+    await expect(manager(randomUUID()).changeLocalPassword(issued.token, "not-the-password-at-all", replacement, {}))
+      .rejects.toMatchObject({ code: "UNAUTHORIZED", statusCode: 401 });
+    await expect(manager(randomUUID()).authenticate(issued.token)).resolves.not.toBeNull();
+  });
+
+  it("refuses a password change that reuses the current password", async () => {
+    await seedPerson();
+    const issued = await manager(randomUUID()).signInWithPassword("ayu", password, {});
+
+    await expect(manager(randomUUID()).changeLocalPassword(issued.token, password, password, {}))
+      .rejects.toMatchObject({ code: "USER_PASSWORD_INVALID", statusCode: 400 });
+  });
+
+  it("blames an expired session rather than the password", async () => {
+    await seedPerson();
+    const issued = await manager(randomUUID()).signInWithPassword("ayu", password, {});
+    await context.database.update(enterpriseUserSession).set({
+      idleExpiresAt: new Date(Date.now() - 1_000),
+    });
+
+    await expect(manager(randomUUID()).changeLocalPassword(issued.token, password, replacement, {}))
+      .rejects.toMatchObject({ code: "SESSION_EXPIRED", statusCode: 401 });
+  });
+
+  it("refuses a federated identity that has no local password", async () => {
+    const { token } = await seedSession();
+
+    await expect(manager(randomUUID()).changeLocalPassword(token, password, replacement, {}))
+      .rejects.toMatchObject({ code: "USER_PASSWORD_UNSUPPORTED", statusCode: 400 });
   });
 });

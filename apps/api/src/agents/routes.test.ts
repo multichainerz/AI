@@ -61,6 +61,7 @@ const enterpriseIdentity: EnterpriseIdentityManager = {
   async startLogin() { throw new Error("Not used"); },
   async completeLogin() { throw new Error("Not used"); },
   async signInWithPassword() { throw new Error("Not used"); },
+  async changeLocalPassword() { throw new Error("Not used"); },
   async authenticate(token) {
     return token === ENTERPRISE_TOKEN ? {
       id: ENTERPRISE_SESSION_ID,
@@ -195,6 +196,38 @@ describe("Hermes agent routes", () => {
 
     const asEnterprise = await app.inject({ method: "GET", url: "/api/v1/admin/agents/runtime", headers: enterpriseHeaders });
     expect(asEnterprise.statusCode).toBe(401);
+  });
+
+  it("refuses an enterprise session that still owes a password change", async () => {
+    const pendingIdentity: EnterpriseIdentityManager = {
+      ...enterpriseIdentity,
+      async authenticate(token) {
+        const principal = await enterpriseIdentity.authenticate(token);
+        if (!principal) return null;
+        return {
+          ...principal,
+          session: { ...principal.session, passwordChangeRequired: true },
+        };
+      },
+    };
+    const app = await createApp({
+      logger: false,
+      runtime: {
+        bootstrapState: "READY",
+        sessionManager: new Sessions(),
+        identityManager: pendingIdentity,
+        agentManager: manager(),
+      },
+    });
+    apps.push(app);
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/agents/profiles",
+      headers: enterpriseHeaders,
+    });
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toMatchObject({ error: "PASSWORD_CHANGE_REQUIRED" });
   });
 
   it("tells an enterprise caller whether execution is switched on at all", async () => {

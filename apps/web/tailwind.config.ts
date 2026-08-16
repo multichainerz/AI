@@ -116,10 +116,10 @@ export default {
       },
       borderRadius: {
         /*
-         * One semi-rounded silhouette for every interactive control and
-         * container. The aliases stay because they describe component roles,
-         * but they deliberately resolve to one token so a modal, card, input,
-         * chip and button cannot drift into separate visual systems again.
+         * One sharp silhouette for every interactive control and container.
+         * The aliases stay because they describe component roles, but they
+         * deliberately resolve to one token so a modal, card, input, chip and
+         * button cannot drift into separate visual systems again.
          * `rounded-full` remains Tailwind's semantic escape hatch for actual
          * circles such as avatars, status dots and switch thumbs.
          */

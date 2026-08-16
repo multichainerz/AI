@@ -330,10 +330,10 @@ describe("DrizzleOperationsManager abandoned runs", () => {
     const manager = new DrizzleOperationsManager(context.database, 20);
 
     await manager.start();
-    await new Promise((resolve) => setTimeout(resolve, 90));
+    await vi.waitFor(async () => {
+      const [run] = await context.database.select().from(agentRun).where(eq(agentRun.id, runId));
+      expect(run?.status).toBe("FAILED");
+    }, { timeout: 2_000, interval: 20 });
     await manager.stop();
-
-    const [run] = await context.database.select().from(agentRun).where(eq(agentRun.id, runId));
-    expect(run?.status).toBe("FAILED");
   });
 });

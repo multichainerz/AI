@@ -173,9 +173,10 @@
   /*
    * The application silhouette. Components may keep semantic Tailwind aliases
    * such as `rounded-card` or `rounded-input`, but every non-circular surface
-   * resolves here to the same restrained, semi-rounded corner.
+   * resolves here to a sharp corner. `rounded-full` stays the escape hatch
+   * for true circles (avatars, status dots, switch thumbs).
    */
-  --radius-component: 10px;
+  --radius-component: 0;
 
   --sans: "Plus Jakarta Sans", ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
   /* Display type — headings, stat figures, the brand — per the design system. */
@@ -364,32 +365,30 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .sidebar-collapse-button:hover { background: rgba(255, 255, 255, 0.07); }
 .sidebar-collapse-button:focus-visible { outline-offset: -3px; }
 
-main { min-width: 0; padding: 0 clamp(24px, 4vw, 64px) 64px; background: var(--bg); }
-main > * { width: min(100%, 1380px); margin-left: auto; margin-right: auto; }
 /*
- * The sticky band bleeds to the workspace edges: it cancels main's inline
- * padding with the same clamp, re-applies it inside, and escapes the 1380px
- * child cap so the hairline runs the full width the way the design draws it.
- * Content beneath starts 26px later, standing in for main's old top padding.
+ * Session's inset is the workspace inset. Every tab uses the same compact
+ * clamp so Dashboard, Agents and Settings sit as close to the rail as Chat
+ * does, instead of a reading column with 24–64px of unused margin.
  */
+main {
+  --workspace-inline: clamp(16px, 3vw, 24px);
+  min-width: 0;
+  padding: 0 var(--workspace-inline) 32px;
+  background: var(--bg);
+}
 /*
  * The Dashboard's command panel: a full-bleed field, not a card on a page.
  *
- * `main > *` constrains every child to 1380px and centres it, which is right
- * for reading and wrong for a surface whose whole point is to be the horizon.
- * A class beats that element selector on specificity, so the width is retaken
- * here and the page's own horizontal padding is cancelled and re-applied
- * inside — the same arrangement `.workspace-header` uses to reach the edge.
- *
- * The field follows the workspace canvas in both themes. Depth belongs to the
- * controls and operational panels inside it; violet remains an accent instead
- * of tinting the entire authenticated Dashboard.
+ * It cancels main's inline padding with the same token the sticky band uses,
+ * so the canvas meets the rail and the header on a shared edge. Depth belongs
+ * to the controls inside it; violet remains an accent instead of tinting the
+ * entire authenticated Dashboard.
  */
 .dashboard-hero {
   width: auto;
   max-width: none;
-  margin: 0 calc(-1 * clamp(24px, 4vw, 64px)) 26px;
-  padding: 0 clamp(24px, 4vw, 64px);
+  margin: 0 calc(-1 * var(--workspace-inline));
+  padding: 0 var(--workspace-inline);
   color: var(--text);
   border-bottom: 1px solid var(--border);
   background: var(--bg);
@@ -806,15 +805,7 @@ main > * { width: min(100%, 1380px); margin-left: auto; margin-right: auto; }
   opacity: 0.2;
 }
 
-/* The panel sits directly under the sticky band, with nothing between them.
-   The band carries 26px of bottom margin for every other screen; here the two
-   are meant to meet on a shared edge -- the brand band introducing the themed
-   canvas, with no strip of page between them -- so the margin is cancelled at
-   the join rather than removed from the band. */
-.workspace-header + .dashboard-hero { margin-top: -26px; }
-
 @media (max-width: 760px) {
-  .dashboard-hero { margin-inline: -16px; padding-inline: 16px; }
   .dashboard-synapse { inset-inline: -52%; opacity: 0.48; }
   .dashboard-synapse--front-page {
     inset: 0;
@@ -851,9 +842,8 @@ main > * { width: min(100%, 1380px); margin-left: auto; margin-right: auto; }
  * `rgb(var(--x-rgb) / <alpha-value>)`: the variable is read on the element
  * wearing the utility, not frozen into the class at build time, so one
  * redefinition here reaches `text-text`, `bg-soft` and `border-input`
- * everywhere beneath it. The account menu is a descendant too, so it comes
- * along and reads as a violet panel belonging to the band rather than a
- * page-coloured card hanging off it.
+ * everywhere beneath it. The section strip and the account menu then put the
+ * page ramp back, so they follow the theme instead of staying white-on-violet.
  *
  * Two traps come with that mechanism, and both fail silently:
  *
@@ -886,8 +876,8 @@ main > * { width: min(100%, 1380px); margin-left: auto; margin-right: auto; }
   z-index: 40;
   width: auto;
   max-width: none;
-  margin: 0 calc(-1 * clamp(24px, 4vw, 64px)) 26px;
-  padding: 0 clamp(24px, 4vw, 64px);
+  margin: 0 calc(-1 * var(--workspace-inline));
+  padding: 0 var(--workspace-inline);
   border-bottom: 1px solid var(--border);
   /*
    * Opaque, and the blur is gone with it.
@@ -950,6 +940,71 @@ main > * { width: min(100%, 1380px); margin-left: auto; margin-right: auto; }
 }
 
 /*
+ * The area's section strip and the account menu hang off the brand band but
+ * follow the page theme. The title row remaps every text/fill channel to
+ * white-on-violet, so this subtree has to put the page ramp back or
+ * `text-muted` and `bg-soft` stay white-on-violet on a fill that never flips.
+ *
+ * `--surface-rgb` was never remapped, so the background can read it directly.
+ * The text channels cannot.
+ */
+.workspace-header__sections,
+.workspace-header__account {
+  background: rgb(var(--surface-rgb));
+
+  --text-rgb: 237 237 239;
+  --foreground-rgb: 237 237 239;
+  --muted-rgb: 138 138 147;
+  --muted-foreground-rgb: 138 138 147;
+  --faint-rgb: 134 134 140;
+  --soft-rgb: 45 40 67;
+  --border-rgb: 38 38 44;
+  --border: rgb(var(--border-rgb));
+  --border-strong-rgb: 59 59 66;
+  --input-rgb: 59 59 66;
+  --background-rgb: var(--surface-rgb);
+  --raised-rgb: 28 28 36;
+  --secondary-rgb: 28 28 36;
+  --accent-rgb: 146 119 245;
+  --primary-rgb: 146 119 245;
+  --ring-rgb: 146 119 245;
+  --accent-strong-rgb: 168 146 248;
+}
+[data-theme="light"] .workspace-header__sections,
+[data-theme="light"] .workspace-header__account {
+  --text-rgb: 25 26 28;
+  --foreground-rgb: 25 26 28;
+  --muted-rgb: 107 108 116;
+  --muted-foreground-rgb: 107 108 116;
+  --faint-rgb: 98 98 104;
+  --soft-rgb: 241 236 253;
+  --border-rgb: 229 229 229;
+  --border: rgb(var(--border-rgb));
+  --border-strong-rgb: 209 209 209;
+  --input-rgb: 209 209 209;
+  --raised-rgb: 247 247 245;
+  --secondary-rgb: 247 247 245;
+  --accent-rgb: 112 61 239;
+  --primary-rgb: 112 61 239;
+  --ring-rgb: 112 61 239;
+  --accent-strong-rgb: 91 46 219;
+}
+.workspace-header__sections {
+  border-top: 1px solid rgb(var(--border-rgb));
+  border-bottom: 1px solid rgb(var(--border-rgb));
+}
+
+/*
+ * Pages with a section strip need air under it. Session and Dashboard have
+ * no strip, so their header stays flush with the canvas. The title row's
+ * own hairline is dropped so the themed strip owns the bottom edge.
+ */
+.workspace-header:has(.workspace-header__sections) {
+  border-bottom: 0;
+  margin-bottom: 24px;
+}
+
+/*
  * At the agreed desktop baseline the Dashboard is the viewport, not a page
  * beneath it. The header owns its natural row and the command panel receives
  * everything left. Shorter or narrower windows deliberately miss this query
@@ -989,20 +1044,16 @@ h1 { margin: 0; font-size: clamp(29px, 3vw, 38px); line-height: 1.15; font-weigh
 h2 { margin: 0; font-size: 18px; line-height: 1.3; font-weight: 650; }
 h3 { font-weight: 650; }
 /*
- * The four legacy button classes, restated as the design system's Button
- * variants. The connection drawer and the runtime-nodes panel still apply them
- * by name; matching the primitive here is what keeps the last two components
- * from looking like a different product.
+ * Legacy button classes restated as the design system's Button variants.
+ * Kept while any remaining stylesheet-era markup still names them.
  */
-.primary-button, .text-button, .diagnostic-result button {
+.primary-button, .text-button {
   min-height: 36px; padding: 8px 14px; border: 1px solid transparent; border-radius: var(--radius-component); cursor: pointer;
   font-family: inherit; font-size: 11px; font-weight: 500; white-space: nowrap;
   transition: background .15s ease, border-color .15s ease, color .15s ease;
 }.primary-button, .text-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }.primary-button:focus-visible, .text-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .primary-button { color: var(--bg); border-color: var(--accent); background: var(--accent); }
 .primary-button:hover:not(:disabled) { border-color: var(--accent-strong); background: var(--accent-strong); }
-.diagnostic-result button { color: var(--text); border-color: var(--border-strong); background: var(--raised); }
-.diagnostic-result button:hover:not(:disabled) { border-color: var(--faint); }
 .text-button { color: var(--muted); border-color: transparent; background: transparent; }
 .text-button:hover:not(:disabled) { color: var(--text); background: var(--raised); }
 
@@ -1027,7 +1078,7 @@ button:disabled { opacity: .48; cursor: not-allowed; }.panel { border: 1px solid
 /* The band's negative clamp margins exist to bleed its border to the edge of a
    padded page. This page has no padding, so they are cancelled rather than the
    header being hidden. */
-.chat-page > .workspace-header { margin: 0; padding: 0 clamp(16px, 3vw, 24px); }
+.chat-page > .workspace-header { margin: 0; padding: 0 var(--workspace-inline); }
 /*
  * The one part of the transcript that stays a stylesheet rule rather than
  * utility classes, and the reason is structural: ReactMarkdown emits the
@@ -1078,134 +1129,6 @@ button:disabled { opacity: .48; cursor: not-allowed; }.panel { border: 1px solid
 /* Field hints. Without this they inherit the panel's body size and read
    as loud as the label they are explaining. */
 .ops-form label > small { color: var(--muted); font-size: 10px; line-height: 1.55; }
-.drawer-operations-details { margin-top: 14px; border: 1px solid var(--border); border-radius: var(--radius-component); background: var(--bg); }
-.drawer-operations-details > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 13px; color: var(--muted); cursor: pointer; list-style: none; }
-.drawer-operations-details > summary::-webkit-details-marker { display: none; }
-.drawer-operations-details > summary span, .drawer-operations-details > summary strong, .drawer-operations-details > summary small { display: block; }
-.drawer-operations-details > summary strong { color: var(--muted); font-size: 10px; }
-.drawer-operations-details > summary small { margin-top: 2px; color: var(--faint); font-size: 8px; }
-.drawer-operations-details > summary em { padding: 4px 7px; color: var(--muted); border-radius: var(--radius-component); background: var(--raised); font-size: 8px; font-style: normal; font-weight: 700; }
-.monitoring-control { display: grid; grid-template-columns: auto 140px minmax(0, 1fr) auto; gap: 12px; align-items: end; padding: 15px; border: 0; border-top: 1px solid var(--border); border-left: 3px solid var(--border-strong); border-radius: 0 0 var(--radius-component) var(--radius-component); background: var(--bg); }
-.monitoring-control.enabled { border-left-color: var(--good); }
-.monitoring-control > div { grid-column: 1 / -1; }
-.monitoring-control > div small, .monitoring-control > div strong, .monitoring-control > div span { display: block; }
-.monitoring-control > div small { color: var(--faint); font-size: 9px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
-.monitoring-control > div strong { margin-top: 5px; font-size: 12px; }
-.monitoring-control > div span { margin-top: 4px; color: var(--muted); font-size: 10px; line-height: 1.5; }
-.monitoring-control > button { min-height: 42px; white-space: nowrap; }
-.monitoring-control .monitoring-toggle { min-height: 42px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--radius-component); background: var(--bg); white-space: nowrap; }
-.monitoring-control .monitoring-toggle input { width: 15px; min-height: 15px; margin: 0; accent-color: var(--accent); }.form-heading h3 { margin: 0; font-size: 18px; }.form-error { padding: 10px 12px; border-radius: var(--radius-component); font-size: 11px; text-align: left; }
-.form-error { color: var(--bad); border: 1px solid rgb(var(--bad-rgb) / 0.4); background: rgb(var(--bad-rgb) / 0.12); }.connection-form label { display: grid; gap: 7px; color: var(--muted); font-size: 11px; font-weight: 600; text-align: left; }.connection-form input, .connection-form select { width: 100%; min-height: 42px; padding: 9px 11px; color: var(--text); border: 1px solid var(--border-strong); border-radius: var(--radius-component); outline: none; background: var(--bg); }.connection-form input:focus, .connection-form select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.12); }
-.connection-form input:disabled { color: var(--faint); background: var(--raised); }
-.kind-tabs { display: flex; gap: 6px; overflow-x: auto; padding: 19px 0 14px; scrollbar-width: none; }
-.kind-tabs::-webkit-scrollbar { display: none; }
-.kind-tabs button { flex: 0 0 auto; min-height: 34px; padding: 7px 10px; color: var(--muted); border: 1px solid var(--border); border-radius: var(--radius-component); background: var(--bg); cursor: pointer; font-size: 10px; }
-.kind-tabs button.selected { color: var(--text); border-color: rgb(var(--accent-rgb) / 0.55); background: var(--raised); }
-.form-heading { display: flex; align-items: center; gap: 12px; padding: 14px; margin-bottom: 17px; border: 1px solid var(--border); border-radius: var(--radius-component); background: var(--bg); }
-.form-heading p { margin: 3px 0 0; color: var(--faint); font-size: 10px; }
-.saved-badge { margin-left: auto; padding: 5px 8px; color: var(--good); border-radius: var(--radius-component); background: rgb(var(--good-rgb) / 0.12); font-size: 9px; font-weight: 700; }
-.diagnostic-result { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 10px; padding: 12px 13px; margin-bottom: 17px; border: 1px solid var(--border); border-radius: var(--radius-component); background: var(--bg); }
-.diagnostic-result div strong, .diagnostic-result div span { display: block; }
-.diagnostic-result div strong { color: var(--text); font-size: 10px; }
-.diagnostic-result div span { margin-top: 3px; color: var(--faint); font-size: 9px; line-height: 1.45; }
-.diagnostic-result small { color: var(--muted); font-size: 9px; }
-.diagnostic-result button { min-height: 34px; color: var(--text); border: 1px solid var(--border-strong); background: var(--raised); }
-.diagnostic-result.healthy { border-color: rgb(var(--good-rgb) / 0.7); background: rgb(var(--good-rgb) / 0.12); }
-.diagnostic-result.degraded { border-color: rgb(var(--warn-rgb) / 0.7); background: rgb(var(--warn-rgb) / 0.12); }
-.diagnostic-result.unreachable { border-color: rgb(var(--bad-rgb) / 0.7); background: rgb(var(--bad-rgb) / 0.12); }
-.form-grid, .configuration-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-.inference-identity-grid { padding-bottom: 14px; margin-bottom: 14px; border-bottom: 1px solid var(--border); }
-.inference-discovery-section { display: grid; gap: 16px; padding: 18px; margin-top: 17px; border: 1px solid rgb(var(--accent-rgb) / 0.4); border-radius: var(--radius-component); background: linear-gradient(145deg, rgb(var(--accent-rgb) / 0.1), var(--bg)); box-shadow: inset 0 1px rgb(var(--text-rgb) / 0.03); }
-.inference-discovery-section > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
-.inference-discovery-section > header small, .inference-discovery-section > header strong, .inference-discovery-section > header span { display: block; }
-.inference-discovery-section > header small { margin-bottom: 5px; color: var(--accent); font-size: 8px; font-weight: 750; letter-spacing: .09em; text-transform: uppercase; }
-.inference-discovery-section > header strong { font-size: 15px; }
-.inference-discovery-section > header span { max-width: 470px; margin-top: 5px; color: var(--muted); font-size: 10px; line-height: 1.55; }
-.inference-discovery-section > header em { flex: 0 0 auto; padding: 5px 9px; color: var(--accent); border: 1px solid rgb(var(--accent-rgb) / 0.5); border-radius: var(--radius-component); background: rgb(var(--accent-rgb) / 0.18); font-size: 8px; font-style: normal; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
-.inference-connect-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(190px, .8fr) auto; align-items: end; gap: 13px; }
-.inference-connect-grid label > small { color: var(--faint); font-size: 8px; font-weight: 500; line-height: 1.5; }
-.secret-input-label { justify-self: end; margin-top: -19px; color: var(--good); font-size: 8px; font-weight: 500; }
-.inference-discover-button { min-height: 42px; padding-inline: 17px; white-space: nowrap; }
-.inference-discovery-result { overflow: hidden; border: 1px solid rgb(var(--good-rgb) / 0.45); border-radius: var(--radius-component); background: rgb(var(--good-rgb) / 0.12); }
-.inference-discovery-result.partial, .inference-discovery-result.auth_required { border-color: rgb(var(--warn-rgb) / 0.7); background: rgb(var(--warn-rgb) / 0.1); }
-.inference-discovery-result.unreachable { border-color: rgb(var(--bad-rgb) / 0.7); background: rgb(var(--bad-rgb) / 0.12); }
-.inference-discovery-summary { display: flex; align-items: center; gap: 11px; padding: 13px; }
-.discovery-status-mark { width: 30px; height: 30px; display: grid; flex: 0 0 auto; place-items: center; color: var(--good); border-radius: 50%; background: rgb(var(--good-rgb) / 0.22); font-size: 14px; font-weight: 800; }
-.partial .discovery-status-mark, .auth_required .discovery-status-mark { color: var(--warn); background: rgb(var(--warn-rgb) / 0.26); }
-.unreachable .discovery-status-mark { color: var(--bad); background: rgb(var(--bad-rgb) / 0.28); }
-.inference-discovery-summary > div { min-width: 0; flex: 1; }
-.inference-discovery-summary small, .inference-discovery-summary strong, .inference-discovery-summary span { display: block; }
-.inference-discovery-summary small { color: var(--good); font-size: 8px; font-weight: 750; letter-spacing: .08em; }
-.inference-discovery-summary strong { margin-top: 3px; color: var(--good); font-size: 10px; line-height: 1.45; }
-.inference-discovery-summary span { overflow: hidden; margin-top: 3px; color: var(--faint); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
-.inference-discovery-summary em { color: var(--muted); font-size: 8px; font-style: normal; white-space: nowrap; }
-.inference-discovery-facts { display: grid; grid-template-columns: repeat(3, 1fr); border-block: 1px solid rgb(var(--good-rgb) / 0.4); }
-.inference-discovery-facts > span { min-width: 0; padding: 10px 12px; border-right: 1px solid rgb(var(--good-rgb) / 0.4); }
-.inference-discovery-facts > span:last-child { border-right: 0; }
-.inference-discovery-facts small, .inference-discovery-facts strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.inference-discovery-facts small { color: var(--muted); font-size: 8px; }
-.inference-discovery-facts strong { margin-top: 3px; color: var(--good); font-size: 10px; }
-.discovered-model-select { margin: 13px; }
-.discovered-model-select > small { color: var(--muted); font-size: 8px; font-weight: 500; }
-.inference-activation-note { display: grid; gap: 3px; padding: 11px 13px; margin: 0 13px 13px; border: 1px solid rgb(var(--good-rgb) / 0.5); border-radius: var(--radius-component); background: rgb(var(--good-rgb) / 0.12); }
-.inference-activation-note strong { color: var(--good); font-size: 9px; }
-.inference-activation-note span { color: var(--good); font-size: 8px; line-height: 1.5; }
-.discovery-evidence { margin: 0 13px 13px; border-top: 1px solid rgb(var(--good-rgb) / 0.4); }
-.discovery-evidence summary { padding: 10px 0 0; color: var(--muted); cursor: pointer; font-size: 9px; font-weight: 650; }
-.discovery-evidence > div { display: grid; gap: 5px; padding-top: 9px; }
-.discovery-evidence p { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: center; gap: 6px; padding: 7px 8px; margin: 0; border-radius: var(--radius-component); background: rgb(var(--good-rgb) / 0.1); }
-.discovery-evidence p > span { color: var(--good); font-weight: 800; }
-.discovery-evidence p.failed > span { color: var(--bad); }
-.discovery-evidence p.warning > span { color: var(--warn); }
-.discovery-evidence p strong { color: var(--text); font-size: 8px; }
-.discovery-evidence p small { color: var(--muted); font-size: 8px; text-align: right; }
-.advanced-configuration-toggle { width: 100%; min-height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 13px; margin-top: 13px; color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-component); background: var(--raised); cursor: pointer; text-align: left; }
-.advanced-configuration-toggle span, .advanced-configuration-toggle strong, .advanced-configuration-toggle small { display: block; }
-.advanced-configuration-toggle small { margin-top: 3px; color: var(--faint); font-size: 8px; font-weight: 500; }
-.advanced-configuration-toggle b { color: var(--accent); font-size: 17px; font-weight: 500; }
-.switch-label { align-self: end; display: flex !important; align-items: center; min-height: 42px; padding: 9px 11px; border: 1px solid var(--border-strong); border-radius: var(--radius-component); background: var(--bg); }
-.switch-label input { width: 16px; min-height: auto; accent-color: var(--accent); }
-.configuration-section, .secret-section { display: grid; gap: 14px; padding: 16px; margin-top: 17px; border: 1px solid var(--border); border-radius: var(--radius-component); background: var(--bg); }
-.configuration-section > div:first-child, .secret-section > div:first-child { display: flex; justify-content: space-between; gap: 12px; }
-.configuration-section > div:first-child strong, .secret-section > div:first-child strong { font-size: 12px; }
-.configuration-section > div:first-child span, .secret-section > div:first-child span { color: var(--faint); font-size: 9px; }
-.configuration-grid label > small { color: var(--faint); font-size: 8px; font-weight: 500; line-height: 1.5; }
-.configuration-toggle { grid-column: 1 / -1; display: flex !important; align-items: center; padding: 10px 11px; border: 1px solid var(--border-strong); border-radius: var(--radius-component); background: var(--bg); }
-.configuration-toggle input { width: 16px; min-height: auto; flex: 0 0 auto; accent-color: var(--accent); }
-.configuration-toggle span { display: grid; gap: 3px; }
-.configuration-toggle span strong { color: var(--muted); font-size: 10px; }
-.configuration-toggle span small { color: var(--faint); font-size: 8px; font-weight: 500; }
-.secret-section label { position: relative; }
-.secret-section label small { position: absolute; right: 0; top: 0; color: var(--good); font-size: 8px; font-weight: 500; }
-.revision-section { display: grid; gap: 12px; padding: 16px; margin-top: 17px; border: 1px solid var(--border); border-radius: var(--radius-component); background: var(--bg); }
-.revision-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
-.revision-heading strong, .revision-heading span { display: block; }
-.revision-heading strong { font-size: 12px; }
-.revision-heading span { margin-top: 3px; color: var(--faint); font-size: 9px; }
-.revision-heading > button, .revision-list article > button, .rollback-confirmation button { min-height: 32px; padding: 7px 10px; color: var(--text); border: 1px solid var(--border-strong); border-radius: var(--radius-component); background: var(--raised); cursor: pointer; font-size: 9px; font-weight: 650; }
-.revision-list { display: grid; gap: 7px; }
-.revision-list article { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 11px; border: 1px solid var(--border); border-radius: var(--radius-component); background: var(--bg); }
-.revision-list article > div:first-child { min-width: 0; }
-.revision-list article > div:first-child strong, .revision-list article > div:first-child span { display: block; }
-.revision-list article > div:first-child strong { color: var(--text); font-size: 10px; }
-.revision-list article > div:first-child span { margin-top: 3px; color: var(--faint); font-size: 8px; }
-.revision-list article > div:first-child span:last-child { overflow-wrap: anywhere; }
-.revision-active { padding: 4px 7px; color: var(--good); border-radius: var(--radius-component); background: rgb(var(--good-rgb) / 0.12); font-size: 8px; font-weight: 700; }
-.rollback-confirmation { max-width: 280px; display: grid; gap: 7px; justify-items: end; color: var(--warn); font-size: 9px; line-height: 1.4; text-align: right; }
-.rollback-confirmation > div { display: flex; gap: 6px; }
-/* The destructive confirm. Tokenising this in one pass turned an opaque
-   amber fill into a translucent tint and left `color: #fff` behind it, which
-   composited to white-on-sand at 1.58:1 in light -- worse than the hardcoded
-   original it replaced. Foreground and fill move together or not at all. */
-.rollback-confirmation button:last-child { color: rgb(var(--onaccent-rgb)); border-color: var(--bad); background: var(--bad); font-weight: 600; }
-/*
- * Layout only. The two element rules that used to paint these buttons are
- * gone: at (0,1,1) they outranked every utility class on the submit control,
- * so the drawer's primary action rendered byte-identical to Cancel — same
- * text colour, same border, same fill — while the markup plainly asked for
- * the accent. Both buttons are `Button` now and paint themselves.
- */
-.drawer-actions { display: flex; justify-content: flex-end; gap: 9px; padding-top: 20px; }
 
 .runtime-alert { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 11px 13px; color: var(--bad); border: 1px solid rgb(var(--bad-rgb) / 0.4); border-radius: var(--radius-component); background: rgb(var(--bad-rgb) / 0.12); font-size: 10px; }
 .runtime-alert button { color: inherit; border: 0; background: transparent; cursor: pointer; font-size: 9px; font-weight: 650; }
@@ -1264,34 +1187,13 @@ button:disabled { opacity: .48; cursor: not-allowed; }.panel { border: 1px solid
   }
   .sidebar .nav-app-icon svg { width: 19px; height: 19px; }
   .sidebar-bottom { display: none; }
-  main { padding: 19px 16px 38px; }
-  .mobile-brand { display: flex; margin-bottom: 24px; }
+  main { padding-block: 0 24px; }
+  .mobile-brand { display: flex; margin-bottom: 16px; }
   .mobile-brand strong { font-size: 13px; }
   .chat-page { height: calc(100dvh - 72px); padding: 0; }
 }@media (max-width: 560px) {
   .panel { padding: 17px; }
-  .form-grid, .configuration-grid, .inference-connect-grid { grid-template-columns: 1fr; }.configuration-toggle { grid-column: auto; }
-  .inference-discovery-section { padding: 15px; }
-  .inference-discovery-section > header { align-items: stretch; flex-direction: column; }
-  .inference-discovery-section > header em { align-self: flex-start; }
-  .inference-discover-button { width: 100%; }
-  .inference-discovery-summary { align-items: flex-start; flex-wrap: wrap; }
-  .inference-discovery-summary em { margin-left: 41px; }
-  .inference-discovery-facts { grid-template-columns: 1fr; }
-  .inference-discovery-facts > span { border-right: 0; border-bottom: 1px solid rgb(var(--good-rgb) / 0.4); }
-  .inference-discovery-facts > span:last-child { border-bottom: 0; }
-  .discovery-evidence p { grid-template-columns: 16px minmax(0, 1fr); }
-  .discovery-evidence p small { grid-column: 2; text-align: left; }
-  .monitoring-control { grid-template-columns: 1fr; align-items: stretch; }
-  .monitoring-control > div { grid-column: auto; }
-  .monitoring-control > button { width: 100%; }
-  .revision-list article { align-items: flex-start; }
-  .rollback-confirmation { max-width: 210px; }
-  .diagnostic-result { grid-template-columns: 1fr auto; }
-  .diagnostic-result button { grid-column: 1 / -1; }
   .runtime-section-heading { padding: 15px; }
-}@media (max-width: 390px) {
-  main { padding-inline: 12px; }
 }
 
 /* Production setup */
@@ -1348,41 +1250,15 @@ button:disabled { opacity: .48; cursor: not-allowed; }.panel { border: 1px solid
 .runtime-node-actions .danger { color: var(--bad); }
 .runtime-network-contract { padding: 18px; }
 .runtime-network-contract h2 { margin: 4px 0 16px; font-size: 15px; }
-.runtime-network-contract ol, .runtime-install-steps ol { display: grid; gap: 12px; padding: 0; margin: 0; list-style: none; }
-.runtime-network-contract li, .runtime-install-steps li { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 10px; }
-.runtime-network-contract li > span, .runtime-install-steps li > span { width: 22px; height: 22px; display: grid; place-items: center; color: var(--text); border: 1px solid var(--border-strong); border-radius: 50%; background: var(--raised); font-size: 8px; font-weight: 700; }
-.runtime-network-contract li strong, .runtime-install-steps li strong { display: block; font-size: 9px; }
-.runtime-network-contract li small, .runtime-install-steps li small { display: block; margin-top: 4px; color: var(--faint); font-size: 8px; line-height: 1.5; }
+.runtime-network-contract ol { display: grid; gap: 12px; padding: 0; margin: 0; list-style: none; }
+.runtime-network-contract li { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 10px; }
+.runtime-network-contract li > span { width: 22px; height: 22px; display: grid; place-items: center; color: var(--text); border: 1px solid var(--border-strong); border-radius: 50%; background: var(--raised); font-size: 8px; font-weight: 700; }
+.runtime-network-contract li strong { display: block; font-size: 9px; }
+.runtime-network-contract li small { display: block; margin-top: 4px; color: var(--faint); font-size: 8px; line-height: 1.5; }
 .runtime-network-note { padding: 12px; margin-top: 17px; border: 1px solid var(--border-strong); border-radius: var(--radius-component); background: var(--raised); }
 .runtime-network-note strong { color: var(--text); font-size: 9px; }
 .runtime-network-note p { margin: 5px 0 0; color: var(--muted); font-size: 8px; line-height: 1.55; }
-.runtime-form-intro { margin: 0; color: var(--muted); font-size: 9px; line-height: 1.55; }
-.runtime-install-preview { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 9px 10px; padding: 12px; border: 1px solid var(--border-strong); border-radius: var(--radius-component); background: var(--raised); }
-.runtime-install-preview > span { width: 24px; height: 24px; display: grid; place-items: center; color: rgb(var(--onaccent-rgb)); border: 1px solid var(--accent); border-radius: 50%; background: var(--accent); font-size: 8px; font-weight: 750; }
-.runtime-install-preview strong, .runtime-install-preview small { display: block; }
-.runtime-install-preview strong { color: var(--text); font-size: 9px; }
-.runtime-install-preview small { margin-top: 2px; color: var(--faint); font-size: 8px; line-height: 1.4; }
-.runtime-deployment-details { border: 1px solid var(--border); border-radius: var(--radius-component); background: var(--bg); }
-.runtime-deployment-details > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 12px; cursor: pointer; list-style: none; }
-.runtime-deployment-details > summary::-webkit-details-marker { display: none; }
-.runtime-deployment-details > summary span, .runtime-deployment-details > summary strong, .runtime-deployment-details > summary small { display: block; }
-.runtime-deployment-details > summary strong { color: var(--text); font-size: 9px; }
-.runtime-deployment-details > summary small { margin-top: 2px; color: var(--faint); font-size: 8px; }
-.runtime-deployment-details > summary b { color: var(--accent); font-size: 14px; font-weight: 500; }
-.runtime-deployment-details[open] > summary b { transform: rotate(45deg); }
-.runtime-deployment-details > div { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 12px; border-top: 1px solid var(--border); }
-.runtime-deployment-details > div label:nth-last-child(-n+2) { grid-column: 1 / -1; }
-.runtime-invite-warning { padding: 12px; border: 1px solid rgb(var(--warn-rgb) / 0.45); border-radius: var(--radius-component); background: rgb(var(--warn-rgb) / 0.12); }
-.runtime-invite-warning strong { color: var(--warn); font-size: 9px; }
-.runtime-invite-warning ul { padding-left: 17px; margin: 6px 0 0; color: var(--warn); font-size: 8px; line-height: 1.55; }
 .runtime-development-note { padding: 9px 11px; color: var(--faint); border: 1px solid var(--border); border-radius: var(--radius-component); background: var(--raised); font-size: 8px; line-height: 1.5; }
-.runtime-install-steps { display: grid; gap: 16px; }
-.runtime-success-mark { width: 42px; height: 42px; display: grid; place-items: center; color: var(--good); border: 1px solid rgb(var(--good-rgb) / 0.5); border-radius: 50%; background: rgb(var(--good-rgb) / 0.12); font-size: 18px; }
-.runtime-install-steps > p { margin: 0; color: var(--muted); font-size: 9px; line-height: 1.55; }
-.runtime-install-steps li > div { min-width: 0; }
-.runtime-install-steps li button { margin-top: 9px; }
-.runtime-install-steps li code { display: block; overflow-x: auto; padding: 10px; margin-top: 7px; border: 1px solid var(--border); border-radius: var(--radius-component); background: var(--bg); line-height: 1.6; white-space: pre; }
-.runtime-install-steps footer { display: flex; justify-content: flex-end; gap: 9px; margin-top: 5px; }
 .runtime-removal-warning { padding: 13px; border: 1px solid rgb(var(--bad-rgb) / 0.4); border-radius: var(--radius-component); background: rgb(var(--bad-rgb) / 0.12); }
 .runtime-removal-warning strong { color: var(--bad); font-size: 10px; }
 .runtime-removal-warning p { margin: 5px 0 0; color: var(--bad); font-size: 8px; line-height: 1.55; }
@@ -1411,10 +1287,6 @@ button:disabled { opacity: .48; cursor: not-allowed; }.panel { border: 1px solid
   .runtime-node-list > article { grid-template-columns: auto minmax(0, 1fr); align-items: start; padding-inline: 13px; }
   .runtime-node-list dl { grid-column: 2; grid-template-columns: 1fr; gap: 8px; }
   .runtime-node-actions { grid-column: 2; grid-row: auto; }
-  .runtime-install-steps footer { flex-direction: column-reverse; }
-  .runtime-install-steps footer button { width: 100%; }
-  .runtime-deployment-details > div { grid-template-columns: 1fr; }
-  .runtime-deployment-details > div label:nth-last-child(-n+2) { grid-column: auto; }
 }/* A blocked agent is the most urgent thing on this page, so the panel reads as
    an action list rather than another table. */
 

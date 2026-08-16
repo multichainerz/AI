@@ -157,7 +157,7 @@ describe("discovering an endpoint that is already live", () => {
     // completed discovery rather than one that raced it.
     await screen.findByText("The model list answered; the health path did not.");
 
-    fireEvent.submit(screen.getByRole("button", { name: /Save changes|Activate AI Inference/ }).closest("form")!);
+    fireEvent.click(screen.getByRole("button", { name: /Save changes|Activate AI Inference/ }));
     await waitFor(() => expect(onSave).toHaveBeenCalled());
     expect(onSave.mock.calls[0]![0]).toMatchObject({ existingId: liveInference.id, enabled: true });
   });
@@ -182,7 +182,7 @@ describe("discovering an endpoint that is already live", () => {
     fireEvent.click(screen.getByRole("button", { name: "Discover server" }));
     const submit = await screen.findByRole("button", { name: "Activate AI Inference" });
 
-    fireEvent.submit(submit.closest("form")!);
+    fireEvent.click(submit);
     await waitFor(() => expect(onSave).toHaveBeenCalled());
     expect(onSave.mock.calls[0]![0]).toMatchObject({ enabled: true });
   });

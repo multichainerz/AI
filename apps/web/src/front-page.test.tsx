@@ -87,7 +87,7 @@ describe("signing in from the front page", () => {
     );
     // The heading and the sign-in card are what the page is for, and both stay.
     expect(container.textContent).toContain("Dynamic intelligence, orchestrated into action.");
-    expect(screen.getByRole("region", { name: "Administrator access" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Local access" })).toBeTruthy();
   });
 
   it("keeps the sign-in card compact and removes decorative framing copy", () => {
@@ -97,7 +97,8 @@ describe("signing in from the front page", () => {
     expect(screen.queryByText("Private intelligence. Governed execution. Your infrastructure.")).toBeNull();
     expect(screen.queryByText(/Identity, policy, and execution stay within/i)).toBeNull();
 
-    const access = screen.getByRole("region", { name: "Administrator access" });
+    const access = screen.getByRole("region", { name: "Local access" });
+    expect(screen.queryByText("Local access")).toBeNull();
     expect(screen.queryByText("Administrator access")).toBeNull();
     expect(screen.queryByText("Enter the control plane")).toBeNull();
     expect(screen.queryByText(/Sign in to operate and govern/i)).toBeNull();
@@ -209,6 +210,14 @@ describe("the forced password change", () => {
     expect(screen.getByRole("form", { name: "Reset local administrator" })).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Reset local administrator" })).toBeNull();
     expect(screen.queryByText(/The recovery key has been verified/i)).toBeNull();
+  });
+
+  it("opens the same change form for a locally created person without an administrator session", () => {
+    render(<FrontPage {...base} {...handlers()} mustChangePassword />);
+
+    expect(screen.getByRole("form", { name: "Change temporary password" })).toBeTruthy();
+    expect(screen.queryByLabelText(/^username$/i)).toBeNull();
+    expect(screen.queryByRole("form", { name: "Reset local administrator" })).toBeNull();
   });
 
   it("changes a temporary password through the change handler", async () => {

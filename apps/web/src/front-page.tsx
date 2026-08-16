@@ -29,7 +29,8 @@ import { ThemeToggle } from "./ui/theme-toggle.js";
  * eyeballing it. The violet hero is the exception: it is the brand panel, so
  * its palette is the brand one, cyan #22D3EE included.
  *
- * The four states of the card are the four ways in: local sign-in, offline
+ * The four states of the card are the four ways in: local sign-in (an
+ * administrator or a person created under Settings → People), offline
  * recovery with the Installation Key, the forced password change a temporary
  * password lands in, and the recovery reset. Enterprise SSO is a redirect the
  * API owns, shown only when the deployment has OIDC configured.
@@ -44,6 +45,8 @@ interface FrontPageProps {
   oidcConfigured: boolean;
   /** Present only when a session exists but must change its password first. */
   session: AdministratorSession | null;
+  /** A locally created person whose temporary password has not been replaced. */
+  mustChangePassword?: boolean;
   onLogin: (username: string, password: string) => Promise<boolean>;
   onStartRecovery: (installationKey: string) => Promise<boolean>;
   onChangePassword: (currentPassword: string, newPassword: string) => Promise<boolean>;
@@ -101,7 +104,7 @@ export function FrontPage(props: FrontPageProps) {
   const [newPassword, setNewPassword] = useState("");
   const [confirmedPassword, setConfirmedPassword] = useState("");
 
-  const changeRequired = props.session?.passwordChangeRequired === true;
+  const changeRequired = props.session?.passwordChangeRequired === true || props.mustChangePassword === true;
   const recovering = props.session?.authenticationMethod === "INSTALLATION_KEY_RECOVERY";
 
   const submitAccess = async (event: FormEvent) => {
@@ -154,7 +157,7 @@ export function FrontPage(props: FrontPageProps) {
             <div
               className="min-w-0 overflow-hidden rounded border border-black/[0.12] bg-white shadow-[0_12px_30px_rgba(0,0,0,0.14)]"
               role="region"
-              aria-label="Administrator access"
+              aria-label="Local access"
             >
               <div className="p-6 sm:p-7">
               {!changeRequired ? (
@@ -173,7 +176,7 @@ export function FrontPage(props: FrontPageProps) {
                           icon={<IdentityIcon size={18} />}
                           value={username}
                           onChange={(event) => setUsername(event.target.value)}
-                          placeholder="Administrator username"
+                          placeholder="Username"
                           aria-label="Username"
                           autoComplete="username"
                           required

@@ -5,6 +5,7 @@ import type {
   MutateHermesRuntimeNode,
   OnboardingTargetEnvironment,
 } from "@orcasynapse/contracts";
+import { ChevronDown } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   OrcaSynapseApiError,
@@ -13,7 +14,7 @@ import {
   mutateHermesRuntimeNode,
   removeHermesRuntimeNode,
 } from "./api.js";
-import { Button, Dialog, EmptyState, Input, MicroLabel, StatusText, Tile, cn } from "./ui/index.js";
+import { Alert, Button, Dialog, EmptyState, Field, Input, MicroLabel, StatusText, Tile, cn } from "./ui/index.js";
 import { Switch } from "@/components/ui/switch";
 
 /**
@@ -485,42 +486,99 @@ export function RuntimeNodesPanel({
       */}
     {editorOpen && inferenceReady && targetKnown && <Dialog
       open
-      kicker="Agentic System"
       title={invitation ? "Run this on VM2" : "Generate the VM2 installer"}
+      description={invitation
+        ? `The enrollment claim expires ${new Date(invitation.bundle.expiresAt).toLocaleString()} and can be used only once.`
+        : "OrcaSynapse will pre-seed Hermes with the active AI Inference route. No inference key, SSH password, or private node key is exposed to the browser."}
       onClose={() => setEditorOpen(false)}
       footer={invitation
-        ? <div className="flex justify-end gap-2">
+        ? <>
             <Button onClick={() => setInvitation(null)}>Issue another</Button>
             <Button variant="primary" onClick={() => { setEditorOpen(false); void load(); }}>Done</Button>
-          </div>
-        : <div className="flex justify-end gap-2">
+          </>
+        : <>
             <Button onClick={() => setEditorOpen(false)}>Cancel</Button>
             <Button variant="primary" form="vm2-installer-form" type="submit" disabled={busy !== null || productionArtifactBlocked}>
               {busy === "invite" ? "Preparing installer…" : productionArtifactBlocked ? "Review production options" : "Generate install command"}
             </Button>
-          </div>}
+          </>}
     >
-      {!invitation ? <form id="vm2-installer-form" className="ops-form grid gap-4" onSubmit={(event) => void issueInvitation(event)}>
-        <p className="runtime-form-intro">OrcaSynapse will pre-seed Hermes with the active AI Inference route. No inference key, SSH password, or private node key is exposed to the browser.</p>
-        <div className="runtime-install-preview"><span>1</span><div><strong>Tell OrcaSynapse how to reach VM2</strong><small>Use the private address accessible from the dashboard host.</small></div><span>2</span><div><strong>Run one generated command</strong><small>The installer handles Hermes, credentials, and registration.</small></div></div>
-        <label><span>VM2 private address</span><Input required type="url" value={form.baseUrl} onChange={(event) => setForm({ ...form, baseUrl: event.target.value })} /><small>Normally <code>http://VM2-IP:8642</code>. Port 8642 must be reachable only from OrcaSynapse.</small></label>
-        <details className="runtime-deployment-details">
-          <summary><span><strong>Advanced deployment options</strong><small>Identity, release pins, and network overrides</small></span><b>+</b></summary>
-          <div>
-            <label><span>Node name</span><Input required minLength={2} maxLength={120} value={form.displayName} onChange={(event) => setForm({ ...form, displayName: event.target.value })} /></label>
-            <label><span>Node slug</span><Input required pattern="[a-z0-9]+(?:-[a-z0-9]+)*" minLength={2} maxLength={64} value={form.slug} onChange={(event) => setForm({ ...form, slug: event.target.value })} /></label>
-            <label><span>Expected VM hostname (optional)</span><Input maxLength={253} value={form.expectedHostname ?? ""} placeholder="hermes-01.internal" onChange={(event) => setForm({ ...form, expectedHostname: event.target.value })} /><small>When set, enrollment fails if VM2 reports a different hostname.</small></label>
-            <label><span>OrcaSynapse address visible to VM2</span><Input required type="url" value={form.controlPlaneUrl} onChange={(event) => setForm({ ...form, controlPlaneUrl: event.target.value })} /></label>
-            <label><span>Hermes commit</span><Input required minLength={40} maxLength={40} pattern="[0-9a-fA-F]{40}" value={form.hermesCommit} onChange={(event) => setForm({ ...form, hermesCommit: event.target.value.trim().toLowerCase() })} /><small>The 40-character commit VM2 installs. A commit cannot be moved, so this is the runtime pin.</small></label>
+      <div className="grid gap-5">
+      {error ? <Alert>{error}</Alert> : null}
+      {!invitation ? <form id="vm2-installer-form" className="grid gap-5" onSubmit={(event) => void issueInvitation(event)}>
+        <Field
+          label="VM2 private address"
+          hint="Normally http://VM2-IP:8642. Port 8642 must be reachable only from OrcaSynapse."
+        >
+          <Input required type="url" value={form.baseUrl} onChange={(event) => setForm({ ...form, baseUrl: event.target.value })} />
+        </Field>
+
+        <details className="group border-t border-border pt-4">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
+            <span>
+              <span className="block text-label font-semibold text-foreground">Advanced deployment options</span>
+              <span className="block text-caption font-normal text-muted">Identity, release pins, and network overrides</span>
+            </span>
+            <ChevronDown className="size-4 text-muted-foreground transition-transform group-open:rotate-180" />
+          </summary>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <Field label="Node name">
+              <Input required minLength={2} maxLength={120} value={form.displayName} onChange={(event) => setForm({ ...form, displayName: event.target.value })} />
+            </Field>
+            <Field label="Node slug">
+              <Input required pattern="[a-z0-9]+(?:-[a-z0-9]+)*" minLength={2} maxLength={64} value={form.slug} onChange={(event) => setForm({ ...form, slug: event.target.value })} />
+            </Field>
+            <Field className="sm:col-span-2" label="Expected VM hostname" hint="Optional. When set, enrollment fails if VM2 reports a different hostname.">
+              <Input maxLength={253} value={form.expectedHostname ?? ""} placeholder="hermes-01.internal" onChange={(event) => setForm({ ...form, expectedHostname: event.target.value })} />
+            </Field>
+            <Field className="sm:col-span-2" label="OrcaSynapse address visible to VM2">
+              <Input required type="url" value={form.controlPlaneUrl} onChange={(event) => setForm({ ...form, controlPlaneUrl: event.target.value })} />
+            </Field>
+            <Field className="sm:col-span-2" label="Hermes commit" hint="The 40-character commit VM2 installs. A commit cannot be moved, so this is the runtime pin.">
+              <Input required minLength={40} maxLength={40} pattern="[0-9a-fA-F]{40}" value={form.hermesCommit} onChange={(event) => setForm({ ...form, hermesCommit: event.target.value.trim().toLowerCase() })} />
+            </Field>
           </div>
         </details>
-        {targetEnvironment === "PRODUCTION" && (unpinned || insecureControlPlane) && <div className="runtime-invite-warning"><strong>Production hardening required</strong><ul>{unpinned && <li>The Hermes runtime is not pinned to a 40-character commit.</li>}{insecureControlPlane && <li>The OrcaSynapse enrollment route uses HTTP rather than HTTPS.</li>}</ul></div>}
-        {targetKnown && targetEnvironment !== "PRODUCTION" && (unpinned || insecureControlPlane) && <div className="runtime-development-note">Development release defaults are selected. Exact production pins remain available under Advanced deployment options.</div>}
-      </form> : <div className="runtime-install-steps">
-        <div className="runtime-success-mark">✓</div><p>The enrollment claim expires <strong>{new Date(invitation.bundle.expiresAt).toLocaleString()}</strong> and can be used only once.</p>
-        <ol><li><span>1</span><div><strong>Run one command on VM2</strong><small>OrcaSynapse serves the installer directly; it connects back only to this control-plane origin.</small><code>{agenticNodeInstallCommand(invitation.bundle.controlPlaneUrl)}</code></div></li><li><span>2</span><div><strong>Paste the claim when prompted</strong><small>The installer reads it from the terminal with hidden input and sends it in a redacted POST body—not in the URL or shell history.</small><code>{invitation.bundle.token}</code><Button onClick={() => void navigator.clipboard.writeText(invitation.bundle.token)}>Copy claim</Button></div></li><li><span>3</span><div><strong>Watch the node come online</strong><small>OrcaSynapse installs Hermes, applies the approved route and policy, then starts signed health reporting.</small><Button onClick={downloadBundle}>Download JSON fallback</Button></div></li></ol>
-        <div className="runtime-network-note"><strong>What happens next</strong><p>VM2 generates its own private identity, installs Hermes, exchanges the claim once, and appears Online here. OrcaSynapse never receives the private signing key or a reusable VM credential.</p></div>
+
+        {targetEnvironment === "PRODUCTION" && (unpinned || insecureControlPlane) ? (
+          <Alert tone="warn">
+            <span className="block font-semibold">Production hardening required</span>
+            <ul className="mt-1.5 list-disc pl-4 text-caption">
+              {unpinned ? <li>The Hermes runtime is not pinned to a 40-character commit.</li> : null}
+              {insecureControlPlane ? <li>The OrcaSynapse enrollment route uses HTTP rather than HTTPS.</li> : null}
+            </ul>
+          </Alert>
+        ) : null}
+        {targetKnown && targetEnvironment !== "PRODUCTION" && (unpinned || insecureControlPlane) ? (
+          <p className="m-0 text-caption leading-relaxed text-muted">
+            Development release defaults are selected. Exact production pins remain available under Advanced deployment options.
+          </p>
+        ) : null}
+      </form> : <div className="grid gap-4">
+        <div className="grid gap-1.5">
+          <p className="text-micro font-semibold uppercase tabular-nums text-faint">Run on VM2</p>
+          <code className="block overflow-x-auto rounded border border-border bg-bg px-3 py-2.5 font-mono text-caption text-muted">
+            {agenticNodeInstallCommand(invitation.bundle.controlPlaneUrl)}
+          </code>
+          <p className="m-0 text-caption leading-relaxed text-muted">
+            OrcaSynapse serves the installer. It connects back only to this control-plane origin.
+          </p>
+        </div>
+        <div className="grid gap-1.5">
+          <p className="text-micro font-semibold uppercase tabular-nums text-faint">Paste the claim when prompted</p>
+          <code className="block overflow-x-auto rounded border border-border bg-bg px-3 py-2.5 font-mono text-caption text-muted">
+            {invitation.bundle.token}
+          </code>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" onClick={() => void navigator.clipboard.writeText(invitation.bundle.token)}>Copy claim</Button>
+            <Button size="sm" variant="ghost" onClick={downloadBundle}>Download JSON fallback</Button>
+          </div>
+          <p className="m-0 text-caption leading-relaxed text-muted">
+            The installer reads the claim from a hidden prompt and sends it in a redacted body — not in the URL or shell history. VM2 then appears Online on this step.
+          </p>
+        </div>
       </div>}
+      </div>
     </Dialog>}
 
     {removalNode && <Dialog

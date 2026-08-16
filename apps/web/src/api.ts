@@ -254,6 +254,37 @@ export async function createLocalAdministratorSession(username: string, password
   return administratorSessionSchema.parse(await parsedResponse(response));
 }
 
+/**
+ * Sign in a person created under Settings → People.
+ *
+ * The login route only returns a display name; the cookie it sets is what
+ * `GET /api/v1/session` reads. Two calls, one identity — the same shape the
+ * OIDC callback leaves behind after the redirect.
+ */
+export async function createLocalPersonSession(username: string, password: string): Promise<EnterpriseSession> {
+  const response = await fetch("/api/v1/auth/local/login", {
+    method: "POST",
+    headers: adminHeaders(),
+    credentials: "same-origin",
+    body: JSON.stringify({ username, password }),
+  });
+  await parsedResponse(response);
+  return getEnterpriseSession();
+}
+
+export async function changeLocalPersonPassword(
+  currentPassword: string,
+  newPassword: string,
+): Promise<EnterpriseSession> {
+  const response = await fetch("/api/v1/auth/local/password", {
+    method: "PUT",
+    headers: adminHeaders(),
+    credentials: "same-origin",
+    body: JSON.stringify({ currentPassword, newPassword }),
+  });
+  return enterpriseSessionSchema.parse(await parsedResponse(response));
+}
+
 export async function createInstallationKeyRecoverySession(installationKey: string): Promise<AdministratorSession> {
   const response = await fetch("/api/v1/admin/session/installation-key", {
     method: "POST",

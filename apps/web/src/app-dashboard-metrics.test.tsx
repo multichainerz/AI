@@ -42,6 +42,7 @@ const api = vi.hoisted(() => ({
   getAgentProfiles: vi.fn(),
   getHermesRuntimeNodes: vi.fn(),
   createLocalAdministratorSession: vi.fn(),
+  createLocalPersonSession: vi.fn(),
   revokeAdministratorSession: vi.fn(),
   revokeEnterpriseSession: vi.fn(),
 }));

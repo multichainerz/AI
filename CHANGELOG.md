@@ -5,6 +5,33 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v8.8.8 — 2026-08-17
+
+Enforces the password change People already promised, and remakes the setup
+dialogs so their actions stay on screen.
+
+A person created under Settings → People was told they would be asked to change
+the temporary password. Nothing enforced it: they signed in, used chat and
+agents, and `GET /session` could not even see the flag because authenticate did
+not join `LocalUser`. The front page spoke only to `LocalAdministrator`, so the
+same credentials were answered as an expired administrator session. OIDC status
+gated the enterprise cookie restore, which threw a locally created person away
+on every reload.
+
+`passwordChangeRequired` is now on the enterprise session when it is true.
+`PUT /api/v1/auth/local/password` changes it. Chat and agents answer
+`PASSWORD_CHANGE_REQUIRED` until they do. The front page asks the administrator
+store first and falls through to People only on a refused credential; elevation
+still asks for an administrator.
+
+The connection, VM2 installer, and profile-version dialogs are one heading and
+one form. Overlay chrome is a flex column so a long form scrolls in the body
+and Cancel / Save stay visible — the previous content-sized grid plus
+`overflow-hidden` clipped the footer below 86vh. Settings sits in the main
+rail. Appearance and sign-out live in the account menu. Section tabs sit in
+the sticky header rather than as a second bar on the page. Non-circular
+surfaces are sharp (`--radius-component: 0`).
+
 ## v8.8.7 — 2026-08-17
 
 Adds `docs/OPENROUTER_INFERENCE_PLAN.md`. Documentation only; nothing is built.

@@ -69,6 +69,15 @@ async function requireChatPrincipal(
     enterpriseSessionToken(request.headers.cookie),
   );
   if (enterprise) {
+    // Same split as the administrator gate: a pending password change must
+    // not be reportable as a missing `chat:use` scope.
+    if (enterprise.session.passwordChangeRequired === true) {
+      await reply.code(403).send({
+        error: "PASSWORD_CHANGE_REQUIRED",
+        message: "Change the temporary password before using OrcaSynapse.",
+      });
+      return null;
+    }
     return {
       id: enterprise.id,
       subject: enterprise.subject,

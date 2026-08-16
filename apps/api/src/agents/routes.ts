@@ -53,6 +53,13 @@ async function requirePrincipal(
   if (!settings.adminOnly) {
     const enterprise = await options.identityManager?.authenticate(enterpriseSessionToken(request.headers.cookie));
     if (enterprise) {
+      if (enterprise.session.passwordChangeRequired === true) {
+        await reply.code(403).send({
+          error: "PASSWORD_CHANGE_REQUIRED",
+          message: "Change the temporary password before using OrcaSynapse.",
+        });
+        return null;
+      }
       if (!enterprise.scopes.includes("agents:use")) {
         await reply.code(403).send({ error: "FORBIDDEN", message: "The enterprise session does not grant agent access." });
         return null;

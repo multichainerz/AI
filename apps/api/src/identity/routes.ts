@@ -1,4 +1,8 @@
-import { enterpriseSessionSchema, oidcStatusSchema } from "@orcasynapse/contracts";
+import {
+  enterpriseSessionSchema,
+  localPersonPasswordChangeRequestSchema,
+  oidcStatusSchema,
+} from "@orcasynapse/contracts";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { sessionCookie } from "../auth/admin-session.js";
 import {
@@ -149,6 +153,50 @@ export async function registerIdentityRoutes(
       const issued = await options.manager.signInWithPassword(username, password, requestContext(request));
       void reply.header("set-cookie", enterpriseSessionCookie(issued.token, secureRequest(request)));
       return reply.code(200).send({ displayName: issued.principal.displayName });
+    } catch (error) {
+      if (error instanceof EnterpriseIdentityError) {
+        return reply.code(error.statusCode).send(publicIdentityError(error));
+      }
+      throw error;
+    }
+  });
+
+  app.put("/auth/local/password", async (request, reply) => {
+    if (!options.manager) return reply.code(423).send(locked());
+    const parsed = localPersonPasswordChangeRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({
+        error: "INVALID_PASSWORD_CHANGE",
+        message: "A valid current password and a different new password are required.",
+      });
+    }
+    /*
+     * An expired session and a wrong current password are both refusals, and
+     * telling them apart matters here the same way it does for the
+     * administrator change: this is the first screen after a generated
+     * password is copied out of a vault, and blaming the password when the
+     * cookie simply aged out sends them round the loop again with the same
+     * correct password.
+     *
+     * Checking the session first also slides its idle window, so a submit that
+     * arrives inside the window can never be refused for staleness.
+     */
+    const token = enterpriseSessionToken(request.headers.cookie);
+    if (!(await options.manager.authenticate(token))) {
+      return reply.code(401).send({
+        error: "SESSION_EXPIRED",
+        message: "This session expired. Sign in again to set a new password.",
+      });
+    }
+    try {
+      const issued = await options.manager.changeLocalPassword(
+        token,
+        parsed.data.currentPassword,
+        parsed.data.newPassword,
+        requestContext(request),
+      );
+      void reply.header("set-cookie", enterpriseSessionCookie(issued.token, secureRequest(request)));
+      return enterpriseSessionSchema.parse(issued.principal.session);
     } catch (error) {
       if (error instanceof EnterpriseIdentityError) {
         return reply.code(error.statusCode).send(publicIdentityError(error));

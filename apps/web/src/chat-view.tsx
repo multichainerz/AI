@@ -1072,7 +1072,7 @@ export function ChatView({
        * screen is not the workspace, and inherited zero left it flush against
        * the sidebar.
        */
-      <div className="px-[clamp(24px,4vw,64px)] pb-16 pt-9">
+      <div className="px-[clamp(16px,3vw,24px)] pb-16 pt-9">
         <LockedScreen
           title="Session"
           kicker="Workspace"
@@ -1184,11 +1184,9 @@ export function ChatView({
 
   return (
     /*
-     * `m-0 w-full max-w-none` is not decoration: `main > *` centres every view
-     * in a 1380px column, and Chat is the one screen that must fill the shell.
-     * A utility class outranks that element selector, which is what lets the
-     * layout be stated here rather than in a stylesheet rule keyed to a class
-     * name.
+     * `m-0 w-full max-w-none` keeps the session workspace edge-to-edge inside
+     * the shell. The page used to centre every view in a 1380px column; Chat
+     * was the exception, and the rest of the workspace now follows it.
      */
     <section className="m-0 grid h-full w-full max-w-none grid-cols-1 bg-bg lg:grid-cols-[288px_minmax(0,1fr)]">
       <aside

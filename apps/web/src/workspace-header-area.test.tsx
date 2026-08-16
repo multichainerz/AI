@@ -14,6 +14,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { cleanup, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 import { WorkspaceHeader } from "./app.js";
 import { primaryNavigationGroups } from "./workspace-navigation.js";
@@ -53,13 +54,12 @@ function lockupFor(area: string) {
 afterEach(cleanup);
 
 describe("the workspace header's area lockup", () => {
-  it("covers the areas the rail draws at the foot of the menu as well as the top", () => {
+  it("covers every area the rail draws, including Settings", () => {
     /*
-     * The precondition of every loop below. `primaryNavigationItems("top")` is
-     * the call that reads correctly and silently omits Settings -- the only
-     * `"bottom"` area, and one an operator reaches by hash without ever having
-     * scrolled the rail to its foot -- so the cases would still pass over five
-     * areas while the sixth shipped without a glyph.
+     * The precondition of every loop below. Settings used to sit in a
+     * `"bottom"` group that `primaryNavigationItems("top")` silently omitted,
+     * so a header test driven only from the top of the rail would pass over
+     * five areas while the sixth shipped without a glyph.
      */
     expect(areas.map((item) => item.area)).toContain("Settings");
     expect(areas.length).toBeGreaterThan(5);
@@ -168,5 +168,15 @@ describe("the workspace header's area lockup", () => {
     for (const component of ["LayoutDashboard", "MessageSquareText", "Bot", "Settings", "Waypoints", "Activity"]) {
       expect(source.split(`<${component} `).length - 1, `${component} is drawn more than once`).toBe(1);
     }
+  });
+
+  it("keeps appearance inside the account menu rather than on the band", async () => {
+    const user = userEvent.setup();
+    render(<WorkspaceHeader area="Agents" operator={operator} onSignOut={() => undefined} immersive={false} />);
+
+    expect(screen.queryByRole("switch", { name: "Light appearance" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "System administrator" }));
+    expect(screen.getByRole("switch", { name: "Light appearance" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Sign out" })).toBeTruthy();
   });
 });

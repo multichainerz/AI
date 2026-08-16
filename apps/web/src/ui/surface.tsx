@@ -186,7 +186,7 @@ export function Tile({
  * Hand-rolled eight times at four box sizes and five type sizes, and the
  * design system's own answer in `LockedScreen` disagreed with all of them on
  * both shape and face. One shape, stated once: accent-soft fill, the shared
- * semi-rounded component radius, and the display face.
+ * sharp component radius, and the display face.
  */
 export function Mark({
   size = "md",

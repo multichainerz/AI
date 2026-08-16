@@ -47,47 +47,25 @@ describe("collapsed navigation rail", () => {
     const menu = app.indexOf('<nav aria-label="Primary navigation">');
     const menuEnd = app.indexOf("</nav>", menu);
     const topGroup = app.indexOf('<div className="nav-group">', menu);
-    const bottomGroup = app.indexOf('<div className="nav-group nav-group--bottom">', menu);
     const footer = app.indexOf('<div className="sidebar-bottom">');
     const collapse = app.indexOf('className="sidebar-collapse-button', footer);
 
-    // Settings is inside the same menu as the other areas, and it is last.
     expect(menu).toBeGreaterThan(-1);
     expect(topGroup).toBeGreaterThan(menu);
-    expect(bottomGroup).toBeGreaterThan(topGroup);
-    expect(menuEnd).toBeGreaterThan(bottomGroup);
+    expect(menuEnd).toBeGreaterThan(topGroup);
+    expect(app).not.toContain("nav-group--bottom");
 
-    /*
-     * Both groups go through one renderer. That is the assertion that keeps
-     * geometry, hover, `aria-current` and the collapsed-rail treatment from
-     * drifting apart: there is no second copy of the row to forget.
-     */
     expect(app).toContain('{primaryNavigationItems("top").map(renderNavigationRow)}');
-    expect(app).toContain('{primaryNavigationItems("bottom").map(renderNavigationRow)}');
     expect(app).toContain('aria-current={active ? "page" : undefined}');
 
-    // The width control stays a footer action, outside the menu and below it.
     expect(footer).toBeGreaterThan(menuEnd);
     expect(collapse).toBeGreaterThan(footer);
 
-    // The edge-to-edge slab and the phone-only duplicate of it are both gone.
     expect(app).not.toContain("sidebar-settings-button");
     expect(app).not.toContain("nav-settings-mobile");
     expect(app).not.toContain("settingsNavigationItem");
     expect(stylesheet).not.toContain("sidebar-settings-button");
     expect(stylesheet).not.toContain("nav-settings-mobile");
-
-    /*
-     * "Very bottom" is an auto margin, and an auto margin needs a column to
-     * resolve in -- the rail's nav was a start-packed grid, where it would have
-     * done nothing at all. The phone dock lays the same rows out horizontally,
-     * so the group must stop generating a box down there or the margin would
-     * push it off the bar.
-     */
-    expect(stylesheet).toContain(".nav-group--bottom { margin-top: auto; }");
-    expect(stylesheet).toContain(".sidebar nav { min-height: 0; flex: 1; display: flex; flex-direction: column;");
-    expect(stylesheet).toContain(".sidebar nav { min-width: 0; flex: 1 1 auto; display: flex; flex-direction: row;");
-    expect(stylesheet).toContain(".nav-group { display: contents; }");
   });
 
   it("keeps the app-tile treatment when navigation becomes a phone dock", () => {

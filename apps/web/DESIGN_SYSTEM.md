@@ -1,6 +1,6 @@
 # OrcaSynapse web design system
 
-The web application uses the shadcn local-source model on top of Tailwind CSS. It is not a second theme layered over the product: shadcn components consume the existing OrcaSynapse semantic variables, light/dark theme attribute, typography, and single semi-rounded radius.
+The web application uses the shadcn local-source model on top of Tailwind CSS. It is not a second theme layered over the product: shadcn components consume the existing OrcaSynapse semantic variables, light/dark theme attribute, typography, and single sharp radius.
 
 “Pure shadcn” is not a migration target. shadcn is the source-ownership model
 for reusable controls; Tailwind remains the layout and composition language,
@@ -17,7 +17,7 @@ and complex OrcaSynapse surfaces remain deliberately product-specific.
 
 `src/styles.css` owns the palette and maps it to shadcn semantic names (`background`, `foreground`, `card`, `primary`, `secondary`, `muted`, `destructive`, `input`, and `ring`). `[data-theme="light"]` overrides the same channel variables; components never branch on theme colors.
 
-All non-circular surfaces resolve to `--radius-component`. `rounded-full` is reserved for true circles such as avatars, status dots, and switch thumbs.
+All non-circular surfaces resolve to `--radius-component` (`0`). `rounded-full` is reserved for true circles such as avatars, status dots, and switch thumbs.
 
 ## Security and accessibility
 

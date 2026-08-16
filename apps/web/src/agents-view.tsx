@@ -3,6 +3,7 @@ import type {
   AdminScope, AdministratorSession, AgentMetrics, AgentProfile, AgentRun, AgentRunEvent,
   AgentRuntimeControl, AgentSkillReference, CreateAgentProfile, Division, SkillSet, ToolSet,
 } from "@orcasynapse/contracts";
+import { ChevronDown } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { adminAccess } from "./admin-access.js";
 import { ExecutionBoundary, RunDetail, RunLedger } from "./agent-run-ledger.js";
@@ -694,9 +695,10 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
       <Dialog
         open={editorOpen && canManage}
         onClose={() => setEditorOpen(false)}
-        kicker={editingId ? "Immutable revision" : "New bounded profile"}
         title={editingId ? "Create a new profile version" : "Create agent profile"}
-        className="max-w-[760px]"
+        description={editingId
+          ? "Saving writes a new immutable revision. The current version stays in the ledger."
+          : "Personality and instructions become the first immutable revision. Skills and tool sets are recorded here; admission still decides what a run may use."}
         footer={<>
           <Button onClick={() => setEditorOpen(false)}>Cancel</Button>
           <Button variant="primary" disabled={busy !== null} type="submit" form="agent-profile-editor">
@@ -704,110 +706,128 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
           </Button>
         </>}
       >
-        <form className="grid gap-3" id="agent-profile-editor" onSubmit={(event) => void saveProfile(event)}>
+        <form className="grid gap-5" id="agent-profile-editor" onSubmit={(event) => void saveProfile(event)}>
+          {error ? <Alert onDismiss={() => { setError(null); setReadinessRequired(false); }}>{error}</Alert> : null}
+
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Slug"><Input required disabled={editingId !== null} pattern="[a-z0-9]+(?:-[a-z0-9]+)*" value={profileDraft.slug} onChange={(event) => setProfileDraft({ ...profileDraft, slug: event.target.value })} /></Field>
-            <Field label="Display name"><Input required minLength={2} maxLength={120} value={profileDraft.displayName} onChange={(event) => setProfileDraft({ ...profileDraft, displayName: event.target.value })} /></Field>
+            <Field label="Slug">
+              <Input required disabled={editingId !== null} pattern="[a-z0-9]+(?:-[a-z0-9]+)*" value={profileDraft.slug} onChange={(event) => setProfileDraft({ ...profileDraft, slug: event.target.value })} />
+            </Field>
+            <Field label="Display name">
+              <Input required minLength={2} maxLength={120} value={profileDraft.displayName} onChange={(event) => setProfileDraft({ ...profileDraft, displayName: event.target.value })} />
+            </Field>
           </div>
-          <Field label="Purpose"><Textarea required minLength={3} maxLength={500} value={profileDraft.purpose} onChange={(event) => setProfileDraft({ ...profileDraft, purpose: event.target.value })} /></Field>
+          <Field label="Purpose">
+            <Textarea required minLength={3} maxLength={500} value={profileDraft.purpose} onChange={(event) => setProfileDraft({ ...profileDraft, purpose: event.target.value })} />
+          </Field>
           <Field label="Personality and operating principles">
-            <Textarea className="min-h-[160px]" required minLength={10} maxLength={32_000} value={profileDraft.soulMd} onChange={(event) => setProfileDraft({ ...profileDraft, soulMd: event.target.value })} />
+            <Textarea required minLength={10} maxLength={32_000} value={profileDraft.soulMd} onChange={(event) => setProfileDraft({ ...profileDraft, soulMd: event.target.value })} />
           </Field>
           <Field label="System instructions">
-            <Textarea className="min-h-[160px]" required minLength={10} maxLength={32_000} value={profileDraft.instructions} onChange={(event) => setProfileDraft({ ...profileDraft, instructions: event.target.value })} />
+            <Textarea required minLength={10} maxLength={32_000} value={profileDraft.instructions} onChange={(event) => setProfileDraft({ ...profileDraft, instructions: event.target.value })} />
           </Field>
-          {/*
-            * The label and hint say what the field does, which is less than it
-            * used to imply. The triples are recorded on the version and folded
-            * into `distributionDigest`; the run payload carries no skills
-            * field, and nothing in `apps/worker` or `packages/runtime-clients`
-            * reads `version.skills`. Whether that stays true is a product
-            * decision and not this file's to make -- reading the field as
-            * "this Profile is bound to that Skill" is the part that has to
-            * stop.
-            */}
-          <Field
-            label="Approved Skills (recorded, not delivered)"
-            hint="A reviewed, secret-free record of the Skills this version expects. It is folded into the distribution digest and never sent to Hermes: OrcaSynapse does not install, pin, or verify a Skill from here, and a run loads whatever the node already holds. Govern the node's own Skills under Agents → Skills."
-          >
-            <Textarea className="font-mono" value={skillsDraft} placeholder={`One per line: name@version ${"a".repeat(64)}`} onChange={(event) => setSkillsDraft(event.target.value)} />
+          <Field label="Inference model" hint="Filled from the healthy AI Inference connection.">
+            <Input required value={profileDraft.modelAlias} onChange={(event) => setProfileDraft({ ...profileDraft, modelAlias: event.target.value })} />
           </Field>
-          <div className="grid gap-3">
-            <Field label="Inference model" hint="Filled from the healthy AI Inference connection.">
-              <Input required value={profileDraft.modelAlias} onChange={(event) => setProfileDraft({ ...profileDraft, modelAlias: event.target.value })} />
-            </Field>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            {/*
-              * The same correction the Approved Skills field above carries, and
-              * for the same kind of reason -- except that here the field is
-              * about authority rather than behaviour, so reading it wrongly is
-              * worse. `agent-processor.ts` selects every admitted toolset with
-              * no profile predicate and hands that array to `hermes.start`;
-              * `toolSetId` has no reader in the worker, in
-              * `packages/runtime-clients`, or in the tool-call gate, and
-              * `agent-processor.test.ts` pins the deployment-wide set being
-              * submitted even for a profile that names a narrower one.
-              *
-              * So a set narrows nothing today, and the label said "everything
-              * admitted" as though the alternative narrowed something. What an
-              * agent may actually use is decided by admission under Tools; that
-              * is where an operator has to be sent, rather than to a select
-              * that records a preference.
-              */}
-            <Field
-              label="Tool set (recorded, not delivered)"
-              hint="Which Hermes toolsets this version declares. It is recorded on the version and folded into the distribution digest, and it does not narrow a run: every admitted toolset is submitted to Hermes whatever this says. Withhold a toolset under Agents → Tools to change what an agent may actually use."
-            >
-              <Select
-                value={profileDraft.toolSetId ?? ""}
-                onChange={(event) => setProfileDraft({ ...profileDraft, toolSetId: event.target.value || undefined })}
+
+          <details className="group border-t border-border pt-4">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
+              <span>
+                <span className="block text-label font-semibold text-foreground">Limits and recorded references</span>
+                <span className="block text-caption font-normal text-muted">Skills, tool sets, and run limits. Recorded on the version, not delivered to a run.</span>
+              </span>
+              <ChevronDown className="size-4 text-muted-foreground transition-transform group-open:rotate-180" />
+            </summary>
+            <div className="mt-4 grid gap-3">
+              {/*
+                * The label and hint say what the field does, which is less than it
+                * used to imply. The triples are recorded on the version and folded
+                * into `distributionDigest`; the run payload carries no skills
+                * field, and nothing in `apps/worker` or `packages/runtime-clients`
+                * reads `version.skills`. Whether that stays true is a product
+                * decision and not this file's to make -- reading the field as
+                * "this Profile is bound to that Skill" is the part that has to
+                * stop.
+                */}
+              <Field
+                label="Approved Skills (recorded, not delivered)"
+                hint="A reviewed, secret-free record of the Skills this version expects. It is folded into the distribution digest and never sent to Hermes: OrcaSynapse does not install, pin, or verify a Skill from here, and a run loads whatever the node already holds. Govern the node's own Skills under Agents → Skills."
               >
-                <option value="">Default — no set declared</option>
-                {toolSets.map((set) => (
-                  <option key={set.id} value={set.id}>
-                    {set.displayName}{set.tracksAdmission ? " (tracks admission)" : ""}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            <Field
-              label="Skill set"
-              hint="A named selection the system prompt can refer to. Like the Skills field above, it is recorded rather than delivered."
-            >
-              <Select
-                value={profileDraft.skillSetId ?? ""}
-                onChange={(event) => setProfileDraft({ ...profileDraft, skillSetId: event.target.value || undefined })}
-              >
-                <option value="">Default — everything the runtime reports</option>
-                {skillSets.map((set) => (
-                  <option key={set.id} value={set.id}>{set.displayName}</option>
-                ))}
-              </Select>
-            </Field>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-3">
-            <Field label="Timeout (seconds)"><Input required type="number" min={30} max={3600} value={profileDraft.timeoutSeconds} onChange={(event) => setProfileDraft({ ...profileDraft, timeoutSeconds: Number(event.target.value) })} /></Field>
-            <Field label="Concurrent runs"><Input required type="number" min={1} max={20} value={profileDraft.maxConcurrentRuns} onChange={(event) => setProfileDraft({ ...profileDraft, maxConcurrentRuns: Number(event.target.value) })} /></Field>
-          </div>
-          <Field label="Memory" hint="Hermes manages its native MEMORY.md and USER.md lifecycle inside the isolated runtime.">
-            <div className="rounded border border-border bg-raised p-3 text-body text-muted">
-              Hermes-native memory is active and remains canonical on VM2. Administrators can observe and govern its allowlisted file mirror from Agents → Memory; it is never used as model context.
+                <Textarea className="font-mono" value={skillsDraft} placeholder="name@version <64-hex digest>" onChange={(event) => setSkillsDraft(event.target.value)} />
+              </Field>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {/*
+                  * The same correction the Approved Skills field above carries, and
+                  * for the same kind of reason -- except that here the field is
+                  * about authority rather than behaviour, so reading it wrongly is
+                  * worse. `agent-processor.ts` selects every admitted toolset with
+                  * no profile predicate and hands that array to `hermes.start`;
+                  * `toolSetId` has no reader in the worker, in
+                  * `packages/runtime-clients`, or in the tool-call gate, and
+                  * `agent-processor.test.ts` pins the deployment-wide set being
+                  * submitted even for a profile that names a narrower one.
+                  *
+                  * So a set narrows nothing today, and the label said "everything
+                  * admitted" as though the alternative narrowed something. What an
+                  * agent may actually use is decided by admission under Tools; that
+                  * is where an operator has to be sent, rather than to a select
+                  * that records a preference.
+                  */}
+                <Field
+                  label="Tool set (recorded, not delivered)"
+                  hint="Which Hermes toolsets this version declares. It is recorded on the version and folded into the distribution digest, and it does not narrow a run: every admitted toolset is submitted to Hermes whatever this says. Withhold a toolset under Agents → Tools to change what an agent may actually use."
+                >
+                  <Select
+                    value={profileDraft.toolSetId ?? ""}
+                    onChange={(event) => setProfileDraft({ ...profileDraft, toolSetId: event.target.value || undefined })}
+                  >
+                    <option value="">Default — no set declared</option>
+                    {toolSets.map((set) => (
+                      <option key={set.id} value={set.id}>
+                        {set.displayName}{set.tracksAdmission ? " (tracks admission)" : ""}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+                <Field
+                  label="Skill set"
+                  hint="A named selection the system prompt can refer to. Like the Skills field above, it is recorded rather than delivered."
+                >
+                  <Select
+                    value={profileDraft.skillSetId ?? ""}
+                    onChange={(event) => setProfileDraft({ ...profileDraft, skillSetId: event.target.value || undefined })}
+                  >
+                    <option value="">Default — everything the runtime reports</option>
+                    {skillSets.map((set) => (
+                      <option key={set.id} value={set.id}>{set.displayName}</option>
+                    ))}
+                  </Select>
+                </Field>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Timeout (seconds)">
+                  <Input required type="number" min={30} max={3600} value={profileDraft.timeoutSeconds} onChange={(event) => setProfileDraft({ ...profileDraft, timeoutSeconds: Number(event.target.value) })} />
+                </Field>
+                <Field label="Concurrent runs">
+                  <Input required type="number" min={1} max={20} value={profileDraft.maxConcurrentRuns} onChange={(event) => setProfileDraft({ ...profileDraft, maxConcurrentRuns: Number(event.target.value) })} />
+                </Field>
+              </div>
+              <p className="m-0 text-caption leading-relaxed text-muted">
+                Hermes-native memory is active and remains canonical on VM2. Administrators can observe and govern its allowlisted file mirror from Agents → Memory; it is never used as model context.
+              </p>
             </div>
-          </Field>
-          <div className={cn(
-            "rounded border border-l-2 border-border p-3",
-            activationReady === false ? "border-l-warn" : "border-l-accent",
-          )}>
-            <strong className="block text-label font-semibold text-text">
+          </details>
+
+          <Alert tone={activationReady === false ? "warn" : "info"}>
+            <span className="block font-semibold">
               {activationReady === false ? "Draft until infrastructure is ready" : "Automatic activation"}
-            </strong>
-            <span className="mt-1 block text-body leading-relaxed text-muted">
+            </span>
+            <span className="mt-1 block text-caption leading-relaxed">
               {activationReady === false
                 ? "This Profile will be saved safely without attempting a runtime activation. Finish Settings setup, then verify and activate it from the Profile list."
                 : "OrcaSynapse will verify Hermes, activate this immutable Profile, and enable Chat. Personality and Skills describe behavior, never authority."}
             </span>
-          </div>
+          </Alert>
         </form>
       </Dialog>
     </div>

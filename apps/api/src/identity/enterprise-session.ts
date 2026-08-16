@@ -16,7 +16,14 @@ import {
   type OrcaSynapseDatabase,
 } from "@orcasynapse/database";
 import { and, eq, gt, isNull, lt, lte } from "drizzle-orm";
-import { DUMMY_PASSWORD_DIGEST, EnvelopeEncryption, verifyLocalPassword } from "@orcasynapse/security";
+import {
+  DUMMY_PASSWORD_DIGEST,
+  EnvelopeEncryption,
+  hashLocalPassword,
+  localPasswordIsValid,
+  verifyLocalPassword,
+} from "@orcasynapse/security";
+import { advisoryLock } from "../database-support.js";
 import {
   createLocalJWKSet,
   jwtVerify,
@@ -83,6 +90,16 @@ export interface EnterpriseIdentityManager {
   signInWithPassword(
     username: string,
     password: string,
+    context: IdentityRequestContext,
+  ): Promise<IssuedEnterpriseSession>;
+  /**
+   * Replace a locally created person's temporary password and mint a new
+   * session. Federated identities have no password here and are refused.
+   */
+  changeLocalPassword(
+    token: string | undefined,
+    currentPassword: string,
+    newPassword: string,
     context: IdentityRequestContext,
   ): Promise<IssuedEnterpriseSession>;
   authenticate(token: string | undefined): Promise<EnterprisePrincipal | null>;
@@ -212,6 +229,7 @@ function principalFromRecord(record: {
   idleExpiresAt: Date;
   absoluteExpiresAt: Date;
   user: { id: string; displayName: string; email: string | null; divisionId?: string | null };
+  passwordChangeRequired?: boolean;
 }): EnterprisePrincipal {
   const session: EnterpriseSession = {
     id: record.id,
@@ -225,6 +243,7 @@ function principalFromRecord(record: {
     createdAt: record.createdAt.toISOString(),
     idleExpiresAt: record.idleExpiresAt.toISOString(),
     absoluteExpiresAt: record.absoluteExpiresAt.toISOString(),
+    ...(record.passwordChangeRequired === true ? { passwordChangeRequired: true } : {}),
   };
   return {
     id: record.id,
@@ -336,6 +355,7 @@ async function tokenExchangeFailure(response: Response): Promise<EnterpriseIdent
 /** A session joined to its user, which is what the principal mapper needs. */
 type LoadedSession = typeof enterpriseUserSession.$inferSelect & {
   user: typeof enterpriseUser.$inferSelect;
+  passwordChangeRequired?: boolean;
 };
 
 export class DrizzleEnterpriseIdentityManager implements EnterpriseIdentityManager {
@@ -711,7 +731,14 @@ export class DrizzleEnterpriseIdentityManager implements EnterpriseIdentityManag
         actorType: "USER", actorId: user.id, action: "user.local_login_succeeded",
         resourceType: "EnterpriseUser", resourceId: user.id, outcome: "SUCCESS",
       });
-      return { rejected: false as const, principal: principalFromRecord({ ...created, user }) };
+      return {
+        rejected: false as const,
+        principal: principalFromRecord({
+          ...created,
+          user,
+          passwordChangeRequired: found!.credential.passwordChangeRequired,
+        }),
+      };
     });
     if (outcome.rejected) {
       throw new EnterpriseIdentityError("USER_LOGIN_REJECTED", "That username and password do not match an account.", 401);
@@ -719,16 +746,150 @@ export class DrizzleEnterpriseIdentityManager implements EnterpriseIdentityManag
     return { token: sessionToken, returnTo: "/", principal: outcome.principal };
   }
 
+  /**
+   * Replace a locally created person's password and burn every other session.
+   *
+   * The route checks `authenticate` first so an expired cookie is not reported
+   * as a wrong password — the same split the administrator change uses, and
+   * for the same reason: this is the first screen after a generated password
+   * is copied out of a vault.
+   *
+   * Same password, a password that fails the policy, and an IdP account are
+   * 400s rather than the administrator path's collapsed `null` → 401. The
+   * current password being wrong is the only 401 this method itself raises.
+   */
+  async changeLocalPassword(
+    token: string | undefined,
+    currentPassword: string,
+    newPassword: string,
+    context: IdentityRequestContext,
+  ): Promise<IssuedEnterpriseSession> {
+    if (!validOpaqueToken(token)) {
+      throw new EnterpriseIdentityError(
+        "SESSION_EXPIRED",
+        "This session expired. Sign in again to set a new password.",
+        401,
+      );
+    }
+    if (!localPasswordIsValid(currentPassword) || !localPasswordIsValid(newPassword)) {
+      throw new EnterpriseIdentityError(
+        "USER_PASSWORD_INVALID",
+        "A valid current password and a different new password are required.",
+        400,
+      );
+    }
+    if (currentPassword === newPassword) {
+      throw new EnterpriseIdentityError(
+        "USER_PASSWORD_INVALID",
+        "The new password must be different from the current password.",
+        400,
+      );
+    }
+    const now = new Date();
+    const replacementToken = randomBytes(32).toString("base64url");
+    const newPasswordHash = await hashLocalPassword(newPassword);
+    const sourceIp = context.sourceIp && isIP(context.sourceIp) ? context.sourceIp : null;
+    return this.database.transaction(async (transaction) => {
+      const [row] = await transaction
+        .select({ session: enterpriseUserSession, user: enterpriseUser, credential: localUser })
+        .from(enterpriseUserSession)
+        .innerJoin(enterpriseUser, eq(enterpriseUserSession.userId, enterpriseUser.id))
+        .leftJoin(localUser, eq(localUser.userId, enterpriseUser.id))
+        .where(eq(enterpriseUserSession.tokenHash, tokenDigest(token)))
+        .limit(1);
+      if (
+        !row
+        || row.session.revokedAt
+        || !row.user.enabled
+        || row.session.idleExpiresAt <= now
+        || row.session.absoluteExpiresAt <= now
+      ) {
+        throw new EnterpriseIdentityError(
+          "SESSION_EXPIRED",
+          "This session expired. Sign in again to set a new password.",
+          401,
+        );
+      }
+      if (!row.credential) {
+        throw new EnterpriseIdentityError(
+          "USER_PASSWORD_UNSUPPORTED",
+          "This account signs in through an identity provider, so this product holds no password for it.",
+          400,
+        );
+      }
+      await transaction.execute(advisoryLock(`orcasynapse-person:${row.user.id}`));
+      const [credential] = await transaction
+        .select()
+        .from(localUser)
+        .where(eq(localUser.id, row.credential.id))
+        .limit(1);
+      if (!credential || !(await verifyLocalPassword(currentPassword, credential.passwordHash))) {
+        throw new EnterpriseIdentityError("UNAUTHORIZED", "The current password is incorrect.", 401);
+      }
+      await transaction
+        .update(localUser)
+        .set({
+          passwordHash: newPasswordHash,
+          passwordChangeRequired: false,
+          passwordChangedAt: now,
+          failedLoginCount: 0,
+          lockedUntil: null,
+        })
+        .where(eq(localUser.id, credential.id));
+      await transaction
+        .update(enterpriseUserSession)
+        .set({ revokedAt: now })
+        .where(and(eq(enterpriseUserSession.userId, row.user.id), isNull(enterpriseUserSession.revokedAt)));
+      const [created] = await transaction
+        .insert(enterpriseUserSession)
+        .values({
+          tokenHash: tokenDigest(replacementToken),
+          userId: row.user.id,
+          lastSeenAt: now,
+          idleExpiresAt: new Date(now.getTime() + ENTERPRISE_SESSION_IDLE_MS),
+          absoluteExpiresAt: new Date(now.getTime() + ENTERPRISE_SESSION_ABSOLUTE_MS),
+          sourceIp,
+          userAgentHash: userAgentDigest(context.userAgent) ?? null,
+        })
+        .returning();
+      if (!created) {
+        throw new EnterpriseIdentityError("USER_SESSION_UNAVAILABLE", "The session could not be created.", 503);
+      }
+      await transaction.insert(auditEvent).values({
+        actorType: "USER",
+        actorId: row.user.id,
+        action: "user.local_password_changed",
+        resourceType: "EnterpriseUser",
+        resourceId: row.user.id,
+        outcome: "SUCCESS",
+        sourceIp,
+        metadata: { revokedOtherSessions: true },
+      });
+      return {
+        token: replacementToken,
+        returnTo: "/",
+        principal: principalFromRecord({ ...created, user: row.user }),
+      };
+    });
+  }
+
   async authenticate(token: string | undefined): Promise<EnterprisePrincipal | null> {
     if (!validOpaqueToken(token)) return null;
     const now = new Date();
     const [row] = await this.database
-      .select({ session: enterpriseUserSession, user: enterpriseUser })
+      .select({ session: enterpriseUserSession, user: enterpriseUser, credential: localUser })
       .from(enterpriseUserSession)
       .innerJoin(enterpriseUser, eq(enterpriseUserSession.userId, enterpriseUser.id))
+      .leftJoin(localUser, eq(localUser.userId, enterpriseUser.id))
       .where(eq(enterpriseUserSession.tokenHash, tokenDigest(token)))
       .limit(1);
-    const session: LoadedSession | undefined = row ? { ...row.session, user: row.user } : undefined;
+    const session: LoadedSession | undefined = row
+      ? {
+          ...row.session,
+          user: row.user,
+          passwordChangeRequired: row.credential?.passwordChangeRequired === true,
+        }
+      : undefined;
     if (
       !session || session.revokedAt || !session.user.enabled ||
       session.idleExpiresAt <= now || session.absoluteExpiresAt <= now

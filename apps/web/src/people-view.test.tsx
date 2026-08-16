@@ -22,7 +22,7 @@
  */
 import { ADMIN_SCOPES } from "@orcasynapse/contracts";
 import type { AdminScope, AdministratorSession, Division, Person } from "@orcasynapse/contracts";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { writeFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -295,9 +295,9 @@ describe("people and divisions on one screen", () => {
     await user.click(screen.getByRole("button", { name: "Add person" }));
     expect(screen.getByText("At least 12 characters. Shown once, here.")).toBeTruthy();
 
-    await user.type(within(personForm()).getByLabelText(/^Name/), "Ravi Shah");
-    await user.type(within(personForm()).getByLabelText(/^Username/), "ravi");
-    await user.type(within(personForm()).getByLabelText(/^Temporary password/), "correct-horse-battery");
+    fireEvent.change(within(personForm()).getByLabelText(/^Name/), { target: { value: "Ravi Shah" } });
+    fireEvent.change(within(personForm()).getByLabelText(/^Username/), { target: { value: "ravi" } });
+    fireEvent.change(within(personForm()).getByLabelText(/^Temporary password/), { target: { value: "correct-horse-battery" } });
     await user.click(screen.getByRole("button", { name: /Create person/ }));
 
     expect(await screen.findByText(/this is the only time it is shown/)).toBeTruthy();

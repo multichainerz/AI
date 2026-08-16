@@ -78,6 +78,7 @@ const enterpriseIdentity: EnterpriseIdentityManager = {
   async startLogin() { throw new Error("Not used"); },
   async completeLogin() { throw new Error("Not used"); },
   async signInWithPassword() { throw new Error("Not used"); },
+  async changeLocalPassword() { throw new Error("Not used"); },
   async authenticate(token) {
     return token === ENTERPRISE_TOKEN ? {
       id: SESSION_ID,
@@ -216,6 +217,31 @@ describe("controlled chat routes", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ items: [summary] });
     expect(response.body).not.toContain("write-only-key");
+  });
+
+  it("refuses an enterprise session that still owes a password change", async () => {
+    const pendingIdentity: EnterpriseIdentityManager = {
+      ...enterpriseIdentity,
+      async authenticate(token) {
+        const principal = await enterpriseIdentity.authenticate(token);
+        if (!principal) return null;
+        return {
+          ...principal,
+          session: { ...principal.session, passwordChangeRequired: true },
+        };
+      },
+    };
+    const manager = memoryChatManager();
+    const app = await chatApp(manager, pendingIdentity);
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/chat/conversations",
+      headers: { cookie: `${ENTERPRISE_SESSION_COOKIE}=${ENTERPRISE_TOKEN}` },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toMatchObject({ error: "PASSWORD_CHANGE_REQUIRED" });
+    expect(manager.list).not.toHaveBeenCalled();
   });
 
   it("authorizes a group-approved enterprise identity without an admin session", async () => {

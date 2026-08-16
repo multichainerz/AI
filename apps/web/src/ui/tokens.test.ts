@@ -61,8 +61,8 @@ describe("the border reset", () => {
 });
 
 describe("component radius", () => {
-  it("resolves every non-circular radius alias to one semi-rounded token", () => {
-    expect(styles).toContain("--radius-component: 10px;");
+  it("resolves every non-circular radius alias to one sharp token", () => {
+    expect(styles).toContain("--radius-component: 0;");
 
     for (const [name, value] of Object.entries(radii)) {
       expect(value, `radius \"${name}\" drifted from the application silhouette`)

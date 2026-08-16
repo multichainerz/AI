@@ -35,12 +35,9 @@ const RETIRED_SURFACES = [
 describe("workspace navigation", () => {
   it("puts Settings last in the one primary navigation menu", () => {
     /*
-     * Settings used to be excluded from these groups so the rail could anchor
-     * it by hand at the bottom. That made its row a second, hand-maintained
-     * copy of a nav row -- drawn twice in `app.tsx`, styled edge-to-edge, and
-     * claiming the active-item ref alongside the copy it duplicated. "Last, at
-     * the bottom" is a property of the menu now: the group says where it sits,
-     * and one renderer draws every row in it.
+     * Settings used to sit in a `"bottom"` group so an auto margin could pin
+     * it to the foot of the rail, which left a gap above it and made it look
+     * like a second menu. It is the last row of the same list as Operations.
      */
     expect(primaryNavigationGroups.flatMap((group) => group.items).map((item) => item.area)).toEqual([
       "Dashboard",
@@ -56,17 +53,14 @@ describe("workspace navigation", () => {
       "Agents",
       "Gateway",
       "Operations",
+      "Settings",
     ]);
-    expect(primaryNavigationItems("bottom").map((item) => item.area)).toEqual(["Settings"]);
+    expect(primaryNavigationItems("bottom")).toEqual([]);
 
-    // Same row, same destination: the anchored button opened Setup, and so
-    // does the menu entry that replaced it.
-    expect(primaryNavigationItems("bottom")[0]?.target).toBe("Deployment");
+    expect(primaryNavigationItems("top").at(-1)?.target).toBe("Deployment");
     expect(productAreaForView("Deployment")).toBe("Settings");
 
-    // Every entry the shared renderer receives has the two things a row draws:
-    // a glyph and the tooltip that carries its description.
-    for (const item of primaryNavigationItems("top").concat(primaryNavigationItems("bottom"))) {
+    for (const item of primaryNavigationItems("top")) {
       expect(item.icon).toBeTruthy();
       expect(item.description).toBeTruthy();
     }
@@ -200,12 +194,22 @@ describe("workspace navigation", () => {
      * only place this structure is visible.
      */
     expect(sectionNavigationFor("Agents")).toEqual([
-      { label: "Profiles", view: "Agents" },
-      { label: "Skills", view: "Skills" },
-      { label: "Memory", view: "Memory" },
-      { label: "Tools", view: "Integrations" },
+      { label: "Profiles", view: "Agents", icon: "profiles" },
+      { label: "Skills", view: "Skills", icon: "skills" },
+      { label: "Memory", view: "Memory", icon: "memory" },
+      { label: "Tools", view: "Integrations", icon: "tools" },
     ]);
     expect(sectionNavigationFor("Dashboard")).toEqual([]);
+  });
+
+  it("gives every section tab an icon key", () => {
+    for (const area of ["Agents", "Gateway", "Operations", "Settings"] as const) {
+      const tabs = sectionNavigationFor(area);
+      expect(tabs.length, `${area} has no tabs`).toBeGreaterThan(0);
+      for (const tab of tabs) {
+        expect(tab.icon, `${area}/${tab.label} has no icon`).toMatch(/^[a-z]+$/);
+      }
+    }
   });
 
   it("keeps the retired Runtime address pointing at the tab that absorbed it", () => {
@@ -261,16 +265,16 @@ describe("workspace navigation", () => {
 
   it("gives the update check its own tab rather than a slot inside setup", () => {
     expect(sectionNavigationFor("Settings")).toEqual([
-      { label: "Setup", view: "Deployment" },
-      { label: "People", view: "People" },
-      { label: "System", view: "Application" },
+      { label: "Setup", view: "Deployment", icon: "setup" },
+      { label: "People", view: "People", icon: "people" },
+      { label: "System", view: "Application", icon: "system" },
     ]);
     // What Settings is left holding is what it was always really about:
     // bringing the deployment up, and keeping the machine it runs on current.
     expect(sectionNavigationFor("Gateway")).toEqual([
-      { label: "Models", view: "Models" },
-      { label: "Prompts", view: "Prompts" },
-      { label: "Guardrails", view: "Guardrails" },
+      { label: "Models", view: "Models", icon: "models" },
+      { label: "Prompts", view: "Prompts", icon: "prompts" },
+      { label: "Guardrails", view: "Guardrails", icon: "guardrails" },
     ]);
     // The hash follows the label and the routing token does not, the same way
     // `Deployment` is addressed as `#settings/setup` two lines above.
@@ -298,8 +302,8 @@ describe("workspace navigation", () => {
      * place this structure is visible.
      */
     expect(sectionNavigationFor("Operations")).toEqual([
-      { label: "Health", view: "Operations" },
-      { label: "Audit trail", view: "Audit" },
+      { label: "Health", view: "Operations", icon: "health" },
+      { label: "Audit trail", view: "Audit", icon: "audit" },
     ]);
 
     expect(pathForView("Operations")).toBe("#operations/health");

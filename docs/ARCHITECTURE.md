@@ -40,7 +40,7 @@ source-owned shadcn component layer. Canonical interactive controls live in
 `apps/web/src/components/ui`; OrcaSynapse-specific readiness, session,
 telemetry, and command-center compositions live above those primitives. Both
 light and dark appearances consume the same semantic color variables and one
-semi-rounded component radius.
+sharp component radius.
 
 The web container keeps `style-src 'self'` without `unsafe-inline`. Components
 must not inject runtime stylesheets or JSX `style` attributes, and visual assets

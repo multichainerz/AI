@@ -23,6 +23,7 @@ import {
   Bot,
   ChevronDown,
   LayoutDashboard,
+  LogOut,
   MessageSquareText,
   PanelLeftClose,
   PanelLeftOpen,
@@ -32,8 +33,10 @@ import {
 import {
   OrcaSynapseApiError,
   changeLocalAdministratorPassword,
+  changeLocalPersonPassword,
   createInstallationKeyRecoverySession,
   createLocalAdministratorSession,
+  createLocalPersonSession,
   createConnection,
   discoverInferenceServer,
   getAdministratorSession,
@@ -193,11 +196,9 @@ function connectionState(connection: ServiceConnectionSummary | undefined) {
  * the rail row highlighted an inch to its left shows another, which reads as a
  * navigation bug rather than as a stale lookup table.
  *
- * Every group is searched, not `primaryNavigationItems("top")`. Settings is the
- * only `"bottom"` area today, and it is precisely the one that would go
- * unnoticed — a session that opens on the Dashboard and never scrolls the rail
- * to its foot still lands there through `#settings/...`, with the header the
- * only place the area is named.
+ * Every group is searched, not `primaryNavigationItems("top")` with a hard-coded
+ * extra case. Settings used to be the only `"bottom"` area, and looking only at
+ * the top of the rail would have left its header without a glyph.
  */
 function areaIconName(area: string): string | undefined {
   return primaryNavigationGroups.flatMap((group) => group.items).find((item) => item.area === area)?.icon;
@@ -220,6 +221,7 @@ export function WorkspaceHeader({
   operator,
   onSignOut,
   immersive,
+  children,
 }: {
   area: string;
   operator: { initials: string; name: string; detail: string };
@@ -235,6 +237,12 @@ export function WorkspaceHeader({
    * what survives here is the layout difference, not a colour one.
    */
   immersive: boolean;
+  /**
+   * The area's section strip. Nested here so the tabs stick with the title
+   * instead of sitting on the page as a second bar. The strip restores the
+   * page theme; the title row above it stays brand in both appearances.
+   */
+  children?: ReactNode;
 }) {
   const [accountOpen, setAccountOpen] = useState(false);
   const account = useRef<HTMLDivElement | null>(null);
@@ -333,73 +341,75 @@ export function WorkspaceHeader({
         </span>
         <span className="flex-1" />
         {/*
-          * The one child the band's token override cannot reach. `.theme-toggle__track`
-          * paints itself from `--text-rgb` at 8%, which the override does turn into
-          * white-on-violet -- but its `[data-mode="light"]` state is a teal track with a
-          * teal inset ring, tuned for a pale page. `tone="brand"` is the variant the
-          * login hero already uses on this exact violet, so the switch is the existing
-          * one rather than a third treatment invented for the band.
-          */}
-        <ThemeToggle tone="brand" />
-        {/*
-          * The account moved out of the rail and into the top-right corner.
+          * Account is the only control in the top-right. Appearance used to sit
+          * beside it as a second widget, which crowded the band and left the
+          * open menu repeating the same name the chip already showed. The
+          * trigger is the mark plus a chevron; the name, the theme switch and
+          * sign-out live once, in the account panel.
           *
-          * It sat at the foot of the sidebar, inside `.operator` -- which is
-          * `display: none` below 760px, where the rail becomes a bottom bar.
-          * Sign out was therefore unreachable on a phone: present in the markup,
-          * hidden by a rule written for a layout that has no room for it. Here
-          * it is reachable at every width, which is a fix rather than a move.
+          * `aria-label` keeps the operator's name as the accessible name of
+          * the chip, so a screen reader (and the sign-out tests) still find
+          * "System administrator" after the visible label moved into the menu.
           */}
         <div className="relative flex items-center" ref={account}>
           <Button
-            variant="outline"
+            variant="ghost"
             size="sm"
-            className="h-9 gap-2.5 py-1 pl-1 pr-2.5 text-left"
+            className="h-8 gap-2 rounded-none border-0 bg-transparent px-1.5 hover:bg-white/[0.08] hover:text-text"
+            aria-label={operator.name}
             aria-haspopup="menu"
             aria-expanded={accountOpen}
             onClick={() => setAccountOpen((open) => !open)}
           >
             <span
               aria-hidden="true"
-              className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-soft font-display text-micro font-semibold text-accent-strong"
+              className="grid h-7 w-7 shrink-0 place-items-center bg-soft font-display text-micro font-semibold text-accent-strong"
             >
               {operator.initials}
-            </span>
-            <span className="hidden min-w-0 sm:block">
-              <span className="block max-w-[150px] truncate text-caption font-semibold leading-tight text-text">
-                {operator.name}
-              </span>
-              <span className="block max-w-[150px] truncate text-micro capitalize leading-tight text-faint">
-                {operator.detail}
-              </span>
             </span>
             <ChevronDown aria-hidden="true" className={cn("h-3.5 w-3.5 shrink-0 text-faint transition-transform", accountOpen && "rotate-180")} />
           </Button>
           {accountOpen && (
             <div
-              className="absolute right-0 top-[calc(100%+8px)] z-50 grid min-w-[212px] gap-1 rounded-lg border border-border-strong bg-raised p-2 shadow-overlay"
+              className="workspace-header__account absolute right-0 top-[calc(100%+6px)] z-50 w-[240px] border border-border shadow-overlay"
               role="menu"
             >
-              <div className="px-2 pb-1.5 pt-1">
-                <span className="block truncate text-caption font-semibold text-text">{operator.name}</span>
-                <span className="mt-0.5 block truncate text-micro capitalize text-faint">{operator.detail}</span>
+              <div className="flex items-center gap-2.5 border-b border-border px-3 py-2.5">
+                <span
+                  aria-hidden="true"
+                  className="grid h-8 w-8 shrink-0 place-items-center bg-soft font-display text-caption font-semibold text-text"
+                >
+                  {operator.initials}
+                </span>
+                <span className="min-w-0">
+                  <span className="block truncate text-caption font-semibold text-text">{operator.name}</span>
+                  <span className="mt-0.5 block truncate text-micro capitalize text-faint">{operator.detail}</span>
+                </span>
               </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                role="menuitem"
-                className="w-full justify-start px-2 text-caption"
-                onClick={() => {
-                  setAccountOpen(false);
-                  onSignOut();
-                }}
-              >
-                Sign out
-              </Button>
+              <div className="flex items-center justify-between gap-3 border-b border-border px-3 py-2.5">
+                <span className="text-caption font-medium text-muted">Appearance</span>
+                <ThemeToggle />
+              </div>
+              <div className="p-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  role="menuitem"
+                  className="h-8 w-full justify-start gap-2 rounded-none px-2 text-caption"
+                  onClick={() => {
+                    setAccountOpen(false);
+                    onSignOut();
+                  }}
+                >
+                  <LogOut aria-hidden="true" className="h-3.5 w-3.5" />
+                  Sign out
+                </Button>
+              </div>
             </div>
           )}
         </div>
       </div>
+      {children}
     </header>
   );
 }
@@ -508,24 +518,26 @@ function App() {
        * employee whose probe was still in flight would see the sign-in page
        * flash before the workspace replaced it. The enterprise chain used to
        * be fire-and-forget when the shell rendered regardless.
+       *
+       * OIDC status and the enterprise cookie are independent. A person an
+       * administrator created signs in locally and never needs an IdP; gating
+       * the session probe on `status.configured` threw that cookie away on
+       * every reload.
        */
-      const enterpriseRestore = getOidcStatus()
+      const oidcRestore = getOidcStatus()
         .then((status) => {
-          if (!active || sessionGeneration.current !== generation) return;
-          setOidcStatus(status);
-          if (!status.configured) {
-            setEnterpriseSession(null);
-            return;
-          }
-          return getEnterpriseSession()
-            .then((session) => {
-              if (active && sessionGeneration.current === generation) setEnterpriseSession(session);
-            })
-            .catch(() => {
-              if (active && sessionGeneration.current === generation) setEnterpriseSession(null);
-            });
+          if (active && sessionGeneration.current === generation) setOidcStatus(status);
         })
-        .catch(() => active && sessionGeneration.current === generation && setOidcStatus(null));
+        .catch(() => {
+          if (active && sessionGeneration.current === generation) setOidcStatus(null);
+        });
+      const enterpriseRestore = getEnterpriseSession()
+        .then((session) => {
+          if (active && sessionGeneration.current === generation) setEnterpriseSession(session);
+        })
+        .catch(() => {
+          if (active && sessionGeneration.current === generation) setEnterpriseSession(null);
+        });
       try {
         const session = await getAdministratorSession();
         if (!active || sessionGeneration.current !== generation) return;
@@ -560,7 +572,7 @@ function App() {
       } catch {
         if (active && sessionGeneration.current === generation) setAdminSession(null);
       } finally {
-        await enterpriseRestore.catch(() => undefined);
+        await Promise.all([oidcRestore, enterpriseRestore]);
         if (active && sessionGeneration.current === generation) setSessionRestored(true);
       }
     };
@@ -569,7 +581,9 @@ function App() {
   }, []);
 
   const bootstrapState = platform?.bootstrapState ?? (apiAvailable ? "REQUIRED" : "LOCKED");
-  const passwordChangePending = adminSession?.passwordChangeRequired === true;
+  const adminPasswordChangePending = adminSession?.passwordChangeRequired === true;
+  const personPasswordChangePending = enterpriseSession?.passwordChangeRequired === true;
+  const passwordChangePending = adminPasswordChangePending || personPasswordChangePending;
   // One definition of "may call admin routes", shared with every governed
   // view. The inline copy that used to live here was the same expression by
   // hand, which is how a shell and a screen start disagreeing about a session.
@@ -648,19 +662,30 @@ function App() {
    * "the password could not be changed with the supplied credentials", which
    * reads as a wrong password and sends them round the same loop again.
    *
-   * `GET /admin/session` is deliberately the call: it needs no scope, so it
-   * works in exactly this state, and re-reading the principal means an expiry
-   * that does happen surfaces here rather than at submit.
+   * The keep-alive is the matching session probe: `GET /admin/session` for an
+   * administrator, `GET /session` for a locally created person. Both need no
+   * scope, so they work in exactly this state, and re-reading the principal
+   * means an expiry that does happen surfaces here rather than at submit.
    */
   useEffect(() => {
-    if (!passwordChangePending) return;
-    const timer = window.setInterval(() => {
-      void getAdministratorSession()
-        .then((session) => setAdminSession(session))
-        .catch(() => undefined);
-    }, 4 * 60_000);
-    return () => window.clearInterval(timer);
-  }, [passwordChangePending]);
+    if (adminPasswordChangePending) {
+      const timer = window.setInterval(() => {
+        void getAdministratorSession()
+          .then((session) => setAdminSession(session))
+          .catch(() => undefined);
+      }, 4 * 60_000);
+      return () => window.clearInterval(timer);
+    }
+    if (personPasswordChangePending) {
+      const timer = window.setInterval(() => {
+        void getEnterpriseSession()
+          .then((session) => setEnterpriseSession(session))
+          .catch(() => undefined);
+      }, 4 * 60_000);
+      return () => window.clearInterval(timer);
+    }
+    return undefined;
+  }, [adminPasswordChangePending, personPasswordChangePending]);
 
   useEffect(() => {
     if (!unlocked) {
@@ -833,7 +858,7 @@ function App() {
   const establishAdministratorSession = async (
     issue: () => Promise<AdministratorSession>,
     fallback: string,
-  ) => {
+  ): Promise<true | false | "unauthorized"> => {
     const generation = ++sessionGeneration.current;
     let createdSession = false;
     setSettingsBusy(true);
@@ -864,6 +889,17 @@ function App() {
       if (createdSession) await revokeAdministratorSession().catch(() => undefined);
       if (sessionGeneration.current === generation) {
         setAdminSession(null);
+        /*
+         * A 401 here is a refused sign-in, not a session that just died.
+         * `handleAdminError` rewrites every 401 as "your administrator
+         * session expired" because that is what a 401 means *after* the
+         * operator is already in. Applied to the password field it turns a
+         * People account — or a mistyped admin password — into a lie.
+         */
+        if (!createdSession && error instanceof OrcaSynapseApiError && error.status === 401) {
+          setSettingsError(error.message);
+          return "unauthorized";
+        }
         setSettingsError(handleAdminError(error, fallback));
       }
       return false;
@@ -872,17 +908,52 @@ function App() {
     }
   };
 
-  const loginAdministrator = (username: string, password: string) =>
-    establishAdministratorSession(
+  const loginAdministrator = async (username: string, password: string) =>
+    (await establishAdministratorSession(
+      () => createLocalAdministratorSession(username, password),
+      "Unable to sign in with the supplied local account.",
+    )) === true;
+
+  /*
+   * One field, two stores. The card used to speak only to LocalAdministrator,
+   * so a person created under Settings → People was answered as an expired
+   * admin session. Ask that store first; only a refused credential falls
+   * through to People. Elevation stays on `loginAdministrator` — that dialog
+   * is asking for an administrator, not a person.
+   */
+  const loginWithPassword = async (username: string, password: string) => {
+    const admin = await establishAdministratorSession(
       () => createLocalAdministratorSession(username, password),
       "Unable to sign in with the supplied local account.",
     );
+    if (admin === true) return true;
+    if (admin !== "unauthorized") return false;
 
-  const startAdministratorRecovery = (installationKey: string) =>
-    establishAdministratorSession(
+    const generation = ++sessionGeneration.current;
+    setSettingsBusy(true);
+    try {
+      const session = await createLocalPersonSession(username, password);
+      if (sessionGeneration.current !== generation) return false;
+      setSettingsError(null);
+      setEnterpriseSession(session);
+      return true;
+    } catch (error) {
+      if (sessionGeneration.current === generation) {
+        setSettingsError(
+          error instanceof Error ? error.message : "Unable to sign in with the supplied local account.",
+        );
+      }
+      return false;
+    } finally {
+      setSettingsBusy(false);
+    }
+  };
+
+  const startAdministratorRecovery = async (installationKey: string) =>
+    (await establishAdministratorSession(
       () => createInstallationKeyRecoverySession(installationKey),
       "Unable to start local-account recovery.",
-    );
+    )) === true;
 
   const completeAdministratorPassword = async (
     action: () => Promise<AdministratorSession>,
@@ -917,6 +988,26 @@ function App() {
       () => changeLocalAdministratorPassword(currentPassword, newPassword),
       "Unable to change the local administrator password.",
     );
+
+  const changePersonPassword = async (currentPassword: string, newPassword: string) => {
+    setSettingsBusy(true);
+    setSettingsError(null);
+    try {
+      const session = await changeLocalPersonPassword(currentPassword, newPassword);
+      setEnterpriseSession(session);
+      return true;
+    } catch (error) {
+      setSettingsError(error instanceof Error ? error.message : "Unable to change the password.");
+      return false;
+    } finally {
+      setSettingsBusy(false);
+    }
+  };
+
+  const changePendingPassword = (currentPassword: string, newPassword: string) =>
+    personPasswordChangePending && !adminPasswordChangePending
+      ? changePersonPassword(currentPassword, newPassword)
+      : changeAdministratorPassword(currentPassword, newPassword);
 
   const recoverAdministrator = (username: string, newPassword: string) =>
     completeAdministratorPassword(
@@ -1196,9 +1287,10 @@ function App() {
         error={settingsError}
         oidcConfigured={oidcStatus?.configured === true}
         session={adminSession}
-        onLogin={loginAdministrator}
+        mustChangePassword={personPasswordChangePending}
+        onLogin={loginWithPassword}
         onStartRecovery={startAdministratorRecovery}
-        onChangePassword={changeAdministratorPassword}
+        onChangePassword={changePendingPassword}
         onRecover={recoverAdministrator}
       />
     );
@@ -1269,17 +1361,6 @@ function App() {
             * split is described — this only declines to draw a heading for it.
             */}
           <div className="nav-group">{primaryNavigationItems("top").map(renderNavigationRow)}</div>
-          {/*
-            * Settings, last in the same menu rather than a slab bolted beneath
-            * it. It used to be drawn twice — an edge-to-edge footer row for the
-            * rail, plus a duplicate hidden inside this nav that only the phone
-            * dock revealed — so it was the one area whose height, padding,
-            * hover and active fill were maintained in two places, and while it
-            * was the active area both copies claimed `activeNavigationItem`.
-            * The only thing this group still does differently is sit at the
-            * bottom, and it does that in CSS, through one auto margin.
-            */}
-          <div className="nav-group nav-group--bottom">{primaryNavigationItems("bottom").map(renderNavigationRow)}</div>
         </nav>
         <div className="sidebar-bottom">
           {/*
@@ -1317,10 +1398,11 @@ function App() {
         )}
       >
         <div className="mobile-brand"><BrandMark size={26} /><strong>OrcaSynapse</strong></div>
-        <WorkspaceHeader area={activeArea} operator={operator} onSignOut={() => void signOut()} immersive={activeView === "Overview"} />
-        {activeView !== "Chat" && activeView !== "Overview" && (
-          <WorkspaceContextBar area={activeArea} activeView={activeView} onSelect={selectView} />
-        )}
+        <WorkspaceHeader area={activeArea} operator={operator} onSignOut={() => void signOut()} immersive={activeView === "Overview"}>
+          {activeView !== "Chat" && activeView !== "Overview" && (
+            <WorkspaceContextBar area={activeArea} activeView={activeView} onSelect={selectView} />
+          )}
+        </WorkspaceHeader>
         <Suspense fallback={<section className="view-loading" aria-live="polite"><span className="setup-spinner" />Loading workspace...</section>}>
         {/*
           * One entry per view, keyed by the same token the router produces.

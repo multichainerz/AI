@@ -93,9 +93,21 @@ describe("thread measure", () => {
   });
 
   it("cancels the band's bleed margins on a page that has no padding", () => {
-    // `.workspace-header` pulls itself outward by `clamp(24px, 4vw, 64px)` so
-    // its border reaches the edge of a padded page. Chat has no padding, so
+    // `.workspace-header` pulls itself outward by `--workspace-inline` so its
+    // border reaches the edge of a padded page. Chat has no padding, so
     // uncancelled those margins hang the header off both sides.
     expect(stylesheet).toContain(".chat-page > .workspace-header { margin: 0;");
+  });
+
+  it("uses Session's compact inset as the workspace default, not a 1380px column", () => {
+    /*
+     * Chat was the only full-bleed screen because `main > *` centred every
+     * child at 1380px with a 24–64px clamp. The rest of the workspace now
+     * shares Chat's inset, so a Dashboard or Agents tab cannot grow a second
+     * reading column beside the one the header already sits in.
+     */
+    expect(stylesheet).toContain("--workspace-inline: clamp(16px, 3vw, 24px)");
+    expect(stylesheet).not.toContain("1380px");
+    expect(stylesheet).not.toContain("clamp(24px, 4vw, 64px)");
   });
 });
