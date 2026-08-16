@@ -5,6 +5,39 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v8.1.1 — 2026-08-16
+
+Rewrites `docs/MCP_ENABLEMENT_PLAN.md` around what verification against the
+pinned Hermes commit actually found, and clears three stale statements from
+`docs/DIVISIONS_PLAN.md`. Documentation only.
+
+The plan's five pieces were necessary and not sufficient, and its 1–2 day
+estimate was for work that could not have produced a callable tool:
+
+- record that the api_server platform cannot carry a per-run header at
+  `c015663b`: `mcp_servers` is global config, `identity_header` resolves once at
+  connect time (`static` or `profile` only), `POST /v1/runs` takes no MCP
+  config, and `api_server.py` mentions MCP once in the whole file
+- record that only the ACP adapter has per-session MCP servers with arbitrary
+  headers, which is a different platform from the one OrcaSynapse drives
+- replace the five pieces with three options and their real costs, since the
+  choice between them is an architecture decision rather than a task
+- state plainly that relaxing the run-authorization requirement would make the
+  tools callable and destroy the division boundary, because it is the shortest
+  path from here to a green demo
+- keep the installer half, which verification confirmed is sound: the
+  desired-state client parses field by field and verifies the signature over the
+  decoded bytes, so a new field is safe for already-enrolled nodes
+
+In the divisions plan:
+
+- correct the status, which still said nothing was implemented after every
+  increment had shipped
+- strike the section claiming F was unbuilt and describing a SQLite store and a
+  corpus mirror, both withdrawn at v7.6.0 by the same document
+- strike the checklist item requiring the mirror, which would have had somebody
+  build what the design says not to build
+
 ## v8.1.0 — 2026-08-16
 
 Issues the run capability every governed tool call is authorized by. Nothing

@@ -1,6 +1,15 @@
 # Divisions, tool sets and skill sets — simple design
 
-Status: **plan, awaiting approval.** Nothing here is implemented.
+Status: **implemented.** A–E shipped at v7.3.0, F across v7.5.0–v7.8.0, its
+seeding at v7.9.0 and the default prompt at v8.0.0.
+
+One thing built here is still not reachable by an agent: the memory tools
+execute on VM1's MCP plane, and the agent runs on VM2. v8.1.0 closed the half of
+that gap this repository owns — see `docs/MCP_ENABLEMENT_PLAN.md` for the half
+that is blocked on a decision.
+
+The design below is kept as written, including the reasoning that was corrected
+along the way, because the corrections are the useful part.
 
 Written at v5.5.0; recalibrated at v6.0.1; **re-verified against v6.0.4**. Every
 citation was re-checked against the tree rather than assumed. Most held: the 27
@@ -757,18 +766,22 @@ rows even when the request body asks for them**, because the body is not where
 the division comes from. **2–4 days.** The 7–11 day estimate was mostly the mirror and the SQLite
 lifecycle, and both are gone.
 
-### F is now the only unbuilt increment
+### Every increment is now built
 
-A, B, C, D and E ship as of v7.3.0: the boundary, its administration, the sets,
-the screens, the people and their sign-in. Memory is shared per node and the
-screens say so, which is the position A–E were always designed to ship with.
+A, B, C, D and E shipped at v7.3.0: the boundary, its administration, the sets,
+the screens, the people and their sign-in. F followed across v7.5.0 (the scope
+injection), v7.7.0 (the store and the tool pair), v7.8.0 (the Memory screen),
+v7.9.0 (seeding and grants) and v8.0.0 (the default prompt).
 
-F remains genuinely optional. What the spike changed is its risk, not its
-necessity: the hard part was how a tool learns which division it is serving
-without trusting the agent, and that turns out to be already solved by the run
-authorization the MCP plane was built with. What is left is ordinary work —
-a SQLite store, a tool pair, and the corpus mirror that keeps Agents → Memory
-honest — with the mirror still the bulk of it.
+*This section previously said F was unbuilt and described what was left as "a
+SQLite store, a tool pair, and the corpus mirror". Both the SQLite store and the
+mirror were withdrawn at v7.6.0 — see the increment itself, which says so — and
+leaving the sentence here contradicted it. Recorded rather than deleted, because
+a document disagreeing with itself is the cheapest kind of error to catch and
+this one survived four releases.*
+
+What remains is not an increment: the tools execute on VM1 and the agent runs on
+VM2, and the path between them is not open. See `docs/MCP_ENABLEMENT_PLAN.md`.
 
 ## Total
 
@@ -884,8 +897,16 @@ to maintain forever, rather than any difficulty in building it.
 - [ ] the seeded default tool set and skill set track admission rather than
       snapshot it, so a fresh install is not seeded with an empty "everything"
 - [ ] *(F only)* the memory tool takes no division parameter
-- [ ] *(F only)* the scoped store is mirrored into the corpus plane in the same
-      increment that introduces it
+- [ ] *(F only)* ~~the scoped store is mirrored into the corpus plane in the same
+      increment that introduces it~~ — **withdrawn at v7.6.0.** The store is a
+      table in VM1's own database, so it is already in the corpus plane and
+      there is no second copy to reconcile. Struck rather than deleted: this
+      item outlived its design by four releases, and anybody working the list
+      would have built a mirror the design says not to build
+- [ ] every governed tool call is authorized by a run capability that something
+      actually issues — `RunCapabilityIssuer` existed and was constructed
+      nowhere until v8.1.0, which made the whole plane unreachable without
+      failing a single test
 
 ## Testing
 

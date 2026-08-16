@@ -1,6 +1,13 @@
 # Letting the agent reach its memory — enabling MCP on VM2
 
-Status: **plan, not started.** Written at v8.0.0.
+Status: **blocked on a decision, not on effort.** Written at v8.0.0, verified
+against the tree and against Hermes at the pinned commit at v8.1.0.
+
+The five pieces this document used to describe were necessary and **not
+sufficient**. Verification found one missing prerequisite, now shipped, and one
+transport gap that no amount of installer work closes. Both are recorded below
+with the measurement, because the estimate and the Done-when in the original
+draft were both unreachable.
 
 ## The gap this closes
 
@@ -9,114 +16,134 @@ Division-scoped memory is built and tested end to end on VM1: the store
 Agents → Memory screen, the seeded and granted tools, and the default prompt
 that tells an agent when to use them.
 
-**The agent cannot call any of it.** `scripts/install-agentic-node.sh:691` puts
-`no_mcp` in Hermes' `platform_toolsets` allowlist, and VM2 has no MCP client
-configuration of any kind — no endpoint, no credential. The MCP plane is
-reachable from VM1's side and unreachable from the agent's.
+**The agent cannot call any of it.**
 
-Recorded plainly because v7.4.0 overstated it: that entry said the spike showed
-the plane "ready", which was true of the run-authorization chain on VM1 — the
-thing actually measured — and untrue of VM2, which was not looked at.
+## What verification found
 
-## The one design decision, already settled
+### Finding 1 — no run was ever given a capability. Fixed at v8.1.0.
 
-The credential cannot travel in the desired-state document. That document is
-**signed, not encrypted** (`runtimeDesiredStateDocumentSchema`,
-`packages/contracts/src/runtime-nodes.ts:195`), and it is `.strict()`.
+Every MCP call carries **two** credentials, and the original plan supplied one:
 
-There is already a pattern for handing VM2 a secret at enrolment:
-`hermesNodeEnrollmentResultSchema` (`:160`) carries `modelBootstrap`, a nested
-object with `baseUrl` + `apiKey`. `drizzle-runtime-node-manager.ts:649` mints
-that key, stores it encrypted, and the installer reads it at
-`install-agentic-node.sh:2183` and `:2233`.
+| Header | Purpose | Original plan |
+| --- | --- | --- |
+| `Authorization: Bearer orcasynapse_mcp_…` | authenticates the node | the `toolBootstrap` below |
+| `orcasynapse-run-authorization: <runId>.<capability>` | authorizes the run | absent entirely |
 
-**Follow that exactly.** Add a sibling `toolBootstrap { baseUrl, apiKey }`.
+`apps/api/src/tooling/routes.ts:181` reads the second, and without it
+`tools/list` returns `-32001 "Private run authorization is required for tool
+discovery."` (`mcp-gateway.ts:169`). An agent would authenticate cleanly and see
+**zero tools**.
 
-One trap worth naming before somebody trips it: `API_SERVER_KEY` in the
-installer (`:2094`) is **not** this. It is `openssl rand -hex 32`, generated
-locally, and it is the key for Hermes' *own* API server on VM2. Reusing it for
-the MCP gateway would hand the agent a credential the control plane never issued
-and cannot revoke.
+Worse, nothing minted one. `RunCapabilityIssuer` was written, had its own unit
+test, and was constructed **nowhere** in production; all three writes of
+`toolCapabilityTokenHash` set it to `null`, and `assertRunIsExecutable`
+(`drizzle-tooling-manager.ts:911`) refuses a null. The governed-tool plane was
+unreachable by construction rather than by configuration — for every run, not
+only for VM2.
 
-## The five pieces, which must land together
+v8.1.0 mints it at claim time, expiring on the run's own deadline. **This is
+necessary under every option below and sufficient under none.**
 
-A contract change without the installer half — or an installer reading a field
-enrolment does not send — breaks enrolment. And an installer that is wrong does
-not fail a test; it fails on a customer's machine.
+### Finding 2 — the api_server platform cannot carry a per-run header
 
-### 1. Mint an MCP credential at enrolment
+This is the decisive one. Measured against `c015663b`, the pinned commit, read
+from the checkout on `OrcaSynapse-VM2`.
 
-`apps/api/src/tooling/drizzle-tooling-manager.ts:311` already has
-`issueCredential`, which returns the plaintext once and stores only its digest.
-Enrolment calls it, names the credential after the node, and puts the token in
-the response.
+A run authorization is **per run and expiring**. An MCP client configuration is
+**static**. At the pinned commit, the platform OrcaSynapse uses offers no way to
+bridge that:
 
-### 2. Extend the enrolment result
+- MCP servers come from the `mcp_servers` section of `config.yaml` — global to
+  the process, file-watched for reload (`cli.py:11524`).
+- The one dynamic header mechanism is `identity_header`, and its own docstring
+  closes the door: `value_from` accepts `static` or `profile`, and *"`profile`
+  mode resolves the value to the active Hermes profile name once at connect
+  time; there is no per-call mutation"* (`tools/mcp_tool.py:1189`).
+- `gateway/platforms/api_server.py` mentions MCP exactly once in the whole file
+  — `include_default_mcp_servers=False` at `:3215`, inside the capabilities
+  handler. There is no per-session registration.
+- `POST /v1/runs` accepts `input`, `instructions`, `previous_response_id`,
+  `conversation_history`, `session_id`, `model`. No MCP config, no arbitrary
+  headers.
+- `POST /api/sessions` — what `ensureNativeSession` calls — is sent `{ id,
+  model, source }`.
 
-`hermesNodeEnrollmentResultSchema` gains:
+**Only the ACP adapter supports what this needs.**
+`acp_adapter/server.py:970` `_register_session_mcp_servers` takes per-session
+servers with arbitrary `headers`, built from
+`{"url": server.url, "headers": {...}}`. That is a different platform from the
+`api_server` one OrcaSynapse drives.
 
-```
-toolBootstrap: { baseUrl: serviceEndpointSchema, apiKey: z.string().min(1).max(16_384) }
-```
+### What must not be done about it
 
-`baseUrl` is the control plane's `/api/v1/mcp`, derived the same way
-`inferenceGatewayBaseUrl(controlPlaneUrl)` derives the inference one — which
-lives in `apps/api/src/runtime-nodes/drizzle-runtime-node-manager.ts:119`, not in
-contracts, so `serviceEndpointSchema` (`packages/contracts/src/connections.ts:38`)
-is what validates the field.
+Relaxing the run-authorization requirement so a node bearer token alone suffices
+would make the tools callable and **destroy the feature**. The division a call
+reads and writes is derived from the run (`runScope`). With no run, there is no
+division — every call would be unscoped, and Finance's agent would read Legal's
+notes. That is the one outcome worse than the tools not working.
 
-**Make it optional in the schema.** A node enrolled by an older control plane
-must still enrol against a newer one; a required field turns a version skew into
-a failed install.
+Recorded explicitly because it is the shortest path from here to a green demo.
 
-### 3. Installer: write the MCP client configuration
+## The three options
 
-Read `toolBootstrap` from the enrolment response beside `modelBootstrap`, and
-write Hermes' MCP server entry pointing at that URL with that bearer token.
-Store the token with the same mode and ownership as the other secrets under
-`${STATE_ROOT}/data/`.
+| | What it costs | What it risks |
+| --- | --- | --- |
+| **A. Drive Hermes over ACP** instead of the api_server platform | a real change to how the worker talks to Hermes — session lifecycle, streaming, and the capabilities probe all move | largest change here, but **needs nothing upstream**; per-session MCP servers with arbitrary headers already work at the pinned commit |
+| **B. Upstream change to Hermes** — per-session MCP headers on `api_server` | small once accepted | software we pin and do not own; unbounded on calendar time, and pinning a fork is its own decision |
+| **C. Wait** | nothing | the memory work stays reachable only by tests, and the v8.0.0 default prompt keeps telling agents to use a tool they cannot see |
 
-### 4. Installer: drop `no_mcp`
+**A is the only option with a date on it.** It is also the honest reading of
+what Hermes supports: the per-session surface exists, and we are on the platform
+that does not have it.
 
-`:691` and the allowlist rewrite at `:1609`
-(`["no_mcp", "memory"] + admitted`). Both need to stop suppressing MCP **when a
-`toolBootstrap` was received**, and keep suppressing it when one was not — a
-node that never got a credential must not open an unauthenticated MCP path.
+If C is chosen, the v8.0.0 MEMORY section should come out of the default profile
+instructions — an install that tells its agent to `recall` when nothing can is
+a promise the product does not keep.
 
-The comment at `:685-688` says this stays until OrcaSynapse "explicitly
-distributes and verifies another governed toolset". That is precisely what this
-is; rewrite the comment rather than deleting it.
+## Still true, and still needed under A or B
 
-### 5. Desired state carries whether MCP is enabled
+Verified at v8.0.2 and re-checked at v8.1.0; the installer half of the original
+plan is sound, and its version-skew handling is genuinely safe:
 
-The reconciler (`:1546` onward) rewrites the allowlist on every pass from the
-desired-state document. If that document does not say MCP is on, the next
-reconcile puts `no_mcp` back — and the timer is
-`OnBootSec=90s`, `OnUnitActiveSec=5min`, its unit description reading *"Reconcile
-the OrcaSynapse desired runtime state every five minutes"*. So the agent loses
-its tools **about five minutes after install**, silently, while an operator is
-still watching the screen and concluding the feature does not work.
+- The desired-state client parses field by field — `jq -r '.hermesCommit //
+  empty'` (`:1436`), `jq -r '.admittedToolsets[]?'` (`:1450`) — so a new
+  `mcpEnabled` field is invisible to already-enrolled older nodes rather than
+  fatal to them. The signature is verified over the decoded document bytes
+  (`openssl pkeyutl -verify -rawin`, `:1414`), so adding a field is
+  signature-safe.
+- The enrolment bundle is parsed the same way, so an added `toolBootstrap` is
+  safe for older installers. **Keep it optional in the schema**: a node enrolled
+  by an older control plane must still enrol against a newer one.
+- `hermesNodeEnrollmentResultSchema` (`packages/contracts/src/runtime-nodes.ts:160`)
+  already carries `modelBootstrap { baseUrl, apiKey }`;
+  `drizzle-runtime-node-manager.ts:649` mints that key and the installer reads it
+  at `:2183` and `:2233`. Follow it exactly for `toolBootstrap`.
+  `baseUrl` derives like `inferenceGatewayBaseUrl(controlPlaneUrl)`
+  (`drizzle-runtime-node-manager.ts:119`), validated by `serviceEndpointSchema`
+  (`packages/contracts/src/connections.ts:38`).
+- `API_SERVER_KEY` (`install-agentic-node.sh:2094`) is **not** this. It is
+  `openssl rand -hex 32`, generated locally, for Hermes' own API server. Reusing
+  it would hand the agent a credential the control plane never issued and cannot
+  revoke.
+- `no_mcp` must stop being suppressed **only when a `toolBootstrap` was
+  received** (`:691`, and the allowlist rebuild at `:1609`). A node that never
+  got a credential must not open an unauthenticated MCP path.
+- `mcpEnabled` must travel in the desired-state document. The rebuild is
+  unconditional every pass — `["no_mcp", "memory"] + admitted`, `no_mcp`
+  hardcoded, the whole `platform_toolsets` block replaced by regex — and the
+  timer is `OnBootSec=90s`, `OnUnitActiveSec=5min`. Omit it and the agent loses
+  its tools about **five minutes** after install, silently, while an operator is
+  still watching.
 
-So `runtimeDesiredStateDocumentSchema` gains `mcpEnabled: z.boolean()`, emitted
-from `drizzle-runtime-node-manager.ts:914` beside `admittedToolsets`.
-
-**This is the piece most likely to be forgotten**, because everything works
-immediately after install without it. The rewrite is unconditional — the
-allowlist is rebuilt every pass as `["no_mcp", "memory"] + admitted`, with
-`no_mcp` hardcoded at the front (`:1609`) and the whole `platform_toolsets`
-block replaced by regex — so nothing about a previous pass survives.
-
-## Verification
+## Verification, when there is something to verify
 
 `scripts/test-agentic-installer-smoke.sh` is the harness: it runs the
 installer's `main()` end to end on Ubuntu with systemd and root, installs Hermes
 at the pinned commit, and uses a **real Ed25519 key so the desired-state
-signature is genuinely verified**. `OrcaSynapse-VM2` (WSL, systemd, currently no
-Hermes install) qualifies.
+signature is genuinely verified**. `OrcaSynapse-VM2` (WSL, systemd) qualifies
+and already holds the checkout at `c015663b`.
 
-Done when, in order:
-
-1. The smoke test passes with `toolBootstrap` present, and Hermes' config has the
+1. The smoke test passes with `toolBootstrap` present; Hermes' config has the
    MCP entry and no `no_mcp`.
 2. The smoke test passes with `toolBootstrap` **absent** — the older-control-plane
    case — and `no_mcp` is still there. Run this second and deliberately: it is
@@ -126,9 +153,9 @@ Done when, in order:
 4. `pnpm verify` green, and the release consistency check at the new version.
 
 Then, against the live pair: enrol `OrcaSynapse-VM2` against the running VM1,
-start a session, and confirm the agent calls `recall` — the first end-to-end
-proof that any of the memory work is reachable by an agent rather than only by a
-test.
+start a session, and confirm the agent calls `recall` — **and that a run in one
+division cannot recall the other's rows**. The second half is the feature; the
+first half alone would pass with the boundary removed.
 
 ## What this does not change
 
@@ -144,6 +171,22 @@ test.
 
 ## Estimate
 
-**1–2 days**, most of it the installer and its two smoke-test cases. The VM1
-half is small because `issueCredential` and the enrolment response pattern both
-already exist.
+The original **1–2 days** was for five pieces that could not have worked. The
+honest replacement:
+
+| | Days |
+| --- | --- |
+| ~~Piece 0 — issue the run capability~~ | **shipped at v8.1.0** |
+| Option A — move to ACP, then the installer half | 5–9 |
+| Option B — the installer half only, once upstream lands | 1–2, plus the wait |
+
+## The lesson, recorded because it recurred three times
+
+v7.4.0 read `runForTooling`'s join and `run-capability.ts`'s existence and
+concluded the plane was "ready". v8.0.1 planned five pieces on that basis. Both
+were checking that a symbol existed.
+
+An issuer nothing calls issues nothing; a header no transport can carry is not a
+header. `DIVISIONS_PLAN.md:29` already says this, from the last time. The check
+that would have caught all three is the same one: **find the write, not the
+definition.**
