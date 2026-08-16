@@ -1,0 +1,1 @@
+ALTER TABLE "AgentRuntimeControl" ADD COLUMN "memoryExtractionEnabled" boolean DEFAULT true NOT NULL;

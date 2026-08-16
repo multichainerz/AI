@@ -467,6 +467,7 @@ describe("DrizzleAgentProcessor memory extraction", () => {
     );
 
     await processor.process({ runId }, jobId, WORKER_ID);
+    await processor.drainMemoryExtraction();
 
     const rows = await context.database.select().from(scopedMemoryEntry);
     expect(rows).toHaveLength(1);
@@ -497,6 +498,7 @@ describe("DrizzleAgentProcessor memory extraction", () => {
     );
 
     await processor.process({ runId }, jobId, WORKER_ID);
+    await processor.drainMemoryExtraction();
 
     const rows = await context.database.select().from(scopedMemoryEntry);
     expect(rows).toHaveLength(1);
@@ -515,6 +517,7 @@ describe("DrizzleAgentProcessor memory extraction", () => {
     );
 
     const result = await processor.process({ runId }, jobId, WORKER_ID);
+    await processor.drainMemoryExtraction();
 
     expect(result).toMatchObject({ status: "COMPLETED" });
     const [message] = await context.database.select().from(chatMessage).where(eq(chatMessage.id, messageId));
@@ -546,6 +549,7 @@ describe("DrizzleAgentProcessor memory extraction", () => {
     );
 
     await processor.process({ runId }, jobId, WORKER_ID);
+    await processor.drainMemoryExtraction();
 
     const rows = await context.database.select().from(scopedMemoryEntry);
     expect(rows).toHaveLength(2);
@@ -575,10 +579,157 @@ describe("DrizzleAgentProcessor memory extraction", () => {
     );
 
     await processor.process({ runId }, jobId, WORKER_ID);
+    await processor.drainMemoryExtraction();
 
     const rows = await context.database.select().from(scopedMemoryEntry);
     expect(rows).toHaveLength(2);
     expect(rows.filter((row) => row.divisionId === alpha)).toHaveLength(1);
+  });
+
+  /*
+   * The point of the whole piece: the processor slot is released with the
+   * answer, not with the note.
+   *
+   * Asserted as an absence immediately after `process` returns, because that is
+   * the only observable difference between running extraction inline and
+   * running it on a timer. Written before the sweep on purpose -- reorder these
+   * two lines and the test says nothing at all.
+   */
+  it("does not extract while it holds the processor slot", async () => {
+    const { runId, jobId } = await seed();
+    await assignDivision(runId, "Alpha");
+    const processor = new DrizzleAgentProcessor(
+      context.database, runtime() as never, CAPABILITIES,
+      extractor(["Something durable."]),
+    );
+
+    await processor.process({ runId }, jobId, WORKER_ID);
+    expect(await context.database.select().from(scopedMemoryEntry)).toHaveLength(0);
+
+    await processor.drainMemoryExtraction();
+    expect(await context.database.select().from(scopedMemoryEntry)).toHaveLength(1);
+  });
+
+  /*
+   * A run is claimed, not attempted-until-successful.
+   *
+   * If the mark were written only on success, a run whose extraction fails --
+   * an endpoint down, a model refusing -- would be re-claimed on every sweep
+   * forever, spending a model call each time and never succeeding for the same
+   * reason it failed first. One lost note is the cheaper failure.
+   */
+  it("does not retry a run whose extraction failed", async () => {
+    const { runId, jobId } = await seed();
+    await assignDivision(runId, "Alpha");
+    let attempts = 0;
+    const processor = new DrizzleAgentProcessor(
+      context.database, runtime() as never, CAPABILITIES,
+      { extract: async () => { attempts += 1; throw new Error("The endpoint is unreachable."); } },
+    );
+
+    await processor.process({ runId }, jobId, WORKER_ID);
+    await processor.drainMemoryExtraction();
+    await processor.drainMemoryExtraction();
+    await processor.drainMemoryExtraction();
+
+    expect(attempts).toBe(1);
+  });
+
+  /*
+   * Two sweeps must not extract the same run twice, which is what `FOR UPDATE
+   * SKIP LOCKED` inside the claim is for.
+   *
+   * Asserted by sweeping twice and counting, per the plan -- reading the SQL and
+   * agreeing it looks right is exactly the check that has failed repeatedly in
+   * this work.
+   */
+  it("claims each run once across repeated sweeps", async () => {
+    const { runId, jobId } = await seed();
+    await assignDivision(runId, "Alpha");
+    const processor = new DrizzleAgentProcessor(
+      context.database, runtime() as never, CAPABILITIES,
+      extractor(["Alpha settles invoices on Fridays."]),
+    );
+    await processor.process({ runId }, jobId, WORKER_ID);
+
+    const [first, second] = await Promise.all([
+      processor.drainMemoryExtraction(),
+      processor.drainMemoryExtraction(),
+    ]);
+
+    expect(first + second).toBe(1);
+    expect(await context.database.select().from(scopedMemoryEntry)).toHaveLength(1);
+  });
+
+  /*
+   * The lookback, which matters exactly once and then never again: the first
+   * sweep after this ships sees every completed run the installation has ever
+   * had, all of them unmarked.
+   */
+  it("leaves runs older than the lookback window alone", async () => {
+    const { runId, jobId } = await seed();
+    await assignDivision(runId, "Alpha");
+    const processor = new DrizzleAgentProcessor(
+      context.database, runtime() as never, CAPABILITIES, extractor(["Something durable."]),
+    );
+    await processor.process({ runId }, jobId, WORKER_ID);
+    await context.database.update(agentRun)
+      .set({ completedAt: new Date(Date.now() - 48 * 60 * 60 * 1_000) })
+      .where(eq(agentRun.id, runId));
+
+    expect(await processor.drainMemoryExtraction()).toBe(0);
+    expect(await context.database.select().from(scopedMemoryEntry)).toHaveLength(0);
+  });
+
+  /*
+   * The switch, checked before the claim rather than after.
+   *
+   * Checking after would still mark every run as extracted, so everything
+   * learned while it was off would be silently discarded and turning it back on
+   * would recover none of it. The assertion is therefore on the run staying
+   * unclaimed, not merely on no rows being written.
+   */
+  it("extracts nothing while the deployment switch is off, and forgets nothing", async () => {
+    const { runId, jobId } = await seed();
+    await assignDivision(runId, "Alpha");
+    await context.database.update(agentRuntimeControl).set({ memoryExtractionEnabled: false });
+    const processor = new DrizzleAgentProcessor(
+      context.database, runtime() as never, CAPABILITIES, extractor(["Something durable."]),
+    );
+
+    await processor.process({ runId }, jobId, WORKER_ID);
+    expect(await processor.drainMemoryExtraction()).toBe(0);
+
+    expect(await context.database.select().from(scopedMemoryEntry)).toHaveLength(0);
+    // Still owed. Turning the switch back on must recover the run, not skip it.
+    const [run] = await context.database.select().from(agentRun).where(eq(agentRun.id, runId));
+    expect(run?.memoryExtractedAt).toBeNull();
+
+    await context.database.update(agentRuntimeControl).set({ memoryExtractionEnabled: true });
+    expect(await processor.drainMemoryExtraction()).toBe(1);
+    expect(await context.database.select().from(scopedMemoryEntry)).toHaveLength(1);
+  });
+
+  it("records what it kept and what it was offered", async () => {
+    const { runId, jobId } = await seed();
+    const alpha = await assignDivision(runId, "Alpha");
+    await context.database.insert(scopedMemoryEntry).values({
+      divisionId: alpha, content: "Already known.",
+    });
+    const processor = new DrizzleAgentProcessor(
+      context.database, runtime() as never, CAPABILITIES,
+      extractor(["Already known.", "Newly learned."]),
+    );
+
+    await processor.process({ runId }, jobId, WORKER_ID);
+    await processor.drainMemoryExtraction();
+
+    const [event] = await context.database.select().from(auditEvent)
+      .where(eq(auditEvent.action, "memory.entry_extracted"));
+    expect(event?.resourceId).toBe(runId);
+    // Both counts, because "kept 1" alone cannot tell a quiet model from an
+    // effective dedup, and those want different responses from an operator.
+    expect(event?.metadata).toMatchObject({ kept: 1, offered: 2, divisionId: alpha });
   });
 
   it("writes nothing when there was nothing worth keeping", async () => {
@@ -588,6 +739,7 @@ describe("DrizzleAgentProcessor memory extraction", () => {
     );
 
     await processor.process({ runId }, jobId, WORKER_ID);
+    await processor.drainMemoryExtraction();
 
     expect(await context.database.select().from(scopedMemoryEntry)).toHaveLength(0);
   });

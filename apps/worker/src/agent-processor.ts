@@ -212,6 +212,10 @@ const MEMORY_CHARACTER_LIMIT = 6_000;
 const MEMORY_MATCH_LIMIT = 20;
 /** How many recent notes a question matching nothing still sees. */
 const MEMORY_RECENCY_FLOOR = 5;
+/** How many runs one sweep claims. */
+const MEMORY_EXTRACTION_BATCH = 10;
+/** How far back a sweep will reach for work it has never done. */
+const MEMORY_EXTRACTION_LOOKBACK_MS = 6 * 60 * 60 * 1_000;
 
 export function hardenedInstructions(run: LoadedRun, memory: readonly DivisionMemory[] = []): string {
   /*
@@ -443,9 +447,15 @@ export class DrizzleAgentProcessor {
             }
             await drainEvents(EVENT_STREAM_DRAIN_GRACE_MS);
             await this.complete(run, state, externalRunId, workerId);
-            // After the run is finalised and the answer delivered, deliberately.
-            // A note is worth strictly less than the answer it came from.
-            await this.rememberFrom(run, state.output);
+            /*
+             * Extraction is not run here, and used to be.
+             *
+             * It ran after the answer was delivered, so it never cost latency
+             * -- but it held the processor slot until it returned, up to the
+             * extractor's 30s timeout, and there are only five. The run now
+             * leaves `memoryExtractedAt` null and `drainMemoryExtraction`
+             * claims it, so the slot is released the moment the answer is.
+             */
             return { runId: run.id, status: "COMPLETED" };
           }
           if (state.status === "failed") throw new Error(state.error ?? "Hermes reported that the run failed.");
@@ -788,11 +798,81 @@ export class DrizzleAgentProcessor {
    * escape would turn a delivered answer into a failed run over a note nobody
    * asked for.
    */
-  private async rememberFrom(run: LoadedRun, answer: string | null): Promise<void> {
-    if (!this.extractor || !answer?.trim()) return;
+  /**
+   * Claims completed runs that still owe memory, and extracts from each.
+   *
+   * Runs on the worker's own timer rather than inside `process`, so extraction
+   * competes with nothing: the five processor slots are for answering people.
+   *
+   * The plan proposed hanging this on `DrizzleOperationsManager`'s reconcile
+   * timer. It is here instead, because that manager runs inside the API
+   * process -- a thirty-second model call there would compete with serving
+   * HTTP, which is a worse place to spend it than a worker slot, not a better
+   * one. The goal was to stop occupying a *processor slot*, and a separate task
+   * in the same process does that completely.
+   *
+   * Two properties this depends on, both already true:
+   *
+   * - **The claim is the same statement as the selection.** `FOR UPDATE SKIP
+   *   LOCKED` inside the subquery means two workers sweeping at once take
+   *   disjoint batches rather than both extracting the same run.
+   * - **The write is idempotent** (v8.6.0's dedup), so a run claimed and then
+   *   half-written does not duplicate what it already stored.
+   */
+  async drainMemoryExtraction(limit = MEMORY_EXTRACTION_BATCH): Promise<number> {
+    if (!this.extractor) return 0;
+    /*
+     * Checked before the claim, not after: a switch that stopped the write but
+     * still marked runs as extracted would silently discard everything learned
+     * while it was off, and turning it back on would recover none of it.
+     */
+    const [control] = await this.database
+      .select({ enabled: agentRuntimeControl.memoryExtractionEnabled })
+      .from(agentRuntimeControl).where(eq(agentRuntimeControl.id, "global")).limit(1);
+    if (control && !control.enabled) return 0;
+    /*
+     * A bounded lookback, which matters most exactly once: the first sweep
+     * after this ships sees every completed run the installation has ever had,
+     * all of them unmarked. Without the window that is one model call per
+     * historical run, in one pass, on the upgrade.
+     */
+    const cutoff = new Date(Date.now() - MEMORY_EXTRACTION_LOOKBACK_MS);
+    const claimed = await this.database.execute<{
+      id: string; input: string; output: string | null; divisionId: string | null;
+    }>(sql`
+      UPDATE "AgentRun" SET "memoryExtractedAt" = CURRENT_TIMESTAMP
+      WHERE "id" IN (
+        SELECT "id" FROM "AgentRun"
+        WHERE "status" = 'COMPLETED'
+          AND "memoryExtractedAt" IS NULL
+          AND "completedAt" > ${cutoff}
+        ORDER BY "completedAt" ASC
+        LIMIT ${limit}
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING "id", "input", "output",
+        (SELECT "divisionId" FROM "AgentProfile" WHERE "AgentProfile"."id" = "AgentRun"."profileId") AS "divisionId"
+    `);
+    const rows = (Array.isArray(claimed) ? claimed : claimed.rows) as Array<{
+      id: string; input: string; output: string | null; divisionId: string | null;
+    }>;
+    let extracted = 0;
+    for (const row of rows) {
+      if (await this.rememberFrom(row.id, row.divisionId, row.input, row.output)) extracted += 1;
+    }
+    return extracted;
+  }
+
+  private async rememberFrom(
+    runId: string,
+    divisionId: string | null,
+    question: string,
+    answer: string | null,
+  ): Promise<boolean> {
+    if (!this.extractor || !answer?.trim()) return false;
     try {
-      const notes = await this.extractor.extract({ question: run.input, answer });
-      if (notes.length === 0) return;
+      const notes = await this.extractor.extract({ question, answer });
+      if (notes.length === 0) return false;
       /*
        * Exact-match dedup within the division, and only exact.
        *
@@ -811,21 +891,38 @@ export class DrizzleAgentProcessor {
        * this depends on: a batch retried after a partial failure must not write
        * what it already wrote.
        */
-      const scope = run.divisionId === null
+      const scope = divisionId === null
         ? isNull(scopedMemoryEntry.divisionId)
-        : eq(scopedMemoryEntry.divisionId, run.divisionId);
+        : eq(scopedMemoryEntry.divisionId, divisionId);
       const existing = await this.database
         .select({ content: scopedMemoryEntry.content })
         .from(scopedMemoryEntry)
         .where(and(scope, inArray(scopedMemoryEntry.content, notes)));
       const known = new Set(existing.map(({ content }) => content));
       const fresh = notes.filter((content) => !known.has(content));
-      if (fresh.length === 0) return;
+      if (fresh.length === 0) return false;
       await this.database.insert(scopedMemoryEntry).values(
-        fresh.map((content) => ({ divisionId: run.divisionId, content, runId: run.id })),
+        fresh.map((content) => ({ divisionId, content, runId })),
       );
+      /*
+       * The only record that extraction ran at all.
+       *
+       * Without it the feature is invisible: notes appear on a screen with no
+       * trace of what decided to keep them or when, and an operator asking "is
+       * this thing running" has nothing to read. Counts rather than contents --
+       * the contents are already a row away, and duplicating them into the
+       * audit trail would put the same division-scoped text somewhere with no
+       * division scoping at all.
+       */
+      await this.database.insert(auditEvent).values({
+        actorType: "SERVICE", action: "memory.entry_extracted",
+        resourceType: "AgentRun", resourceId: runId, outcome: "SUCCESS",
+        metadata: { divisionId, kept: fresh.length, offered: notes.length },
+      }).catch(() => undefined);
+      return true;
     } catch {
       // Deliberately silent: see above.
+      return false;
     }
   }
 

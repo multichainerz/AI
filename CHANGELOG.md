@@ -5,6 +5,46 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v8.7.0 — 2026-08-16
+
+Pieces C and D of `docs/MEMORY_HARDENING_PLAN.md`, completing it. Extraction
+leaves the processor slot, and it can be switched off and seen.
+
+Off the slot:
+
+- claim completed runs on the worker's own timer instead of extracting inside
+  `process`, so a slot is released with the answer rather than up to thirty
+  seconds later — there are five, and they are for answering people
+- mark the run when it is claimed, not when extraction succeeds: a run retried
+  after a failure would spend a model call per sweep, forever, failing for the
+  reason it failed first
+- claim with `FOR UPDATE SKIP LOCKED` inside the selecting statement, so two
+  workers sweeping at once take disjoint batches
+- bound the lookback to six hours, which matters exactly once — the first sweep
+  after this ships would otherwise see every completed run the installation has
+  ever had, unmarked, and extract them all in one pass
+- **put the sweep on the worker rather than the operations manager**, which is
+  where the plan said. That manager runs inside the API process, and a
+  thirty-second model call there would compete with serving HTTP — a worse place
+  to spend it, not a better one. The goal was to stop occupying a processor
+  slot, and a separate task in the same process does that completely
+
+The switch and the trail:
+
+- `AgentRuntimeControl.memoryExtractionEnabled`, defaulting to true, since a
+  memory that never fills is the feature not working
+- check it **before the claim**: checking after would still mark every run as
+  extracted, so everything learned while it was off would be silently discarded
+  and turning it back on would recover none of it
+- record `memory.entry_extracted` with what was kept and what was offered —
+  "kept 1" alone cannot distinguish a quiet model from an effective dedup, and
+  those want different responses from an operator
+- keep the note contents out of the audit trail, which has no division scoping
+
+Both new tests earned their keep under mutation: moving the switch below the
+claim fails the switch test, and removing `SKIP LOCKED` fails the concurrent
+sweep.
+
 ## v8.6.0 — 2026-08-16
 
 Pieces A and B of `docs/MEMORY_HARDENING_PLAN.md`: injection selects by

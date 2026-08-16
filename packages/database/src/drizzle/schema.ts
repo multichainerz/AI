@@ -299,6 +299,20 @@ export const agentRuntimeControl = pgTable("AgentRuntimeControl", {
 	id: varchar({ length: 32 }).default('global').primaryKey().notNull(),
 	enabled: boolean().default(false).notNull(),
 	reason: varchar({ length: 500 }),
+	/**
+	 * Whether completed runs are read for durable facts.
+	 *
+	 * Default true, because a memory that never fills is the feature not
+	 * working, and an operator who has not thought about it yet is better served
+	 * by it working. Off is for a deployment that has decided the model call per
+	 * completed run is not worth it -- which is a real position, and the reason
+	 * this exists rather than being a constant.
+	 *
+	 * Deployment-wide rather than per profile: per-profile control belongs with
+	 * the profile editor and its versioning, where it can be reproduced on
+	 * re-run like every other configuration a profile carries.
+	 */
+	memoryExtractionEnabled: boolean().default(true).notNull(),
 	updatedBy: uuid(),
 	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
 });
@@ -1461,6 +1475,19 @@ export const agentRun = pgTable("AgentRun", {
 	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
 	toolCapabilityTokenHash: bytea("toolCapabilityTokenHash"),
 	toolCapabilityExpiresAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
+	/**
+	 * When memory extraction claimed this run, or null while it is still owed.
+	 *
+	 * A marker rather than deriving the work from "completed runs with no
+	 * ScopedMemoryEntry": a run that legitimately produced no notes would then
+	 * be indistinguishable from one never processed, and would be extracted
+	 * again on every sweep for as long as the row existed.
+	 *
+	 * Set when the run is claimed, not when extraction succeeds. A run whose
+	 * extraction fails is one lost note; a run retried forever is a model call
+	 * per sweep, per run, indefinitely.
+	 */
+	memoryExtractedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
 	profileDistributionDigest: varchar({ length: 64 }),
 	sessionId: varchar({ length: 200 }).notNull(),
 	processorLeaseOwner: varchar({ length: 160 }),

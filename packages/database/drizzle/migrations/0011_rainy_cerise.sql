@@ -1,0 +1,1 @@
+ALTER TABLE "AgentRun" ADD COLUMN "memoryExtractedAt" timestamp (6) with time zone;
