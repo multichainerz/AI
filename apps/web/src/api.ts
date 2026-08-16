@@ -193,6 +193,8 @@ import {
   type Person,
   type PersonList,
   type UpdatePerson,
+  scopedMemoryListSchema,
+  type ScopedMemoryList,
 } from "@orcasynapse/contracts";
 
 export class OrcaSynapseApiError extends Error {
@@ -1292,4 +1294,9 @@ export async function resetPersonPassword(id: string, password: string): Promise
     method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify({ password }),
   });
   if (!response.ok) await parsedResponse(response);
+}
+
+export async function getScopedMemory(): Promise<ScopedMemoryList> {
+  const response = await fetch("/api/v1/admin/tooling/scoped-memory", { credentials: "same-origin" });
+  return scopedMemoryListSchema.parse(await parsedResponse(response));
 }

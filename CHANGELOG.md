@@ -5,6 +5,33 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v7.8.0 — 2026-08-16
+
+Shows division memory in Agents → Memory. **Increment F is complete, and with it
+every increment of `docs/DIVISIONS_PLAN.md`.**
+
+The screen reads the same table the `recall` tool reads — not a mirror of it.
+That is the point of the v7.6.0 redesign: there is no reconciliation that could
+be wrong, and no window in which the dashboard shows one thing while the agent
+knows another.
+
+- add `GET /api/v1/admin/tooling/scoped-memory` behind `corpus:content:read`,
+  the scope that already governs reading what an agent knows
+- label each entry with its division rather than filtering by one: every caller
+  here is an administrator, and administrators are deployment-wide
+- render a null division as **"Deployment-wide"**, not "none" — those entries
+  are read back only by other deployment-wide runs, and calling the scope absent
+  would suggest every division can see them
+- say on screen how this differs from the Hermes memory above it: those files
+  belong to the node and are shared by every division, these entries belong to
+  one division each
+- report the total when the list is truncated, so a partial view cannot be read
+  as a complete one
+
+Verified against the running stack: two entries seeded, one in Finance and one
+deployment-wide, both rendering with the right labels beside a file mirror
+correctly reporting no memory files; then removed.
+
 ## v7.7.0 — 2026-08-16
 
 Division-scoped agent memory works. `ScopedMemoryEntry` plus the `remember` and

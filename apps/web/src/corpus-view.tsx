@@ -17,6 +17,7 @@ import {
   getHermesCorpusRevisions,
 } from "./api.js";
 import { ConfigurationSetsPanel } from "./configuration-sets-panel.js";
+import { ScopedMemoryPanel } from "./scoped-memory-panel.js";
 import { SnapshotIcon, StorageIcon, SyncIcon, TerminalIcon } from "./ui/relay-icons.js";
 import {
   Alert, Button, Dialog, EmptyState, Field, Input, LockedScreen, MicroLabel, PageHeader,
@@ -500,6 +501,13 @@ export function CorpusView({ session, scope, onConfigure, onSessionExpired }: Co
       {!memoryScope && (
         <ConfigurationSetsPanel kind="skills" canManage={canWrite} onSessionExpired={onSessionExpired} />
       )}
+
+      {/*
+        * Memory only. These rows are the same store the `recall` tool reads --
+        * not a mirror of it -- which is what lets this screen be complete rather
+        * than merely plausible about what an agent knows.
+        */}
+      {memoryScope && <ScopedMemoryPanel onSessionExpired={onSessionExpired} />}
     </div>
   );
 }

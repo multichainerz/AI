@@ -1,4 +1,5 @@
 import type {
+  ScopedMemoryList,
   DecideToolsetAdmission,
   ToolApproval,
   GatewayCredentialList,
@@ -39,6 +40,8 @@ export interface GovernedToolResult {
 
 export interface ToolingManager {
   listTools(): Promise<GovernedToolList>;
+  /** What agents have remembered, for Agents → Memory. Division-labelled, not division-filtered. */
+  listScopedMemory(limit?: number): Promise<ScopedMemoryList>;
   listToolsForRun(authorization: string | undefined): Promise<GovernedToolList>;
   setToolStatus(principal: ToolingPrincipal, toolId: string, status: ToolStatus): Promise<void>;
   listGrants(): Promise<ToolGrantList>;

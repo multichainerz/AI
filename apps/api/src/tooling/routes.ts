@@ -1,6 +1,7 @@
 import {
   gatewayCredentialListSchema,
   governedToolListSchema,
+  scopedMemoryListSchema,
   issueGatewayCredentialSchema,
   issuedGatewayCredentialSchema,
   decideToolApprovalSchema,
@@ -191,6 +192,18 @@ export async function registerAdminToolingRoutes(app: FastifyInstance, options: 
     const manager = managerOrLocked(options, reply);
     if (!principal || !manager) return;
     return governedToolListSchema.parse(await manager.listTools());
+  });
+
+  /*
+   * Behind `corpus:content:read`, the scope that already governs reading what
+   * an agent knows. These rows are memory, so they answer to the same gate as
+   * the file-backed memory beside them on the screen.
+   */
+  app.get("/scoped-memory", async (request, reply) => {
+    const principal = await requireAdmin(request, reply, options, "corpus:content:read");
+    const manager = managerOrLocked(options, reply);
+    if (!principal || !manager) return;
+    return scopedMemoryListSchema.parse(await manager.listScopedMemory());
   });
 
   app.patch("/tools/:toolId", async (request, reply) => {

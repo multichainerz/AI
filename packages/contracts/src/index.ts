@@ -15,6 +15,7 @@ export * from "./people.js";
 export * from "./guardrails.js";
 export * from "./prompts.js";
 export * from "./runtime-nodes.js";
+export * from "./scoped-memory.js";
 export * from "./platform.js";
 export * from "./tooling.js";
 export * from "./version.js";

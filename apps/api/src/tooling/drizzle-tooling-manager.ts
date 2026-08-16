@@ -8,6 +8,7 @@ import type {
   ToolGrant,
   ToolMetrics,
   ToolRuntimeControl,
+  ScopedMemoryList,
   ToolsetAdmission,
   ToolStatus,
   UpdateToolRuntimeControl,
@@ -25,6 +26,7 @@ import {
   governedTool,
   governedToolCall,
   mcpGatewayCredential,
+  division,
   runtimeToolsetAdmission,
   scopedMemoryEntry,
   toolApproval,
@@ -360,6 +362,49 @@ export class DrizzleToolingManager implements ToolingManager {
       .set({ lastUsedAt: new Date() })
       .where(eq(mcpGatewayCredential.id, credential.id));
     return true;
+  }
+
+  /**
+   * What agents have remembered, for Agents → Memory.
+   *
+   * Reads the same table the `recall` tool reads. That is the whole reason the
+   * store lives in VM1's database: the screen shows what the agent has, rather
+   * than a mirror that could fall behind it, and there is no reconciliation
+   * that could be wrong.
+   *
+   * Deliberately unscoped by division, because every caller is an administrator
+   * and administrators are deployment-wide. The division is *labelled* on each
+   * row rather than used to filter it -- an administrator asking "what has been
+   * remembered" is asking about the whole deployment.
+   */
+  async listScopedMemory(limit = 200): Promise<ScopedMemoryList> {
+    const [rows, [counted]] = await Promise.all([
+      this.database
+        .select({
+          id: scopedMemoryEntry.id,
+          content: scopedMemoryEntry.content,
+          divisionId: scopedMemoryEntry.divisionId,
+          divisionName: division.displayName,
+          runId: scopedMemoryEntry.runId,
+          createdAt: scopedMemoryEntry.createdAt,
+        })
+        .from(scopedMemoryEntry)
+        .leftJoin(division, eq(division.id, scopedMemoryEntry.divisionId))
+        .orderBy(desc(scopedMemoryEntry.createdAt))
+        .limit(limit),
+      this.database.select({ total: count() }).from(scopedMemoryEntry),
+    ]);
+    return {
+      items: rows.map((row) => ({
+        id: row.id,
+        content: row.content,
+        divisionId: row.divisionId,
+        divisionName: row.divisionName,
+        runId: row.runId,
+        createdAt: row.createdAt.toISOString(),
+      })),
+      total: counted?.total ?? 0,
+    };
   }
 
   async invoke(toolSlug: string, invocation: GovernedToolInvocation): Promise<GovernedToolResult> {
