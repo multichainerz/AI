@@ -5,6 +5,38 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v8.0.0 — 2026-08-16
+
+Teaches the default agent to use its memory. The seeded profile's instructions
+gain a MEMORY section: when to recall, what is worth remembering, and what to
+leave out.
+
+**The scope is deliberately absent from it.** `remember` and `recall` take no
+division; the one they act on comes from the run's authorization, so wording
+here can neither widen nor narrow it and should not appear to. Telling an agent
+*"only recall your own division's notes"* would read as a rule it could be
+argued out of, when it is in fact the only thing it can do. What the prompt is
+for is the judgement the tools cannot make: whether a thing is worth keeping.
+
+- recall before answering anything that depends on what the team decided before
+- remember durable facts and decisions, not the transcript
+- never remember secrets, credentials or personal data — and the test for that
+  is whether a note would be awkward for a colleague to read
+- write a note that stands alone, since it will be read months later by somebody
+  who was not in the conversation
+
+Only new installations get this. The seeder is `ON CONFLICT DO NOTHING`, so an
+existing deployment keeps the prompt its operators have, which is theirs rather
+than ours to rewrite.
+
+**Still outstanding, and stated plainly because v7.4.0 overstated it.** That
+entry said the MCP spike showed the plane "ready". That was true of the run
+authorization chain on VM1, which is what was measured — but not of VM2, which
+was not. `scripts/install-agentic-node.sh` puts `no_mcp` in Hermes' platform
+allowlist and configures no MCP client at all, so the agent still cannot reach
+these tools. The store, the scope injection, the isolation and the screen are
+real and tested; the last hop is not built.
+
 ## v7.9.0 — 2026-08-16
 
 Makes a fresh install arrive able to remember, rather than able to be configured
