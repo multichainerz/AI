@@ -175,6 +175,10 @@ import {
   type Division,
   type DivisionList,
   type UpdateDivision,
+  skillSetListSchema,
+  toolSetListSchema,
+  type SkillSetList,
+  type ToolSetList,
 } from "@orcasynapse/contracts";
 
 export class OrcaSynapseApiError extends Error {
@@ -1182,4 +1186,28 @@ export async function deleteDivision(id: string): Promise<void> {
     credentials: "same-origin",
   });
   if (!response.ok) await parsedResponse(response);
+}
+
+export async function assignProfileDivision(
+  profileId: string,
+  divisionId: string | null,
+  expectedRevision: number,
+): Promise<void> {
+  const response = await fetch(`/api/v1/admin/divisions/profiles/${encodeURIComponent(profileId)}`, {
+    method: "PUT",
+    headers: adminHeaders(),
+    credentials: "same-origin",
+    body: JSON.stringify({ divisionId, expectedRevision }),
+  });
+  if (!response.ok) await parsedResponse(response);
+}
+
+export async function getToolSets(): Promise<ToolSetList> {
+  const response = await fetch("/api/v1/admin/configuration/tool-sets", { credentials: "same-origin" });
+  return toolSetListSchema.parse(await parsedResponse(response));
+}
+
+export async function getSkillSets(): Promise<SkillSetList> {
+  const response = await fetch("/api/v1/admin/configuration/skill-sets", { credentials: "same-origin" });
+  return skillSetListSchema.parse(await parsedResponse(response));
 }

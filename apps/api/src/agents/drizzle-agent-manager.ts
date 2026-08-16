@@ -71,6 +71,7 @@ interface StoredProfile {
   status: AgentProfile["status"];
   currentVersion: number;
   activeVersion: number | null;
+  divisionId: string | null;
   createdAt: Date;
   updatedAt: Date;
   versions: StoredVersion[];
@@ -246,6 +247,7 @@ function profileDto(profile: StoredProfile, preferCurrent = false): AgentProfile
     activeVersion: profile.activeVersion,
     activeVersionConfiguration: activeVersion ? versionDto(activeVersion) : null,
     version: versionDto(version),
+    divisionId: profile.divisionId,
     createdAt: profile.createdAt.toISOString(),
     updatedAt: profile.updatedAt.toISOString(),
   };

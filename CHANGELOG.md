@@ -5,6 +5,34 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v6.9.0 — 2026-08-16
+
+Puts the pickers on Agents → Profiles. A profile can now be assigned to a
+division, given a tool set and given a skill set, from the screen it belongs to.
+This is what connects v6.8.0's Divisions screen to what a user actually sees.
+
+- show which division each profile is visible to, on the row rather than behind
+  a click
+- add a **Visible to** control per profile, as its own control rather than a
+  field in the version editor: assigning a division does not change what the
+  agent is or how it behaves, only who may reach it, and minting a new immutable
+  version for it would make the version history lie about what changed
+- add tool-set and skill-set pickers to the version editor, both defaulting to
+  "everything", which is what the server resolves to when neither is named
+- carry `AgentProfile.divisionId` in the contract and the DTO
+
+**A bug caught in the browser, not by a test.** The row label resolved the
+division by lookup and fell back to "everyone". The division list loads
+separately from the profiles and lands a frame later — so for that frame, and
+permanently if the request ever failed, a profile restricted to one division
+announced itself as visible to everybody. It showed for exactly one screenshot.
+"Everyone" is now keyed off a null `divisionId` and never off a failed lookup;
+an unresolvable division reads as "a division", which is vague but true.
+
+That failure direction is the one worth spending care on: a restricted thing
+that claims to be open invites exactly the mistake the boundary exists to
+prevent.
+
 ## v6.8.0 — 2026-08-16
 
 Gives divisions a screen. Settings gains a **Divisions** tab, so the boundary

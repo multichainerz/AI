@@ -21,6 +21,7 @@ const session: AdministratorSession = {
 };
 const profile: AgentProfile = {
   id: PROFILE_ID, slug: "hermes-analyst", status: "ACTIVE", currentVersion: 1, activeVersion: 1,
+  divisionId: null,
   version: {
     id: "b41d3534-658b-4cf0-a046-2b20b15f44e5", version: 1, displayName: "Hermes Analyst",
     purpose: "Internal analysis", instructions: "Answer only the authorized request.", modelAlias: "hermes-agent",

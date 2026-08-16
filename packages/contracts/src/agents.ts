@@ -181,6 +181,15 @@ export const agentProfileSchema = z.object({
   // presenting an unactivated draft as the live runtime configuration.
   activeVersionConfiguration: agentProfileVersionSchema.nullable(),
   version: agentProfileVersionSchema,
+  /**
+   * Null means deployment-wide: visible to every signed-in user.
+   *
+   * On the profile rather than the version, because assigning a division is not
+   * a configuration change to the agent -- it does not alter what the agent is
+   * or how it behaves, only who may reach it, and minting a new version for it
+   * would make the version history lie about what changed.
+   */
+  divisionId: z.uuid().nullable(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
 });

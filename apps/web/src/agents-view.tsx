@@ -1,7 +1,7 @@
 import { DEFAULT_AGENT_PROFILE } from "@orcasynapse/contracts";
 import type {
   AdminScope, AdministratorSession, AgentMetrics, AgentProfile, AgentRun, AgentRunEvent,
-  AgentRuntimeControl, AgentSkillReference, CreateAgentProfile,
+  AgentRuntimeControl, AgentSkillReference, CreateAgentProfile, Division, SkillSet, ToolSet,
 } from "@orcasynapse/contracts";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { adminAccess } from "./admin-access.js";
@@ -17,6 +17,10 @@ import {
   getAgentRuns,
   getAgentRuntime,
   getConnections,
+  assignProfileDivision,
+  getDivisions,
+  getSkillSets,
+  getToolSets,
   runOnboardingValidation,
   setAgentProfileState,
   updateAgentProfile,
@@ -24,7 +28,7 @@ import {
 } from "./api.js";
 import {
   Alert, Button, Dialog, EmptyState, Field, Input, LockedScreen, PageHeader,
-  Panel, PanelHeading, StatusText, Textarea, cn, toneFor,
+  Panel, PanelHeading, Select, StatusText, Textarea, cn, toneFor,
 } from "./ui/index.js";
 
 interface AgentsViewProps {
@@ -92,11 +96,24 @@ function draftFromProfile(profile: AgentProfile): CreateAgentProfile {
     timeoutSeconds: profile.version.timeoutSeconds,
     maxConcurrentRuns: profile.version.maxConcurrentRuns,
     safeMode: true,
+    ...(profile.version.toolSetId ? { toolSetId: profile.version.toolSetId } : {}),
+    ...(profile.version.skillSetId ? { skillSetId: profile.version.skillSetId } : {}),
   };
 }
 
 export function AgentsView({ unlocked, session, administrator, activationReady, activationMessage, oidcConfigured, onSignIn, onConfigure, onOpenChat, onOpenReadiness, onSessionExpired }: AgentsViewProps) {
   const [profiles, setProfiles] = useState<AgentProfile[]>([]);
+  /*
+   * The named sets and divisions a profile can be pointed at.
+   *
+   * Loaded here rather than inside the editor so the list can name a profile's
+   * division without a second round trip, and so a failure to read them leaves
+   * the editor usable: a profile created without naming a set gets the tracking
+   * defaults on the server, which is the same answer an empty picker gives.
+   */
+  const [toolSets, setToolSets] = useState<ToolSet[]>([]);
+  const [skillSets, setSkillSets] = useState<SkillSet[]>([]);
+  const [divisions, setDivisions] = useState<Division[]>([]);
   /*
    * The deployment-wide execution boundary, as the profile list reports it.
    *
@@ -217,11 +234,37 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
     }
     let active = true;
     void load().catch((cause) => active && fail(cause));
+    /*
+     * Best-effort and deliberately not part of `load`: these three only fill
+     * pickers, and a profile saved without naming a set gets the tracking
+     * defaults on the server. A failure here must not take the editor down with
+     * it.
+     */
+    void Promise.all([getToolSets(), getSkillSets(), getDivisions(false)])
+      .then(([tools, skills, divisionList]) => {
+        if (!active) return;
+        setToolSets(tools.items);
+        setSkillSets(skills.items);
+        setDivisions(divisionList.items);
+      })
+      .catch(() => undefined);
     const timer = window.setInterval(() => {
       if (active && runsRef.current.some(({ status }) => runningStatuses.has(status))) void loadRuns().catch(() => undefined);
     }, 2_500);
     return () => { active = false; window.clearInterval(timer); };
   }, [unlocked, administrator]);
+
+  const assignDivision = async (profile: AgentProfile, divisionId: string | null) => {
+    setBusy("profile-save");
+    try {
+      await assignProfileDivision(profile.id, divisionId, profile.currentVersion);
+      await load();
+    } catch (cause) {
+      fail(cause);
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const selectedProfile = useMemo(
     () => profiles.find(({ id }) => id === selectedProfileId) ?? null,
@@ -522,6 +565,24 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
                 <small className="mt-1 block truncate font-mono text-micro text-faint">
                   {profile.slug} · current v{profile.version.version} · {profile.version.modelAlias} · distro {profile.version.distributionDigest.slice(0, 10)}
                   {profile.activeVersion !== null && profile.activeVersion !== profile.version.version ? ` · live v${profile.activeVersion}` : ""}
+                  {/*
+                    * Who can reach it, on the row rather than behind a click.
+                    * "everyone" is the honest word for a null division: it is
+                    * not "unassigned" or "none" -- the profile really is visible
+                    * to every signed-in user, and a label that sounded like an
+                    * empty field would hide that.
+                    *
+                    * Which is exactly why "everyone" is keyed off a null
+                    * `divisionId` and never off a failed lookup. The division
+                    * list loads separately and lands after the profiles: for one
+                    * frame -- or permanently, if that request fails -- a
+                    * restricted profile would otherwise announce itself as
+                    * visible to everybody. Caught in the browser, where it
+                    * showed for exactly one screenshot.
+                    */}
+                  {` · ${profile.divisionId === null
+                    ? "everyone"
+                    : divisions.find(({ id }) => id === profile.divisionId)?.displayName ?? "a division"}`}
                 </small>
               </div>
               {/*
@@ -552,6 +613,31 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
                   </StatusText>}
               </div>
             </Button>
+            {canManage && divisions.length > 0 && (
+              /*
+                * Its own control, not a field in the version editor. Assigning a
+                * division does not change what the agent is or how it behaves,
+                * only who may reach it -- minting a new immutable version for it
+                * would make the version history lie about what changed. The
+                * write is guarded server-side by `currentVersion`, so a stale
+                * tab cannot silently re-home a profile somebody else just
+                * edited.
+                */
+              <label className="flex items-center justify-end gap-2 text-caption text-muted">
+                <span>Visible to</span>
+                <Select
+                  className="h-8 w-[220px] text-caption"
+                  value={profile.divisionId ?? ""}
+                  disabled={busy !== null}
+                  onChange={(event) => void assignDivision(profile, event.target.value || null)}
+                >
+                  <option value="">Everyone (deployment-wide)</option>
+                  {divisions.map((item) => (
+                    <option key={item.id} value={item.id}>{item.displayName}</option>
+                  ))}
+                </Select>
+              </label>
+            )}
             {canManage && <div className="flex justify-end gap-1.5">
               <Button size="sm" onClick={() => editProfile(profile)}>New version</Button>
               {profile.status === "ACTIVE"
@@ -646,10 +732,44 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
           >
             <Textarea className="font-mono" value={skillsDraft} placeholder={`One per line: name@version ${"a".repeat(64)}`} onChange={(event) => setSkillsDraft(event.target.value)} />
           </Field>
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-3">
             <Field label="Inference model" hint="Filled from the healthy AI Inference connection.">
               <Input required value={profileDraft.modelAlias} onChange={(event) => setProfileDraft({ ...profileDraft, modelAlias: event.target.value })} />
             </Field>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field
+              label="Tool set"
+              hint="Which Hermes toolsets this version declares. Leave on the default and it means everything this deployment admits."
+            >
+              <Select
+                value={profileDraft.toolSetId ?? ""}
+                onChange={(event) => setProfileDraft({ ...profileDraft, toolSetId: event.target.value || undefined })}
+              >
+                <option value="">Default — everything admitted</option>
+                {toolSets.map((set) => (
+                  <option key={set.id} value={set.id}>
+                    {set.displayName}{set.tracksAdmission ? " (tracks admission)" : ""}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field
+              label="Skill set"
+              hint="A named selection the system prompt can refer to. Like the Skills field above, it is recorded rather than delivered."
+            >
+              <Select
+                value={profileDraft.skillSetId ?? ""}
+                onChange={(event) => setProfileDraft({ ...profileDraft, skillSetId: event.target.value || undefined })}
+              >
+                <option value="">Default — everything the runtime reports</option>
+                {skillSets.map((set) => (
+                  <option key={set.id} value={set.id}>{set.displayName}</option>
+                ))}
+              </Select>
+            </Field>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
             <Field label="Timeout (seconds)"><Input required type="number" min={30} max={3600} value={profileDraft.timeoutSeconds} onChange={(event) => setProfileDraft({ ...profileDraft, timeoutSeconds: Number(event.target.value) })} /></Field>
             <Field label="Concurrent runs"><Input required type="number" min={1} max={20} value={profileDraft.maxConcurrentRuns} onChange={(event) => setProfileDraft({ ...profileDraft, maxConcurrentRuns: Number(event.target.value) })} /></Field>
           </div>
