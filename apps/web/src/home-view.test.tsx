@@ -248,11 +248,33 @@ describe("Home", () => {
     expect(panel.outerHTML).not.toContain("bg-[#2B1364]");
 
     const heroRule = /\.dashboard-hero \{[^}]*\}/.exec(stylesheet)?.[0] ?? "";
-    const headerRule = /\.workspace-header--immersive \{[^}]*\}/.exec(stylesheet)?.[0] ?? "";
     expect(heroRule).toContain("background: var(--bg)");
-    expect(headerRule).toContain("background: var(--bg)");
     expect(heroRule).not.toContain("--brand-rgb");
-    expect(headerRule).not.toContain("--brand-rgb");
+  });
+
+  /*
+   * The sticky band above the panel used to be asserted here as themed too, on
+   * the grounds that band and panel should read as one field. The band has since
+   * been given the rail's violet deliberately -- it continues the sidebar rather
+   * than the canvas -- so the assertion moved here and inverted. The panel above
+   * is still the thing that must not go violet; this is the thing that must.
+   *
+   * The token lines are the half worth guarding. A brand background with
+   * page-coloured ink is the failure mode that has no visible symptom in the
+   * dark theme and puts near-black text on deep violet in the light one, so the
+   * background and the foreground override are asserted as a pair.
+   */
+  it("keeps the sticky band on the rail's violet, with ink re-pointed for it", () => {
+    const bandRule = /\n\.workspace-header \{[^}]*\}/.exec(stylesheet)?.[0] ?? "";
+    const immersiveRule = /\.workspace-header--immersive \{[^}]*\}/.exec(stylesheet)?.[0] ?? "";
+
+    expect(bandRule).toContain("background: rgb(var(--brand-rgb))");
+    expect(immersiveRule).toContain("background: rgb(var(--brand-rgb))");
+    expect(bandRule).toContain("--text-rgb: 255 255 255");
+    // `--foreground-rgb` is a separate declaration and not a forward of
+    // `--text-rgb`: the alias is substituted on <html>, so overriding one and
+    // not the other leaves the operator control's `text-foreground` dark.
+    expect(bandRule).toContain("--foreground-rgb: 255 255 255");
   });
 
   it("reports what the deployment has done, not what it is ready to do", () => {

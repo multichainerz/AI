@@ -808,8 +808,9 @@ main > * { width: min(100%, 1380px); margin-left: auto; margin-right: auto; }
 
 /* The panel sits directly under the sticky band, with nothing between them.
    The band carries 26px of bottom margin for every other screen; here the two
-   surfaces are meant to read as one field, so it is cancelled at the join
-   rather than removed from the band. */
+   are meant to meet on a shared edge -- the brand band introducing the themed
+   canvas, with no strip of page between them -- so the margin is cancelled at
+   the join rather than removed from the band. */
 .workspace-header + .dashboard-hero { margin-top: -26px; }
 
 @media (max-width: 760px) {
@@ -830,10 +831,114 @@ main > * { width: min(100%, 1380px); margin-left: auto; margin-right: auto; }
   }
 }
 
-.workspace-header { position: sticky; top: 0; z-index: 40; width: auto; max-width: none; margin: 0 calc(-1 * clamp(24px, 4vw, 64px)) 26px; padding: 0 clamp(24px, 4vw, 64px); border-bottom: 1px solid var(--border); background: rgb(var(--bg-rgb) / 0.92); backdrop-filter: blur(12px); }
-/* On the Dashboard the band takes the command panel's themed canvas colour, so
-   the two read as one field rather than a lid on it. Opaque and not transparent
-   on purpose: the band is sticky, so it stays legible once the panel scrolls.
+/*
+ * The band carries the rail's brand violet, so the workspace chrome is one
+ * colour: the sidebar's edge and the header's underside now meet at #2B1364
+ * instead of a violet rail butting into a page-coloured lid. Like the rail --
+ * and like the login hero -- it does not theme. Brand is brand in both.
+ *
+ * The background is the easy half. The hard half is that every child in here
+ * was written for the *page* surface: `text-text` on the area label,
+ * `border-input` / `bg-background` / `text-foreground` on the operator control,
+ * `text-faint` on its caption, `bg-soft` behind the initials. Every one of
+ * those flips with the theme, so swapping only the background puts near-black
+ * ink on deep violet the moment the light theme is chosen -- and nothing in
+ * this repo would have failed to say so.
+ *
+ * So the band re-points the tokens rather than restyling the children, which is
+ * the move `.sidebar` already makes when it pins `--accent-rgb`. It works
+ * because every colour in `tailwind.config.ts` is authored as
+ * `rgb(var(--x-rgb) / <alpha-value>)`: the variable is read on the element
+ * wearing the utility, not frozen into the class at build time, so one
+ * redefinition here reaches `text-text`, `bg-soft` and `border-input`
+ * everywhere beneath it. The account menu is a descendant too, so it comes
+ * along and reads as a violet panel belonging to the band rather than a
+ * page-coloured card hanging off it.
+ *
+ * Two traps come with that mechanism, and both fail silently:
+ *
+ * 1. The shadcn aliases do not forward. A custom property computes to its
+ *    specified value with `var()` already substituted, on the element that
+ *    declares it -- so `--foreground-rgb: var(--text-rgb)` is a literal
+ *    `237 237 239` by the time <html> is done with it, and descendants inherit
+ *    that number, not the reference. Overriding `--text-rgb` alone would
+ *    whiten the area label and leave the operator control's `text-foreground`
+ *    near-black beside it. Every alias the band's children actually consume is
+ *    therefore restated below next to the token it aliases, and the pairs have
+ *    to move together.
+ * 2. `--border` has that same shape (`rgb(var(--border-rgb))`, resolved on
+ *    <html>) and this rule's own `border-bottom` reads it, so the hairline
+ *    needs the resolved form restated as well as the channels.
+ *
+ * The values are solid colours computed against #2B1364 rather than white at an
+ * alpha, for the reason the palette at the top of this file gives for its
+ * hairlines, plus one that belongs to this rule: the band is translucent over a
+ * blur, so an alpha layer inside it would change shade with whatever happens to
+ * be scrolling underneath. Measured, not reasoned about -- white on the band is
+ * 12.33:1 at the worst composite the blur can produce (a white card passing
+ * beneath) and 15.57:1 over the dark page, and the quietest pair in the band,
+ * the initials on their chip, is 5.20:1. Those figures are the same in both
+ * themes because none of these tokens theme; only the 8% showing through does.
+ */
+.workspace-header {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  width: auto;
+  max-width: none;
+  margin: 0 calc(-1 * clamp(24px, 4vw, 64px)) 26px;
+  padding: 0 clamp(24px, 4vw, 64px);
+  border-bottom: 1px solid var(--border);
+  /*
+   * Opaque, and the blur is gone with it.
+   *
+   * At 0.92 the page bled 8% through the band, so it composited to #3B256F in
+   * light against the rail's #2B1364 -- a measured deltaE of 8.57, plainly
+   * visible where the two meet at the top-left corner. The requirement was that
+   * this band read as the same purple as the rail, and translucency cannot
+   * satisfy that in both themes: the colour behind it differs by theme, so the
+   * result must too.
+   *
+   * `backdrop-filter` is therefore dropped rather than left inert. Kept, it
+   * would compute on every scroll for no visible effect, and read to the next
+   * person as a frosted panel that had stopped working.
+   */
+  background: rgb(var(--brand-rgb));
+
+  --text-rgb: 255 255 255;
+  --foreground-rgb: 255 255 255;        /* alias of --text-rgb; trap 1 above */
+  --muted-rgb: 206 199 230;
+  --muted-foreground-rgb: 206 199 230;  /* alias of --muted-rgb */
+  --faint-rgb: 196 188 222;
+  /* White 10% over brand. `bg-background` means "flush with the surface behind
+     me", and in here that surface is the brand panel -- so the operator control
+     is lifted a step off it rather than painted invisibly onto it. */
+  --background-rgb: 64 43 116;
+  --raised-rgb: 77 57 125;              /* white 16% -- its hover, and the menu */
+  --secondary-rgb: 77 57 125;           /* alias of --raised-rgb */
+  --soft-rgb: 90 71 134;                /* white 22% -- initials chip, menu hover */
+  --border-rgb: 77 57 125;
+  --border: rgb(77 57 125);             /* the resolved form; trap 2 above */
+  /* White 50%, and louder than the page's hairline on purpose. This token is
+     the operator control's *boundary*, and carried over at the page's weight it
+     measured 1.71:1 against the band in dark and 1.33:1 in light -- a control
+     with no visible edge, which is what it already was on the page. Here it
+     clears the 3:1 a boundary is meant to hold: worst case 3.58:1, against its
+     own fill. */
+  --border-strong-rgb: 149 137 178;
+  --input-rgb: 149 137 178;             /* alias of --border-strong-rgb */
+  /* Pinned exactly as `.sidebar` pins it, for the reason given there: the light
+     theme's #703DEF is tuned to sit on a pale page and goes dim on deep violet,
+     taking the focus ring down with it. */
+  --accent-rgb: 146 119 245;
+  --primary-rgb: 146 119 245;           /* alias of --accent-rgb */
+  --ring-rgb: 146 119 245;              /* alias of --accent-rgb */
+  --accent-strong-rgb: 214 204 255;     /* the initials, 5.20:1 on their chip */
+}
+/* On the Dashboard the band is opaque rather than translucent, and the reason
+   is unchanged by the colour: it is sticky over a panel that scrolls, so the 8%
+   that shows through elsewhere would be 8% of something moving. Same violet,
+   nothing through it.
 
    Declared *after* `.workspace-header` deliberately: both are a single class, so
    neither wins on specificity and the later one takes it. Written above, this
@@ -841,7 +946,7 @@ main > * { width: min(100%, 1380px); margin-left: auto; margin-right: auto; }
    the band stayed page-coloured. */
 .workspace-header--immersive {
   border-bottom-color: var(--border);
-  background: var(--bg);
+  background: rgb(var(--brand-rgb));
 }
 
 /*

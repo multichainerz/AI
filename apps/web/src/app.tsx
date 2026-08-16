@@ -183,7 +183,12 @@ function connectionState(connection: ServiceConnectionSummary | undefined) {
 
 /**
  * The sticky band above every screen: where you are, and the theme switch.
- * Blurred over the content it floats on, per the design's header treatment.
+ * Blurred over the content it floats on, per the design's header treatment, and
+ * on the rail's brand violet in both themes. The children below carry ordinary
+ * semantic classes -- `text-text`, `bg-soft`, `border-input` -- and read as
+ * white-on-violet because `.workspace-header` re-points those tokens for its
+ * own subtree. The reasoning is in `styles.css`; nothing here hard-codes a
+ * colour, so the band's palette stays in one place.
  */
 function WorkspaceHeader({
   area,
@@ -195,9 +200,10 @@ function WorkspaceHeader({
   operator: { initials: string; name: string; detail: string };
   onSignOut: () => void;
   /*
-   * The Dashboard's command panel begins directly beneath this band. Immersive
-   * keeps the header opaque on that same themed canvas so the sticky band and
-   * the command surface read as one continuous field.
+   * The Dashboard's command panel begins directly beneath this band and
+   * scrolls under it. Immersive drops the 8% the band is otherwise translucent
+   * by, because 8% of a moving surface is a band that shimmers; the violet is
+   * the same either way.
    */
   immersive: boolean;
 }) {
@@ -231,7 +237,15 @@ function WorkspaceHeader({
       <div className="flex h-12 items-center gap-4">
         <span className="font-display text-[15px] font-semibold tracking-[-0.01em] text-text">{area}</span>
         <span className="flex-1" />
-        <ThemeToggle />
+        {/*
+          * The one child the band's token override cannot reach. `.theme-toggle__track`
+          * paints itself from `--text-rgb` at 8%, which the override does turn into
+          * white-on-violet -- but its `[data-mode="light"]` state is a teal track with a
+          * teal inset ring, tuned for a pale page. `tone="brand"` is the variant the
+          * login hero already uses on this exact violet, so the switch is the existing
+          * one rather than a third treatment invented for the band.
+          */}
+        <ThemeToggle tone="brand" />
         {/*
           * The account moved out of the rail and into the top-right corner.
           *

@@ -5,6 +5,39 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v8.8.2 — 2026-08-16
+
+Paints the workspace header the sidebar's violet, in both themes, with the
+foreground carried by scoped tokens rather than by editing every child.
+
+- override the colour tokens on `.workspace-header` itself, which works because
+  every Tailwind colour here is `rgb(var(--x-rgb) / <alpha-value>)` and the
+  variable resolves on whichever element wears the utility — so one scope
+  re-points `text-text`, `bg-soft`, `border-input` and the rest of the subtree,
+  the account menu included
+- restate each shadcn alias beside its base token: `--foreground-rgb:
+  var(--text-rgb)` is substituted on `<html>`, so it computes to a literal and
+  descendants inherit the number rather than the reference. Overriding the base
+  alone whitens the label and leaves the operator button near-black
+- give the theme toggle `tone="brand"`, the variant the login hero already uses
+  on this violet — its light-mode track is a teal tuned for a pale page and is
+  the one child tokens cannot reach
+- drop `backdrop-filter` and paint the band opaque. At 0.92 the page bled
+  through and the band composited to `#3B256F` in light against the rail's
+  `#2B1364` — a measured ΔE of 8.57, visible where they meet. Translucency
+  cannot read as one colour in both themes, because what sits behind it differs
+  by theme
+- invert the guard in `home-view.test.tsx`, which asserted the immersive header
+  must *not* use `--brand-rgb` — a deliberate decision from when the Dashboard
+  moved off a fixed violet field, now deliberately reversed. The replacement
+  asserts the brand background and the foreground override **as a pair**, since
+  a brand background with page ink is the failure that has no dark-theme symptom
+
+Contrast was measured in a browser against the built stylesheet rather than
+reasoned about, and the probe was validated by mutation: injecting the page's
+ink back onto the band collapsed the operator control to 1.51:1. Worst surviving
+text pair is 5.20:1; the control's boundary went from 1.71 to 4.83.
+
 ## v8.8.1 — 2026-08-16
 
 Makes the audit trail say which control moved. Turning extraction off while
