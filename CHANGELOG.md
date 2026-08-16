@@ -5,6 +5,29 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v8.5.1 — 2026-08-16
+
+Adds `docs/MEMORY_HARDENING_PLAN.md`, covering the three things flagged when
+division memory shipped. Documentation only.
+
+- rank injection by relevance rather than recency, using the GIN index
+  `ScopedMemoryEntry` already carries and the governed `recall` handler already
+  queries — today every turn in a division pays about 1500 tokens chosen without
+  reference to the question asked
+- state that lexical matching will miss paraphrases and that embeddings are the
+  answer, rather than letting the improvement pass for the final one
+- move extraction off the worker slot onto the reconcile timer
+  `DrizzleOperationsManager` already runs, with a marker column rather than
+  deriving the work, since a run that produced no notes would retry forever
+- add a deployment-wide switch and an audit event, and note that per-profile
+  control belongs with the profile editor rather than smuggled in here
+
+One gap found while planning and not previously flagged: **nothing can delete a
+memory entry.** `/scoped-memory` has `GET` and `POST` and no `DELETE`, so an
+operator can add a note and never remove one — including a note extraction got
+wrong, with no workaround short of SQL. That is a worse gap than any of the
+three, and the plan sequences it second.
+
 ## v8.5.0 — 2026-08-16
 
 Carries a corrected default profile to installs that already exist, and tests
