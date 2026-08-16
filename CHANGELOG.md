@@ -5,6 +5,33 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v8.0.1 — 2026-08-16
+
+Adds `docs/MCP_ENABLEMENT_PLAN.md`, the plan for the one gap left in the
+divisions work: an agent on VM2 still cannot reach the memory tools built on
+VM1. Documentation only.
+
+Every anchor is verified rather than recalled, and the plan records two traps
+found while writing it:
+
+- **`API_SERVER_KEY` is not the gateway key.** It is `openssl rand -hex 32`
+  generated on VM2 for Hermes' own API server. Reusing it for the MCP gateway
+  would hand the agent a credential the control plane never issued and cannot
+  revoke. The pattern to copy is `modelBootstrap`, which already delivers the
+  inference key at enrolment.
+- **The desired-state reconciler rewrites the allowlist on every pass.** Enable
+  MCP in the installer alone and the next reconcile puts `no_mcp` back — the
+  agent loses its tools an hour after install, silently, long after anybody is
+  watching. So `mcpEnabled` has to travel in the desired-state document too.
+  This is the piece most likely to be missed, because everything works
+  immediately after install without it.
+
+The verification section asks for the older-control-plane case — enrolment
+returning no `toolBootstrap` — to be run deliberately and second: it is the case
+nobody thinks to try, and the one a version skew actually produces.
+
+**1–2 days**, most of it the installer and its two smoke-test cases.
+
 ## v8.0.0 — 2026-08-16
 
 Teaches the default agent to use its memory. The seeded profile's instructions
