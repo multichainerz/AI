@@ -1,6 +1,8 @@
 import {
   gatewayCredentialListSchema,
   governedToolListSchema,
+  createScopedMemorySchema,
+  scopedMemoryEntrySchema,
   scopedMemoryListSchema,
   issueGatewayCredentialSchema,
   issuedGatewayCredentialSchema,
@@ -204,6 +206,25 @@ export async function registerAdminToolingRoutes(app: FastifyInstance, options: 
     const manager = managerOrLocked(options, reply);
     if (!principal || !manager) return;
     return scopedMemoryListSchema.parse(await manager.listScopedMemory());
+  });
+
+  /*
+   * Curated memory, behind `corpus:write` rather than `tools:manage`.
+   *
+   * What is being written is knowledge an agent will read, not configuration of
+   * a tool, so it answers to the corpus gate beside the file-backed memory it
+   * sits next to on the screen -- the same reasoning that put the read on
+   * `corpus:content:read`.
+   */
+  app.post("/scoped-memory", async (request, reply) => {
+    const principal = await requireAdmin(request, reply, options, "corpus:write");
+    const manager = managerOrLocked(options, reply);
+    if (!principal || !manager) return;
+    const input = createScopedMemorySchema.safeParse(request.body);
+    if (!input.success) {
+      return reply.code(400).send({ error: "INVALID_REQUEST", message: "A division and non-empty content are required." });
+    }
+    return reply.code(201).send(scopedMemoryEntrySchema.parse(await manager.createScopedMemory(principal, input.data)));
   });
 
   app.patch("/tools/:toolId", async (request, reply) => {

@@ -682,3 +682,67 @@ describe("division-scoped memory", () => {
     expect(entries[0]?.content).toBe("everyone");
   });
 });
+
+/*
+ * Curated memory: what an administrator writes for a division directly.
+ *
+ * This exists because extraction has nothing to extract from on a fresh
+ * install. A division's standing facts -- how it closes its books, which
+ * committee approves what -- are known on day one and would otherwise wait for
+ * an agent to infer them from conversations that have not happened.
+ *
+ * It writes to the same table a run reads, so the entry is subject to the same
+ * division selection and needs no separate boundary. The row is deliberately
+ * indistinguishable from a remembered one apart from its null `runId`.
+ */
+describe("administrator-curated division memory", () => {
+  it("writes an entry scoped to the division it names", async () => {
+    const [finance] = await context.database.insert(division)
+      .values({ slug: "finance", displayName: "Finance" }).returning();
+
+    const created = await manager().createScopedMemory(
+      principal,
+      { content: "Finance closes the books on the fifth working day.", divisionId: finance!.id },
+    );
+
+    const [row] = await context.database.select().from(scopedMemoryEntry);
+    expect(created.divisionId).toBe(finance!.id);
+    expect(row?.divisionId).toBe(finance!.id);
+    expect(row?.content).toBe("Finance closes the books on the fifth working day.");
+    // Null run id is what distinguishes curated from remembered, and the Memory
+    // screen reads it to say which is which.
+    expect(row?.runId).toBeNull();
+  });
+
+  it("accepts a deployment-wide entry, which is its own scope rather than all of them", async () => {
+    const [finance] = await context.database.insert(division)
+      .values({ slug: "finance", displayName: "Finance" }).returning();
+
+    await manager().createScopedMemory(
+      principal,
+      { content: "The company holiday calendar is published each November.", divisionId: null },
+    );
+
+    const rows = await context.database.select().from(scopedMemoryEntry);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.divisionId).toBeNull();
+    // Not readable by Finance: a deployment-wide row belongs to the null scope,
+    // and a division reads its own. Asserted here so the write path cannot be
+    // mistaken for a way to broadcast into every division.
+    const financeRows = await context.database.select().from(scopedMemoryEntry)
+      .where(eq(scopedMemoryEntry.divisionId, finance!.id));
+    expect(financeRows).toHaveLength(0);
+  });
+
+  it("records an audit event naming who wrote it", async () => {
+    await manager().createScopedMemory(
+      principal,
+      { content: "Legal reviews every vendor contract over fifty thousand.", divisionId: null },
+    );
+
+    const events = await context.database.select().from(auditEvent)
+      .where(eq(auditEvent.action, "memory.entry_curated"));
+    expect(events).toHaveLength(1);
+    expect(events[0]?.actorId).toBe(principal.id);
+  });
+});

@@ -5,6 +5,35 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v8.3.0 — 2026-08-16
+
+Closes the loop: an administrator can write a division's standing facts, and
+v8.2.0 puts them in that division's prompts. Division-scoped memory now works
+end to end without anything on VM2 changing.
+
+Curated entries exist because extraction has nothing to extract from on a fresh
+install. A deployment already knows how its divisions work on day one; without
+this, that would wait to be inferred from conversations that have not happened.
+
+- add `POST /api/v1/admin/tooling/scoped-memory` behind `corpus:write`, beside
+  the read on `corpus:content:read`, since what is written is knowledge an agent
+  reads rather than configuration of a tool
+- write to the same table a run reads, so a curated note and a remembered one
+  are the same kind of thing to the run reading them, and the division scope has
+  only one place to be got wrong
+- leave `runId` null, which is the only thing distinguishing curated from
+  remembered and what the screen reads to label them
+- require `divisionId` in the request rather than defaulting it, so
+  deployment-wide is chosen rather than reached by leaving a dropdown alone —
+  the widest-looking option has the narrowest readership
+- say on screen that a deployment-wide note is read only by profiles with no
+  division, because "deployment-wide" reads like "everyone" and is not
+- record an audit event naming who wrote it
+
+Still open: nothing writes automatically yet. Post-turn extraction is the
+remaining piece, and `INFERENCE` is a resolvable connection kind the worker can
+already reach.
+
 ## v8.2.0 — 2026-08-16
 
 Division-scoped memory reaches the agent. VM1 selects the division's remembered

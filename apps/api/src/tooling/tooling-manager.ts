@@ -1,4 +1,6 @@
 import type {
+  CreateScopedMemory,
+  ScopedMemoryEntry,
   ScopedMemoryList,
   DecideToolsetAdmission,
   ToolApproval,
@@ -42,6 +44,8 @@ export interface ToolingManager {
   listTools(): Promise<GovernedToolList>;
   /** What agents have remembered, for Agents → Memory. Division-labelled, not division-filtered. */
   listScopedMemory(limit?: number): Promise<ScopedMemoryList>;
+  /** A note an administrator writes for one division, read by that division's runs. */
+  createScopedMemory(principal: ToolingPrincipal, input: CreateScopedMemory): Promise<ScopedMemoryEntry>;
   listToolsForRun(authorization: string | undefined): Promise<GovernedToolList>;
   setToolStatus(principal: ToolingPrincipal, toolId: string, status: ToolStatus): Promise<void>;
   listGrants(): Promise<ToolGrantList>;

@@ -193,7 +193,10 @@ import {
   type Person,
   type PersonList,
   type UpdatePerson,
+  scopedMemoryEntrySchema,
   scopedMemoryListSchema,
+  type CreateScopedMemory,
+  type ScopedMemoryEntry,
   type ScopedMemoryList,
 } from "@orcasynapse/contracts";
 
@@ -1299,4 +1302,11 @@ export async function resetPersonPassword(id: string, password: string): Promise
 export async function getScopedMemory(): Promise<ScopedMemoryList> {
   const response = await fetch("/api/v1/admin/tooling/scoped-memory", { credentials: "same-origin" });
   return scopedMemoryListSchema.parse(await parsedResponse(response));
+}
+
+export async function createScopedMemory(input: CreateScopedMemory): Promise<ScopedMemoryEntry> {
+  const response = await fetch("/api/v1/admin/tooling/scoped-memory", {
+    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return scopedMemoryEntrySchema.parse(await parsedResponse(response));
 }

@@ -1,7 +1,9 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type {
+  CreateScopedMemory,
   DecideToolsetAdmission,
   GatewayCredential,
+  ScopedMemoryEntry,
   GovernedTool,
   ToolApproval,
   ToolCall,
@@ -405,6 +407,47 @@ export class DrizzleToolingManager implements ToolingManager {
       })),
       total: counted?.total ?? 0,
     };
+  }
+
+  /**
+   * An entry an administrator writes for a division, or for the deployment.
+   *
+   * Written to the same table a run reads, deliberately: a curated note and a
+   * remembered one are the same kind of thing to the run that reads them, and
+   * two stores would be two places for the division scope to be got wrong.
+   * `runId` stays null, which is the only thing distinguishing the two and what
+   * the Memory screen reads to label them.
+   *
+   * No division check beyond the foreign key. An administrator is
+   * deployment-wide by construction -- see the scope model in the divisions
+   * plan -- so there is no narrower principal whose division this could exceed.
+   */
+  async createScopedMemory(
+    principal: ToolingPrincipal,
+    input: CreateScopedMemory,
+  ): Promise<ScopedMemoryEntry> {
+    return this.database.transaction(async (transaction) => {
+      const [written] = await transaction
+        .insert(scopedMemoryEntry)
+        .values({ divisionId: input.divisionId, content: input.content, runId: null })
+        .returning();
+      if (!written) throw new ToolingConflictError("The memory entry could not be written.");
+      const [named] = input.divisionId === null ? [] : await transaction
+        .select({ displayName: division.displayName })
+        .from(division).where(eq(division.id, input.divisionId)).limit(1);
+      await transaction.insert(auditEvent).values({
+        actorType: "USER", actorId: principal.id, action: "memory.entry_curated",
+        resourceType: "ScopedMemoryEntry", resourceId: written.id, outcome: "SUCCESS",
+      });
+      return {
+        id: written.id,
+        content: written.content,
+        divisionId: written.divisionId,
+        divisionName: named?.displayName ?? null,
+        runId: null,
+        createdAt: written.createdAt.toISOString(),
+      };
+    });
   }
 
   async invoke(toolSlug: string, invocation: GovernedToolInvocation): Promise<GovernedToolResult> {
