@@ -169,6 +169,12 @@ import {
   type HermesCorpusMutation,
   type HermesCorpusOverview,
   type HermesCorpusRevision,
+  divisionListSchema,
+  divisionSchema,
+  type CreateDivision,
+  type Division,
+  type DivisionList,
+  type UpdateDivision,
 } from "@orcasynapse/contracts";
 
 export class OrcaSynapseApiError extends Error {
@@ -1134,3 +1140,46 @@ export async function getRuntimeCatalogue(): Promise<HermesRuntimeCatalogue> {
  * `dryRun` is the caller's decision because the preview and the commit are the
  * same request; the server defaults it to true, so an omitted flag previews.
  */
+
+/*
+ * Divisions.
+ *
+ * A division bounds which agent profiles a user may see and run. Reads sit
+ * behind `agents:read` and writes behind `agents:manage`: no new scope, because
+ * a division decides which profiles a user reaches, which is the decision the
+ * Agents screens already make.
+ */
+export async function getDivisions(includeSuspended = true): Promise<DivisionList> {
+  const response = await fetch(`/api/v1/admin/divisions?includeSuspended=${includeSuspended ? "true" : "false"}`, {
+    credentials: "same-origin",
+  });
+  return divisionListSchema.parse(await parsedResponse(response));
+}
+
+export async function createDivision(input: CreateDivision): Promise<Division> {
+  const response = await fetch("/api/v1/admin/divisions", {
+    method: "POST",
+    headers: adminHeaders(),
+    credentials: "same-origin",
+    body: JSON.stringify(input),
+  });
+  return divisionSchema.parse(await parsedResponse(response));
+}
+
+export async function updateDivision(id: string, input: UpdateDivision): Promise<Division> {
+  const response = await fetch(`/api/v1/admin/divisions/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: adminHeaders(),
+    credentials: "same-origin",
+    body: JSON.stringify(input),
+  });
+  return divisionSchema.parse(await parsedResponse(response));
+}
+
+export async function deleteDivision(id: string): Promise<void> {
+  const response = await fetch(`/api/v1/admin/divisions/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    credentials: "same-origin",
+  });
+  if (!response.ok) await parsedResponse(response);
+}

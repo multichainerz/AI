@@ -5,6 +5,36 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v6.8.0 — 2026-08-16
+
+Gives divisions a screen. Settings gains a **Divisions** tab, so the boundary
+enforced since v6.4.0 can be operated without curl.
+
+Create, rename, suspend, reactivate and delete a division; see how many agent
+profiles and people each one holds. The counts are the point of the list — an
+administrator about to suspend or delete something needs to see what it holds
+before doing it, which is why they are read from the rows rather than a stored
+number that could drift.
+
+The screen states two limits rather than leaving a reader to assume otherwise,
+because both are easy to get wrong in exactly the expensive direction:
+
+- **A division is not an isolation boundary.** Agents on the same Agentic System
+  node share their memory and their Skills whichever division their profile
+  belongs to.
+- **Administrators are never bounded by a division.** There is no
+  division-scoped administrator, so every administration screen shows the whole
+  deployment.
+
+- add `apps/web/src/divisions-view.tsx` and the four API client calls
+- add the tab, the `Divisions` view token, `#settings/divisions` and `#divisions`
+- update the Settings rail tooltip, which a test requires to name every tab in
+  its own area
+
+The empty state says what the absence means — every agent profile is visible to
+every signed-in user until a division is created and assigned — rather than just
+reporting that there is nothing here.
+
 ## v6.7.0 — 2026-08-16
 
 Divisions become administrable. v6.4.0 made the boundary real but left divisions
