@@ -5,6 +5,35 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v8.8.4 — 2026-08-16
+
+Puts each product area's rail icon beside its title in the workspace header, so
+the band names where you are the same way the rail does.
+
+- reuse both existing tables rather than adding a third: `primaryNavigationGroups`
+  for area → icon key, and the `Glyph` component the rail already dispatches
+  through for key → drawing. Two maps drift, and the symptom would be a header
+  showing a different icon from the rail beside it — which reads as a
+  navigation bug rather than a lookup one, and gets diagnosed in the wrong place
+- flat-map every group rather than `primaryNavigationItems("top")`, which reads
+  correctly and silently drops Settings, the only `"bottom"` area
+- render no wrapper at all when the model names no icon, so the title sits where
+  it would on a header without one — no reserved well, no orphan gap
+- take the colour from `text-muted` so it follows the band's scoped tokens in
+  both themes
+
+Sizing was measured in a browser rather than reasoned about: the glyph renders
+17px against an 11px cap height, ink 11.3–14.2px, which is what makes a
+geometric mark read at the same weight as the letters. `items-center` leaves the
+ink centre 0.75px below the capitals' — a 1px lift would fix "Dashboard" and
+throw "Gateway" and "Operations" the other way, since four of six area names
+carry descenders.
+
+Two comments corrected while merging, both left stale by v8.8.2: the header is
+no longer blurred, and `immersive` is no longer the opaque variant — both are
+opaque now, so what survives in that flag is a layout difference rather than a
+colour one.
+
 ## v8.8.3 — 2026-08-16
 
 Merges Divisions into People, so the row is Setup, People, System. Creating a

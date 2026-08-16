@@ -72,6 +72,7 @@ import { ThemeToggle } from "./ui/theme-toggle.js";
 import { persistRailCollapsed, storedRailCollapsed } from "./shell-preferences.js";
 import {
   pathForView,
+  primaryNavigationGroups,
   primaryNavigationItems,
   productAreaForView,
   setupStepFromHash,
@@ -181,15 +182,40 @@ function connectionState(connection: ServiceConnectionSummary | undefined) {
 }
 
 /**
- * The sticky band above every screen: where you are, and the theme switch.
- * Blurred over the content it floats on, per the design's header treatment, and
- * on the rail's brand violet in both themes. The children below carry ordinary
- * semantic classes -- `text-text`, `bg-soft`, `border-input` -- and read as
- * white-on-violet because `.workspace-header` re-points those tokens for its
- * own subtree. The reasoning is in `styles.css`; nothing here hard-codes a
- * colour, so the band's palette stays in one place.
+ * The icon key the rail already draws for an area, or undefined when the
+ * navigation model names none for it.
+ *
+ * The lookup goes through the model rather than restating "Dashboard is a
+ * monitor, Session is a terminal window" beside the header. There are exactly
+ * two tables in this dispatch — `workspace-navigation.tsx` owns area -> key and
+ * `Glyph` above owns key -> drawing — and a third one written here would be the
+ * copy nobody updates: the visible failure is a header showing one glyph while
+ * the rail row highlighted an inch to its left shows another, which reads as a
+ * navigation bug rather than as a stale lookup table.
+ *
+ * Every group is searched, not `primaryNavigationItems("top")`. Settings is the
+ * only `"bottom"` area today, and it is precisely the one that would go
+ * unnoticed — a session that opens on the Dashboard and never scrolls the rail
+ * to its foot still lands there through `#settings/...`, with the header the
+ * only place the area is named.
  */
-function WorkspaceHeader({
+function areaIconName(area: string): string | undefined {
+  return primaryNavigationGroups.flatMap((group) => group.items).find((item) => item.area === area)?.icon;
+}
+
+/**
+ * The sticky band above every screen: where you are, and the theme switch.
+ * Painted the rail's brand violet in both themes. The children below carry
+ * ordinary semantic classes -- `text-text`, `bg-soft`, `border-input` -- and
+ * read as white-on-violet because `.workspace-header` re-points those tokens
+ * for its own subtree. The reasoning is in `styles.css`; nothing here
+ * hard-codes a colour, so the band's palette stays in one place.
+ *
+ * Exported for the same reason `ApplicationBootScreen` is: it is a shell
+ * surface with no route of its own, so the only way a test can render one per
+ * product area is to be handed the component. Nothing else imports it.
+ */
+export function WorkspaceHeader({
   area,
   operator,
   onSignOut,
@@ -199,10 +225,14 @@ function WorkspaceHeader({
   operator: { initials: string; name: string; detail: string };
   onSignOut: () => void;
   /*
-   * The Dashboard's command panel begins directly beneath this band and
-   * scrolls under it. Immersive drops the 8% the band is otherwise translucent
-   * by, because 8% of a moving surface is a band that shimmers; the violet is
-   * the same either way.
+   * The Dashboard's command panel begins directly beneath this band and scrolls
+   * under it.
+   *
+   * Immersive used to be the opaque variant, back when the band was 8%
+   * translucent and 8% of a moving surface read as a shimmer. Since v8.8.2 both
+   * are opaque -- translucency could not make the band the same violet as the
+   * rail in both themes, because what sits behind it differs by theme -- so
+   * what survives here is the layout difference, not a colour one.
    */
   immersive: boolean;
 }) {
@@ -231,10 +261,76 @@ function WorkspaceHeader({
     };
   }, [accountOpen]);
 
+  const areaIcon = areaIconName(area);
+
   return (
     <header className={cn("workspace-header", immersive && "workspace-header--immersive")}>
       <div className="flex h-12 items-center gap-4">
-        <span className="font-display text-[15px] font-semibold tracking-[-0.01em] text-text">{area}</span>
+        {/*
+          * The area's own rail glyph, then its name, as one lockup rather than
+          * as two items of the row. The row's `gap-4` is the distance between
+          * *controls* -- the title, the theme switch, the account chip -- and at
+          * 16px the icon would read as a separate thing that happens to sit to
+          * the left of the heading. 8px is the distance inside a lockup.
+          *
+          * 17px rather than the title's 15px, and the difference is the point.
+          * A Lucide glyph is drawn inside a 24-unit box with about two units of
+          * air on each side, so what these six actually put on the screen at
+          * that size measures between 11.3px and 14.2px of ink, against a cap
+          * height of 11px -- measured in a browser on the built stylesheet, not
+          * inferred from the numbers in the class. A geometric mark set at
+          * exactly cap height reads smaller than the letters beside it, and
+          * about a quarter taller is what makes the two look like one thing; at
+          * 15px these glyphs would land at or under the capitals and read
+          * shrunken next to a semibold word. It is also the 17px the front page
+          * already pairs with its 14.5px semibold submit row.
+          *
+          * `items-center` is the whole of the vertical alignment, and that is
+          * measured too: the glyph's ink centre lands 0.75px below the centre of
+          * the capitals, and 0.25px below the ink centre of a name that has no
+          * descender. The nudge this looks like it wants is worse than nothing.
+          * Four of the six names carry a descender, which moves their ink centre
+          * the other way -- so a lift that squared "Dashboard" against its
+          * capitals would leave "Gateway" and "Operations" 1.75px out on the
+          * side nobody was complaining about.
+          *
+          * `text-muted`, not a colour: `.workspace-header` re-scopes the text
+          * ramp for the band, and an icon carrying its own value would be the
+          * one mark in here that ignored it. A step below the title on purpose,
+          * the way the rail's icon column sits below its labels -- the name is
+          * the information and the glyph is the same fact drawn again.
+          */}
+        <span className="flex items-center gap-2">
+          {/*
+            * Decorative, and `aria-hidden` sits on the wrapper rather than on
+            * the glyph. The area is spelled out in text 8px to the right, so a
+            * glyph in the accessibility tree buys a screen reader "image,
+            * Agents, Agents" and nothing else. Both icon sets in this product --
+            * Lucide, which `Glyph` draws from, and the Relay set beside it --
+            * hide their own <svg>, but each does so as a default of its own
+            * making, and Lucide's is conditional on how the component was
+            * called. The wrapper is the one place this file can say it, and it
+            * covers whatever the map returns next.
+            *
+            * Rendered at all only when the model names an icon. Always drawing
+            * the wrapper and letting it come out empty would keep the 8px lockup
+            * gap for nothing and stand the title off the position every other
+            * screen puts it in; giving the empty wrapper a fixed 17px so the
+            * layout "holds its place" would be worse, because a blank well
+            * beside a heading reads as an image that failed to load. There is no
+            * place to hold: the name beside it was always the whole of the
+            * information. `empty:hidden` closes the narrower miss -- a key the
+            * model names that `Glyph` has no drawing for, where the wrapper
+            * renders with nothing in it -- since `display: none` takes the span
+            * out of the flex row and the gap leaves with it.
+            */}
+          {areaIcon ? (
+            <span aria-hidden="true" className="flex shrink-0 text-muted empty:hidden [&_svg]:h-[17px] [&_svg]:w-[17px]">
+              <Glyph name={areaIcon} />
+            </span>
+          ) : null}
+          <span className="font-display text-[15px] font-semibold tracking-[-0.01em] text-text">{area}</span>
+        </span>
         <span className="flex-1" />
         {/*
           * The one child the band's token override cannot reach. `.theme-toggle__track`
