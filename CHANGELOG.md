@@ -5,6 +5,43 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v7.6.0 — 2026-08-16
+
+Corrects increment F's store, which removes most of what was left of it.
+Documentation only; no product change. F falls from **7–11 days to 2–4**.
+
+Every draft said SQLite, one file per Hermes process, beside the runtime — *"not
+PostgreSQL: a Postgres would be a service to run, patch and back up for three
+columns"* — with one file per process a hard constraint.
+
+That reasoning was sound for a Hermes memory *provider*, which runs inside the
+runtime on VM2 and cannot reach VM1's database. **It does not apply here, and the
+difference was missed because both are "a memory store".** The tool is hosted on
+the MCP plane, and the MCP plane is VM1's API:
+`DrizzleToolingManager.executeHandler` runs in the API process against VM1's
+PostgreSQL, and every governed call is already recorded there.
+
+So the store is an ordinary VM1 table, and three things fall away:
+
+- **No SQLite**, and none of what it dragged in — no file per process, no
+  service-account ownership, no `.backup` line in the restore runbook, no second
+  store to patch.
+- **No mirror, which was the bulk of the cost.** The mirror existed because a
+  store the corpus plane cannot see makes Agents → Memory lie. A table in that
+  plane *is* visible to it; the screen queries it directly. Nothing to
+  reconcile, because there are no longer two copies.
+- **No new backup story.** VM1's PostgreSQL backup already covers it, and it is
+  the backup an operator already takes.
+
+The VM2 boundary is untouched: nothing there gains a SQL credential, and the
+tool executes on VM1 exactly like every other governed tool. That is the same
+asymmetry already recorded against Hindsight — VM1's inference gateway is
+deliberately reachable from enrolled nodes, its database from nothing — except
+that here the database is never exposed at all, because VM2 never touches it.
+
+The one real cost: memory now needs VM1 reachable. It already is for every run
+— a run is submitted from VM1, and a tool call is an HTTP request back to it.
+
 ## v7.5.0 — 2026-08-16
 
 Builds increment F's scope injection: `runScope(authorization)` answers which

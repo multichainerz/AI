@@ -637,7 +637,7 @@ result, not reintroduce the drawer.
 both, a division, and a user in it — and that user signs in and sees exactly that
 profile. Driven end to end. **5–7 days**, plus the auth path below.
 
-### F — scoped memory, on a local store we own
+### F — scoped memory, on a store we own
 *In the plan. Sequenced last, because A–E must land first — a division-scoped
 memory is meaningless until divisions exist and bound who reaches a profile.*
 
@@ -670,14 +670,43 @@ Non-determinism about *what* to remember stays exactly as it is — that is what
 memory is, and the agent already decides it for `MEMORY.md`. What stops being
 non-deterministic is who can read it.
 
-- **SQLite, one file per Hermes process**, beside the runtime and owned by the
-  service account. Not PostgreSQL: this is a keyed local store for small records
-  with one writer, which is SQLite's ideal profile rather than its edge, and a
-  Postgres would be a service to run, patch and back up for three columns. It is
-  also strictly an upgrade on the flat file it supplements — atomicity, crash
-  safety, a schema and a `WHERE` clause where today there are none. **One file
-  per process is a hard constraint**: two Hermes processes sharing one SQLite is
-  where this goes wrong.
+- **The store is a VM1 PostgreSQL table. There is no SQLite, and no mirror.**
+  Corrected at v7.6.0, and this removes most of the increment's cost.
+
+  Every earlier draft said *"SQLite, one file per Hermes process, beside the
+  runtime and owned by the service account. Not PostgreSQL: ... a Postgres would
+  be a service to run, patch and back up for three columns"*, with **one file
+  per process a hard constraint**.
+
+  That reasoning was sound for a *Hermes memory provider*, which runs inside the
+  runtime on VM2 and therefore cannot reach VM1's database. It does not apply to
+  this design at all, and the difference was missed because both are "a memory
+  store": **the tool is hosted on the MCP plane, and the MCP plane is VM1's
+  API.** `DrizzleToolingManager.executeHandler`
+  (`apps/api/src/tooling/drizzle-tooling-manager.ts:917`) runs in the API
+  process, against `this.database` — VM1's PostgreSQL — and every governed call
+  is already recorded there in `GovernedToolCall`.
+
+  So:
+
+  - **No SQLite**, and none of what it dragged in: no file per process, no
+    service-account ownership, no `.backup` line in the restore runbook, no
+    second store to patch.
+  - **No mirror — and that was the bulk of the cost.** The mirror existed
+    because a store the corpus plane cannot see makes Agents → Memory lie. A
+    table in VM1's own database *is* in that plane; the Memory screen queries it
+    directly. There is nothing to reconcile because there are no longer two
+    copies.
+  - **The VM2 boundary is untouched.** Nothing on VM2 gains a SQL credential.
+    VM2 still makes only signed HTTP calls, and the tool executes on VM1 exactly
+    like every other governed tool. This is precisely the asymmetry recorded
+    against Hindsight above: VM1's *inference gateway* is deliberately exposed to
+    enrolled nodes, VM1's *database* to nothing — and here the database is never
+    exposed, because VM2 never touches it.
+
+  The one genuine loss is that memory now requires VM1 to be reachable. It
+  already is for every run: a run is submitted from VM1, and a tool call is an
+  HTTP request back to it.
 - **The scope is derived from the run, and the agent never holds it at all.**
   Rewritten at v7.4.0 after the spike below; the previous design was weaker and
   is recorded here because the difference matters.
@@ -710,14 +739,12 @@ non-deterministic is who can read it.
   than aspirational. *The tool filters; the prompt never does* — and now the
   prompt could not filter even if somebody tried, because it carries nothing to
   filter with.
-- **The mirror ships in this increment, not after it.** A second store the corpus
-  plane cannot see is the same failure as a provider: the dashboard would show
-  `MEMORY.md` while the real knowledge sat elsewhere. Unlike Hindsight, we own
-  the schema and both ends, so this is ordinary work rather than an integration
-  against someone else's format — but it is the bulk of the cost and it is not
-  optional.
-- **The restore runbook grows a line.** A SQLite file is copied or `.backup`-ed;
-  simple, and untested until it is written down.
+- **~~The mirror ships in this increment~~ — withdrawn at v7.6.0.** It existed
+  to stop a second store making Agents → Memory lie. With the store in VM1's
+  own database there is no second store, so there is nothing to mirror and
+  nothing to fall out of sync. What remains is a read on the Memory screen.
+- **~~The restore runbook grows a line~~ — withdrawn.** VM1's PostgreSQL backup
+  already covers the store, and it is the backup an operator already takes.
 
 **Done when:** a run in Division A cannot recall a row written by Division B —
 asserted against the tool's arguments and its SQL, never against a model reply;
@@ -727,7 +754,8 @@ file-backed entries and are labelled as to which division they belong to; and
 deleting the scope injection fails a test — and, after the spike, one more:
 **a tool call carrying Division A's run authorization cannot read Division B's
 rows even when the request body asks for them**, because the body is not where
-the division comes from. **7–11 days**, most of it the mirror.
+the division comes from. **2–4 days.** The 7–11 day estimate was mostly the mirror and the SQLite
+lifecycle, and both are gone.
 
 ### F is now the only unbuilt increment
 
@@ -764,8 +792,8 @@ mirror, not the store.
 | --- | --- |
 | A–E — divisions, tool sets, skill sets, the screens | 16–22 |
 | D1 — the sign-in decision (2–3 invited OIDC, 5–7 local passwords) | 2–7 |
-| F — scoped memory on a local store | 7–11 |
-| **A–F, everything** | **25–40** |
+| F — scoped memory, on a VM1 table | 2–4 |
+| **A–F, everything** | **20–33** |
 
 The spread is wide because D1 is unanswered, not because the work is vague:
 invited OIDC puts the whole plan at **25–36 days**, local passwords at
