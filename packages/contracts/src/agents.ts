@@ -131,11 +131,30 @@ export const agentVersionConfigurationSchema = z.object({
   safeMode: z.literal(true),
 }).strict();
 
+/**
+ * The version's named sets.
+ *
+ * Optional on the way in and resolved to the tracking defaults when absent, so
+ * a profile is never without them and no caller has to know they exist. Held
+ * apart from `agentVersionConfigurationSchema` on purpose: that shape is the
+ * input to `distributionDigest`, and the digest is recomputed independently in
+ * `packages/database`'s seeder. Folding the sets into it would couple two
+ * packages through a hash for no gain -- the sets are recorded on the version
+ * either way.
+ */
+const agentSetSelectionSchema = {
+  toolSetId: z.uuid().optional(),
+  skillSetId: z.uuid().optional(),
+};
+
 export const createAgentProfileSchema = agentVersionConfigurationSchema.extend({
   slug: agentSlugSchema,
+  ...agentSetSelectionSchema,
 });
 
-export const updateAgentProfileSchema = agentVersionConfigurationSchema.partial().strict()
+export const updateAgentProfileSchema = agentVersionConfigurationSchema
+  .extend(agentSetSelectionSchema)
+  .partial().strict()
   .refine((value) => Object.keys(value).length > 0, {
     message: "At least one agent configuration field must be provided.",
   });
@@ -146,6 +165,9 @@ export const agentProfileVersionSchema = agentVersionConfigurationSchema.extend(
   createdAt: z.iso.datetime(),
   createdBy: z.uuid().nullable(),
   distributionDigest: sha256Schema,
+  /* Nullable only for rows written before the sets existed. */
+  toolSetId: z.uuid().nullable(),
+  skillSetId: z.uuid().nullable(),
 });
 
 export const agentProfileSchema = z.object({

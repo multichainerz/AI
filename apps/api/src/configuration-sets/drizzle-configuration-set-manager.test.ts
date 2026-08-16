@@ -31,7 +31,7 @@ function manager() {
 
 async function admit(...names: string[]) {
   await context.database.insert(runtimeToolsetAdmission)
-    .values(names.map((toolsetName) => ({ toolsetName, admittedBy: principal.id, reason: "Admitted for tests." })));
+    .values(names.map((toolsetName) => ({ toolsetName, admitted: true, admittedBy: principal.id, reason: "Admitted for tests." })));
 }
 
 /*

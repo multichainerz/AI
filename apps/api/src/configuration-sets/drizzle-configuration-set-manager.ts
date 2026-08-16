@@ -44,6 +44,12 @@ export class DrizzleConfigurationSetManager implements ConfigurationSetManager {
     const rows = await this.database
       .select({ name: runtimeToolsetAdmission.toolsetName })
       .from(runtimeToolsetAdmission)
+      // `admitted` is the decision, and it defaults to FALSE: a row here records
+      // that somebody considered a toolset, not that they allowed it. Reading
+      // every row would report refused toolsets as admitted, and the tracking
+      // default would then claim to include tools the node must never enable.
+      // The worker filters the same way; these two must agree.
+      .where(eq(runtimeToolsetAdmission.admitted, true))
       .orderBy(asc(runtimeToolsetAdmission.toolsetName));
     return rows.map(({ name }) => name);
   }

@@ -5,6 +5,43 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v6.5.0 — 2026-08-16
+
+Profiles now carry a tool set and a skill set, and a run reproduces exactly the
+sets its version was given. Increment C of `docs/DIVISIONS_PLAN.md`.
+
+A profile created without naming either gets the tracking defaults, so no API
+caller has to know these exist. An edit that says nothing about the sets carries
+the previous version's forward rather than re-resolving them — a version is
+immutable, and a run must reproduce what it was given rather than what the
+defaults happen to be today.
+
+**The regression this increment is really about.** The plan originally had the
+worker pass `deployment-admitted ∩ the profile's tool set` to `hermes.start`.
+That value is not a control: it feeds `assertAdmittedToolBoundaryFor`, which
+reads the runtime's *enabled* toolsets and throws when any falls outside the set
+it is handed. Narrowing it per profile would not have given that profile fewer
+tools — it would have failed **every** run of any profile whose set was a strict
+subset, with an error reading like runtime drift rather than a design mistake.
+
+So the worker still submits the deployment-wide set, the reason is recorded at
+the seam, and a test in `agent-processor.test.ts` asserts the call arguments.
+That test was verified by implementing the intersection the plan asked for and
+watching it fail.
+
+- add `toolSetId` / `skillSetId` to the create and update contracts, optional in
+  and resolved to the tracking defaults when absent
+- keep both out of `distributionDigest`, so the digest recomputed independently
+  in `packages/database`'s seeder is untouched
+- carry the sets forward across an unrelated edit
+- assert the submitted toolset payload stays deployment-wide
+
+**Also fixes a defect the new test found.** `RuntimeToolsetAdmission.admitted`
+defaults to **false** — a row records that somebody considered a toolset, not
+that they allowed it — and v6.3.0's `admittedToolsetNames` read every row. The
+tracking default would have claimed to include toolsets the deployment had
+refused. It now filters on `admitted`, the way the worker always has.
+
 ## v6.4.0 — 2026-08-16
 
 Divisions become a real boundary. A user in one division cannot list or run

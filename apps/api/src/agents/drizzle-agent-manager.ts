@@ -27,6 +27,8 @@ import {
   platformArchitectureDecision,
   runtimeToolsetAdmission,
   serviceConnection,
+  skillSet,
+  toolSet,
   type OrcaSynapseDatabase,
   agentRunWakeStatement,
 } from "@orcasynapse/database";
@@ -59,6 +61,8 @@ interface StoredVersion {
   safeMode: boolean;
   createdBy: string | null;
   createdAt: Date;
+  toolSetId: string | null;
+  skillSetId: string | null;
 }
 
 interface StoredProfile {
@@ -219,6 +223,8 @@ function versionDto(version: StoredVersion) {
     createdBy: version.createdBy,
     distributionDigest: digest,
     createdAt: version.createdAt.toISOString(),
+    toolSetId: version.toolSetId,
+    skillSetId: version.skillSetId,
   };
 }
 
@@ -316,6 +322,42 @@ export class DrizzleAgentManager implements AgentManager {
    * crosses over -- `getRuntimeControl`'s reason and operator stay on the admin
    * route that returns them.
    */
+  /**
+   * Settle which tool set and skill set a new version carries.
+   *
+   * Precedence: what the caller named, else what the previous version held,
+   * else the tracking defaults. The last step is why no API caller has to know
+   * these exist -- a profile created without naming them gets "everything this
+   * deployment admits", which is both the friendliest default and the only safe
+   * one, since a set narrower than the node's enabled toolsets makes the Hermes
+   * boundary assertion throw.
+   *
+   * Returns a partial rather than throwing when a default is missing: a
+   * database that predates the seed should not lose the ability to create
+   * profiles over a column that is nullable anyway.
+   */
+  private async resolveSets(
+    transaction: { select: OrcaSynapseDatabase["select"] },
+    input: { toolSetId?: string | undefined; skillSetId?: string | undefined },
+    current?: { toolSetId: string | null; skillSetId: string | null },
+  ): Promise<{ toolSetId?: string; skillSetId?: string }> {
+    const named = {
+      toolSetId: input.toolSetId ?? current?.toolSetId ?? undefined,
+      skillSetId: input.skillSetId ?? current?.skillSetId ?? undefined,
+    };
+    if (named.toolSetId && named.skillSetId) return { toolSetId: named.toolSetId, skillSetId: named.skillSetId };
+    const [tools] = named.toolSetId ? [] : await transaction
+      .select({ id: toolSet.id }).from(toolSet).where(eq(toolSet.tracksAdmission, true)).limit(1);
+    const [skills] = named.skillSetId ? [] : await transaction
+      .select({ id: skillSet.id }).from(skillSet).where(eq(skillSet.tracksRuntime, true)).limit(1);
+    const resolvedTool = named.toolSetId ?? tools?.id;
+    const resolvedSkill = named.skillSetId ?? skills?.id;
+    return {
+      ...(resolvedTool ? { toolSetId: resolvedTool } : {}),
+      ...(resolvedSkill ? { skillSetId: resolvedSkill } : {}),
+    };
+  }
+
   async listProfiles(principal: AgentPrincipal, includeInactive: boolean): Promise<AgentProfileList> {
     const [profiles, runtime] = await Promise.all([
       this.database.query.agentProfile.findMany({
@@ -373,6 +415,7 @@ export class DrizzleAgentManager implements AgentManager {
             maxConcurrentRuns: input.maxConcurrentRuns,
             safeMode: input.safeMode,
             createdBy: principal.id,
+            ...(await this.resolveSets(transaction, input)),
           })
           .returning();
         if (!version) throw new AgentConflictError("The agent configuration could not be created.");
@@ -429,6 +472,13 @@ export class DrizzleAgentManager implements AgentManager {
         ...nextConfiguration,
         distributionDigest: distributionDigest(nextConfiguration),
         createdBy: principal.id,
+        /*
+         * Carried forward from the version being superseded unless the caller
+         * changes them. A version is immutable and a run must reproduce exactly
+         * what it was given, so an edit that says nothing about the sets must
+         * not quietly re-resolve them to whatever the defaults are today.
+         */
+        ...(await this.resolveSets(transaction, input, current)),
       });
       await transaction
         .update(agentProfile)

@@ -615,6 +615,16 @@ export class DrizzleAgentProcessor {
   private async admittedToolsets(): Promise<string[]> {
     const rows = await this.database.select({ toolsetName: runtimeToolsetAdmission.toolsetName })
       .from(runtimeToolsetAdmission).where(eq(runtimeToolsetAdmission.admitted, true));
+    /*
+     * Deployment-wide, deliberately -- never narrowed to the profile's tool set.
+     *
+     * This value feeds `assertAdmittedToolBoundaryFor`, which throws when the
+     * runtime has an enabled toolset outside the set it is handed. Narrowing it
+     * per profile would not give that profile fewer tools; it would fail every
+     * one of its runs with what reads like runtime drift. The profile's tool set
+     * is recorded on its version and is declarative. Guarded by the boundary
+     * test in agent-processor.test.ts.
+     */
     return rows.map((row) => row.toolsetName);
   }
 

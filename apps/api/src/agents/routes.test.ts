@@ -28,6 +28,7 @@ const profile: AgentProfile = {
     maxTurns: 1, timeoutSeconds: 600, maxConcurrentRuns: 2, safeMode: true,
     createdAt: "2026-07-30T00:00:00.000Z", createdBy: session.id,
     distributionDigest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    toolSetId: null, skillSetId: null,
   },
   activeVersionConfiguration: null,
   createdAt: "2026-07-30T00:00:00.000Z", updatedAt: "2026-07-30T00:00:00.000Z",

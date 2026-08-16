@@ -4,6 +4,8 @@ import { asc, eq } from "drizzle-orm";
 import {
   agentProfile,
   agentProfileVersion,
+  runtimeToolsetAdmission,
+  toolSet,
   agentRun,
   agentRunEvent,
   agentRuntimeControl,
@@ -153,6 +155,54 @@ async function events(runId: string) {
   return context.database.select().from(agentRunEvent)
     .where(eq(agentRunEvent.runId, runId)).orderBy(asc(agentRunEvent.cursor));
 }
+
+describe("DrizzleAgentProcessor tool boundary", () => {
+  /*
+   * The increment-C regression, placed where the trap actually is.
+   *
+   * `admittedToolsets` on the run submission is NOT a control over what the
+   * agent may use. It feeds `assertAdmittedToolBoundaryFor`, which reads the
+   * runtime's *enabled* toolsets and throws when any of them falls outside the
+   * set handed to it. What a node may enable is decided by its desired state,
+   * deployment-wide, and cannot vary per run.
+   *
+   * So the plan's original instruction -- have the worker pass
+   * `deployment-admitted INTERSECT the profile's tool set` -- would not have
+   * narrowed anything. It would have failed every run of any profile whose set
+   * was a strict subset, with an error that reads like runtime drift rather
+   * than a design mistake.
+   *
+   * This asserts the payload carries the DEPLOYMENT-WIDE set. It is written
+   * against the call arguments rather than a model reply, and it exists to fail
+   * the day somebody implements the intersection that looks obviously correct.
+   */
+  it("submits the deployment-wide admitted set, never a per-profile narrowing", async () => {
+    const { runId, jobId } = await seed();
+    await context.database.insert(runtimeToolsetAdmission).values(
+      ["clarify", "bfl", "memory"].map((toolsetName) => ({
+        toolsetName, admitted: true, admittedBy: randomUUID(), reason: "Admitted for tests.",
+      })),
+    );
+    // A tool set narrower than admission, pointed at by the run's version.
+    const [narrow] = await context.database.insert(toolSet)
+      .values({ slug: "narrow", displayName: "Narrow", toolsetNames: ["memory"] }).returning();
+    await context.database.update(agentProfileVersion)
+      .set({ toolSetId: narrow!.id })
+      .where(eq(agentProfileVersion.id, (await context.database.select({ id: agentProfileVersion.id })
+        .from(agentProfileVersion).limit(1))[0]!.id));
+
+    let submitted: readonly string[] | undefined;
+    const processor = new DrizzleAgentProcessor(context.database, runtime({
+      start: async (input: { admittedToolsets?: readonly string[] }) => {
+        submitted = input.admittedToolsets;
+        return "hermes-native-boundary";
+      },
+    }) as never);
+    await processor.process({ runId }, jobId, WORKER_ID);
+
+    expect([...(submitted ?? [])].sort()).toEqual(["bfl", "clarify", "memory"]);
+  });
+});
 
 describe("DrizzleAgentProcessor finalisation", () => {
   it("writes the end-of-run marker with the completion, and leaves the cursor on the last delivered event", async () => {

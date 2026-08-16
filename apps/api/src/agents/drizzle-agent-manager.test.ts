@@ -12,7 +12,10 @@ import {
   createTestDatabase,
   hermesRuntimeNode,
   platformArchitectureDecision,
+  runtimeToolsetAdmission,
   serviceConnection,
+  skillSet,
+  toolSet,
   type TestDatabase,
 } from "@orcasynapse/database";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -307,6 +310,76 @@ describe("DrizzleAgentManager runs", () => {
 
     await expect(manager().submitRun(principal, { profileId: created.id, input: "hello" } as never))
       .rejects.toBeInstanceOf(AgentConflictError);
+  });
+
+  /*
+   * Increment C: a profile created without naming sets gets the defaults.
+   *
+   * "Everything this deployment admits" is both the friendliest default and the
+   * only safe one -- see the regression below for what a narrower default would
+   * do -- so no API caller has to know these exist.
+   */
+  it("gives a profile the tracking defaults when the caller names none", async () => {
+    const [tools] = await context.database.insert(toolSet)
+      .values({ slug: "default-tool-set", displayName: "Default tool set", tracksAdmission: true }).returning();
+    const [skills] = await context.database.insert(skillSet)
+      .values({ slug: "default-skill-set", displayName: "Default skill set", tracksRuntime: true }).returning();
+
+    const created = await manager().createProfile(principal, profileInput());
+
+    expect(created.version.toolSetId).toBe(tools!.id);
+    expect(created.version.skillSetId).toBe(skills!.id);
+  });
+
+  /*
+   * A version is immutable, so an edit that says nothing about the sets must
+   * carry the previous version's forward rather than re-resolving them to
+   * whatever the defaults happen to be now.
+   */
+  it("carries the sets forward across an unrelated edit", async () => {
+    await context.database.insert(toolSet)
+      .values({ slug: "default-tool-set", displayName: "Default tool set", tracksAdmission: true });
+    await context.database.insert(skillSet)
+      .values({ slug: "default-skill-set", displayName: "Default skill set", tracksRuntime: true });
+    const [named] = await context.database.insert(toolSet)
+      .values({ slug: "finance", displayName: "Finance tools", toolsetNames: ["clarify"] }).returning();
+    const created = await manager().createProfile(principal, profileInput({ toolSetId: named!.id } as never));
+
+    const updated = await manager().updateProfile(principal, created.id, { displayName: "Renamed" } as never);
+
+    expect(updated.currentVersion).toBe(2);
+    expect(updated.version.toolSetId).toBe(named!.id);
+  });
+
+  /*
+   * THE REGRESSION, and the reason this test exists before the feature did.
+   *
+   * The plan originally had the worker pass `deployment-admitted INTERSECT the
+   * profile's tool set` to `hermes.start`. That call is not a control: it feeds
+   * `assertAdmittedToolBoundaryFor`, which fetches the runtime's *enabled*
+   * toolsets and throws if any falls outside the set handed to it. So a profile
+   * whose set is a strict subset of admission would not have run with fewer
+   * tools -- every one of its runs would have failed, and it would have looked
+   * like runtime drift rather than a design error.
+   *
+   * A profile with the narrowest possible tool set must therefore still run.
+   */
+  it("still runs a profile whose tool set is narrower than deployment admission", async () => {
+    await context.database.insert(runtimeToolsetAdmission).values(
+      ["clarify", "bfl", "memory"].map((toolsetName) => ({
+        toolsetName, admitted: true, admittedBy: principal.id, reason: "Admitted for tests.",
+      })),
+    );
+    const [narrow] = await context.database.insert(toolSet)
+      .values({ slug: "narrow", displayName: "Narrow", toolsetNames: ["memory"] }).returning();
+    const created = await manager().createProfile(principal, profileInput({ toolSetId: narrow!.id } as never));
+    await allowActivation();
+    const active = await manager().activateProfile(principal, created.id);
+    await enableRuntime();
+    await enrolHealthyRuntime();
+
+    await expect(manager().submitRun(principal, { profileId: active.id, input: "hello" } as never))
+      .resolves.toMatchObject({ profileId: active.id, status: "QUEUED" });
   });
 
   /*
