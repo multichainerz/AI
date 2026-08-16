@@ -36,13 +36,22 @@
 export interface ProfileVisibilityPrincipal {
   identityMode: "ENTERPRISE" | "ADMINISTRATOR_PREVIEW";
   scopes: readonly string[];
+  /**
+   * The caller's division, or null for a user in none.
+   *
+   * Optional on the interface rather than required because a principal
+   * assembled before divisions existed is a caller in no division, which is the
+   * narrowest reading and therefore the safe one: absent means "sees only
+   * deployment-wide profiles", never "sees everything".
+   */
+  divisionId?: string | null;
 }
 
-/**
- * The subset of a profile this rule reads. Increment D adds `divisionId`.
- */
+/** The subset of a profile this rule reads. */
 export interface ProfileVisibilityCandidate {
   id: string;
+  /** Null means deployment-wide: visible from every division. */
+  divisionId?: string | null;
 }
 
 /**
@@ -57,6 +66,20 @@ export function profileVisibleTo<T extends ProfileVisibilityCandidate>(
   principal: ProfileVisibilityPrincipal,
   profile: T | null | undefined,
 ): profile is T {
-  void principal;
-  return profile !== null && profile !== undefined;
+  if (profile === null || profile === undefined) return false;
+  /*
+   * Administrators are deployment-wide, by design rather than by omission.
+   *
+   * There is no division-scoped administrator anywhere in this product, which
+   * is what makes every administration screen safe by construction. It matters
+   * most for Agents -> Memory and Agents -> Skills: those are shared per node
+   * and *cannot* be filtered by division even in principle, so an administrator
+   * bounded to one division would read what every other division's agent had
+   * learned. Deployment-wide removes that possibility instead of guarding it.
+   */
+  if (principal.identityMode === "ADMINISTRATOR_PREVIEW") return true;
+  // Null division on a profile means deployment-wide, which every profile is
+  // until a super admin deliberately assigns one.
+  if (profile.divisionId === null || profile.divisionId === undefined) return true;
+  return profile.divisionId === principal.divisionId;
 }

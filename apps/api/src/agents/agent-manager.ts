@@ -18,6 +18,13 @@ export interface AgentPrincipal {
   subject: string;
   identityMode: "ENTERPRISE" | "ADMINISTRATOR_PREVIEW";
   scopes: readonly string[];
+  /**
+   * The caller's division, or null for a caller in none.
+   *
+   * Administrators leave this null and are not bounded by it -- an administrator
+   * is deployment-wide. See `profileVisibleTo`.
+   */
+  divisionId?: string | null;
 }
 
 export interface AgentBoundaryVerifier {

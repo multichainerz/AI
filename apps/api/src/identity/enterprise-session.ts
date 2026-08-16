@@ -47,6 +47,8 @@ export interface EnterprisePrincipal {
   displayName: string;
   email: string | null;
   scopes: ["chat:use", "agents:use"];
+  /** The user's division, or null for a user in none. */
+  divisionId: string | null;
   session: EnterpriseSession;
 }
 
@@ -197,7 +199,7 @@ function principalFromRecord(record: {
   createdAt: Date;
   idleExpiresAt: Date;
   absoluteExpiresAt: Date;
-  user: { id: string; displayName: string; email: string | null };
+  user: { id: string; displayName: string; email: string | null; divisionId?: string | null };
 }): EnterprisePrincipal {
   const session: EnterpriseSession = {
     id: record.id,
@@ -219,6 +221,7 @@ function principalFromRecord(record: {
     displayName: record.user.displayName,
     email: record.user.email,
     scopes: ["chat:use", "agents:use"],
+    divisionId: record.user.divisionId ?? null,
     session,
   };
 }

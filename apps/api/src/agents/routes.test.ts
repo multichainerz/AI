@@ -65,7 +65,7 @@ const enterpriseIdentity: EnterpriseIdentityManager = {
       identityMode: "ENTERPRISE",
       displayName: "Pilot User",
       email: "pilot@orcasynapse.example",
-      scopes: ["chat:use", "agents:use"],
+      scopes: ["chat:use", "agents:use"], divisionId: null,
       session: {
         id: ENTERPRISE_SESSION_ID,
         identityMode: "ENTERPRISE",
@@ -74,7 +74,7 @@ const enterpriseIdentity: EnterpriseIdentityManager = {
           displayName: "Pilot User",
           email: "pilot@orcasynapse.example",
         },
-        scopes: ["chat:use", "agents:use"],
+        scopes: ["chat:use", "agents:use"], divisionId: null,
         createdAt: "2026-07-30T00:00:00.000Z",
         idleExpiresAt: "2026-07-30T08:00:00.000Z",
         absoluteExpiresAt: "2026-07-30T12:00:00.000Z",

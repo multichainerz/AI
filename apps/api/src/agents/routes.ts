@@ -57,7 +57,10 @@ async function requirePrincipal(
         await reply.code(403).send({ error: "FORBIDDEN", message: "The enterprise session does not grant agent access." });
         return null;
       }
-      return { id: enterprise.id, subject: enterprise.subject, identityMode: "ENTERPRISE", scopes: enterprise.scopes };
+      return {
+        id: enterprise.id, subject: enterprise.subject, identityMode: "ENTERPRISE",
+        scopes: enterprise.scopes, divisionId: enterprise.divisionId,
+      };
     }
   }
   if (!options.sessionManager && !options.identityManager) {

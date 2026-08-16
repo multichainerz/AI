@@ -5,6 +5,46 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v6.4.0 — 2026-08-16
+
+Divisions become a real boundary. A user in one division cannot list or run
+another division's agent profile.
+
+This is the clause increment A was built to make cheap, and it landed as a
+four-line change to one function because that groundwork existed. The rule:
+
+    administrator || profile.divisionId === null || profile.divisionId === principal.divisionId
+
+Administrators are deployment-wide, by design rather than by omission. There is
+no division-scoped administrator anywhere in this product, which is what makes
+every administration screen safe by construction — it matters most for Agents →
+Memory and Agents → Skills, which are shared per node and *cannot* be filtered
+by division even in principle. A division-scoped admin opening them would read
+what every other division's agent had learned; deployment-wide removes that
+possibility rather than guarding it.
+
+- add the `Division` table, and nullable `divisionId` on `AgentProfile` and
+  `EnterpriseUser` with `ON DELETE RESTRICT`
+- **no column on `LocalAdministrator`** — see above
+- add the division clause to `profileVisibleTo`, and only there
+- carry `divisionId` on the enterprise principal, through both route surfaces
+- select `divisionId` where the rule reads it; omit that and the rule sees
+  `undefined`, treats it as deployment-wide, and passes every profile while
+  looking exactly as it does now
+
+Null division means deployment-wide, which every existing row already is, so the
+migration re-homes nothing. A user in *no* division sees deployment-wide
+profiles only — absent reads as narrowest, never as unrestricted.
+
+Divisions are data, not an enum: any name, any number, created at runtime. That
+follows from division not being a scope — modelled as one, every new division
+would have meant editing `ADMIN_SCOPES`, a release, and an upgrade of every
+deployment.
+
+**Not yet included:** the Division CRUD contract, manager and routes, so
+divisions are currently assignable only by direct database access. The boundary
+is complete and enforced; the administration surface for it is not.
+
 ## v6.3.0 — 2026-08-16
 
 Makes tool sets and skill sets real: contracts, a manager and admin routes at

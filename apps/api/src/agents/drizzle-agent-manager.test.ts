@@ -7,6 +7,7 @@ import {
   agentRunEvent,
   agentRuntimeControl,
   auditEvent,
+  division,
   componentCompatibility,
   createTestDatabase,
   hermesRuntimeNode,
@@ -306,6 +307,86 @@ describe("DrizzleAgentManager runs", () => {
 
     await expect(manager().submitRun(principal, { profileId: created.id, input: "hello" } as never))
       .rejects.toBeInstanceOf(AgentConflictError);
+  });
+
+  /*
+   * The division boundary itself: four answers, all 404.
+   *
+   * Asserted against a real enterprise principal rather than an administrator,
+   * because an administrator is deployment-wide by design and would pass every
+   * case here without the rule doing anything.
+   */
+  it("hides another division's profile from a user, and keeps a deployment-wide one visible", async () => {
+    const [alpha] = await context.database.insert(division)
+      .values({ slug: "alpha", displayName: "Alpha" }).returning();
+    const [beta] = await context.database.insert(division)
+      .values({ slug: "beta", displayName: "Beta" }).returning();
+    const theirs = await activeProfile();
+    const ours = await activeProfile();
+    const shared = await activeProfile();
+    await context.database.update(agentProfile)
+      .set({ divisionId: beta!.id }).where(eq(agentProfile.id, theirs.id));
+    await context.database.update(agentProfile)
+      .set({ divisionId: alpha!.id }).where(eq(agentProfile.id, ours.id));
+    await enableRuntime();
+    await enrolHealthyRuntime();
+
+    const user: AgentPrincipal = {
+      id: randomUUID(), subject: "user:alpha-member",
+      identityMode: "ENTERPRISE", scopes: ["chat:use", "agents:use"], divisionId: alpha!.id,
+    };
+
+    // Not listed, and not runnable -- the same rule answering both.
+    const listed = (await manager().listProfiles(user, false)).items.map(({ id }) => id);
+    expect(listed).not.toContain(theirs.id);
+    expect(listed).toEqual(expect.arrayContaining([ours.id, shared.id]));
+    await expect(manager().submitRun(user, { profileId: theirs.id, input: "hello" } as never))
+      .rejects.toBeInstanceOf(AgentNotFoundError);
+
+    // Their own division's profile and a deployment-wide one both work.
+    await expect(manager().submitRun(user, { profileId: ours.id, input: "mine" } as never))
+      .resolves.toMatchObject({ profileId: ours.id });
+    await expect(manager().submitRun(user, { profileId: shared.id, input: "shared" } as never))
+      .resolves.toMatchObject({ profileId: shared.id });
+  });
+
+  /*
+   * A user with no division sees deployment-wide profiles only. Absent must
+   * read as "narrowest", never as "unrestricted" -- the opposite reading is how
+   * a boundary silently opens.
+   */
+  it("gives a user in no division only the deployment-wide profiles", async () => {
+    const [alpha] = await context.database.insert(division)
+      .values({ slug: "alpha", displayName: "Alpha" }).returning();
+    const owned = await activeProfile();
+    const shared = await activeProfile();
+    await context.database.update(agentProfile)
+      .set({ divisionId: alpha!.id }).where(eq(agentProfile.id, owned.id));
+
+    const user: AgentPrincipal = {
+      id: randomUUID(), subject: "user:unassigned",
+      identityMode: "ENTERPRISE", scopes: ["chat:use", "agents:use"], divisionId: null,
+    };
+
+    const listed = (await manager().listProfiles(user, false)).items.map(({ id }) => id);
+    expect(listed).not.toContain(owned.id);
+    expect(listed).toContain(shared.id);
+  });
+
+  /* An administrator is deployment-wide and is bounded by no division. */
+  it("shows an administrator every division's profile", async () => {
+    const [alpha] = await context.database.insert(division)
+      .values({ slug: "alpha", displayName: "Alpha" }).returning();
+    const owned = await activeProfile();
+    await context.database.update(agentProfile)
+      .set({ divisionId: alpha!.id }).where(eq(agentProfile.id, owned.id));
+
+    const admin: AgentPrincipal = {
+      id: randomUUID(), subject: "local-admin:operator",
+      identityMode: "ADMINISTRATOR_PREVIEW", scopes: ["agents:read"], divisionId: null,
+    };
+
+    expect((await manager().listProfiles(admin, false)).items.map(({ id }) => id)).toContain(owned.id);
   });
 
   it("scopes run visibility to the requesting owner unless the caller may see all", async () => {

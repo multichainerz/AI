@@ -74,6 +74,7 @@ async function requireChatPrincipal(
       subject: enterprise.subject,
       identityMode: "ENTERPRISE",
       scopes: enterprise.scopes,
+      divisionId: enterprise.divisionId,
     };
   }
 

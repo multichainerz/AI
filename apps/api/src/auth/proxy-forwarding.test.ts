@@ -137,7 +137,7 @@ const identityManager: EnterpriseIdentityManager = {
         identityMode: "ENTERPRISE",
         displayName: "Enterprise user",
         email: null,
-        scopes: ["chat:use", "agents:use"],
+        scopes: ["chat:use", "agents:use"], divisionId: null,
         session: {
           id: "0f0a0a4e-0a3d-4a3c-9d3f-7d1b6f4e2c11",
           identityMode: "ENTERPRISE",

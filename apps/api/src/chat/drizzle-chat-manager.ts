@@ -1224,7 +1224,15 @@ export class DrizzleChatManager implements ChatManager {
     profileId: string,
   ): Promise<{ id: string; displayName: string; modelAlias: string; version: number }> {
     const [profile] = await this.database
-      .select({ id: agentProfile.id, status: agentProfile.status, activeVersion: agentProfile.activeVersion })
+      .select({
+        id: agentProfile.id,
+        status: agentProfile.status,
+        activeVersion: agentProfile.activeVersion,
+        // Selected because the visibility rule reads it. Omit it and the rule
+        // sees undefined, which it treats as deployment-wide -- the gate would
+        // pass every profile while looking exactly as it does now.
+        divisionId: agentProfile.divisionId,
+      })
       .from(agentProfile)
       .where(eq(agentProfile.id, profileId))
       .limit(1);

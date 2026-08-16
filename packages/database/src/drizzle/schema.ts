@@ -42,6 +42,7 @@ export const hermesCorpusEntryKind = pgEnum("HermesCorpusEntryKind", ['MEMORY', 
 export const hermesCorpusMutationOperation = pgEnum("HermesCorpusMutationOperation", ['MEMORY_ADD', 'MEMORY_REPLACE', 'MEMORY_REMOVE', 'SKILL_CREATE', 'SKILL_EDIT', 'SKILL_DELETE', 'SKILL_WRITE_FILE', 'SKILL_REMOVE_FILE'])
 export const hermesCorpusMutationStatus = pgEnum("HermesCorpusMutationStatus", ['PENDING_APPROVAL', 'QUEUED', 'DISPATCHED', 'APPLIED', 'REJECTED', 'CONFLICT', 'FAILED', 'EXPIRED'])
 export const configurationSetStatus = pgEnum("ConfigurationSetStatus", ['ACTIVE', 'RETIRED'])
+export const divisionStatus = pgEnum("DivisionStatus", ['ACTIVE', 'SUSPENDED'])
 export const modelDeploymentStatus = pgEnum("ModelDeploymentStatus", ['DRAFT', 'ACTIVE', 'SUSPENDED'])
 export const modelWorkload = pgEnum("ModelWorkload", ['CHAT', 'AGENT'])
 export const onboardingEvidenceOutcome = pgEnum("OnboardingEvidenceOutcome", ['PASSED', 'FAILED', 'WARNING'])
@@ -83,10 +84,17 @@ export const enterpriseUser = pgTable("EnterpriseUser", {
 	lastLoginAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull(),
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
+	/* Null means the user sees only deployment-wide profiles. */
+	divisionId: uuid(),
 }, (table) => [
 	index("EnterpriseUser_email_idx").using("btree", table.email.asc().nullsLast()),
 	index("EnterpriseUser_enabled_lastLoginAt_idx").using("btree", table.enabled.asc().nullsLast(), table.lastLoginAt.asc().nullsLast()),
 	uniqueIndex("EnterpriseUser_issuer_subject_key").using("btree", table.issuer.asc().nullsLast(), table.subject.asc().nullsLast()),
+	foreignKey({
+			columns: [table.divisionId],
+			foreignColumns: [division.id],
+			name: "EnterpriseUser_divisionId_fkey"
+		}).onUpdate("cascade").onDelete("restrict"),
 ]);
 
 export const enterpriseUserSession = pgTable("EnterpriseUserSession", {
@@ -187,6 +195,37 @@ export const configurationRevision = pgTable("ConfigurationRevision", {
 		}).onUpdate("cascade").onDelete("cascade"),
 ]);
 
+/**
+ * A tenant boundary over rows, not a scope over actions.
+ *
+ * Deliberately ordinary data: a super admin creates these at runtime with any
+ * name, and nothing in the code enumerates them. That is a consequence of
+ * division not being a scope -- had it been modelled as one, every new division
+ * would mean editing ADMIN_SCOPES, a release, and an upgrade of every
+ * deployment.
+ *
+ * Divisions bound *users*, never administrators. There is deliberately no
+ * column on LocalAdministrator: an administrator is deployment-wide, which is
+ * what makes every administration screen safe by construction -- including
+ * Memory and Skills, which are shared per node and therefore cannot be filtered
+ * for a division-scoped admin even in principle.
+ */
+export const division = pgTable("Division", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	slug: varchar({ length: 64 }).notNull(),
+	displayName: varchar({ length: 120 }).notNull(),
+	description: varchar({ length: 500 }).default('').notNull(),
+	status: divisionStatus().default('ACTIVE').notNull(),
+	revision: integer().default(1).notNull(),
+	createdBy: uuid(),
+	updatedBy: uuid(),
+	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
+}, (table) => [
+	uniqueIndex("Division_slug_key").using("btree", table.slug.asc().nullsLast()),
+	index("Division_status_displayName_idx").using("btree", table.status.asc().nullsLast(), table.displayName.asc().nullsLast()),
+]);
+
 export const agentProfile = pgTable("AgentProfile", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	slug: varchar({ length: 64 }).notNull(),
@@ -195,9 +234,21 @@ export const agentProfile = pgTable("AgentProfile", {
 	activeVersion: integer(),
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
+	/*
+	 * Null means deployment-wide, which is what every existing row already is.
+	 * So the migration re-homes nothing: a profile stays visible to everyone
+	 * until a super admin deliberately assigns it.
+	 */
+	divisionId: uuid(),
 }, (table) => [
 	uniqueIndex("AgentProfile_slug_key").using("btree", table.slug.asc().nullsLast()),
 	index("AgentProfile_status_updatedAt_idx").using("btree", table.status.asc().nullsLast(), table.updatedAt.asc().nullsLast()),
+	index("AgentProfile_divisionId_idx").using("btree", table.divisionId.asc().nullsLast()),
+	foreignKey({
+			columns: [table.divisionId],
+			foreignColumns: [division.id],
+			name: "AgentProfile_divisionId_fkey"
+		}).onUpdate("cascade").onDelete("restrict"),
 ]);
 
 export const workerNode = pgTable("WorkerNode", {

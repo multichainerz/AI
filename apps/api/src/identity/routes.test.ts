@@ -30,7 +30,7 @@ const principal: EnterprisePrincipal = {
   identityMode: "ENTERPRISE",
   displayName: session.user.displayName,
   email: session.user.email,
-  scopes: ["chat:use", "agents:use"],
+  scopes: ["chat:use", "agents:use"], divisionId: null,
   session,
 };
 

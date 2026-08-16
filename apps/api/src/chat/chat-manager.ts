@@ -19,6 +19,8 @@ export interface ChatPrincipal {
   subject: string;
   identityMode: "ENTERPRISE" | "ADMINISTRATOR_PREVIEW";
   scopes: readonly string[];
+  /** As `AgentPrincipal.divisionId`. */
+  divisionId?: string | null;
 }
 
 export interface ChatManager {
