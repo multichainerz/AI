@@ -623,6 +623,49 @@ describe("DrizzleAgentManager runtime control", () => {
     expect(await manager().getRuntimeControl()).toMatchObject({ enabled: false, reason: "Maintenance" });
     expect(await context.database.select().from(agentRuntimeControl)).toHaveLength(1);
   });
+
+  /*
+   * The audit trail has to say which control moved.
+   *
+   * The action is picked from `enabled`, so turning extraction off while
+   * leaving execution running recorded `agent.runtime_enabled` and a metadata
+   * object naming only the reason -- true, and silent about the one thing that
+   * changed, inside the control whose purpose was making extraction visible.
+   */
+  it("records extraction being switched off as its own transition", async () => {
+    await manager(passingBoundary)
+      .updateRuntimeControl(principal, { enabled: true, reason: "First release" } as never);
+
+    await manager(passingBoundary).updateRuntimeControl(
+      principal,
+      { enabled: true, memoryExtractionEnabled: false, reason: "Model spend review" } as never,
+    );
+
+    const events = await context.database.select().from(auditEvent);
+    const extraction = events.filter(({ action }) => action.startsWith("agent.memory_extraction"));
+    expect(extraction.map(({ action }) => action)).toEqual(["agent.memory_extraction_disabled"]);
+    expect(extraction[0]?.metadata).toMatchObject({ reason: "Model spend review" });
+    // And the execution event now carries both states, so one row answers what
+    // the control was left in without reading the next.
+    const runtime = events.filter(({ action }) => action === "agent.runtime_enabled");
+    expect(runtime.at(-1)?.metadata).toMatchObject({ enabled: true, memoryExtractionEnabled: false });
+  });
+
+  /*
+   * The counterpart: a call that only starts or stops execution must not be
+   * recorded as touching extraction, or the trail grows an entry per unchanged
+   * write and stops being searchable for the change anybody cares about.
+   */
+  it("records nothing about extraction when only execution changed", async () => {
+    await manager(passingBoundary)
+      .updateRuntimeControl(principal, { enabled: true, reason: "First release" } as never);
+    await manager(passingBoundary)
+      .updateRuntimeControl(principal, { enabled: false, reason: "Maintenance" } as never);
+
+    const events = await context.database.select().from(auditEvent);
+    expect(events.filter(({ action }) => action.startsWith("agent.memory_extraction"))).toHaveLength(0);
+    expect(await manager().getRuntimeControl()).toMatchObject({ memoryExtractionEnabled: true });
+  });
 });
 
 describe("DrizzleAgentManager audit trail", () => {

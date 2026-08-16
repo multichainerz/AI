@@ -802,6 +802,21 @@ export class DrizzleAgentManager implements AgentManager {
       }
     }
     const control = await this.database.transaction(async (transaction) => {
+      /*
+       * Read before write, so the audit trail can say what moved.
+       *
+       * Without it the action is picked from `input.enabled` alone: an operator
+       * turning extraction off while leaving execution running produced
+       * `agent.runtime_enabled` and a metadata object mentioning only the
+       * reason. True, and silent about the only thing that actually changed --
+       * in the control whose entire purpose was making extraction visible.
+       */
+      const [before] = await transaction
+        .select({ enabled: agentRuntimeControl.enabled, extraction: agentRuntimeControl.memoryExtractionEnabled })
+        .from(agentRuntimeControl).where(eq(agentRuntimeControl.id, "global")).limit(1);
+      // Absent matches the column defaults, which is what the first write sees.
+      const wasExtracting = before?.extraction ?? true;
+      const nowExtracting = input.memoryExtractionEnabled ?? wasExtracting;
       const [updated] = await transaction
         .insert(agentRuntimeControl)
         .values({
@@ -823,8 +838,26 @@ export class DrizzleAgentManager implements AgentManager {
         actorType: "USER", actorId: principal.id,
         action: input.enabled ? "agent.runtime_enabled" : "agent.runtime_disabled",
         resourceType: "AgentRuntimeControl", resourceId: "global", outcome: "SUCCESS",
-        metadata: { reason: input.reason },
+        // Both states, not just the reason: a reader of one event should not
+        // have to find the next one to know what the control was left in.
+        metadata: { reason: input.reason, enabled: input.enabled, memoryExtractionEnabled: nowExtracting },
       });
+      /*
+       * A second event, and only when extraction actually moved.
+       *
+       * Its own action rather than a field on the one above, because that one
+       * is written on every call -- including calls that change nothing -- so
+       * an operator searching for "when did we stop reading conversations"
+       * would have to diff metadata across a history of unchanged writes.
+       */
+      if (nowExtracting !== wasExtracting) {
+        await transaction.insert(auditEvent).values({
+          actorType: "USER", actorId: principal.id,
+          action: nowExtracting ? "agent.memory_extraction_enabled" : "agent.memory_extraction_disabled",
+          resourceType: "AgentRuntimeControl", resourceId: "global", outcome: "SUCCESS",
+          metadata: { reason: input.reason },
+        });
+      }
       return updated;
     });
     return {

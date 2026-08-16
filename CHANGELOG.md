@@ -5,6 +5,23 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v8.8.1 — 2026-08-16
+
+Makes the audit trail say which control moved. Turning extraction off while
+leaving execution running recorded `agent.runtime_enabled` and a metadata object
+naming only the reason — true, and silent about the one thing that changed,
+inside the control whose purpose was making extraction visible.
+
+- read the control before writing it, so what changed is knowable at all
+- record `agent.memory_extraction_enabled` / `_disabled` as its own transition,
+  and only when it actually moved: the execution event is written on every call
+  including calls that change nothing, so an operator asking "when did we stop
+  reading conversations" would otherwise have to diff metadata across a history
+  of unchanged writes
+- carry both states in the execution event's metadata, so one row answers what
+  the control was left in without reading the next
+- treat an absent row as the column defaults, which is what the first write sees
+
 ## v8.8.0 — 2026-08-16
 
 Makes v8.7.0's extraction switch reachable. It existed in the database and in
