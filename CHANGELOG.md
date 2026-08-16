@@ -5,6 +5,38 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v7.4.0 — 2026-08-16
+
+Runs the spike increment F asked for before any of it was designed further, and
+the finding rewrites the increment. Documentation only; no product change.
+
+F's hard problem was how a memory tool learns which division it is serving
+**without trusting the agent to say**. The plan's answer was a scoped token in
+the system prompt, with a limit stated honestly: the agent can read its own
+prompt, so it holds its own token.
+
+That is no longer necessary, because the MCP plane already solves it. Every call
+requires a private run authorization — `runId` plus a capability derived from
+the bootstrap key and the run id, whose digest alone is stored — which an agent
+cannot forge and cannot obtain for another run. `runForTooling` already
+inner-joins `AgentProfile` to resolve it, so `runId → AgentRun →
+AgentProfile.divisionId` is complete today and adding `divisionId` to that
+existing projection is one line.
+
+So the scope never passes through the prompt at all. There is no token for the
+agent to read, leak into a transcript, or be talked into repeating — and the
+increment's own rule, *the tool filters and the prompt never does*, stops being
+aspirational: the prompt could not filter even if somebody tried, because it
+carries nothing to filter with.
+
+- rewrite F's scope-injection section, keeping the superseded design on record
+  because the difference is the point
+- record the spike's evidence with file and line, so the claim stays checkable
+- add a Done-when: a call carrying Division A's run authorization cannot read
+  Division B's rows even when the request body asks for them
+- note that F is now the only unbuilt increment, and that the spike changed its
+  risk rather than its necessity
+
 ## v7.3.0 — 2026-08-16
 
 Adds the **People** tab. Increment E is complete: an administrator can create a

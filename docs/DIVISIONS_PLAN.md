@@ -678,15 +678,38 @@ non-deterministic is who can read it.
   safety, a schema and a `WHERE` clause where today there are none. **One file
   per process is a hard constraint**: two Hermes processes sharing one SQLite is
   where this goes wrong.
-- **The scope arrives as a credential, not an instruction.** Hermes' session API
-  carries no identity (see above), but OrcaSynapse composes the system prompt per
-  profile and profiles are per division, so the prompt can carry a scoped token
-  the tool exchanges for a division. That is capability-based rather than
-  instruction-based, which is a real difference. State its limit plainly: the
-  agent can read its own system prompt, so it holds its own token — it simply
-  never holds anyone else's.
-- **The MCP plane is the candidate host** for the tool. It is already built and
-  currently inert. Spike it before designing further.
+- **The scope is derived from the run, and the agent never holds it at all.**
+  Rewritten at v7.4.0 after the spike below; the previous design was weaker and
+  is recorded here because the difference matters.
+
+  It said: the prompt carries a scoped token the tool exchanges for a division,
+  which is capability-based rather than instruction-based — with the stated
+  limit that *"the agent can read its own system prompt, so it holds its own
+  token"*. **That limit is now gone.** The scope never passes through the prompt,
+  so there is no token for the agent to read, leak into a transcript, or be
+  talked into repeating.
+
+- **The MCP plane hosts the tool, and the spike says it is ready.** It was
+  written "spike it before designing further"; that spike is done and the
+  finding decides the design:
+
+  Every MCP call already requires a **private run authorization** —
+  `runId` plus a capability derived from the bootstrap key and the run id, whose
+  digest alone is stored (`packages/security/src/run-capability.ts`). An agent
+  cannot forge one and cannot obtain another run's.
+  `apps/api/src/tooling/drizzle-tooling-manager.ts:214` refuses discovery
+  without it, and `runForTooling` (`:793`) **already inner-joins `AgentProfile`**
+  to resolve the run.
+
+  So the chain `runId → AgentRun → AgentProfile.divisionId` is complete today,
+  and adding `divisionId` to that existing projection is a one-line change. The
+  tool implementation reads the division from the authorization it was called
+  with. Nothing about the division is supplied by the caller.
+
+  This is what makes the rule at the head of this increment enforceable rather
+  than aspirational. *The tool filters; the prompt never does* — and now the
+  prompt could not filter even if somebody tried, because it carries nothing to
+  filter with.
 - **The mirror ships in this increment, not after it.** A second store the corpus
   plane cannot see is the same failure as a provider: the dashboard would show
   `MEMORY.md` while the real knowledge sat elsewhere. Unlike Hindsight, we own
@@ -701,7 +724,23 @@ asserted against the tool's arguments and its SQL, never against a model reply;
 the tool's signature has no division parameter, so the mutation that would break
 it does not typecheck; the store's contents appear in Agents → Memory beside the
 file-backed entries and are labelled as to which division they belong to; and
-deleting the scope injection fails a test. **7–11 days**, most of it the mirror.
+deleting the scope injection fails a test — and, after the spike, one more:
+**a tool call carrying Division A's run authorization cannot read Division B's
+rows even when the request body asks for them**, because the body is not where
+the division comes from. **7–11 days**, most of it the mirror.
+
+### F is now the only unbuilt increment
+
+A, B, C, D and E ship as of v7.3.0: the boundary, its administration, the sets,
+the screens, the people and their sign-in. Memory is shared per node and the
+screens say so, which is the position A–E were always designed to ship with.
+
+F remains genuinely optional. What the spike changed is its risk, not its
+necessity: the hard part was how a tool learns which division it is serving
+without trusting the agent, and that turns out to be already solved by the run
+authorization the MCP plane was built with. What is left is ordinary work —
+a SQLite store, a tool pair, and the corpus mirror that keeps Agents → Memory
+honest — with the mirror still the bulk of it.
 
 ## Total
 
