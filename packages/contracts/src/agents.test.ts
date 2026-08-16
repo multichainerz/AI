@@ -4,6 +4,7 @@ import {
   AGENT_RUN_EVENT_TYPES,
   AGENT_RUN_STATUSES,
   agentProfileListSchema,
+  agentRunEventSchema,
   agentRunSchema,
   agentRuntimeControlSchema,
   createAgentProfileSchema,
@@ -108,6 +109,46 @@ describe("agent contracts", () => {
       updatedAt: "2026-07-30T00:00:02.000Z",
     };
     expect(agentRunSchema.parse(base).status).toBe("COMPLETED");
+  });
+});
+
+/*
+ * The event log's `type`, read the way the column is written.
+ *
+ * `AgentRunEvent.type` is a `varchar(80)` and not a database enum, deliberately
+ * and for a stated reason: widening the list needs no migration, and an older
+ * dashboard can meet a newer worker. The schema then described it with
+ * `agentRunEventTypeSchema`, a closed `z.enum` over the names that existed when
+ * it was written -- so a worker emitting a newly added type made every reader
+ * of the run's timeline throw on a Zod issue rather than show a row it did not
+ * recognise. The column tolerated the value; the contract over it did not, and
+ * the contract is what both the API and the web client hard-parse.
+ *
+ * `chatRuntimeEventSchema` in chat.ts describes the same table with
+ * `z.string().min(1).max(80)` and has always been right. These pin the two
+ * halves of that: an unrecognised type parses, and the bound is still the
+ * column's.
+ */
+describe("the event log's open type", () => {
+  it("parses an event type this build has never heard of", () => {
+    const event = {
+      id: "0f8f8f0e-2c9a-4a4b-9d1d-5c1e0f7a4b21",
+      cursor: "42",
+      runId: "9a3f1f77-90ab-4b0f-9b8b-2a1f7a5c3d10",
+      type: "TOOL_RETRIED_AFTER_BACKOFF",
+      delta: null, preview: null, errorCode: null, approvalId: null, summary: null,
+      status: null, toolName: null, toolCallKey: null, text: null, contentOffset: null,
+      childSessionId: null, durationMs: null, inputTokens: null, outputTokens: null,
+      reasoningTokens: null, costUsd: null,
+      occurredAt: "2026-08-15T00:00:00.000Z",
+    };
+
+    expect(agentRunEventSchema.parse(event).type).toBe("TOOL_RETRIED_AFTER_BACKOFF");
+    expect(AGENT_RUN_EVENT_TYPES).not.toContain("TOOL_RETRIED_AFTER_BACKOFF" as never);
+    // Open, not unbounded. The column is varchar(80), and a reader that accepted
+    // more than it could store would move the failure to the write.
+    expect(agentRunEventSchema.safeParse({ ...event, type: "" }).success).toBe(false);
+    expect(agentRunEventSchema.safeParse({ ...event, type: "T".repeat(81) }).success).toBe(false);
   });
 });
 

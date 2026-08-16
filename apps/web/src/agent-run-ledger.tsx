@@ -209,6 +209,16 @@ export function ExecutionBoundary({ runtime, metrics, runs, busy, onToggle, hasP
   );
 }
 
+/**
+ * How many runs either run endpoint will ever return.
+ *
+ * `DrizzleAgentManager.listRuns` is a bare `limit: 200` ordered by `createdAt`
+ * descending, and `AgentRunList` carries no total, so a full array means "at
+ * least 200 exist" and nothing more. Every sentence below that would otherwise
+ * describe the deployment has to stop at the edge of that window instead.
+ */
+const RUN_WINDOW = 200;
+
 interface RunLedgerProps {
   /** Already scoped by the caller; `total` is the full window it came from. */
   runs: readonly AgentRun[];
@@ -257,26 +267,58 @@ export function RunLedger({ runs, total, profileName, scoped, administrator, sel
    * person's window -- the second is not even a hedge, it is false the moment a
    * colleague has used the Profile. Written out in full rather than assembled
    * from fragments: this is the copy, and it should read as copy.
+   *
+   * The second axis is the window, and it is the same failure in a different
+   * direction. `total` is the size of the array the endpoint returned, capped
+   * at `RUN_WINDOW`; when it is full, the loaded runs are the newest 200 across
+   * every Profile, and scoping them to one Profile says nothing whatever about
+   * a Profile whose runs are all older than that. "Nothing has run under X" is
+   * then false for the very deployment that most needs the ledger -- a busy one
+   * -- so the windowed sentences describe the window and let it be widened
+   * rather than asserting over the far side of it.
    */
-  const description = administrator
-    ? named
-      ? `Produced by ${profileName}, newest first.`
-      : "Across every Profile, newest first."
-    : named
-      ? `Your runs produced by ${profileName}, newest first.`
-      : "Your runs across every Profile, newest first.";
+  const windowed = total >= RUN_WINDOW;
 
+  const description = windowed
+    ? administrator
+      ? named
+        ? `Produced by ${profileName}, within the newest ${RUN_WINDOW} runs.`
+        : `The newest ${RUN_WINDOW} runs, across every Profile.`
+      : named
+        ? `Your runs produced by ${profileName}, within the newest ${RUN_WINDOW} loaded.`
+        : `The newest ${RUN_WINDOW} of your runs, across every Profile.`
+    : administrator
+      ? named
+        ? `Produced by ${profileName}, newest first.`
+        : "Across every Profile, newest first."
+      : named
+        ? `Your runs produced by ${profileName}, newest first.`
+        : "Your runs across every Profile, newest first.";
+
+  /*
+   * Only the scoped-and-named case can be empty while the window is full, so
+   * that is the only title with a windowed form: an unscoped ledger holding 200
+   * runs is not empty, and neither is a scoped one below the cap.
+   */
   const emptyTitle = administrator
-    ? named ? `Nothing has run under ${profileName}` : "No runs yet"
-    : named ? `You have not run ${profileName}` : "You have no runs yet";
-
-  const emptyBody = administrator
     ? named
-      ? "Runs appear here with their complete lifecycle as soon as this Profile is used."
-      : "Queued work will appear here with its complete lifecycle."
+      ? windowed ? `Nothing by ${profileName} in the newest ${RUN_WINDOW} runs` : `Nothing has run under ${profileName}`
+      : "No runs yet"
     : named
-      ? `Runs appear here with their complete lifecycle as soon as you use ${profileName}. Runs your colleagues started against it are not shown.`
-      : "Work you queue will appear here with its complete lifecycle. Runs your colleagues started are not shown.";
+      ? windowed ? `None of your newest ${RUN_WINDOW} runs used ${profileName}` : `You have not run ${profileName}`
+      : "You have no runs yet";
+
+  /* `windowed && named`, matching the title above: the name is interpolated,
+     and the unnamed branch is unreachable while the window is full anyway. */
+  const emptyBody = windowed && named
+    ? `This ledger holds the newest ${RUN_WINDOW} runs across every Profile, so older ones by ${profileName} are not loaded and are not counted here.`
+    : administrator
+      ? named
+        ? "Runs appear here with their complete lifecycle as soon as this Profile is used."
+        : "Queued work will appear here with its complete lifecycle."
+      : named
+        ? `Runs appear here with their complete lifecycle as soon as you use ${profileName}. Runs your colleagues started against it are not shown.`
+        : "Work you queue will appear here with its complete lifecycle. Runs your colleagues started are not shown.";
 
   return (
     <Panel aria-label="Execution ledger">
@@ -319,8 +361,11 @@ export function RunLedger({ runs, total, profileName, scoped, administrator, sel
         </Button>)}
       </div>
       {scoped && hidden > 0 && (
+        /* The count only when it is a count. At the cap it is the window size,
+           and "Show all runs (200)" reads as a deployment total on precisely
+           the deployments where it is furthest from one. */
         <Button variant="ghost" size="sm" className="mt-3" onClick={() => onScopeChange(false)}>
-          Show all runs ({total})
+          {windowed ? `Show the newest ${RUN_WINDOW} runs` : `Show all runs (${total})`}
         </Button>
       )}
       {!scoped && profileName && (

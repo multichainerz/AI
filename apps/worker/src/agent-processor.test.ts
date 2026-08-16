@@ -4,7 +4,11 @@ import { asc, eq } from "drizzle-orm";
 import {
   agentProfile,
   agentProfileVersion,
+  agentToolGrant,
+  governedTool,
+  mcpGatewayCredential,
   runtimeToolsetAdmission,
+  toolRuntimeControl,
   toolSet,
   agentRun,
   agentRunEvent,
@@ -215,6 +219,128 @@ describe("DrizzleAgentProcessor tool boundary", () => {
   });
 });
 
+/** An ACTIVE governed tool granted to the run's own version, the way the seed grants `remember`. */
+async function grantActiveTool(runId: string, slug: string): Promise<void> {
+  const [tool] = await context.database.insert(governedTool).values({
+    slug,
+    displayName: "Remember",
+    description: "Save a note for this division.",
+    risk: "READ_ONLY",
+    status: "ACTIVE",
+    handlerKey: `orcasynapse.memory.${slug}`,
+    inputSchema: { type: "object", properties: {} },
+  }).returning({ id: governedTool.id });
+  const [run] = await context.database
+    .select({ versionId: agentRun.profileVersionId }).from(agentRun).where(eq(agentRun.id, runId)).limit(1);
+  await context.database.insert(agentToolGrant).values({
+    profileVersionId: run!.versionId,
+    toolId: tool!.id,
+    enabled: true,
+    allowedGroups: ["orcasynapse:people"],
+    allowedAdminRoles: [],
+  });
+}
+
+/**
+ * A live MCP gateway credential: the one thing that makes the governed tool
+ * plane answerable at all. `revoked` writes the row an operator's revocation
+ * leaves behind, which authenticates nothing.
+ */
+async function issueGatewayCredential(options: { revoked?: boolean } = {}): Promise<void> {
+  await context.database.insert(mcpGatewayCredential).values({
+    name: "Hermes MCP client",
+    tokenPrefix: `orca_mcp_${randomUUID().slice(0, 8)}`,
+    tokenHash: Buffer.alloc(32, 7),
+    enabled: true,
+    revokedAt: options.revoked ? new Date() : null,
+  });
+}
+
+async function finalState(runId: string) {
+  const [row] = await context.database
+    .select({ status: agentRun.status, failureCode: agentRun.failureCode, failureMessage: agentRun.failureMessage })
+    .from(agentRun).where(eq(agentRun.id, runId)).limit(1);
+  return row!;
+}
+
+/*
+ * The tool switch, and the run switch, and why they are not the same switch.
+ *
+ * `ToolRuntimeControl.enabled` governs the MCP gateway: discovery, execution
+ * and scope resolution each re-read it and each refuse fail-closed. Nothing
+ * here can change that, and nothing here tries to.
+ *
+ * What the processor decides is narrower -- whether a run whose profile carries
+ * an enabled grant on an ACTIVE tool should be *started* while that switch is
+ * off. It used to decide "no", unconditionally, and that answer denied every
+ * run on every fresh install: the migration grants `remember` and `recall` to
+ * every profile version, and nothing ever writes the control row. Two grants
+ * nobody chose, over a plane with no credential to authenticate a call with,
+ * refusing every conversation in the product.
+ *
+ * These four tests pin the state machine the fix replaces it with. The second
+ * is the one that enters the branch, and it is the reason the branch can still
+ * be tested at all: `context.reset()` truncates the seeded tools and grants, so
+ * a suite that does not write its own never reaches these lines.
+ */
+describe("DrizzleAgentProcessor governed tool plane", () => {
+  it("starts a run whose only grants are on a plane no credential can reach", async () => {
+    const { runId, jobId } = await seed();
+    await grantActiveTool(runId, "remember");
+    // No ToolRuntimeControl row and no gateway credential: the measured state of
+    // a fresh install, immediately after an operator enables agent execution.
+
+    const processor = new DrizzleAgentProcessor(context.database, runtime() as never, CAPABILITIES);
+    await processor.process({ runId }, jobId, WORKER_ID);
+
+    expect(await finalState(runId)).toMatchObject({ status: "COMPLETED", failureCode: null });
+  });
+
+  it("denies the run once a live credential exists and the tool switch is off", async () => {
+    const { runId, jobId } = await seed();
+    await grantActiveTool(runId, "remember");
+    await issueGatewayCredential();
+
+    const processor = new DrizzleAgentProcessor(context.database, runtime() as never, CAPABILITIES);
+    await processor.process({ runId }, jobId, WORKER_ID);
+
+    const state = await finalState(runId);
+    expect(state.status).toBe("DENIED");
+    expect(state.failureCode).toBe("TOOL_RUNTIME_DISABLED");
+    // The message is the only thing an operator sees -- the dashboard prints the
+    // code and this string and nothing else -- so it has to name the switch and
+    // where to reach it. An endpoint rather than a screen, because the switch
+    // has no screen: nothing in apps/web calls `updateToolRuntime` but its own
+    // API-client test.
+    expect(state.failureMessage).toContain("/api/v1/admin/tooling/runtime");
+  });
+
+  it("keeps denying against a credential an operator has revoked", async () => {
+    const { runId, jobId } = await seed();
+    await grantActiveTool(runId, "remember");
+    await issueGatewayCredential({ revoked: true });
+
+    const processor = new DrizzleAgentProcessor(context.database, runtime() as never, CAPABILITIES);
+    await processor.process({ runId }, jobId, WORKER_ID);
+
+    // A revoked credential authenticates nothing, so no tool call is reachable
+    // and there is nothing for the run to be denied over.
+    expect(await finalState(runId)).toMatchObject({ status: "COMPLETED", failureCode: null });
+  });
+
+  it("starts the run when the gateway is wired and switched on", async () => {
+    const { runId, jobId } = await seed();
+    await grantActiveTool(runId, "remember");
+    await issueGatewayCredential();
+    await context.database.insert(toolRuntimeControl).values({ id: "global", enabled: true });
+
+    const processor = new DrizzleAgentProcessor(context.database, runtime() as never, CAPABILITIES);
+    await processor.process({ runId }, jobId, WORKER_ID);
+
+    expect(await finalState(runId)).toMatchObject({ status: "COMPLETED", failureCode: null });
+  });
+});
+
 /*
  * The gap this closes, and why it is asserted here rather than against the
  * tooling manager.
@@ -386,13 +512,29 @@ describe("DrizzleAgentProcessor division memory", () => {
       divisionId: alpha, content: "The policy review happens every March.",
       createdAt: new Date("2026-01-01T00:00:00.000Z"),
     });
-    // Enough newer, unrelated notes to push the relevant one past any
-    // recency-ordered cap. This is the arrangement a division reaches by simply
-    // being used.
+    /*
+     * Enough newer, unrelated notes to push the relevant one past any
+     * recency-ordered cap. This is the arrangement a division reaches by simply
+     * being used.
+     *
+     * The decoys are written as ordinary English, and that is the whole point
+     * of them rather than an aesthetic choice. They used to read "Unrelated
+     * note number 3 about catering arrangements." -- which shares no word at
+     * all with "Summarize the policy.", not even *the*. So this test passed
+     * against a tokenizer that kept every stop word, because its fixtures
+     * happened to contain none: rewriting one decoy to start with "The" was
+     * enough to fail it. Each of these now carries the words a question is
+     * likeliest to share with any note -- the, and, for, you, can, are -- so a
+     * tokenizer that ORs them into the tsquery injects all forty-five here and
+     * this fails, rather than waiting for somebody to write a natural sentence
+     * in production.
+     */
     await context.database.insert(scopedMemoryEntry).values(
       [...Array(45).keys()].map((index) => ({
         divisionId: alpha,
-        content: `Unrelated note number ${index} about catering arrangements.`,
+        content:
+          `The catering arrangements for meeting room ${index} are the same as they have always been, `
+          + "and you can change them for an event if you ask on the day before.",
         createdAt: new Date(`2026-08-${String((index % 27) + 1).padStart(2, "0")}T00:00:00.000Z`),
       })),
     );
@@ -427,6 +569,69 @@ describe("DrizzleAgentProcessor division memory", () => {
     // Bounded, not the whole store: the floor exists so the agent is not blind,
     // not so an unmatched question costs the same as a matched one.
     expect(instructions.match(/Standing fact number/g) ?? []).toHaveLength(5);
+  });
+
+  /*
+   * The two-character terms a question is most specific about.
+   *
+   * The tokenizer used to drop everything under three characters, calling it
+   * stop-word handling, which meant `Q3`, `AI`, `HR`, `VP` and `EU` never
+   * reached the query at all -- while `the` and `and` did. Now that a real stop
+   * list does that job, the floor only drops single characters.
+   *
+   * "Any update on Q3?" leaves *update* and *q3*. The note that answers it says
+   * nothing about an update, so `q3` is the only term that can find it: a floor
+   * back at three characters empties the query of everything but *update*,
+   * matches nothing, and hands back the five newest notes instead -- none of
+   * which is the one asked for.
+   */
+  it("searches on a two-character term a question turns on", async () => {
+    const { runId, jobId } = await seed({ input: "Any update on Q3?" });
+    const alpha = await assignDivision(runId, "Alpha");
+    await context.database.insert(scopedMemoryEntry).values({
+      divisionId: alpha,
+      content: "Q3 closed ahead of the plan, and the board was told in September.",
+      createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    });
+    await context.database.insert(scopedMemoryEntry).values(
+      [...Array(9).keys()].map((index) => ({
+        divisionId: alpha,
+        content: `The visitor badges for building ${index} are collected at the desk, and you sign them back in.`,
+        createdAt: new Date(`2026-08-${String(index + 1).padStart(2, "0")}T00:00:00.000Z`),
+      })),
+    );
+
+    const instructions = await submittedInstructions(runId, jobId);
+
+    expect(instructions).toContain("Q3 closed ahead of the plan");
+    expect(instructions).not.toContain("visitor badges");
+  });
+
+  /*
+   * A question with no content words, which is the state the stop-word filter
+   * is most easily got wrong in.
+   *
+   * "Can you do that for me?" is six stop words and nothing else, so it carries
+   * no lexical signal and belongs on the recency floor. A tokenizer that keeps
+   * stop words instead ORs *can*, *you*, *do*, *that* and *for* into the
+   * tsquery, every note containing any of them matches, and the request pays
+   * for twenty ranked-by-frequency notes chosen by a question that asked for
+   * none of them. The count is the assertion: five is the floor, twenty is the
+   * match cap.
+   */
+  it("falls to the floor for a question made only of stop words", async () => {
+    const { runId, jobId } = await seed({ input: "Can you do that for me?" });
+    const alpha = await assignDivision(runId, "Alpha");
+    await context.database.insert(scopedMemoryEntry).values(
+      [...Array(12).keys()].map((index) => ({
+        divisionId: alpha,
+        content: `The invoicing rule number ${index} is that you can send it for approval on the same day.`,
+      })),
+    );
+
+    const instructions = await submittedInstructions(runId, jobId);
+
+    expect(instructions.match(/The invoicing rule number/g) ?? []).toHaveLength(5);
   });
 
   /*

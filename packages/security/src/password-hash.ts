@@ -93,6 +93,30 @@ export async function verifyLocalPassword(password: string, encoded: string): Pr
   return parsePasswordDigest(encoded) !== null && matches;
 }
 
+/**
+ * Whether a stored digest was written under parameters this build no longer
+ * uses, and so should be replaced the next time the password is in hand.
+ *
+ * **Nothing in production calls this, and that is a gap rather than a
+ * decision.** The correct callers are the two local sign-in paths --
+ * `verifyLocalPassword` succeeding in `apps/api/src/auth/admin-session.ts` and
+ * in `apps/api/src/identity/enterprise-session.ts` -- because a sign-in is the
+ * only moment the plaintext exists and a stronger digest can be written. Until
+ * one of them calls it, raising `COST` protects accounts created afterwards and
+ * silently leaves every existing account on the old parameters forever: the
+ * verifier reads the cost out of the stored digest, so an old account keeps
+ * verifying at the old cost with nothing anywhere reporting that it does.
+ *
+ * It is kept rather than deleted deliberately. Deleting it would remove the
+ * only marker in the tree that the gap exists, and leave the next person
+ * raising `COST` with no reason to suspect that the change reaches new accounts
+ * only -- the failure is invisible in exactly the way that makes it survive. A
+ * correct, tested predicate waiting for two call sites costs one exported
+ * function; discovering the gap from an incident costs considerably more.
+ *
+ * A digest that will not parse is reported as needing a rehash. It cannot be
+ * verified against either, so there is no state in which keeping it is right.
+ */
 export function localPasswordNeedsRehash(encoded: string): boolean {
   const parameters = parsePasswordDigest(encoded);
   return !parameters

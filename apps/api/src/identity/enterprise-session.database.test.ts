@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import {
   auditEvent,
   createTestDatabase,
@@ -37,7 +37,9 @@ const discoveryDocument = {
 };
 
 /** Serves OIDC discovery and rejects everything else, so no test reaches the network. */
-function identityProvider(overrides: { discovery?: unknown; tokenStatus?: number } = {}) {
+function identityProvider(
+  overrides: { discovery?: unknown; tokenStatus?: number; tokenBody?: unknown } = {},
+) {
   return vi.fn(async (input: unknown) => {
     const url = String(input);
     if (url.endsWith("/.well-known/openid-configuration")) {
@@ -45,7 +47,10 @@ function identityProvider(overrides: { discovery?: unknown; tokenStatus?: number
         status: 200, headers: { "content-type": "application/json" },
       });
     }
-    return new Response(JSON.stringify({ error: "invalid_grant" }), { status: overrides.tokenStatus ?? 400 });
+    return new Response(
+      JSON.stringify(overrides.tokenBody ?? { error: "invalid_grant" }),
+      { status: overrides.tokenStatus ?? 400, headers: { "content-type": "application/json" } },
+    );
   }) as unknown as typeof fetch;
 }
 
@@ -151,6 +156,51 @@ async function seedSession(overrides: Record<string, unknown> = {}) {
     })
     .returning({ id: enterpriseUserSession.id });
   return { token, userId: user!.id, sessionId: session!.id };
+}
+
+type Transaction = Parameters<Parameters<TestDatabase["database"]["transaction"]>[0]>[0];
+
+/**
+ * Holds the session row locked until `concurrency` copies of `call` are queued
+ * behind it, so their reads all land before any of their writes.
+ *
+ * The twin of the helper in auth/admin-session.test.ts, against this module's
+ * own table; the note there explains why the interleaving is forced rather than
+ * left to the scheduler.
+ */
+async function whileRowIsLocked<T>(
+  sessionId: string,
+  concurrency: number,
+  call: () => Promise<T>,
+  beforeRelease?: (transaction: Transaction) => Promise<void>,
+): Promise<T[]> {
+  let locked!: () => void;
+  let release!: () => void;
+  const reached = new Promise<void>((resolve) => { locked = resolve; });
+  const queued = new Promise<void>((resolve) => { release = resolve; });
+  const holder = context.database.transaction(async (transaction) => {
+    await transaction.execute(
+      sql`SELECT 1 FROM ${enterpriseUserSession} WHERE ${enterpriseUserSession.id} = ${sessionId} FOR UPDATE`,
+    );
+    locked();
+    await queued;
+    if (beforeRelease) await beforeRelease(transaction);
+  });
+  await Promise.race([reached, holder]);
+  const answers = Promise.all(Array.from({ length: concurrency }, () => call()));
+  try {
+    await vi.waitFor(async () => {
+      const { rows } = await context.database.execute<{ waiting: number }>(
+        sql`SELECT count(*)::int AS waiting FROM pg_stat_activity
+            WHERE datname = current_database() AND wait_event_type = 'Lock'`,
+      );
+      expect(rows[0]?.waiting).toBe(concurrency);
+    }, { timeout: 15_000, interval: 25 });
+  } finally {
+    release();
+    await holder;
+  }
+  return answers;
 }
 
 describe("DrizzleEnterpriseIdentityManager configuration", () => {
@@ -304,6 +354,47 @@ describe("DrizzleEnterpriseIdentityManager login completion", () => {
     await expect(manager(connectionId).completeLogin("code", state, state, {}))
       .rejects.toMatchObject({ code: "OIDC_CONFIGURATION_CHANGED" });
   });
+
+  /*
+   * Whose fault the failed exchange was decides who can fix it.
+   *
+   * Every non-2xx from the token endpoint was reported as "the identity
+   * provider rejected the authorization code" with the class default 401 --
+   * including an IdP returning 503, and including `invalid_client`, which is
+   * what an IdP says when OrcaSynapse's own client secret has been rotated out
+   * from under it. Told 401 with that message, the operator sends the user to
+   * sign in again, and every retry fails the same way because nothing about the
+   * user's session was ever the problem. The neighbouring JWKS fetch, the same
+   * `!response.ok` shape, already answered 502 for exactly this reason.
+   *
+   * RFC 6749 sets the shapes being told apart here: `invalid_grant` with 400 is
+   * this code being refused, and `invalid_client` -- conventionally with 401 --
+   * is the client credential being refused.
+   */
+  it("blames the authorization code only when the identity provider blamed it", async () => {
+    const connectionId = await seedOidcConnection();
+    const attempt = async (fetcher: typeof fetch) => {
+      const state = randomBytes(32).toString("base64url");
+      await seedAuthorizationRequest(connectionId, state);
+      return manager(connectionId, { fetcher }).completeLogin("code", state, state, {})
+        .then(() => null, (error: EnterpriseIdentityError) => ({ code: error.code, statusCode: error.statusCode }));
+    };
+
+    expect(await attempt(identityProvider({ tokenStatus: 400, tokenBody: { error: "invalid_grant" } })))
+      .toEqual({ code: "OIDC_TOKEN_REJECTED", statusCode: 401 });
+    // A stale client secret. Nothing the person signing in can do about it.
+    expect(await attempt(identityProvider({ tokenStatus: 401, tokenBody: { error: "invalid_client" } })))
+      .toEqual({ code: "OIDC_CLIENT_REJECTED", statusCode: 502 });
+    // Some IdPs answer invalid_client with 400 rather than 401.
+    expect(await attempt(identityProvider({ tokenStatus: 400, tokenBody: { error: "invalid_client" } })))
+      .toEqual({ code: "OIDC_CLIENT_REJECTED", statusCode: 502 });
+    // The provider is simply broken; the code was never examined.
+    expect(await attempt(identityProvider({ tokenStatus: 503, tokenBody: { error: "server_error" } })))
+      .toEqual({ code: "OIDC_TOKEN_UNAVAILABLE", statusCode: 502 });
+    // No parseable body at all is not evidence against the code either.
+    expect(await attempt(identityProvider({ tokenStatus: 429, tokenBody: "slow down" })))
+      .toEqual({ code: "OIDC_TOKEN_UNAVAILABLE", statusCode: 502 });
+  });
 });
 
 describe("DrizzleEnterpriseIdentityManager sessions", () => {
@@ -347,6 +438,40 @@ describe("DrizzleEnterpriseIdentityManager sessions", () => {
       .from(enterpriseUserSession).where(eq(enterpriseUserSession.id, sessionId));
     expect(after?.idleExpiresAt.toISOString()).toBe(after!.absoluteExpiresAt.toISOString());
     expect(principal).not.toBeNull();
+  });
+
+  /*
+   * The same burst the dashboard produces, against the enterprise session.
+   *
+   * Concurrent touches serialise on the row lock, and every one but the winner
+   * re-evaluates its predicate against a tuple whose lastSeenAt no longer
+   * satisfies the write throttle. Only the throttle failed there; the session
+   * did not, and a signed-in user must not be signed out by it. See the
+   * matching test in auth/admin-session.test.ts for why the row is locked from
+   * outside rather than left to whatever order the scheduler picks.
+   */
+  it("authenticates every request in a burst on a session past its touch interval", async () => {
+    const connectionId = await seedOidcConnection();
+    const { token, sessionId } = await seedSession({ lastSeenAt: new Date(Date.now() - 180_000) });
+
+    const answers = await whileRowIsLocked(sessionId, 4, () => manager(connectionId).authenticate(token));
+
+    expect(answers.filter((principal) => principal === null)).toEqual([]);
+    for (const principal of answers) expect(principal?.identityMode).toBe("ENTERPRISE");
+  });
+
+  it("refuses a burst whose session is revoked between the read and the touch", async () => {
+    const connectionId = await seedOidcConnection();
+    const { token, sessionId } = await seedSession({ lastSeenAt: new Date(Date.now() - 180_000) });
+
+    const answers = await whileRowIsLocked(sessionId, 4, () => manager(connectionId).authenticate(token), async (transaction) => {
+      await transaction
+        .update(enterpriseUserSession)
+        .set({ revokedAt: new Date() })
+        .where(eq(enterpriseUserSession.id, sessionId));
+    });
+
+    expect(answers).toEqual([null, null, null, null]);
   });
 
   it("revokes a session that is presented after it expired", async () => {

@@ -24,6 +24,7 @@ import {
   auditEvent,
   componentCompatibility,
   governedTool,
+  guardrailPolicy,
   hermesRuntimeNode,
   modelDeployment,
   platformArchitectureDecision,
@@ -611,7 +612,25 @@ export class DrizzleAgentManager implements AgentManager {
     } = {},
   ): Promise<AgentRun> {
     const runId = randomUUID();
-    const outputCharacterLimit = Math.min(200_000, Math.max(1_000, options.outputCharacterLimit ?? 200_000));
+    /*
+     * The operator's guardrail, on every path that starts a run.
+     *
+     * Chat resolves the active policy itself -- it needs the same numbers to
+     * inspect the input -- and passes the output ceiling down. A run submitted
+     * directly through /api/v1/agents/runs passed nothing, so it silently took
+     * the 200,000 platform ceiling while the dashboard showed the operator the
+     * smaller number they had configured. A guardrail one of two callers obeys
+     * is worse than an absent one, because the screen claims otherwise.
+     *
+     * Resolved here rather than at the route so no future caller can reintroduce
+     * the gap by forgetting the option, and clamped to the platform ceiling
+     * either way: the policy may lower the bound, never raise it past what the
+     * worker's own accounting is built for.
+     */
+    const outputCharacterLimit = Math.min(
+      200_000,
+      Math.max(1_000, options.outputCharacterLimit ?? await this.activeOutputCharacterLimit()),
+    );
     const run = await this.database.transaction(async (transaction) => {
       await transaction.execute(advisoryLock(`orcasynapse-agent-submit:${input.profileId}`));
       const [control] = await transaction
@@ -726,6 +745,23 @@ export class DrizzleAgentManager implements AgentManager {
       } as StoredRun;
     });
     return runDto(run);
+  }
+
+  /**
+   * The output ceiling the active guardrail policy sets, or the platform's.
+   *
+   * At most one policy may be ACTIVE -- a partial unique index enforces it --
+   * so this is a single indexed read with no ambiguity to resolve. Absent a
+   * policy the platform ceiling stands, which is what a deployment that has
+   * activated no guardrails has always run under.
+   */
+  private async activeOutputCharacterLimit(): Promise<number> {
+    const [policy] = await this.database
+      .select({ maxOutputCharacters: guardrailPolicy.maxOutputCharacters })
+      .from(guardrailPolicy)
+      .where(eq(guardrailPolicy.status, "ACTIVE"))
+      .limit(1);
+    return policy?.maxOutputCharacters ?? 200_000;
   }
 
   async cancelRun(principal: AgentPrincipal, runId: string, includeAll: boolean): Promise<AgentRun> {

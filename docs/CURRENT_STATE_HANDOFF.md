@@ -1,4 +1,13 @@
-# Current State Handoff — v5.1.0
+# Current State Handoff
+
+<!--
+No version in the title. It said "v5.1.0" while the body below described the tab
+strips as of v8.8.3, because a version in a heading is a bump surface that
+nothing bumps: scripts/test-release-consistency.sh pins every surface it knows
+about and does not know this file exists, and every paragraph here already names
+the release it is talking about. An unenforced surface is what produced the
+wrong number in the first place, so the number is gone rather than corrected.
+-->
 
 ## Product state
 
@@ -35,7 +44,7 @@ Tools)" for a release because nothing did.
 It then said "Settings (Setup, System)" for four releases for the same reason,
 missing the Divisions tab added at v6.8.0 and the People tab added at v7.3.0 —
 `workspace-navigation.test.ts` pins the strips and nothing pins this sentence
-against them. **Divisions is not a tab.** At v8.9.0 it and People became one
+against them. **Divisions is not a tab.** At v8.8.3 it and People became one
 screen: the people list, the divisions list, and a division-create dialog
 reachable from inside the person form, because the two were always one job and
 the split made an administrator retype a half-finished person to go and create
@@ -95,7 +104,7 @@ The earlier product generation is preserved on the `backup/pgvector` branch. Do 
 ## Install and recovery
 
 - Any VM1 installation carrying the `hermes-native-v1` schema epoch updates in place, whichever release installed it. `install.sh` reads the literal marker at `.local/state/schema-epoch` and compares it to that string — no version is parsed or compared anywhere in the decision, so "v4.6.0 and v4.7.x" was an inaccurate proxy for the real gate. Rerun the current generated VM2 installer with `--repair` to install or replace the corpus companion. A pre-v4.6.0 database carries no marker and still requires a clean host.
-- **Settings → Application** can check official release tags and copy the version-pinned VM1 installer command. Running that command remains an explicit host-administrator action; it does not update VM2.
+- **Settings → System** can check official release tags and copy the version-pinned VM1 installer command. (`Application` is the routing token behind that tab, not its label; this line said "Settings → Application" while the tab row was Setup, People, System.) Running that command remains an explicit host-administrator action; it does not update VM2.
 - Re-running an interrupted installer is supported when its protected completion or enrollment state is intact.
 - Do not point this release at an older OrcaSynapse database; the migrator refuses it before mutation.
 - Back up VM1 PostgreSQL for control/audit state and VM2's Hermes state root for native sessions and memory.

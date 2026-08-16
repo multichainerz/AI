@@ -122,6 +122,31 @@ describe("governed tooling routes", () => {
     expect(JSON.stringify(listed.json())).not.toContain(runAuthorization);
   });
 
+  it("fails closed on a malformed approval id instead of reaching the database", async () => {
+    // `:approvalId` was the one path parameter in this module that reached a
+    // manager unvalidated -- its siblings (`:entryId`, `:toolId`,
+    // `:credentialId`) all run through `uuid()` first. A non-UUID landed on a
+    // `uuid` column, PostgreSQL raised 22P02, and the route's rethrow turned a
+    // typo into a 500 with an error-log entry beside it.
+    const { app, toolingManager } = await toolingApp();
+    toolingManager.decideApproval = vi.fn(async () => {
+      throw Object.assign(new Error(`invalid input syntax for type uuid: "not-a-uuid"`), { code: "22P02" });
+    });
+    const headers = { cookie: `${ADMIN_SESSION_COOKIE}=${SESSION_TOKEN}` };
+
+    for (const badId of ["not-a-uuid", "1", "'; select 1--", "ac369dab-cad5-4fd9-83ed-b4fbf528028az"]) {
+      const decided = await app.inject({
+        method: "POST",
+        url: `/api/v1/admin/tooling/approvals/${encodeURIComponent(badId)}/decision`,
+        headers,
+        payload: { decision: "APPROVE", reason: "Reviewed with the requesting operator." },
+      });
+      expect(decided.statusCode, `decision with id ${badId}`).toBe(400);
+      expect(decided.json()).toMatchObject({ error: "INVALID_TOOL_DECISION" });
+    }
+    expect(toolingManager.decideApproval).not.toHaveBeenCalled();
+  });
+
   it("refuses an administrator who has not rotated the temporary password", async () => {
     // This module resolves its own principal instead of using the shared
     // requireAdmin, and so used to skip that helper's forced-rotation gate.

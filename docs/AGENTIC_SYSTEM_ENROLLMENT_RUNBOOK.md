@@ -8,17 +8,26 @@ VM2 runs exactly one agent runtime plane: the Hermes gateway/API server, install
 
 ## Prerequisites
 
-These are the three conditions `runtimePrerequisites` in
-`apps/api/src/runtime-nodes/drizzle-runtime-node-manager.ts` actually enforces
-before it will issue an invitation, plus the network facts the installer needs.
+`runtimePrerequisites` in
+`apps/api/src/runtime-nodes/drizzle-runtime-node-manager.ts` enforces exactly
+**two** conditions before it will issue an invitation. They are the first two
+bullets below; the rest are facts the installer needs that nothing in the
+product checks for you.
+
 There is deliberately no model-route prerequisite: this list used to demand "an
 evaluated Agent model route is active", which was wrong twice over — no
 evaluation gate exists anywhere in the product any more, and enrolment does not
 require an active Agent route at all.
 
-- OrcaSynapse is installed and the temporary local-administrator password has been replaced.
-- PostgreSQL is healthy.
-- exactly one AI Inference connection is enabled, healthy, and has a selected served model — *exactly* one, because `seedableInferenceModelAlias()` refuses to guess between two healthy connections;
+There is also no PostgreSQL prerequisite, and this list claimed one for several
+releases by counting three enforced conditions where the function returns two
+(`dashboardReady`, `inferenceReady`). No probe of that kind exists. A database
+that is down does not produce a stated prerequisite failure — it makes the
+invitation request itself fail, which reads as an outage rather than as
+something an operator is being asked to go and fix.
+
+- OrcaSynapse is installed and the temporary local-administrator password has been replaced (`dashboardReady`);
+- exactly one AI Inference connection is enabled, healthy, and has a selected served model (`inferenceReady`) — *exactly* one, because `seedableInferenceModelAlias()` refuses to guess between two healthy connections;
 - VM2 is a clean Ubuntu systemd VM on x86_64 or aarch64 with outbound access to OrcaSynapse and the artifact sources during installation;
 - OrcaSynapse can reach the VM2 Hermes address on TCP 8642;
 - the invitation uses a hostname/address that matches customer DNS and TLS policy.
@@ -114,8 +123,11 @@ Preferred host-loss procedure:
 
 Do not use an invitation as a generic remote administrator. Upgrade with pinned artifacts under customer change control: an upgrade is a new invitation naming a new Hermes commit, followed by a re-enrollment. Before promotion, test the exact Hermes commit, API contracts, state migration, backup, rollback, and agent cancellation in a non-production environment.
 
-The **Settings → Application** release check concerns the OrcaSynapse VM1
-release only. It compares official stable tags and gives the administrator a
+The **Settings → System** release check concerns the OrcaSynapse VM1 release
+only. (The tabs are Setup, People and System. This paragraph said "Settings →
+Application" for several releases; `Application` is the routing token the System
+tab still uses internally, and has never been a name on screen.) It compares
+official stable tags and gives the administrator a
 version-pinned VM1 installer command; the browser cannot run it. It does not
 change the VM2 Hermes commit, repair the runtime boundary, or bypass this
 re-enrollment workflow. Treat VM1 and VM2 changes as separate approvals even

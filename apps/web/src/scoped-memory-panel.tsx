@@ -18,11 +18,36 @@ const DEPLOYMENT_WIDE = "";
  * assuming the other is how somebody concludes memory is isolated when it is
  * only partly so.
  */
-export function ScopedMemoryPanel({ onSessionExpired }: { onSessionExpired: () => void }) {
+export function ScopedMemoryPanel({ canWrite, canDelete, onSessionExpired }: {
+  /**
+   * `corpus:write`, which `POST /tooling/scoped-memory` requires.
+   *
+   * Taken as a prop rather than read from the session here, so this panel and
+   * the skill-set panel it sits beside in `corpus-view.tsx` are gated from one
+   * place on the same two facts. Without it every reading role was offered Add
+   * note and Remove and got a 403 from each: an AUDITOR holds
+   * `corpus:content:read`, so the notes load and read perfectly, and neither of
+   * the two scopes the buttons need.
+   */
+  canWrite: boolean;
+  /** `corpus:delete`, which `DELETE /tooling/scoped-memory/:entryId` requires. */
+  canDelete: boolean;
+  onSessionExpired: () => void;
+}) {
   const [entries, setEntries] = useState<ScopedMemoryEntry[]>([]);
   const [divisions, setDivisions] = useState<Division[]>([]);
   const [total, setTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Whether the list on screen is a list at all.
+   *
+   * Separate from `error`, which a failed save also sets: "Nothing remembered
+   * yet" is a claim about what a division knows, and a read that never landed
+   * supports no claim about it either way. On the one screen an operator opens
+   * to find out what an agent knows, an unearned empty state is the worst
+   * available answer.
+   */
+  const [loadFailed, setLoadFailed] = useState(false);
   const [content, setContent] = useState("");
   const [divisionId, setDivisionId] = useState<string>(DEPLOYMENT_WIDE);
   const [saving, setSaving] = useState(false);
@@ -47,7 +72,9 @@ export function ScopedMemoryPanel({ onSessionExpired }: { onSessionExpired: () =
         setTotal(counted);
         setDivisions(divisionList.items);
         setError(null);
+        setLoadFailed(false);
       } catch (cause) {
+        setLoadFailed(true);
         failed(cause, "Division memory could not be loaded.");
       }
     })();
@@ -58,6 +85,7 @@ export function ScopedMemoryPanel({ onSessionExpired }: { onSessionExpired: () =
     const { items, total: counted } = await getScopedMemory();
     setEntries(items);
     setTotal(counted);
+    setLoadFailed(false);
   };
 
   const remove = async (entryId: string) => {
@@ -94,7 +122,9 @@ export function ScopedMemoryPanel({ onSessionExpired }: { onSessionExpired: () =
         kicker="Per division"
         title="Division memory"
         description="Curated here or remembered by a run. A run is handed only its own division's notes, selected before its prompt is built."
-        actions={<StatusText>{total} {total === 1 ? "entry" : "entries"}</StatusText>}
+        // Withheld rather than shown as zero when the read did not land: a
+        // count is the same kind of claim as the empty state below.
+        actions={loadFailed ? null : <StatusText>{total} {total === 1 ? "entry" : "entries"}</StatusText>}
       />
 
       {error && <Alert tone="error">{error}</Alert>}
@@ -104,8 +134,12 @@ export function ScopedMemoryPanel({ onSessionExpired }: { onSessionExpired: () =
         * any agent has run. A fresh deployment already knows how its divisions
         * work; without this, that has to wait to be inferred from conversations
         * that have not happened yet.
+        *
+        * Behind `corpus:write`, which is what the route behind it requires.
+        * Offering the form to a role that cannot save is an invitation to
+        * compose a standing fact about a division and lose it to a 403.
         */}
-      <div className="mb-4 grid gap-3 rounded border border-border p-3">
+      {canWrite && <div className="mb-4 grid gap-3 rounded border border-border p-3">
         <Field label="Division" htmlFor="memory-division"
           hint="Deployment-wide notes are read only by profiles with no division — they are not shared with every division.">
           <Select id="memory-division" value={divisionId} onChange={(event) => setDivisionId(event.target.value)}>
@@ -130,13 +164,21 @@ export function ScopedMemoryPanel({ onSessionExpired }: { onSessionExpired: () =
             {saving ? "Saving…" : "Add note"}
           </Button>
         </div>
-      </div>
+      </div>}
 
       {entries.length === 0 ? (
-        <EmptyState title="Nothing remembered yet">
-          This is separate from the Hermes memory above. Those files belong to the node and are
-          shared by every division; these entries belong to one division each.
-        </EmptyState>
+        /*
+          * Nothing at all when the read failed. The Alert above already says
+          * what happened, and the alternative -- an empty state under an error
+          * -- reads as two facts where there is one, the second of which is not
+          * a fact.
+          */
+        loadFailed ? null : (
+          <EmptyState title="Nothing remembered yet">
+            This is separate from the Hermes memory above. Those files belong to the node and are
+            shared by every division; these entries belong to one division each.
+          </EmptyState>
+        )
       ) : (
         <div className="grid gap-2">
           {entries.map((entry) => (
@@ -162,14 +204,19 @@ export function ScopedMemoryPanel({ onSessionExpired }: { onSessionExpired: () =
                     * Two-step rather than a dialog: the row being removed stays
                     * on screen and under the pointer, so what is about to go is
                     * never in doubt. Deletion is not recoverable.
+                    *
+                    * Behind `corpus:delete`, the scope the route requires -- a
+                    * two-step confirmation that ends in a 403 is worse than no
+                    * control, because the operator believes the note is gone
+                    * until they read the error.
                     */}
-                  <Button
+                  {canDelete && <Button
                     variant="ghost"
                     onClick={() => (confirming === entry.id ? void remove(entry.id) : setConfirming(entry.id))}
                     onBlur={() => setConfirming((current) => (current === entry.id ? null : current))}
                   >
                     {confirming === entry.id ? "Confirm removal" : "Remove"}
-                  </Button>
+                  </Button>}
                 </div>
               </div>
               <p className="m-0 whitespace-pre-wrap text-body text-text">{entry.content}</p>

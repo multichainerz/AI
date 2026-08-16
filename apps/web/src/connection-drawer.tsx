@@ -165,7 +165,25 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
     if (!result) return;
 
     setInferenceDiscovery(result);
-    setEnabled(result.status === "READY");
+    /*
+     * Discovery may raise admission and must never lower it.
+     *
+     * This was `setEnabled(result.status === "READY")`, so a PARTIAL,
+     * AUTH_REQUIRED or UNREACHABLE probe turned off a connection that was
+     * serving chat a second earlier. Nothing downstream caught it: Save has no
+     * gate on the discovery outcome, `app.tsx` reads `draft.enabled` to decide
+     * whether this is an activation, and with it false it writes
+     * `enabled: false` and skips the test-and-reactivate branch entirely -- no
+     * health check, no message, and no `enabled` control anywhere on the
+     * INFERENCE form to put it back. The only route out is "Test & activate",
+     * which needs a HEALTHY test the operator now has to go and earn.
+     *
+     * The asymmetry is the point. A probe is evidence about one moment, from
+     * this browser, through whatever sat in the path; admission is a decision
+     * an administrator made. Evidence of health is enough to offer activation,
+     * and the absence of it is not enough to withdraw one.
+     */
+    setEnabled((current) => current || result.status === "READY");
     setBaseUrl(result.recommended.baseUrl);
     setConfiguration((current) => {
       const next: ServiceConnectionConfiguration = {

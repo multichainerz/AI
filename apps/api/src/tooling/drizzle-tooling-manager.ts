@@ -57,9 +57,12 @@ const APPROVAL_POLL_MS = 1_000;
  * The longest a tool call will hold its caller open waiting for a human.
  *
  * approvalTtlMinutes may be set as high as 1440, which is a sensible lifetime
- * for the decision but an absurd one for an HTTP request. When this cap is hit
- * the approval is expired too, so the record never claims a decision was
- * pending on a call that already failed.
+ * for the decision but an absurd one for an HTTP request. Hitting this cap ends
+ * the wait and nothing else: the approval keeps the deadline the administrator
+ * configured and stays in the queue, because it is the request that ran out of
+ * patience and not the decision that ran out of time. Expiring the row here
+ * instead is what left `approvalTtlMinutes` with no observable effect anywhere
+ * in its 5-1440 range.
  */
 const MAXIMUM_INLINE_WAIT_MS = 5 * 60_000;
 
@@ -202,11 +205,42 @@ const callColumns = {
   risk: governedTool.risk,
 };
 
+/**
+ * How the wait for a human ended, and what the approval may still become.
+ *
+ * UNDECIDED is the outcome the code used to lack, and lacking it is what made
+ * `approvalTtlMinutes` inert: the request giving up and the approval running out
+ * were reported as one thing and written to the row as EXPIRED.
+ */
+type ApprovalWait =
+  | { outcome: "APPROVED" | "REJECTED" | "EXPIRED" }
+  | { outcome: "UNDECIDED"; decidableUntil: Date };
+
+/**
+ * Timings a deployment may need to differ on, and tests certainly do.
+ *
+ * The wait cap is a property of how long the deployment's proxies will hold a
+ * request open rather than of governance, so it is a setting rather than a
+ * constant -- and a suite that had to spend five real minutes to reach the
+ * give-up path would simply never test it.
+ */
+export interface ToolingManagerOptions {
+  maximumInlineWaitMs?: number;
+  approvalPollMs?: number;
+}
+
 export class DrizzleToolingManager implements ToolingManager {
+  private readonly maximumInlineWaitMs: number;
+  private readonly approvalPollMs: number;
+
   constructor(
     private readonly database: OrcaSynapseDatabase,
     private readonly boundaryVerifier?: ToolBoundaryVerifier,
-  ) {}
+    options: ToolingManagerOptions = {},
+  ) {
+    this.maximumInlineWaitMs = options.maximumInlineWaitMs ?? MAXIMUM_INLINE_WAIT_MS;
+    this.approvalPollMs = options.approvalPollMs ?? APPROVAL_POLL_MS;
+  }
 
   async listTools() {
     const items = await this.database
@@ -217,19 +251,13 @@ export class DrizzleToolingManager implements ToolingManager {
   }
 
   async listToolsForRun(authorization: string | undefined) {
-    const parsedAuthorization = authorization ? RUN_AUTHORIZATION.exec(authorization) : null;
-    const runId = parsedAuthorization?.[1];
-    const capability = parsedAuthorization?.[2];
-    if (!runId || !capability) throw new ToolingDeniedError("Private run authorization is required for tool discovery.");
-    const [control, run] = await Promise.all([this.runtimeControlRow(), this.runForTooling(runId)]);
-    if (!control?.enabled) throw new ToolingDeniedError(control?.reason ?? "The tool gateway is disabled fail-closed.");
-    this.assertRunIsExecutable(run, capability, "discovery");
+    const { run } = await this.authorizedRun(authorization, "discovery");
 
     const items: GovernedTool[] = [];
-    for (const grant of await this.enabledGrantsForVersion(run!.profileVersionId)) {
+    for (const grant of await this.enabledGrantsForVersion(run.profileVersionId)) {
       if (
         grant.tool.status === "ACTIVE" &&
-        await this.requesterMatchesGrant(run!.requestedBy, grant.allowedGroups, grant.allowedAdminRoles)
+        await this.requesterMatchesGrant(run.requestedBy, grant.allowedGroups, grant.allowedAdminRoles)
       ) {
         items.push(toolDto(grant.tool));
       }
@@ -479,59 +507,88 @@ export class DrizzleToolingManager implements ToolingManager {
   }
 
   async invoke(toolSlug: string, invocation: GovernedToolInvocation): Promise<GovernedToolResult> {
-    const parsedAuthorization = RUN_AUTHORIZATION.exec(invocation.authorization);
-    if (!parsedAuthorization || !UUID.test(invocation.requestId)) throw new ToolingDeniedError("Run authorization or request ID is invalid.");
-    const [, runId, capability] = parsedAuthorization;
-    if (!runId || !capability) throw new ToolingDeniedError();
-
-    const [control, run, tool] = await Promise.all([
-      this.runtimeControlRow(),
-      this.runForTooling(runId),
+    if (!UUID.test(invocation.requestId)) throw new ToolingDeniedError("Run authorization or request ID is invalid.");
+    const [authorized, tool] = await Promise.all([
+      this.authorizedRun(invocation.authorization, "execution"),
       this.database.select().from(governedTool).where(eq(governedTool.slug, toolSlug)).limit(1)
         .then(([found]) => found),
     ]);
-    if (!control?.enabled) throw new ToolingDeniedError(control?.reason ?? "The tool gateway is disabled fail-closed.");
-    this.assertRunIsExecutable(run, capability, "execution");
+    const { runId, run, control } = authorized;
     if (!tool || tool.status !== "ACTIVE") throw new ToolingDeniedError("The requested tool is not active.");
     // CONSEQUENTIAL tools are no longer refused outright; they request a human
     // decision. Everything below this point still applies to them — the grant,
     // the requester check, and idempotency — because an approval must never be
     // able to widen what the grant already allows.
-    const grants = await this.enabledGrantsForVersion(run!.profileVersionId);
+    const grants = await this.enabledGrantsForVersion(run.profileVersionId);
     const grant = grants.find((item) => item.toolId === tool.id);
     if (!grant) throw new ToolingDeniedError("The active agent version does not grant this tool.");
-    if (!(await this.requesterMatchesGrant(run!.requestedBy, grant.allowedGroups, grant.allowedAdminRoles))) {
+    if (!(await this.requesterMatchesGrant(run.requestedBy, grant.allowedGroups, grant.allowedAdminRoles))) {
       throw new ToolingDeniedError("The requesting identity no longer satisfies the tool grant.");
     }
     const sanitizedArguments = jsonObject(invocation.arguments);
     const existing = await this.findExistingResult(runId, invocation.requestId, toolSlug, sanitizedArguments);
-    if (existing) return existing;
+    /*
+     * A call still waiting for its human is resumed, not replayed.
+     *
+     * This is the other half of letting a request give up while its approval
+     * lives on: the approval is only decidable in a useful sense if presenting
+     * the same request id again picks the decision up. Replaying the stored
+     * APPROVAL_PENDING row instead would hand the agent a resultless answer
+     * forever, and the human's decision would never reach the tool.
+     */
+    const waiting = existing?.status === "APPROVAL_PENDING" && tool.risk === "CONSEQUENTIAL";
+    if (existing && !waiting) return existing;
 
     let callId: string;
-    try {
-      const [created] = await this.database
-        .insert(governedToolCall)
-        .values({
-          runId, toolId: tool.id, grantId: grant.id, requestId: invocation.requestId,
-          status: tool.risk === "CONSEQUENTIAL" ? "APPROVAL_PENDING" : "EXECUTING",
-          arguments: sanitizedArguments,
-          ...(tool.risk === "CONSEQUENTIAL" ? {} : { startedAt: new Date() }),
-        })
-        .returning({ id: governedToolCall.id });
-      if (!created) throw new ToolingConflictError("The tool call could not be recorded.");
-      callId = created.id;
-    } catch (cause) {
-      const raced = await this.findExistingResult(runId, invocation.requestId, toolSlug, sanitizedArguments);
-      if (raced) return raced;
-      throw cause;
+    if (existing) {
+      callId = existing.callId;
+    } else {
+      try {
+        const [created] = await this.database
+          .insert(governedToolCall)
+          .values({
+            runId, toolId: tool.id, grantId: grant.id, requestId: invocation.requestId,
+            status: tool.risk === "CONSEQUENTIAL" ? "APPROVAL_PENDING" : "EXECUTING",
+            arguments: sanitizedArguments,
+            ...(tool.risk === "CONSEQUENTIAL" ? {} : { startedAt: new Date() }),
+          })
+          .returning({ id: governedToolCall.id });
+        if (!created) throw new ToolingConflictError("The tool call could not be recorded.");
+        callId = created.id;
+      } catch (cause) {
+        const raced = await this.findExistingResult(runId, invocation.requestId, toolSlug, sanitizedArguments);
+        if (raced) return raced;
+        throw cause;
+      }
     }
     if (tool.risk === "CONSEQUENTIAL") {
-      const decision = await this.awaitApproval(callId, control.approvalTtlMinutes ?? 15);
-      if (decision !== "APPROVED") {
-        const reason = decision === "REJECTED"
+      const wait = await this.awaitApproval(callId, control.approvalTtlMinutes ?? 15);
+      /*
+       * The request ran out of patience; the approval did not.
+       *
+       * Nothing is written to either row here. The call stays APPROVAL_PENDING
+       * because that is what it is, the approval keeps the deadline the
+       * administrator configured, and the message says which of the two clocks
+       * expired -- because "expired" was previously said of an approval that
+       * had fifty-five minutes left, which sent the administrator looking for a
+       * decision the queue no longer offered them.
+       */
+      if (wait.outcome === "UNDECIDED") {
+        const message = "No human decision was recorded while this request could wait. "
+          + `The approval is still pending and can be decided until ${wait.decidableUntil.toISOString()}; `
+          + "presenting the same request id again resumes the wait.";
+        return {
+          callId,
+          status: "APPROVAL_PENDING",
+          data: { message, decidableUntil: wait.decidableUntil.toISOString() },
+          isError: true,
+        };
+      }
+      if (wait.outcome !== "APPROVED") {
+        const reason = wait.outcome === "REJECTED"
           ? "A human rejected this tool call."
           : "No human decision was recorded before the approval expired.";
-        await this.failCall(callId, `TOOL_APPROVAL_${decision}`, reason);
+        await this.failCall(callId, `TOOL_APPROVAL_${wait.outcome}`, reason);
         return { callId, status: "FAILED", data: { message: reason }, isError: true };
       }
       await this.database
@@ -549,7 +606,7 @@ export class DrizzleToolingManager implements ToolingManager {
        * sent. Passing the first and not the second is the entire boundary.
        */
       const data = await this.executeHandler(tool.handlerKey, sanitizedArguments, {
-        runId, divisionId: run!.divisionId,
+        runId, divisionId: run.divisionId,
       });
       await this.completeCall(callId, data);
       return { callId, status: "COMPLETED", data, isError: false };
@@ -561,13 +618,58 @@ export class DrizzleToolingManager implements ToolingManager {
   }
 
   /**
-   * Blocks a consequential call until a human decides, or the approval expires.
+   * The approval's own deadline, opening one if this call has none yet.
+   *
+   * `ToolApproval.callId` is unique, so a resumed call re-uses the row it
+   * already has -- and, crucially, the deadline that row was opened with. A
+   * second insert would otherwise hand the caller a fresh hour every time it
+   * asked, which would make `approvalTtlMinutes` a per-request grace rather
+   * than the lifetime of one decision.
+   */
+  private async openApproval(callId: string, ttlMinutes: number): Promise<Date> {
+    const [opened] = await this.database
+      .insert(toolApproval)
+      .values({ callId, status: "PENDING", expiresAt: new Date(Date.now() + ttlMinutes * 60_000) })
+      .onConflictDoNothing({ target: toolApproval.callId })
+      .returning({ expiresAt: toolApproval.expiresAt });
+    if (opened) return opened.expiresAt;
+    const [existing] = await this.database
+      .select({ expiresAt: toolApproval.expiresAt })
+      .from(toolApproval)
+      .where(eq(toolApproval.callId, callId))
+      .limit(1);
+    if (!existing) throw new ToolingConflictError("The approval for this tool call could not be opened.");
+    return existing.expiresAt;
+  }
+
+  /** The recorded decision, or null while nobody has made one. */
+  private async recordedDecision(callId: string): Promise<"APPROVED" | "REJECTED" | "EXPIRED" | null> {
+    const [row] = await this.database
+      .select({ status: toolApproval.status })
+      .from(toolApproval)
+      .where(eq(toolApproval.callId, callId))
+      .limit(1);
+    if (!row || row.status === "PENDING") return null;
+    return row.status === "APPROVED" ? "APPROVED" : row.status === "REJECTED" ? "REJECTED" : "EXPIRED";
+  }
+
+  /**
+   * Waits for a human, for as long as the request can afford to.
    *
    * MCP is request/response, so the decision has to happen while the caller
    * waits: there is no channel to hand an answer back to a call that already
-   * returned. The wait is bounded by the administrator's own
-   * `approvalTtlMinutes`, and the approval row outlives the wait either way —
-   * an expired approval is a recorded decision, not a lost one.
+   * returned. But the two clocks that bound this are not the same clock, and
+   * conflating them is what made `approvalTtlMinutes` inert across its whole
+   * 5-1440 range. The approval's lifetime is the administrator's setting; the
+   * wait is capped at five minutes because no HTTP request survives an hour.
+   * Hitting the cap used to write EXPIRED, so the approval left the queue and
+   * `decideApproval` answered "already decided, or it expired" for every value
+   * the setting could take -- including, at its 5-minute minimum, the value
+   * where the two deadlines coincide and the bug was invisible.
+   *
+   * So the row is only expired when the row's own deadline has passed.
+   * Otherwise the wait reports UNDECIDED and leaves the approval exactly as the
+   * administrator will find it in the queue.
    *
    * This deliberately does not rest on `maxTurns = 1`. That value is a boundary
    * OrcaSynapse declares about its own profiles and never transmits: the run
@@ -575,45 +677,36 @@ export class DrizzleToolingManager implements ToolingManager {
    * actually keeps a run single-step is that no toolset is admitted, so
    * blocking here must hold on its own once one is.
    */
-  private async awaitApproval(callId: string, ttlMinutes: number): Promise<"APPROVED" | "REJECTED" | "EXPIRED"> {
-    const expiresAt = new Date(Date.now() + ttlMinutes * 60_000);
-    await this.database.insert(toolApproval).values({ callId, status: "PENDING", expiresAt });
-    const giveUpAt = Math.min(expiresAt.getTime(), Date.now() + MAXIMUM_INLINE_WAIT_MS);
+  private async awaitApproval(callId: string, ttlMinutes: number): Promise<ApprovalWait> {
+    const expiresAt = await this.openApproval(callId, ttlMinutes);
+    const giveUpAt = Math.min(expiresAt.getTime(), Date.now() + this.maximumInlineWaitMs);
 
     while (Date.now() < giveUpAt) {
-      const [row] = await this.database
-        .select({ status: toolApproval.status })
-        .from(toolApproval)
-        .where(eq(toolApproval.callId, callId))
-        .limit(1);
-      if (row && row.status !== "PENDING") {
-        return row.status === "APPROVED" ? "APPROVED" : "REJECTED";
-      }
-      await new Promise((resolve) => setTimeout(resolve, APPROVAL_POLL_MS));
+      const decision = await this.recordedDecision(callId);
+      if (decision) return { outcome: decision };
+      await new Promise((resolve) => setTimeout(resolve, this.approvalPollMs));
     }
 
-    // Expire it durably, so the record reflects why nothing ran.
-    //
-    // The row count is the answer, not the clock. An administrator can decide
-    // between the last poll and the deadline, and this update then matches
-    // nothing: reporting EXPIRED regardless failed a call a named human had
-    // already approved, leaving the trail holding tool.call_approved SUCCESS
-    // beside a record asserting nobody decided. findExistingResult replays that
-    // FAILED call, so the run could never recover from it either.
+    /*
+     * One last read before either answer, because a decision can land between
+     * the final poll and here. Reporting the wrong thing regardless failed a
+     * call a named human had already approved, leaving the trail holding
+     * tool.call_approved SUCCESS beside a record asserting nobody decided.
+     */
+    const decision = await this.recordedDecision(callId);
+    if (decision) return { outcome: decision };
+    if (Date.now() < expiresAt.getTime()) return { outcome: "UNDECIDED", decidableUntil: expiresAt };
+
+    // Expire it durably, so the record reflects why nothing ran. The row count
+    // is the answer, not the clock: a decision landing inside this same window
+    // matches the guard away, and then it is that decision that stands.
     const expired = await this.database
       .update(toolApproval)
       .set({ status: "EXPIRED", decidedAt: new Date() })
       .where(and(eq(toolApproval.callId, callId), eq(toolApproval.status, "PENDING")))
       .returning({ id: toolApproval.id });
-    if (expired.length === 1) return "EXPIRED";
-
-    const [decided] = await this.database
-      .select({ status: toolApproval.status })
-      .from(toolApproval)
-      .where(eq(toolApproval.callId, callId))
-      .limit(1);
-    if (decided?.status === "APPROVED") return "APPROVED";
-    return decided?.status === "REJECTED" ? "REJECTED" : "EXPIRED";
+    if (expired.length === 1) return { outcome: "EXPIRED" };
+    return { outcome: await this.recordedDecision(callId) ?? "EXPIRED" };
   }
 
   /** Approvals still awaiting a human, newest first. */
@@ -961,17 +1054,41 @@ export class DrizzleToolingManager implements ToolingManager {
    * is every division's rows.
    */
   async runScope(authorization: string | undefined): Promise<{ runId: string; divisionId: string | null }> {
+    const { runId, run } = await this.authorizedRun(authorization, "execution");
+    return { runId, divisionId: run.divisionId };
+  }
+
+  /**
+   * The run an authorization names, once every gate that governs it has passed.
+   *
+   * One implementation, three callers: discovery, execution, and `runScope`.
+   * They had three copies of the same six lines, and the copies had already
+   * begun to differ -- `invoke` read the control row and the run in parallel
+   * while `runScope` read them one after the other -- which meant the seven
+   * tests covering `runScope`'s guarantee were covering a chain the shipping
+   * invocation path re-implemented separately. A guarantee this load-bearing
+   * gets written once and tested once.
+   *
+   * The gate is the same for all three intents on purpose: a run that may not
+   * call a tool may not discover one, and may not have a scope resolved for it
+   * either. Only the wording of the refusal differs, which is what `intent`
+   * carries.
+   */
+  private async authorizedRun(authorization: string | undefined, intent: "discovery" | "execution") {
     const parsed = authorization ? RUN_AUTHORIZATION.exec(authorization) : null;
     const runId = parsed?.[1];
     const capability = parsed?.[2];
-    if (!runId || !capability) throw new ToolingDeniedError("Private run authorization is required.");
-    const control = await this.runtimeControlRow();
+    if (!runId || !capability) {
+      throw new ToolingDeniedError(
+        intent === "discovery"
+          ? "Private run authorization is required for tool discovery."
+          : "Private run authorization is required.",
+      );
+    }
+    const [control, run] = await Promise.all([this.runtimeControlRow(), this.runForTooling(runId)]);
     if (!control?.enabled) throw new ToolingDeniedError(control?.reason ?? "The tool gateway is disabled fail-closed.");
-    const run = await this.runForTooling(runId);
-    // The same gate discovery and execution pass through: a run that may not
-    // call a tool may not have a scope resolved for it either.
-    this.assertRunIsExecutable(run, capability, "execution");
-    return { runId, divisionId: run!.divisionId };
+    this.assertRunIsExecutable(run, capability, intent);
+    return { runId, run: run!, control };
   }
 
   private assertRunIsExecutable(

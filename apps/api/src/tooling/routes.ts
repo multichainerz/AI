@@ -312,13 +312,21 @@ export async function registerAdminToolingRoutes(app: FastifyInstance, options: 
     // the whole approval boundary exists to gate.
     const principal = await requireAdmin(request, reply, options, "tools:manage");
     const manager = managerOrLocked(options, reply);
+    // The id is checked here as well as the body, because it reaches a `uuid`
+    // column: unvalidated, a typo raised PostgreSQL's 22P02 and was rethrown as
+    // a 500. Every other path parameter in this module already runs through
+    // `uuid` for the same reason.
+    const approvalId = uuid(request.params.approvalId);
     if (!principal || !manager) return;
     const input = decideToolApprovalSchema.safeParse(request.body);
-    if (!input.success) {
-      return reply.code(400).send({ error: "INVALID_TOOL_DECISION", message: input.error.issues[0]?.message });
+    if (!approvalId || !input.success) {
+      return reply.code(400).send({
+        error: "INVALID_TOOL_DECISION",
+        message: approvalId ? input.error?.issues[0]?.message : "Approval ID is invalid.",
+      });
     }
     try {
-      await manager.decideApproval(principal, request.params.approvalId, input.data.decision === "APPROVE", input.data.reason);
+      await manager.decideApproval(principal, approvalId, input.data.decision === "APPROVE", input.data.reason);
       return reply.code(204).send();
     } catch (error) {
       if (error instanceof ToolingConflictError) {

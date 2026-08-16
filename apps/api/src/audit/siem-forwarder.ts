@@ -13,42 +13,78 @@ const DEFAULT_BATCH_SIZE = 100;
 const DEFAULT_TIMEOUT_MS = 10_000;
 
 /**
- * Whether nothing still running could have written an event before this one.
+ * How long a hole must have been a hole before it can be declared permanent.
  *
- * A sequence value is claimed while the inserting transaction is still open, so
- * a position can be occupied by a transaction that has not committed yet - or
- * by one that never will, because a rolled-back insert does not give its
- * position back. This is true once the transaction that wrote the row is older
- * than every transaction still in flight, at which point anything that has not
- * landed yet claimed its position after this row claimed its own. age() is used
- * rather than a plain comparison so the answer survives transaction id
- * wraparound.
+ * This covers one window and nothing else: a transaction evaluates the cursor
+ * default a moment before its first heap insert assigns it a transaction id, so
+ * for that instant it holds a position while being invisible to any test made
+ * of transaction ids. The window is microseconds of executor work; a minute is
+ * six orders of magnitude of margin, and it is only ever paid on a position
+ * that has already been observed missing.
  */
-const SETTLED = sql<boolean>`age(${auditEvent}.xmin) > age(pg_snapshot_xmin(pg_current_snapshot())::xid)`;
+const HOLE_GRACE_MS = 60_000;
+
+/** The transaction-id horizon of one read, in wraparound-free xid8 form. */
+interface Horizon {
+  /** Every transaction below this has finished. */
+  xmin: bigint;
+  /** No transaction at or above this had been assigned an id yet. */
+  xmax: bigint;
+}
+
+/**
+ * A run of positions seen missing, and the horizon at the moment they were.
+ *
+ * Held in memory rather than in auditForwardingState, which has no column for
+ * it. Losing it on restart only costs another observation cycle: the forwarder
+ * waits again rather than skipping something it has not yet proved dead, which
+ * is the direction an audit trail should fail in.
+ */
+interface HoleObservation extends Horizon {
+  from: bigint;
+  to: bigint;
+  observedAt: number;
+}
 
 /**
  * The leading run of a batch that is provably complete.
  *
  * An unbroken run of positions is safe on its own: a position that is already
  * occupied cannot also be held by an uncommitted write, so nothing can still
- * arrive between these events. That covers the ordinary case without waiting on
- * unrelated transactions elsewhere in the cluster. Past a hole - a position
- * claimed by a write that is still open, or lost to one that was rolled back -
- * an event is only safe once it has settled, which is what keeps a permanent
- * hole from stalling forwarding forever.
+ * arrive between these events. Past a hole nothing is safe, because a hole is
+ * either a write still in flight or one that was rolled back, and the trail
+ * cannot tell those apart by looking at itself.
+ *
+ * The previous rule tried to, and it was wrong in a way that lost events. It
+ * compared the xid that wrote a row against the oldest xid still running and
+ * read the answer as "nothing earlier is outstanding" -- but a transaction
+ * takes its xid at its first write and its cursor at the audit insert, and
+ * every writer here inserts its domain row first. An older transaction can
+ * therefore hold a *later* position, which made a row past a hole look settled,
+ * advanced the cursor over the hole, and left `gt(cursor, after)` excluding the
+ * missing event from every later pass -- permanently, and silently, because the
+ * backlog query shares that predicate.
+ *
+ * So a hole stops the batch. `holeIsSettled` is the only way past one, and what
+ * it decides is not "did this row's writer come first" but "can anything still
+ * arrive here at all" -- see SiemForwarder.holeIsSettled.
  */
-function deliverablePrefix<T extends { cursor: bigint; settled: boolean }>(
+function deliverablePrefix<T extends { cursor: bigint }>(
   batch: readonly T[],
   after: bigint,
-): T[] {
+  holeIsSettled: (from: bigint, to: bigint) => boolean,
+): { deliverable: T[]; hole?: { from: bigint; to: bigint } } {
   let expected = after + 1n;
   let count = 0;
   for (const candidate of batch) {
-    if (candidate.cursor !== expected && !candidate.settled) break;
+    if (candidate.cursor !== expected) {
+      const hole = { from: expected, to: candidate.cursor - 1n };
+      if (!holeIsSettled(hole.from, hole.to)) return { deliverable: batch.slice(0, count), hole };
+    }
     expected = candidate.cursor + 1n;
     count += 1;
   }
-  return batch.slice(0, count);
+  return { deliverable: batch.slice(0, count) };
 }
 
 export interface SiemForwarderLogger {
@@ -84,6 +120,8 @@ export class SiemForwarder {
   private timer: NodeJS.Timeout | undefined;
   private active: Promise<unknown> | undefined;
   private started = false;
+  /** The run of positions this forwarder is currently waiting out. */
+  private hole: HoleObservation | undefined;
 
   constructor(
     private readonly database: OrcaSynapseDatabase,
@@ -91,7 +129,36 @@ export class SiemForwarder {
     private readonly logger: SiemForwarderLogger,
     private readonly fetcher: typeof fetch = fetch,
     private readonly tickIntervalMs = TICK_INTERVAL_MS,
+    private readonly holeGraceMs = HOLE_GRACE_MS,
   ) {}
+
+  /**
+   * Whether this run of positions can never be filled.
+   *
+   * Two conditions, and both are about what could still write there rather than
+   * about what already did.
+   *
+   * The first is that every transaction holding an id when the hole was
+   * observed has since ended: `xmin` now at or past the `xmax` recorded then
+   * means exactly that, in xid8, which is 64-bit and so has no wraparound to
+   * reason about. Anything that started afterwards took a position above
+   * everything already handed out, so it cannot land here.
+   *
+   * The second is the grace period, which covers the one gap the first leaves:
+   * the instant between a transaction evaluating the cursor default and its
+   * first heap insert giving it an id. That is the whole of the reasoning --
+   * nothing here assumes the order positions were claimed in matches the order
+   * transaction ids were issued in, which is the assumption that lost events.
+   *
+   * The observation has to match this hole exactly. A hole that partly filled
+   * is a different hole and starts its own wait.
+   */
+  private holeIsSettled(from: bigint, to: bigint, horizon: Horizon): boolean {
+    const observed = this.hole;
+    if (!observed || observed.from !== from || observed.to !== to) return false;
+    if (Date.now() - observed.observedAt < this.holeGraceMs) return false;
+    return horizon.xmin >= observed.xmax;
+  }
 
   async start(): Promise<void> {
     if (this.started) return;
@@ -149,14 +216,37 @@ export class SiemForwarder {
     // A sequence hands out its first value at 1, so an unset position means
     // everything is outstanding rather than that the run starts anywhere.
     const after = state?.lastForwardedCursor ?? 0n;
+    // The horizon is read in the same statement as the rows, so it describes
+    // the same snapshot the holes were observed in rather than a later one.
     const candidates = await this.database
-      .select({ ...getTableColumns(auditEvent), settled: SETTLED })
+      .select({
+        ...getTableColumns(auditEvent),
+        xmin: sql<string>`pg_snapshot_xmin(pg_current_snapshot())::text`,
+        xmax: sql<string>`pg_snapshot_xmax(pg_current_snapshot())::text`,
+      })
       .from(auditEvent)
       .where(gt(auditEvent.cursor, after))
       .orderBy(asc(auditEvent.cursor))
       .limit(batchSize);
 
-    const batch = deliverablePrefix(candidates, after);
+    const first = candidates[0];
+    const horizon: Horizon | undefined = first
+      ? { xmin: BigInt(first.xmin), xmax: BigInt(first.xmax) }
+      : undefined;
+    const { deliverable: batch, hole } = deliverablePrefix(
+      candidates,
+      after,
+      (from, to) => horizon !== undefined && this.holeIsSettled(from, to, horizon),
+    );
+    /*
+     * A hole is remembered so the next cycle can measure how long it has been
+     * one; re-recording the same hole every cycle would restart the clock and
+     * leave forwarding stalled behind a position nothing will ever fill.
+     */
+    if (!hole || !horizon) this.hole = undefined;
+    else if (this.hole?.from !== hole.from || this.hole.to !== hole.to) {
+      this.hole = { ...hole, ...horizon, observedAt: Date.now() };
+    }
     // Anything left behind is an event a still-open transaction could precede.
     // It is counted as pending, not delivered, and follows on a later cycle.
     if (batch.length === 0) return { forwarded: 0 };

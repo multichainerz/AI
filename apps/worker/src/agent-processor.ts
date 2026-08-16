@@ -13,6 +13,7 @@ import {
   chatRunWakeStatement,
   governedTool,
   hermesRuntimeNode,
+  mcpGatewayCredential,
   runtimeToolsetAdmission,
   scopedMemoryEntry,
   serviceConnection,
@@ -145,6 +146,42 @@ export interface DivisionMemory {
 }
 
 /**
+ * The words the `simple` configuration will index and a question always
+ * contains, so this has to drop them itself.
+ *
+ * The first 127 are exactly PostgreSQL's snowball English stop list -- the set
+ * `to_tsvector('english', ...)` removes -- read out of the server rather than
+ * remembered, by asking `ts_lexize('english_stem', word)` which words it
+ * answers with an empty lexeme array. Taking the list from there rather than
+ * writing one by hand is what makes this filter and the `english`
+ * configuration agree: if the GIN index is ever rebuilt on `english`, this
+ * becomes redundant rather than contradictory.
+ *
+ * The rest are what an apostrophe leaves behind. `[\p{L}\p{N}]` splits "don't"
+ * into *don* and *t* and "we're" into *we* and *re*, and those fragments are
+ * noise that can still match -- a note containing any contraction carries them
+ * too, and matching one inflates its rank over a note that answers the
+ * question. `won` and `ma` are deliberately absent even though the contraction
+ * lists that inspired this carry both: they are ordinary words here, and a
+ * question about a contract somebody won should find the note about it.
+ */
+const SEARCH_STOP_WORDS = new Set([
+  "i", "me", "my", "myself", "we", "our", "ours", "ourselves", "you", "your", "yours", "yourself",
+  "yourselves", "he", "him", "his", "himself", "she", "her", "hers", "herself", "it", "its",
+  "itself", "they", "them", "their", "theirs", "themselves", "what", "which", "who", "whom",
+  "this", "that", "these", "those", "am", "is", "are", "was", "were", "be", "been", "being",
+  "have", "has", "had", "having", "do", "does", "did", "doing", "a", "an", "the", "and", "but",
+  "if", "or", "because", "as", "until", "while", "of", "at", "by", "for", "with", "about",
+  "against", "between", "into", "through", "during", "before", "after", "above", "below", "to",
+  "from", "up", "down", "in", "out", "on", "off", "over", "under", "again", "further", "then",
+  "once", "here", "there", "when", "where", "why", "how", "all", "any", "both", "each", "few",
+  "more", "most", "other", "some", "such", "no", "nor", "not", "only", "own", "same", "so",
+  "than", "too", "very", "s", "t", "can", "will", "just", "don", "should", "now",
+  "ll", "ve", "re", "ain", "aren", "couldn", "didn", "doesn", "hadn", "hasn", "haven", "isn",
+  "mightn", "mustn", "needn", "shan", "shouldn", "wasn", "weren", "wouldn",
+]);
+
+/**
  * Turns a question into a `simple`-configuration tsquery, or nothing.
  *
  * `plainto_tsquery` is unusable here and the reason is easy to miss:
@@ -153,17 +190,38 @@ export interface DivisionMemory {
  * *policy*. Almost nothing ever matches, and the failure is silent — the query
  * runs, returns nothing, and the recency floor quietly answers every request.
  *
- * So the terms are ORed and ranked instead, and tokens under three characters
- * are dropped as crude stop-word handling that `simple` does not do. Only
- * letters and digits survive tokenisation, which is also what makes it safe to
- * interpolate into `to_tsquery` — the operators it would otherwise parse cannot
- * appear.
+ * So the terms are ORed and ranked instead. Which makes stop words the *other*
+ * half of the same problem, and the half this got wrong for longer: an ORed
+ * *the* matches nearly every note ever written, and `ts_rank` counts
+ * occurrences, so a long note that says "the" six times outranks the short one
+ * that answers the question. This used to drop tokens under three characters
+ * and call it stop-word handling, which kept *the*, *and*, *for*, *you*, *can*
+ * and *are* -- the six words a question is likeliest to contain. It survived
+ * review because the guarding test's decoy notes happened to be phrased
+ * without any of them; changing one decoy to an ordinary English sentence
+ * failed it immediately.
+ *
+ * The length floor is two rather than three now, and that is the consequence of
+ * having a real list rather than a separate decision: the floor's whole
+ * justification was standing in for one. What it is left doing is dropping
+ * single characters, which carry no signal, while *Q3*, *AI*, *HR*, *VP* and
+ * *EU* -- the terms a question is most specific about -- reach the query for
+ * the first time.
+ *
+ * Only letters and digits survive tokenisation, which is also what makes it
+ * safe to interpolate into `to_tsquery` — the operators it would otherwise
+ * parse cannot appear.
+ *
+ * A question made only of stop words yields nothing and falls to the recency
+ * floor, which is right: it carries no lexical signal, and the alternative is
+ * matching everything.
  *
  * The index is on `to_tsvector('simple', content)`; matching any other
  * configuration here would silently stop using it.
  */
 function searchTermsFrom(input: string): string {
-  const terms = input.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? [];
+  const terms = (input.toLowerCase().match(/[\p{L}\p{N}]{2,}/gu) ?? [])
+    .filter((term) => !SEARCH_STOP_WORDS.has(term));
   return [...new Set(terms)].slice(0, 24).join(" | ");
 }
 
@@ -185,7 +243,7 @@ function rememberedSection(memory: readonly DivisionMemory[]): string {
   if (memory.length === 0) return "";
   const lines: string[] = [];
   let characters = 0;
-  for (const { content, at } of memory.slice(0, MEMORY_ENTRY_LIMIT)) {
+  for (const { content, at } of memory) {
     const line = `- (${at.toISOString().slice(0, 10)}) ${content}`;
     if (characters + line.length > MEMORY_CHARACTER_LIMIT) break;
     characters += line.length;
@@ -202,11 +260,27 @@ function rememberedSection(memory: readonly DivisionMemory[]): string {
 /**
  * How much remembered material a prompt may carry.
  *
- * Both limits, because either alone fails: forty one-line notes and four notes
- * of two thousand characters are the same problem, and the second is the one
- * that silently eats the model's context.
+ * Characters, because that is what a context window is spent in. There was a
+ * second limit here, `MEMORY_ENTRY_LIMIT = 40`, and the comment justifying the
+ * pair claimed both were load-bearing: "either alone fails: forty one-line
+ * notes and four notes of two thousand characters are the same problem". Half
+ * of that is right and the half it argues for is not. Four notes of two
+ * thousand characters is exactly what this stops. Forty one-line notes costs
+ * around two thousand five hundred characters, which is not a problem and never
+ * needed a limit of its own.
+ *
+ * And the entry limit could not have enforced one anyway. `divisionMemory`
+ * returns at most `MEMORY_MATCH_LIMIT` (20) matched notes, or
+ * `MEMORY_RECENCY_FLOOR` (5) recent ones -- both below 40 -- so in production
+ * the branch never ran. It was a limit that read as a guarantee and gave none,
+ * which is worse than the absence it replaced: it invited the next reader to
+ * believe the entry count was bounded somewhere it is not.
+ *
+ * The bound that remains is a property of the loop rather than of any caller's
+ * `LIMIT` clause, which matters because `hardenedInstructions` is exported and
+ * takes whatever it is handed. Pinned in hardened-instructions.test.ts against
+ * two hundred notes -- more than any caller here produces.
  */
-const MEMORY_ENTRY_LIMIT = 40;
 const MEMORY_CHARACTER_LIMIT = 6_000;
 /** How many ranked matches a question may pull in. */
 const MEMORY_MATCH_LIMIT = 20;
@@ -949,10 +1023,107 @@ export class DrizzleAgentProcessor {
     if (run.profile.status !== "ACTIVE") return { code: "PROFILE_SUSPENDED", message: "The agent profile is no longer active." };
     if (run.profile.activeVersion !== run.profileVersion) return { code: "PROFILE_VERSION_REVOKED", message: "The run's agent version is no longer active." };
     if (!run.version.safeMode || run.version.maxTurns !== 1) return { code: "UNSAFE_PROFILE", message: "The agent configuration does not satisfy the single-turn safe-mode boundary." };
+    /*
+     * TOOL_RUNTIME_DISABLED: the run is configured for a tool plane that is
+     * wired up and switched off.
+     *
+     * ## What this is not
+     *
+     * It is not the boundary that stops a governed tool from executing. That
+     * boundary is the MCP gateway's, and it is checked three separate times --
+     * `listToolsForRun`, `invoke` and `runScope` in the API's tooling manager
+     * each re-read `ToolRuntimeControl` and each refuse fail-closed. A run that
+     * starts while the switch is off gets no tool discovery and no tool call;
+     * it behaves exactly as a run with no grants. Nothing below can widen that
+     * and nothing below tries to.
+     *
+     * What this decides is only whether such a run should be *started* at all,
+     * and the honest answer is "it depends on whether a tool call was ever
+     * possible".
+     *
+     * ## Why it used to deny every run on every fresh install
+     *
+     * The superseded rule was: any enabled grant on an ACTIVE tool, plus a
+     * control row that is not enabled, denies the run. Both halves are true on
+     * a fresh install and neither was chosen by anybody.
+     *
+     * `seedMemoryTools` in packages/database grants `remember` and `recall` to
+     * every profile version on every migration -- deliberately permissive, see
+     * its own comment -- so a new install has two enabled grants on two ACTIVE
+     * tools before an operator has opened the dashboard. `ToolRuntimeControl`
+     * defaults `enabled: false` and nothing seeds the row, so the second half
+     * held too. The measured result was ToolRuntimeControl with zero rows and
+     * two enabled grants: every run of every profile denied before Hermes was
+     * ever called, on a product whose central screen is a chat window.
+     *
+     * Seeding the row would not have fixed it. `false` changes nothing, and
+     * `true` would open the gateway from a migration, behind the back of
+     * `updateRuntimeControl`, which deliberately refuses to enable it without a
+     * live credential, a grant, and a passing Hermes boundary check.
+     *
+     * ## The condition that replaces it
+     *
+     * A governed tool call reaches this deployment through exactly one door:
+     * `registerMcpGatewayRoutes`, which authenticates the bearer token against
+     * `McpGatewayCredential` and 401s unless a row matches that is `enabled`
+     * and not revoked. `McpGateway` is the only caller of `invoke` and
+     * `listToolsForRun`. So with no live credential, a grant is not a capability
+     * the run has -- it is a row describing one it could be given later, and
+     * refusing the run over it protects nothing that is not already impossible.
+     *
+     * With a live credential the calculus reverses: somebody has wired a client
+     * to the gateway, the grant is reachable in principle, and a run whose
+     * profile depends on tools that are switched off is a half-configured run
+     * worth stopping with a code that says so rather than one that answers
+     * around the gap. That is the state this still denies, and the state the
+     * guarding test in agent-processor.test.ts puts the branch into -- it has to
+     * write its own tool, grant and credential, because `context.reset()`
+     * truncates the seeded ones and would otherwise leave these lines unreached
+     * by the entire suite.
+     *
+     * Deliberately the *necessary* condition rather than a sufficient one. A
+     * credential existing does not prove Hermes is wired to the gateway; it
+     * proves a call could authenticate. Narrowing a fail-closed gate to the
+     * necessary condition removes it only where the risk cannot exist.
+     */
     if (run.version.toolGrants.some((grant) => grant.enabled && grant.tool.status === "ACTIVE")) {
-      const [toolControl] = await this.database.select().from(toolRuntimeControl)
-        .where(eq(toolRuntimeControl.id, "global")).limit(1);
-      if (!toolControl?.enabled) return { code: "TOOL_RUNTIME_DISABLED", message: toolControl?.reason ?? "Tool execution is disabled fail-closed." };
+      const [gatewayCredential] = await this.database.select({ id: mcpGatewayCredential.id })
+        .from(mcpGatewayCredential)
+        .where(and(eq(mcpGatewayCredential.enabled, true), isNull(mcpGatewayCredential.revokedAt)))
+        .limit(1);
+      if (gatewayCredential) {
+        const [toolControl] = await this.database.select().from(toolRuntimeControl)
+          .where(eq(toolRuntimeControl.id, "global")).limit(1);
+        /*
+         * The fallback message names the switch and where it lives, because it
+         * is nearly all the operator gets. The dashboard prints `failureCode`
+         * and this string and nothing else, and `TOOL_RUNTIME_DISABLED` appears
+         * nowhere but here and its own test -- no document, no interface copy --
+         * so "Tool execution is disabled fail-closed", which is what this said,
+         * left them with a code to search for and nothing to find.
+         *
+         * It names an endpoint rather than a screen, and that is not a stylistic
+         * choice: there is no screen. `getToolRuntime` and `updateToolRuntime`
+         * exist in the web client and are called by `api.test.ts` and by nothing
+         * else, so the switch that produced this refusal has no control surface
+         * in the dashboard at all. Sending an operator to a page that does not
+         * exist would be worse than the message it replaces. Worth fixing on the
+         * web side; until it is, this has to be honest about where the switch
+         * is.
+         *
+         * An operator's own reason, when they set one, is better than anything
+         * written here and is preferred.
+         */
+        if (!toolControl?.enabled) {
+          return {
+            code: "TOOL_RUNTIME_DISABLED",
+            message: toolControl?.reason
+              ?? "This agent is granted governed tools while the tool gateway is switched off, so the run was refused "
+                + "rather than answered without them. Switch the gateway on with PATCH /api/v1/admin/tooling/runtime, "
+                + "or remove the tool grants from the agent's version.",
+          };
+        }
+      }
     }
     return null;
   }

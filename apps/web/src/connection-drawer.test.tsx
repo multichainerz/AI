@@ -5,10 +5,11 @@
  * keystroke-by-keystroke rewrite is invisible to static markup.
  */
 import type { ComponentProps } from "react";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import type { InferenceDiscoveryResult, ServiceConnectionSummary } from "@orcasynapse/contracts";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ConnectionDrawer } from "./connection-drawer.js";
+import { ConnectionDrawer, type ConnectionDraft } from "./connection-drawer.js";
 
 describe("ConnectionDrawer inference endpoint", () => {
   it("renders a guided discovery flow and keeps manual fields behind an advanced control", () => {
@@ -83,6 +84,109 @@ function slugField(): HTMLElement {
 }
 
 afterEach(cleanup);
+
+/** A production inference connection that is up and admitted right now. */
+const liveInference: ServiceConnectionSummary = {
+  id: "0f8b1f4c-4a2e-4a4a-9d3c-2f6c1a5b7e90",
+  slug: "vllm-primary",
+  displayName: "AI Inference Primary",
+  kind: "INFERENCE",
+  environment: "PRODUCTION",
+  baseUrl: "http://gpu-server.internal:8000/v1",
+  enabled: true,
+  status: "HEALTHY",
+  configuration: { inferenceBackend: "VLLM", modelAlias: "hermes-agent" },
+  activeRevision: 3,
+  secretFieldNames: ["apiKey"],
+  lastHealthcheckAt: "2026-08-14T00:00:00.000Z",
+  lastHealthcheckMessage: "Answering within budget.",
+  updatedAt: "2026-08-14T00:00:00.000Z",
+};
+
+/** A probe that came back with something less than a clean bill of health. */
+const partialDiscovery: InferenceDiscoveryResult = {
+  status: "PARTIAL",
+  message: "The model list answered; the health path did not.",
+  normalizedBaseUrl: "http://gpu-server.internal:8000/v1",
+  backend: "VLLM",
+  backendConfidence: "HIGH",
+  backendEvidence: ["Server header names vLLM."],
+  models: [{ id: "hermes-agent" }],
+  recommended: {
+    baseUrl: "http://gpu-server.internal:8000/v1",
+    inferenceBackend: "VLLM",
+    healthPath: null,
+    modelsPath: "/models",
+    chatPath: "/chat/completions",
+    modelAlias: "hermes-agent",
+  },
+  probes: [{
+    key: "health", label: "Health", path: "/health", status: "FAILED",
+    httpStatus: null, latencyMs: 8_000, message: "No response.",
+  }],
+};
+
+describe("discovering an endpoint that is already live", () => {
+  it("does not disable a working connection because one probe failed", async () => {
+    /*
+     * The whole path: `Discover server` used to assign `enabled` from the
+     * discovery status, so a PARTIAL, AUTH_REQUIRED or UNREACHABLE result set
+     * it false on a connection that was serving chat a second earlier. Saving
+     * then took `app.tsx`'s inactive branch -- write `enabled: false`, skip the
+     * test-and-reactivate entirely -- and INFERENCE has no `enabled` control on
+     * this form, so nothing on screen said what had happened or offered a way
+     * back short of a HEALTHY "Test & activate".
+     *
+     * A probe is evidence about a moment; admission is a decision. Discovery
+     * may raise one, never lower it.
+     */
+    // Typed, so `mock.calls[0][0]` is the draft rather than an empty tuple: an
+    // untyped `vi.fn` has no parameters to index into and the assertion below
+    // would not compile.
+    const onSave = vi.fn<(draft: ConnectionDraft) => Promise<void>>(async () => undefined);
+    render(<ConnectionDrawer
+      {...props}
+      initialKind="INFERENCE"
+      connections={[liveInference]}
+      onSave={onSave}
+      onDiscoverInference={vi.fn(async () => partialDiscovery)}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Discover server" }));
+    // The result is on screen, so the submit below is the one that follows a
+    // completed discovery rather than one that raced it.
+    await screen.findByText("The model list answered; the health path did not.");
+
+    fireEvent.submit(screen.getByRole("button", { name: /Save changes|Activate AI Inference/ }).closest("form")!);
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+    expect(onSave.mock.calls[0]![0]).toMatchObject({ existingId: liveInference.id, enabled: true });
+  });
+
+  it("still turns a new connection on when discovery comes back ready", async () => {
+    // The other half of "raise, never lower": a never-admitted endpoint that
+    // answers everything is exactly what the guided flow exists to activate.
+    // Typed, so `mock.calls[0][0]` is the draft rather than an empty tuple: an
+    // untyped `vi.fn` has no parameters to index into and the assertion below
+    // would not compile.
+    const onSave = vi.fn<(draft: ConnectionDraft) => Promise<void>>(async () => undefined);
+    render(<ConnectionDrawer
+      {...props}
+      initialKind="INFERENCE"
+      onSave={onSave}
+      onDiscoverInference={vi.fn(async () => ({ ...partialDiscovery, status: "READY" as const }))}
+    />);
+
+    fireEvent.change(screen.getByLabelText(/AI Inference address/), {
+      target: { value: "http://gpu-server.internal:8000" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Discover server" }));
+    const submit = await screen.findByRole("button", { name: "Activate AI Inference" });
+
+    fireEvent.submit(submit.closest("form")!);
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+    expect(onSave.mock.calls[0]![0]).toMatchObject({ enabled: true });
+  });
+});
 
 describe("naming a connection", () => {
   it("lets a hyphen be typed into the slug, because the seeded slug has one", () => {

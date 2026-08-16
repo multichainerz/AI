@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="v8.8.4"
+INSTALLER_VERSION="v8.8.5"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 HERMES_HOME_DIR="${STATE_ROOT}/home"
 RUNTIME_SERVICE="orcasynapse-hermes"
@@ -1949,8 +1949,14 @@ repair_runtime_installation() {
   validate_state_root "${STATE_ROOT}"
   [[ -s "${STATE_ROOT}/node-id" ]] \
     || fail "no completed OrcaSynapse enrollment exists under ${STATE_ROOT}"
+  # Naming the program that decommissions, because "decommission" is not a verb
+  # the host implements: remove-agentic-node.sh is the only thing that does it,
+  # and an operator holding a --repair command has no reason to know that. The
+  # control-plane origin is not available here -- --repair takes no argument and
+  # this runs before any bundle or journal is read -- so the script is named
+  # rather than turned into a copy-pasteable curl.
   [[ -s "${STATE_ROOT}/data/.env" && -x "${HERMES_BINARY}" ]] \
-    || fail "the enrolled Hermes runtime is incomplete; decommission and re-enroll this node"
+    || fail "the enrolled Hermes runtime is incomplete and --repair cannot rebuild it: run remove-agentic-node.sh on this host (OrcaSynapse serves it at /install/remove-agentic-node.sh), then enroll again with a fresh invitation"
   [[ -r "/etc/systemd/system/${RUNTIME_SERVICE}.service" ]] \
     || fail "the managed ${RUNTIME_SERVICE} unit is missing"
   grep -Fqx 'X-OrcaSynapse-Managed=true' "/etc/systemd/system/${RUNTIME_SERVICE}.service" \
@@ -2042,7 +2048,20 @@ main() {
     fi
     success "Protected enrollment state found; continuing without another claim."
   else
-    [[ ! -e "${STATE_ROOT}/node-id" ]] || fail "this host is already enrolled; revoke it in OrcaSynapse before rebuilding the node"
+    if [[ -e "${STATE_ROOT}/node-id" ]]; then
+      # Naming the local remedy as well as the dashboard one, because the
+      # dashboard one is not always available. "Revoke it in OrcaSynapse" is
+      # impossible advice on a host whose node was already removed from the
+      # control plane, or was never recorded there -- there is nothing left to
+      # revoke, and the operator is told to go and do it anyway. Decommissioning
+      # is the step that always applies: revocation disables the credential and
+      # leaves ${STATE_ROOT} exactly as it is, and it is ${STATE_ROOT}/node-id
+      # that this line is refusing to build on top of.
+      local remover="remove-agentic-node.sh, served by OrcaSynapse at /install/remove-agentic-node.sh"
+      [[ "$#" -eq 2 && "$1" == "--connect" ]] \
+        && remover="curl -fsSL ${2%/}/install/remove-agentic-node.sh | sudo bash"
+      fail "this host is already enrolled: ${STATE_ROOT}/node-id exists. Revoke the node in OrcaSynapse if the control plane still lists it, then decommission this host with '${remover}' and run this command again with a fresh claim"
+    fi
     if [[ "$#" -eq 1 && "$1" != "--connect" ]]; then
       bundle="$(realpath "$1")"
     elif [[ "$#" -eq 2 && "$1" == "--connect" ]]; then
@@ -2059,7 +2078,7 @@ main() {
     hermes_commit="$(jq -r '.hermesCommit' "${bundle}")"
     hostname_value="$(hostname --fqdn 2>/dev/null || hostname)"
     systemctl list-unit-files "${RUNTIME_SERVICE}.service" >/dev/null 2>&1 \
-      && fail "a '${RUNTIME_SERVICE}' service already exists without resumable enrollment state"
+      && fail "a '${RUNTIME_SERVICE}' service already exists without resumable enrollment state, so there is no journal to continue from and nothing here may be built on top of it. Decommission this host first: curl -fsSL ${control_plane_url}/install/remove-agentic-node.sh | sudo bash. Then run this command again -- with a new invitation if this one has expired by then"
     success "Enrollment bundle is valid, unexpired, and bound to OrcaSynapse."
   fi
 
@@ -2116,6 +2135,21 @@ API_SERVER_KEY=${api_key}
 EOF
 
   step 4 7 "Install and start the hardened Hermes runtime"
+  # Before write_hermes_runtime_unit, not after it.
+  #
+  # This check used to sit below that call, inside the else branch. The
+  # condition is unchanged -- the branch is only reachable when `resuming` is 0,
+  # so `not (resuming and enabled) and -e ${HERMES_INSTALL_DIR} and not
+  # resuming` is exactly `not resuming and -e ${HERMES_INSTALL_DIR}` -- but the
+  # position matters more than the wording. The unit that call writes carries
+  # X-OrcaSynapse-Managed=true, which is remove-agentic-node.sh's proof that
+  # OrcaSynapse installed the program at ${HERMES_INSTALL_DIR}. Writing it and
+  # then telling the operator to decommission handed the decommissioner a reason
+  # to delete a Hermes we did not install -- the exact outcome this check exists
+  # to prevent, reached by following the instruction the check itself prints.
+  if ! (( resuming )) && [[ -e "${HERMES_INSTALL_DIR}" ]]; then
+    fail "Hermes is already installed at ${HERMES_INSTALL_DIR}, and OrcaSynapse will not enroll on top of an installation it did not make. If that installation is ours, decommission this host first: curl -fsSL ${control_plane_url}/install/remove-agentic-node.sh | sudo bash. If it is yours, remove or relocate it deliberately -- the decommissioner refuses to touch a Hermes it cannot prove OrcaSynapse installed, and will only print the paths for you to remove by hand"
+  fi
   write_hermes_runtime_unit
   if (( resuming )) && systemctl is-enabled "${RUNTIME_SERVICE}" >/dev/null 2>&1; then
     systemctl start "${RUNTIME_SERVICE}" >/dev/null 2>&1 || true
@@ -2124,8 +2158,6 @@ EOF
     hermes_commit="$(installed_hermes_commit)" \
       || fail "the retained Hermes installation has no readable commit pin"
   else
-    [[ -e "${HERMES_INSTALL_DIR}" ]] && ! (( resuming )) \
-      && fail "Hermes is already installed at ${HERMES_INSTALL_DIR}; decommission this host before re-enrolling"
     # --skip-setup is not optional: without it the upstream installer ends in an
     # interactive provider wizard that blocks forever under `curl | bash`. It is
     # also correct on the merits -- OrcaSynapse supplies the entire

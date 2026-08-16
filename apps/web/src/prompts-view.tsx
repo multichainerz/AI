@@ -30,6 +30,16 @@ const initialDraft: CreatePromptTemplate = {
   content: "You are the OrcaSynapse assistant. Be accurate, concise, and explicit about uncertainty. Do not claim to have used tools, enterprise data, or current external information unless that context is present in the conversation.",
 };
 
+/**
+ * How many templates `GET /admin/prompts` will ever return.
+ *
+ * `DrizzlePromptManager.list` is a bare `limit: 100` and `PromptTemplateList`
+ * carries no total, so a full array means "at least 100 exist" -- and a screen
+ * whose subject is versioned records is the one most likely to accumulate
+ * enough of them to reach it.
+ */
+const PROMPT_WINDOW = 100;
+
 function tone(prompt: PromptTemplate): string {
   if (prompt.status === "ACTIVE") return "healthy";
   if (prompt.status === "SUSPENDED") return "degraded";
@@ -202,7 +212,11 @@ export function PromptsView({ session, onOpenOperations, onOpenSettings, onSessi
     />
 
     <MetricRow className="lg:grid-cols-4" aria-label="Prompt governance summary">
-      <Metric label="Prompt records" value={prompts.length} caption="Chat-system purpose" />
+      <Metric
+        label="Prompt records"
+        value={prompts.length >= PROMPT_WINDOW ? `${PROMPT_WINDOW}+` : prompts.length}
+        caption={prompts.length >= PROMPT_WINDOW ? `Newest ${PROMPT_WINDOW} loaded` : "Chat-system purpose"}
+      />
       {/* "Fail closed" and "Legacy mode" were the two states of a governed
           mode that was never wired: no active prompt breaks nothing, because
           nothing resolves one. */}
@@ -340,30 +354,43 @@ export function PromptsView({ session, onOpenOperations, onOpenSettings, onSessi
           <StatusText>Revision {prompt.revision}</StatusText>
           {canManage && <div className="flex gap-1.5">
             {prompt.status !== "ACTIVE" && <Button size="sm" onClick={() => startEdit(prompt)}>Edit</Button>}
+            {/* Secondary for both, for the same reason the form below carries
+                no red: this button opens a decision that has no runtime
+                consequence to warn about. */}
             <Button
               size="sm"
-              variant={prompt.status === "ACTIVE" ? "danger" : "secondary"}
+              variant="secondary"
               onClick={() => setDecision({ id: prompt.id, action: prompt.status === "ACTIVE" ? "suspend" : "activate", reason: "" })}
             >
               {prompt.status === "ACTIVE" ? "Suspend" : "Activate"}
             </Button>
           </div>}
         </footer>
+        {/*
+          * One surface for both decisions, and no red on either.
+          *
+          * The copy here was already hedged into the future -- "after prompt
+          * governance has been adopted" -- but it sat in a red-bordered panel
+          * under a heading calling the record "runtime", with a danger submit,
+          * which together read as a live kill switch. Nothing under
+          * `apps/api/src/chat/` or `apps/worker/` reads a template's content,
+          * as the release panel and both outcome messages above say plainly,
+          * so there is no consequence for the styling to be warning about. A
+          * reader resolves that contradiction in favour of the colour, and
+          * then goes looking for a chat outage that never happened.
+          */}
         {decision?.id === prompt.id && <form
-          className={cn(
-            "grid gap-3 rounded border p-3",
-            decision.action === "suspend" ? "border-bad/40 bg-bad/10" : "border-border-strong bg-raised",
-          )}
+          className="grid gap-3 rounded border border-border-strong bg-raised p-3"
           onSubmit={(event) => void applyDecision(event)}
         >
           <div>
             <strong className="block text-label font-semibold text-text">
-              {decision.action === "activate" ? "Release prompt" : "Suspend runtime prompt"}
+              {decision.action === "activate" ? "Release prompt" : "Suspend the released prompt"}
             </strong>
             <span className="mt-1 block text-body text-muted">
               {decision.action === "activate"
                 ? `Releases prompt:${prompt.slug}, version ${prompt.version}, as the single active ${prompt.purpose.toLowerCase().replaceAll("_", " ")} instruction.`
-                : "Suspension makes chat fail closed after prompt governance has been adopted."}
+                : "Withdraws the release and records the decision with its version and checksum. Chat and agent runs are unaffected: no runtime component reads the active prompt, so nothing about a conversation changes when this is applied."}
             </span>
           </div>
           <Field label="Operator reason">
@@ -372,7 +399,7 @@ export function PromptsView({ session, onOpenOperations, onOpenSettings, onSessi
           <div className="flex justify-end gap-2">
             <Button onClick={() => setDecision(null)}>Cancel</Button>
             <Button
-              variant={decision.action === "suspend" ? "danger" : "primary"}
+              variant="primary"
               type="submit"
               disabled={busy || decision.reason.trim().length < 3}
             >

@@ -12,6 +12,14 @@ const api = vi.hoisted(() => ({
   getHermesCorpusRevisions: vi.fn(),
   createHermesCorpusMutation: vi.fn(),
   decideHermesCorpusMutation: vi.fn(),
+  /*
+   * The division-memory panel below the Memory tab reads these two. They were
+   * absent from this mock, so the panel reached the real module and rendered
+   * its error branch -- which draws the same empty panel as a deployment with
+   * no notes, so nothing looked wrong and its controls were never covered.
+   */
+  getScopedMemory: vi.fn(),
+  getDivisions: vi.fn(),
 }));
 
 vi.mock("./api.js", async (load) => ({ ...(await load<typeof import("./api.js")>()), ...api }));
@@ -58,7 +66,16 @@ const pendingSkill: HermesCorpusMutation = {
   path: "skills/research/SKILL.md", oldText: null, reason: "Remove retired skill.",
 };
 
+/** Reads fine for every role on this screen: `corpus:content:read` covers it. */
+const scopedMemoryEntry = {
+  id: "1c9f2a5b-2d3e-4f5a-8b6c-7d8e9f0a1b2c",
+  content: "Finance closes the books on the fifth working day.",
+  divisionId: "d1", divisionName: "Finance", runId: null, createdAt: NOW,
+};
+
 function setupApi(over: { node?: Partial<HermesCorpusStatus> } = {}) {
+  api.getScopedMemory.mockResolvedValue({ items: [scopedMemoryEntry], total: 1 });
+  api.getDivisions.mockResolvedValue({ items: [] });
   api.getHermesCorpusOverview.mockResolvedValue({ nodes: [{
     nodeId: NODE_ID, nodeSlug: "vm2", nodeDisplayName: "Hermes VM2", available: true, writable: true,
     entryCount: 2, totalBytes: 70, rootHash: HASH, lastSyncedAt: NOW, stale: false,
@@ -276,6 +293,72 @@ describe("CorpusView", () => {
       expectedHash: HASH,
       oldText: "Keep responses concise.",
     })));
+  });
+
+  /*
+   * The division-memory panel below the mirror, which is the same store the
+   * `recall` tool reads. Its two controls answer to `corpus:write` and
+   * `corpus:delete`; the panel took neither scope and drew both unconditionally
+   * while the sibling panel eight lines above it in `corpus-view.tsx` is gated
+   * on `canWrite`. An AUDITOR holds `corpus:content:read` and neither of the
+   * other two, so every note read fine and every button 403'd.
+   */
+  describe("division memory", () => {
+    /** The real AUDITOR slice of `ROLE_SCOPES`, copied rather than derived. */
+    const auditor: AdministratorSession = {
+      ...session, role: "AUDITOR", scopes: ["corpus:metadata:read", "corpus:content:read"],
+    };
+
+    it("withholds the controls a reading role cannot use", async () => {
+      setupApi();
+      render(<CorpusView scope="MEMORY" session={auditor} onConfigure={vi.fn()} onSessionExpired={vi.fn()} />);
+
+      // The panel is populated, so the absences below are judgements about the
+      // controls rather than about an unrendered panel.
+      expect(await screen.findByText("Finance closes the books on the fifth working day.")).toBeTruthy();
+      expect(screen.getByText("Division memory")).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Add note" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Remove" })).toBeNull();
+    });
+
+    it("offers both to a role that holds the scopes behind them", async () => {
+      setupApi();
+      render(<CorpusView scope="MEMORY" session={session} onConfigure={vi.fn()} onSessionExpired={vi.fn()} />);
+
+      expect(await screen.findByText("Finance closes the books on the fifth working day.")).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Add note" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Remove" })).toBeTruthy();
+    });
+
+    it("does not claim nothing is remembered when the read failed", async () => {
+      // "Nothing remembered yet" is a claim about the division's knowledge. A
+      // refused or failed read supports no such claim, and on this screen of
+      // all screens -- the one an operator opens to find out what an agent
+      // knows -- an unearned empty state is the worst possible answer.
+      setupApi();
+      api.getScopedMemory.mockRejectedValue(new Error("Division memory is unavailable."));
+      render(<CorpusView scope="MEMORY" session={session} onConfigure={vi.fn()} onSessionExpired={vi.fn()} />);
+
+      expect(await screen.findByText("Division memory is unavailable.")).toBeTruthy();
+      expect(screen.queryByText("Nothing remembered yet")).toBeNull();
+    });
+  });
+
+  it("says the change-request panel is a slice rather than the history", async () => {
+    /*
+     * Twenty rows under a heading that says only "Recent requests" reads as
+     * everything that has been asked of this node. The twenty-first row is a
+     * pending approval that no longer exists as far as this screen is
+     * concerned, on a panel whose whole job is two-person review.
+     */
+    setupApi();
+    api.getHermesCorpusMutations.mockResolvedValue({
+      items: Array.from({ length: 25 }, (_, index) => ({ ...pending, id: `m${index}` })),
+    });
+    render(<CorpusView scope="MEMORY" session={session} onConfigure={vi.fn()} onSessionExpired={vi.fn()} />);
+
+    expect(await screen.findByText("Showing the 20 most recent of 25 loaded.")).toBeTruthy();
+    expect(screen.getAllByText("MEMORY REMOVE")).toHaveLength(20);
   });
 
   it("can initialize native memory files before the first snapshot contains them", async () => {

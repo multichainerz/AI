@@ -12,7 +12,7 @@ import {
   updateToolSet,
 } from "./api.js";
 import { slugAsTyped, slugify } from "./slug.js";
-import { Alert, Button, EmptyState, Field, Input, Panel, PanelHeading, StatusText, cn, toneFor } from "./ui/index.js";
+import { Alert, Button, EmptyState, Field, Input, Panel, PanelHeading, StatusText, cn } from "./ui/index.js";
 
 /**
  * Named sets of Hermes toolsets and of Skills, on the tab that owns each.
@@ -197,8 +197,20 @@ export function ConfigurationSetsPanel({
 
       {sets.length === 0 ? (
         <EmptyState title={`No ${noun}s yet`}>
-          A profile that names none gets everything this deployment admits, which is what every
-          profile does today.
+          {/*
+            * "A profile that names none gets everything this deployment admits"
+            * read as a delivery promise, and its converse -- that naming one
+            * gets less -- is the belief this sentence has to stop. Nothing
+            * narrows on a tool set: `agent-processor.ts` selects every admitted
+            * toolset with no profile predicate and submits that array to
+            * `hermes.start`, and `toolSetId` has no reader in the worker, in
+            * the runtime clients, or in the tool-call gate. Admission is the
+            * only control that changes what an agent may use, so that is what
+            * this points at.
+            */}
+          {isTools
+            ? "Naming one narrows nothing: every run is submitted with every toolset this deployment admits, whether or not its profile declares a set. Admission above is the control that decides what an agent may use; a set is a record of what a version declares."
+            : "A profile that names none refers to every Skill the runtime reports. Either way the set is recorded rather than delivered: a run loads whatever the node already holds."}
         </EmptyState>
       ) : (
         <div className="grid gap-2">
@@ -231,7 +243,11 @@ export function ConfigurationSetsPanel({
                 <small className="mt-1 block font-mono text-micro text-faint">{item.slug}</small>
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                <StatusText tone={toneFor(item.status === "ACTIVE" ? "HEALTHY" : "DEGRADED")}>
+                {/* The tone directly, not through `toneFor`: its vocabulary is
+                    lower case, so `toneFor("HEALTHY")` matched nothing and both
+                    states came back neutral. A two-state boolean has no
+                    readiness string to translate in the first place. */}
+                <StatusText tone={item.status === "ACTIVE" ? "good" : "warn"}>
                   {item.status === "ACTIVE" ? "Active" : "Retired"}
                 </StatusText>
                 {canManage && !tracks(item) && (

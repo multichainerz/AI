@@ -150,6 +150,17 @@ function initialDraft(operation: Operation, entry?: HermesCorpusEntry | null, ol
   };
 }
 
+/**
+ * How many change requests the "Recent requests" panel draws.
+ *
+ * The panel is one scrolling column beside the file it belongs to, so it has a
+ * length whether or not one is chosen; what it must not do is present that
+ * length as the history. `listMutations` returns the newest 200 for the node
+ * and this screen filters those to the tab's own kind, so even the number this
+ * slice is taken from is a loaded count rather than a total.
+ */
+const RECENT_MUTATIONS = 20;
+
 export function CorpusView({ session, scope, onConfigure, onSessionExpired }: CorpusViewProps) {
   const copy = scopes[scope];
   const memoryScope = scope === "MEMORY";
@@ -436,7 +447,7 @@ export function CorpusView({ session, scope, onConfigure, onSessionExpired }: Co
           <Panel className="p-4">
             <PanelHeading kicker="Change control" title="Recent requests" />
             <div className="grid max-h-[300px] gap-2 overflow-y-auto">
-              {mutations.slice(0, 20).map((mutation) => (
+              {mutations.slice(0, RECENT_MUTATIONS).map((mutation) => (
                 <Tile key={mutation.id} pad="sm">
                   <div className="flex items-start justify-between gap-3"><strong className="text-label text-text">{mutation.operation.replaceAll("_", " ")}</strong><StatusText tone={mutationTone(mutation.status)}>{mutation.status.replaceAll("_", " ")}</StatusText></div>
                   <span className="mt-1 block truncate font-mono text-micro text-faint">{mutation.path}</span>
@@ -454,6 +465,17 @@ export function CorpusView({ session, scope, onConfigure, onSessionExpired }: Co
                 </Tile>
               ))}
               {mutations.length === 0 ? <EmptyState title="No change requests">Changes made here will be signed, dispatched, and audited.</EmptyState> : null}
+              {/* The slice, stated. Twenty rows out of a longer list under a
+                  heading that says only "Recent requests" reads as the whole
+                  history, and the twenty-first is a pending approval nobody can
+                  see from here. `mutations` is itself the newest 200 the API
+                  returns, filtered to this tab's kind, so the figure is what is
+                  loaded rather than what exists -- which is what it says. */}
+              {mutations.length > RECENT_MUTATIONS ? (
+                <MicroLabel className="block">
+                  Showing the {RECENT_MUTATIONS} most recent of {mutations.length} loaded.
+                </MicroLabel>
+              ) : null}
             </div>
           </Panel>
           <Panel className="p-4">
@@ -507,7 +529,9 @@ export function CorpusView({ session, scope, onConfigure, onSessionExpired }: Co
         * not a mirror of it -- which is what lets this screen be complete rather
         * than merely plausible about what an agent knows.
         */}
-      {memoryScope && <ScopedMemoryPanel onSessionExpired={onSessionExpired} />}
+      {memoryScope && (
+        <ScopedMemoryPanel canWrite={canWrite} canDelete={canDelete} onSessionExpired={onSessionExpired} />
+      )}
     </div>
   );
 }

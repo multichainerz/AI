@@ -49,6 +49,13 @@ export interface ToolingManager {
   /** Removes one entry, so a note written in error stops being read. */
   deleteScopedMemory(principal: ToolingPrincipal, entryId: string): Promise<void>;
   listToolsForRun(authorization: string | undefined): Promise<GovernedToolList>;
+  /**
+   * The division a run acts for, derived from its authorization and nothing
+   * else. The same gate `invoke` puts a tool call through, answered on its own
+   * so a caller that needs the scope without invoking anything cannot arrive at
+   * it by another route.
+   */
+  runScope(authorization: string | undefined): Promise<{ runId: string; divisionId: string | null }>;
   setToolStatus(principal: ToolingPrincipal, toolId: string, status: ToolStatus): Promise<void>;
   listGrants(): Promise<ToolGrantList>;
   upsertGrant(principal: ToolingPrincipal, input: UpsertToolGrant): Promise<ToolGrant>;

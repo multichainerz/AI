@@ -1,6 +1,6 @@
 # Settings: one screen for people and their divisions
 
-Status: **implemented at v8.9.0.** Written at v8.8.1, against the navigation
+Status: **implemented at v8.8.3.** Written at v8.8.1, against the navigation
 model as it stood on `main`; built at v8.8.2. All five increments landed as
 described, with three departures recorded at the foot of this file under *What
 the implementation found* — the copy the plan called verbatim was not, the

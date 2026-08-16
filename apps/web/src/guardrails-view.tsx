@@ -39,6 +39,16 @@ const initialDraft: PolicyDraft = {
   blockCredentialPatterns: true,
 };
 
+/**
+ * How many policies `GET /admin/guardrails` will ever return.
+ *
+ * `DrizzleGuardrailManager.list` is a bare `limit: 100` and
+ * `GuardrailPolicyList` carries no total, so a full array means "at least 100
+ * exist". "Policy records" over "Version controlled" is a claim about the
+ * table, and past the cap the figure under it is a claim about the response.
+ */
+const POLICY_WINDOW = 100;
+
 function tone(policy: GuardrailPolicy): string {
   if (policy.status === "ACTIVE") return "healthy";
   if (policy.status === "SUSPENDED") return "degraded";
@@ -219,7 +229,11 @@ export function GuardrailsView({
     />
 
     <MetricRow className="lg:grid-cols-4" aria-label="Guardrail policy summary">
-      <Metric label="Policy records" value={policies.length} caption="Version controlled" />
+      <Metric
+        label="Policy records"
+        value={policies.length >= POLICY_WINDOW ? `${POLICY_WINDOW}+` : policies.length}
+        caption={policies.length >= POLICY_WINDOW ? `Newest ${POLICY_WINDOW} loaded` : "Version controlled"}
+      />
       <Metric
         label="Active boundary"
         value={active ? "1" : "0"}

@@ -57,6 +57,15 @@ const api = vi.hoisted(() => ({
   getToolsetAdmissions: vi.fn(),
   getRuntimeCatalogue: vi.fn(),
   decideToolsetAdmission: vi.fn(),
+  /*
+   * The tool-sets panel at the foot of this screen reads these two. They were
+   * absent from this mock, so the panel reached the real module, `fetch` failed
+   * under jsdom, and the panel rendered its error branch -- which happens to
+   * draw the same empty list as a deployment with no sets, so nothing looked
+   * wrong and its copy was never covered by anything.
+   */
+  getToolSets: vi.fn(),
+  getSkillSets: vi.fn(),
 }));
 
 vi.mock("./api.js", async (load) => ({ ...(await load<typeof import("./api.js")>()), ...api }));
@@ -71,6 +80,8 @@ interface Setup {
   catalogue?: HermesRuntimeCatalogue | null;
   admissions?: Array<{ toolsetName: string; admitted: boolean; reason: string | null }>;
   session?: AdministratorSession;
+  /** Named tool sets, for the panel at the foot of the screen. */
+  toolSets?: unknown[];
 }
 
 function setupApi(over: Setup = {}) {
@@ -88,6 +99,8 @@ function setupApi(over: Setup = {}) {
     return over.catalogue ?? { toolsets: [], skills: [], enabledToolsets: 0 };
   });
   api.decideToolsetAdmission.mockResolvedValue(undefined);
+  api.getToolSets.mockResolvedValue({ items: over.toolSets ?? [] });
+  api.getSkillSets.mockResolvedValue({ items: [] });
 }
 
 const props = { onConfigure: vi.fn(), onSessionExpired: vi.fn() };
@@ -179,6 +192,52 @@ describe("browsing what exists", () => {
 
     answer({ toolsets: [], skills: [], enabledToolsets: 0 });
     expect(await screen.findByText(/reports no tools beyond built-in memory/i)).toBeTruthy();
+  });
+});
+
+describe("tool sets", () => {
+  it("does not offer a set as a way of narrowing what an agent may use", async () => {
+    /*
+     * The panel's empty state said "A profile that names none gets everything
+     * this deployment admits", whose converse -- that naming one gets less --
+     * is false and is the only reason an operator would create a set for
+     * safety. `agent-processor.ts` selects every admitted toolset with no
+     * profile predicate and submits that array to `hermes.start`; `toolSetId`
+     * has no reader in the worker, in the runtime clients, or in the tool-call
+     * gate. Admission is the only control that narrows anything, and it is on
+     * this same screen.
+     */
+    await view({ catalogue: catalogue({ name: "code_execution", enabled: true }) });
+
+    const panel = await screen.findByText("No tool sets yet");
+    const empty = panel.closest("div")!;
+    expect(within(empty).getByText(/Naming one narrows nothing/)).toBeTruthy();
+    expect(within(empty).getByText(/every toolset this deployment admits/)).toBeTruthy();
+    expect(document.body.textContent).not.toContain("A profile that names none gets everything this deployment admits");
+  });
+
+  it("colours a retired set differently from an active one", async () => {
+    /*
+     * `toneFor` is case-sensitive and its vocabulary is lower case, so
+     * `toneFor("HEALTHY")` and `toneFor("DEGRADED")` both answered neutral and
+     * the two states were the same grey. The 60% opacity on a retired row is
+     * a dimming rather than a state, and it is the only thing left when the
+     * colour says nothing.
+     */
+    await view({
+      catalogue: catalogue({ name: "clarify", enabled: true }),
+      toolSets: [
+        { id: "t1", slug: "reader", displayName: "Reader", status: "ACTIVE", revision: 1, tracksAdmission: false, toolsetNames: ["clarify"] },
+        { id: "t2", slug: "legacy", displayName: "Legacy", status: "RETIRED", revision: 2, tracksAdmission: false, toolsetNames: [] },
+      ],
+    });
+
+    const active = (await screen.findByText("Reader")).closest("article");
+    const retired = screen.getByText("Legacy").closest("article");
+    expect(active).toBeTruthy();
+    expect(retired).toBeTruthy();
+    expect(within(active!).getByText("Active").className).toContain("text-good");
+    expect(within(retired!).getByText("Retired").className).toContain("text-warn");
   });
 });
 

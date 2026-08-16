@@ -13,6 +13,7 @@ import {
   governedTool,
   governedToolCall,
   mcpGatewayCredential,
+  toolApproval,
   toolRuntimeControl,
   type TestDatabase,
 } from "@orcasynapse/database";
@@ -371,6 +372,129 @@ describe("DrizzleToolingManager invocation", () => {
     const [recorded] = await context.database.select().from(auditEvent);
     expect(recorded).toMatchObject({ action: "tool.call_denied", outcome: "FAILURE", resourceId: run.id });
     expect(await context.database.select().from(governedToolCall)).toHaveLength(0);
+  });
+});
+
+/*
+ * The approval TTL an operator configures, against the wait a request can
+ * afford.
+ *
+ * These are two different clocks and the code used to run only one. The wait is
+ * capped at five minutes because an HTTP request cannot be held open for the
+ * hour `approvalTtlMinutes` allows -- but hitting that cap wrote EXPIRED on the
+ * approval, so the row left the queue, `decideApproval` answered "already
+ * decided, or it expired", and every configurable value of the setting behaved
+ * exactly like its 5-minute minimum. The setting had no effect anywhere in its
+ * documented 5-1440 range.
+ */
+describe("DrizzleToolingManager consequential approvals", () => {
+  /** The wait, shrunk to milliseconds; the approval TTL stays in real minutes. */
+  function waitingManager() {
+    return new DrizzleToolingManager(context.database, passingBoundary, {
+      maximumInlineWaitMs: 150,
+      approvalPollMs: 25,
+    });
+  }
+
+  async function seedConsequentialCall(approvalTtlMinutes = 60) {
+    await enableGateway(approvalTtlMinutes);
+    const tool = await seedTool({ risk: "CONSEQUENTIAL", handlerKey: "orcasynapse.memory.remember" });
+    const seeded = await seedRunnableAgent();
+    await grantTool(seeded.version.id, tool.id);
+    return { tool, ...seeded, requestId: randomUUID() };
+  }
+
+  async function storedApproval() {
+    const [approval] = await context.database.select().from(toolApproval);
+    return approval!;
+  }
+
+  it("gives up the wait without expiring an approval that still has an hour to run", async () => {
+    const { tool, authorization, requestId } = await seedConsequentialCall(60);
+
+    const result = await waitingManager().invoke(tool.slug, {
+      authorization, requestId, arguments: { text: "pay the invoice" },
+    });
+
+    expect(result).toMatchObject({ status: "APPROVAL_PENDING", isError: true });
+    expect((result.data as { message: string }).message).toMatch(/still pending/i);
+    // Not "expired": nothing about the approval ran out, only the request.
+    expect((result.data as { message: string }).message).not.toMatch(/expired/i);
+    const approval = await storedApproval();
+    expect(approval.status).toBe("PENDING");
+    expect(approval.decidedAt).toBeNull();
+    // The configured TTL is the one on the row, not the wait's five minutes.
+    expect(approval.expiresAt.getTime() - Date.now()).toBeGreaterThan(50 * 60_000);
+    const [call] = await context.database.select().from(governedToolCall);
+    expect(call?.status).toBe("APPROVAL_PENDING");
+  });
+
+  it("still lets a human decide after the request gave up, and runs the tool on the retry", async () => {
+    const { tool, authorization, requestId } = await seedConsequentialCall(60);
+    await waitingManager().invoke(tool.slug, { authorization, requestId, arguments: { text: "pay the invoice" } });
+
+    // The administrator arrives after the request has long since returned.
+    await expect(manager().decideApproval(principal, (await storedApproval()).id, true, "Checked with finance."))
+      .resolves.toBeUndefined();
+
+    const retried = await waitingManager().invoke(tool.slug, {
+      authorization, requestId, arguments: { text: "pay the invoice" },
+    });
+
+    expect(retried).toMatchObject({ status: "COMPLETED", isError: false });
+    expect(await context.database.select().from(governedToolCall)).toHaveLength(1);
+    expect((await context.database.select().from(scopedMemoryEntry))).toHaveLength(1);
+  });
+
+  it("fails the call once the approval's own TTL has passed", async () => {
+    const { tool, authorization, requestId } = await seedConsequentialCall(60);
+    await waitingManager().invoke(tool.slug, { authorization, requestId, arguments: { text: "pay the invoice" } });
+    // The hour ran out with nobody deciding.
+    await context.database
+      .update(toolApproval)
+      .set({ expiresAt: new Date(Date.now() - 1_000) })
+      .where(eq(toolApproval.callId, (await storedApproval()).callId));
+
+    const retried = await waitingManager().invoke(tool.slug, {
+      authorization, requestId, arguments: { text: "pay the invoice" },
+    });
+
+    expect(retried).toMatchObject({ status: "FAILED", isError: true });
+    expect((retried.data as { message: string }).message).toMatch(/expired/i);
+    expect((await storedApproval()).status).toBe("EXPIRED");
+    const [call] = await context.database.select().from(governedToolCall);
+    expect(call).toMatchObject({ status: "FAILED", errorCode: "TOOL_APPROVAL_EXPIRED" });
+  });
+
+  it("fails the call when a human rejects it", async () => {
+    const { tool, authorization, requestId } = await seedConsequentialCall(60);
+    await waitingManager().invoke(tool.slug, { authorization, requestId, arguments: { text: "pay the invoice" } });
+    await manager().decideApproval(principal, (await storedApproval()).id, false, "Not this quarter.");
+
+    const retried = await waitingManager().invoke(tool.slug, {
+      authorization, requestId, arguments: { text: "pay the invoice" },
+    });
+
+    expect(retried).toMatchObject({ status: "FAILED", isError: true });
+    expect((retried.data as { message: string }).message).toMatch(/rejected/i);
+    const [call] = await context.database.select().from(governedToolCall);
+    expect(call).toMatchObject({ status: "FAILED", errorCode: "TOOL_APPROVAL_REJECTED" });
+    expect(await context.database.select().from(scopedMemoryEntry)).toHaveLength(0);
+  });
+
+  it("returns the decision to a request that was still waiting when it landed", async () => {
+    const { tool, authorization, requestId } = await seedConsequentialCall(60);
+    // A wait long enough to still be polling when the administrator decides.
+    const patient = new DrizzleToolingManager(context.database, passingBoundary, {
+      maximumInlineWaitMs: 10_000,
+      approvalPollMs: 25,
+    });
+    const invoked = patient.invoke(tool.slug, { authorization, requestId, arguments: { text: "pay the invoice" } });
+    await vi.waitFor(async () => expect(await context.database.select().from(toolApproval)).toHaveLength(1));
+
+    await manager().decideApproval(principal, (await storedApproval()).id, true, "Approved live.");
+
+    expect(await invoked).toMatchObject({ status: "COMPLETED", isError: false });
   });
 });
 

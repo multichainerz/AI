@@ -738,15 +738,32 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
             </Field>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
+            {/*
+              * The same correction the Approved Skills field above carries, and
+              * for the same kind of reason -- except that here the field is
+              * about authority rather than behaviour, so reading it wrongly is
+              * worse. `agent-processor.ts` selects every admitted toolset with
+              * no profile predicate and hands that array to `hermes.start`;
+              * `toolSetId` has no reader in the worker, in
+              * `packages/runtime-clients`, or in the tool-call gate, and
+              * `agent-processor.test.ts` pins the deployment-wide set being
+              * submitted even for a profile that names a narrower one.
+              *
+              * So a set narrows nothing today, and the label said "everything
+              * admitted" as though the alternative narrowed something. What an
+              * agent may actually use is decided by admission under Tools; that
+              * is where an operator has to be sent, rather than to a select
+              * that records a preference.
+              */}
             <Field
-              label="Tool set"
-              hint="Which Hermes toolsets this version declares. Leave on the default and it means everything this deployment admits."
+              label="Tool set (recorded, not delivered)"
+              hint="Which Hermes toolsets this version declares. It is recorded on the version and folded into the distribution digest, and it does not narrow a run: every admitted toolset is submitted to Hermes whatever this says. Withhold a toolset under Agents → Tools to change what an agent may actually use."
             >
               <Select
                 value={profileDraft.toolSetId ?? ""}
                 onChange={(event) => setProfileDraft({ ...profileDraft, toolSetId: event.target.value || undefined })}
               >
-                <option value="">Default — everything admitted</option>
+                <option value="">Default — no set declared</option>
                 {toolSets.map((set) => (
                   <option key={set.id} value={set.id}>
                     {set.displayName}{set.tracksAdmission ? " (tracks admission)" : ""}

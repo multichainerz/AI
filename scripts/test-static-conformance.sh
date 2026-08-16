@@ -31,7 +31,36 @@ gate() {
 
 # Parses every installer script without running one. A syntax error in a file
 # an operator pipes into `sudo bash` is not something to discover on their VM.
-gate "installer scripts parse" bash -n install.sh scripts/*.sh scripts/lib/*.sh
+#
+# One invocation per file, because `bash -n FILE ARG...` parses FILE and binds
+# everything after it to $1, $2, ... -- it never opens them. The single call this
+# replaced therefore parsed install.sh and nothing else, which is why
+# scripts/install-agentic-node.sh and scripts/remove-agentic-node.sh -- the two
+# the API serves to operators to pipe into `sudo bash`, and the two on the host
+# that holds the node identity -- had never been parsed by this gate at all.
+# Measured rather than reasoned about: a file whose entire content is
+# `if [ ; then` exits 2 when it is the argument to -n, and 0 when it is the
+# second word on the same command line.
+installers_parse() {
+  local problems=0 path
+  for path in install.sh scripts/*.sh scripts/lib/*.sh; do
+    # An unmatched glob comes through as the literal pattern; skipping it here
+    # keeps the failure attributable to the named-file loop below rather than to
+    # bash reporting that `scripts/*.sh` does not exist.
+    [[ -f "${path}" ]] || continue
+    bash -n -- "${path}" || { echo "${path} does not parse" >&2; problems=$((problems + 1)); }
+  done
+  # The three an operator pipes into `sudo bash` are named as well as globbed.
+  # A loop over an empty list succeeds, so a moved or renamed directory would
+  # turn this gate green by leaving it nothing to do -- which is the same shape
+  # of hole as the one above, one level up.
+  for path in install.sh scripts/install-agentic-node.sh scripts/remove-agentic-node.sh; do
+    [[ -f "${path}" ]] \
+      || { echo "${path} is missing, so nothing here parsed a script operators pipe into sudo bash" >&2; problems=$((problems + 1)); }
+  done
+  [[ "${problems}" -eq 0 ]]
+}
+gate "installer scripts parse" installers_parse
 
 # Dockerfile.api bakes the agentic-node scripts into the API image and the API
 # hands them to operators who pipe them into `sudo bash`, where a CRLF shebang

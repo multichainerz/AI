@@ -197,6 +197,34 @@ describe("people and divisions on one screen", () => {
     expect(screen.queryByRole("button", { name: "Add person" })).toBeNull();
   });
 
+  it("colours the state of an account and of a division", async () => {
+    /*
+     * `toneFor` is case-sensitive and its vocabulary is lower case, so
+     * `toneFor("HEALTHY")` and `toneFor("DEGRADED")` both answered neutral:
+     * every row on this screen carried the same grey whatever it said, and the
+     * only remaining signal for a disabled account was the 40% opacity on the
+     * row -- which is a dimming, not a state, and is exactly what a suspended
+     * division uses too.
+     *
+     * jsdom applies no stylesheet, so the utility class is the only evidence
+     * the colour exists.
+     */
+    view();
+
+    const person = (await screen.findByText("Ana Ruiz")).closest("article");
+    const disabled = screen.getByText("Priya Nair").closest("article");
+    // Asserted before anything is read off them: `null?.className` passes
+    // silently and would make every expectation below vacuous.
+    expect(person).toBeTruthy();
+    expect(disabled).toBeTruthy();
+    expect(within(person!).getByText("Active").className).toContain("text-good");
+    expect(within(disabled!).getByText("Disabled").className).toContain("text-warn");
+
+    const suspended = screen.getByText("Legacy").closest("li");
+    expect(suspended).toBeTruthy();
+    expect(within(suspended!).getByText("Suspended").className).toContain("text-warn");
+  });
+
   it("separates a refusal from a request that simply failed", async () => {
     /*
      * The pair to the test above, and what stops the refusal copy becoming the

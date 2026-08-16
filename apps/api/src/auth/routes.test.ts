@@ -187,6 +187,61 @@ describe("administrator session routes", () => {
     expect(response.json().message).toMatch(/current password is incorrect/i);
   });
 
+  /*
+   * One locked platform, one answer.
+   *
+   * `sessionManager` is absent for exactly one reason: the process came up
+   * without a usable database URL, master key or Installation Key, so
+   * bootstrapState is LOCKED and no credential of any kind can be checked. Each
+   * of these four routes used to describe that state differently -- "the
+   * username or password is incorrect", "OrcaSynapse installation trust is not
+   * ready", and twice "a valid ... is required" -- and the operator reading
+   * them is on the first screen of an install, typing a password that is
+   * correct, out of a file the installer just wrote. Three of those four
+   * answers send them to check their typing; only the 423 sends them to the
+   * service.
+   */
+  it("answers every session route with PLATFORM_LOCKED while the platform is locked", async () => {
+    const app = await createApp({ logger: false, runtime: { bootstrapState: "LOCKED" } });
+    apps.push(app);
+    const requests = [
+      { method: "POST" as const, url: "/api/v1/admin/session/local", payload: { username: "admin", password: "temporary-password" } },
+      { method: "POST" as const, url: "/api/v1/admin/session/installation-key", payload: { installationKey: "a-secure-installation-key-with-more-than-32-characters" } },
+      { method: "PUT" as const, url: "/api/v1/admin/session/password", payload: { currentPassword: "temporary-password", newPassword: "replacement-password" } },
+      { method: "PUT" as const, url: "/api/v1/admin/session/recovery", payload: { username: "admin", newPassword: "replacement-password" } },
+    ];
+
+    const answers = await Promise.all(requests.map((request) => app.inject(request)));
+
+    for (const [index, answer] of answers.entries()) {
+      expect({ url: requests[index]!.url, status: answer.statusCode, error: answer.json().error })
+        .toEqual({ url: requests[index]!.url, status: 423, error: "PLATFORM_LOCKED" });
+      expect(answer.headers["set-cookie"]).toBeUndefined();
+    }
+  });
+
+  /*
+   * The locked answer must not swallow the ordinary one. A running platform
+   * still tells a caller its body is malformed rather than that the service is
+   * unavailable.
+   */
+  it("still refuses a malformed body on a running platform", async () => {
+    const { app } = await sessionApp();
+
+    const local = await app.inject({ method: "POST", url: "/api/v1/admin/session/local", payload: { username: "admin" } });
+    const recovery = await app.inject({
+      method: "PUT",
+      url: "/api/v1/admin/session/recovery",
+      headers: { cookie: `${ADMIN_SESSION_COOKIE}=${SESSION_TOKEN}` },
+      payload: { username: "admin" },
+    });
+
+    expect(local.statusCode).toBe(401);
+    expect(local.json()).toMatchObject({ error: "UNAUTHORIZED" });
+    expect(recovery.statusCode).toBe(400);
+    expect(recovery.json()).toMatchObject({ error: "INVALID_RECOVERY_REQUEST" });
+  });
+
   it("returns and revokes the current administrator session", async () => {
     const { app, sessionManager } = await sessionApp();
     const headers = { cookie: `${ADMIN_SESSION_COOKIE}=${SESSION_TOKEN}` };

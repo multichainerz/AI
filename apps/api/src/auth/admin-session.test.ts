@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import {
   administratorSession,
   auditEvent,
@@ -59,6 +59,61 @@ async function seedLocalAdministrator(overrides: Record<string, unknown> = {}) {
 
 async function storedSessions() {
   return context.database.select().from(administratorSession);
+}
+
+type Transaction = Parameters<Parameters<TestDatabase["database"]["transaction"]>[0]>[0];
+
+/**
+ * Runs `concurrency` copies of `call` whose reads all land before any of their
+ * writes, by holding the session row locked until every one of them is queued.
+ *
+ * A burst of authenticated requests only exposes a write race when they read
+ * the same tuple; whichever one reads after another has already written takes
+ * the early return instead and never contends. Firing them together and hoping
+ * leaves that to the scheduler -- measured, it produced the contention in one
+ * run out of several. Waiting for PostgreSQL to report exactly this many
+ * backends blocked on a lock makes the interleaving the test claims the one it
+ * actually gets, on an idle machine and a loaded one alike.
+ *
+ * `beforeRelease` runs inside the holding transaction, which is the only place
+ * a write to the locked row can happen while the burst is queued behind it.
+ */
+async function whileRowIsLocked<T>(
+  sessionId: string,
+  concurrency: number,
+  call: () => Promise<T>,
+  beforeRelease?: (transaction: Transaction) => Promise<void>,
+): Promise<T[]> {
+  let locked!: () => void;
+  let release!: () => void;
+  const reached = new Promise<void>((resolve) => { locked = resolve; });
+  const queued = new Promise<void>((resolve) => { release = resolve; });
+  const holder = context.database.transaction(async (transaction) => {
+    await transaction.execute(
+      sql`SELECT 1 FROM ${administratorSession} WHERE ${administratorSession.id} = ${sessionId} FOR UPDATE`,
+    );
+    locked();
+    await queued;
+    if (beforeRelease) await beforeRelease(transaction);
+  });
+  // Racing the holder surfaces a failed lock instead of hanging here.
+  await Promise.race([reached, holder]);
+  const answers = Promise.all(Array.from({ length: concurrency }, () => call()));
+  try {
+    await vi.waitFor(async () => {
+      const { rows } = await context.database.execute<{ waiting: number }>(
+        sql`SELECT count(*)::int AS waiting FROM pg_stat_activity
+            WHERE datname = current_database() AND wait_event_type = 'Lock'`,
+      );
+      expect(rows[0]?.waiting).toBe(concurrency);
+    }, { timeout: 15_000, interval: 25 });
+  } finally {
+    // Always, or the open transaction outlives the test and hangs the TRUNCATE
+    // the next one starts with instead of reporting this one's failure.
+    release();
+    await holder;
+  }
+  return answers;
 }
 
 describe("requireAdmin", () => {
@@ -365,6 +420,62 @@ describe("DrizzleAdminSessionManager authentication", () => {
     const [after] = await storedSessions();
     expect(principal?.id).toBe(before!.id);
     expect(after?.lastSeenAt.toISOString()).toBe(before!.lastSeenAt.toISOString());
+  });
+
+  /*
+   * The burst the dashboard fires, on a session the touch interval has caught.
+   *
+   * Seven authenticated calls leave in one Promise.all, so after any gap over a
+   * minute every one of them reads the same stale lastSeenAt and every one of
+   * them tries to slide the window. Only one can: under READ COMMITTED the
+   * others block on the winner's row lock and then re-evaluate their predicate
+   * against the *updated* tuple, where lastSeenAt is no longer old enough to
+   * satisfy the write throttle. Counting that empty result as an authentication
+   * failure signed the operator out mid-screen while their session was live and
+   * every liveness condition still held.
+   *
+   * The lock is held from outside so the reads all land before any of the
+   * writes. Firing the calls and hoping they interleave reproduced this once in
+   * a handful of runs -- whichever calls read after the winner had committed
+   * took the early return and never raced at all.
+   */
+  it("authenticates every request in a burst on a session past its touch interval", async () => {
+    const issued = await manager().issueFederatedSession("oidc:subject", "PLATFORM_ADMIN", {});
+    const [session] = await storedSessions();
+    await context.database
+      .update(administratorSession)
+      .set({ lastSeenAt: new Date(Date.now() - ADMIN_SESSION_TOUCH_INTERVAL_MS - 60_000) });
+
+    const answers = await whileRowIsLocked(session!.id, 4, () => manager().authenticate(issued.token));
+
+    expect(answers.filter((principal) => principal === null)).toEqual([]);
+    for (const principal of answers) expect(principal?.role).toBe("PLATFORM_ADMIN");
+    // The throttle still did its job: one write sliding the window for all four.
+    const [after] = await storedSessions();
+    expect(Date.now() - after!.lastSeenAt.getTime()).toBeLessThan(ADMIN_SESSION_TOUCH_INTERVAL_MS);
+  });
+
+  /*
+   * The half of the same predicate the fix must not weaken. The revocation
+   * lands while the same four calls are queued behind the lock, so each one has
+   * already read a live session and is about to write: a burst that survives a
+   * lost throttle must still lose to a revoke.
+   */
+  it("refuses a burst whose session is revoked between the read and the touch", async () => {
+    const issued = await manager().issueFederatedSession("oidc:subject", "PLATFORM_ADMIN", {});
+    const [session] = await storedSessions();
+    await context.database
+      .update(administratorSession)
+      .set({ lastSeenAt: new Date(Date.now() - ADMIN_SESSION_TOUCH_INTERVAL_MS - 60_000) });
+
+    const answers = await whileRowIsLocked(session!.id, 4, () => manager().authenticate(issued.token), async (transaction) => {
+      await transaction
+        .update(administratorSession)
+        .set({ revokedAt: new Date() })
+        .where(eq(administratorSession.id, session!.id));
+    });
+
+    expect(answers).toEqual([null, null, null, null]);
   });
 
   it("fails closed once a session is revoked", async () => {

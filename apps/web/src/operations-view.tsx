@@ -1,7 +1,10 @@
 import {
   type AdministratorSession,
+  type AiOpsComponent,
   type AiOpsOverview,
+  type GuardrailControl,
   type OperationalIncident,
+  type RuntimeExecutorSnapshot,
 } from "@orcasynapse/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -78,6 +81,18 @@ function relativeTime(value: string | null): string {
  */
 const SNAPSHOT_STALE_AFTER_MS = 5 * 60 * 1_000;
 
+/**
+ * How many incidents `GET /ai-ops/incidents` will ever return.
+ *
+ * `DrizzleAiOpsManager.listIncidents` is a bare `limit: 200` ordered by
+ * `detectedAt` descending and `OperationalIncidentList` carries no total, so a
+ * full array means "at least 200 exist". The hero above the ledger prints
+ * `overview.incidents.open`, which is an unbounded `count()` over the same
+ * table -- two figures from different sources, on one screen, that disagree
+ * once the ledger fills. The ledger is the one that has to admit its edge.
+ */
+const INCIDENT_WINDOW = 200;
+
 export function snapshotIsStale(generatedAt: string | null | undefined, now: number = Date.now()): boolean {
   if (!generatedAt) return false;
   const timestamp = new Date(generatedAt).getTime();
@@ -92,6 +107,63 @@ function percentage(value: number | null): string {
 function humanLabel(value: string): string {
   const special: Partial<Record<string, string>> = { MCP: "MCP", OIDC: "OIDC", SIEM: "SIEM", TOOL_USE: "Tool use", MODEL_ACCESS: "Model access", DATA_EGRESS: "Data egress" };
   return special[value] ?? value.replaceAll("_", " ").toLowerCase().replace(/^./, (letter) => letter.toUpperCase());
+}
+
+/**
+ * The four vocabularies this screen speaks, translated into the shared one
+ * before anything is coloured.
+ *
+ * `toneFor` recognises `ready|healthy|active`, `degraded|validation|not_tested|
+ * draft` and `blocked|unreachable|failed`, and answers neutral grey to
+ * everything else. None of the enums below is in that list, and lower-casing
+ * them — which is what this file did — is not a translation: `unavailable`,
+ * `not_verified`, `not_configured`, every executor status and every guardrail
+ * status all fell through to grey.
+ *
+ * That produced an inverted signal rather than a dull one. `sortedComponents`
+ * puts UNAVAILABLE first as the most severe thing on the page, and it was drawn
+ * quieter than the DEGRADED row beneath it; a stopped worker was
+ * indistinguishable from a running one. The rule these four keep is that
+ * severity survives the mapping, which is the whole reason the mapping exists.
+ *
+ * Private and per-vocabulary, in the shape `models-view`, `guardrails-view`,
+ * `prompts-view` and `audit-view` already use: widening the shared `toneFor`
+ * would mean one function owning six enums that happen not to collide today.
+ */
+function componentStatusTone(status: AiOpsComponent["status"]): string {
+  if (status === "HEALTHY") return "healthy";
+  if (status === "UNAVAILABLE") return "unreachable";
+  /*
+   * Degraded and never-verified share the amber deliberately. One is failing
+   * now and the other has no evidence it ever worked, and neither is a state an
+   * operator may leave alone -- the label beside the dot says which is which.
+   * NOT_CONFIGURED is the one that is genuinely not a fault: nothing was asked
+   * of it, which is also where the sort puts it, below both.
+   */
+  if (status === "DEGRADED" || status === "NOT_VERIFIED") return "degraded";
+  return "not_configured";
+}
+
+function executorStatusTone(status: RuntimeExecutorSnapshot["status"]): string {
+  if (status === "ONLINE") return "healthy";
+  if (status === "STALE") return "degraded";
+  // STOPPED: nothing is draining the queue this screen prints two panels above,
+  // which is the same class of fact as a service that cannot be reached.
+  return "failed";
+}
+
+function guardrailStatusTone(status: GuardrailControl["status"]): string {
+  if (status === "ENFORCED") return "healthy";
+  // PARTIAL and NOT_VERIFIED both: a protection that covers some of the path
+  // and one with no evidence behind it are equally not a protection an operator
+  // can rely on, and neither is a failure to be alarmed by.
+  return "degraded";
+}
+
+function overviewStatusTone(status: AiOpsOverview["status"]): string {
+  if (status === "HEALTHY") return "healthy";
+  if (status === "DEGRADED") return "degraded";
+  return "blocked";
 }
 
 function incidentSort(items: OperationalIncident[]): OperationalIncident[] {
@@ -111,6 +183,19 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
   const [message, setMessage] = useState<string | null>(null);
   const [incidentAction, setIncidentAction] = useState<IncidentAction>(null);
   const [decisionNote, setDecisionNote] = useState("");
+  /**
+   * Who owns the incident once this decision is recorded.
+   *
+   * Seeded from the incident's current owner rather than left empty, because
+   * `DrizzleAiOpsManager` writes `owner: input.owner ?? principal.subject` for
+   * both decisions: a form that sends only a note hands the incident to
+   * whoever pressed the button. An incident owned by "Platform team" silently
+   * becoming one administrator's is a change to the single field that says who
+   * is dealing with it, made by an action that does not read as a change of
+   * ownership at all -- and there is nothing on this screen that would show it
+   * happened, let alone undo it.
+   */
+  const [decisionOwner, setDecisionOwner] = useState("");
   const [showIncidentForm, setShowIncidentForm] = useState(false);
 
   const { unlocked, scopes } = adminAccess(session);
@@ -178,9 +263,19 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
     if (!incidentAction) return;
     setBusy(true); setError(null); setMessage(null);
     try {
-      await decideOperationalIncident(incidentAction.id, incidentAction.action, { note: decisionNote });
+      /*
+       * Omitted rather than sent empty when the field is blank. `owner` is
+       * `min(1)` on a strict schema, so "" is a 400; and an incident nobody
+       * owns is exactly the case where the server's default -- the operator
+       * acting on it -- is the right answer.
+       */
+      const owner = decisionOwner.trim();
+      await decideOperationalIncident(incidentAction.id, incidentAction.action, {
+        note: decisionNote,
+        ...(owner ? { owner } : {}),
+      });
       setMessage(`Incident ${incidentAction.action === "resolve" ? "resolved" : "acknowledged"}.`);
-      setIncidentAction(null); setDecisionNote("");
+      setIncidentAction(null); setDecisionNote(""); setDecisionOwner("");
       await refresh();
     } catch (cause) { handleError(cause, "The incident decision could not be recorded."); }
     finally { setBusy(false); }
@@ -227,7 +322,11 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
         title="Service health"
         description="What is degraded, which AI workflows it reaches, and what has been raised about it."
         actions={<>
-          <StatusText dot tone={overview?.status === "HEALTHY" ? "good" : "warn"} className="h-9 items-center border border-border bg-surface px-3">
+          <StatusText
+            dot
+            tone={overview ? toneFor(overviewStatusTone(overview.status)) : "neutral"}
+            className="h-9 items-center border border-border bg-surface px-3"
+          >
             {overview ? humanLabel(overview.status) : "Loading"}
           </StatusText>
           <Button onClick={() => void refresh()} disabled={busy}>{busy ? "Refreshing..." : "Refresh"}</Button>
@@ -297,7 +396,7 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
               {sortedComponents.map((component) => (
                 <Tile as="article" className="grid gap-2" key={component.id}>
                   <div className="flex items-center gap-2.5">
-                    <StatusText dot tone={toneFor(component.status.toLowerCase())} />
+                    <StatusText dot tone={toneFor(componentStatusTone(component.status))} />
                     <strong className="min-w-0 truncate text-label font-semibold text-text">{component.label}</strong>
                     <StatusText className="ml-auto shrink-0">{humanLabel(component.status)}</StatusText>
                   </div>
@@ -380,9 +479,19 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
             <MicroLabel className="block">Operator note</MicroLabel>
             <span className="mt-1 block text-body leading-relaxed text-muted">{item.resolutionNote}</span>
           </blockquote>}
-          {canOperate && item.status !== "RESOLVED" && <footer className="flex flex-wrap justify-end gap-2"><Button size="sm" onClick={() => { setIncidentAction({ id: item.id, action: "acknowledge" }); setDecisionNote(""); }} disabled={item.status !== "OPEN"}>Acknowledge</Button><Button size="sm" onClick={() => { setIncidentAction({ id: item.id, action: "resolve" }); setDecisionNote(""); }}>Resolve</Button></footer>}
-          {incidentAction?.id === item.id && <form className="ops-form grid gap-3 rounded border border-border-strong bg-raised p-3" onSubmit={(event) => void decideIncident(event)}><label><span>Operator note</span><Textarea value={decisionNote} onChange={(event) => setDecisionNote(event.target.value)} minLength={3} maxLength={1000} rows={2} required /></label><div className="flex justify-end gap-2"><Button variant="ghost" onClick={() => setIncidentAction(null)}>Cancel</Button><Button type="submit" disabled={busy}>Record {incidentAction.action}</Button></div></form>}
-        </article>)}{incidents.length === 0 && <p className="m-0 rounded border border-dashed border-border px-4 py-7 text-body text-muted">No operational incidents have been recorded.</p>}</div>
+          {canOperate && item.status !== "RESOLVED" && <footer className="flex flex-wrap justify-end gap-2"><Button size="sm" onClick={() => { setIncidentAction({ id: item.id, action: "acknowledge" }); setDecisionNote(""); setDecisionOwner(item.owner ?? ""); }} disabled={item.status !== "OPEN"}>Acknowledge</Button><Button size="sm" onClick={() => { setIncidentAction({ id: item.id, action: "resolve" }); setDecisionNote(""); setDecisionOwner(item.owner ?? ""); }}>Resolve</Button></footer>}
+          {/* Owner beside the note, carrying what the incident already says, so
+              a handover is something an operator does on purpose and can see
+              themselves doing. Blank means "assign it to me", which is what the
+              server does with a decision that names nobody. */}
+          {incidentAction?.id === item.id && <form className="ops-form grid gap-3 rounded border border-border-strong bg-raised p-3 sm:grid-cols-2" onSubmit={(event) => void decideIncident(event)}><label className="sm:col-span-2"><span>Operator note</span><Textarea value={decisionNote} onChange={(event) => setDecisionNote(event.target.value)} minLength={3} maxLength={1000} rows={2} required /></label><label className="sm:col-span-2"><span>Owner</span><Input value={decisionOwner} maxLength={160} placeholder="Leave blank to take this incident yourself" onChange={(event) => setDecisionOwner(event.target.value)} /></label><div className="flex justify-end gap-2 sm:col-span-2"><Button variant="ghost" onClick={() => setIncidentAction(null)}>Cancel</Button><Button type="submit" disabled={busy}>Record {incidentAction.action}</Button></div></form>}
+        </article>)}{incidents.length === 0 && <p className="m-0 rounded border border-dashed border-border px-4 py-7 text-body text-muted">No operational incidents have been recorded.</p>}
+          {incidents.length >= INCIDENT_WINDOW && (
+            <MicroLabel className="block">
+              The newest {INCIDENT_WINDOW} incidents are listed. The open count above is counted over every
+              incident and can be larger than what is shown here.
+            </MicroLabel>
+          )}</div>
       </section>
 
         <Panel>
@@ -435,7 +544,7 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
           <div className="mt-3 grid gap-1.5">
             {executors.map((executor) => <Tile as="article" pad="sm" className="flex flex-wrap items-center justify-between gap-3" key={executor.id}>
               <div className="flex min-w-0 items-center gap-2.5">
-                <StatusText dot tone={toneFor(executor.status.toLowerCase())} />
+                <StatusText dot tone={toneFor(executorStatusTone(executor.status))} />
                 <div className="min-w-0">
                   <strong className="block truncate text-caption font-semibold text-text">{executor.name}</strong>
                   <small className="block font-mono text-micro text-faint">
@@ -444,7 +553,7 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
                 </div>
               </div>
               <div className="text-right">
-                <StatusText tone={toneFor(executor.status.toLowerCase())}>{humanLabel(executor.status)}</StatusText>
+                <StatusText tone={toneFor(executorStatusTone(executor.status))}>{humanLabel(executor.status)}</StatusText>
                 <span className="mt-0.5 block font-mono text-micro text-faint">{relativeTime(executor.lastSeenAt)}</span>
               </div>
             </Tile>)}
@@ -463,7 +572,7 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{overview?.guardrails.map((control) => <Tile as="article" className="grid gap-1.5" key={control.layer}>
             <header className="flex items-center justify-between gap-3">
               <MicroLabel>{humanLabel(control.layer)}</MicroLabel>
-              <StatusText dot tone={toneFor(control.status.toLowerCase())}>{humanLabel(control.status)}</StatusText>
+              <StatusText dot tone={toneFor(guardrailStatusTone(control.status))}>{humanLabel(control.status)}</StatusText>
             </header>
             <h3 className="m-0 font-display text-label font-semibold text-text">{control.label}</h3>
             <p className="mb-0 text-caption leading-relaxed text-muted">{control.summary}</p>

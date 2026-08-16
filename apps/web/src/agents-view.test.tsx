@@ -313,6 +313,37 @@ describe("agents", () => {
     expect(within(ledger()).getByText("Nothing has run under Support analyst")).toBeTruthy();
   });
 
+  it("does not claim a Profile has never run when the window cannot see that far", async () => {
+    /*
+     * `listRuns` is a bare `limit: 200` and `AgentRunList` carries no total, so
+     * a full array means "at least 200 exist" and nothing more. Two sentences
+     * were asserted over it anyway: "Show all runs (200)", which reads as a
+     * deployment total and is false the moment a 201st run exists, and
+     * "Nothing has run under X" -- a claim about a Profile derived from a
+     * client-side filter of the newest 200 runs across *every* Profile, and so
+     * false for any Profile whose runs are all older than that window. The
+     * deployments where it is most wrong are the busy ones this ledger exists
+     * to serve.
+     */
+    const window200 = Array.from({ length: 200 }, (_, index) => ({
+      ...runs[1]!, id: `w${index}`, createdAt: "2026-08-08T09:00:00.000Z",
+    })) as AgentRun[];
+    setupApi({ runs: window200 });
+    await view();
+
+    // Support analyst is selected and has nothing in the window, which is the
+    // state the old copy described as "nothing has run".
+    const panel = ledger();
+    expect(within(panel).queryByText("Nothing has run under Support analyst")).toBeNull();
+    expect(within(panel).getByText("Nothing by Support analyst in the newest 200 runs")).toBeTruthy();
+    expect(within(panel).getByText(/older ones by Support analyst are not loaded/)).toBeTruthy();
+    expect(within(panel).getByText("Produced by Support analyst, within the newest 200 runs.")).toBeTruthy();
+
+    // And the escape hatch stops offering a total it does not have.
+    expect(within(panel).queryByRole("button", { name: "Show all runs (200)" })).toBeNull();
+    expect(within(panel).getByRole("button", { name: "Show the newest 200 runs" })).toBeTruthy();
+  });
+
   it("drops the detail pane entirely when there is nothing anywhere to select", async () => {
     /*
      * The deployment this was designed against has one Profile and no runs. A
@@ -578,6 +609,33 @@ describe("agents", () => {
     // The wording that implied a runtime consequence, gone. A plain substring
     // check over the whole dialog, so no element boundary can hide it.
     expect(dialog.textContent).not.toContain("Runtime installation remains evidence-gated");
+  });
+
+  it("says the Tool set field records a declaration nothing narrows on", async () => {
+    /*
+     * The same correction the Approved Skills field above already carries.
+     * `agent-processor.ts` selects every admitted toolset with no profile
+     * predicate and hands that array to `hermes.start`; `toolSetId` has no
+     * reader in the worker, in `packages/runtime-clients`, or in the tool-call
+     * gate, and `agent-processor.test.ts` already pins the deployment-wide set
+     * being submitted for a profile that names a narrower one.
+     *
+     * "Default — everything admitted" and "it means everything this deployment
+     * admits" both read as a delivery promise, which on a field about what an
+     * agent may do is a security claim the product cannot keep.
+     */
+    setupApi();
+    const user = userEvent.setup();
+    await view();
+    await user.click(screen.getByRole("button", { name: "Create agent" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/Tool set \(recorded, not delivered\)/)).toBeTruthy();
+    expect(within(dialog).getByText(/every admitted toolset is submitted to Hermes/i)).toBeTruthy();
+    // Plain substring checks over the whole dialog, so no element boundary can
+    // hide the sentence coming back.
+    expect(dialog.textContent).not.toContain("Default — everything admitted");
+    expect(dialog.textContent).not.toContain("it means everything this deployment admits");
   });
 
   it("withholds the session when the API is too old to say whether execution is on", async () => {

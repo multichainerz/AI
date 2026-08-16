@@ -10,6 +10,7 @@ import {
   division,
   componentCompatibility,
   createTestDatabase,
+  guardrailPolicy,
   hermesRuntimeNode,
   platformArchitectureDecision,
   runtimeToolsetAdmission,
@@ -109,6 +110,26 @@ async function enableRuntime() {
     .insert(agentRuntimeControl)
     .values({ id: "global", enabled: true, reason: "Enabled for tests", updatedBy: principal.id })
     .onConflictDoUpdate({ target: agentRuntimeControl.id, set: { enabled: true } });
+}
+
+/**
+ * The one ACTIVE guardrail policy a deployment may have.
+ *
+ * Written directly rather than through DrizzleGuardrailManager.activate, which
+ * additionally demands a healthy inference route -- irrelevant to what a run
+ * does with the number, and a second deployment to keep in step with here.
+ */
+async function activeGuardrailPolicy(maxOutputCharacters: number) {
+  await context.database.insert(guardrailPolicy).values({
+    slug: `policy-${randomUUID().slice(0, 8)}`,
+    displayName: "Pilot guardrails",
+    description: "Bounds what a run may emit.",
+    version: "1",
+    status: "ACTIVE",
+    maxInputCharacters: 32_000,
+    maxOutputCharacters,
+    firstActivatedAt: new Date(),
+  });
 }
 
 /** Creates a profile and takes it all the way to ACTIVE. */
@@ -258,6 +279,66 @@ describe("DrizzleAgentManager runs", () => {
     expect(run.profileDistributionDigest).toBe(active.version.distributionDigest);
     // The run must carry the version's model alias, not a caller-supplied one.
     expect(run.modelAlias).toBe("hermes-agent");
+  });
+
+  /*
+   * The guardrail an operator configured, on the path that never asked for it.
+   *
+   * `maxOutputCharacters` is a policy the dashboard exposes and Chat obeys --
+   * Chat resolves the active policy and hands the number to `submitRun`. Direct
+   * agent runs called the same method with no options at all, so they took the
+   * hard-coded 200,000 no matter what the operator had set. Two callers, one
+   * guardrail, and only one of them enforcing it is worse than not having the
+   * setting: the number on the screen said the deployment was bounded.
+   */
+  it("bounds a directly submitted run by the active guardrail policy", async () => {
+    const active = await activeProfile();
+    await enableRuntime();
+    await enrolHealthyRuntime();
+    await activeGuardrailPolicy(4_096);
+
+    const run = await manager().submitRun(principal, { profileId: active.id, input: "hello" } as never);
+
+    const [stored] = await context.database
+      .select({ outputCharacterLimit: agentRun.outputCharacterLimit })
+      .from(agentRun)
+      .where(eq(agentRun.id, run.id));
+    expect(stored?.outputCharacterLimit).toBe(4_096);
+  });
+
+  it("falls back to the platform ceiling when no policy is active", async () => {
+    const active = await activeProfile();
+    await enableRuntime();
+    await enrolHealthyRuntime();
+
+    const run = await manager().submitRun(principal, { profileId: active.id, input: "hello" } as never);
+
+    const [stored] = await context.database
+      .select({ outputCharacterLimit: agentRun.outputCharacterLimit })
+      .from(agentRun)
+      .where(eq(agentRun.id, run.id));
+    expect(stored?.outputCharacterLimit).toBe(200_000);
+  });
+
+  it("lets a caller that already resolved the policy pass its own limit", async () => {
+    // Chat resolves the policy itself, because it needs the same numbers for
+    // input inspection; what it passes must still win.
+    const active = await activeProfile();
+    await enableRuntime();
+    await enrolHealthyRuntime();
+    await activeGuardrailPolicy(4_096);
+
+    const run = await manager().submitRun(
+      principal,
+      { profileId: active.id, input: "hello" } as never,
+      { outputCharacterLimit: 8_192 },
+    );
+
+    const [stored] = await context.database
+      .select({ outputCharacterLimit: agentRun.outputCharacterLimit })
+      .from(agentRun)
+      .where(eq(agentRun.id, run.id));
+    expect(stored?.outputCharacterLimit).toBe(8_192);
   });
 
   it("enforces the configured concurrent-run limit", async () => {

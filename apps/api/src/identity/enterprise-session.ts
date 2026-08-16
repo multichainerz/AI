@@ -276,6 +276,63 @@ export async function boundedOidcJson(response: Response): Promise<unknown> {
   }
 }
 
+/** The OAuth `error` code a failed token response carries, if it carries one. */
+async function oidcErrorCode(response: Response): Promise<string | null> {
+  try {
+    const value = await boundedOidcJson(response);
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const code = (value as { error?: unknown }).error;
+    return typeof code === "string" ? code.slice(0, 80) : null;
+  } catch {
+    // A body that is oversized, truncated or not JSON says nothing about whose
+    // fault the failure was, which the caller treats as "unknown".
+    return null;
+  }
+}
+
+/**
+ * Whose failure the token exchange was, which decides who can fix it.
+ *
+ * Every non-2xx used to come back as OIDC_TOKEN_REJECTED, "The identity
+ * provider rejected the authorization code", carrying the class default 401.
+ * That sentence is true of exactly one of the shapes that reaches here. An IdP
+ * answering 503, and an IdP answering `invalid_client` because OrcaSynapse's
+ * client secret was rotated out from under this connection, both produced the
+ * same sentence -- so the operator sent the user round to sign in again, and
+ * every attempt failed identically, because nothing about that user's sign-in
+ * was ever wrong. The JWKS fetch immediately below, the same `!response.ok`
+ * shape on the same provider, already answered 502 for this reason.
+ *
+ * RFC 6749 §5.2 defines the two shapes being separated: `invalid_grant` is this
+ * authorization code being refused, and `invalid_client` is this client's
+ * credential being refused -- conventionally with 401, though providers differ,
+ * so the code in the body decides and the status only breaks ties. Anything
+ * else, including a body that does not parse, is upstream trouble rather than
+ * evidence against the code, and says so with 502.
+ */
+async function tokenExchangeFailure(response: Response): Promise<EnterpriseIdentityError> {
+  const failure = await oidcErrorCode(response);
+  if (failure === "invalid_client" || failure === "unauthorized_client") {
+    return new EnterpriseIdentityError(
+      "OIDC_CLIENT_REJECTED",
+      "The identity provider refused OrcaSynapse's client credential. Re-enter the client secret on the OIDC connection and test it.",
+      502,
+    );
+  }
+  if (failure === "invalid_grant") {
+    return new EnterpriseIdentityError(
+      "OIDC_TOKEN_REJECTED",
+      "The identity provider rejected the authorization code.",
+      401,
+    );
+  }
+  return new EnterpriseIdentityError(
+    "OIDC_TOKEN_UNAVAILABLE",
+    `The identity provider token endpoint returned status ${response.status}; the authorization code was never examined.`,
+    502,
+  );
+}
+
 /** A session joined to its user, which is what the principal mapper needs. */
 type LoadedSession = typeof enterpriseUserSession.$inferSelect & {
   user: typeof enterpriseUser.$inferSelect;
@@ -703,7 +760,45 @@ export class DrizzleEnterpriseIdentityManager implements EnterpriseIdentityManag
         gt(enterpriseUserSession.absoluteExpiresAt, now),
       ))
       .returning({ id: enterpriseUserSession.id });
-    return updated.length === 1 ? principalFromRecord({ ...session, idleExpiresAt }) : null;
+    if (updated.length === 1) return principalFromRecord({ ...session, idleExpiresAt });
+    return this.touchLost(session, now);
+  }
+
+  /**
+   * Answers a touch that matched no row, which is not by itself a refusal.
+   *
+   * Only three of that predicate's clauses are about whether the session is
+   * alive; the lastSeenAt clause is a write throttle, and it is the one a
+   * concurrent *success* falsifies. Under READ COMMITTED the second writer
+   * blocks on the winner's row lock and then re-evaluates against the winner's
+   * tuple, where lastSeenAt is a moment old rather than a minute. Reading that
+   * as an authentication failure signed users out whenever a burst of requests
+   * followed a gap longer than the touch interval -- which is what a dashboard
+   * screen loading seven endpoints at once produces every time.
+   *
+   * The throttle may therefore lose the write; liveness is then asked again,
+   * against the row as it stands rather than the copy read before the race, so
+   * a revoke, an expiry or a disabled user landing in the same window still
+   * refuses. The twin of this is in auth/admin-session.ts, on the same shape.
+   */
+  private async touchLost(session: LoadedSession, now: Date): Promise<EnterprisePrincipal | null> {
+    const [current] = await this.database
+      .select({
+        revokedAt: enterpriseUserSession.revokedAt,
+        idleExpiresAt: enterpriseUserSession.idleExpiresAt,
+        absoluteExpiresAt: enterpriseUserSession.absoluteExpiresAt,
+        enabled: enterpriseUser.enabled,
+      })
+      .from(enterpriseUserSession)
+      .innerJoin(enterpriseUser, eq(enterpriseUserSession.userId, enterpriseUser.id))
+      .where(eq(enterpriseUserSession.id, session.id))
+      .limit(1);
+    if (
+      !current || current.revokedAt || !current.enabled ||
+      current.idleExpiresAt <= now || current.absoluteExpiresAt <= now
+    ) return null;
+    // The winner's idle window, which is the one now on record.
+    return principalFromRecord({ ...session, idleExpiresAt: current.idleExpiresAt });
   }
 
   async revoke(token: string | undefined): Promise<boolean> {
@@ -873,9 +968,7 @@ export class DrizzleEnterpriseIdentityManager implements EnterpriseIdentityManag
     } catch {
       throw new EnterpriseIdentityError("OIDC_TOKEN_UNREACHABLE", "The identity provider token endpoint could not be reached.", 502);
     }
-    if (!response.ok) {
-      throw new EnterpriseIdentityError("OIDC_TOKEN_REJECTED", "The identity provider rejected the authorization code.");
-    }
+    if (!response.ok) throw await tokenExchangeFailure(response);
     const value = await boundedOidcJson(response);
     if (!value || typeof value !== "object" || Array.isArray(value)) {
       throw new EnterpriseIdentityError("OIDC_TOKEN_INVALID", "The identity provider token response is invalid.", 502);

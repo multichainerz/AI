@@ -106,6 +106,11 @@ function manager(): HermesRuntimeNodeManager {
   };
 }
 
+/** What node-postgres raises when a non-UUID string reaches a `uuid` column. */
+function malformedUuid(): Error {
+  return Object.assign(new Error(`invalid input syntax for type uuid: "not-a-uuid"`), { code: "22P02" });
+}
+
 const apps: Awaited<ReturnType<typeof createApp>>[] = [];
 afterEach(async () => Promise.all(apps.splice(0).map((app) => app.close())));
 
@@ -331,5 +336,41 @@ describe("Hermes runtime-node routes", () => {
     // Refused before the manager is consulted at all.
     expect(runtimeNodeManager.heartbeat).not.toHaveBeenCalled();
     expect(runtimeNodeManager.desiredState).not.toHaveBeenCalled();
+  });
+
+  it("fails closed on a malformed node id on the administrator routes too", async () => {
+    // The same unvalidated path parameter, on the two routes the guard above
+    // was never wired into. Here the caller holds a valid session, so the
+    // answer is 400 rather than the unauthenticated routes' 401: their id
+    // arrives with a signature and a bad one is a failed credential, while an
+    // administrator with a mistyped id has a bad request and needs to be told
+    // that rather than that their session is not recognised.
+    const runtimeNodeManager = manager();
+    runtimeNodeManager.mutate = vi.fn(async () => { throw malformedUuid(); });
+    runtimeNodeManager.remove = vi.fn(async () => { throw malformedUuid(); });
+    const { app } = await testApp(runtimeNodeManager);
+    const headers = { cookie: `${ADMIN_SESSION_COOKIE}=${TOKEN}` };
+
+    for (const badId of ["not-a-uuid", "1", "'; select 1--", `${NODE_ID}x`]) {
+      const action = await app.inject({
+        method: "POST",
+        url: `/api/v1/admin/runtime-nodes/${encodeURIComponent(badId)}/actions`,
+        headers,
+        payload: { action: "DRAIN", reason: "Draining for maintenance on the runtime host.", expectedRevision: 0 },
+      });
+      expect(action.statusCode, `action with id ${badId}`).toBe(400);
+      expect(action.json()).toMatchObject({ error: "INVALID_NODE_ACTION" });
+
+      const removal = await app.inject({
+        method: "DELETE",
+        url: `/api/v1/admin/runtime-nodes/${encodeURIComponent(badId)}`,
+        headers,
+        payload: { confirmation: node.slug, reason: "VM2 host purge completed by the platform administrator.", expectedRevision: 0 },
+      });
+      expect(removal.statusCode, `removal with id ${badId}`).toBe(400);
+      expect(removal.json()).toMatchObject({ error: "INVALID_NODE_REMOVAL" });
+    }
+    expect(runtimeNodeManager.mutate).not.toHaveBeenCalled();
+    expect(runtimeNodeManager.remove).not.toHaveBeenCalled();
   });
 });

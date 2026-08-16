@@ -207,6 +207,36 @@ describe("models catalogue", () => {
     expect(within(summary).getAllByText("2")).not.toHaveLength(0);
   });
 
+  it("stops presenting the loaded window as the catalogue's size", async () => {
+    /*
+     * `DrizzleModelManager.list` is a bare `limit: 200` and the contract has no
+     * total, so at the cap `models.length` is the size of the response and not
+     * of the catalogue -- while the label above it says "Catalogue routes" and
+     * the caption below says "Versioned records". Both describe the table.
+     */
+    catalogue = Array.from({ length: 200 }, (_, index) => model({
+      id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      slug: `route-${index}`,
+      displayName: `Route ${index}`,
+    }));
+    render(
+      <main>
+        <ModelsView
+          session={session}
+          connections={connections}
+          onConfigureConnections={vi.fn()}
+          onOpenOperations={vi.fn()}
+          onSessionExpired={vi.fn()}
+        />
+      </main>,
+    );
+    const summary = await screen.findByLabelText("Model catalogue summary");
+
+    await waitFor(() => expect(within(summary).getByText("200+")).toBeTruthy());
+    expect(within(summary).getByText("Newest 200 loaded")).toBeTruthy();
+    expect(within(summary).queryByText("Versioned records")).toBeNull();
+  });
+
   it("distinguishes a route that is serving from one that is not", async () => {
     await view();
 

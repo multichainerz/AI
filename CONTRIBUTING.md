@@ -54,7 +54,7 @@ gate unrunnable:
 | `scripts/test-hermes-corpus-reconciler.py` | root |
 | `scripts/test-deployment-limits.mjs` | the `docker` CLI (daemon-less; run it in WSL on Windows) |
 | `scripts/test-public-installer-recovery.sh`, `scripts/test-agentic-installer-recovery.sh` | a Linux host |
-| `scripts/test-installer-host-sizing.sh` | a Linux host |
+| `scripts/test-installer-host-sizing.sh` | a Linux host **and** a reachable Docker daemon — it exits 2 without one, because the preflight checks it exercises alongside the sizing split are run for real rather than stubbed |
 | `scripts/test-installer-public-scheme.sh`, `scripts/test-installer-secret-permissions.sh` | real `sudo` |
 | `scripts/test-agentic-installer-smoke.sh`, `scripts/test-orcasynapse-installer-smoke.sh` | root, systemd and Docker |
 | `scripts/test-orcasynapse-installer-backup.sh`, `scripts/test-orcasynapse-installer-upgrade.sh`, `scripts/test-orcasynapse-update-agent.sh` | root and a live Docker daemon (no image build; each contains itself to its own Compose project and asserts the host is unchanged afterwards) |

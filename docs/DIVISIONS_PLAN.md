@@ -526,8 +526,20 @@ deleting the predicate fails a test. **1–2 days.**
   here writes to a grant.
 
 Files: `packages/database/src/drizzle/schema.ts` + migration,
-`packages/contracts/src/{toolsets,skillsets}.ts`, `apps/api/src/toolsets/*`,
+`packages/contracts/src/tooling.ts` and `packages/contracts/src/configuration-sets.ts`,
+`apps/api/src/tooling/` and `apps/api/src/configuration-sets/`,
 `apps/web/src/{tooling-view,corpus-view}.tsx`, `apps/web/src/api.ts`.
+
+This line named `packages/contracts/src/{toolsets,skillsets}.ts` and
+`apps/api/src/toolsets/*` — three paths, none of which has ever existed. What
+shipped calls the concept a *configuration set*, and puts a tool set and a
+skill set in one module rather than two, for the reason that module's own
+header gives: they are the same shape with a different payload, and splitting
+them invites the two to drift. `tooling` is the neighbouring plane the Tools
+tab reads — deployment-wide toolset admission — which this increment adds to
+but does not replace. A plan that names paths is checkable against the tree;
+these were not, and anybody following them went looking for directories that
+were never created.
 
 **Done when:** a set can be created, edited, listed and retired; deleting a
 referenced set is refused; the Tools tab still shows deployment-wide admission

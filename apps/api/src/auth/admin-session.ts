@@ -718,8 +718,43 @@ export class DrizzleAdminSessionManager implements AdminSessionManager {
         ),
       )
       .returning({ id: administratorSession.id });
-    if (updated.length !== 1) return null;
-    return principalFromRecord({ ...session, idleExpiresAt });
+    if (updated.length === 1) return principalFromRecord({ ...session, idleExpiresAt });
+    return this.touchLost(session, now);
+  }
+
+  /**
+   * Answers a touch that matched no row, which is not by itself a refusal.
+   *
+   * Four clauses guard that update and only three of them are about whether the
+   * session is alive. The fourth -- lastSeenAt older than the touch interval --
+   * is a write throttle, and under READ COMMITTED it is the one clause a
+   * *concurrent success* can turn false: PostgreSQL makes the second writer wait
+   * on the winner's row lock and then re-evaluates the predicate against the
+   * winner's tuple, where lastSeenAt is a moment old. Treating all four as one
+   * answer meant that whenever the dashboard's seven parallel calls arrived
+   * after a gap longer than a minute, six of them were told their session was
+   * gone and the operator was signed out of a live session.
+   *
+   * So the throttle is allowed to lose the write, and only then is liveness
+   * asked again -- against the row as it stands now, not the copy read before
+   * the race. A revoke or an expiry that landed in the same window still wins,
+   * because it is still the row that answers. The extra read costs one query on
+   * the losing path of a once-a-minute write, and nothing at all on the path
+   * every other request takes.
+   */
+  private async touchLost(session: StoredSession, now: Date): Promise<AdminPrincipal | null> {
+    const [current] = await this.database
+      .select({
+        revokedAt: administratorSession.revokedAt,
+        idleExpiresAt: administratorSession.idleExpiresAt,
+        absoluteExpiresAt: administratorSession.absoluteExpiresAt,
+      })
+      .from(administratorSession)
+      .where(eq(administratorSession.id, session.id))
+      .limit(1);
+    if (!current || !activeSession(current, now)) return null;
+    // The winner's idle window, which is the one now on record.
+    return principalFromRecord({ ...session, idleExpiresAt: current.idleExpiresAt });
   }
 
   async revoke(token: string | undefined): Promise<boolean> {

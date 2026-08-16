@@ -149,12 +149,20 @@ schema the code no longer expects. Do both, in this order.
 ### 1. Stop everything except the database
 
 ```sh
-cd /opt/orcasynapse
-sudo docker compose stop api worker web
-sudo docker compose up -d postgres
+sudo docker compose --project-directory /opt/orcasynapse stop api worker web
+sudo docker compose --project-directory /opt/orcasynapse up -d postgres
 ```
 
 Leaving `api` and `worker` running would let them write during the restore.
+
+Every command on this page names the project directory rather than changing
+into it, and that is not a style preference. The installation tree is `0750
+root:root`, so `cd /opt/orcasynapse` from the shell these `sudo` prefixes imply
+fails with *Permission denied* — and a `cd` that fails leaves you in the
+directory you were already in, where `docker compose` finds no project and
+stops nothing. This step in particular is the one that keeps `api` and `worker`
+off the database, so a silent no-op here means the restore below runs with
+writers live.
 
 ### 2. Restore the dump
 
@@ -205,11 +213,13 @@ Restore into a scratch database on the same server. The dump is taken with
 `--no-owner`, so it does not need the original role names.
 
 ```sh
-cd /opt/orcasynapse
-sudo docker compose exec -T postgres createdb -U orcasynapse orcasynapse_inspect
-sudo sh -c 'gzip -cd .local/state/backups/<dump>.sql.gz \
-  | docker compose exec -T postgres psql -U orcasynapse -d orcasynapse_inspect -v ON_ERROR_STOP=1'
-sudo docker compose exec -T postgres dropdb -U orcasynapse orcasynapse_inspect
+sudo docker compose --project-directory /opt/orcasynapse exec -T postgres \
+  createdb -U orcasynapse orcasynapse_inspect
+sudo sh -c 'gzip -cd /opt/orcasynapse/.local/state/backups/<dump>.sql.gz \
+  | docker compose --project-directory /opt/orcasynapse exec -T postgres \
+      psql -U orcasynapse -d orcasynapse_inspect -v ON_ERROR_STOP=1'
+sudo docker compose --project-directory /opt/orcasynapse exec -T postgres \
+  dropdb -U orcasynapse orcasynapse_inspect
 ```
 
 ## Before you need it

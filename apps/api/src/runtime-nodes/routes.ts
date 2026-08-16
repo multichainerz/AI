@@ -86,6 +86,28 @@ function rejectMalformedNodeId(nodeId: string, reply: FastifyReply): boolean {
   return true;
 }
 
+/**
+ * The same guard for the administrator routes, which it was never wired into.
+ *
+ * `POST /:nodeId/actions` and `DELETE /:nodeId` validate their bodies and then
+ * hand the path parameter straight to a `uuid` column, so they had the 500 the
+ * note above describes -- reachable with a valid session and a mistyped id.
+ *
+ * The answer differs from the unauthenticated one on purpose. There, the id
+ * arrives as part of a signed request and a malformed one is a failed
+ * credential, so 401 is the truth. Here the caller has already proved who they
+ * are and what is wrong is the request, which is what the sibling admin routes
+ * in tooling/routes.ts say with 400 and their own error code. Answering 401
+ * would tell an administrator holding a perfectly good session that it was
+ * refused, and an operator sent to re-authenticate over a typo'd id learns
+ * nothing except to distrust the answer.
+ */
+function rejectMalformedAdminNodeId(nodeId: string, reply: FastifyReply, error: string): boolean {
+  if (NODE_ID_PATTERN.test(nodeId)) return false;
+  void reply.code(400).send({ error, message: "A runtime node id must be a UUID." });
+  return true;
+}
+
 export async function registerRuntimeNodeInstallerRoutes(
   app: FastifyInstance,
   options: RuntimeNodeRouteOptions,
@@ -224,6 +246,7 @@ export async function registerAdminRuntimeNodeRoutes(app: FastifyInstance, optio
     const principal = await requireAdmin(request, reply, options.sessionManager, "readiness:manage");
     const manager = managerOrLocked(options, reply);
     if (!principal || !manager) return reply;
+    if (rejectMalformedAdminNodeId(request.params.nodeId, reply, "INVALID_NODE_ACTION")) return reply;
     const input = mutateHermesRuntimeNodeSchema.safeParse(request.body);
     if (!input.success) {
       return reply.code(400).send({ error: "INVALID_NODE_ACTION", message: input.error.issues[0]?.message });
@@ -239,6 +262,7 @@ export async function registerAdminRuntimeNodeRoutes(app: FastifyInstance, optio
     const principal = await requireAdmin(request, reply, options.sessionManager, "readiness:manage");
     const manager = managerOrLocked(options, reply);
     if (!principal || !manager) return reply;
+    if (rejectMalformedAdminNodeId(request.params.nodeId, reply, "INVALID_NODE_REMOVAL")) return reply;
     const input = removeHermesRuntimeNodeSchema.safeParse(request.body);
     if (!input.success) {
       return reply.code(400).send({ error: "INVALID_NODE_REMOVAL", message: input.error.issues[0]?.message });

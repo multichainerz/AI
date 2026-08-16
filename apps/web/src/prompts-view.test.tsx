@@ -6,7 +6,7 @@
  * field, which rewrites what it is given on every keystroke.
  */
 import { ADMIN_SCOPES, type AdministratorSession, type PromptTemplate } from "@orcasynapse/contracts";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const session: AdministratorSession = {
@@ -154,6 +154,32 @@ describe("a prompt another operator moved first", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save prompt revision" }));
     await waitFor(() => screen.getByText(/Prompt revision saved/));
     expect(updatePromptTemplate.mock.calls[1]![1]).toMatchObject({ expectedRevision: 2 });
+  });
+});
+
+describe("counting the records", () => {
+  it("stops presenting the loaded window as the record count", async () => {
+    /*
+     * `DrizzlePromptManager.list` is a bare `limit: 100` and
+     * `PromptTemplateList` carries no total, so at the cap the figure under
+     * "Prompt records" is the size of the response. This screen's whole subject
+     * is versioned records, which is what makes it the one most likely to
+     * accumulate a hundred of them.
+     */
+    catalogue = Array.from({ length: 100 }, (_, index) => ({
+      ...draftPrompt, id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`, displayName: `Prompt ${index}`,
+    }));
+    render(<main><PromptsView
+      session={session}
+      onOpenOperations={vi.fn()}
+      onOpenSettings={vi.fn()}
+      onSessionExpired={vi.fn()}
+    /></main>);
+    const summary = await screen.findByLabelText("Prompt governance summary");
+
+    await waitFor(() => expect(within(summary).getByText("100+")).toBeTruthy());
+    expect(within(summary).getByText("Newest 100 loaded")).toBeTruthy();
+    expect(within(summary).queryByText("Chat-system purpose")).toBeNull();
   });
 });
 

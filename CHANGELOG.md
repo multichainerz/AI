@@ -5,6 +5,60 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v8.8.5 — 2026-08-17
+
+Fixes what a four-way audit of the codebase found, verified adversarially before
+any of it was touched. Two defects would have reached customers.
+
+**The installer could delete a customer's own Hermes.** It wrote the managed
+systemd unit — carrying `X-OrcaSynapse-Managed=true`, the remover's proof of
+ownership — *before* the refusal that stops it overwriting a pre-existing
+install. An operator following that refusal's own instruction to decommission
+would have had their unrelated Hermes removed as ours. The check is hoisted
+above the unit write; all eight combinations of (resuming, directory, unit) were
+enumerated to prove the condition is otherwise unchanged.
+
+**The gate that parses the installers parsed one file.** `bash -n a.sh b.sh`
+parses `a.sh` and treats the rest as positional arguments, so
+`install-agentic-node.sh` and `remove-agentic-node.sh` — served by the API to
+operators who pipe them into `sudo bash` — had never been syntax-checked. Now
+one parse per file, plus a named-file loop, because a loop over an empty list
+succeeds too.
+
+Also fixed, each verified by reproduction rather than by reading:
+
+- **every run denied on a fresh install** — `ToolRuntimeControl` is never
+  seeded, and v7.9.0's seeded memory grants made the worker's pre-flight check
+  fire. The gate is *narrowed* rather than opened: no governed tool call can
+  authenticate without a live gateway credential, so the deny now fires only
+  when one exists
+- **spurious 401s** — the session touch mixed a write-throttle clause among
+  three liveness clauses and treated an unmatched row as "not authenticated", so
+  a burst of concurrent requests signed the operator out
+- **the audit trail could permanently skip an event** — the forwarder assumed
+  cursor order implies transaction-id order; ids are assigned at a transaction's
+  first write and cursors at the audit insert, and every writer here does the
+  domain row first
+- **`approvalTtlMinutes` had no effect anywhere in its 5–1440 range** — the
+  request giving up and the decision running out were the same outcome
+- **`installing chmod'd /opt itself`** from 755 to 750, breaking non-root
+  traversal of unrelated software, on every install and upgrade
+- **`maxOutputCharacters` was ignored on agent runs**, honoured only on chat
+- **a failed discovery probe disabled a live inference connection**, with no
+  on-screen control to undo it
+- **a Tool set narrowed nothing** while the screen implied it did — the label
+  now matches the Skills field beside it
+- **a down component rendered greyer than a degraded one**, because four screens
+  passed `toneFor` values it does not recognise
+- errors that named impossible or unnamed remedies: a locked platform reported
+  as a wrong password, an OIDC outage as a rejected authorization code, an
+  `rm -rf` for a directory never checked to exist
+- lists that claimed completeness from a truncated window or a refused read
+
+Two guards were found to be vacuous only because a mutation was attempted on
+them: the SIEM hole tests, and a memory-search test that passed on the luck of
+its fixtures avoiding the word "the".
+
 ## v8.8.4 — 2026-08-16
 
 Puts each product area's rail icon beside its title in the workspace header, so

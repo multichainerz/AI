@@ -17,7 +17,7 @@
  * to a file so the screen can be looked at without a session.
  */
 import { ADMIN_SCOPES, type AdministratorSession, type GuardrailPolicy, type PromptTemplate } from "@orcasynapse/contracts";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { writeFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -126,6 +126,38 @@ describe("prompts", () => {
     expect(screen.getByText(/Be precise, evidence-led, and candid/)).toBeTruthy();
     // The checksum is what audit retains in place of the body.
     expect(screen.getAllByText(/9f2c4a1b7e5d3086…/).length).toBeGreaterThan(0);
+  });
+
+  it("does not dress a suspension as a runtime kill switch", async () => {
+    /*
+     * Suspending the released prompt changes nothing about a conversation:
+     * nothing under `apps/api/src/chat/` or `apps/worker/` reads a template's
+     * content, which this screen states three times over elsewhere. The
+     * decision form said so in hedged future tense -- "after prompt governance
+     * has been adopted" -- while everything around it said the opposite: a
+     * heading calling the record "runtime", a red-bordered panel, a danger
+     * submit. Under a mismatch like that the styling is the half a reader
+     * believes, and this one sends an operator hunting an outage that is not
+     * there.
+     */
+    await promptsView();
+    fireEvent.click(screen.getByRole("button", { name: "Suspend" }));
+
+    const heading = await screen.findByText("Suspend the released prompt");
+    const form = heading.closest("form");
+    // Asserted before anything is read off it: `null?.className` is a silent
+    // pass, and every check below reads one.
+    expect(form).toBeTruthy();
+    expect(form!.className).not.toMatch(/bg-bad|border-bad/);
+    expect(within(form!).getByText(/no runtime component reads the active prompt/i)).toBeTruthy();
+    // `danger` is the only variant that paints its label with the destructive
+    // ink, so its absence is the absence of the variant.
+    expect(within(form!).getByRole("button", { name: "Confirm" }).className).not.toContain("text-destructive");
+
+    const body = document.body.textContent ?? "";
+    for (const claim of ["fail closed", "Suspend runtime prompt"]) {
+      expect(body, `the suspend form still claims "${claim}"`).not.toContain(claim);
+    }
   });
 
   it("counts the drafts waiting behind the bound release", async () => {

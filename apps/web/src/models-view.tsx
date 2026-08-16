@@ -62,6 +62,16 @@ const connectionKinds: Readonly<Record<ModelWorkload, readonly string[]>> = {
   AGENT: ["INFERENCE"],
 };
 
+/**
+ * How many routes `GET /admin/models` will ever return.
+ *
+ * `DrizzleModelManager.list` is a bare `limit: 200` and `ModelDeploymentList`
+ * carries no total, so a full array means "at least 200 exist" and the figure
+ * below is the size of a window. Labelled "Catalogue routes" over "Versioned
+ * records", that window reads as the catalogue itself.
+ */
+const CATALOGUE_WINDOW = 200;
+
 function compactNumber(value: number): string {
   return new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(value);
 }
@@ -252,7 +262,11 @@ export function ModelsView({
     />
 
     <MetricRow className="lg:grid-cols-4" aria-label="Model catalogue summary">
-      <Metric label="Catalogue routes" value={models.length} caption="Versioned records" />
+      <Metric
+        label="Catalogue routes"
+        value={models.length >= CATALOGUE_WINDOW ? `${CATALOGUE_WINDOW}+` : models.length}
+        caption={models.length >= CATALOGUE_WINDOW ? `Newest ${CATALOGUE_WINDOW} loaded` : "Versioned records"}
+      />
       <Metric label="Active routes" value={activeCount} tone={activeCount > 0 ? "good" : "neutral"} caption="Serving now" />
       <Metric label="Defaults" value={defaultCount} caption="Per workload" />
       <Metric label="Workloads" value={workloadCount} caption="Chat and agent" />

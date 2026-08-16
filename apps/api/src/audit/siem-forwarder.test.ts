@@ -101,27 +101,35 @@ async function recordInHeldTransaction(action: string, occurredAt: Date) {
 const openTransactions = new Set<() => Promise<void>>();
 afterEach(async () => { for (const commit of openTransactions) await commit(); });
 
+type Transaction = Parameters<Parameters<TestDatabase["database"]["transaction"]>[0]>[0];
+
 /**
- * Waits until nothing older than this event is still running on the cluster.
+ * An open transaction that already holds a transaction id, and writes nothing.
  *
- * Stepping over a hole is the one thing the forwarder cannot decide from the
- * trail alone: it needs pg_snapshot_xmin to pass the event, and that horizon is
- * computed across every backend in the cluster rather than across this database
- * alone, so a migration another test file is running in its own database pins
- * it. Retrying forward() a fixed number of times instead asserts that the
- * horizon moves within a few hundred milliseconds, which nothing promises -
- * under a concurrent run it does not, and the test failed on a machine that was
- * merely busy. Waiting for the condition the behaviour actually needs is what
- * makes the answer the same on a loaded machine as on an idle one.
+ * This is the shape every writer in the product has by the time it records an
+ * audit event: the domain row goes in first and takes the xid, the audit row
+ * goes in last and takes the cursor. Separating the two is what lets a test
+ * decide the xid order and the cursor order independently -- which is the whole
+ * point, because they are not the same order and the forwarder used to assume
+ * they were.
  */
-async function waitUntilSettled(action: string): Promise<void> {
-  await vi.waitFor(async () => {
-    const { rows } = await context.database.execute<{ settled: boolean }>(
-      sql`SELECT age(xmin) > age(pg_snapshot_xmin(pg_current_snapshot())::xid) AS settled
-          FROM ${auditEvent} WHERE ${auditEvent.action} = ${action}`,
-    );
-    expect(rows[0]?.settled).toBe(true);
-  }, { timeout: 45_000, interval: 100 });
+async function openTransaction(): Promise<{ transaction: Transaction; commit: () => Promise<void> }> {
+  let ready!: (transaction: Transaction) => void;
+  let release!: () => void;
+  const started = new Promise<Transaction>((resolve) => { ready = resolve; });
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const finished = context.database.transaction(async (transaction) => {
+    await transaction.execute(sql`SELECT pg_current_xact_id()`);
+    ready(transaction);
+    await held;
+  });
+  const commit = async () => { openTransactions.delete(commit); release(); await finished; };
+  openTransactions.add(commit);
+  const transaction = await Promise.race([
+    started,
+    finished.then(() => { throw new Error("The transaction ended before it could be used."); }),
+  ]);
+  return { transaction, commit };
 }
 
 /** Every event handed to the destination across every cycle, in delivery order. */
@@ -243,6 +251,46 @@ describe("SiemForwarder", () => {
     expect(delivered(fetcher).map((entry) => entry.action)).toEqual(["before", "during", "after"]);
   });
 
+  /*
+   * The trail's worst failure: an event the forwarder decides it will never
+   * need to look at again.
+   *
+   * A transaction takes its xid at its first write and its cursor at the audit
+   * insert, and every writer here does its domain work first -- so a
+   * transaction that started earlier can claim a *later* cursor. The old
+   * settling test compared xid ages and read that as position order: given a
+   * committed row written by an older xid sitting past a hole held by a younger
+   * one, it declared the hole safe to step over, advanced the cursor past it,
+   * and `gt(cursor, after)` then excluded the missing event from every future
+   * pass. The backlog query shares that predicate, so the trail reported itself
+   * complete while an event of it had never been sent.
+   *
+   * Reproduced exactly: `older` takes the lower xid and the higher cursor,
+   * `younger` the higher xid and the lower cursor.
+   */
+  it("does not skip an event whose position was claimed before a later one's", async () => {
+    const id = await seedSiem();
+    const fetcher = accepted();
+    const forwarder = new SiemForwarder(context.database, connections(id), logger, fetcher);
+
+    const older = await openTransaction();
+    const younger = await openTransaction();
+    await younger.transaction.insert(auditEvent).values(event("claimed-first", base));
+    await older.transaction.insert(auditEvent).values(event("claimed-second", new Date(base.getTime() + 1)));
+    // The older transaction commits first, so the trail is visible out of order.
+    await older.commit();
+
+    // Nothing may leave while the earlier position is still outstanding: the
+    // batch and the cursor advance as one, so sending the later event alone
+    // would strand the earlier one for good.
+    expect(await forwarder.forward()).toMatchObject({ forwarded: 0 });
+    expect(fetcher).not.toHaveBeenCalled();
+
+    await younger.commit();
+    expect(await forwarder.forward()).toMatchObject({ forwarded: 2 });
+    expect(delivered(fetcher).map((entry) => entry.action)).toEqual(["claimed-first", "claimed-second"]);
+  });
+
   it("does not report a trail with an undelivered event as fully forwarded", async () => {
     const id = await seedSiem();
     const slow = await recordInHeldTransaction("slow", new Date(base.getTime() + 248));
@@ -278,6 +326,36 @@ describe("SiemForwarder", () => {
     expect(state?.deliveredCount).toBe(1);
   });
 
+  /*
+   * The other half of the settling test, and the one that decides whether a
+   * hole is a lost position or a slow writer: no amount of waiting may step
+   * over a position a transaction still running could fill.
+   *
+   * Run with no grace at all, so the wall clock cannot be what refuses -- what
+   * refuses is that a transaction holding an id when the hole was observed has
+   * not finished. Nothing about which position that transaction is going to
+   * claim is knowable, which is exactly why the answer cannot be read off
+   * transaction ids the way it used to be.
+   */
+  it("never steps over a hole while a transaction that could fill it is open", async () => {
+    const id = await seedSiem();
+    const fetcher = accepted();
+    const forwarder = new SiemForwarder(context.database, connections(id), logger, fetcher, undefined, 0);
+
+    const holder = await openTransaction();
+    await holder.transaction.insert(auditEvent).values(event("in flight", base));
+    await record("committed", new Date(base.getTime() + 1));
+
+    for (let cycle = 0; cycle < 5; cycle += 1) {
+      expect(await forwarder.forward(), `cycle ${cycle}`).toMatchObject({ forwarded: 0 });
+    }
+    expect(fetcher).not.toHaveBeenCalled();
+
+    await holder.commit();
+    expect(await forwarder.forward()).toMatchObject({ forwarded: 2 });
+    expect(delivered(fetcher).map((entry) => entry.action)).toEqual(["in flight", "committed"]);
+  });
+
   it("does not stall when a rolled-back write leaves a hole in the trail", async () => {
     const id = await seedSiem();
     // A position is claimed inside the transaction and is not returned when it
@@ -288,16 +366,70 @@ describe("SiemForwarder", () => {
     })).rejects.toThrow("the surrounding work failed");
     await record("survivor", new Date(base.getTime() + 1_000));
 
-    // Resolving a hole means waiting out the writes that were in flight around
-    // it, which other tests on this cluster may still be holding open. Once
-    // they are gone one cycle has to clear it, so this asserts on a single
-    // pass rather than on however many a busy machine happens to need.
-    await waitUntilSettled("survivor");
+    /*
+     * The grace is a minute in production and a fraction of a second here, but
+     * it is deliberately not zero: a hole must still have to *persist* across
+     * it, and the run below spends more than one cycle inside it. Which cycle
+     * finally clears the hole is a property of the machine rather than of the
+     * forwarder -- stepping over it also requires every transaction that held
+     * an id when it was observed to have finished, including ones other suites
+     * on this cluster are holding open in their own databases. So this waits
+     * for the condition instead of asserting a cycle count that an idle machine
+     * meets and a loaded one does not.
+     */
     const fetcher = accepted();
-    const result = await new SiemForwarder(context.database, connections(id), logger, fetcher).forward();
+    const forwarder = new SiemForwarder(context.database, connections(id), logger, fetcher, undefined, 250);
 
-    expect(result.forwarded).toBe(1);
+    await vi.waitFor(
+      async () => expect((await forwarder.forward()).forwarded).toBe(1),
+      { timeout: 45_000, interval: 100 },
+    );
+
     expect(delivered(fetcher).map((entry) => entry.action)).toEqual(["survivor"]);
+  }, 60_000);
+
+  /*
+   * The grace is not decoration: it is the whole answer to the one thing the
+   * transaction-id horizon cannot see.
+   *
+   * A transaction evaluates the cursor default a moment before its first heap
+   * insert assigns it an id, so for that instant it holds a position while
+   * being invisible to any test made of ids -- and the horizon would happily
+   * report that nothing is outstanding. Waiting out a period vastly longer than
+   * that window is what closes it.
+   *
+   * Asserted by discrimination rather than by a clock: two forwarders on the
+   * same trail, the same hole and the same horizon, differing only in how long
+   * they insist the hole has been one. The probe's destination refuses every
+   * batch, so reaching it proves the hole was stepped over while leaving the
+   * cursor exactly where it was for the second forwarder to face the same
+   * decision -- and refuse it.
+   */
+  it("waits out the grace before stepping over a hole the horizon has already passed", async () => {
+    const id = await seedSiem();
+    await expect(context.database.transaction(async (transaction) => {
+      await transaction.insert(auditEvent).values(event("doomed", base));
+      throw new Error("the surrounding work failed");
+    })).rejects.toThrow("the surrounding work failed");
+    await record("survivor", new Date(base.getTime() + 1_000));
+
+    const patientFetcher = accepted();
+    const patient = new SiemForwarder(context.database, connections(id), logger, patientFetcher, undefined, 60_000);
+    const rejecting = vi.fn(async () => new Response("", { status: 503 })) as unknown as typeof fetch;
+    const probe = new SiemForwarder(context.database, connections(id), logger, rejecting, undefined, 0);
+    // Both must have seen the hole once before either could ever step over it.
+    expect(await patient.forward()).toMatchObject({ forwarded: 0 });
+
+    // A reason names an attempted delivery, so this is the moment the horizon
+    // stops being what holds the hole -- however many cycles that takes on a
+    // cluster other suites are also writing to.
+    await vi.waitFor(
+      async () => expect((await probe.forward()).reason).toContain("503"),
+      { timeout: 45_000, interval: 100 },
+    );
+
+    expect(await patient.forward()).toMatchObject({ forwarded: 0 });
+    expect(patientFetcher).not.toHaveBeenCalled();
   }, 60_000);
 
   it("retries a rejected batch rather than losing it", async () => {

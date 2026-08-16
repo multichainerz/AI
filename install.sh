@@ -705,7 +705,22 @@ stage_source_tree() {
   local install_parent install_name
   install_parent="$(dirname -- "${ORCASYNAPSE_INSTALL_DIR}")"
   install_name="$(basename -- "${ORCASYNAPSE_INSTALL_DIR}")"
-  install -d -m 0750 "${install_parent}"
+  # The parent is created only when it is absent, and never re-moded.
+  #
+  # `install -d -m 0750` applies the mode whether or not the directory already
+  # existed, and this runs as uid 0 on every install *and* every upgrade. Ubuntu
+  # ships /opt at 0755, which is the default parent here, so the unconditional
+  # call quietly took 0755 down to 0750 -- removing traversal for every non-root
+  # user of every unrelated package installed under /opt, on a host whose
+  # operator asked us to install one application. Measured on Linux: an existing
+  # 755 directory comes back 750.
+  #
+  # 0750 is still correct for the tree this installer owns -- it holds the
+  # Compose secrets -- and the staging directory below is created with it and
+  # renamed into place, so the installation directory itself is unaffected by
+  # this. The mode was only ever about our own directory; it was being applied
+  # one level too high.
+  [[ -d "${install_parent}" ]] || install -d -m 0750 "${install_parent}"
   staging_dir="${install_parent}/.${install_name}.staging.$$"
   [[ ! -e "${staging_dir}" ]] || fail "temporary installation path already exists: ${staging_dir}"
   install -d -m 0750 "${staging_dir}"
@@ -1398,7 +1413,25 @@ install_source_tree() {
   if [[ -e "${ORCASYNAPSE_INSTALL_DIR}" || -L "${ORCASYNAPSE_INSTALL_DIR}" ]]; then
     if existing_install_is_verified; then
       verified=1
-      if [[ "$(<"${marker}")" == "${commit}" ]]; then
+      # The requested commit is already the installed one, so there is no source
+      # to stage and re-running the host installer is the entire job.
+      #
+      # That shortcut used to be taken unconditionally, which made this the one
+      # path where ORCASYNAPSE_EXISTING_INSTALL_ACTION had no reader at all:
+      # choose_existing_install_action is the only thing that interprets it, it
+      # sits below, and the exec never came back to it. Automation following
+      # deploy/BOOTSTRAP.md asked for `abort` and got a rebuilt and recreated
+      # stack; asked for `erase` and was told "existing data and secrets will be
+      # preserved", which is the opposite of both what it requested and what it
+      # was about to be given. Neither case said anything, so either one is
+      # discovered from the state of the machine afterwards or not at all.
+      #
+      # Only `upgrade` and an unset variable keep the shortcut, because for those
+      # two it is exactly what was asked for. Everything else -- a misspelling
+      # included -- falls through to the one place that knows what these values
+      # mean, rather than growing a second copy of that decision here.
+      if [[ "$(<"${marker}")" == "${commit}" ]] \
+        && [[ "${ORCASYNAPSE_EXISTING_INSTALL_ACTION:-upgrade}" == "upgrade" ]]; then
         success "The same verified source is already installed; existing data and secrets will be preserved."
         export ORCASYNAPSE_BOOTSTRAP_BRANDED=1
         exec bash "${ORCASYNAPSE_INSTALL_DIR}/scripts/install-orcasynapse.sh"

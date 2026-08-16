@@ -99,6 +99,14 @@ export const AGENT_RUN_APPROVAL_STATUSES = [
 
 export const agentProfileStatusSchema = z.enum(AGENT_PROFILE_STATUSES);
 export const agentRunStatusSchema = z.enum(AGENT_RUN_STATUSES);
+/**
+ * The writer's vocabulary, and deliberately not the reader's.
+ *
+ * Closed on purpose: it is what this build emits and what a UI has labels for.
+ * `agentRunEventSchema.type` is a bounded open string instead, because a reader
+ * has to survive meeting a worker that knows one more name than it does. See
+ * the comment on that field for what conflating the two cost.
+ */
 export const agentRunEventTypeSchema = z.enum(AGENT_RUN_EVENT_TYPES);
 export const agentRunApprovalStatusSchema = z.enum(AGENT_RUN_APPROVAL_STATUSES);
 
@@ -264,7 +272,29 @@ export const agentRunEventSchema = z.object({
   id: z.uuid(),
   cursor: z.string().regex(/^\d+$/),
   runId: z.uuid(),
-  type: agentRunEventTypeSchema,
+  /*
+   * Open, matching the column and matching `chatRuntimeEventSchema` over the
+   * same table.
+   *
+   * This was `agentRunEventTypeSchema` -- a closed `z.enum` over
+   * `AGENT_RUN_EVENT_TYPES` -- which contradicted the reason that list gives
+   * for existing. `AgentRunEvent.type` is a `varchar(80)` rather than a database
+   * enum precisely so the list can be widened without a migration, on the
+   * understanding stated there that "readers must tolerate a value they do not
+   * recognise, because an older dashboard can meet a newer worker". A closed
+   * enum here made that tolerance impossible: both the API and the web client
+   * hard-parse this schema, so a worker one release ahead emitting a new type
+   * threw a Zod issue and took out the whole run timeline rather than
+   * degrading to a row nobody had a label for. `chat.ts` describes the same
+   * column as `z.string().min(1).max(80)` and never had the problem; this
+   * follows it.
+   *
+   * `agentRunEventTypeSchema` and `AGENT_RUN_EVENT_TYPES` stay exported. They
+   * are the right shape for a *writer* -- the vocabulary this build emits, and
+   * what a UI can label -- and the wrong shape for a reader. That asymmetry is
+   * the whole point, and it is why the two are no longer the same thing.
+   */
+  type: z.string().min(1).max(80),
   delta: z.string().nullable(),
   preview: z.string().max(1000).nullable(),
   errorCode: z.string().max(80).nullable(),

@@ -63,7 +63,14 @@ fi
 font_faces=0
 font_faces_with_url=0
 if [[ "${#stylesheets[@]}" -gt 0 ]]; then
-  font_faces="$(grep -ohE "@font-face[[:space:]]*\{[^}]*\}" "${stylesheets[@]}" | wc -l | tr -d '[:space:]')"
+  # `|| true` for the same reason as the line below it, and it was missing here.
+  # Zero matches is grep's exit 1, which pipefail promotes to the pipeline's
+  # status and errexit turns into an abort -- so the one input this count exists
+  # to detect, a stylesheet with no @font-face at all, killed the script two
+  # lines before the report that would have named it. The count is still 0 and
+  # the check below still fires; the only thing the missing `|| true` changed was
+  # whether anyone was told why.
+  font_faces="$(grep -ohE "@font-face[[:space:]]*\{[^}]*\}" "${stylesheets[@]}" | wc -l | tr -d '[:space:]' || true)"
   font_faces_with_url="$(grep -ohE "@font-face[[:space:]]*\{[^}]*\}" "${stylesheets[@]}" \
     | grep -cE "url\(" || true)"
 fi

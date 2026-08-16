@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="v8.8.4"
+INSTALLER_VERSION="v8.8.5"
 # Honor the same state-root overrides the installer accepts, so a non-default
 # layout installed with ORCASYNAPSE_*_STATE_ROOT can be removed the same way.
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
@@ -666,8 +666,30 @@ remove_hermes_runtime() {
   # host that already has Hermes and tells them to decommission first. Following
   # that instruction must not destroy an installation we never made.
   if (( RUNTIME_IS_OURS == 0 )); then
-    warning "A Hermes installation exists at ${HERMES_INSTALL_DIR} but nothing identifies it as OrcaSynapse-managed; leaving it untouched."
-    warning "Remove it yourself if it is unwanted: rm -rf ${HERMES_INSTALL_DIR} ${HERMES_BINARY}"
+    # What is on disk, rather than what the constants say could be there.
+    #
+    # This used to state as fact that a Hermes installation exists at
+    # ${HERMES_INSTALL_DIR}, and hand over an `rm -rf` for it and one launcher,
+    # without testing either path. Neither is implied by getting here:
+    # managed_install_exists upstream is satisfied by the runtime unit *or* the
+    # install directory, so this runs with the directory absent, and the
+    # launchers are independent of it again -- a Hermes with `hermes` but no
+    # `hermes-acp` is ordinary. A line telling somebody to `rm -rf` a path is
+    # the last place to be relaxed about whether the path is real.
+    #
+    # All four are considered, not just the first two. The purge below removes
+    # ${HERMES_BINARY}-agent and -acp as well, so a manual remedy that omits
+    # them leaves behind exactly the files this script would have taken.
+    local leftovers=() candidate
+    for candidate in "${HERMES_INSTALL_DIR}" "${HERMES_BINARY}" "${HERMES_BINARY}-agent" "${HERMES_BINARY}-acp"; do
+      [[ -e "${candidate}" ]] && leftovers+=("${candidate}")
+    done
+    if (( ${#leftovers[@]} == 0 )); then
+      success "No Hermes program files remain; nothing here was OrcaSynapse-managed and nothing is left to remove."
+      return 0
+    fi
+    warning "Hermes files exist here but nothing identifies them as OrcaSynapse-managed; leaving them untouched."
+    warning "Remove them yourself if they are unwanted: rm -rf ${leftovers[*]}"
     return 0
   fi
 

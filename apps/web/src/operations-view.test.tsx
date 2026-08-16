@@ -9,7 +9,7 @@
  * a session; see `chat-transcript.test.tsx`.
  */
 import { ADMIN_SCOPES, type AdministratorSession } from "@orcasynapse/contracts";
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { writeFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -38,15 +38,29 @@ const session: AdministratorSession = {
 const openIncident = { id: "i1", title: "Hermes node vm2-b unreachable", severity: "CRITICAL", status: "OPEN", detectedAt: "2026-08-07T10:40:00.000Z", lastObservedAt: "2026-08-07T10:59:00.000Z", component: "hermes-vm2", owner: null, summary: "No heartbeat for 19 minutes.", automated: true, resolutionNote: null };
 const resolvedIncident = { id: "i2", title: "Chat latency above budget", severity: "WARNING", status: "RESOLVED", detectedAt: "2026-08-07T09:10:00.000Z", lastObservedAt: "2026-08-07T09:40:00.000Z", component: "chat-gateway", owner: "platform-admin", summary: "Median answer time crossed the six-second budget for twenty minutes.", automated: false, resolutionNote: "Restarted the inference node; latency returned to 3.1s." };
 
+/** Open and already owned by somebody who is not the reader. */
+const ownedIncident = { id: "i3", title: "Tool queue backing up", severity: "WARNING", status: "OPEN", detectedAt: "2026-08-07T10:20:00.000Z", lastObservedAt: "2026-08-07T10:58:00.000Z", component: "tool-runner", owner: "Platform team", summary: "Approvals are outpacing execution.", automated: true, resolutionNote: null };
+
 const overview = {
   status: "DEGRADED",
   generatedAt: "2026-08-07T11:00:00.000Z",
+  /*
+   * All five statuses, because the colour of the last three is the whole
+   * subject of "severity survives the palette" below and two of them are the
+   * ones the shared vocabulary has no word for. `source` is CONFIGURATION on
+   * the additions on purpose: the live/last-verified pair above is asserted
+   * with `getByText`, which throws on a second match.
+   */
   components: [
     { id: "c1", label: "AI Inference", status: "HEALTHY", summary: "vLLM answering within budget.", source: "LAST_VERIFIED", observedAt: "2026-08-07T10:58:00.000Z", affectedWorkflows: ["TOOL_USE"] },
     { id: "c2", label: "Hermes runtime", status: "DEGRADED", summary: "One node missed its last heartbeat.", source: "LIVE", observedAt: "2026-08-07T10:59:00.000Z", affectedWorkflows: [] },
+    { id: "c3", label: "Hermes node vm2-b", status: "UNAVAILABLE", summary: "No heartbeat for 19 minutes.", source: "CONFIGURATION", observedAt: null, affectedWorkflows: ["AGENTS"] },
+    { id: "c4", label: "Audit forwarding", status: "NOT_VERIFIED", summary: "Configured, never tested from here.", source: "CONFIGURATION", observedAt: null, affectedWorkflows: [] },
+    { id: "c5", label: "Identity provider", status: "NOT_CONFIGURED", summary: "No enterprise identity is connected.", source: "CONFIGURATION", observedAt: null, affectedWorkflows: [] },
   ],
   guardrails: [
     { layer: "APPLICATION", label: "Chat boundary", status: "ENFORCED", summary: "Size and credential checks active.", evidence: "policy:baseline-chat v2.0" },
+    { layer: "TOOL_USE", label: "Tool boundary", status: "NOT_VERIFIED", summary: "Admission is recorded; no call has exercised it.", evidence: "no evidence retained" },
   ],
   incidents: { open: 1, critical: 1, items: [openIncident] },
   metrics: {
@@ -57,7 +71,16 @@ const overview = {
   runtime: {
     capturedAt: "2026-08-07T11:00:00.000Z",
     workloads: [{ name: "agent-run", displayName: "Hermes runs", pendingCount: 0, activeCount: 1, failedCount: 2, totalCount: 40 }],
-    executors: [{ id: "w1", name: "worker-1", status: "HEALTHY", version: "3.16.0", workloads: ["agent-run"], lastSeenAt: "2026-08-07T10:59:50.000Z" }],
+    /*
+     * ONLINE and STOPPED, which is what `runtimeExecutorSnapshotSchema`
+     * actually admits -- this fixture said "HEALTHY", a status no executor can
+     * have, and the screen drew it grey along with every other value because
+     * nothing here was ever translated.
+     */
+    executors: [
+      { id: "w1", name: "worker-1", status: "ONLINE", version: "3.16.0", workloads: ["agent-run"], lastSeenAt: "2026-08-07T10:59:50.000Z" },
+      { id: "w2", name: "worker-2", status: "STOPPED", version: "3.16.0", workloads: ["agent-run"], lastSeenAt: "2026-08-07T09:10:00.000Z" },
+    ],
   },
 };
 
@@ -66,7 +89,8 @@ vi.mock("./api.js", async () => {
   return {
     ...actual,
     getAiOpsOverview: vi.fn(async () => overview),
-    getOperationalIncidents: vi.fn(async () => ({ items: [openIncident, resolvedIncident] })),
+    getOperationalIncidents: vi.fn(async () => ({ items: [openIncident, ownedIncident, resolvedIncident] })),
+    decideOperationalIncident: vi.fn(async () => openIncident),
     /*
      * `getProductionReadiness` used to be stubbed here too, and so did the
      * evaluation reads before the whole evaluation subsystem was removed.
@@ -78,7 +102,7 @@ vi.mock("./api.js", async () => {
 });
 
 const { OperationsView, snapshotIsStale } = await import("./operations-view.js");
-const { getAiOpsOverview, getOperationalIncidents } = await import("./api.js");
+const { decideOperationalIncident, getAiOpsOverview, getOperationalIncidents } = await import("./api.js");
 
 async function view() {
   render(<main><OperationsView session={session} onConfigure={vi.fn()} onSessionExpired={vi.fn()} /></main>);
@@ -287,6 +311,171 @@ describe("operations control room", () => {
       expect(open!.className).toContain("border-l-bad");
       expect(resolved!.className).toContain("border-l-good");
     });
+  });
+
+  /*
+   * The palette is four colours and this screen speaks four vocabularies, none
+   * of which is the one `toneFor` knows. Lower-casing them is not a
+   * translation: `unavailable`, `not_verified`, `not_configured`, every
+   * executor status and every guardrail status fell through to neutral grey,
+   * so the component this screen deliberately sorts first as the most severe
+   * thing on the page was drawn *quieter* than the merely degraded one under
+   * it, and a stopped worker looked exactly like a running one.
+   *
+   * jsdom applies no stylesheet, so the utility class on the toned element is
+   * the only evidence the colour exists.
+   */
+  describe("severity survives the palette", () => {
+    /**
+     * The tone class on the element carrying the live dot.
+     *
+     * That element is the toned one by construction — `StatusText` puts the dot
+     * inside the span it colours — so this cannot drift onto a neighbouring
+     * label the way a class-name search over the whole card would.
+     */
+    function statusTone(card: HTMLElement): string {
+      const dot = card.querySelector(".anim-live");
+      // Asserted before it is dereferenced: `null?.parentElement` is a silent
+      // pass and would make every expectation below vacuous.
+      expect(dot).toBeTruthy();
+      return (dot!.parentElement as HTMLElement).className;
+    }
+
+    function card(label: string): HTMLElement {
+      const article = screen.getByText(label).closest("article");
+      expect(article).toBeTruthy();
+      return article as HTMLElement;
+    }
+
+    it("draws a down service louder than a degraded one, matching its own sort", async () => {
+      // The inversion in one assertion: `sortedComponents` weights UNAVAILABLE
+      // above DEGRADED, and the colour has to agree with the order.
+      await view();
+      expect(statusTone(card("Hermes node vm2-b"))).toContain("text-bad");
+      expect(statusTone(card("Hermes runtime"))).toContain("text-warn");
+      expect(statusTone(card("AI Inference"))).toContain("text-good");
+    });
+
+    it("separates a service nobody has verified from one nobody has configured", async () => {
+      /*
+       * Both were grey. They are not the same fact: one is a service this
+       * deployment depends on with no evidence it works, the other is a
+       * capability nothing was ever asked of -- which is the order the sort
+       * already puts them in.
+       */
+      await view();
+      expect(statusTone(card("Audit forwarding"))).toContain("text-warn");
+      expect(statusTone(card("Identity provider"))).toContain("text-faint");
+    });
+
+    it("does not draw a stopped worker like a running one", async () => {
+      await view();
+      expect(statusTone(card("worker-2"))).toContain("text-bad");
+      expect(statusTone(card("worker-1"))).toContain("text-good");
+    });
+
+    it("colours an unverified guardrail rather than leaving the whole row grey", async () => {
+      await view();
+      expect(statusTone(card("Chat boundary"))).toContain("text-good");
+      expect(statusTone(card("Tool boundary"))).toContain("text-warn");
+    });
+
+    it("does not paint a critical deployment the same amber as a degraded one", async () => {
+      // `overview.status` is a three-value enum and the header read it as a
+      // boolean, so the worst state the API can report had no colour of its own.
+      await view();
+      const degraded = screen.getAllByText("Degraded").find((node) => node.querySelector(".anim-live"));
+      expect(degraded?.className).toContain("text-warn");
+
+      cleanup();
+      vi.mocked(getAiOpsOverview).mockResolvedValueOnce({ ...overview, status: "CRITICAL" } as never);
+      await view();
+      // The badge on each incident says "Critical" too; the header's is the one
+      // carrying the live dot.
+      const critical = screen.getAllByText("Critical").find((node) => node.querySelector(".anim-live"));
+      expect(critical).toBeTruthy();
+      expect(critical!.className).toContain("text-bad");
+    });
+  });
+
+  /*
+   * `POST /incidents/:id/acknowledge` writes `owner: input.owner ??
+   * principal.subject`, so a decision that sends only a note hands the
+   * incident to whoever pressed the button. `IncidentDecision` has always
+   * carried an optional `owner`; this screen never surfaced it, so an incident
+   * owned by a team silently became one administrator's -- on the one field
+   * whose job is to say who is dealing with it, and with no undo anywhere on
+   * the screen.
+   */
+  describe("ownership through a decision", () => {
+    function decisionOn(title: string): HTMLElement {
+      const article = screen.getByText(title).closest("article");
+      expect(article).toBeTruthy();
+      return article as HTMLElement;
+    }
+
+    it("keeps the owner an incident already has", async () => {
+      await view();
+      const card = decisionOn("Tool queue backing up");
+      fireEvent.click(within(card).getByRole("button", { name: "Acknowledge" }));
+
+      // Shown, not merely preserved: an operator who means to take it over has
+      // to be able to see that they are about to.
+      const owner = within(card).getByLabelText("Owner");
+      expect(owner).toHaveProperty("value", "Platform team");
+
+      fireEvent.change(within(card).getByLabelText("Operator note"), { target: { value: "Paging the on-call." } });
+      fireEvent.click(within(card).getByRole("button", { name: "Record acknowledge" }));
+
+      await waitFor(() => expect(vi.mocked(decideOperationalIncident)).toHaveBeenCalledWith(
+        "i3", "acknowledge", { note: "Paging the on-call.", owner: "Platform team" },
+      ));
+    });
+
+    it("leaves an unassigned incident for the server to assign", async () => {
+      /*
+       * The other half. `owner` is `min(1)` on a strict schema, so an empty
+       * field cannot be sent as an empty string -- and taking an unowned
+       * incident by acknowledging it is the server's existing behaviour and the
+       * right one.
+       */
+      await view();
+      const card = decisionOn("Hermes node vm2-b unreachable");
+      fireEvent.click(within(card).getByRole("button", { name: "Acknowledge" }));
+      expect(within(card).getByLabelText("Owner")).toHaveProperty("value", "");
+
+      fireEvent.change(within(card).getByLabelText("Operator note"), { target: { value: "Taking this one." } });
+      fireEvent.click(within(card).getByRole("button", { name: "Record acknowledge" }));
+
+      await waitFor(() => expect(vi.mocked(decideOperationalIncident)).toHaveBeenCalledWith(
+        "i1", "acknowledge", { note: "Taking this one." },
+      ));
+    });
+  });
+
+  it("says where the incident ledger stops, since the hero counts past it", async () => {
+    /*
+     * `listIncidents` is a bare `limit: 200` with no total in the contract,
+     * while the hero's open count is an unbounded `count()` over the same
+     * table. On a deployment that has raised more than 200 the two figures
+     * disagree on one screen with nothing to explain it, and the ledger is the
+     * one whose edge is invisible.
+     */
+    const many = Array.from({ length: 200 }, (_, index) => ({
+      ...resolvedIncident, id: `f${index}`, title: `Historic incident ${index}`,
+    }));
+    vi.mocked(getOperationalIncidents).mockResolvedValueOnce({ items: many } as never);
+    await view();
+
+    expect(screen.getByText(/The newest 200 incidents are listed/)).toBeTruthy();
+    expect(screen.getByText(/can be larger than what is shown here/)).toBeTruthy();
+  });
+
+  it("says nothing about a cap the ledger has not reached", async () => {
+    // The pair to the test above: three incidents is three incidents, and a
+    // hedge over a complete list is its own kind of noise.
+    await view();
+    expect(screen.queryByText(/The newest 200 incidents are listed/)).toBeNull();
   });
 
   it("does not reload on every parent render, which App produces every few seconds", async () => {

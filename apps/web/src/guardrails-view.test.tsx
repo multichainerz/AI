@@ -6,7 +6,7 @@
  * field, which rewrites what it is given on every keystroke.
  */
 import { ADMIN_SCOPES, type AdministratorSession, type GuardrailPolicy } from "@orcasynapse/contracts";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const session: AdministratorSession = {
@@ -105,6 +105,31 @@ afterEach(() => {
   catalogue = [];
   updateGuardrailPolicy.mockReset();
   changeGuardrailPolicyState.mockReset();
+});
+
+describe("counting the records", () => {
+  it("stops presenting the loaded window as the record count", async () => {
+    /*
+     * `DrizzleGuardrailManager.list` is a bare `limit: 100` and
+     * `GuardrailPolicyList` carries no total, so at the cap the figure under
+     * "Policy records" describes the response rather than the table its caption
+     * claims to be counting.
+     */
+    catalogue = Array.from({ length: 100 }, (_, index) => ({
+      ...draftPolicy, id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`, displayName: `Policy ${index}`,
+    }));
+    render(<main><GuardrailsView
+      session={session}
+      onConfigureInference={vi.fn()}
+      onOpenOperations={vi.fn()}
+      onSessionExpired={vi.fn()}
+    /></main>);
+    const summary = await screen.findByLabelText("Guardrail policy summary");
+
+    await waitFor(() => expect(within(summary).getByText("100+")).toBeTruthy());
+    expect(within(summary).getByText("Newest 100 loaded")).toBeTruthy();
+    expect(within(summary).queryByText("Version controlled")).toBeNull();
+  });
 });
 
 describe("a policy another operator moved first", () => {

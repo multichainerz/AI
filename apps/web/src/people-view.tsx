@@ -15,7 +15,7 @@ import { adminAccess } from "./admin-access.js";
 import { slugAsTyped, slugify } from "./slug.js";
 import {
   Alert, Button, Dialog, EmptyState, Field, Input, LockedScreen, Metric, MetricRow, MicroLabel,
-  PageHeader, Panel, PanelHeading, Select, StatusText, cn, toneFor,
+  PageHeader, Panel, PanelHeading, Select, StatusText, cn,
 } from "./ui/index.js";
 
 interface PeopleViewProps {
@@ -552,7 +552,14 @@ export function PeopleView({ session, onOpenSettings, onSessionExpired }: People
                   </MicroLabel>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
-                  <StatusText tone={toneFor(person.enabled ? "HEALTHY" : "DEGRADED")}>
+                  {/* The tone directly, not through `toneFor`: its vocabulary
+                      is lower case, so `toneFor("HEALTHY")` matched nothing and
+                      both arms of this came back neutral -- an enabled and a
+                      disabled account were the same grey. There is no readiness
+                      string behind a boolean to translate, so translating one
+                      through a case-sensitive lookup was only ever a way to
+                      lose the colour. */}
+                  <StatusText tone={person.enabled ? "good" : "warn"}>
                     {person.enabled ? "Active" : "Disabled"}
                   </StatusText>
                   {canManagePeople && (
@@ -621,7 +628,7 @@ export function PeopleView({ session, onOpenSettings, onSessionExpired }: People
                   </MicroLabel>
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-2">
-                  <StatusText tone={toneFor(item.status === "ACTIVE" ? "HEALTHY" : "DEGRADED")}>
+                  <StatusText tone={item.status === "ACTIVE" ? "good" : "warn"}>
                     {item.status === "ACTIVE" ? "Active" : "Suspended"}
                   </StatusText>
                   {canManageDivisions && (

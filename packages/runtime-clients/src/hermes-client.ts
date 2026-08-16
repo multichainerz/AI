@@ -465,8 +465,18 @@ export class HermesClient {
    * toolset enabled on the runtime that nobody admitted means the runtime is no
    * longer the one this installation approved, and that is not a run to submit.
    *
-   * With nothing admitted this is exactly the zero-tool boundary it replaces,
-   * so an installation that never opts in keeps the behaviour it already had.
+   * With nothing admitted this is the tightest boundary available, which is
+   * Hermes' built-in `memory` and nothing else. It used to be described here as
+   * "exactly the zero-tool boundary it replaces", and that was never true: the
+   * built-in grant below is unconditional, so an installation admitting nothing
+   * still permits one toolset. The refusal carried the same mistake in a
+   * sentence guarded by `permitted.size === 0` -- a size that cannot be zero --
+   * so a message about requiring a zero-tool boundary sat in the source for
+   * several releases having never reached anybody. Both are corrected rather
+   * than made reachable: making them true would mean withdrawing the built-in
+   * memory grant, which is a deliberate capability and not an oversight. Pinned
+   * by "admits Hermes' built-in memory toolset without an operator admitting
+   * it" in hermes-client.test.ts.
    */
   private async assertAdmittedToolBoundaryFor(
     connection: RuntimeConnection,
@@ -483,9 +493,7 @@ export class HermesClient {
       .map((toolset) => toolset.name);
     if (unadmitted.length === 0) return;
     throw new Error(
-      permitted.size === 0
-        ? "Hermes has an enabled toolset; OrcaSynapse requires a zero-tool boundary for this run."
-        : `Hermes has enabled toolsets this installation has not admitted: ${unadmitted.slice(0, 5).join(", ")}.`,
+      `Hermes has enabled toolsets this installation has not admitted: ${unadmitted.slice(0, 5).join(", ")}.`,
     );
   }
 
