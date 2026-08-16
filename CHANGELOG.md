@@ -5,6 +5,40 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v7.5.0 — 2026-08-16
+
+Builds increment F's scope injection: `runScope(authorization)` answers which
+division a tool call is acting for. Nothing else in F can be built without it,
+and it is the part that has to be right.
+
+The division is derived from the run authorization and from nothing the caller
+sent. The MCP authorization carries a run id and a capability derived from the
+bootstrap key and that run id, whose digest alone is stored; an agent can
+neither forge one nor obtain another run's. The run resolves to the profile it
+is pinned to, and the profile carries the division.
+
+So F's rule — *the tool filters, the prompt never does* — is now enforceable
+rather than aspirational. A tool scoping its reads by this value cannot be
+argued, prompted or injected into scoping them by another: **there is no
+parameter to override and no token in the prompt to leak.** `runScope` takes the
+authorization and nothing else, which is what makes that a property of the
+signature rather than a promise about the implementation.
+
+- add `divisionId` to the projection `runForTooling` already joined
+- gate scope resolution behind the same capability check discovery and execution
+  pass through: a run that may not call a tool may not have a scope resolved for
+  it either
+- treat a null division as **its own scope, not the absence of one** — a caller
+  reading it as "no filter" would hand every division's rows to a run that
+  belongs to none of them, so that is asserted rather than left to judgement
+
+Verified by mutation, which F's own Done-when requires: making the scope always
+resolve deployment-wide failed 2 tests, and dropping the capability check failed
+the forged-authorization test.
+
+Still unbuilt in F: the SQLite store, the `remember` / `recall` pair, and the
+corpus mirror.
+
 ## v7.4.0 — 2026-08-16
 
 Runs the spike increment F asked for before any of it was designed further, and

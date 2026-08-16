@@ -8,6 +8,7 @@ import {
   agentToolGrant,
   auditEvent,
   createTestDatabase,
+  division,
   governedTool,
   governedToolCall,
   mcpGatewayCredential,
@@ -490,5 +491,80 @@ describe("DrizzleToolingManager metrics", () => {
       const events = await context.database.select().from(auditEvent);
       expect(events.map((event) => event.action)).toContain("tool.toolset_admitted");
     });
+  });
+});
+
+describe("run scope", () => {
+  /*
+   * Increment F's scope injection. The division a tool acts for is derived from
+   * the run authorization and from nothing the caller sent.
+   */
+  it("derives the division from the run's profile", async () => {
+    const [finance] = await context.database.insert(division)
+      .values({ slug: "finance", displayName: "Finance" }).returning();
+    await enableGateway();
+    const seeded = await seedRunnableAgent();
+    await context.database.update(agentProfile)
+      .set({ divisionId: finance!.id }).where(eq(agentProfile.id, seeded.profile.id));
+
+    await expect(manager().runScope(seeded.authorization))
+      .resolves.toEqual({ runId: seeded.run.id, divisionId: finance!.id });
+  });
+
+  /*
+   * A deployment-wide run resolves null, and null is a scope rather than the
+   * absence of one. A caller that read it as "no filter" would hand every
+   * division's rows to a run that belongs to none of them, so this is asserted
+   * explicitly rather than left to a reader's judgement.
+   */
+  it("resolves a deployment-wide run to null rather than to everything", async () => {
+    await enableGateway();
+    const seeded = await seedRunnableAgent();
+
+    await expect(manager().runScope(seeded.authorization))
+      .resolves.toEqual({ runId: seeded.run.id, divisionId: null });
+  });
+
+  /*
+   * The property the whole increment rests on: two runs, two divisions, and no
+   * way for one authorization to yield the other's scope. There is no parameter
+   * to override -- `runScope` takes only the authorization -- so this is the
+   * test that the seam has no second input.
+   */
+  it("gives each run its own division and never the other's", async () => {
+    const [alpha] = await context.database.insert(division)
+      .values({ slug: "alpha", displayName: "Alpha" }).returning();
+    const [beta] = await context.database.insert(division)
+      .values({ slug: "beta", displayName: "Beta" }).returning();
+    await enableGateway();
+    const first = await seedRunnableAgent();
+    const second = await seedRunnableAgent();
+    await context.database.update(agentProfile)
+      .set({ divisionId: alpha!.id }).where(eq(agentProfile.id, first.profile.id));
+    await context.database.update(agentProfile)
+      .set({ divisionId: beta!.id }).where(eq(agentProfile.id, second.profile.id));
+
+    expect((await manager().runScope(first.authorization)).divisionId).toBe(alpha!.id);
+    expect((await manager().runScope(second.authorization)).divisionId).toBe(beta!.id);
+  });
+
+  /*
+   * A forged capability resolves no scope at all. Pairing a real run id with a
+   * capability the caller invented is the obvious attack, and it must fail on
+   * the capability rather than succeed on the run id.
+   */
+  it("refuses a run id carrying somebody else's capability", async () => {
+    await enableGateway();
+    const first = await seedRunnableAgent();
+    const second = await seedRunnableAgent();
+    const forged = `${first.run.id}.${second.authorization.split(".")[1]}`;
+
+    await expect(manager().runScope(forged)).rejects.toBeInstanceOf(ToolingDeniedError);
+  });
+
+  it("refuses a missing or malformed authorization", async () => {
+    await enableGateway();
+    await expect(manager().runScope(undefined)).rejects.toBeInstanceOf(ToolingDeniedError);
+    await expect(manager().runScope("not-an-authorization")).rejects.toBeInstanceOf(ToolingDeniedError);
   });
 });

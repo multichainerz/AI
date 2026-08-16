@@ -803,12 +803,49 @@ export class DrizzleToolingManager implements ToolingManager {
         toolCapabilityExpiresAt: agentRun.toolCapabilityExpiresAt,
         profileStatus: agentProfile.status,
         profileActiveVersion: agentProfile.activeVersion,
+        // The division the run belongs to. Read from the profile the run is
+        // pinned to, never from anything the caller sent -- see `runScope`.
+        divisionId: agentProfile.divisionId,
       })
       .from(agentRun)
       .innerJoin(agentProfile, eq(agentRun.profileId, agentProfile.id))
       .where(eq(agentRun.id, runId))
       .limit(1);
     return run;
+  }
+
+  /**
+   * The division a tool call is acting for, derived from its authorization.
+   *
+   * This is the scope injection increment F is built on, and the reason its
+   * rule -- *the tool filters, the prompt never does* -- is enforceable rather
+   * than aspirational.
+   *
+   * Nothing about the division comes from the caller. The MCP authorization
+   * carries a run id and a capability derived from the bootstrap key and that
+   * run id, whose digest alone is stored; an agent can neither forge one nor
+   * obtain another run's. The run resolves to the profile it is pinned to, and
+   * the profile carries the division. So a tool that scopes its reads by this
+   * value cannot be argued, prompted or injected into scoping them by another:
+   * there is no parameter to override and no token in the prompt to leak.
+   *
+   * A null division means the run belongs to a deployment-wide profile. That is
+   * a real scope, not an absent one, and a caller reading this must treat it as
+   * its own bucket rather than as "no filter" -- the difference between the two
+   * is every division's rows.
+   */
+  async runScope(authorization: string | undefined): Promise<{ runId: string; divisionId: string | null }> {
+    const parsed = authorization ? RUN_AUTHORIZATION.exec(authorization) : null;
+    const runId = parsed?.[1];
+    const capability = parsed?.[2];
+    if (!runId || !capability) throw new ToolingDeniedError("Private run authorization is required.");
+    const control = await this.runtimeControlRow();
+    if (!control?.enabled) throw new ToolingDeniedError(control?.reason ?? "The tool gateway is disabled fail-closed.");
+    const run = await this.runForTooling(runId);
+    // The same gate discovery and execution pass through: a run that may not
+    // call a tool may not have a scope resolved for it either.
+    this.assertRunIsExecutable(run, capability, "execution");
+    return { runId, divisionId: run!.divisionId };
   }
 
   private assertRunIsExecutable(
