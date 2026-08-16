@@ -96,7 +96,6 @@ const AgentsView = lazy(() => import("./agents-view.js").then((module) => ({ def
 const CorpusView = lazy(() => import("./corpus-view.js").then((module) => ({ default: module.CorpusView })));
 const ToolingView = lazy(() => import("./tooling-view.js").then((module) => ({ default: module.ToolingView })));
 const ModelsView = lazy(() => import("./models-view.js").then((module) => ({ default: module.ModelsView })));
-const DivisionsView = lazy(() => import("./divisions-view.js").then((module) => ({ default: module.DivisionsView })));
 const PeopleView = lazy(() => import("./people-view.js").then((module) => ({ default: module.PeopleView })));
 const GuardrailsView = lazy(() => import("./guardrails-view.js").then((module) => ({ default: module.GuardrailsView })));
 const PromptsView = lazy(() => import("./prompts-view.js").then((module) => ({ default: module.PromptsView })));
@@ -1342,15 +1341,16 @@ function App() {
               onSessionExpired={forgetAdminSession}
             />
           ),
+          /*
+           * One entry where there were two. Divisions was its own Settings tab
+           * and its own view module until v8.9.0; `PeopleView` holds both
+           * panels now, and `#settings/divisions` resolves here. This lookup is
+           * `satisfies Record<ActiveView, () => ReactNode>`, so deleting the
+           * `Divisions` token from `ActiveView` is what proved the removal
+           * complete rather than a search through the tree.
+           */
           People: () => (
             <PeopleView
-              session={adminSession}
-              onOpenSettings={() => openConnectionSettings()}
-              onSessionExpired={forgetAdminSession}
-            />
-          ),
-          Divisions: () => (
-            <DivisionsView
               session={adminSession}
               onOpenSettings={() => openConnectionSettings()}
               onSessionExpired={forgetAdminSession}

@@ -1,14 +1,14 @@
 /**
  * @vitest-environment jsdom
  *
- * Four governance screens tell a signed-out operator the same thing — sign in
+ * Five governance screens tell a signed-out operator the same thing — sign in
  * as an administrator — and the button underneath has to be the one that
  * offers it.
  *
  * Copy and wiring drifted apart independently three times during the design
  * system move, because each screen's own test covers its populated state and
  * nothing paired the promise with the control. This file is that pair, and it
- * is deliberately one table rather than four tests: the point is that the four
+ * is deliberately one table rather than five tests: the point is that the
  * screens agree with each other, which no per-screen test can see.
  *
  * `openConnectionSettings` in `app.tsx` is what makes the promise true — it
@@ -23,6 +23,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApplicationView } from "./application-view.js";
 import { GuardrailsView } from "./guardrails-view.js";
 import { ModelsView } from "./models-view.js";
+import { PeopleView } from "./people-view.js";
 import { PromptsView } from "./prompts-view.js";
 
 afterEach(cleanup);
@@ -90,6 +91,30 @@ const cases: LockedCase[] = [
         currentVersion="3.19.0"
         onConfigure={elevate}
         onOpenOperations={navigate}
+      />);
+    },
+  },
+  /*
+   * People, joining late and making the point above about screens added later.
+   * Divisions arrived at v6.8.0 and People at v7.3.0, each with this exact
+   * promise and this exact button, and neither joined this table -- so the
+   * comment two entries up described a discipline the file was not keeping.
+   * The two are one screen from v8.9.0, which is one row, and it is the row
+   * that should have been two since v6.8.0.
+   *
+   * `navigate` has nowhere to go on this screen: it takes one callback, and it
+   * is the elevation one. Passing the spy anyway keeps every case in the table
+   * the same shape, and the assertion that it was *not* called is then a real
+   * statement about this screen rather than a vacuous one -- if somebody wires
+   * a second destination in later, it is already covered.
+   */
+  {
+    name: "People",
+    render: ({ elevate }) => {
+      render(<PeopleView
+        session={signedOut}
+        onOpenSettings={elevate}
+        onSessionExpired={vi.fn()}
       />);
     },
   },

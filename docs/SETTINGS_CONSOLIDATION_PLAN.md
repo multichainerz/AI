@@ -1,7 +1,11 @@
 # Settings: one screen for people and their divisions
 
-Status: **plan, not started.** Written at v8.8.1, against the navigation model as
-it stands on `main`.
+Status: **implemented at v8.9.0.** Written at v8.8.1, against the navigation
+model as it stood on `main`; built at v8.8.2. All five increments landed as
+described, with three departures recorded at the foot of this file under *What
+the implementation found* — the copy the plan called verbatim was not, the
+dialog cannot live inside the person form's element, and the divisions panel's
+inline create form became the same dialog rather than a second copy of it.
 
 The ask, in the user's words: *"Settings, division and people should be under 1
 management menu not a separate menu."*
@@ -498,3 +502,53 @@ screen has a test file.** `divisions-view.tsx` and `people-view.tsx` have no
 and all of the second test recommendation above exist because of that, and a
 merge of two untested screens is exactly where a control disappears without
 anything going red.
+
+## What the implementation found
+
+Recorded here rather than folded into the text above, so the plan stays readable
+as what was decided before the work and this stays readable as what the work
+disagreed with.
+
+1. **The "verbatim" sentence was not verbatim.** The copy section says it keeps
+   the existing non-isolation sentence *"verbatim rather than rewriting it"*,
+   and then quotes a rewritten one: the screen said *"It is not an isolation
+   boundary. Agents that run on the same Agentic System node share their memory
+   and their Skills…"* and the plan proposed *"It is not an isolation boundary:
+   agents on the same Agentic System node share…"*. The shipped panel uses the
+   screen's original wording, because the plan's own reason for keeping it —
+   that the sentence is load-bearing and this product claims no tenant isolation
+   anywhere — argues for the sentence that was actually there.
+
+   The same paragraph cites `apps/web/src/connection-definitions.test.ts:31` as
+   asserting the claim. That test asserts it of the **OIDC connection
+   definition**, not of this copy; nothing asserted this sentence at all. It is
+   asserted now, in `people-view.test.tsx`.
+
+2. **The dialog cannot be inside the person form, as an element.** Increment B
+   reads as putting a `Dialog` inside the person form. `DialogPortal` in this
+   design system is a fragment — deliberately, so focus ownership is
+   deterministic — which means the dialog renders in the tree it is written in,
+   and writing it inside `<form>` nests a form in a form. The affordance is in
+   the form; the element is a sibling of the panels. The interaction the
+   increment describes is unchanged.
+
+3. **The divisions panel's inline create form is gone, not kept.** The plan
+   lists the divisions list as "unchanged" and adds a dialog for the person
+   form, which read as two create forms with the same three fields. Both
+   entry points open the one dialog instead. This is the plan's own argument for
+   deleting `divisions-view.tsx` — no second copy to drift — applied one level
+   down, and the dialog knows which button opened it because only one of them
+   should select the result in a person form.
+
+4. **One bug the merge exposed rather than caused.** People fetched
+   `getDivisions(false)` and Divisions fetched `getDivisions(true)`, so a person
+   left in a suspended division rendered a select whose value matched no option
+   and the browser showed the first one — "No division" — for somebody who is in
+   one. Two tabs hid the contradiction; one page does not. The merged screen
+   asks the wider question once, narrows it for placing a person, and keeps a
+   person's own suspended division in their row select, named as suspended.
+
+5. **`apps/web` has no `vitest.config.ts`**, so no test-file count needed
+   keeping accurate for `scripts/test-database-test-budgets.mjs`. That script
+   only checks packages whose suites call `createTestDatabase`, and none of this
+   work touches one.

@@ -1,16 +1,20 @@
-import type { AdministratorSession, Division, Person } from "@orcasynapse/contracts";
+import type { AdministratorSession, CreateDivision, Division, Person } from "@orcasynapse/contracts";
 import { useEffect, useState, type FormEvent } from "react";
 import {
   OrcaSynapseApiError,
+  createDivision,
   createPerson,
+  deleteDivision,
   getDivisions,
   getPeople,
   resetPersonPassword,
+  updateDivision,
   updatePerson,
 } from "./api.js";
 import { adminAccess } from "./admin-access.js";
+import { slugAsTyped, slugify } from "./slug.js";
 import {
-  Alert, Button, EmptyState, Field, Input, LockedScreen, Metric, MetricRow, MicroLabel,
+  Alert, Button, Dialog, EmptyState, Field, Input, LockedScreen, Metric, MetricRow, MicroLabel,
   PageHeader, Panel, PanelHeading, Select, StatusText, cn, toneFor,
 } from "./ui/index.js";
 
@@ -20,23 +24,110 @@ interface PeopleViewProps {
   onSessionExpired: () => void;
 }
 
+const emptyDivisionDraft: CreateDivision = { slug: "", displayName: "", description: "" };
+
 function when(value: string | null): string {
   if (!value) return "never";
   return new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 }
 
 /**
- * The people a division bounds.
+ * Why one of this screen's two panels has no data, in the words the panel will
+ * use to say so.
  *
- * Two things this screen is careful about. A password an administrator sets is
- * shown once, here, and never again -- so it is displayed deliberately rather
- * than hidden behind a copy button that might silently fail. And a person who
- * signs in through an identity provider has no password this product holds, so
- * the reset control is absent for them rather than present and failing.
+ * `refused` separates a 403 from every other failure, and the distinction is
+ * the whole reason this type exists rather than a `string | null`. A load
+ * failure is a thing that went wrong and might not go wrong next time, so an
+ * operator is right to reload. A refusal is a stable fact about their role --
+ * reloading will refuse again -- and telling them "could not be loaded" invites
+ * them to keep trying something that will never work.
+ */
+interface PanelFailure {
+  refused: boolean;
+  message: string;
+}
+
+/**
+ * The two panels' data, and where the round trip that fetches it can go wrong.
+ *
+ * `Promise.allSettled`, not `Promise.all`, and this is the single line on this
+ * screen that the session every developer signs in with cannot check by hand.
+ *
+ * The two panels are behind different scopes, and the difference is not
+ * symmetric. People is `sessions:manage` end to end
+ * (`apps/api/src/people/routes.ts`); divisions read on `agents:read` and write
+ * on `agents:manage` (`apps/api/src/divisions/routes.ts`). Against `ROLE_SCOPES`
+ * in `apps/api/src/auth/admin-session.ts`, PLATFORM_ADMIN and SECURITY_ADMIN
+ * hold both, and **OPERATIONS_ADMIN and AUDITOR hold `agents:read` without
+ * `sessions:manage`** -- they may read divisions and are refused people
+ * outright.
+ *
+ * Before the merge those two facts lived on two screens and failed
+ * independently: an OPERATIONS_ADMIN opening People got an error, and the
+ * Divisions tab beside it still worked. One `Promise.all` would have turned
+ * that into a regression -- a single 403 on `getPeople()` rejects the pair and
+ * blanks a divisions panel that would have drawn perfectly. So each panel
+ * renders from its own outcome, and neither can take the other down.
+ *
+ * A PLATFORM_ADMIN session holds every scope and never produces this, which is
+ * why `people-view.test.tsx` drives it with an OPERATIONS_ADMIN session rather
+ * than leaving it to be noticed.
+ */
+function failureFrom(reason: unknown, refusal: string, fallback: string): PanelFailure {
+  if (reason instanceof OrcaSynapseApiError && reason.status === 403) {
+    return { refused: true, message: refusal };
+  }
+  return { refused: false, message: reason instanceof Error ? reason.message : fallback };
+}
+
+/*
+ * Neither sentence says the other panel is fine, which is the version these
+ * started as. It reads better and it can be false: a refusal on one request and
+ * an unrelated network failure on the other are independent events, and this
+ * copy would then be contradicted by the alert directly beneath it. What is
+ * always true is that the *refusal* has no bearing on the rest of the screen,
+ * so that is what they claim.
+ */
+const PEOPLE_REFUSED =
+  "Your administrator role cannot see people. Reading this list needs the session scope that "
+  + "manages sign-in, which a platform or security administrator holds. Nothing else on this "
+  + "screen depends on it.";
+
+const DIVISIONS_REFUSED =
+  "Your administrator role cannot see divisions. Nothing else on this screen depends on it.";
+
+/**
+ * People and the divisions that bound them: one screen, two panels.
+ *
+ * These were two Settings tabs until v8.9.0, and they were always one job --
+ * who is in the organisation and how they are grouped. The split had a
+ * measurable cost rather than an untidy one. An administrator adding somebody
+ * to a division that does not exist yet had to leave a half-typed person form
+ * for the Divisions tab, and `app.tsx` renders through a closed lookup, so
+ * changing tab unmounted this component and discarded four `useState` values
+ * including the temporary password. Nothing persisted it and nothing warned.
+ * The **New division** control in the person form is what removes that round
+ * trip; the merge is what makes the control possible.
+ *
+ * People first and divisions second because of what the administrator arrives
+ * holding: a *person*, for whom the division is an attribute. Divisions is also
+ * the shorter list -- a deployment has tens of people and a handful of
+ * divisions.
+ *
+ * Behaviours carried over rather than re-derived, each because it was got wrong
+ * once already. A password an administrator sets is shown once, here, and never
+ * again -- so it is displayed deliberately rather than hidden behind a copy
+ * button that might silently fail. A person who signs in through an identity
+ * provider has no password this product holds, so the reset control is absent
+ * for them rather than present and failing. A division that still holds work
+ * refuses deletion by naming what is in the way. And every division mutation
+ * carries `expectedRevision`.
  */
 export function PeopleView({ session, onOpenSettings, onSessionExpired }: PeopleViewProps) {
   const [people, setPeople] = useState<Person[]>([]);
   const [divisions, setDivisions] = useState<Division[]>([]);
+  const [peopleFailure, setPeopleFailure] = useState<PanelFailure | null>(null);
+  const [divisionsFailure, setDivisionsFailure] = useState<PanelFailure | null>(null);
   const [showEditor, setShowEditor] = useState(false);
   const [displayName, setDisplayName] = useState("");
   const [username, setUsername] = useState("");
@@ -44,25 +135,77 @@ export function PeopleView({ session, onOpenSettings, onSessionExpired }: People
   const [divisionId, setDivisionId] = useState("");
   const [resetting, setResetting] = useState<Person | null>(null);
   const [newPassword, setNewPassword] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState<Division | null>(null);
+  /*
+   * The division dialog's own state, deliberately separate from everything
+   * above. `busy` and `error` below belong to the person form and the row
+   * controls; a division that fails to create must leave the person draft
+   * exactly as it was, and sharing either field is the easiest way to break
+   * that without noticing.
+   *
+   * `divisionDialogFor` doubles as the open flag and as where the dialog was
+   * opened from, because the two entry points want different things on success:
+   * one is answering "this person needs a division that does not exist", and
+   * should select the new division in the form underneath; the other is the
+   * divisions panel's own New division button, which should not reach into a
+   * person form the administrator has not opened.
+   */
+  const [divisionDialogFor, setDivisionDialogFor] = useState<"person-form" | "divisions" | null>(null);
+  const [divisionDraft, setDivisionDraft] = useState<CreateDivision>(emptyDivisionDraft);
+  const [divisionBusy, setDivisionBusy] = useState(false);
+  const [divisionError, setDivisionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const { unlocked, can } = adminAccess(session);
-  const canManage = can("sessions:manage");
+  /*
+   * Two gates, kept per panel rather than collapsed into one. Picking either
+   * would be wrong in one direction: `sessions:manage` alone hides division
+   * management from a role that has it, and `agents:manage` alone offers person
+   * management to a role the API will refuse.
+   */
+  const canManagePeople = can("sessions:manage");
+  const canManageDivisions = can("agents:manage");
 
   const load = async () => {
     if (!unlocked) return;
-    try {
-      const [{ items }, divisionList] = await Promise.all([getPeople(), getDivisions(false)]);
-      setPeople(items);
-      setDivisions(divisionList.items);
-      setError(null);
-    } catch (cause) {
-      if (cause instanceof OrcaSynapseApiError && cause.status === 401) {
+    const [peopleOutcome, divisionOutcome] = await Promise.allSettled([getPeople(), getDivisions(true)]);
+
+    /*
+     * A 401 is not a per-panel fact. The session is gone for both, and this
+     * screen answers it the way every other one does -- before either outcome
+     * is written, so an expiring session does not paint two refusal notices on
+     * its way out to the sign-in dialog.
+     */
+    for (const outcome of [peopleOutcome, divisionOutcome]) {
+      if (outcome.status === "rejected"
+        && outcome.reason instanceof OrcaSynapseApiError
+        && outcome.reason.status === 401) {
         onSessionExpired();
         return;
       }
-      setError(cause instanceof Error ? cause.message : "People could not be loaded.");
+    }
+
+    if (peopleOutcome.status === "fulfilled") {
+      setPeople(peopleOutcome.value.items);
+      setPeopleFailure(null);
+    } else {
+      const failure = failureFrom(peopleOutcome.reason, PEOPLE_REFUSED, "People could not be loaded.");
+      // Cleared on a refusal and kept on a failure. A refusal says the operator
+      // may not see this, so continuing to draw a list they were served earlier
+      // would contradict it; a network blip says nothing about the rows already
+      // on screen, and blanking them loses information for no reason.
+      if (failure.refused) setPeople([]);
+      setPeopleFailure(failure);
+    }
+
+    if (divisionOutcome.status === "fulfilled") {
+      setDivisions(divisionOutcome.value.items);
+      setDivisionsFailure(null);
+    } else {
+      const failure = failureFrom(divisionOutcome.reason, DIVISIONS_REFUSED, "Divisions could not be loaded.");
+      if (failure.refused) setDivisions([]);
+      setDivisionsFailure(failure);
     }
   };
 
@@ -75,6 +218,7 @@ export function PeopleView({ session, onOpenSettings, onSessionExpired }: People
     setBusy(true);
     try {
       await work();
+      setError(null);
     } catch (cause) {
       if (cause instanceof OrcaSynapseApiError && cause.status === 401) {
         onSessionExpired();
@@ -98,7 +242,7 @@ export function PeopleView({ session, onOpenSettings, onSessionExpired }: People
         + "They will be asked to change it, and this is the only time it is shown.",
       );
       setDisplayName(""); setUsername(""); setPassword(""); setDivisionId("");
-      setShowEditor(false); setError(null);
+      setShowEditor(false);
       await load();
     });
   };
@@ -109,7 +253,6 @@ export function PeopleView({ session, onOpenSettings, onSessionExpired }: People
       setMessage(enabled
         ? `${person.displayName} can sign in again.`
         : `${person.displayName} is disabled, and any session they had open has ended.`);
-      setError(null);
       await load();
     });
   };
@@ -117,7 +260,6 @@ export function PeopleView({ session, onOpenSettings, onSessionExpired }: People
   const move = async (person: Person, next: string) => {
     await guard(async () => {
       await updatePerson(person.id, { divisionId: next || null });
-      setError(null);
       await load();
     });
   };
@@ -131,9 +273,77 @@ export function PeopleView({ session, onOpenSettings, onSessionExpired }: People
         `${resetting.displayName} can sign in with the new password. `
         + "Their open sessions have ended and they will be asked to change it.",
       );
-      setResetting(null); setNewPassword(""); setError(null);
+      setResetting(null); setNewPassword("");
       await load();
     });
+  };
+
+  const setStatus = async (item: Division, status: Division["status"]) => {
+    await guard(async () => {
+      await updateDivision(item.id, { status, expectedRevision: item.revision });
+      setMessage(status === "SUSPENDED"
+        ? `${item.displayName} is suspended. Its profiles keep their assignment; no new profile can be moved into it.`
+        : `${item.displayName} is active again.`);
+      await load();
+    });
+  };
+
+  const remove = async (item: Division) => {
+    await guard(async () => {
+      await deleteDivision(item.id);
+      setMessage(`${item.displayName} was deleted.`);
+      setConfirmDelete(null);
+      await load();
+    });
+  };
+
+  const openDivisionDialog = (from: "person-form" | "divisions") => {
+    setDivisionDraft(emptyDivisionDraft);
+    setDivisionError(null);
+    setDivisionDialogFor(from);
+  };
+
+  /*
+   * The division create, and the one path on this screen whose failure case is
+   * the point rather than an edge.
+   *
+   * Deliberately not routed through `guard`. `guard` writes the page-level
+   * error and shares `busy` with the person form; this has to report inside the
+   * dialog, leave the dialog open on the draft that failed, and touch none of
+   * the four person-form fields -- the temporary password above all, which is
+   * shown once and cannot be recovered by reloading.
+   */
+  const submitDivision = async (event: FormEvent) => {
+    event.preventDefault();
+    const from = divisionDialogFor;
+    setDivisionBusy(true);
+    try {
+      const created = await createDivision({
+        slug: divisionDraft.slug,
+        displayName: divisionDraft.displayName,
+        ...(divisionDraft.description ? { description: divisionDraft.description } : {}),
+      });
+      // Reloaded before the id is selected, not after: the select renders its
+      // options from `divisions`, and setting a value with no matching option
+      // shows the person form's first option instead -- "No division", which is
+      // the opposite of what just happened.
+      await load();
+      if (from === "person-form") setDivisionId(created.id);
+      setMessage(from === "person-form"
+        ? `${created.displayName} is ready and selected below. Assign it a profile from Agents.`
+        : `${created.displayName} is ready. Assign it a profile from Agents.`);
+      setDivisionDraft(emptyDivisionDraft);
+      setDivisionError(null);
+      setDivisionDialogFor(null);
+    } catch (cause) {
+      if (cause instanceof OrcaSynapseApiError && cause.status === 401) {
+        onSessionExpired();
+        return;
+      }
+      setDivisionError(cause instanceof Error ? cause.message : "The division could not be created.");
+    } finally {
+      setDivisionBusy(false);
+    }
   };
 
   if (!unlocked) {
@@ -141,7 +351,7 @@ export function PeopleView({ session, onOpenSettings, onSessionExpired }: People
       <LockedScreen
         title="People"
         mark="PE"
-        reason="Sign in as an administrator to manage people."
+        reason="Sign in as an administrator to manage people and divisions."
         actionLabel="Open platform settings"
         onAction={onOpenSettings}
       />
@@ -149,16 +359,56 @@ export function PeopleView({ session, onOpenSettings, onSessionExpired }: People
   }
 
   const enabled = people.filter((person) => person.enabled).length;
-  const local = people.filter((person) => person.credential === "LOCAL").length;
-  const assigned = people.filter((person) => person.divisionId !== null).length;
+  const activeDivisions = divisions.filter(({ status }) => status === "ACTIVE").length;
+  /*
+   * Counted from the divisions rather than from `people.filter(divisionId !==
+   * null)`, which is the same number from the other side. The division rows
+   * carry a server-counted `userCount`, so this metric still reads correctly
+   * for a role that may see divisions and not people -- and it is the API's
+   * count rather than this screen's arithmetic over a list it was allowed to
+   * fetch.
+   */
+  const members = divisions.reduce((total, item) => total + item.userCount, 0);
+  // An em dash rather than a zero wherever a panel has no data *and* a reason
+  // why. Zero is a fact about the deployment; this is a fact about the request.
+  const peopleUnknown = peopleFailure !== null && people.length === 0;
+  const divisionsUnknown = divisionsFailure !== null && divisions.length === 0;
+  const count = (value: number, unknown: boolean) => (unknown ? "—" : String(value));
+
+  /*
+   * Active divisions only, wherever a person is being *put* somewhere.
+   *
+   * The two screens this one merges asked the API different questions -- People
+   * called `getDivisions(false)` and Divisions called `getDivisions(true)` --
+   * because they wanted different lists. A suspended division must still be
+   * listed, so it can be reactivated, and must not be offered as somewhere to
+   * put a person. One screen asks the wider question once and narrows here,
+   * which keeps both behaviours without the merge costing a third round trip.
+   */
+  const assignable = divisions.filter(({ status }) => status === "ACTIVE");
+
+  /*
+   * What one person's division select may show: the assignable list, plus their
+   * own division when it has been suspended underneath them.
+   *
+   * Without the second half, a person in a suspended division renders a select
+   * whose value matches no option, and the browser shows the first one --
+   * "No division" -- for somebody who is in one. That misreport existed before
+   * the merge and was invisible, because the fact that contradicted it was on
+   * the other tab. It is on the same page now.
+   */
+  const optionsFor = (person: Person): Division[] => {
+    const own = divisions.find(({ id }) => id === person.divisionId);
+    return own && own.status !== "ACTIVE" ? [...assignable, own] : assignable;
+  };
 
   return (
     <div className="grid gap-6">
       <PageHeader
         kicker="Access control"
         title="People"
-        description="Who can sign in, and which division bounds what they see."
-        actions={canManage ? (
+        description="Who can sign in, and the divisions that bound what they see."
+        actions={canManagePeople ? (
           <Button onClick={() => setShowEditor((open) => !open)}>
             {showEditor ? "Cancel" : "Add person"}
           </Button>
@@ -168,14 +418,22 @@ export function PeopleView({ session, onOpenSettings, onSessionExpired }: People
       {error && <Alert tone="error">{error}</Alert>}
       {message && <Alert tone="info">{message}</Alert>}
 
+      {/*
+        * Four metrics, where the two screens carried eight between them. The
+        * three dropped -- Local accounts, Suspended divisions, Assigned
+        * profiles -- are all still readable where they are acted on: every
+        * division row states its own profile and people counts, which is where
+        * an administrator about to suspend something looks, and every person
+        * row says whether they are local or federated.
+        */}
       <MetricRow>
-        <Metric label="People" value={String(enabled)} caption="Able to sign in" />
-        <Metric label="Disabled" value={String(people.length - enabled)} caption="Blocked" />
-        <Metric label="Local accounts" value={String(local)} caption="Password held here" />
-        <Metric label="In a division" value={String(assigned)} caption="Bounded" />
+        <Metric label="People" value={count(enabled, peopleUnknown)} caption="Able to sign in" />
+        <Metric label="Disabled" value={count(people.length - enabled, peopleUnknown)} caption="Blocked" />
+        <Metric label="Divisions" value={count(activeDivisions, divisionsUnknown)} caption="Active" />
+        <Metric label="In a division" value={count(members, divisionsUnknown)} caption="Bounded" />
       </MetricRow>
 
-      {showEditor && canManage && (
+      {showEditor && canManagePeople && (
         <Panel>
           <PanelHeading
             title="Add a person"
@@ -199,14 +457,37 @@ export function PeopleView({ session, onOpenSettings, onSessionExpired }: People
               <Field label="Temporary password" hint="At least 12 characters. Shown once, here.">
                 <Input required minLength={12} value={password} onChange={(event) => setPassword(event.target.value)} />
               </Field>
-              <Field label="Division" hint="Leave empty and they see only deployment-wide agents.">
-                <Select value={divisionId} onChange={(event) => setDivisionId(event.target.value)}>
-                  <option value="">No division</option>
-                  {divisions.map((item) => (
-                    <option key={item.id} value={item.id}>{item.displayName}</option>
-                  ))}
-                </Select>
-              </Field>
+              <div className="grid content-start gap-1.5">
+                <Field label="Division" hint="Leave empty and they see only deployment-wide agents.">
+                  <Select value={divisionId} onChange={(event) => setDivisionId(event.target.value)}>
+                    <option value="">No division</option>
+                    {assignable.map((item) => (
+                      <option key={item.id} value={item.id}>{item.displayName}</option>
+                    ))}
+                  </Select>
+                </Field>
+                {/*
+                  * The control this whole consolidation exists for. The division
+                  * the administrator needs is very often the one that does not
+                  * exist yet -- on a fresh deployment it always is, because the
+                  * first person is created before any division -- and before
+                  * this button the only way to make it was to leave, which threw
+                  * the typed name, username and temporary password away.
+                  *
+                  * Bordered, not `ghost`, and that was measured in a browser
+                  * rather than reasoned about: as a ghost button it computed to
+                  * 11px #8a8a93 on a transparent ground, directly beneath a hint
+                  * sentence in the same muted colour, which made the one
+                  * genuinely new affordance on this screen read as a second line
+                  * of help text. It is the divisions panel's own New division
+                  * treatment, one size down.
+                  */}
+                {canManageDivisions && (
+                  <Button size="sm" className="justify-self-start" onClick={() => openDivisionDialog("person-form")}>
+                    New division
+                  </Button>
+                )}
+              </div>
             </div>
             <div className="flex justify-end">
               <Button type="submit" variant="primary" disabled={busy}>
@@ -237,11 +518,18 @@ export function PeopleView({ session, onOpenSettings, onSessionExpired }: People
 
       <Panel>
         <PanelHeading title="People" description="Everyone this deployment knows about." />
+        {peopleFailure && (
+          <Alert tone={peopleFailure.refused ? "info" : "error"} className="mb-4">{peopleFailure.message}</Alert>
+        )}
         {people.length === 0 ? (
-          <EmptyState title="Nobody yet">
-            Divisions bound what a person can see, so a deployment with no people has a boundary and
-            nobody to apply it to. Add somebody to start.
-          </EmptyState>
+          // Suppressed under a failure: "Nobody yet" is a claim about the
+          // deployment, and the panel has just said it does not know.
+          peopleFailure ? null : (
+            <EmptyState title="Nobody yet">
+              Divisions bound what a person can see, so a deployment with no people has a boundary and
+              nobody to apply it to. Add somebody to start.
+            </EmptyState>
+          )
         ) : (
           <div className="grid gap-2">
             {people.map((person) => (
@@ -267,17 +555,20 @@ export function PeopleView({ session, onOpenSettings, onSessionExpired }: People
                   <StatusText tone={toneFor(person.enabled ? "HEALTHY" : "DEGRADED")}>
                     {person.enabled ? "Active" : "Disabled"}
                   </StatusText>
-                  {canManage && (
+                  {canManagePeople && (
                     <>
                       <Select
                         className="h-8 w-[190px] text-caption"
+                        aria-label={`Division for ${person.displayName}`}
                         value={person.divisionId ?? ""}
                         disabled={busy}
                         onChange={(event) => void move(person, event.target.value)}
                       >
                         <option value="">No division</option>
-                        {divisions.map((item) => (
-                          <option key={item.id} value={item.id}>{item.displayName}</option>
+                        {optionsFor(person).map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.status === "ACTIVE" ? item.displayName : `${item.displayName} (suspended)`}
+                          </option>
                         ))}
                       </Select>
                       {/* Absent, not disabled, for a federated person: this
@@ -298,6 +589,180 @@ export function PeopleView({ session, onOpenSettings, onSessionExpired }: People
           </div>
         )}
       </Panel>
+
+      <Panel>
+        <PanelHeading
+          title="Divisions"
+          description="A profile with no division stays visible to everyone."
+          actions={canManageDivisions ? (
+            <Button onClick={() => openDivisionDialog("divisions")}>New division</Button>
+          ) : null}
+        />
+        {divisionsFailure && (
+          <Alert tone={divisionsFailure.refused ? "info" : "error"} className="mb-4">{divisionsFailure.message}</Alert>
+        )}
+        {divisions.length === 0 ? (
+          divisionsFailure ? null : (
+            <EmptyState title="No divisions yet">
+              Every agent profile is visible to every signed-in user until a division is created and
+              assigned.
+            </EmptyState>
+          )
+        ) : (
+          <ul className="grid gap-3">
+            {divisions.map((item) => (
+              <li key={item.id} className={cn("flex items-start justify-between gap-6 rounded-card border border-border p-4", item.status !== "ACTIVE" && "opacity-60")}>
+                <div className="min-w-0">
+                  <h3>{item.displayName}</h3>
+                  <p>{item.description || "No description."}</p>
+                  <MicroLabel>
+                    {item.profileCount} profile{item.profileCount === 1 ? "" : "s"} ·{" "}
+                    {item.userCount} {item.userCount === 1 ? "person" : "people"} · updated {when(item.updatedAt)}
+                  </MicroLabel>
+                </div>
+                <div className="flex shrink-0 flex-col items-end gap-2">
+                  <StatusText tone={toneFor(item.status === "ACTIVE" ? "HEALTHY" : "DEGRADED")}>
+                    {item.status === "ACTIVE" ? "Active" : "Suspended"}
+                  </StatusText>
+                  {canManageDivisions && (
+                    <div className="flex gap-1">
+                      <Button
+                        variant="ghost"
+                        disabled={busy}
+                        onClick={() => void setStatus(item, item.status === "ACTIVE" ? "SUSPENDED" : "ACTIVE")}
+                      >
+                        {item.status === "ACTIVE" ? "Suspend" : "Reactivate"}
+                      </Button>
+                      <Button variant="ghost" disabled={busy} onClick={() => setConfirmDelete(item)}>
+                        Delete
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Panel>
+
+      {confirmDelete && (
+        <Panel>
+          <PanelHeading title={`Delete ${confirmDelete.displayName}?`} />
+          <p>
+            {confirmDelete.profileCount > 0 || confirmDelete.userCount > 0
+              ? "This division still holds work, so it cannot be deleted. Move its profiles and people elsewhere, or suspend it instead."
+              : "This division holds nothing. Deleting it cannot affect any profile or person."}
+          </p>
+          <div className="mt-4 flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setConfirmDelete(null)}>Keep it</Button>
+            <Button disabled={busy} onClick={() => void remove(confirmDelete)}>Delete division</Button>
+          </div>
+        </Panel>
+      )}
+
+      <Panel>
+        <PanelHeading title="What a division does, and what it does not" />
+        {/*
+          * What is *absent* first, then why, because the reader of a screen
+          * called People is looking for their own administrator account and not
+          * finding it. This is a decision rather than an omission and nothing on
+          * screen used to say so: `LocalAdministrator` has no `divisionId`
+          * column at all, `profileVisibleTo` returns true for an administrator
+          * before it reads any division, and administrators are provisioned by
+          * a CLI the installer runs rather than from any dashboard.
+          *
+          * The Divisions screen carried one sentence of this and it answered a
+          * different question -- "can I scope an administrator?" rather than
+          * "where is my administrator account?" -- which is the question this
+          * screen's name invites.
+          *
+          * The non-isolation sentence below is the old screen's, word for word.
+          * It is load-bearing: this product makes no tenant-isolation claim
+          * anywhere, and rewriting the one place that says so out loud is how
+          * that claim gets softened by accident.
+          */}
+        {/*
+          * Spaced, because the reset zeroes `p` margins and the two paragraphs
+          * abutted at exactly the same pixel -- measured, not guessed. That was
+          * survivable on the old Divisions screen, where the note was a
+          * footnote nobody was sent to; it is not here, where the first
+          * paragraph is the answer somebody arrived looking for.
+          */}
+        <div className="grid gap-3">
+          <p>
+            <strong>Administrators are not on this list.</strong> An administrator is deployment-wide
+            by design: they see every division and every screen, so there is no division to put one in
+            and no administrator account on this page. Administrators are created by the installer on
+            the OrcaSynapse host, not from here.
+          </p>
+          <p>
+            A division bounds one thing — which agent profiles a person can see and run when they sign
+            in. A profile with no division is visible to everyone, which is what every profile is until
+            you assign one. It is not an isolation boundary. Agents that run on the same Agentic System
+            node share their memory and their Skills, whichever division their profile belongs to.
+          </p>
+        </div>
+      </Panel>
+
+      {/*
+        * A centred `Dialog`, never the right-hand `Drawer`: Setup's panels moved
+        * off the edge across v6.0.1 and v6.0.3 because a panel sliding in over
+        * the screen it serves covers the thing it is explaining, and this one
+        * exists precisely to keep the person form visible behind it.
+        *
+        * It renders here, at the top level, rather than inside the person form's
+        * JSX where it reads as belonging. `DialogPortal` in this design system
+        * is a fragment -- the dialog stays in the tree it is written in -- so
+        * writing it inside `<form>` would nest a form in a form, which is
+        * invalid HTML and makes the inner submit ambiguous. The affordance is in
+        * the form; the element cannot be.
+        */}
+      <Dialog
+        open={divisionDialogFor !== null}
+        onClose={() => { if (!divisionBusy) setDivisionDialogFor(null); }}
+        kicker="Access control"
+        title="New division"
+        description="Any name you like. Nothing in the product enumerates them."
+      >
+        <form className="grid gap-4" onSubmit={submitDivision}>
+          <Field label="Name" hint="What operators will call it.">
+            <Input
+              value={divisionDraft.displayName}
+              onChange={(event) => {
+                const displayName = event.target.value;
+                setDivisionDraft((current) => ({
+                  ...current,
+                  displayName,
+                  // Follows the name until somebody edits the slug themselves,
+                  // the same way the other create forms behave.
+                  slug: current.slug === slugify(current.displayName) ? slugify(displayName) : current.slug,
+                }));
+              }}
+              required
+            />
+          </Field>
+          <Field label="Identifier" hint="Lowercase, used in the audit trail.">
+            <Input
+              value={divisionDraft.slug}
+              onChange={(event) => setDivisionDraft((current) => ({ ...current, slug: slugAsTyped(event.target.value) }))}
+              required
+            />
+          </Field>
+          <Field label="Description" hint="Optional.">
+            <Input
+              value={divisionDraft.description ?? ""}
+              onChange={(event) => setDivisionDraft((current) => ({ ...current, description: event.target.value }))}
+            />
+          </Field>
+          {divisionError && <Alert tone="error">{divisionError}</Alert>}
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" disabled={divisionBusy} onClick={() => setDivisionDialogFor(null)}>Cancel</Button>
+            <Button type="submit" variant="primary" disabled={divisionBusy}>
+              {divisionBusy ? "Creating…" : "Create division"}
+            </Button>
+          </div>
+        </form>
+      </Dialog>
     </div>
   );
 }

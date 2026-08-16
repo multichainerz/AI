@@ -5,6 +5,38 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v8.8.3 — 2026-08-16
+
+Merges Divisions into People, so the row is Setup, People, System. Creating a
+person and creating the division they belong to are one job, and they were two
+tabs.
+
+- move the division create *inside* the person form as a centred dialog:
+  changing tab unmounted the view, so an administrator who discovered mid-form
+  that their division did not exist lost four fields including the temporary
+  password — and that happens on every deployment, since divisions do not exist
+  at install
+- load both panels with `Promise.allSettled` rather than `Promise.all`. The two
+  screens are gated differently — people on `sessions:manage`, divisions read on
+  `agents:read` — so an OPERATIONS_ADMIN or AUDITOR can see one and not the
+  other, and a single rejection would have blanked both. **A PLATFORM_ADMIN
+  session never triggers this**, so it is invisible to whoever builds it
+- keep `#settings/divisions` and `#divisions` working as aliases, following the
+  four alias cases already in `viewFromHash`
+- say on screen why no administrator appears on a page about people: they are
+  deployment-wide by design, so there is no division to put one in
+- join `locked-screen-contract.test.tsx`, which Divisions and People should have
+  done at v6.8.0 and v7.3.0 — its own comment promises new screens join it on
+  the day they arrive
+- ignore `.claude/worktrees/`, which an isolated subagent leaves in the tree and
+  which must never be committed into it
+
+One bug the merge exposed rather than caused: a person left in a **suspended**
+division rendered a select whose value matched no option, so the browser showed
+"No division" for somebody who had one. Two tabs hid it; one page does not.
+Their own suspended division now stays in their row, labelled, and is still
+never offered to anyone else.
+
 ## v8.8.2 — 2026-08-16
 
 Paints the workspace header the sidebar's violet, in both themes, with the

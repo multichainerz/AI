@@ -262,7 +262,6 @@ describe("workspace navigation", () => {
   it("gives the update check its own tab rather than a slot inside setup", () => {
     expect(sectionNavigationFor("Settings")).toEqual([
       { label: "Setup", view: "Deployment" },
-      { label: "Divisions", view: "Divisions" },
       { label: "People", view: "People" },
       { label: "System", view: "Application" },
     ]);
@@ -351,6 +350,31 @@ describe("workspace navigation", () => {
     expect(viewFromHash("#platform/models")).toBe("Models");
     expect(viewFromHash("#platform/prompts")).toBe("Prompts");
     expect(viewFromHash("#platform/guardrails")).toBe("Guardrails");
+  });
+
+  it("keeps a bookmarked divisions link pointing at the screen that holds divisions", () => {
+    /*
+     * Divisions was a Settings tab of its own until v8.9.0, when it and People
+     * became one screen -- the same job, split across two tabs that already
+     * read each other's data. Both of its addresses stay as cases rather than
+     * becoming dead links.
+     *
+     * This is the assertion whose absence is the failure mode. Deleting the two
+     * `#…divisions` cases compiles, and every other test in this file passes,
+     * while every saved link silently redirects to the Dashboard -- exactly
+     * what happened to the Release gates hashes, which were added by the
+     * release that removed them and asserted by nothing for two releases after.
+     */
+    expect(viewFromHash("#settings/divisions")).toBe("People");
+    expect(viewFromHash("#divisions")).toBe("People");
+
+    // The generated addresses, so the alias cannot quietly become the one the
+    // rail produces: People still generates its own path, and there is no
+    // `Divisions` view left for `pathForView` to be called with.
+    expect(pathForView("People")).toBe("#settings/people");
+    expect(viewFromHash("#settings/people")).toBe("People");
+    expect(viewFromHash("#people")).toBe("People");
+    expect(productAreaForView("People")).toBe("Settings");
   });
 
   it("keeps a bookmarked corpus link pointing at a real screen", () => {

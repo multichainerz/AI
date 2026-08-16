@@ -14,7 +14,6 @@ export type ActiveView =
   | "Memory"
   | "Integrations"
   | "Guardrails"
-  | "Divisions"
   | "People"
   | "Operations"
   | "Audit";
@@ -163,9 +162,22 @@ const sectionNavigation: Partial<Record<ProductArea, ReadonlyArray<SectionNaviga
    * and grouping them under the same roof as "install this" made Settings read
    * as a drawer rather than a place.
    */
+  /*
+   * Divisions and People were two tabs and are one. They were always one job --
+   * who is in the organisation and how they are grouped -- and the split cost
+   * an administrator real work rather than tidiness: the person form could not
+   * name a division that did not exist yet, and going to make one unmounted the
+   * form and threw the draft away. The screen holds both panels now, and
+   * `#settings/divisions` is kept as an alias below.
+   *
+   * Not a tab with its own sub-navigation, which would have answered the letter
+   * of this and none of it: divisions would still have been one click away from
+   * the half-typed form, and the click would still have unmounted it. It would
+   * also have revived the three-level navigation Operations was collapsed out
+   * of at v5.1.0, two releases later, for tidiness.
+   */
   Settings: [
     { label: "Setup", view: "Deployment" },
-    { label: "Divisions", view: "Divisions" },
     { label: "People", view: "People" },
     { label: "System", view: "Application" },
   ],
@@ -184,7 +196,6 @@ const areaByView: Record<ActiveView, ProductArea> = {
   Memory: "Agents",
   Integrations: "Agents",
   Deployment: "Settings",
-  Divisions: "Settings",
   People: "Settings",
   Application: "Settings",
   Models: "Gateway",
@@ -202,7 +213,6 @@ const pathByView: Record<ActiveView, string> = {
   Memory: "#agents/memory",
   Integrations: "#agents/tools",
   Deployment: "#settings/setup",
-  Divisions: "#settings/divisions",
   People: "#settings/people",
   Application: "#settings/system",
   Models: "#gateway/models",
@@ -326,6 +336,31 @@ export function viewFromHash(hash: string): ActiveView {
     case "#settings/setup/profile":
       return "Deployment";
     /*
+     * `#settings/divisions` and `#divisions` addressed a Settings tab that
+     * People now contains outright -- the divisions list, its status and delete
+     * controls, and the create form -- so an existing bookmark has a correct
+     * destination rather than falling through to the Dashboard and dropping the
+     * operator out of the area.
+     *
+     * This is the strongest of the five aliases in this switch, and the only
+     * one where the old screen is not merely *absorbed*: `#agents/corpus` lands
+     * on the tab that took most of a split screen, `#agents/runtime` and
+     * `#operations/releases` on tabs that took what still exists of a deleted
+     * one. Here the divisions panel is on the page the link opens.
+     *
+     * What is honestly lost is the scroll position: the link lands at the top
+     * of the screen rather than at the divisions panel. `viewFromHash` matches
+     * a whole hash and the only sub-addressing in the product is Setup's three
+     * steps, which exist because a VM2 install takes twenty minutes and a
+     * reload has to return to it. A scroll offset does not earn the same
+     * machinery.
+     */
+    case "#settings/people":
+    case "#people":
+    case "#settings/divisions":
+    case "#divisions":
+      return "People";
+    /*
      * The tab is "System"; the routing token stays `Application` for the reason
      * given at the top of this file, and the hash follows the label the way
      * `Deployment` is addressed as `#settings/setup`.
@@ -335,13 +370,11 @@ export function viewFromHash(hash: string): ActiveView {
      * so it is the one Settings tab somebody has reason to have bookmarked
      * mid-incident, and a retired hash that falls through would drop them on
      * the Dashboard at exactly the wrong moment.
+     *
+     * (This block sat above the People cases until v8.9.0, describing the four
+     * cases below it across an unrelated pair. Moved rather than rewritten --
+     * it was always about System.)
      */
-    case "#settings/people":
-    case "#people":
-      return "People";
-    case "#settings/divisions":
-    case "#divisions":
-      return "Divisions";
     case "#settings/system":
     case "#system":
     case "#settings/application":

@@ -26,11 +26,23 @@ readiness was deleted outright (below); `#operations/releases`,
 
 The six areas and their tabs, in menu order, are: Dashboard; Session; Agents
 (Profiles, Skills, Memory, Tools); Gateway (Models, Prompts, Guardrails);
-Operations (Health, Audit trail); Settings (Setup, System).
+Operations (Health, Audit trail); Settings (Setup, People, System).
 `apps/web/src/workspace-navigation.tsx` is the source of truth, and
 `workspace-navigation.test.ts` pins every one of those strips literally —
 this paragraph said "Agents is five (Profiles, Runtime, Skills, Memory, Agent
 Tools)" for a release because nothing did.
+
+It then said "Settings (Setup, System)" for four releases for the same reason,
+missing the Divisions tab added at v6.8.0 and the People tab added at v7.3.0 —
+`workspace-navigation.test.ts` pins the strips and nothing pins this sentence
+against them. **Divisions is not a tab.** At v8.9.0 it and People became one
+screen: the people list, the divisions list, and a division-create dialog
+reachable from inside the person form, because the two were always one job and
+the split made an administrator retype a half-finished person to go and create
+the division it needed. `#settings/divisions` and `#divisions` resolve to
+People. The two panels are gated separately — people read on `sessions:manage`,
+divisions on `agents:read` — so a role holding one and not the other draws the
+panel it may see and a refusal in place of the other.
 
 Pilot readiness is removed from the console. `ProductionReadinessControl` has
 no create route and no seed, so that screen could never display a row; the
