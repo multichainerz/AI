@@ -21,6 +21,7 @@ import {
 } from "@orcasynapse/database";
 import { HermesClient, HermesRunDetachedError, type HermesSafeRunEvent } from "@orcasynapse/runtime-clients";
 import type { RunCapabilityIssuer } from "@orcasynapse/security";
+import type { MemoryExtractor } from "./memory-extractor.js";
 
 type TransactionExecutor = Parameters<Parameters<OrcaSynapseDatabase["transaction"]>[0]>[0];
 
@@ -214,6 +215,16 @@ export class DrizzleAgentProcessor {
     private readonly database: OrcaSynapseDatabase,
     private readonly hermes: AgentHermesRuntime | HermesClient,
     private readonly capabilities: RunCapabilityIssuer,
+    /*
+     * Optional, unlike the issuer above, and the asymmetry is deliberate.
+     *
+     * A missing capability is silent and total: every tool call is refused with
+     * an error that reads like a revoked grant. A missing extractor is visible
+     * and partial -- memory simply stops growing, which is also the correct
+     * behaviour for a deployment with no evaluated model to call. One is a
+     * wiring mistake, the other is a configuration.
+     */
+    private readonly extractor?: MemoryExtractor,
   ) {}
 
   async process(payload: AgentRunJobPayload, jobId: string, workerId: string): Promise<object> {
@@ -404,6 +415,9 @@ export class DrizzleAgentProcessor {
             }
             await drainEvents(EVENT_STREAM_DRAIN_GRACE_MS);
             await this.complete(run, state, externalRunId, workerId);
+            // After the run is finalised and the answer delivered, deliberately.
+            // A note is worth strictly less than the answer it came from.
+            await this.rememberFrom(run, state.output);
             return { runId: run.id, status: "COMPLETED" };
           }
           if (state.status === "failed") throw new Error(state.error ?? "Hermes reported that the run failed.");
@@ -687,6 +701,33 @@ export class DrizzleAgentProcessor {
       .orderBy(desc(scopedMemoryEntry.createdAt))
       .limit(MEMORY_ENTRY_LIMIT);
     return rows.map(({ content, createdAt }) => ({ content, at: createdAt }));
+  }
+
+  /**
+   * Keeps what this exchange taught the division, if anything.
+   *
+   * The division comes from the run, exactly as it does on the read side, so a
+   * note written here can only ever land in the division that produced it.
+   * Nothing about the scope passes through the model: the extractor is shown
+   * the exchange and returns text, and this decides where it goes.
+   *
+   * Failure is swallowed on purpose, and this is the one place in the processor
+   * where that is right. It runs after the run is COMPLETED and the answer is
+   * on screen; there is no longer anything to fail. Letting an extraction error
+   * escape would turn a delivered answer into a failed run over a note nobody
+   * asked for.
+   */
+  private async rememberFrom(run: LoadedRun, answer: string | null): Promise<void> {
+    if (!this.extractor || !answer?.trim()) return;
+    try {
+      const notes = await this.extractor.extract({ question: run.input, answer });
+      if (notes.length === 0) return;
+      await this.database.insert(scopedMemoryEntry).values(
+        notes.map((content) => ({ divisionId: run.divisionId, content, runId: run.id })),
+      );
+    } catch {
+      // Deliberately silent: see above.
+    }
   }
 
   private async boundaryState(run: LoadedRun): Promise<{ code: string; message: string } | null> {

@@ -5,6 +5,44 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v8.4.0 — 2026-08-16
+
+Memory fills itself. After a run is finalised, the control plane reads the
+exchange and keeps what is durable, scoped to the run's own division — and the
+default prompt stops describing two tools the agent has never been able to call.
+
+Extraction:
+
+- run it after the run is COMPLETED and the answer delivered, never before, so a
+  note costs strictly less than the answer it came from
+- swallow every extraction failure. It is the one place in the processor where
+  that is right: there is no longer anything to fail, and letting an error
+  escape would turn a delivered answer into a failed run over a note nobody
+  asked for
+- take the division from the run and give the model no say in it. The extractor
+  is shown an exchange and returns strings; a note naming another division lands
+  in the run's own, because there is no parameter for it to name one with
+- call only the evaluated default AGENT route, and do nothing when the catalogue
+  is not yet enforced — guessing a model would send a division's exchanges
+  somewhere nobody approved
+- tell the model that keeping nothing is usually right, since a model nudged
+  toward producing something produces something, and every later run in the
+  division pays context for it
+- leave the extractor optional on the processor while the capability issuer
+  stays required: a missing capability is silent and total, a missing extractor
+  is visible and partial
+
+The prompt:
+
+- rewrite the MEMORY section, which described `remember` and `recall`. The agent
+  has never been able to call them — they are on the MCP plane, and its runtime
+  has no route there — so a fresh install instructed its agent to use two tools
+  absent from its tool list
+- say instead that notes arrive already selected, and that there is nothing to
+  search and no way to ask for more, which is now true in both directions
+- tell it to say it has nothing rather than reason as though it might, when a
+  question turns on a division it holds no notes for
+
 ## v8.3.0 — 2026-08-16
 
 Closes the loop: an administrator can write a division's standing facts, and

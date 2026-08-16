@@ -7,6 +7,7 @@ import { DrizzleRuntimeConnectionResolver, HermesClient } from "@orcasynapse/run
 import { WorkerRuntime } from "./worker-runtime.js";
 import { DrizzlePendingRunSource, DrizzleWorkerRegistry } from "./worker-registry.js";
 import { DrizzleAgentProcessor } from "./agent-processor.js";
+import { InferenceMemoryExtractor } from "./memory-extractor.js";
 
 const databaseUrl = readBootstrapSecret("orcasynapse_database_url");
 const { database, close: closeDatabase } = createDrizzleClient(databaseUrl);
@@ -33,6 +34,7 @@ const runtime = new WorkerRuntime(
     database,
     new HermesClient(connectionResolver),
     new RunCapabilityIssuer(masterKey),
+    new InferenceMemoryExtractor(database, connectionResolver),
   ),
   1_000,
   5,

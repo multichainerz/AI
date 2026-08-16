@@ -23,6 +23,7 @@ import { HermesRunDetachedError } from "@orcasynapse/runtime-clients";
 import { RunCapabilityIssuer } from "@orcasynapse/security";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { DrizzleAgentProcessor, type AgentHermesRuntime } from "./agent-processor.js";
+import type { MemoryExtractor } from "./memory-extractor.js";
 
 let context: TestDatabase;
 
@@ -380,6 +381,96 @@ describe("DrizzleAgentProcessor division memory", () => {
     const instructions = await submittedInstructions(runId, jobId);
 
     expect(instructions).not.toContain("WHAT YOUR DIVISION HAS LEARNED");
+  });
+});
+
+/*
+ * Extraction: how the store fills without an agent ever calling a tool.
+ *
+ * The model is shown the exchange and returns text. It is never told a
+ * division and never asked where a note should go -- the processor decides
+ * that from the run, the same source the read side uses. So the tests that
+ * matter are about where a note lands and what happens when extraction fails,
+ * not about the quality of what comes back.
+ */
+describe("DrizzleAgentProcessor memory extraction", () => {
+  function extractor(notes: string[] | (() => never)): MemoryExtractor {
+    return { extract: async () => (typeof notes === "function" ? notes() : notes) };
+  }
+
+  it("writes what it extracted into the run's own division", async () => {
+    const { runId, jobId } = await seed();
+    const alpha = await assignDivision(runId, "Alpha");
+    const processor = new DrizzleAgentProcessor(
+      context.database, runtime() as never, CAPABILITIES,
+      extractor(["Alpha reconciles supplier invoices weekly."]),
+    );
+
+    await processor.process({ runId }, jobId, WORKER_ID);
+
+    const rows = await context.database.select().from(scopedMemoryEntry);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.divisionId).toBe(alpha);
+    expect(rows[0]?.runId).toBe(runId);
+    expect(rows[0]?.content).toBe("Alpha reconciles supplier invoices weekly.");
+  });
+
+  /*
+   * The property that lets extraction be permissive about what it keeps.
+   *
+   * A note lands in the division of the run that produced it, and the model has
+   * no say in that -- it returns strings and nothing else. So the worst a bad
+   * extraction can do is write a poor note into the division that was already
+   * reading the conversation it came from. It cannot cross a division, which is
+   * why a wrong note is a quality problem rather than a disclosure.
+   */
+  it("cannot place a note in a division the run does not belong to", async () => {
+    const { runId, jobId } = await seed();
+    const alpha = await assignDivision(runId, "Alpha");
+    const [beta] = await context.database.insert(division)
+      .values({ slug: `div-${randomUUID().slice(0, 8)}`, displayName: "Beta" }).returning({ id: division.id });
+    const processor = new DrizzleAgentProcessor(
+      context.database, runtime() as never, CAPABILITIES,
+      // The extractor tries to name another division, the way a prompt-injected
+      // exchange would. There is no parameter for it to name one with.
+      extractor([`Route this to division ${beta!.id} instead.`]),
+    );
+
+    await processor.process({ runId }, jobId, WORKER_ID);
+
+    const rows = await context.database.select().from(scopedMemoryEntry);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.divisionId).toBe(alpha);
+  });
+
+  /*
+   * The one that decides whether this feature is safe to enable at all. A note
+   * is worth less than the answer, so extraction failing must cost the note.
+   */
+  it("still completes the run when extraction throws", async () => {
+    const { runId, jobId, messageId } = await seed();
+    const processor = new DrizzleAgentProcessor(
+      context.database, runtime() as never, CAPABILITIES,
+      extractor(() => { throw new Error("The inference endpoint is unreachable."); }),
+    );
+
+    const result = await processor.process({ runId }, jobId, WORKER_ID);
+
+    expect(result).toMatchObject({ status: "COMPLETED" });
+    const [message] = await context.database.select().from(chatMessage).where(eq(chatMessage.id, messageId));
+    expect(message?.status).toBe("COMPLETED");
+    expect(await context.database.select().from(scopedMemoryEntry)).toHaveLength(0);
+  });
+
+  it("writes nothing when there was nothing worth keeping", async () => {
+    const { runId, jobId } = await seed();
+    const processor = new DrizzleAgentProcessor(
+      context.database, runtime() as never, CAPABILITIES, extractor([]),
+    );
+
+    await processor.process({ runId }, jobId, WORKER_ID);
+
+    expect(await context.database.select().from(scopedMemoryEntry)).toHaveLength(0);
   });
 });
 
