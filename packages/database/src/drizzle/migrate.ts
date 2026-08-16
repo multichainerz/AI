@@ -65,6 +65,66 @@ async function seedDefaultAgentProfile(pool: Pool): Promise<void> {
   );
 }
 
+/** The slugs the seeded defaults own. Exported so tests can name them. */
+export const DEFAULT_TOOL_SET_SLUG = "default-tool-set";
+export const DEFAULT_SKILL_SET_SLUG = "default-skill-set";
+
+/**
+ * Seeds the two default sets and points every set-less profile version at them.
+ *
+ * ## Why the defaults track rather than snapshot
+ *
+ * `RuntimeToolsetAdmission` is empty when this runs. It is written only when an
+ * operator admits toolsets, and on a fresh install no Hermes node has enrolled
+ * to report any. A default set that captured "everything admitted right now"
+ * would therefore contain nothing and would read on screen as a profile
+ * permitted no tools at all -- the opposite of what a default means. So the
+ * seeded rows carry `tracksAdmission` / `tracksRuntime`, and resolve to whatever
+ * exists at the moment they are read. A set an operator names by hand lists its
+ * members explicitly, which is the point of naming one.
+ *
+ * This is also the only *safe* default rather than merely the friendly one.
+ * Handing Hermes a set narrower than what the node has enabled makes the tool
+ * boundary assertion throw and the run fail, so "everything admitted" is the one
+ * value that cannot break a fresh install from its own seed.
+ *
+ * ## Why the backfill lives here and not in the migration
+ *
+ * Migrations are generated, never hand-authored, and a generated `NOT NULL`
+ * foreign key cannot be added ahead of rows that would satisfy it. So `0007`
+ * adds both columns nullable and this fills them immediately afterwards, inside
+ * the same `runMigrations` call. `ON CONFLICT DO NOTHING` on the sets and a
+ * `WHERE ... IS NULL` on the backfill keep it idempotent: an upgrade that has
+ * already run does nothing, and a version an operator has since pointed
+ * elsewhere is left alone.
+ */
+async function seedDefaultConfigurationSets(pool: Pool): Promise<void> {
+  await pool.query(
+    `INSERT INTO "ToolSet" ("slug", "displayName", "description", "tracksAdmission", "updatedAt")
+     VALUES ($1, 'Default tool set', 'Every Hermes toolset this deployment admits. Tracks admission rather than a fixed list, so newly admitted toolsets are included automatically.', true, CURRENT_TIMESTAMP)
+     ON CONFLICT ("slug") DO NOTHING`,
+    [DEFAULT_TOOL_SET_SLUG],
+  );
+  await pool.query(
+    `INSERT INTO "SkillSet" ("slug", "displayName", "description", "tracksRuntime", "updatedAt")
+     VALUES ($1, 'Default skill set', 'Every Skill the enrolled Hermes runtime reports. Tracks the runtime rather than a fixed list.', true, CURRENT_TIMESTAMP)
+     ON CONFLICT ("slug") DO NOTHING`,
+    [DEFAULT_SKILL_SET_SLUG],
+  );
+  await pool.query(
+    `UPDATE "AgentProfileVersion"
+     SET "toolSetId" = (SELECT "id" FROM "ToolSet" WHERE "slug" = $1)
+     WHERE "toolSetId" IS NULL`,
+    [DEFAULT_TOOL_SET_SLUG],
+  );
+  await pool.query(
+    `UPDATE "AgentProfileVersion"
+     SET "skillSetId" = (SELECT "id" FROM "SkillSet" WHERE "slug" = $1)
+     WHERE "skillSetId" IS NULL`,
+    [DEFAULT_SKILL_SET_SLUG],
+  );
+}
+
 /**
  * Resolves the committed migration folder from either the built or the source
  * layout, so the same entry point works in the container and in development.
@@ -111,6 +171,9 @@ export async function runMigrations(connectionString: string): Promise<void> {
     const database = drizzle(pool);
     await migrate(database, { migrationsFolder: migrationsFolder() });
     await seedDefaultAgentProfile(pool);
+    // After the profile, never before: the backfill claims every version that
+    // has no set, and the seeded profile's version must be one of them.
+    await seedDefaultConfigurationSets(pool);
     await pool.query(
       `INSERT INTO "SchemaMetadata" ("id", "epoch") VALUES ('current', $1)
        ON CONFLICT ("id") DO UPDATE SET "epoch" = EXCLUDED."epoch"`,

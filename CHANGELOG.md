@@ -5,6 +5,41 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v6.2.0 — 2026-08-16
+
+Adds the tool set and skill set concepts to the schema, and seeds one of each at
+installation so a profile is never without them. Increment B/C groundwork from
+`docs/DIVISIONS_PLAN.md`; nothing reads these yet.
+
+Neither concept existed in any form — a profile could express Hermes toolsets not
+at all, and its `skills` were a raw list retyped per profile and reusable
+nowhere. `ToolSet` and `SkillSet` make a selection nameable and shareable, and
+`AgentProfileVersion` gains a foreign key to each.
+
+The seeded defaults **track** rather than snapshot, which is the whole design
+and not a detail. `RuntimeToolsetAdmission` is empty at installation — it is
+written only when an operator admits toolsets, and no Hermes node has enrolled
+to report any — so a default set built by capturing "everything admitted right
+now" would contain nothing, and would read on screen as a profile permitted no
+tools at all. `tracksAdmission` and `tracksRuntime` mark the two seeded rows as
+resolving to whatever exists when they are read. A set an operator names by hand
+lists its members explicitly.
+
+This is also the only safe default rather than the merely friendly one: handing
+Hermes a set narrower than what the node has enabled makes the tool boundary
+assertion throw and the run fail, so "everything admitted" is the one value that
+cannot break a fresh install from its own seed.
+
+- add `ToolSet` and `SkillSet` with a shared `ConfigurationSetStatus`
+- add `AgentProfileVersion.toolSetId` and `.skillSetId`, `ON DELETE RESTRICT`,
+  because deleting a set a shipped version depends on would silently rewrite
+  what that version was
+- keep both columns nullable and require them at the contract layer instead: a
+  generated `NOT NULL` foreign key cannot be added ahead of the rows that would
+  satisfy it, since migration SQL runs before any seeding code
+- seed both defaults and backfill every set-less profile version, idempotently
+- correct the database test-file budget, which the static gate caught
+
 ## v6.1.0 — 2026-08-16
 
 Closes the three profile-selection holes, which is increment A of

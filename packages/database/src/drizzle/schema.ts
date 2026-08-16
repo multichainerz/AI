@@ -41,6 +41,7 @@ export const hermesRuntimeNodeStatus = pgEnum("HermesRuntimeNodeStatus", ['PENDI
 export const hermesCorpusEntryKind = pgEnum("HermesCorpusEntryKind", ['MEMORY', 'SKILL', 'SKILL_FILE', 'SKILL_BUNDLE', 'PROVENANCE', 'PENDING_CHANGE'])
 export const hermesCorpusMutationOperation = pgEnum("HermesCorpusMutationOperation", ['MEMORY_ADD', 'MEMORY_REPLACE', 'MEMORY_REMOVE', 'SKILL_CREATE', 'SKILL_EDIT', 'SKILL_DELETE', 'SKILL_WRITE_FILE', 'SKILL_REMOVE_FILE'])
 export const hermesCorpusMutationStatus = pgEnum("HermesCorpusMutationStatus", ['PENDING_APPROVAL', 'QUEUED', 'DISPATCHED', 'APPLIED', 'REJECTED', 'CONFLICT', 'FAILED', 'EXPIRED'])
+export const configurationSetStatus = pgEnum("ConfigurationSetStatus", ['ACTIVE', 'RETIRED'])
 export const modelDeploymentStatus = pgEnum("ModelDeploymentStatus", ['DRAFT', 'ACTIVE', 'SUSPENDED'])
 export const modelWorkload = pgEnum("ModelWorkload", ['CHAT', 'AGENT'])
 export const onboardingEvidenceOutcome = pgEnum("OnboardingEvidenceOutcome", ['PASSED', 'FAILED', 'WARNING'])
@@ -242,6 +243,63 @@ export const agentRuntimeControl = pgTable("AgentRuntimeControl", {
 	updatedBy: uuid(),
 	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
 });
+/**
+ * A named, reusable selection of Hermes toolsets.
+ *
+ * Distinct from `RuntimeToolsetAdmission`, which is the deployment-wide
+ * allowlist of what any node may enable. This names a subset of that for reuse
+ * across profiles, and it is *declarative*: see DIVISIONS_PLAN increment C for
+ * why a narrower set cannot bind a run, and why the seeded default must
+ * therefore track admission rather than narrow it.
+ *
+ * `tracksAdmission` is that default's marker. A set with it resolves to whatever
+ * is admitted deployment-wide when read, rather than freezing a snapshot -- at
+ * install nothing is admitted yet, so a snapshot would seed an "everything" set
+ * containing nothing.
+ */
+export const toolSet = pgTable("ToolSet", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	slug: varchar({ length: 64 }).notNull(),
+	displayName: varchar({ length: 120 }).notNull(),
+	description: varchar({ length: 500 }).default('').notNull(),
+	status: configurationSetStatus().default('ACTIVE').notNull(),
+	toolsetNames: text().array().default([]).notNull(),
+	tracksAdmission: boolean().default(false).notNull(),
+	revision: integer().default(1).notNull(),
+	createdBy: uuid(),
+	updatedBy: uuid(),
+	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
+}, (table) => [
+	uniqueIndex("ToolSet_slug_key").using("btree", table.slug.asc().nullsLast()),
+	index("ToolSet_status_updatedAt_idx").using("btree", table.status.asc().nullsLast(), table.updatedAt.asc().nullsLast()),
+]);
+
+/**
+ * A named, reusable selection of Skills, mirroring `ToolSet`.
+ *
+ * `tracksRuntime` is the same idea as `tracksAdmission`: the seeded default
+ * means "every Skill this node reports" rather than a list captured before any
+ * node existed.
+ */
+export const skillSet = pgTable("SkillSet", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	slug: varchar({ length: 64 }).notNull(),
+	displayName: varchar({ length: 120 }).notNull(),
+	description: varchar({ length: 500 }).default('').notNull(),
+	status: configurationSetStatus().default('ACTIVE').notNull(),
+	skills: jsonb().default([]).notNull(),
+	tracksRuntime: boolean().default(false).notNull(),
+	revision: integer().default(1).notNull(),
+	createdBy: uuid(),
+	updatedBy: uuid(),
+	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
+}, (table) => [
+	uniqueIndex("SkillSet_slug_key").using("btree", table.slug.asc().nullsLast()),
+	index("SkillSet_status_updatedAt_idx").using("btree", table.status.asc().nullsLast(), table.updatedAt.asc().nullsLast()),
+]);
+
 export const agentProfileVersion = pgTable("AgentProfileVersion", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	profileId: uuid().notNull(),
@@ -259,6 +317,20 @@ export const agentProfileVersion = pgTable("AgentProfileVersion", {
 	soulMd: text().default("").notNull(),
 	skills: jsonb().default([]).notNull(),
 	distributionDigest: varchar({ length: 64 }),
+	/*
+	 * The version's sets, on the *version* rather than the profile: a version is
+	 * immutable, and a run must reproduce exactly the configuration it was given.
+	 *
+	 * Nullable in the database and required by the API, which is not a hedge.
+	 * A NOT NULL foreign key cannot be added ahead of the rows that would satisfy
+	 * it -- drizzle's migration SQL runs before any seeding code, so every
+	 * existing version would fail the constraint at upgrade. The seeder creates
+	 * the default sets and backfills these columns immediately afterwards; the
+	 * contract refuses a create without both, so only pre-existing rows are ever
+	 * null and only until the same upgrade finishes.
+	 */
+	toolSetId: uuid(),
+	skillSetId: uuid(),
 }, (table) => [
 	index("AgentProfileVersion_profileId_createdAt_idx").using("btree", table.profileId.asc().nullsLast(), table.createdAt.asc().nullsLast()),
 	uniqueIndex("AgentProfileVersion_profileId_version_key").using("btree", table.profileId.asc().nullsLast(), table.version.asc().nullsLast()),
@@ -267,6 +339,22 @@ export const agentProfileVersion = pgTable("AgentProfileVersion", {
 			foreignColumns: [agentProfile.id],
 			name: "AgentProfileVersion_profileId_fkey"
 		}).onUpdate("cascade").onDelete("cascade"),
+	/*
+	 * RESTRICT, not CASCADE: deleting a set that a shipped version depends on
+	 * would silently rewrite what that version was. The manager refuses the
+	 * delete with a 409 naming the profile; this is the backstop if it ever
+	 * does not.
+	 */
+	foreignKey({
+			columns: [table.toolSetId],
+			foreignColumns: [toolSet.id],
+			name: "AgentProfileVersion_toolSetId_fkey"
+		}).onUpdate("cascade").onDelete("restrict"),
+	foreignKey({
+			columns: [table.skillSetId],
+			foreignColumns: [skillSet.id],
+			name: "AgentProfileVersion_skillSetId_fkey"
+		}).onUpdate("cascade").onDelete("restrict"),
 	check("AgentProfileVersion_phase5_boundary_check", sql`("maxTurns" = 1) AND ("safeMode" = true)`),
 ]);
 

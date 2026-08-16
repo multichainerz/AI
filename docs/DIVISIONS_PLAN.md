@@ -387,10 +387,42 @@ that matters three ways:
   which is the original point and still stands: making the sets required outright
   would break the seed.
 
-So: migration `0007` creates a `Default tool set` (every currently admitted
-toolset) and a `Default skill set` (empty, marked as such), **and backfills every
-existing profile version** to reference them. New profiles must choose both;
-existing ones become valid by backfill rather than by luck.
+### The default sets, and why "everything" cannot be a snapshot
+
+Decided: **at installation, seed a default tool set and a default skill set that
+include everything, and point the default profile at them.** Recorded with the
+one fact that changes how it must be built.
+
+**`RuntimeToolsetAdmission` is empty at install.** It is written only by an
+operator admitting toolsets in the Tools tab
+(`apps/api/src/tooling/drizzle-tooling-manager.ts:632`), and no node has enrolled
+when the seed runs. A "Default tool set" that snapshots what is admitted at seed
+time would therefore contain **nothing** — the exact opposite of "everything",
+and it would read on screen as a profile permitted no tools at all. The same
+applies to skills: the runtime reports them, and at install there is no runtime.
+
+So the default sets **track** rather than **snapshot**. `ToolSet` gains
+`tracksAdmission boolean default false`; the seeded default has it `true` and
+resolves to whatever is admitted deployment-wide at the moment it is read.
+`SkillSet` gains `tracksRuntime` on the same principle. A set an operator names
+by hand lists its members explicitly, which is the whole point of naming one.
+
+**This is also the only *safe* default, not merely the convenient one.** Per
+increment C, handing `hermes.start` a set narrower than what the node has
+enabled makes the boundary assertion throw and the run fail. A default meaning
+"everything admitted" is the one value that can never do that — so a fresh
+install cannot be broken by its own seed, and the failure mode C warns about
+cannot appear until an operator deliberately narrows a set.
+
+**Mechanically**, this stays inside the conventions: migration `0007` adds the
+columns as **nullable** — a `NOT NULL` FK cannot be added ahead of the rows that
+would satisfy it, because drizzle's SQL runs before any seeding code — and
+`seedDefaultAgentProfile()` in `packages/database/src/drizzle/migrate.ts` is
+extended to create both default sets and backfill every profile version whose
+set is null. That is code in the seeder, not hand-authored SQL in a migration,
+so "generated migrations only" holds. The API requires both on create, so new
+profiles cannot omit them; existing rows become valid by backfill rather than by
+luck.
 
 **No division column on** `ChatConversation`, `ChatMessage`, `AgentRun` (already
 `ownerSubject`-scoped, strictly tighter), the corpus tables, `AuditEvent`, or any
@@ -702,22 +734,56 @@ invited OIDC puts the whole plan at **25–36 days**, local passwords at
 Sequencing is not negotiable: **F last.** A division-scoped memory built before
 divisions exist would be scoping to something that does not yet bound anything.
 
-## The one open decision
+## D1 — decided: local users with passwords, managed by the administrator
 
-**D1 — how does a super-admin-created user sign in?** `EnterpriseUser` is keyed
-`(issuer, subject)` with `lastLoginAt NOT NULL`, so an administrator cannot
-pre-create one.
+**Settled 2026-08-16. No decisions remain open; the plan is executable end to
+end.**
 
-- **Invite an OIDC identity** — make `lastLoginAt` nullable (null = invited,
-  never signed in) and match the invitation in `completeLogin`. **~2–3 days**,
-  reuses the complete OIDC path. Requires an identity provider.
-- **Local users with passwords** — a `LocalUser` table mirroring
-  `LocalAdministrator`; Argon2, lockout and forced rotation already exist.
-  **~5–7 days**, works with no IdP, matches "the super admin creates the account"
-  most directly. Cost: a third credential store to keep in lockstep with the
-  forced-rotation gate.
+`EnterpriseUser` is keyed `(issuer, subject)` with `lastLoginAt NOT NULL`, so an
+administrator cannot pre-create one. The alternative considered and **not**
+taken was inviting an OIDC identity — make `lastLoginAt` nullable, match the
+invitation in `completeLogin`, ~2–3 days reusing the complete OIDC path. It was
+rejected for one reason: it requires an identity provider, and this is an
+on-premise product where the super admin creating the account directly is the
+flow the customer expects.
 
-No auth.js either way.
+**So: a `LocalUser` table mirroring `LocalAdministrator`, ~5–7 days.** The
+administrator creates, disables and resets accounts from the People tab.
+
+Nothing here is a new framework, which is worth stating because "build our own
+auth" sounds larger than it is. Verified: neither `next-auth` nor `@auth/core` is
+a dependency of any workspace, and neither becomes one. Every mechanism is
+already in production for administrators and is mirrored rather than invented —
+`passwordHash`, `failedLoginCount` + `lockedUntil` (enforced at
+`apps/api/src/auth/admin-session.ts:400` against `LOCAL_LOGIN_FAILURE_LIMIT`),
+`passwordChangeRequired` + `passwordChangedAt`, and `disabledAt` for disable
+without delete.
+
+**The real cost is the third credential store**, not the building of it. Two
+things must therefore hold, and both belong on the checklist rather than in
+someone's memory:
+
+- the forced-rotation gate applies to `LocalUser` exactly as it does to
+  `LocalAdministrator`, asserted by a test that fails if either path is missed;
+- lockout thresholds come from one shared constant, not two that drift.
+
+**No auth.js, and no new framework either way.** Verified: neither `next-auth`
+nor `@auth/core` is a dependency of any workspace, and neither needs to become
+one. The local-password option is not "build an auth system" — every part of it
+already runs in production for administrators and would be mirrored, not
+invented:
+
+| Needed | Already exists |
+| --- | --- |
+| password hashing | `LocalAdministrator.passwordHash` |
+| lockout | `failedLoginCount` + `lockedUntil`, enforced in `apps/api/src/auth/admin-session.ts:400` against `LOCAL_LOGIN_FAILURE_LIMIT` |
+| forced rotation | `passwordChangeRequired`, `passwordChangedAt` |
+| disable without delete | `disabledAt` |
+
+So the 5–7 days is mirroring that table for users and keeping the forced-rotation
+gate in lockstep across two credential stores — **not** framework work. The
+honest cost of the option is the third credential store itself, which is a thing
+to maintain forever, rather than any difficulty in building it.
 
 ## Enforcement checklist
 
@@ -745,6 +811,10 @@ No auth.js either way.
 - [ ] every new route resolves its session through `requireAdmin`
 - [ ] every mutation writes an audit event and takes `expectedRevision`
 - [ ] Skills and Memory screens state they are shared per node
+- [ ] the forced-rotation gate covers `LocalUser` as well as `LocalAdministrator`
+- [ ] lockout thresholds come from one shared constant, not two
+- [ ] the seeded default tool set and skill set track admission rather than
+      snapshot it, so a fresh install is not seeded with an empty "everything"
 - [ ] *(F only)* the memory tool takes no division parameter
 - [ ] *(F only)* the scoped store is mirrored into the corpus plane in the same
       increment that introduces it
