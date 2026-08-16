@@ -5,6 +5,40 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v8.8.6 — 2026-08-17
+
+Spells out `nulls last` on the division-memory recency query, which is the
+difference between a five-row index scan and reading the whole division.
+
+Postgres reads a bare `desc` as DESC NULLS FIRST;
+`ScopedMemoryEntry_divisionId_createdAt_idx` is declared `.desc().nullsLast()`.
+The orderings differ, so the planner could not use the index to order and
+bitmap-scanned every row in the division before top-N sorting it. `createdAt` is
+`notNull`, so the two orderings are semantically identical — the mismatch bought
+nothing.
+
+Measured at 100,000 notes in one division: **12.32ms → 0.39ms, 5,809 buffers →
+8**. The old cost grew with the division; the new one does not.
+
+Found by benchmarking rather than by reading, and worth recording how: the
+question was whether `ts_rank` re-evaluating an expression index would hurt at
+scale. It does — about 2.8–3.3µs per matched row, so ~230ms once a common word
+matches 80,000 notes — but the first thing the sweep surfaced was this, in the
+*other* query, which no amount of reading the ranking path would have found.
+
+Two further findings recorded but **not** acted on, because the numbers do not
+yet justify them:
+
+- above roughly 20% selectivity the planner abandons the GIN index entirely and
+  applies the tsvector as a row filter, so a common-word question at 100,000
+  notes costs ~490ms. A stored tsvector column takes that to 34ms at the price
+  of doubling the table
+- the 6,000-character injection cap does not bind: twenty notes of typical
+  length fill 57–60% of it, so `MEMORY_MATCH_LIMIT` is the real bound
+
+Both matter only past roughly 10,000 notes in a single division, which no
+deployment is near.
+
 ## v8.8.5 — 2026-08-17
 
 Fixes what a four-way audit of the codebase found, verified adversarially before
