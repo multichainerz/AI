@@ -46,6 +46,8 @@ export interface ToolingManager {
   listScopedMemory(limit?: number): Promise<ScopedMemoryList>;
   /** A note an administrator writes for one division, read by that division's runs. */
   createScopedMemory(principal: ToolingPrincipal, input: CreateScopedMemory): Promise<ScopedMemoryEntry>;
+  /** Removes one entry, so a note written in error stops being read. */
+  deleteScopedMemory(principal: ToolingPrincipal, entryId: string): Promise<void>;
   listToolsForRun(authorization: string | undefined): Promise<GovernedToolList>;
   setToolStatus(principal: ToolingPrincipal, toolId: string, status: ToolStatus): Promise<void>;
   listGrants(): Promise<ToolGrantList>;

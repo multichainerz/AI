@@ -450,6 +450,34 @@ export class DrizzleToolingManager implements ToolingManager {
     });
   }
 
+  /**
+   * Removes one entry.
+   *
+   * The gap this closes was total: `/scoped-memory` had `GET` and `POST` and
+   * nothing else, so a note extraction got wrong -- a misread fact, something
+   * that should never have been written down -- had no remedy short of SQL on
+   * the control plane's database. Adding memory an agent reads without a way to
+   * remove it is the wrong half of the feature to ship first.
+   *
+   * Hard delete rather than a tombstone. What makes a note dangerous is that a
+   * run reads it, and a soft-deleted row invites exactly one future bug: a
+   * filter forgotten in one of the two places that select from this table.
+   */
+  async deleteScopedMemory(principal: ToolingPrincipal, entryId: string): Promise<void> {
+    await this.database.transaction(async (transaction) => {
+      const removed = await transaction
+        .delete(scopedMemoryEntry)
+        .where(eq(scopedMemoryEntry.id, entryId))
+        .returning({ id: scopedMemoryEntry.id, divisionId: scopedMemoryEntry.divisionId });
+      if (removed.length !== 1) throw new ToolingNotFoundError("The memory entry is missing or already removed.");
+      await transaction.insert(auditEvent).values({
+        actorType: "USER", actorId: principal.id, action: "memory.entry_removed",
+        resourceType: "ScopedMemoryEntry", resourceId: entryId, outcome: "SUCCESS",
+        metadata: { divisionId: removed[0]!.divisionId },
+      });
+    });
+  }
+
   async invoke(toolSlug: string, invocation: GovernedToolInvocation): Promise<GovernedToolResult> {
     const parsedAuthorization = RUN_AUTHORIZATION.exec(invocation.authorization);
     if (!parsedAuthorization || !UUID.test(invocation.requestId)) throw new ToolingDeniedError("Run authorization or request ID is invalid.");

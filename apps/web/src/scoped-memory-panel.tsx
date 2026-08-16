@@ -1,6 +1,6 @@
 import type { Division, ScopedMemoryEntry } from "@orcasynapse/contracts";
 import { useEffect, useState } from "react";
-import { OrcaSynapseApiError, createScopedMemory, getDivisions, getScopedMemory } from "./api.js";
+import { OrcaSynapseApiError, createScopedMemory, deleteScopedMemory, getDivisions, getScopedMemory } from "./api.js";
 import { Alert, Button, EmptyState, Field, MicroLabel, Panel, PanelHeading, Select, StatusText, Textarea } from "./ui/index.js";
 
 /** The option value standing for "no division", since a select cannot carry null. */
@@ -26,6 +26,7 @@ export function ScopedMemoryPanel({ onSessionExpired }: { onSessionExpired: () =
   const [content, setContent] = useState("");
   const [divisionId, setDivisionId] = useState<string>(DEPLOYMENT_WIDE);
   const [saving, setSaving] = useState(false);
+  const [confirming, setConfirming] = useState<string | null>(null);
 
   const failed = (cause: unknown, fallback: string) => {
     if (cause instanceof OrcaSynapseApiError && cause.status === 401) {
@@ -53,6 +54,23 @@ export function ScopedMemoryPanel({ onSessionExpired }: { onSessionExpired: () =
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const refresh = async () => {
+    const { items, total: counted } = await getScopedMemory();
+    setEntries(items);
+    setTotal(counted);
+  };
+
+  const remove = async (entryId: string) => {
+    setConfirming(null);
+    try {
+      await deleteScopedMemory(entryId);
+      await refresh();
+      setError(null);
+    } catch (cause) {
+      failed(cause, "The note could not be removed.");
+    }
+  };
+
   const save = async () => {
     setSaving(true);
     try {
@@ -60,9 +78,7 @@ export function ScopedMemoryPanel({ onSessionExpired }: { onSessionExpired: () =
         content: content.trim(),
         divisionId: divisionId === DEPLOYMENT_WIDE ? null : divisionId,
       });
-      const { items, total: counted } = await getScopedMemory();
-      setEntries(items);
-      setTotal(counted);
+      await refresh();
       setContent("");
       setError(null);
     } catch (cause) {
@@ -133,7 +149,28 @@ export function ScopedMemoryPanel({ onSessionExpired }: { onSessionExpired: () =
                   * as absent would suggest every division can see it.
                   */}
                 <MicroLabel>{entry.divisionName ?? "Deployment-wide"}</MicroLabel>
-                <MicroLabel>{new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(new Date(entry.createdAt))}</MicroLabel>
+                <div className="flex items-center gap-3">
+                  {/*
+                    * Where the note came from. A null run id means an
+                    * administrator wrote it; anything else was extracted from a
+                    * conversation, which is the one an operator is most likely
+                    * to want to check or remove.
+                    */}
+                  <MicroLabel>{entry.runId === null ? "Curated" : "From a run"}</MicroLabel>
+                  <MicroLabel>{new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(new Date(entry.createdAt))}</MicroLabel>
+                  {/*
+                    * Two-step rather than a dialog: the row being removed stays
+                    * on screen and under the pointer, so what is about to go is
+                    * never in doubt. Deletion is not recoverable.
+                    */}
+                  <Button
+                    variant="ghost"
+                    onClick={() => (confirming === entry.id ? void remove(entry.id) : setConfirming(entry.id))}
+                    onBlur={() => setConfirming((current) => (current === entry.id ? null : current))}
+                  >
+                    {confirming === entry.id ? "Confirm removal" : "Remove"}
+                  </Button>
+                </div>
               </div>
               <p className="m-0 whitespace-pre-wrap text-body text-text">{entry.content}</p>
             </article>

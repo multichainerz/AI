@@ -227,6 +227,24 @@ export async function registerAdminToolingRoutes(app: FastifyInstance, options: 
     return reply.code(201).send(scopedMemoryEntrySchema.parse(await manager.createScopedMemory(principal, input.data)));
   });
 
+  /*
+   * `corpus:delete`, the gate the corpus already uses for removing content an
+   * agent can read -- the same act, on the same plane, so the same scope.
+   */
+  app.delete("/scoped-memory/:entryId", async (request, reply) => {
+    const principal = await requireAdmin(request, reply, options, "corpus:delete");
+    const manager = managerOrLocked(options, reply);
+    const entryId = uuid((request.params as Record<string, unknown>).entryId);
+    if (!principal || !manager) return;
+    if (!entryId) return reply.code(400).send({ error: "INVALID_REQUEST", message: "A memory entry id is required." });
+    try {
+      await manager.deleteScopedMemory(principal, entryId);
+      return reply.code(204).send();
+    } catch (cause) {
+      return sendToolingError(reply, cause);
+    }
+  });
+
   app.patch("/tools/:toolId", async (request, reply) => {
     const principal = await requireAdmin(request, reply, options, "tools:manage");
     const manager = managerOrLocked(options, reply);

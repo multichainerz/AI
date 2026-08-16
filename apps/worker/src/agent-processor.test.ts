@@ -370,6 +370,66 @@ describe("DrizzleAgentProcessor division memory", () => {
   });
 
   /*
+   * Relevance, not recency, and the reason it is a cost question rather than a
+   * quality one.
+   *
+   * Recency ordering spends the same budget every turn regardless of what was
+   * asked: past the cap, a division's oldest and most settled facts stop being
+   * seen at all, while whatever happened to be written yesterday is carried
+   * into every request. The note that answers the question is the one worth
+   * paying for.
+   */
+  it("prefers a note that answers the question over newer ones that do not", async () => {
+    const { runId, jobId } = await seed();
+    const alpha = await assignDivision(runId, "Alpha");
+    await context.database.insert(scopedMemoryEntry).values({
+      divisionId: alpha, content: "The policy review happens every March.",
+      createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    });
+    // Enough newer, unrelated notes to push the relevant one past any
+    // recency-ordered cap. This is the arrangement a division reaches by simply
+    // being used.
+    await context.database.insert(scopedMemoryEntry).values(
+      [...Array(45).keys()].map((index) => ({
+        divisionId: alpha,
+        content: `Unrelated note number ${index} about catering arrangements.`,
+        createdAt: new Date(`2026-08-${String((index % 27) + 1).padStart(2, "0")}T00:00:00.000Z`),
+      })),
+    );
+
+    // The seeded run asks "Summarize the policy."
+    const instructions = await submittedInstructions(runId, jobId);
+
+    expect(instructions).toContain("The policy review happens every March.");
+    expect(instructions).not.toContain("catering arrangements");
+  });
+
+  /*
+   * The floor, and why it is not zero.
+   *
+   * Lexical matching returns nothing for a question sharing no vocabulary with
+   * any note -- which includes most greetings and follow-ups. Injecting nothing
+   * there would make a division's standing facts invisible exactly when a
+   * conversation is getting started.
+   */
+  it("still carries recent notes when the question matches none of them", async () => {
+    const { runId, jobId } = await seed({ input: "Hello." });
+    const alpha = await assignDivision(runId, "Alpha");
+    await context.database.insert(scopedMemoryEntry).values(
+      [...Array(9).keys()].map((index) => ({
+        divisionId: alpha, content: `Standing fact number ${index} about invoicing.`,
+      })),
+    );
+
+    const instructions = await submittedInstructions(runId, jobId);
+
+    expect(instructions).toContain("about invoicing");
+    // Bounded, not the whole store: the floor exists so the agent is not blind,
+    // not so an unmatched question costs the same as a matched one.
+    expect(instructions.match(/Standing fact number/g) ?? []).toHaveLength(5);
+  });
+
+  /*
    * An empty section would read to the model as "your division has learned
    * nothing", which is a claim rather than an absence -- and on a fresh install
    * it is the only state there is.
@@ -460,6 +520,65 @@ describe("DrizzleAgentProcessor memory extraction", () => {
     const [message] = await context.database.select().from(chatMessage).where(eq(chatMessage.id, messageId));
     expect(message?.status).toBe("COMPLETED");
     expect(await context.database.select().from(scopedMemoryEntry)).toHaveLength(0);
+  });
+
+  /*
+   * Dedup, and why it is more than tidiness.
+   *
+   * Extraction restates the same durable fact across turns -- that is what
+   * makes it durable -- so without this a division accumulates one copy per
+   * conversation that touched the subject, and every later run pays context for
+   * each of them.
+   *
+   * It is also what makes the write idempotent, which the sweeper in piece C
+   * depends on: a batch retried after a partial failure must not rewrite what
+   * it already wrote.
+   */
+  it("does not write a note the division already has", async () => {
+    const { runId, jobId } = await seed();
+    const alpha = await assignDivision(runId, "Alpha");
+    await context.database.insert(scopedMemoryEntry).values({
+      divisionId: alpha, content: "Alpha reconciles supplier invoices weekly.",
+    });
+    const processor = new DrizzleAgentProcessor(
+      context.database, runtime() as never, CAPABILITIES,
+      extractor(["Alpha reconciles supplier invoices weekly.", "Alpha uses a two-signature rule."]),
+    );
+
+    await processor.process({ runId }, jobId, WORKER_ID);
+
+    const rows = await context.database.select().from(scopedMemoryEntry);
+    expect(rows).toHaveLength(2);
+    expect(rows.map(({ content }) => content).sort()).toEqual([
+      "Alpha reconciles supplier invoices weekly.",
+      "Alpha uses a two-signature rule.",
+    ]);
+  });
+
+  /*
+   * Dedup is scoped, like everything else here. The same sentence held by two
+   * divisions is two facts about two organisations, not one duplicated -- and a
+   * dedup that reached across divisions would silently deny one of them a note
+   * because another already had it.
+   */
+  it("treats an identical note in another division as a different note", async () => {
+    const { runId, jobId } = await seed();
+    const alpha = await assignDivision(runId, "Alpha");
+    const [beta] = await context.database.insert(division)
+      .values({ slug: `div-${randomUUID().slice(0, 8)}`, displayName: "Beta" }).returning({ id: division.id });
+    await context.database.insert(scopedMemoryEntry).values({
+      divisionId: beta!.id, content: "Invoices are approved by two people.",
+    });
+    const processor = new DrizzleAgentProcessor(
+      context.database, runtime() as never, CAPABILITIES,
+      extractor(["Invoices are approved by two people."]),
+    );
+
+    await processor.process({ runId }, jobId, WORKER_ID);
+
+    const rows = await context.database.select().from(scopedMemoryEntry);
+    expect(rows).toHaveLength(2);
+    expect(rows.filter((row) => row.divisionId === alpha)).toHaveLength(1);
   });
 
   it("writes nothing when there was nothing worth keeping", async () => {

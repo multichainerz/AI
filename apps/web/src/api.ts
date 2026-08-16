@@ -1304,6 +1304,13 @@ export async function getScopedMemory(): Promise<ScopedMemoryList> {
   return scopedMemoryListSchema.parse(await parsedResponse(response));
 }
 
+export async function deleteScopedMemory(entryId: string): Promise<void> {
+  const response = await fetch(`/api/v1/admin/tooling/scoped-memory/${entryId}`, {
+    method: "DELETE", headers: adminHeaders(), credentials: "same-origin",
+  });
+  if (!response.ok) await parsedResponse(response);
+}
+
 export async function createScopedMemory(input: CreateScopedMemory): Promise<ScopedMemoryEntry> {
   const response = await fetch("/api/v1/admin/tooling/scoped-memory", {
     method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),

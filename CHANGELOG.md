@@ -5,6 +5,49 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v8.6.0 — 2026-08-16
+
+Pieces A and B of `docs/MEMORY_HARDENING_PLAN.md`: injection selects by
+relevance instead of recency, and a memory entry can finally be removed.
+
+Relevance:
+
+- rank against the question using the GIN index the table has carried since it
+  was created, with a five-entry recency floor when nothing matches, so a
+  greeting does not leave a division's standing facts invisible
+- **build an OR query rather than using `plainto_tsquery`**, which ANDs its
+  terms — and under the `simple` configuration nothing is a stop word, so
+  "Summarize the policy" demanded a note containing *summarize* and *the* and
+  *policy*. It matched almost nothing, and the failure was silent: the query ran,
+  returned nothing, and the floor quietly answered every request
+- drop tokens under three characters as the stop-word handling `simple` does not
+  do, and keep only letters and digits, which is also what makes the terms safe
+  to interpolate into `to_tsquery`
+- say "most relevant first" in the prompt, which recency ordering had made untrue
+
+Removal, which had no route at all:
+
+- add `DELETE /api/v1/admin/tooling/scoped-memory/:id` behind `corpus:delete`,
+  the gate the corpus already uses for removing content an agent can read
+- hard delete rather than a tombstone: what makes a note dangerous is that a run
+  reads it, and a soft-deleted row invites one forgotten filter in one of the two
+  places that select from this table
+- a two-step confirm on the row itself rather than a dialog, so what is about to
+  go is never in doubt
+- label each entry as curated or from a run, which the panel could already
+  distinguish by a null `runId` and did not say
+
+Dedup, which piece C depends on:
+
+- skip a note the division already holds, exactly matched — extraction restates
+  the same durable fact across turns, which is what makes it durable, so without
+  this a division accumulates one copy per conversation that touched the subject
+- scope the dedup to the division: the same sentence held by two divisions is
+  two facts about two organisations, and a dedup reaching across them would deny
+  one division a note because another already had it
+- this is also what makes the write idempotent, which the sweeper in piece C
+  needs when it retries a partially failed batch
+
 ## v8.5.1 — 2026-08-16
 
 Adds `docs/MEMORY_HARDENING_PLAN.md`, covering the three things flagged when

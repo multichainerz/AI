@@ -734,6 +734,36 @@ describe("administrator-curated division memory", () => {
     expect(financeRows).toHaveLength(0);
   });
 
+  /*
+   * Removal, which had no route at all until now.
+   *
+   * Shipping memory an agent reads without a way to take something out of it
+   * leaves a note extraction got wrong -- a misread fact, something that should
+   * never have been written down -- with no remedy short of SQL against the
+   * control plane's database.
+   */
+  it("removes an entry and records who removed it", async () => {
+    const [finance] = await context.database.insert(division)
+      .values({ slug: "finance", displayName: "Finance" }).returning();
+    const created = await manager().createScopedMemory(
+      principal,
+      { content: "A fact recorded in error.", divisionId: finance!.id },
+    );
+
+    await manager().deleteScopedMemory(principal, created.id);
+
+    expect(await context.database.select().from(scopedMemoryEntry)).toHaveLength(0);
+    const events = await context.database.select().from(auditEvent)
+      .where(eq(auditEvent.action, "memory.entry_removed"));
+    expect(events).toHaveLength(1);
+    expect(events[0]?.actorId).toBe(principal.id);
+  });
+
+  it("refuses to remove an entry that is not there", async () => {
+    await expect(manager().deleteScopedMemory(principal, randomUUID()))
+      .rejects.toBeInstanceOf(ToolingNotFoundError);
+  });
+
   it("records an audit event naming who wrote it", async () => {
     await manager().createScopedMemory(
       principal,
