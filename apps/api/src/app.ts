@@ -13,6 +13,7 @@ import { registerAdminSessionRoutes } from "./auth/routes.js";
 import { registerChatMetricsRoutes, registerChatRoutes } from "./chat/routes.js";
 import { registerIdentityRoutes } from "./identity/routes.js";
 import { registerAdminAgentRoutes, registerAgentRoutes } from "./agents/routes.js";
+import { registerConfigurationSetRoutes } from "./configuration-sets/routes.js";
 import { registerAdminToolingRoutes, registerMcpGatewayRoutes } from "./tooling/routes.js";
 import { registerAiOpsRoutes } from "./ai-ops/routes.js";
 import { registerModelRoutes } from "./models/routes.js";
@@ -300,6 +301,14 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
       ...(runtime.toolingManager ? { manager: runtime.toolingManager } : {}),
     }),
     { prefix: "/api/v1/admin/tooling" },
+  );
+
+  await app.register(
+    async (sets) => registerConfigurationSetRoutes(sets, {
+      ...(runtime.sessionManager ? { sessionManager: runtime.sessionManager } : {}),
+      ...(runtime.configurationSetManager ? { manager: runtime.configurationSetManager } : {}),
+    }),
+    { prefix: "/api/v1/admin/configuration" },
   );
 
   await app.register(

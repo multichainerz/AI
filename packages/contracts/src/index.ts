@@ -2,6 +2,7 @@ export * from "./admin.js";
 export * from "./ai-ops.js";
 export * from "./agents.js";
 export * from "./chat.js";
+export * from "./configuration-sets.js";
 export * from "./connections.js";
 export * from "./corpus.js";
 export * from "./runtime-operations.js";

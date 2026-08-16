@@ -5,6 +5,40 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v6.3.0 — 2026-08-16
+
+Makes tool sets and skill sets real: contracts, a manager and admin routes at
+`/api/v1/admin/configuration`. v6.2.0 added the tables; this is what can read and
+write them. No dashboard yet.
+
+The interesting half is what a *tracking* set answers. The seeded defaults mean
+"everything", and everything is not a list — it is whatever the deployment
+admits at the moment you ask. So `resolvedToolsetNames` is filled in from
+`RuntimeToolsetAdmission` on read, and is deliberately **null** on a set that
+names its own members: a caller that could not tell the two apart would print
+"these toolsets" for a set that actually means "whatever is admitted", and would
+be wrong the moment admission moved.
+
+- add `packages/contracts/src/configuration-sets.ts`, one module for both
+  because they are the same shape with a different payload
+- add `DrizzleConfigurationSetManager` with the `expectedRevision` and
+  audit-event pattern the other managers use
+- resolve a tracking set against admission on read; leave `resolvedToolsetNames`
+  null on a set that lists its own members
+- refuse to give a tracking set a fixed member list, so "what is in this set?"
+  never has two answers with nothing deciding between them
+- refuse to delete a set a profile version references, **naming the profile** —
+  "in use" leaves an operator with no next step, and `ON DELETE RESTRICT` is the
+  backstop rather than the explanation
+- allow retiring a set instead of deleting it, hidden from the list unless asked
+- reuse `tools:read` / `tools:manage` and `corpus:metadata:read` / `corpus:write`
+  rather than adding a scope, per the plan's scope model
+- correct the api test-file budget, which the static gate caught again
+
+`AgentToolGrant` and `GovernedTool` are untouched. A tool set names Hermes
+toolsets; those name governed tools on the MCP plane. Keeping the two apart is
+what stops there being two competing answers to who may use a tool.
+
 ## v6.2.0 — 2026-08-16
 
 Adds the tool set and skill set concepts to the schema, and seeds one of each at
