@@ -14,6 +14,7 @@ import { registerChatMetricsRoutes, registerChatRoutes } from "./chat/routes.js"
 import { registerIdentityRoutes } from "./identity/routes.js";
 import { registerAdminAgentRoutes, registerAgentRoutes } from "./agents/routes.js";
 import { registerConfigurationSetRoutes } from "./configuration-sets/routes.js";
+import { registerDivisionRoutes } from "./divisions/routes.js";
 import { registerAdminToolingRoutes, registerMcpGatewayRoutes } from "./tooling/routes.js";
 import { registerAiOpsRoutes } from "./ai-ops/routes.js";
 import { registerModelRoutes } from "./models/routes.js";
@@ -301,6 +302,14 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
       ...(runtime.toolingManager ? { manager: runtime.toolingManager } : {}),
     }),
     { prefix: "/api/v1/admin/tooling" },
+  );
+
+  await app.register(
+    async (divisions) => registerDivisionRoutes(divisions, {
+      ...(runtime.sessionManager ? { sessionManager: runtime.sessionManager } : {}),
+      ...(runtime.divisionManager ? { manager: runtime.divisionManager } : {}),
+    }),
+    { prefix: "/api/v1/admin/divisions" },
   );
 
   await app.register(

@@ -5,6 +5,37 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v6.7.0 — 2026-08-16
+
+Divisions become administrable. v6.4.0 made the boundary real but left divisions
+creatable only by direct database access; this is the contract, manager and
+routes at `/api/v1/admin/divisions`.
+
+- create, list, rename, suspend and delete a division, with the
+  `expectedRevision` and audit-event pattern the other managers use
+- assign a profile to a division, or return it to deployment-wide with `null`
+- count what each division holds, from the rows rather than a stored counter —
+  these numbers exist so an administrator can see the blast radius of a change,
+  which a count that can drift from the rows would defeat
+- refuse to delete a division that still holds profiles or users, naming what is
+  in the way and pointing at suspension: an administrator told only "in use" has
+  no next step
+- refuse to assign a profile *into* a suspended division, while always allowing
+  one out — moving work into a division taken out of use would create profiles
+  nobody can reach, and moving work out strands nothing
+- guard the assignment with the profile's `currentVersion`, which moves on every
+  configuration change, so a caller holding a stale profile cannot silently
+  re-home it after somebody else edited it
+
+Reads behind `agents:read` and writes behind `agents:manage`, adding no scope
+and no role: a division decides which profiles a user reaches, which is the
+decision the Agents screens already make. That separation is what lets an
+administrator create a division without a release.
+
+The end-to-end test asserts an assignment against `profileVisibleTo` itself
+rather than a restatement of the rule, so administration and enforcement cannot
+drift apart.
+
 ## v6.6.0 — 2026-08-16
 
 Gives Models, Prompts and Guardrails their own rail area, **Gateway**, and

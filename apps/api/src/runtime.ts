@@ -38,6 +38,8 @@ import type { GuardrailManager } from "./guardrails/guardrail-manager.js";
 import { DrizzleGuardrailManager } from "./guardrails/drizzle-guardrail-manager.js";
 import { DrizzleAuditManager, type AuditManager } from "./audit/audit-manager.js";
 import { SiemForwarder } from "./audit/siem-forwarder.js";
+import type { DivisionManager } from "./divisions/division-manager.js";
+import { DrizzleDivisionManager } from "./divisions/drizzle-division-manager.js";
 import type { ConfigurationSetManager } from "./configuration-sets/configuration-set-manager.js";
 import { DrizzleConfigurationSetManager } from "./configuration-sets/drizzle-configuration-set-manager.js";
 import type { PromptManager } from "./prompts/prompt-manager.js";
@@ -68,6 +70,7 @@ export interface RuntimeServices {
   guardrailManager?: GuardrailManager;
   promptManager?: PromptManager;
   configurationSetManager?: ConfigurationSetManager;
+  divisionManager?: DivisionManager;
   auditManager?: AuditManager;
   siemForwarder?: SiemForwarder;
   agentManager?: AgentManager;
@@ -135,6 +138,7 @@ export function createRuntimeServices(): RuntimeServices {
     const guardrailManager = new DrizzleGuardrailManager(database);
     const promptManager = new DrizzlePromptManager(database);
     const configurationSetManager = new DrizzleConfigurationSetManager(database);
+    const divisionManager = new DrizzleDivisionManager(database);
     const auditManager = new DrizzleAuditManager(database);
     const siemForwarder = new SiemForwarder(database, connectionManager, {
       error: (message, error) => console.error(message, error),
@@ -197,6 +201,7 @@ export function createRuntimeServices(): RuntimeServices {
       guardrailManager,
       promptManager,
       configurationSetManager,
+      divisionManager,
       auditManager,
       siemForwarder,
       agentManager,

@@ -5,6 +5,7 @@ export * from "./chat.js";
 export * from "./configuration-sets.js";
 export * from "./connections.js";
 export * from "./corpus.js";
+export * from "./divisions.js";
 export * from "./runtime-operations.js";
 export * from "./identity.js";
 export * from "./inference-gateway.js";
