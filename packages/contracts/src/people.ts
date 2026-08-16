@@ -16,6 +16,20 @@ import { z } from "zod";
 
 export const personIdentifierSchema = z.uuid();
 
+/**
+ * The group every locally created person belongs to.
+ *
+ * A tool grant matches an enterprise identity by intersecting the user's groups
+ * with the grant's `allowedGroups`. An identity provider supplies groups; a
+ * person an administrator created has none, so without this every grant would
+ * refuse them and no local person could ever call a tool.
+ *
+ * A named group rather than a wildcard, so the matcher stays one rule --
+ * intersection -- with nothing to special-case, and so an administrator can see
+ * in the grant exactly who it admits.
+ */
+export const LOCAL_PEOPLE_GROUP = "orcasynapse:people";
+
 const usernameSchema = z.string().trim().min(2).max(64).regex(/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/);
 const displayNameSchema = z.string().trim().min(2).max(200);
 const passwordSchema = z.string().min(12).max(1_024);

@@ -13,15 +13,17 @@ import type {
   UpdateAgentProfile,
   UpdateAgentRuntimeControl,
 } from "@orcasynapse/contracts";
-import { agentSkillReferenceSchema } from "@orcasynapse/contracts";
+import { ADMIN_ROLES, agentSkillReferenceSchema, LOCAL_PEOPLE_GROUP } from "@orcasynapse/contracts";
 import {
   agentProfile,
   agentProfileVersion,
   agentRun,
   agentRunEvent,
   agentRuntimeControl,
+  agentToolGrant,
   auditEvent,
   componentCompatibility,
+  governedTool,
   hermesRuntimeNode,
   modelDeployment,
   platformArchitectureDecision,
@@ -360,6 +362,38 @@ export class DrizzleAgentManager implements AgentManager {
     };
   }
 
+  /**
+   * Grant the governed memory tools to a newly minted version.
+   *
+   * The installer seeds these grants for every version that exists at upgrade
+   * time; without this, a profile created the day after would silently be the
+   * only one that cannot remember anything, and an operator comparing two
+   * profiles would find no setting explaining the difference.
+   *
+   * Permissive by default and narrowable afterwards -- see the seeder for why
+   * that direction is the affordable one. Both tools are READ_ONLY and the
+   * division comes from the run rather than the grant, so this widens who may
+   * keep notes and never what any of them can read.
+   */
+  private async grantMemoryTools(
+    transaction: { select: OrcaSynapseDatabase["select"]; insert: OrcaSynapseDatabase["insert"] },
+    profileVersionId: string,
+  ): Promise<void> {
+    const tools = await transaction
+      .select({ id: governedTool.id })
+      .from(governedTool)
+      .where(inArray(governedTool.handlerKey, ["orcasynapse.memory.remember", "orcasynapse.memory.recall"]));
+    if (tools.length === 0) return;
+    await transaction.insert(agentToolGrant).values(tools.map(({ id }) => ({
+      profileVersionId,
+      toolId: id,
+      enabled: true,
+      allowedGroups: [LOCAL_PEOPLE_GROUP],
+      // Every role, from the one list that defines them.
+      allowedAdminRoles: [...ADMIN_ROLES],
+    })));
+  }
+
   async listProfiles(principal: AgentPrincipal, includeInactive: boolean): Promise<AgentProfileList> {
     const [profiles, runtime] = await Promise.all([
       this.database.query.agentProfile.findMany({
@@ -421,6 +455,7 @@ export class DrizzleAgentManager implements AgentManager {
           })
           .returning();
         if (!version) throw new AgentConflictError("The agent configuration could not be created.");
+        await this.grantMemoryTools(transaction, version.id);
         await transaction.insert(auditEvent).values({
           actorType: "USER", actorId: principal.id, action: "agent.profile_created",
           resourceType: "AgentProfile", resourceId: profile.id, outcome: "SUCCESS",
@@ -468,7 +503,7 @@ export class DrizzleAgentManager implements AgentManager {
         maxConcurrentRuns: input.maxConcurrentRuns ?? current.maxConcurrentRuns,
         safeMode: input.safeMode ?? current.safeMode,
       };
-      await transaction.insert(agentProfileVersion).values({
+      const [minted] = await transaction.insert(agentProfileVersion).values({
         profileId,
         version: nextVersion,
         ...nextConfiguration,
@@ -481,7 +516,13 @@ export class DrizzleAgentManager implements AgentManager {
          * not quietly re-resolve them to whatever the defaults are today.
          */
         ...(await this.resolveSets(transaction, input, current)),
-      });
+      }).returning({ id: agentProfileVersion.id });
+      /*
+       * A new version is a new grant target: `AgentToolGrant` hangs off the
+       * version, not the profile, so an edit that mints v2 would otherwise
+       * leave the agent able to remember on v1 and not on v2.
+       */
+      if (minted) await this.grantMemoryTools(transaction, minted.id);
       await transaction
         .update(agentProfile)
         .set({ currentVersion: nextVersion })

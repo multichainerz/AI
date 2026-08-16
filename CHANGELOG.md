@@ -5,6 +5,41 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v7.9.0 — 2026-08-16
+
+Makes a fresh install arrive able to remember, rather than able to be configured
+to remember. The governed memory tools are seeded and granted by default.
+
+An administrator who has just installed this has no basis yet for deciding which
+agents should keep notes. Requiring that decision first means the feature is off
+for everyone who did not already know it existed; they can narrow it later,
+which is the direction that needs knowledge rather than the direction that needs
+guessing.
+
+Permissive is cheap here because **the grant is not the boundary**. Both tools
+are `READ_ONLY`, and the division a call reads and writes comes from the run
+authorization rather than from the grant — so a wider grant lets more agents
+keep notes, and never lets any agent read another division's. A `CONSEQUENTIAL`
+tool would be a different decision, and would still pass through the human
+approval inbox at call time regardless.
+
+**A blocker found on the way, which would have made all of this inert.** A grant
+matches an enterprise identity by intersecting the user's groups with the
+grant's `allowedGroups`. An identity provider supplies groups; a person an
+administrator created had none — so `(null ?? []).some(...)` is always false and
+every tool call from a locally created person would have been refused. Locally
+created people now carry `orcasynapse:people`, and the grants name it. A named
+group rather than a wildcard, so the matcher stays one rule with nothing to
+special-case.
+
+- seed `remember` and `recall` as active, read-only governed tools
+- grant both to every profile version, and to each new one as it is minted —
+  `AgentToolGrant` hangs off the version, so an edit that mints v2 would
+  otherwise leave an agent able to remember on v1 and not on v2
+- skip a version that already has a grant, so an administrator who deliberately
+  removed one does not have it restored by the next upgrade
+- take the role list from `ADMIN_ROLES` rather than repeating it
+
 ## v7.8.0 — 2026-08-16
 
 Shows division memory in Agents → Memory. **Increment F is complete, and with it

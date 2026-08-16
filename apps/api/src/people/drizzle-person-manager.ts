@@ -7,6 +7,7 @@ import {
   localUser,
   type OrcaSynapseDatabase,
 } from "@orcasynapse/database";
+import { LOCAL_PEOPLE_GROUP } from "@orcasynapse/contracts";
 import { hashLocalPassword, localPasswordIsValid } from "@orcasynapse/security";
 import { and, asc, eq, isNull } from "drizzle-orm";
 import type { AdminPrincipal } from "../auth/admin-session.js";
@@ -100,6 +101,9 @@ export class DrizzlePersonManager {
             displayName: input.displayName,
             email: input.email ?? null,
             divisionId: input.divisionId ?? null,
+            // Without this, no grant can ever match them: the matcher
+            // intersects groups, and a person with none intersects nothing.
+            groups: [LOCAL_PEOPLE_GROUP],
             // Never signed in yet, which is exactly what the nullable column
             // was widened to express.
             lastLoginAt: null,

@@ -125,6 +125,82 @@ async function seedDefaultConfigurationSets(pool: Pool): Promise<void> {
   );
 }
 
+/** The group every locally created person carries; grants name it to mean "everyone". */
+const LOCAL_PEOPLE_GROUP = "orcasynapse:people";
+
+/**
+ * The governed memory tools, and a grant for every profile version.
+ *
+ * Permissive on a fresh install, deliberately. An administrator who has just
+ * installed this has no basis yet for deciding which agents should remember
+ * things; making them configure it first would mean the feature is off for
+ * everybody who did not already know it existed. They can narrow it later,
+ * which is the direction that requires knowledge rather than the direction that
+ * requires guessing.
+ *
+ * Permissive is also cheap here, because granting these two changes no
+ * boundary. Both are `READ_ONLY`, neither acts on the world, and the division a
+ * call reads and writes comes from the run authorization rather than the grant
+ * -- so a wider grant lets more agents keep notes, never lets any agent read
+ * another division's. A `CONSEQUENTIAL` tool would be a different decision, and
+ * still passes through the human approval inbox at call time regardless.
+ */
+const MEMORY_TOOLS = [
+  {
+    slug: "remember",
+    displayName: "Remember",
+    description: "Save a note for this division. Only agents in the same division can read it back.",
+    handlerKey: "orcasynapse.memory.remember",
+    inputSchema: {
+      type: "object",
+      properties: { text: { type: "string", description: "What to remember." } },
+      required: ["text"],
+    },
+  },
+  {
+    slug: "recall",
+    displayName: "Recall",
+    description: "Search what this division has remembered.",
+    handlerKey: "orcasynapse.memory.recall",
+    inputSchema: {
+      type: "object",
+      properties: { query: { type: "string", description: "Words to search for. Omit for the most recent." } },
+    },
+  },
+] as const;
+
+async function seedMemoryTools(pool: Pool): Promise<void> {
+  for (const tool of MEMORY_TOOLS) {
+    await pool.query(
+      `INSERT INTO "GovernedTool" ("slug", "displayName", "description", "risk", "status", "handlerKey", "inputSchema", "updatedAt")
+       VALUES ($1, $2, $3, 'READ_ONLY', 'ACTIVE', $4, $5::jsonb, CURRENT_TIMESTAMP)
+       ON CONFLICT ("slug") DO NOTHING`,
+      [tool.slug, tool.displayName, tool.description, tool.handlerKey, JSON.stringify(tool.inputSchema)],
+    );
+  }
+  /*
+   * Grant to every profile version that does not already have one.
+   *
+   * `WHERE NOT EXISTS` rather than a blanket insert, so an administrator who
+   * has deliberately removed a grant does not have it restored on the next
+   * upgrade -- the seed opens the door once, it does not keep reopening it.
+   */
+  await pool.query(
+    `INSERT INTO "AgentToolGrant" ("profileVersionId", "toolId", "enabled", "allowedGroups", "allowedAdminRoles", "updatedAt")
+     SELECT v."id", t."id", true, ARRAY[$1]::text[],
+            ARRAY['PLATFORM_ADMIN','SECURITY_ADMIN','OPERATIONS_ADMIN','AUDITOR']::"AdministratorRole"[],
+            CURRENT_TIMESTAMP
+       FROM "AgentProfileVersion" v
+       CROSS JOIN "GovernedTool" t
+      WHERE t."handlerKey" IN ('orcasynapse.memory.remember', 'orcasynapse.memory.recall')
+        AND NOT EXISTS (
+          SELECT 1 FROM "AgentToolGrant" g
+           WHERE g."profileVersionId" = v."id" AND g."toolId" = t."id"
+        )`,
+    [LOCAL_PEOPLE_GROUP],
+  );
+}
+
 /**
  * Resolves the committed migration folder from either the built or the source
  * layout, so the same entry point works in the container and in development.
@@ -174,6 +250,7 @@ export async function runMigrations(connectionString: string): Promise<void> {
     // After the profile, never before: the backfill claims every version that
     // has no set, and the seeded profile's version must be one of them.
     await seedDefaultConfigurationSets(pool);
+    await seedMemoryTools(pool);
     await pool.query(
       `INSERT INTO "SchemaMetadata" ("id", "epoch") VALUES ('current', $1)
        ON CONFLICT ("id") DO UPDATE SET "epoch" = EXCLUDED."epoch"`,

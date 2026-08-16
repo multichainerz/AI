@@ -1,8 +1,8 @@
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createTestDatabase, type TestDatabase } from "./testing.js";
 import { DEFAULT_SKILL_SET_SLUG, DEFAULT_TOOL_SET_SLUG } from "./drizzle/migrate.js";
-import { agentProfileVersion, skillSet, toolSet } from "./drizzle/schema.js";
+import { agentProfileVersion, agentToolGrant, governedTool, skillSet, toolSet } from "./drizzle/schema.js";
 
 let context: TestDatabase;
 
@@ -62,5 +62,45 @@ describe("the default configuration sets seeded at installation", () => {
       expect(version.toolSetId).not.toBeNull();
       expect(version.skillSetId).not.toBeNull();
     }
+  });
+});
+
+/*
+ * A fresh install should arrive able to remember, not able to be configured to
+ * remember. An administrator who has just installed this has no basis yet for
+ * deciding which agents keep notes; making them configure it first means the
+ * feature is off for everyone who did not already know it existed.
+ *
+ * Cheap to be permissive here because the grant is not the boundary: both tools
+ * are READ_ONLY, and the division a call reads and writes comes from the run
+ * authorization. A wider grant lets more agents keep notes; it never lets one
+ * read another division's.
+ */
+describe("the governed memory tools seeded at installation", () => {
+  it("seeds both tools as active and read-only", async () => {
+    const tools = await context.database
+      .select().from(governedTool)
+      .where(inArray(governedTool.handlerKey, ["orcasynapse.memory.remember", "orcasynapse.memory.recall"]));
+
+    expect(tools).toHaveLength(2);
+    expect(tools.every((tool) => tool.status === "ACTIVE" && tool.risk === "READ_ONLY")).toBe(true);
+  });
+
+  /*
+   * The half that actually makes it work. A seeded tool nobody is granted is a
+   * row in a table, not a capability -- `listToolsForRun` returns only granted
+   * tools, so without this the agent never sees them.
+   */
+  it("grants both to every profile version that exists", async () => {
+    const versions = await context.database.select({ id: agentProfileVersion.id }).from(agentProfileVersion);
+    const grants = await context.database
+      .select({ profileVersionId: agentToolGrant.profileVersionId, allowedGroups: agentToolGrant.allowedGroups })
+      .from(agentToolGrant);
+
+    expect(versions.length).toBeGreaterThan(0);
+    expect(grants).toHaveLength(versions.length * 2);
+    // Named group, not a wildcard: the matcher intersects groups, and a locally
+    // created person carries exactly this one.
+    expect(grants.every(({ allowedGroups }) => allowedGroups.includes("orcasynapse:people"))).toBe(true);
   });
 });
