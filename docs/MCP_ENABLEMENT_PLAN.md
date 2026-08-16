@@ -60,7 +60,10 @@ toolBootstrap: { baseUrl: serviceEndpointSchema, apiKey: z.string().min(1).max(1
 ```
 
 `baseUrl` is the control plane's `/api/v1/mcp`, derived the same way
-`inferenceGatewayBaseUrl(controlPlaneUrl)` derives the inference one.
+`inferenceGatewayBaseUrl(controlPlaneUrl)` derives the inference one — which
+lives in `apps/api/src/runtime-nodes/drizzle-runtime-node-manager.ts:119`, not in
+contracts, so `serviceEndpointSchema` (`packages/contracts/src/connections.ts:38`)
+is what validates the field.
 
 **Make it optional in the schema.** A node enrolled by an older control plane
 must still enrol against a newer one; a required field turns a version skew into
@@ -88,14 +91,20 @@ is; rewrite the comment rather than deleting it.
 
 The reconciler (`:1546` onward) rewrites the allowlist on every pass from the
 desired-state document. If that document does not say MCP is on, the next
-reconcile puts `no_mcp` back and the agent loses its tools an hour after
-install — silently, and long after anybody is watching.
+reconcile puts `no_mcp` back — and the timer is
+`OnBootSec=90s`, `OnUnitActiveSec=5min`, its unit description reading *"Reconcile
+the OrcaSynapse desired runtime state every five minutes"*. So the agent loses
+its tools **about five minutes after install**, silently, while an operator is
+still watching the screen and concluding the feature does not work.
 
 So `runtimeDesiredStateDocumentSchema` gains `mcpEnabled: z.boolean()`, emitted
 from `drizzle-runtime-node-manager.ts:914` beside `admittedToolsets`.
 
 **This is the piece most likely to be forgotten**, because everything works
-immediately after install without it.
+immediately after install without it. The rewrite is unconditional — the
+allowlist is rebuilt every pass as `["no_mcp", "memory"] + admitted`, with
+`no_mcp` hardcoded at the front (`:1609`) and the whole `platform_toolsets`
+block replaced by regex — so nothing about a previous pass survives.
 
 ## Verification
 

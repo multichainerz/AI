@@ -5,6 +5,29 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v8.0.2 — 2026-08-16
+
+Re-verifies `docs/MCP_ENABLEMENT_PLAN.md` against the tree and corrects two
+things it had wrong. Documentation only.
+
+The seven cited line numbers all held. What did not:
+
+- **"an hour after install" was wrong — it is about five minutes.** The
+  desired-state timer is `OnBootSec=90s`, `OnUnitActiveSec=5min`, its unit
+  described as *"Reconcile the OrcaSynapse desired runtime state every five
+  minutes"*. That changes the character of the failure: not something found the
+  next morning, but something that happens while an operator is still watching
+  the screen and concluding the feature does not work.
+- **`inferenceGatewayBaseUrl` is not in contracts.** It is in
+  `apps/api/src/runtime-nodes/drizzle-runtime-node-manager.ts:119`, so the plan
+  now names `serviceEndpointSchema` in
+  `packages/contracts/src/connections.ts:38` as what validates the new field.
+
+Also records what makes the reconcile hazard certain rather than likely: the
+allowlist is rebuilt unconditionally every pass as `["no_mcp", "memory"] +
+admitted`, with `no_mcp` hardcoded, and the whole `platform_toolsets` block
+replaced by regex — so nothing a previous pass wrote survives.
+
 ## v8.0.1 — 2026-08-16
 
 Adds `docs/MCP_ENABLEMENT_PLAN.md`, the plan for the one gap left in the
@@ -20,9 +43,9 @@ found while writing it:
   revoke. The pattern to copy is `modelBootstrap`, which already delivers the
   inference key at enrolment.
 - **The desired-state reconciler rewrites the allowlist on every pass.** Enable
-  MCP in the installer alone and the next reconcile puts `no_mcp` back — the
-  agent loses its tools an hour after install, silently, long after anybody is
-  watching. So `mcpEnabled` has to travel in the desired-state document too.
+  MCP in the installer alone and the next reconcile puts `no_mcp` back. The
+  timer runs every five minutes, so the agent loses its tools while an operator
+  is still watching and concluding the feature does not work. So `mcpEnabled` has to travel in the desired-state document too.
   This is the piece most likely to be missed, because everything works
   immediately after install without it.
 
