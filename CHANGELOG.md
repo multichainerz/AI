@@ -5,6 +5,45 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v7.1.0 — 2026-08-16
+
+An administrator can create the people a division bounds. Increment E's
+foundation: `LocalUser`, the person manager and `/api/v1/admin/people`. The
+People screen and the sign-in path follow.
+
+This closes the gap the plan called D1. Until now an `EnterpriseUser` row could
+only come into existence when somebody arrived through an identity provider — so
+a deployment with no IdP had a division boundary and nobody to apply it to.
+`lastLoginAt` is now nullable, which is exactly the state "created, never signed
+in" needed to exist.
+
+**The credential is a separate table from the identity**, deliberately. An
+`EnterpriseUser` is who somebody is — their division, their name, what they may
+reach. A `LocalUser` is one way of proving it. Keeping them apart means a person
+can later move to an identity provider by dropping a credential rather than by
+rebuilding an identity, and it keeps a password hash out of every query that
+only wanted a name.
+
+Locally created people are keyed under a reserved issuer, `orcasynapse:local`.
+That puts them in the same table as federated identities, so divisions, sessions
+and `profileVisibleTo` all work unchanged, while making an IdP collision
+impossible.
+
+- add `LocalUser`, mirroring `LocalAdministrator` field for field so lockout and
+  forced rotation cannot diverge between the two credential stores
+- reuse `hashLocalPassword` / `localPasswordIsValid`, so there is one definition
+  of an acceptable password rather than two
+- **revoke every live session when a person is disabled** — otherwise the
+  account is disabled for the next sign-in and unchanged for the one already
+  open, which is the opposite of what disabling somebody means, and the gap
+  lasts as long as the session's absolute lifetime
+- clear the lockout on an administrator password reset, since a reset is the
+  intended way out of one; leaving it would mean a reset that visibly succeeds
+  and still refuses the new password
+- refuse to put a person into a suspended division
+- say plainly that a federated person has no password this product holds, rather
+  than failing obscurely on a missing credential
+
 ## v7.0.0 — 2026-08-16
 
 Gives tool sets and skill sets their screens, on the tabs that own each. This

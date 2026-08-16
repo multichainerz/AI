@@ -64,6 +64,13 @@
       "when": 1786853070882,
       "tag": "0008_fearless_tigra",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1786857408620,
+      "tag": "0009_wandering_sue_storm",
+      "breakpoints": true
     }
   ]
 }

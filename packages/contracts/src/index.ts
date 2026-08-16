@@ -11,6 +11,7 @@ export * from "./identity.js";
 export * from "./inference-gateway.js";
 export * from "./models.js";
 export * from "./onboarding.js";
+export * from "./people.js";
 export * from "./guardrails.js";
 export * from "./prompts.js";
 export * from "./runtime-nodes.js";

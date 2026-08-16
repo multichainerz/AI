@@ -81,7 +81,15 @@ export const enterpriseUser = pgTable("EnterpriseUser", {
 	displayName: varchar({ length: 200 }).notNull(),
 	groups: text().array(),
 	enabled: boolean().default(true).notNull(),
-	lastLoginAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull(),
+	/*
+	 * Null means created but never signed in.
+	 *
+	 * NOT NULL until v7.1.0, which is what made an administrator unable to
+	 * pre-create a person: the row could only come into existence by somebody
+	 * arriving through an identity provider. Divisions bound users, so a
+	 * deployment with no IdP had a boundary and nobody to apply it to.
+	 */
+	lastLoginAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
 	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
 	/* Null means the user sees only deployment-wide profiles. */
@@ -1357,6 +1365,45 @@ export const localAdministrator = pgTable("LocalAdministrator", {
 }, (table) => [
 	index("LocalAdministrator_disabledAt_lockedUntil_idx").using("btree", table.disabledAt.asc().nullsLast(), table.lockedUntil.asc().nullsLast()),
 	uniqueIndex("LocalAdministrator_username_key").using("btree", table.username.asc().nullsLast()),
+]);
+
+/**
+ * A username and password for one `EnterpriseUser`.
+ *
+ * Deliberately a second table rather than columns on the identity. An
+ * `EnterpriseUser` is who somebody is -- their division, their display name,
+ * what they may reach; a `LocalUser` is one way of proving it. Keeping them
+ * apart means a person can later be migrated to an identity provider by
+ * deleting a credential rather than by rebuilding an identity, and it keeps a
+ * password hash out of every query that only wanted a name.
+ *
+ * Every field here mirrors `LocalAdministrator`, because the lockout and
+ * forced-rotation behaviour must not diverge between the two. The plan is
+ * explicit that a third credential store is the real cost of this option; the
+ * mitigation is that both are the same shape and share one failure limit.
+ */
+export const localUser = pgTable("LocalUser", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	userId: uuid().notNull(),
+	username: varchar({ length: 64 }).notNull(),
+	passwordHash: text().notNull(),
+	passwordChangeRequired: boolean().default(true).notNull(),
+	failedLoginCount: integer().default(0).notNull(),
+	lockedUntil: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
+	passwordChangedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	createdBy: uuid(),
+	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
+}, (table) => [
+	uniqueIndex("LocalUser_username_key").using("btree", table.username.asc().nullsLast()),
+	// One credential per identity: two passwords for one person would make
+	// "disable this account" ambiguous.
+	uniqueIndex("LocalUser_userId_key").using("btree", table.userId.asc().nullsLast()),
+	foreignKey({
+			columns: [table.userId],
+			foreignColumns: [enterpriseUser.id],
+			name: "LocalUser_userId_fkey"
+		}).onUpdate("cascade").onDelete("cascade"),
 ]);
 
 export const agentRun = pgTable("AgentRun", {
