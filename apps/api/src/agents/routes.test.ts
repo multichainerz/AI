@@ -94,7 +94,7 @@ const enterpriseIdentity: EnterpriseIdentityManager = {
  * the two disagree would be able to pass a test the product could not.
  */
 const boundaryOff: AgentRuntimeControl = {
-  enabled: false, reason: "Acceptance pending.", updatedAt: "2026-07-30T00:00:00.000Z", updatedBy: null,
+  enabled: false, memoryExtractionEnabled: true, reason: "Acceptance pending.", updatedAt: "2026-07-30T00:00:00.000Z", updatedBy: null,
 };
 
 function manager(boundary: AgentRuntimeControl = boundaryOff): AgentManager {
@@ -118,7 +118,7 @@ function manager(boundary: AgentRuntimeControl = boundaryOff): AgentManager {
     cancelRun: vi.fn(async (): Promise<AgentRun> => ({ ...run, status: "CANCEL_REQUESTED" })),
     runtimeCatalogue: vi.fn(async () => ({ toolsets: [], skills: [], enabledToolsets: 0 })),
     getRuntimeControl: vi.fn(async () => boundary),
-    updateRuntimeControl: vi.fn(async (_principal, input) => ({ enabled: input.enabled, reason: input.reason, updatedAt: "2026-07-30T00:00:00.000Z", updatedBy: session.id })),
+    updateRuntimeControl: vi.fn(async (_principal, input) => ({ enabled: input.enabled, memoryExtractionEnabled: true, reason: input.reason, updatedAt: "2026-07-30T00:00:00.000Z", updatedBy: session.id })),
     metrics: vi.fn(async () => ({ generatedAt: "2026-07-30T00:00:00.000Z", profiles: 1, activeProfiles: 1, queuedRuns: 1, runningRuns: 0, completedRuns: 0, failedRuns: 0 })),
   };
 }
@@ -212,7 +212,7 @@ describe("Hermes agent routes", () => {
     // The other direction, from the same fixture: a flag hardcoded either way
     // would pass one of these two and fail the other.
     const on = await enterpriseApp(manager({
-      enabled: true, reason: "Boundary verified.", updatedAt: "2026-07-30T00:00:00.000Z", updatedBy: session.id,
+      enabled: true, memoryExtractionEnabled: true, reason: "Boundary verified.", updatedAt: "2026-07-30T00:00:00.000Z", updatedBy: session.id,
     }));
     const enabled = await on.app.inject({ method: "GET", url: "/api/v1/agents/profiles", headers: enterpriseHeaders });
     expect(enabled.json()).toMatchObject({ executionEnabled: true });
@@ -231,6 +231,7 @@ describe("Hermes agent routes", () => {
     const switchedOffBy = "1d0a67c4-9b3e-4a52-8f77-0c4e2b6d9a83";
     const { app } = await enterpriseApp(manager({
       enabled: false,
+      memoryExtractionEnabled: true,
       reason: "Suspended pending the VM2 acceptance review.",
       updatedAt: "2026-07-30T00:00:00.000Z",
       updatedBy: switchedOffBy,

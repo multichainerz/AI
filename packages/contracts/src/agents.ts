@@ -314,6 +314,15 @@ export const decideAgentRunApprovalSchema = z.object({
 
 export const agentRuntimeControlSchema = z.object({
   enabled: z.boolean(),
+  /**
+   * Whether completed runs are read for durable facts.
+   *
+   * Separate from `enabled`, which stops runs entirely. Turning extraction off
+   * leaves agents answering exactly as before and stops one model call per
+   * completed run — a cost decision, not a safety one, which is why it is its
+   * own field rather than a mode of the switch beside it.
+   */
+  memoryExtractionEnabled: z.boolean(),
   reason: z.string().nullable(),
   updatedAt: z.iso.datetime(),
   updatedBy: z.uuid().nullable(),
@@ -321,6 +330,8 @@ export const agentRuntimeControlSchema = z.object({
 
 export const updateAgentRuntimeControlSchema = z.object({
   enabled: z.boolean(),
+  /** Optional so a caller that only means to start or stop runs cannot silently re-enable extraction. */
+  memoryExtractionEnabled: z.boolean().optional(),
   reason: z.string().trim().min(3).max(500),
 }).strict();
 

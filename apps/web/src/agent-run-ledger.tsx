@@ -45,7 +45,7 @@ interface ExecutionBoundaryProps {
   metrics: AgentMetrics | null;
   runs: readonly AgentRun[];
   busy: string | null;
-  onToggle: (enabled: boolean, reason: string) => void;
+  onToggle: (enabled: boolean, reason: string, memoryExtractionEnabled?: boolean) => void;
   /** Decides which of the two fixes the disabled state names. */
   hasProfiles: boolean;
   /** `agents:control`: whether this session may throw the switch at all. */
@@ -74,6 +74,7 @@ interface ExecutionBoundaryProps {
 export function ExecutionBoundary({ runtime, metrics, runs, busy, onToggle, hasProfiles, canControl, canManage }: ExecutionBoundaryProps) {
   const [reason, setReason] = useState("Runtime and Profile Distribution boundaries verified by the platform administrator.");
   const enabled = runtime?.enabled === true;
+  const extracting = runtime?.memoryExtractionEnabled !== false;
 
   /*
    * The sentence names a fix the reader can actually reach. Without
@@ -167,7 +168,26 @@ export function ExecutionBoundary({ runtime, metrics, runs, busy, onToggle, hasP
               >
                 {busy === "runtime" ? "Applying..." : enabled ? "Disable execution" : "Enable manually"}
               </Button>
+              {/*
+                * A separate button, not a second meaning for the one beside it.
+                * Stopping execution stops agents answering; stopping extraction
+                * costs a model call per completed run and changes nothing a
+                * person sees. Collapsing them would make the cheap decision
+                * carry the expensive one's consequences.
+                */}
+              <Button
+                variant="secondary"
+                disabled={busy !== null || reason.trim().length < 3}
+                onClick={() => onToggle(enabled, reason.trim(), !extracting)}
+              >
+                {extracting ? "Stop learning from runs" : "Learn from runs"}
+              </Button>
             </form>
+            <p className="mb-0 mt-2 text-caption text-muted">
+              {extracting
+                ? "Each completed run is read once for durable facts, kept against that run's division."
+                : "Completed runs are not being read. Notes already kept are still given to the agents that own them."}
+            </p>
           </details>}
         </div>
       </div>

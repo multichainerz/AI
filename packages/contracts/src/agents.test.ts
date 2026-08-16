@@ -67,12 +67,15 @@ describe("agent contracts", () => {
      * bit that changes what its reader may do.
      */
     const boundary = agentRuntimeControlSchema.parse({
-      enabled: false, reason: "Suspended pending acceptance.",
+      enabled: false, memoryExtractionEnabled: true, reason: "Suspended pending acceptance.",
       updatedAt: "2026-07-30T00:00:00.000Z", updatedBy: "ac369dab-cad5-4fd9-83ed-b4fbf528028a",
     });
-    // Those three exist on the boundary, so their absence below is a boundary
-    // that was drawn rather than a record that was empty.
-    expect(Object.keys(boundary).sort()).toEqual(["enabled", "reason", "updatedAt", "updatedBy"]);
+    // These exist on the boundary, so their absence below is a boundary that
+    // was drawn rather than a record that was empty. `memoryExtractionEnabled`
+    // belongs among them: whether the deployment reads its own conversations is
+    // an operational fact, not something a user of an agent needs told.
+    expect(Object.keys(boundary).sort())
+      .toEqual(["enabled", "memoryExtractionEnabled", "reason", "updatedAt", "updatedBy"]);
 
     const list = agentProfileListSchema.parse({ items: [], executionEnabled: false, ...boundary });
     expect(Object.keys(list).sort()).toEqual(["executionEnabled", "items"]);

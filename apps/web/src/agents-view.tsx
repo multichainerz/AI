@@ -513,7 +513,7 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
         metrics={metrics}
         runs={runs}
         busy={busy}
-        onToggle={(enabled, reason) => void action("runtime", () => updateAgentRuntime(enabled, reason))}
+        onToggle={(enabled, reason, extraction) => void action("runtime", () => updateAgentRuntime(enabled, reason, extraction))}
         hasProfiles={profiles.length > 0}
         canControl={canControl}
         canManage={canManage}

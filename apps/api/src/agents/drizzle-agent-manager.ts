@@ -775,6 +775,10 @@ export class DrizzleAgentManager implements AgentManager {
       .limit(1);
     return {
       enabled: control?.enabled ?? false,
+      // True when the row is missing, matching the column default: a memory
+      // that never fills is the feature not working, and a deployment that has
+      // not decided yet is better served by it running.
+      memoryExtractionEnabled: control?.memoryExtractionEnabled ?? true,
       reason: control?.reason ?? "Runtime control is missing; execution is denied fail-closed.",
       updatedAt: (control?.updatedAt ?? new Date(0)).toISOString(),
       updatedBy: control?.updatedBy ?? null,
@@ -800,10 +804,18 @@ export class DrizzleAgentManager implements AgentManager {
     const control = await this.database.transaction(async (transaction) => {
       const [updated] = await transaction
         .insert(agentRuntimeControl)
-        .values({ id: "global", enabled: input.enabled, reason: input.reason, updatedBy: principal.id })
+        .values({
+          id: "global", enabled: input.enabled, reason: input.reason, updatedBy: principal.id,
+          ...(input.memoryExtractionEnabled === undefined ? {} : { memoryExtractionEnabled: input.memoryExtractionEnabled }),
+        })
         .onConflictDoUpdate({
           target: agentRuntimeControl.id,
-          set: { enabled: input.enabled, reason: input.reason, updatedBy: principal.id, updatedAt: new Date() },
+          set: {
+            enabled: input.enabled, reason: input.reason, updatedBy: principal.id, updatedAt: new Date(),
+            // Omitted rather than defaulted: a caller that only means to start
+            // or stop runs must not silently turn extraction back on.
+            ...(input.memoryExtractionEnabled === undefined ? {} : { memoryExtractionEnabled: input.memoryExtractionEnabled }),
+          },
         })
         .returning();
       if (!updated) throw new AgentConflictError("The agent runtime control could not be written.");
@@ -815,7 +827,13 @@ export class DrizzleAgentManager implements AgentManager {
       });
       return updated;
     });
-    return { enabled: control.enabled, reason: control.reason, updatedAt: control.updatedAt.toISOString(), updatedBy: control.updatedBy };
+    return {
+      enabled: control.enabled,
+      memoryExtractionEnabled: control.memoryExtractionEnabled,
+      reason: control.reason,
+      updatedAt: control.updatedAt.toISOString(),
+      updatedBy: control.updatedBy,
+    };
   }
 
   async metrics(): Promise<AgentMetrics> {

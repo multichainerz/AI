@@ -741,9 +741,16 @@ export async function getAgentRuntime(): Promise<AgentRuntimeControl> {
   return agentRuntimeControlSchema.parse(await parsedResponse(response));
 }
 
-export async function updateAgentRuntime(enabled: boolean, reason: string): Promise<AgentRuntimeControl> {
+export async function updateAgentRuntime(
+  enabled: boolean,
+  reason: string,
+  memoryExtractionEnabled?: boolean,
+): Promise<AgentRuntimeControl> {
   const response = await fetch("/api/v1/admin/agents/runtime", {
-    method: "PATCH", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify({ enabled, reason }),
+    method: "PATCH", headers: adminHeaders(), credentials: "same-origin",
+    // Omitted when undefined, so starting or stopping execution never silently
+    // changes whether the deployment reads its own conversations.
+    body: JSON.stringify({ enabled, reason, ...(memoryExtractionEnabled === undefined ? {} : { memoryExtractionEnabled }) }),
   });
   return agentRuntimeControlSchema.parse(await parsedResponse(response));
 }

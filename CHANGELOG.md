@@ -5,6 +5,26 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v8.8.0 — 2026-08-16
+
+Makes v8.7.0's extraction switch reachable. It existed in the database and in
+the worker, and nowhere an operator could touch it — a constant wearing a
+column, which is worse than no switch because the changelog said there was one.
+
+- carry `memoryExtractionEnabled` through the runtime-control contract, the
+  manager and the existing `PATCH /admin/agents/runtime` route, rather than
+  adding a second control surface for one boolean
+- leave it **optional on update**, and omit it from the write when absent, so a
+  caller that only means to start or stop execution cannot silently turn
+  extraction back on
+- default it true when the control row is missing, matching the column
+- give it its own button beside the execution one rather than folding it in:
+  stopping execution stops agents answering, while stopping extraction costs a
+  model call per completed run and changes nothing a person sees. One button for
+  both would make the cheap decision carry the expensive one's consequences
+- say on screen which state it is in, and that notes already kept are still
+  given to the agents that own them
+
 ## v8.7.0 — 2026-08-16
 
 Pieces C and D of `docs/MEMORY_HARDENING_PLAN.md`, completing it. Extraction
