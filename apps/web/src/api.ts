@@ -187,6 +187,12 @@ import {
   type ToolSetList,
   type UpdateSkillSet,
   type UpdateToolSet,
+  personListSchema,
+  personSchema,
+  type CreatePerson,
+  type Person,
+  type PersonList,
+  type UpdatePerson,
 } from "@orcasynapse/contracts";
 
 export class OrcaSynapseApiError extends Error {
@@ -1258,6 +1264,32 @@ export async function updateSkillSet(id: string, input: UpdateSkillSet): Promise
 export async function deleteSkillSet(id: string): Promise<void> {
   const response = await fetch(`/api/v1/admin/configuration/skill-sets/${encodeURIComponent(id)}`, {
     method: "DELETE", credentials: "same-origin",
+  });
+  if (!response.ok) await parsedResponse(response);
+}
+
+export async function getPeople(): Promise<PersonList> {
+  const response = await fetch("/api/v1/admin/people", { credentials: "same-origin" });
+  return personListSchema.parse(await parsedResponse(response));
+}
+
+export async function createPerson(input: CreatePerson): Promise<Person> {
+  const response = await fetch("/api/v1/admin/people", {
+    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return personSchema.parse(await parsedResponse(response));
+}
+
+export async function updatePerson(id: string, input: UpdatePerson): Promise<Person> {
+  const response = await fetch(`/api/v1/admin/people/${encodeURIComponent(id)}`, {
+    method: "PATCH", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
+  });
+  return personSchema.parse(await parsedResponse(response));
+}
+
+export async function resetPersonPassword(id: string, password: string): Promise<void> {
+  const response = await fetch(`/api/v1/admin/people/${encodeURIComponent(id)}/password`, {
+    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify({ password }),
   });
   if (!response.ok) await parsedResponse(response);
 }

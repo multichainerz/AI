@@ -96,7 +96,7 @@ describe("workspace navigation", () => {
       Agents: "Profiles and runs, skills, memory and tools",
       Gateway: "Models, prompts and guardrails for the governed inference path",
       Operations: "Health, incidents and the audit trail",
-      Settings: "Setup, divisions and system updates",
+      Settings: "Setup, divisions, people and system updates",
     });
 
     for (const [area, description] of Object.entries(described) as Array<[ProductArea, string]>) {
@@ -263,6 +263,7 @@ describe("workspace navigation", () => {
     expect(sectionNavigationFor("Settings")).toEqual([
       { label: "Setup", view: "Deployment" },
       { label: "Divisions", view: "Divisions" },
+      { label: "People", view: "People" },
       { label: "System", view: "Application" },
     ]);
     // What Settings is left holding is what it was always really about:

@@ -15,6 +15,7 @@ export type ActiveView =
   | "Integrations"
   | "Guardrails"
   | "Divisions"
+  | "People"
   | "Operations"
   | "Audit";
 
@@ -79,7 +80,7 @@ export const primaryNavigationGroups: ReadonlyArray<{
     label: "System",
     placement: "bottom",
     items: [
-      { area: "Settings", icon: "settings", target: "Deployment", description: "Setup, divisions and system updates" },
+      { area: "Settings", icon: "settings", target: "Deployment", description: "Setup, divisions, people and system updates" },
     ],
   },
 ];
@@ -165,6 +166,7 @@ const sectionNavigation: Partial<Record<ProductArea, ReadonlyArray<SectionNaviga
   Settings: [
     { label: "Setup", view: "Deployment" },
     { label: "Divisions", view: "Divisions" },
+    { label: "People", view: "People" },
     { label: "System", view: "Application" },
   ],
   Gateway: [
@@ -183,6 +185,7 @@ const areaByView: Record<ActiveView, ProductArea> = {
   Integrations: "Agents",
   Deployment: "Settings",
   Divisions: "Settings",
+  People: "Settings",
   Application: "Settings",
   Models: "Gateway",
   Prompts: "Gateway",
@@ -200,6 +203,7 @@ const pathByView: Record<ActiveView, string> = {
   Integrations: "#agents/tools",
   Deployment: "#settings/setup",
   Divisions: "#settings/divisions",
+  People: "#settings/people",
   Application: "#settings/system",
   Models: "#gateway/models",
   Prompts: "#gateway/prompts",
@@ -332,6 +336,9 @@ export function viewFromHash(hash: string): ActiveView {
      * mid-incident, and a retired hash that falls through would drop them on
      * the Dashboard at exactly the wrong moment.
      */
+    case "#settings/people":
+    case "#people":
+      return "People";
     case "#settings/divisions":
     case "#divisions":
       return "Divisions";

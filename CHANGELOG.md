@@ -5,6 +5,37 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v7.3.0 — 2026-08-16
+
+Adds the **People** tab. Increment E is complete: an administrator can create a
+person, put them in a division, disable them, reset their password, and that
+person can sign in — all without curl.
+
+**Every increment of `docs/DIVISIONS_PLAN.md` except F now ships.**
+
+- add `apps/web/src/people-view.tsx` and the Settings → People tab
+- move somebody between divisions from the row, the same shape the profile list
+  uses for the same decision
+- show a password once, on screen, because that is the only time it exists in
+  readable form; the copy says so rather than leaving an administrator to find
+  out
+- **omit the reset control for a federated person** rather than disabling it —
+  this product holds no password for them, so the action does not exist rather
+  than existing and failing
+- say what disabling actually does: their open sessions end, not just their next
+  sign-in
+
+The empty state explains why an empty list matters — divisions bound what a
+person sees, so a deployment with no people has a boundary and nobody to apply
+it to.
+
+Verified against the running stack: a person created into Finance, signed in
+with `lastLoginAt` stamped from null, and a wrong password and an unknown
+username answering byte-identically. The division boundary itself is covered by
+the manager tests with a real enterprise principal — an administrator session
+takes precedence in the route and is deployment-wide by design, so a browser
+holding one cannot exercise a user's boundary.
+
 ## v7.2.0 — 2026-08-16
 
 A locally created person can now sign in. `POST /api/v1/auth/local/login`
