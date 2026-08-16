@@ -13,7 +13,9 @@ import {
   chatConversation,
   chatMessage,
   createTestDatabase,
+  division,
   hermesRuntimeNode,
+  scopedMemoryEntry,
   serviceConnection,
   type TestDatabase,
 } from "@orcasynapse/database";
@@ -281,6 +283,103 @@ describe("DrizzleAgentProcessor run capability", () => {
     expect(row!.status).toBe("COMPLETED");
     expect(row!.hash).toBeNull();
     expect(row!.expiresAt).toBeNull();
+  });
+});
+
+/**
+ * Points the run's profile at a division, the way assigning one in the
+ * dashboard does. `seed` leaves it null, which is the deployment-wide case.
+ */
+async function assignDivision(runId: string, displayName: string): Promise<string> {
+  const [created] = await context.database.insert(division).values({
+    slug: `div-${randomUUID().slice(0, 8)}`, displayName,
+  }).returning({ id: division.id });
+  const [run] = await context.database
+    .select({ profileId: agentRun.profileId }).from(agentRun).where(eq(agentRun.id, runId)).limit(1);
+  await context.database.update(agentProfile)
+    .set({ divisionId: created!.id }).where(eq(agentProfile.id, run!.profileId));
+  return created!.id;
+}
+
+/** The instructions actually handed to Hermes -- the seam every assertion here uses. */
+async function submittedInstructions(runId: string, jobId: string): Promise<string> {
+  const seen: string[] = [];
+  const processor = new DrizzleAgentProcessor(context.database, runtime({
+    start: async (input: { instructions?: string }) => {
+      seen.push(input.instructions ?? "");
+      return "hermes-native-memory";
+    },
+  }) as never, CAPABILITIES);
+  await processor.process({ runId }, jobId, WORKER_ID);
+  return seen[0] ?? "";
+}
+
+/*
+ * Division-scoped memory, asserted where it is decided.
+ *
+ * The agent is given no memory tool and no division parameter. VM1 selects the
+ * rows and puts them in the prompt, so there is nothing for the agent to ask
+ * for and nothing to talk it into asking for. That makes the seam the
+ * `instructions` argument handed to `hermes.start`, not a model reply.
+ *
+ * These are the tests the tool design could never have: with a tool, "does
+ * division A see division B's rows" depends on what the agent chose to send.
+ * Here it depends only on a WHERE clause, which is a thing a test can pin.
+ */
+describe("DrizzleAgentProcessor division memory", () => {
+  it("injects the run division's memory and never another division's", async () => {
+    const { runId, jobId } = await seed();
+    const alpha = await assignDivision(runId, "Alpha");
+    const [beta] = await context.database.insert(division)
+      .values({ slug: `div-${randomUUID().slice(0, 8)}`, displayName: "Beta" }).returning({ id: division.id });
+    await context.database.insert(scopedMemoryEntry).values([
+      { divisionId: alpha, content: "Alpha settled on quarterly reviews." },
+      { divisionId: beta!.id, content: "Beta settled on monthly reviews." },
+      { divisionId: null, content: "Everyone uses the shared holiday calendar." },
+    ]);
+
+    const instructions = await submittedInstructions(runId, jobId);
+
+    expect(instructions).toContain("Alpha settled on quarterly reviews.");
+    expect(instructions).not.toContain("Beta settled on monthly reviews.");
+    // A deployment-wide row is not this division's row. Divisions read their own
+    // memory only; the shared plane is `MEMORY.md`, which Hermes owns.
+    expect(instructions).not.toContain("Everyone uses the shared holiday calendar.");
+  });
+
+  /*
+   * The mistake the recall handler's own comment warns about, pinned on this
+   * side too: treating a null division as "no filter" rather than as its own
+   * scope hands every division's rows to a run belonging to none. It is the one
+   * error here that fails open.
+   */
+  it("treats a deployment-wide run as its own scope, not as a wildcard", async () => {
+    const { runId, jobId } = await seed();
+    const [other] = await context.database.insert(division)
+      .values({ slug: `div-${randomUUID().slice(0, 8)}`, displayName: "Gamma" }).returning({ id: division.id });
+    await context.database.insert(scopedMemoryEntry).values([
+      { divisionId: null, content: "The deployment-wide retention rule is ninety days." },
+      { divisionId: other!.id, content: "Gamma keeps records for seven years." },
+    ]);
+
+    const instructions = await submittedInstructions(runId, jobId);
+
+    expect(instructions).toContain("The deployment-wide retention rule is ninety days.");
+    expect(instructions).not.toContain("Gamma keeps records for seven years.");
+  });
+
+  /*
+   * An empty section would read to the model as "your division has learned
+   * nothing", which is a claim rather than an absence -- and on a fresh install
+   * it is the only state there is.
+   */
+  it("says nothing at all when the division has remembered nothing", async () => {
+    const { runId, jobId } = await seed();
+    await assignDivision(runId, "Delta");
+
+    const instructions = await submittedInstructions(runId, jobId);
+
+    expect(instructions).not.toContain("WHAT YOUR DIVISION HAS LEARNED");
   });
 });
 

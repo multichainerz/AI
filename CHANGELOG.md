@@ -5,6 +5,39 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v8.2.0 — 2026-08-16
+
+Division-scoped memory reaches the agent. VM1 selects the division's remembered
+notes and puts them in the prompt it already builds, so the agent reads its own
+division's memory and cannot read another's.
+
+This replaces the mechanism, not the goal. The tool design needed MCP working on
+VM2, and MCP on VM2 needs a per-run header Hermes cannot attach — see
+`docs/MCP_ENABLEMENT_PLAN.md`. Injection needs none of it: no MCP, no VM2
+change, no installer, no enrolment field, no upstream dependency.
+
+- select the notes on VM1 from the division the run's profile belongs to, which
+  `load` already had the join for
+- match a null division with `IS NULL` rather than omitting the predicate, since
+  a deployment-wide run reads deployment-wide rows and treating null as a
+  wildcard is the one mistake here that fails open
+- cap the section by entry count and by characters, because forty one-line notes
+  and four long ones are the same problem and the second is the quiet one
+- omit the section entirely when the division has remembered nothing, since an
+  empty heading reads to a model as "your division has learned nothing"
+- frame the notes as background rather than instruction, so a remembered
+  sentence is not obeyed as policy by every later run in the division
+
+The boundary is stronger than the tool design it replaces, not weaker: the agent
+is handed no memory tool and no division parameter, so there is no request it
+could make for another division's rows and nothing to talk it into making one.
+Where the tool version's isolation depended on what the agent chose to send,
+this depends on a `WHERE` clause — and both directions of getting it wrong are
+now pinned by tests that fail when the predicate is removed.
+
+Still missing: nothing writes to the store yet on this path. The `remember` tool
+remains unreachable for the same reason `recall` was.
+
 ## v8.1.1 — 2026-08-16
 
 Rewrites `docs/MCP_ENABLEMENT_PLAN.md` around what verification against the
