@@ -124,6 +124,9 @@ const identityManager: EnterpriseIdentityManager = {
   async startLogin(): Promise<OidcLoginStart> {
     return { authorizationUrl: "https://idp.example.internal/authorize", stateToken: STATE_TOKEN };
   },
+  async signInWithPassword(): Promise<never> {
+    throw new Error("Not used");
+  },
   async completeLogin(): Promise<IssuedEnterpriseSession> {
     // The callback emits three cookies at once -- the expired OIDC state, the
     // enterprise session, and a federated administrator session -- and all three

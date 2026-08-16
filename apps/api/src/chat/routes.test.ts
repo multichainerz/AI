@@ -77,6 +77,7 @@ const enterpriseIdentity: EnterpriseIdentityManager = {
   async status() { return { configured: true, message: "Configured" }; },
   async startLogin() { throw new Error("Not used"); },
   async completeLogin() { throw new Error("Not used"); },
+  async signInWithPassword() { throw new Error("Not used"); },
   async authenticate(token) {
     return token === ENTERPRISE_TOKEN ? {
       id: SESSION_ID,

@@ -41,6 +41,7 @@ function memoryIdentityManager(): EnterpriseIdentityManager {
       administratorSignIn: true,
       message: "Enterprise sign-in is configured.",
     })),
+    signInWithPassword: vi.fn(async () => { throw new Error("Not used"); }) as never,
     startLogin: vi.fn(async () => ({
       authorizationUrl: "https://identity.orcasynapse.example/authorize?client_id=orcasynapse",
       stateToken: STATE,

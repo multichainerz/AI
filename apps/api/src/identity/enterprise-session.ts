@@ -10,12 +10,13 @@ import {
   auditEvent,
   enterpriseUser,
   enterpriseUserSession,
+  localUser,
   oidcAuthorizationRequest,
   serviceConnection,
   type OrcaSynapseDatabase,
 } from "@orcasynapse/database";
 import { and, eq, gt, isNull, lt, lte } from "drizzle-orm";
-import { EnvelopeEncryption } from "@orcasynapse/security";
+import { DUMMY_PASSWORD_DIGEST, EnvelopeEncryption, verifyLocalPassword } from "@orcasynapse/security";
 import {
   createLocalJWKSet,
   jwtVerify,
@@ -23,7 +24,12 @@ import {
   type JWTPayload,
 } from "jose";
 import type { ConnectionDiagnosticStore, ResolvedConnection } from "../connections/diagnostics/types.js";
-import type { AdminSessionManager, IssuedAdminSession } from "../auth/admin-session.js";
+import {
+  LOCAL_LOGIN_FAILURE_LIMIT,
+  LOCAL_LOGIN_LOCK_MS,
+  type AdminSessionManager,
+  type IssuedAdminSession,
+} from "../auth/admin-session.js";
 
 export const ENTERPRISE_SESSION_COOKIE = "orcasynapse_user_session";
 export const OIDC_STATE_COOKIE = "orcasynapse_oidc_state";
@@ -71,6 +77,12 @@ export interface EnterpriseIdentityManager {
     code: string,
     returnedState: string,
     stateCookie: string | undefined,
+    context: IdentityRequestContext,
+  ): Promise<IssuedEnterpriseSession>;
+  /** Local sign-in, for a person an administrator created rather than an IdP. */
+  signInWithPassword(
+    username: string,
+    password: string,
     context: IdentityRequestContext,
   ): Promise<IssuedEnterpriseSession>;
   authenticate(token: string | undefined): Promise<EnterprisePrincipal | null>;
@@ -535,6 +547,119 @@ export class DrizzleEnterpriseIdentityManager implements EnterpriseIdentityManag
       principal: principalFromRecord(session),
       ...(administratorSession ? { administratorSession } : {}),
     };
+  }
+
+  /**
+   * Sign in a locally created person with a username and password.
+   *
+   * Mirrors the administrator local-login path deliberately, down to the shared
+   * failure limit and lock window: two credential stores are the real cost of
+   * this option, and the mitigation is that neither can drift into its own
+   * definition of "locked out".
+   *
+   * Three properties this borrows rather than reinvents, because each is easy
+   * to get subtly wrong:
+   *
+   * - the password is verified against `DUMMY_PASSWORD_DIGEST` when no account
+   *   matches, so an unknown username costs the same time as a wrong password
+   *   and cannot be distinguished by timing;
+   * - every rejection answers with one message, so the response cannot
+   *   enumerate usernames either;
+   * - an expired lock resets the count rather than resuming it, so somebody who
+   *   waited out a lockout starts from zero.
+   *
+   * The session it mints is an ordinary `EnterpriseUserSession`. Everything
+   * downstream -- the principal, its `divisionId`, `profileVisibleTo` -- is the
+   * federated path unchanged, which is the whole reason locally created people
+   * live in `EnterpriseUser` under a reserved issuer.
+   */
+  async signInWithPassword(
+    username: string,
+    password: string,
+    context: IdentityRequestContext,
+  ): Promise<IssuedEnterpriseSession> {
+    const now = new Date();
+    const sessionToken = randomBytes(32).toString("base64url");
+    /*
+     * The rejection is returned from the transaction, never thrown inside it.
+     *
+     * Throwing rolls the transaction back -- including the very row that records
+     * the failed attempt. Written that way first, and the lockout test caught
+     * it: `failedLoginCount` stayed at 0 no matter how many attempts were made,
+     * so the account never locked and an attacker had unlimited guesses. The
+     * counter has to commit before the caller is told no.
+     */
+    const outcome = await this.database.transaction(async (transaction) => {
+      const [found] = await transaction
+        .select({ credential: localUser, user: enterpriseUser })
+        .from(localUser)
+        .innerJoin(enterpriseUser, eq(enterpriseUser.id, localUser.userId))
+        .where(eq(localUser.username, username))
+        .limit(1);
+      const passwordMatches = await verifyLocalPassword(
+        password,
+        found?.credential.passwordHash ?? DUMMY_PASSWORD_DIGEST,
+      );
+      const lockActive = Boolean(found?.credential.lockedUntil && found.credential.lockedUntil > now);
+      const accepted = Boolean(found && found.user.enabled && !lockActive && passwordMatches);
+
+      if (!accepted) {
+        if (found && found.user.enabled && !lockActive) {
+          const priorFailures = found.credential.lockedUntil && found.credential.lockedUntil <= now
+            ? 0
+            : found.credential.failedLoginCount;
+          const failedLoginCount = priorFailures + 1;
+          await transaction
+            .update(localUser)
+            .set({
+              failedLoginCount,
+              lockedUntil: failedLoginCount >= LOCAL_LOGIN_FAILURE_LIMIT
+                ? new Date(now.getTime() + LOCAL_LOGIN_LOCK_MS)
+                : null,
+            })
+            .where(eq(localUser.id, found.credential.id));
+        }
+        await transaction.insert(auditEvent).values({
+          actorType: "USER", actorId: found?.user.id ?? null, action: "user.local_login_failed",
+          resourceType: "EnterpriseUser", resourceId: found?.user.id ?? null, outcome: "FAILURE",
+          metadata: { username, reason: lockActive ? "LOCKED" : "REJECTED" },
+        });
+        return { rejected: true as const };
+      }
+
+      await transaction
+        .update(localUser)
+        .set({ failedLoginCount: 0, lockedUntil: null })
+        .where(eq(localUser.id, found!.credential.id));
+      const [user] = await transaction
+        .update(enterpriseUser)
+        .set({ lastLoginAt: now })
+        .where(eq(enterpriseUser.id, found!.user.id))
+        .returning();
+      if (!user) throw new EnterpriseIdentityError("USER_UNAVAILABLE", "The account could not be read.", 503);
+      const [created] = await transaction
+        .insert(enterpriseUserSession)
+        .values({
+          tokenHash: tokenDigest(sessionToken),
+          userId: user.id,
+          lastSeenAt: now,
+          idleExpiresAt: new Date(now.getTime() + ENTERPRISE_SESSION_IDLE_MS),
+          absoluteExpiresAt: new Date(now.getTime() + ENTERPRISE_SESSION_ABSOLUTE_MS),
+          sourceIp: context.sourceIp ?? null,
+          userAgentHash: userAgentDigest(context.userAgent) ?? null,
+        })
+        .returning();
+      if (!created) throw new EnterpriseIdentityError("USER_SESSION_UNAVAILABLE", "The session could not be created.", 503);
+      await transaction.insert(auditEvent).values({
+        actorType: "USER", actorId: user.id, action: "user.local_login_succeeded",
+        resourceType: "EnterpriseUser", resourceId: user.id, outcome: "SUCCESS",
+      });
+      return { rejected: false as const, principal: principalFromRecord({ ...created, user }) };
+    });
+    if (outcome.rejected) {
+      throw new EnterpriseIdentityError("USER_LOGIN_REJECTED", "That username and password do not match an account.", 401);
+    }
+    return { token: sessionToken, returnTo: "/", principal: outcome.principal };
   }
 
   async authenticate(token: string | undefined): Promise<EnterprisePrincipal | null> {

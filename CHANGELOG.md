@@ -5,6 +5,34 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v7.2.0 — 2026-08-16
+
+A locally created person can now sign in. `POST /api/v1/auth/local/login`
+verifies a username and password and mints an ordinary `EnterpriseUserSession`,
+so their division and `profileVisibleTo` work through the federated path
+unchanged. The accounts v7.1.0 could create are records no longer.
+
+**A serious bug, caught by the lockout test rather than by reading the code.**
+The rejection was thrown from inside the transaction — which rolled it back,
+including the row recording the failed attempt. `failedLoginCount` stayed at
+zero however many times a password was guessed, so the account never locked and
+an attacker had unlimited attempts. The counter now commits before the caller is
+told no, and the test was confirmed by reintroducing the throw and watching it
+fail.
+
+- add `signInWithPassword`, mirroring the administrator local-login path
+- share `LOCAL_LOGIN_FAILURE_LIMIT` and `LOCAL_LOGIN_LOCK_MS` between both
+  credential stores, which the plan's checklist requires: two stores are the
+  real cost of local passwords, and one constant is what stops them drifting
+  into different definitions of "locked out"
+- verify against `DUMMY_PASSWORD_DIGEST` when no account matches, so an unknown
+  username costs the same time as a wrong password
+- answer one message for every rejection — wrong password, unknown username,
+  disabled account, active lockout — so the endpoint is not a username oracle
+- reset an expired lock's count to zero rather than resuming it, so somebody who
+  waited out a lockout starts fresh
+- refuse a disabled person, and clear the failure count on success
+
 ## v7.1.0 — 2026-08-16
 
 An administrator can create the people a division bounds. Increment E's

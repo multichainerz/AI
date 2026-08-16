@@ -4,15 +4,17 @@ import {
   auditEvent,
   createTestDatabase,
   enterpriseUser,
+  localUser,
   enterpriseUserSession,
   oidcAuthorizationRequest,
   serviceConnection,
   type TestDatabase,
 } from "@orcasynapse/database";
-import { EnvelopeEncryption } from "@orcasynapse/security";
+import { EnvelopeEncryption, hashLocalPassword } from "@orcasynapse/security";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConnectionDiagnosticStore } from "../connections/diagnostics/types.js";
 import { DrizzleEnterpriseIdentityManager, EnterpriseIdentityError } from "./enterprise-session.js";
+import { LOCAL_LOGIN_FAILURE_LIMIT } from "../auth/admin-session.js";
 
 let context: TestDatabase;
 
@@ -386,5 +388,102 @@ describe("DrizzleEnterpriseIdentityManager sessions", () => {
     expect(await manager(connectionId).authenticate(undefined)).toBeNull();
     expect(await manager(connectionId).authenticate("short")).toBeNull();
     expect(await manager(connectionId).revoke("not-a-session-token")).toBe(false);
+  });
+});
+
+describe("local sign-in", () => {
+  const password = "correct-horse-battery";
+
+  async function seedPerson(overrides: Record<string, unknown> = {}) {
+    const [user] = await context.database.insert(enterpriseUser).values({
+      issuer: "orcasynapse:local",
+      subject: "ayu",
+      displayName: "Ayu Pratama",
+      lastLoginAt: null,
+      ...overrides,
+    }).returning();
+    await context.database.insert(localUser).values({
+      userId: user!.id,
+      username: "ayu",
+      passwordHash: await hashLocalPassword(password),
+    });
+    return user!;
+  }
+
+  /*
+   * The point of the whole increment: a person an administrator created, who
+   * has never seen an identity provider, can sign in and gets an ordinary
+   * enterprise session -- so their division and `profileVisibleTo` work through
+   * the federated path unchanged.
+   */
+  it("signs in a locally created person and stamps their first login", async () => {
+    const user = await seedPerson();
+
+    const issued = await manager(randomUUID()).signInWithPassword("ayu", password, {});
+
+    expect(issued.token).toHaveLength(43);
+    expect(issued.principal).toMatchObject({ identityMode: "ENTERPRISE", displayName: "Ayu Pratama" });
+    const [row] = await context.database.select().from(enterpriseUser).where(eq(enterpriseUser.id, user.id)).limit(1);
+    expect(row?.lastLoginAt).not.toBeNull();
+    // The session it minted authenticates like any other.
+    await expect(manager(randomUUID()).authenticate(issued.token)).resolves.toMatchObject({ displayName: "Ayu Pratama" });
+  });
+
+  /*
+   * Every rejection answers the same way. A different message for "no such
+   * user" would turn this endpoint into a username oracle, which matters more
+   * here than for administrators: these usernames are handed out by an
+   * administrator and are likely to be guessable.
+   */
+  it("answers identically for a wrong password and an unknown username", async () => {
+    await seedPerson();
+
+    const wrongPassword = await manager(randomUUID()).signInWithPassword("ayu", "not-the-password-at-all", {})
+      .catch((error: Error) => error.message);
+    const unknownUser = await manager(randomUUID()).signInWithPassword("nobody", password, {})
+      .catch((error: Error) => error.message);
+
+    expect(wrongPassword).toBe(unknownUser);
+  });
+
+  it("refuses a disabled person", async () => {
+    await seedPerson({ enabled: false });
+
+    await expect(manager(randomUUID()).signInWithPassword("ayu", password, {}))
+      .rejects.toBeInstanceOf(EnterpriseIdentityError);
+  });
+
+  /*
+   * Lockout, at the same threshold the administrator path uses -- both read
+   * LOCAL_LOGIN_FAILURE_LIMIT, so the two credential stores cannot drift into
+   * different definitions of "locked out". The correct password is refused
+   * while the lock holds, which is the property that makes a lockout worth
+   * having.
+   */
+  it("locks the account after the shared failure limit, and then refuses even the right password", async () => {
+    const user = await seedPerson();
+
+    for (let attempt = 0; attempt < LOCAL_LOGIN_FAILURE_LIMIT; attempt += 1) {
+      await manager(randomUUID()).signInWithPassword("ayu", "wrong-password-here", {}).catch(() => undefined);
+    }
+
+    const [credential] = await context.database.select().from(localUser)
+      .where(eq(localUser.userId, user.id)).limit(1);
+    expect(credential?.failedLoginCount).toBe(LOCAL_LOGIN_FAILURE_LIMIT);
+    expect(credential?.lockedUntil).not.toBeNull();
+    await expect(manager(randomUUID()).signInWithPassword("ayu", password, {}))
+      .rejects.toBeInstanceOf(EnterpriseIdentityError);
+  });
+
+  /* A successful sign-in clears the count, so failures do not accumulate. */
+  it("clears the failure count on success", async () => {
+    const user = await seedPerson();
+    await manager(randomUUID()).signInWithPassword("ayu", "wrong-password-here", {}).catch(() => undefined);
+
+    await manager(randomUUID()).signInWithPassword("ayu", password, {});
+
+    const [credential] = await context.database.select().from(localUser)
+      .where(eq(localUser.userId, user.id)).limit(1);
+    expect(credential?.failedLoginCount).toBe(0);
   });
 });

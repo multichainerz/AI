@@ -31,7 +31,14 @@ const ADMIN_SESSION_ABSOLUTE_MS = 8 * 60 * 60 * 1_000;
 export const ADMIN_SESSION_TOUCH_INTERVAL_MS = 60 * 1_000;
 const ADMIN_SESSION_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
 export const LOCAL_LOGIN_FAILURE_LIMIT = 5;
-const LOCAL_LOGIN_LOCK_MS = 15 * 60 * 1_000;
+/*
+ * Exported so the local *user* sign-in path uses the same number.
+ *
+ * The plan's checklist names this explicitly: two credential stores are the real
+ * cost of local passwords, and the mitigation is that both read one constant
+ * rather than two that drift into different definitions of "locked out".
+ */
+export const LOCAL_LOGIN_LOCK_MS = 15 * 60 * 1_000;
 
 const ROLE_SCOPES: Readonly<Record<AdminRole, readonly AdminScope[]>> = {
   PLATFORM_ADMIN: ADMIN_SCOPES,

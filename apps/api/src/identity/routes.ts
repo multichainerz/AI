@@ -129,6 +129,34 @@ export async function registerIdentityRoutes(
     }
   });
 
+  /**
+   * Local sign-in for a person an administrator created.
+   *
+   * Deliberately answers one message for every rejection -- wrong password,
+   * unknown username, disabled account, active lockout. The manager already
+   * pays the same verification cost when no account matches; leaking the
+   * difference here in the response body would undo that.
+   */
+  app.post("/auth/local/login", async (request, reply) => {
+    if (!options.manager) return reply.code(423).send(locked());
+    const body = request.body as Record<string, unknown>;
+    const username = typeof body?.username === "string" ? body.username.trim().toLowerCase() : "";
+    const password = typeof body?.password === "string" ? body.password : "";
+    if (!username || !password) {
+      return reply.code(400).send({ error: "LOGIN_INVALID", message: "Enter a username and a password." });
+    }
+    try {
+      const issued = await options.manager.signInWithPassword(username, password, requestContext(request));
+      void reply.header("set-cookie", enterpriseSessionCookie(issued.token, secureRequest(request)));
+      return reply.code(200).send({ displayName: issued.principal.displayName });
+    } catch (error) {
+      if (error instanceof EnterpriseIdentityError) {
+        return reply.code(error.statusCode).send(publicIdentityError(error));
+      }
+      throw error;
+    }
+  });
+
   app.get("/session", async (request, reply) => {
     if (!options.manager) return reply.code(423).send(locked());
     const principal = await options.manager.authenticate(
