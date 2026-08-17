@@ -7,7 +7,7 @@ import type {
   ServiceConnectionSummary,
   UpdateServiceConnection,
 } from "@orcasynapse/contracts";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.js";
 import {
   ADMIN_SESSION_COOKIE,
@@ -16,6 +16,7 @@ import {
 import type { ConnectionManager } from "./connection-manager.js";
 import { ConnectionTestService } from "./diagnostics/connection-test-service.js";
 import { InferenceDiscoveryService } from "./diagnostics/inference-discovery-service.js";
+import { InferenceCatalogueService } from "./diagnostics/inference-catalogue-service.js";
 import type { ConnectionDiagnosticStore } from "./diagnostics/types.js";
 import type { ConnectionMonitorService } from "./connection-monitor.js";
 
@@ -148,6 +149,7 @@ async function authenticatedApp(
   sessionManager: AdminSessionManager = new MemorySessionManager(),
   monitor?: ConnectionMonitorService,
   discoverer?: InferenceDiscoveryService,
+  cataloguer?: InferenceCatalogueService,
 ) {
   const app = await createApp({
     logger: false,
@@ -158,6 +160,7 @@ async function authenticatedApp(
       ...(tester ? { connectionTestService: tester } : {}),
       ...(monitor ? { connectionMonitor: monitor } : {}),
       ...(discoverer ? { inferenceDiscoveryService: discoverer } : {}),
+      ...(cataloguer ? { inferenceCatalogueService: cataloguer } : {}),
     },
   });
   apps.push(app);
@@ -193,6 +196,56 @@ describe("administrator connection routes", () => {
       models: [{ id: "hermes-primary" }],
     });
     expect(manager.items).toHaveLength(0);
+  });
+
+  it("loads an OpenRouter catalogue after the key is proven and never returns 401 for a bad key", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json({ data: { label: "pilot" } }))
+      .mockResolvedValueOnce(Response.json({
+        data: [
+          { id: "anthropic/claude-sonnet-4", name: "Claude Sonnet 4" },
+          { id: "~openai/gpt-latest" },
+        ],
+      }));
+    const cataloguer = new InferenceCatalogueService(fetchMock as typeof fetch);
+    const { app } = await authenticatedApp(
+      new MemoryConnectionManager(), undefined, new MemorySessionManager(), undefined, undefined, cataloguer,
+    );
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/admin/connections/inference/catalogue",
+      headers: sessionHeaders,
+      payload: { provider: "openrouter", apiKey: "sk-or-v1-test" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      provider: "openrouter",
+      models: [{ id: "anthropic/claude-sonnet-4" }],
+    });
+    expect(response.json().models).not.toEqual(
+      expect.arrayContaining([{ id: "~openai/gpt-latest" }]),
+    );
+  });
+
+  it("returns 400 when OpenRouter rejects the key so the admin session stays intact", async () => {
+    const cataloguer = new InferenceCatalogueService(vi.fn().mockResolvedValueOnce(
+      new Response(null, { status: 401 }),
+    ) as typeof fetch);
+    const { app } = await authenticatedApp(
+      new MemoryConnectionManager(), undefined, new MemorySessionManager(), undefined, undefined, cataloguer,
+    );
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/admin/connections/inference/catalogue",
+      headers: sessionHeaders,
+      payload: { provider: "openrouter", apiKey: "sk-or-bad" },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: "CATALOGUE_KEY_REJECTED" });
   });
 
   it("reads and updates the scheduled monitoring control with scoped administration", async () => {

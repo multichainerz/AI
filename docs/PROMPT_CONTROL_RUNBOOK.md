@@ -2,36 +2,35 @@
 
 ## What this subsystem does today
 
-**Read this section before anything else: the active prompt is not sent to a
-model.** Prompt Control is a versioned, audited register of reviewed system
-instructions. It is not, at this release, in the chat path.
+**The Gateway Prompts tab is gone.** Nothing at runtime has ever sent an
+active `PromptTemplate` to a model. System text for a run is assembled by
+`hardenedInstructions()` in `apps/worker/src/agent-processor.ts` from the
+agent profile's `soulMd` and `instructions` plus a hardcoded execution-boundary
+block, and that is the only system instruction any model receives.
 
-The complete set of code that reads the `PromptTemplate` table:
+The table and admin REST routes remain, the same way `ProductionReadinessControl`
+survived without a console surface. Bookmarks to `#gateway/prompts`,
+`#settings/prompts` and `#platform/prompts` land on Models.
+
+The complete set of code that still reads the `PromptTemplate` table:
 
 | Reader | What it does |
 | --- | --- |
 | `apps/api/src/prompts/routes.ts` + `drizzle-prompt-manager.ts` | the four admin REST routes and their lifecycle rules |
-| `apps/api/src/ai-ops/drizzle-ai-ops-manager.ts` | renders the active row as one read-only status tile in the Operations overview |
-| `apps/web/src/api.ts` | the dashboard's client for those routes |
 
-Nothing under `apps/api/src/chat/` or `apps/worker/src/` references it. The
-system text for a run is assembled by `hardenedInstructions()` in
-`apps/worker/src/agent-processor.ts` from the agent profile's `soulMd` and
-`instructions` plus a hardcoded execution-boundary block, and that is the only
-system instruction any model receives. There is no built-in chat system prompt
-constant anywhere in the repository either.
+Nothing under `apps/api/src/chat/` or `apps/worker/src/` references it. There
+is no dashboard client and no Operations tile.
 
 This document previously said the active prompt was "used as the first system
 message for new chat requests", that activation "permanently enables governed
 mode", and that suspending it "makes chat fail closed". None of that was ever
-implemented, and an operator following the old acceptance checklist would have
-concluded from step 6 — suspend, observe chat still working — that something was
-broken. The fail-closed behaviour it described belongs to **guardrails**
+implemented. The fail-closed behaviour it described belongs to **guardrails**
 (`apps/api/src/chat/drizzle-chat-manager.ts`, which refuses chat with "Activate
 one guardrail policy before using Chat." once a policy has ever been active);
 prompts have no equivalent.
 
-Governing a prompt here therefore records a decision. It does not enforce one.
+Governing a prompt through the admin API therefore records a decision. It does
+not enforce one.
 
 ## Purpose and boundary
 
@@ -79,19 +78,18 @@ Prompt text never expands authorization. Identity scopes, local retrieval reauth
 - `POST /api/v1/admin/prompts/:id/activate`
 - `POST /api/v1/admin/prompts/:id/suspend`
 
-`prompts:read` permits inspection. `prompts:manage` permits lifecycle changes. Platform and Security administrators can manage prompts; Operations administrators and Auditors have read-only access.
+`prompts:read` permits inspection. `prompts:manage` permits lifecycle changes. Platform and Security administrators can manage prompts; Operations administrators and Auditors have read-only access. There is no console client for these routes.
 
 ## Acceptance checklist
 
 Scoped to what the subsystem actually does. Steps that asserted runtime effects
-have been removed rather than reworded: there is no chat behaviour to observe.
+or a Gateway screen have been removed rather than reworded.
 
 1. Confirm migrations are current (`PromptTemplate` ships in the Drizzle baseline; the compose `migrate` service applies it on every start).
-2. Create the approved draft without secrets and review its displayed checksum.
-3. Activate the prompt and confirm Operations shows the version and checksum prefix without prompt content.
-4. Confirm a second prompt of the same purpose cannot be activated while the first is active.
-5. Confirm editing the active prompt is refused until it is suspended, and that saving changed content requires a new version and returns the record to `DRAFT`.
-6. Confirm the audit trail carries `prompt.template_activated` with the version and the operator reason.
+2. Create the approved draft via `POST /api/v1/admin/prompts` without secrets and review its checksum.
+3. Activate the prompt and confirm a second prompt of the same purpose cannot be activated while the first is active.
+4. Confirm editing the active prompt is refused until it is suspended, and that saving changed content requires a new version and returns the record to `DRAFT`.
+5. Confirm the audit trail carries `prompt.template_activated` with the version and the operator reason.
 
 ## Making it real
 
@@ -102,4 +100,5 @@ the active `CHAT_SYSTEM` row where the run's system text is assembled
 profile's `soulMd`/`instructions`, and add a fail-closed check in
 `apps/api/src/chat/drizzle-chat-manager.ts` alongside the guardrail one so a
 missing or ambiguous active prompt refuses chat rather than silently doing
-nothing. Until all three exist, treat this screen as a register.
+nothing. Until all three exist, treat the table as an unused register — do not
+put the screen back.

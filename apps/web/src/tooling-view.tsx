@@ -4,6 +4,7 @@ import type {
   HermesRuntimeCatalogue,
   ToolsetAdmission,
 } from "@orcasynapse/contracts";
+import { Wrench } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -17,7 +18,7 @@ import { adminAccess } from "./admin-access.js";
 import { ConfigurationSetsPanel } from "./configuration-sets-panel.js";
 import {
   Alert, Button, EmptyState, Field, Input, LockedScreen, MicroLabel,
-  PageHeader, Panel, PanelHeading, StatusText, Tile, cn,
+  Panel, PanelHeading, StatusText, Tile, WorkspaceIntro, cn,
 } from "./ui/index.js";
 
 interface ToolingViewProps {
@@ -290,41 +291,66 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
     />;
   }
 
-  return <div className="grid gap-5">
-    <PageHeader
-      kicker="Agents"
+  return <div className="workspace-stack tools-workspace flex h-full min-h-0 flex-col gap-3 pb-3">
+    <WorkspaceIntro
+      icon={<Wrench className="size-4" aria-hidden="true" />}
       title="Tools"
-      description="What your agents are allowed to use. The runtime runs these tools itself, so OrcaSynapse permits or refuses a whole tool group rather than an individual call."
-      /* `.catch(fail)` like every other call site here: without it an idled-out
-         session rejects unhandled, and the screen keeps showing what the
-         runtime offered fifteen minutes ago with no Alert and no re-auth. */
-      actions={<Button onClick={() => void load().catch(fail)}>Refresh</Button>}
-    />
-
-    {error && <Alert onDismiss={() => setError(null)}>{error}</Alert>}
-    {notice && <Alert tone="good" onDismiss={() => setNotice(null)}>{notice}</Alert>}
-
-    <Panel
-      aria-label="What agents can use"
-      className={cn(
-        "border-l-2",
-        summary.tone === "bad" ? "border-l-bad" : summary.tone === "warn" ? "border-l-warn" : "border-l-good",
-      )}
+      actions={
+        /* `.catch(fail)` like every other call site here: without it an idled-out
+           session rejects unhandled, and the screen keeps showing what the
+           runtime offered fifteen minutes ago with no Alert and no re-auth. */
+        <Button className="shrink-0" onClick={() => void load().catch(fail)}>Refresh</Button>
+      }
     >
-      <MicroLabel className="block">Right now</MicroLabel>
-      <strong className={cn(
-        "mt-1.5 block text-label font-semibold",
-        summary.tone === "bad" ? "text-bad" : summary.tone === "warn" ? "text-warn" : "text-text",
-      )}>
-        {summary.headline}
-      </strong>
-      <p className="mb-0 mt-1 max-w-[86ch] text-body leading-relaxed text-muted">{summary.detail}</p>
-    </Panel>
+      <section
+        aria-label="What agents can use"
+        className={cn(
+          "border-l-2 px-1 py-0.5",
+          summary.tone === "bad" ? "border-l-bad" : summary.tone === "warn" ? "border-l-warn" : "border-l-good",
+        )}
+      >
+        <MicroLabel className="block">Right now</MicroLabel>
+        <strong className={cn(
+          "mt-1 block text-label font-semibold",
+          summary.tone === "bad" ? "text-bad" : summary.tone === "warn" ? "text-warn" : "text-text",
+        )}>
+          {summary.headline}
+        </strong>
+        <p className="mb-0 mt-0.5 max-w-[86ch] text-caption leading-relaxed text-muted">{summary.detail}</p>
+      </section>
+      {/*
+        * The one tripwire kept from the removed plane.
+        *
+        * `GovernedTool` is the first link in its chain — no tool, no grant, no
+        * call, no approval — so a non-empty registry is the only way that plane
+        * can come back to life. If it ever does, this says so instead of leaving
+        * a subsystem running behind a screen that no longer mentions it.
+        */}
+      {mcpTools.length > 0 ? (
+        <section aria-label="OrcaSynapse-executed MCP tools" className="border-l-2 border-l-warn px-1 py-0.5">
+          <strong className="block text-label font-semibold text-warn">
+            {mcpTools.length === 1
+              ? "1 OrcaSynapse-executed MCP tool is registered."
+              : `${mcpTools.length} OrcaSynapse-executed MCP tools are registered.`}
+          </strong>
+          <p className="mb-0 mt-1 max-w-[86ch] text-caption leading-relaxed text-muted">
+            This build cannot execute them: no local executor is registered for any handler, so every such call
+            fails. They are separate from the runtime tools above and are not governed from this screen. Raise it
+            with the platform team before relying on them.
+          </p>
+        </section>
+      ) : null}
+    </WorkspaceIntro>
 
-    <Panel aria-label="Runtime tools" data-loaded={loaded ? "true" : "false"}>
+    {error && <Alert className="shrink-0" onDismiss={() => setError(null)}>{error}</Alert>}
+    {notice && <Alert className="shrink-0" tone="good" onDismiss={() => setNotice(null)}>{notice}</Alert>}
+
+    <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[minmax(0,1.35fr)_minmax(280px,0.85fr)]">
+    <Panel aria-label="Runtime tools" data-loaded={loaded ? "true" : "false"} className="flex min-h-0 flex-col overflow-hidden p-3">
       <PanelHeading
+        className="mb-2 shrink-0"
         title="Runtime tools"
-        description="Each row is a group of related tools the runtime offers. The switch is this installation's decision; the runtime's own policy decides whether it is actually switched on."
+        description="Each row is a group. The switch is this installation's decision; the runtime decides whether it is on."
         /* "0 of 0 allowed" beside a row that reads "Always allowed" is a
            fraction with nothing in it, so it is drawn only once there is
            something to count. */
@@ -335,7 +361,7 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
           : undefined}
       />
 
-      <div className="grid gap-2">
+      <div className="grid min-h-0 flex-1 content-start gap-2 overflow-y-auto">
         {rows.map((row) => {
           const drifting = row.enabled && !row.permitted;
           const open = editing?.name === row.name;
@@ -439,13 +465,12 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
             </Tile>
           );
         })}
-      </div>
 
       {/* `loaded` and not merely `others.length === 0`: the two states are
           identical in the markup and opposite in meaning. */}
       {loaded && others.length === 0 && (
         <EmptyState
-          className="mt-2"
+          className="w-full px-3 py-5"
           title={catalogueRead
             ? "The runtime reports no tools beyond built-in memory"
             : "Nothing could be read from the runtime"}
@@ -455,11 +480,12 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
             : "The runtime did not answer, so nothing can be listed. A decision recorded below is in place for when it does."}
         </EmptyState>
       )}
+      </div>
 
       {canManage && (
-        <div className="mt-4 border-t border-border pt-4">
+        <div className="mt-3 shrink-0 border-t border-border pt-3">
           <MicroLabel className="block">Not listed above</MicroLabel>
-          <p className="mb-0 mt-1.5 max-w-[72ch] text-caption leading-relaxed text-muted">
+          <p className="mb-0 mt-1 max-w-[72ch] text-caption leading-relaxed text-muted">
             Allow a tool the runtime has not reported yet, named exactly as the runtime spells it. It takes
             effect the moment the runtime offers it.
           </p>
@@ -469,7 +495,7 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
             * into a third of the panel instead of taking a second line.
             */}
           <form
-            className="mt-3 flex flex-wrap items-end gap-2.5"
+            className="mt-2.5 flex flex-wrap items-end gap-2.5"
             onSubmit={(event) => void stage(event)}
           >
             <Field label="Tool name" className="min-w-[180px] flex-1">
@@ -505,42 +531,21 @@ export function ToolingView({ session, onConfigure, onSessionExpired }: ToolingV
     </Panel>
 
     {/*
-      * The one tripwire kept from the removed plane.
-      *
-      * `GovernedTool` is the first link in its chain — no tool, no grant, no
-      * call, no approval — so a non-empty registry is the only way that plane
-      * can come back to life. If it ever does, this says so instead of leaving
-      * a subsystem running behind a screen that no longer mentions it.
-      */}
-    {mcpTools.length > 0 && (
-      <Panel aria-label="OrcaSynapse-executed MCP tools" className="border-l-2 border-l-warn">
-        <strong className="block text-label font-semibold text-warn">
-          {mcpTools.length === 1
-            ? "1 OrcaSynapse-executed MCP tool is registered."
-            : `${mcpTools.length} OrcaSynapse-executed MCP tools are registered.`}
-        </strong>
-        <p className="mb-0 mt-1 max-w-[86ch] text-body leading-relaxed text-muted">
-          This build cannot execute them: no local executor is registered for any handler, so every such call
-          fails. They are separate from the runtime tools above and are not governed from this screen. Raise it
-          with the platform team before relying on them.
-        </p>
-      </Panel>
-    )}
-
-    {/*
-      * Below deployment admission, because a set is a selection *of* what is
+      * Beside deployment admission, because a set is a selection *of* what is
       * admitted: naming a toolset here that nobody has admitted would be a
       * promise the runtime never keeps. The two decisions stay visibly separate
       * for the same reason -- admitting is what a node may enable, and a set is
       * which of those a profile declares.
       */}
-    {unlocked && (
+    {unlocked ? (
       <ConfigurationSetsPanel
+        embedded
         kind="tools"
         canManage={canManage}
         availableToolsets={rows.filter(({ permitted }) => permitted).map(({ name }) => name)}
         onSessionExpired={onSessionExpired}
       />
-    )}
+    ) : null}
+    </div>
   </div>;
 }

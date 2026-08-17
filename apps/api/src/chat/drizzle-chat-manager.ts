@@ -14,6 +14,7 @@ import {
   type SetChatFeedback,
   type DecideAgentRunApproval,
   type ForkChatConversation,
+  type GuardrailRule,
   type UpdateChatConversation,
 } from "@orcasynapse/contracts";
 import {
@@ -34,7 +35,11 @@ import {
 import { and, asc, count, desc, eq, gt, gte, inArray, isNotNull, ne, sql, type SQL } from "drizzle-orm";
 import type { AgentManager, AgentPrincipal } from "../agents/agent-manager.js";
 import { profileVisibleTo } from "../agents/profile-visibility.js";
-import { inspectInputText } from "../guardrails/runtime-policy.js";
+import {
+  inspectInput,
+  type GuardrailRuleMatch,
+  type RuntimePolicyViolation,
+} from "../guardrails/runtime-policy.js";
 import {
   ChatConfigurationError,
   ChatConversationConflictError,
@@ -159,8 +164,40 @@ interface ChatPolicy {
   maxOutputCharacters: number;
   blockControlCharacters: boolean;
   blockCredentialPatterns: boolean;
+  rules: GuardrailRule[];
   guardrailPolicyId: string | null;
   guardrailPolicyVersion: string | null;
+}
+
+/**
+ * What a refused sender is told.
+ *
+ * A rule refusal names the rule's *label*, never its pattern and never the text
+ * that matched: the label is what an operator wrote to be read, while the
+ * pattern is configuration and the text may be the credential the rule exists
+ * to catch.
+ */
+function guardrailRefusal(
+  reason: RuntimePolicyViolation,
+  matches: readonly GuardrailRuleMatch[],
+  maxInputCharacters: number,
+): string {
+  switch (reason) {
+    case "INPUT_CHARACTER_LIMIT":
+      return `The active policy limits chat input to ${maxInputCharacters.toLocaleString("en-US")} characters.`;
+    case "CONTROL_CHARACTERS":
+      return "The active policy blocks unsafe control characters.";
+    case "CREDENTIAL_PATTERN":
+      return "The active policy blocks content that appears to contain a credential.";
+    case "RULE_BUDGET_EXCEEDED":
+      return "The active policy could not finish checking this message and refused it rather than sending it unchecked.";
+    default: {
+      const blocking = matches.filter(({ action }) => action === "BLOCK").map(({ label }) => label);
+      return blocking.length > 0
+        ? `The active policy blocks this message (${blocking.join(", ")}).`
+        : "The active policy blocks this message.";
+    }
+  }
 }
 
 function approvalDto(approval: StoredApproval): AgentRunApproval {
@@ -538,17 +575,29 @@ export class DrizzleChatManager implements ChatManager {
   async submitMessage(
     principal: ChatPrincipal,
     conversationId: string,
-    content: string,
+    requested: string,
   ): Promise<ChatMessageSubmission> {
     const policy = await this.resolvePolicy();
-    const violation = inspectInputText(content, policy);
-    if (violation) {
-      await this.recordGuardrailBlock(principal, conversationId, content.length, violation, policy);
-      throw new ChatPolicyViolationError(violation === "INPUT_CHARACTER_LIMIT"
-        ? `The active policy limits chat input to ${policy.maxInputCharacters.toLocaleString("en-US")} characters.`
-        : violation === "CONTROL_CHARACTERS"
-          ? "The active policy blocks unsafe control characters."
-          : "The active policy blocks content that appears to contain a credential.");
+    const inspection = inspectInput(requested, policy, policy.rules);
+    if (inspection.decision === "BLOCK") {
+      await this.recordGuardrailBlock(principal, conversationId, requested.length, inspection.reason!, policy, inspection.matches);
+      throw new ChatPolicyViolationError(guardrailRefusal(inspection.reason!, inspection.matches, policy.maxInputCharacters));
+    }
+
+    /*
+     * From here on the redacted text is the message, and the parameter is
+     * deliberately no longer in scope under a name anybody would reach for.
+     *
+     * `content` is read three times below -- `safeTitle` when the conversation
+     * is still unnamed, the stored USER row, and the input handed to
+     * `submitRun`. Redacting only the row would leave the matched credential
+     * sitting in the conversation title, on the sidebar of every screen that
+     * lists conversations. Rebinding here is what makes it impossible to redact
+     * one of the three and miss the others.
+     */
+    const content = inspection.text;
+    if (inspection.matches.length > 0) {
+      await this.recordGuardrailMatches(principal, conversationId, inspection.matches, policy);
     }
 
     const now = new Date();
@@ -1270,6 +1319,7 @@ export class DrizzleChatManager implements ChatManager {
         maxOutputCharacters: guardrailPolicy.maxOutputCharacters,
         blockControlCharacters: guardrailPolicy.blockControlCharacters,
         blockCredentialPatterns: guardrailPolicy.blockCredentialPatterns,
+        rules: guardrailPolicy.rules,
       })
       .from(guardrailPolicy)
       .where(eq(guardrailPolicy.status, "ACTIVE"))
@@ -1283,9 +1333,39 @@ export class DrizzleChatManager implements ChatManager {
       maxOutputCharacters: policy?.maxOutputCharacters ?? 200_000,
       blockControlCharacters: policy?.blockControlCharacters ?? true,
       blockCredentialPatterns: policy?.blockCredentialPatterns ?? true,
+      rules: (policy?.rules ?? []) as GuardrailRule[],
       guardrailPolicyId: policy?.id ?? null,
       guardrailPolicyVersion: policy?.version ?? null,
     };
+  }
+
+  /**
+   * Records what matched without recording what it matched.
+   *
+   * Counts and labels only. A CREDENTIAL_PATTERN or a credential-shaped rule
+   * fires precisely because the message looked like a key, so quoting the text
+   * to explain the event would put that key in the audit trail — which is
+   * retained, forwarded to a SIEM, and readable by every AUDITOR.
+   */
+  private async recordGuardrailMatches(
+    principal: ChatPrincipal,
+    conversationId: string,
+    matches: readonly GuardrailRuleMatch[],
+    policy: ChatPolicy,
+  ): Promise<void> {
+    const summarise = (action: GuardrailRuleMatch["action"]) => matches
+      .filter((match) => match.action === action)
+      .map(({ ruleId, label, count }) => ({ ruleId, label, count }));
+
+    for (const [action, event] of [["REDACT", "guardrail.request_redacted"], ["FLAG", "guardrail.rule_flagged"]] as const) {
+      const applicable = summarise(action);
+      if (applicable.length === 0) continue;
+      await this.database.insert(auditEvent).values({
+        actorType: "USER", actorId: principal.id, action: event,
+        resourceType: "ChatConversation", resourceId: conversationId, outcome: "SUCCESS",
+        metadata: { policyId: policy.guardrailPolicyId, policyVersion: policy.guardrailPolicyVersion, rules: applicable },
+      }).catch(() => undefined);
+    }
   }
 
   private async recordGuardrailBlock(
@@ -1294,6 +1374,7 @@ export class DrizzleChatManager implements ChatManager {
     observedCharacters: number,
     violation: string,
     policy: ChatPolicy,
+    matches: readonly GuardrailRuleMatch[] = [],
   ): Promise<void> {
     const [conversation] = await this.database
       .select({ id: chatConversation.id })
@@ -1307,7 +1388,15 @@ export class DrizzleChatManager implements ChatManager {
     await this.database.insert(auditEvent).values({
       actorType: "USER", actorId: principal.id, action: "guardrail.request_blocked",
       resourceType: "ChatConversation", resourceId: conversationId, outcome: "FAILURE",
-      metadata: { policyId: policy.guardrailPolicyId, policyVersion: policy.guardrailPolicyVersion, reason: violation, observedCharacters, maxInputCharacters: policy.maxInputCharacters },
+      metadata: {
+        policyId: policy.guardrailPolicyId,
+        policyVersion: policy.guardrailPolicyVersion,
+        reason: violation,
+        observedCharacters,
+        maxInputCharacters: policy.maxInputCharacters,
+        // Labels and counts, never the matched text. See recordGuardrailMatches.
+        rules: matches.map(({ ruleId, label, action, count }) => ({ ruleId, label, action, count })),
+      },
     });
   }
 }

@@ -1,11 +1,13 @@
 import type { AgentMetrics, AgentRun, AgentRunEvent, AgentRuntimeControl } from "@orcasynapse/contracts";
-import { useState } from "react";
+import { Switch } from "@/components/ui/switch";
 import { failedStatuses, runningStatuses, statusTone } from "./agent-status.js";
 import { groupRuntimeEvents } from "./chat/timeline.js";
 import {
-  Button, EmptyState, Field, Input, Metric, MetricRow, MicroLabel,
+  Button, EmptyState, Metric, MetricRow, MicroLabel,
   Panel, PanelHeading, StatusText, Tile, cn, toneFor,
 } from "./ui/index.js";
+
+const EXECUTION_REASON = "Runtime and Profile Distribution boundaries verified by the platform administrator.";
 
 /**
  * The execution half of Profiles: whether Hermes may run, and what it has run.
@@ -46,12 +48,8 @@ interface ExecutionBoundaryProps {
   runs: readonly AgentRun[];
   busy: string | null;
   onToggle: (enabled: boolean, reason: string, memoryExtractionEnabled?: boolean) => void;
-  /** Decides which of the two fixes the disabled state names. */
-  hasProfiles: boolean;
   /** `agents:control`: whether this session may throw the switch at all. */
   canControl: boolean;
-  /** `agents:manage`: whether Verify & activate and Create exist on their screen. */
-  canManage: boolean;
 }
 
 /**
@@ -71,25 +69,9 @@ interface ExecutionBoundaryProps {
  * screen-wide control, where it reads as the boundary's own record rather than
  * as a statistic about whichever profile happens to be selected.
  */
-export function ExecutionBoundary({ runtime, metrics, runs, busy, onToggle, hasProfiles, canControl, canManage }: ExecutionBoundaryProps) {
-  const [reason, setReason] = useState("Runtime and Profile Distribution boundaries verified by the platform administrator.");
+export function ExecutionBoundary({ runtime, metrics, runs, busy, onToggle, canControl }: ExecutionBoundaryProps) {
   const enabled = runtime?.enabled === true;
   const extracting = runtime?.memoryExtractionEnabled !== false;
-
-  /*
-   * The sentence names a fix the reader can actually reach. Without
-   * `agents:manage` there is no Verify & activate and no Create anywhere on
-   * their screen, so either wording would be an instruction to press something
-   * that is not there -- which is the whole failure mode the cross-tab "Open
-   * Profiles" button had, moved inside one screen.
-   */
-  const disabledFix = canManage
-    ? hasProfiles
-      ? "Use Verify & activate on a Profile below; OrcaSynapse will test Hermes and enable this boundary automatically."
-      : "Create a Profile below; OrcaSynapse will test Hermes and enable this boundary automatically."
-    : canControl
-      ? "Enable it under Manual control below, or ask an administrator who can manage Profiles to verify one."
-      : "An administrator who can manage Profiles must verify and activate one before anything here can run.";
 
   const totals = [
     {
@@ -116,96 +98,79 @@ export function ExecutionBoundary({ runtime, metrics, runs, busy, onToggle, hasP
   ];
 
   return (
-    <Panel
+    <section
       aria-label="Hermes execution boundary"
-      className={cn("grid gap-4 border-l-2", enabled ? "border-l-good" : "border-l-border-strong")}
+      className={cn(
+        "grid shrink-0 gap-3 border-l-2 px-1 py-0.5",
+        enabled ? "border-l-good" : "border-l-border-strong",
+      )}
     >
-      <div className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-4">
-        {/* ON/OFF is stated as a word rather than a colour alone, because this
-            is the control an operator reaches for when something is already
-            going wrong. */}
-        <div className={cn(
-          "grid h-11 w-11 place-items-center rounded border font-mono text-caption font-bold",
-          enabled ? "border-good/50 bg-good/10 text-good" : "border-border-strong bg-raised text-muted",
-        )}>
-          {enabled ? "ON" : "OFF"}
+      <div className="flex items-center justify-between gap-6">
+        <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-3">
+          {/* ON/OFF is stated as a word rather than a colour alone, because this
+              is the control an operator reaches for when something is already
+              going wrong. */}
+          <div className={cn(
+            "grid h-9 w-9 place-items-center rounded border font-mono text-micro font-bold",
+            enabled ? "border-good/50 bg-good/10 text-good" : "border-border-strong bg-raised text-muted",
+          )}>
+            {enabled ? "ON" : "OFF"}
+          </div>
+          <div className="min-w-0">
+            <MicroLabel className="block">Hermes execution</MicroLabel>
+            <strong className="mt-0.5 block text-label font-semibold text-text">
+              {enabled ? "Ready for Chat" : "Activates with the first verified Profile"}
+            </strong>
+          </div>
         </div>
-        <div className="min-w-0">
-          <MicroLabel className="block">Hermes execution</MicroLabel>
-          <strong className="mt-1.5 block text-label font-semibold text-text">
-            {enabled ? "Ready for Chat" : "Activates with the first verified Profile"}
-          </strong>
-          {/*
-            * The sentence names the fix, and while this was its own tab the fix
-            * was a screen away -- which is how a split strands someone, and why
-            * Runtime carried an "Open Profiles" button. Both fixes are now a few
-            * centimetres below, so the sentence points at them and carries no
-            * control of its own: the header, the empty state and the profile row
-            * already offer all three, and a fourth identical button would be
-            * four calls to action for one job.
-            */}
-          <p className="mb-0 mt-1 text-body text-muted">
-            {enabled ? runtime?.reason : disabledFix}
-          </p>
-          {/*
-            * `PATCH /admin/agents/runtime` wants `agents:control`, which
-            * AUDITOR does not hold. The state above is an `agents:read` fact
-            * and stays; the control is withheld rather than left to 403.
-            */}
-          {canControl && <details className="mt-3">
-            <summary className="cursor-pointer text-micro font-semibold uppercase tabular-nums text-faint">Manual control</summary>
-            <form
-              className="mt-2.5 flex flex-wrap items-end gap-2.5"
-              onSubmit={(event) => { event.preventDefault(); if (reason.trim().length >= 3) onToggle(!enabled, reason.trim()); }}
-            >
-              <Field label="Audit reason" htmlFor="runtime-reason" className="min-w-[220px] flex-1">
-                <Input id="runtime-reason" value={reason} minLength={3} maxLength={500} onChange={(event) => setReason(event.target.value)} />
-              </Field>
-              <Button
-                variant={enabled ? "danger" : "secondary"}
-                disabled={busy !== null || reason.trim().length < 3}
-                type="submit"
-              >
-                {busy === "runtime" ? "Applying..." : enabled ? "Disable execution" : "Enable manually"}
-              </Button>
-              {/*
-                * A separate button, not a second meaning for the one beside it.
-                * Stopping execution stops agents answering; stopping extraction
-                * costs a model call per completed run and changes nothing a
-                * person sees. Collapsing them would make the cheap decision
-                * carry the expensive one's consequences.
-                */}
-              <Button
-                variant="secondary"
-                disabled={busy !== null || reason.trim().length < 3}
-                onClick={() => onToggle(enabled, reason.trim(), !extracting)}
-              >
-                {extracting ? "Stop learning from runs" : "Learn from runs"}
-              </Button>
-            </form>
-            <p className="mb-0 mt-2 text-caption text-muted">
-              {extracting
-                ? "Each completed run is read once for durable facts, kept against that run's division."
-                : "Completed runs are not being read. Notes already kept are still given to the agents that own them."}
-            </p>
-          </details>}
-        </div>
+        {/*
+          * `PATCH /admin/agents/runtime` wants `agents:control`, which
+          * AUDITOR does not hold. The state above is an `agents:read` fact
+          * and stays; the control is withheld rather than left to 403.
+          */}
+        {canControl ? (
+          <div className="flex shrink-0 flex-col items-end gap-2.5">
+            <label className="flex items-center gap-2.5">
+              <span className="text-caption text-muted">{enabled ? "Allowed" : "Off"}</span>
+              <Switch
+                aria-label={enabled ? "Disable execution" : "Enable execution"}
+                checked={enabled}
+                disabled={busy !== null}
+                onCheckedChange={(next) => onToggle(next, EXECUTION_REASON)}
+              />
+            </label>
+            {/*
+              * A separate switch, not a second meaning for the one above.
+              * Stopping execution stops agents answering; stopping extraction
+              * costs a model call per completed run and changes nothing a
+              * person sees. Collapsing them would make the cheap decision
+              * carry the expensive one's consequences.
+              */}
+            <label className="flex items-center gap-2.5">
+              <span className="text-caption text-muted">Learn from runs</span>
+              <Switch
+                aria-label={extracting ? "Stop learning from runs" : "Learn from runs"}
+                checked={extracting}
+                disabled={busy !== null}
+                onCheckedChange={(next) => onToggle(enabled, EXECUTION_REASON, next)}
+              />
+            </label>
+          </div>
+        ) : null}
       </div>
 
       {/*
         * Four zeroes on a fresh install would be decoration, and this screen
         * ships with none: the deployment the design was checked against has one
-        * Profile and no runs at all. A sentence says the same thing honestly and
-        * says where the first figure will come from.
+        * Profile and no runs at all. The ledger beside this strip already says
+        * nothing has run, so an empty boundary stays a title and the switches.
         */}
-      {totals.some(({ value }) => value > 0)
-        ? <MetricRow className="border-b-0 border-t pb-0 pt-4 lg:grid-cols-4" aria-label="Hermes run summary">
+      {totals.some(({ value }) => value > 0) ? (
+        <MetricRow className="border-b-0 border-t pb-0 pt-3 lg:grid-cols-4" aria-label="Hermes run summary">
           {totals.map((total) => <Metric key={total.label} {...total} />)}
         </MetricRow>
-        : <p className="m-0 border-t border-border pt-4 text-body text-muted">
-          No runs yet. Every run a Profile below produces is counted here, whether it was started from Session or by a governed caller.
-        </p>}
-    </Panel>
+      ) : null}
+    </section>
   );
 }
 
@@ -239,7 +204,7 @@ interface RunLedgerProps {
 }
 
 /**
- * Recent runs, scoped by default to the Profile selected in the list above.
+ * Recent runs, scoped by default to the Profile selected in the list beside it.
  *
  * A flat ledger under an unrelated profile list is the weakest way to put these
  * two things on one screen: runs are produced *by* profiles, and the selection
@@ -321,14 +286,15 @@ export function RunLedger({ runs, total, profileName, scoped, administrator, sel
         : "Work you queue will appear here with its complete lifecycle. Runs your colleagues started are not shown.";
 
   return (
-    <Panel aria-label="Execution ledger">
+    <Panel aria-label="Execution ledger" className="flex min-h-0 flex-col overflow-hidden p-3">
       <PanelHeading
+        className="mb-2 shrink-0"
         kicker="Execution ledger"
         title="Recent runs"
         description={description}
         actions={<StatusText>{runs.length} shown</StatusText>}
       />
-      <div className="grid max-h-[520px] gap-1 overflow-y-auto">
+      <div className="grid min-h-0 flex-1 content-start gap-1 overflow-y-auto">
         {runs.length === 0 && <EmptyState title={emptyTitle}>{emptyBody}</EmptyState>}
         {/*
           * `size="auto"` because a run row is four stacked lines, and every
@@ -364,12 +330,12 @@ export function RunLedger({ runs, total, profileName, scoped, administrator, sel
         /* The count only when it is a count. At the cap it is the window size,
            and "Show all runs (200)" reads as a deployment total on precisely
            the deployments where it is furthest from one. */
-        <Button variant="ghost" size="sm" className="mt-3" onClick={() => onScopeChange(false)}>
+        <Button variant="ghost" size="sm" className="mt-2 shrink-0" onClick={() => onScopeChange(false)}>
           {windowed ? `Show the newest ${RUN_WINDOW} runs` : `Show all runs (${total})`}
         </Button>
       )}
       {!scoped && profileName && (
-        <Button variant="ghost" size="sm" className="mt-3" onClick={() => onScopeChange(true)}>
+        <Button variant="ghost" size="sm" className="mt-2 shrink-0" onClick={() => onScopeChange(true)}>
           Show only {profileName}
         </Button>
       )}
@@ -397,20 +363,22 @@ interface RunDetailProps {
 export function RunDetail({ run, events, busy, canCancel, onCancel }: RunDetailProps) {
   if (!run) {
     return (
-      <Panel aria-label="Run detail">
-        <EmptyState title="Select a run">Input, output, events, and failure information remain in the OrcaSynapse execution ledger.</EmptyState>
+      <Panel aria-label="Run detail" className="flex min-h-0 flex-col overflow-hidden p-3">
+        <EmptyState className="m-auto w-full max-w-[36ch] px-3 py-5" title="Select a run">Input, output, events, and failure information remain in the OrcaSynapse execution ledger.</EmptyState>
       </Panel>
     );
   }
 
   return (
-    <Panel aria-label="Run detail">
+    <Panel aria-label="Run detail" className="flex min-h-0 flex-col overflow-hidden p-3">
       <PanelHeading
+        className="mb-2 shrink-0"
         kicker="Run detail"
         title={run.profileName}
         description={`${run.profileSlug} · version ${run.profileVersion}`}
         actions={<StatusText dot tone={toneFor(statusTone(run.status))}>{runLabel(run.status)}</StatusText>}
       />
+      <div className="grid min-h-0 flex-1 content-start gap-3 overflow-y-auto">
       <dl className="m-0 grid grid-cols-3 gap-px rounded border border-border bg-border">
         {[
           { label: "Queued", value: friendlyTime(run.queuedAt) },
@@ -423,13 +391,13 @@ export function RunDetail({ run, events, busy, canCancel, onCancel }: RunDetailP
           </div>
         ))}
       </dl>
-      <Tile className="mt-3">
+      <Tile>
         <MicroLabel className="block">Profile Distribution</MicroLabel>
         <code className="mt-1.5 block break-all font-mono text-micro text-muted">
           {run.profileDistributionDigest ?? "Legacy run — no distribution digest"}
         </code>
       </Tile>
-      <section className="mt-3 overflow-hidden rounded border border-border" aria-label="Safe Hermes activity timeline">
+      <section className="overflow-hidden rounded border border-border" aria-label="Safe Hermes activity timeline">
         <header className="flex items-center justify-between border-b border-border bg-raised px-3 py-2">
           <MicroLabel>Activity timeline</MicroLabel>
           <StatusText>{events.length} safe event{events.length === 1 ? "" : "s"}</StatusText>
@@ -480,18 +448,19 @@ export function RunDetail({ run, events, busy, canCancel, onCancel }: RunDetailP
         { label: "Input", body: run.input, tone: "" },
         ...(run.output ? [{ label: "Hermes output", body: run.output, tone: "border-l-2 border-l-accent" }] : []),
       ].map((block) => (
-        <Tile className={cn("mt-3", block.tone)} key={block.label}>
+        <Tile className={block.tone} key={block.label}>
           <MicroLabel className="block">{block.label}</MicroLabel>
           <p className="mb-0 mt-1.5 whitespace-pre-wrap break-words text-body leading-relaxed text-text">{block.body}</p>
         </Tile>
       ))}
-      {run.failureMessage && <div className="mt-3 rounded border border-bad/40 bg-bad/10 p-3">
+      {run.failureMessage && <div className="rounded border border-bad/40 bg-bad/10 p-3">
         <strong className="block text-micro font-semibold uppercase tabular-nums text-bad">{run.failureCode}</strong>
         <p className="mb-0 mt-1.5 text-body leading-relaxed text-muted">{run.failureMessage}</p>
       </div>}
+      </div>
       {canCancel && runningStatuses.has(run.status) && <Button
         variant="danger"
-        className="mt-3"
+        className="mt-2 shrink-0"
         disabled={busy !== null || run.status === "CANCEL_REQUESTED"}
         onClick={() => onCancel(run)}
       >

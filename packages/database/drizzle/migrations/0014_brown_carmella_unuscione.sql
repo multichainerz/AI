@@ -1,0 +1,2 @@
+ALTER TABLE "GuardrailPolicy" ADD COLUMN "rules" jsonb DEFAULT '[]'::jsonb NOT NULL;--> statement-breakpoint
+ALTER TABLE "GuardrailPolicy" ADD CONSTRAINT "GuardrailPolicy_rules_array_check" CHECK (jsonb_typeof(rules) = 'array'::text);

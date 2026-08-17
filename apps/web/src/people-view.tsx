@@ -1,4 +1,5 @@
 import type { AdministratorSession, CreateDivision, Division, Person } from "@orcasynapse/contracts";
+import { KeyRound, Layers, LockKeyhole, Trash2, Users } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 import {
   OrcaSynapseApiError,
@@ -14,8 +15,8 @@ import {
 import { adminAccess } from "./admin-access.js";
 import { slugAsTyped, slugify } from "./slug.js";
 import {
-  Alert, Button, Dialog, EmptyState, Field, Input, LockedScreen, Metric, MetricRow, MicroLabel,
-  PageHeader, Panel, PanelHeading, Select, StatusText, cn,
+  Alert, Button, Dialog, Field, Input, LockedScreen, Mark, Metric, MetricRow, MicroLabel,
+  Panel, Select, StatusText, WorkspaceDock, WorkspaceIntro, cn,
 } from "./ui/index.js";
 
 interface PeopleViewProps {
@@ -29,6 +30,12 @@ const emptyDivisionDraft: CreateDivision = { slug: "", displayName: "", descript
 function when(value: string | null): string {
   if (!value) return "never";
   return new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+}
+
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  const letters = `${parts[0]?.[0] ?? ""}${parts[1]?.[0] ?? parts[0]?.[1] ?? ""}`;
+  return letters.toUpperCase() || "·";
 }
 
 /**
@@ -349,8 +356,8 @@ export function PeopleView({ session, onOpenSettings, onSessionExpired }: People
   if (!unlocked) {
     return (
       <LockedScreen
-        title="People"
-        mark="PE"
+        title="Access"
+        mark="AC"
         reason="Sign in as an administrator to manage people and divisions."
         actionLabel="Open platform settings"
         onAction={onOpenSettings}
@@ -403,20 +410,26 @@ export function PeopleView({ session, onOpenSettings, onSessionExpired }: People
   };
 
   return (
-    <div className="grid gap-6">
-      <PageHeader
-        kicker="Access control"
-        title="People"
-        description="Who can sign in, and the divisions that bound what they see."
-        actions={canManagePeople ? (
-          <Button onClick={() => setShowEditor((open) => !open)}>
-            {showEditor ? "Cancel" : "Add person"}
-          </Button>
-        ) : null}
+    <div className="workspace-stack people-workspace flex h-full min-h-0 flex-col gap-3 pb-3">
+      <WorkspaceIntro
+        icon={<LockKeyhole className="size-4" aria-hidden="true" />}
+        title="Access"
+        actions={
+          <>
+            {canManageDivisions ? (
+              <Button onClick={() => openDivisionDialog("divisions")}>New division</Button>
+            ) : null}
+            {canManagePeople ? (
+              <Button variant={showEditor ? "outline" : "primary"} onClick={() => setShowEditor((open) => !open)}>
+                {showEditor ? "Cancel" : "Add person"}
+              </Button>
+            ) : null}
+          </>
+        }
       />
 
-      {error && <Alert tone="error">{error}</Alert>}
-      {message && <Alert tone="info">{message}</Alert>}
+      {error ? <Alert className="shrink-0" tone="error">{error}</Alert> : null}
+      {message ? <Alert className="shrink-0" tone="good">{message}</Alert> : null}
 
       {/*
         * Four metrics, where the two screens carried eight between them. The
@@ -426,122 +439,126 @@ export function PeopleView({ session, onOpenSettings, onSessionExpired }: People
         * an administrator about to suspend something looks, and every person
         * row says whether they are local or federated.
         */}
-      <MetricRow>
-        <Metric label="People" value={count(enabled, peopleUnknown)} caption="Able to sign in" />
-        <Metric label="Disabled" value={count(people.length - enabled, peopleUnknown)} caption="Blocked" />
-        <Metric label="Divisions" value={count(activeDivisions, divisionsUnknown)} caption="Active" />
-        <Metric label="In a division" value={count(members, divisionsUnknown)} caption="Bounded" />
-      </MetricRow>
+      <WorkspaceDock>
+        <MetricRow className="border-b-0 pb-0 lg:grid-cols-4">
+          <Metric label="People" value={count(enabled, peopleUnknown)} caption="Able to sign in" />
+          <Metric label="Disabled" value={count(people.length - enabled, peopleUnknown)} caption="Blocked" />
+          <Metric label="Divisions" value={count(activeDivisions, divisionsUnknown)} caption="Active" />
+          <Metric label="In a division" value={count(members, divisionsUnknown)} caption="Bounded" />
+        </MetricRow>
+      </WorkspaceDock>
 
-      {showEditor && canManagePeople && (
-        <Panel>
-          <PanelHeading
-            title="Add a person"
-            description="They sign in with this username and password, and are asked to change it."
-          />
-          <form className="grid gap-4" onSubmit={submit}>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Name">
-                <Input required minLength={2} value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
-              </Field>
-              <Field label="Username" hint="Lowercase. This is what they type to sign in.">
-                <Input
-                  required
-                  pattern="[a-z0-9]+([._-][a-z0-9]+)*"
-                  value={username}
-                  onChange={(event) => setUsername(event.target.value.toLowerCase())}
-                />
-              </Field>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Temporary password" hint="At least 12 characters. Shown once, here.">
-                <Input required minLength={12} value={password} onChange={(event) => setPassword(event.target.value)} />
-              </Field>
-              <div className="grid content-start gap-1.5">
-                <Field label="Division" hint="Leave empty and they see only deployment-wide agents.">
-                  <Select value={divisionId} onChange={(event) => setDivisionId(event.target.value)}>
-                    <option value="">No division</option>
-                    {assignable.map((item) => (
-                      <option key={item.id} value={item.id}>{item.displayName}</option>
-                    ))}
-                  </Select>
-                </Field>
-                {/*
-                  * The control this whole consolidation exists for. The division
-                  * the administrator needs is very often the one that does not
-                  * exist yet -- on a fresh deployment it always is, because the
-                  * first person is created before any division -- and before
-                  * this button the only way to make it was to leave, which threw
-                  * the typed name, username and temporary password away.
-                  *
-                  * Bordered, not `ghost`, and that was measured in a browser
-                  * rather than reasoned about: as a ghost button it computed to
-                  * 11px #8a8a93 on a transparent ground, directly beneath a hint
-                  * sentence in the same muted colour, which made the one
-                  * genuinely new affordance on this screen read as a second line
-                  * of help text. It is the divisions panel's own New division
-                  * treatment, one size down.
-                  */}
-                {canManageDivisions && (
-                  <Button size="sm" className="justify-self-start" onClick={() => openDivisionDialog("person-form")}>
-                    New division
-                  </Button>
-                )}
-              </div>
-            </div>
-            <div className="flex justify-end">
-              <Button type="submit" variant="primary" disabled={busy}>
-                {busy ? "Creating…" : "Create person"}
-              </Button>
-            </div>
-          </form>
-        </Panel>
-      )}
-
-      {resetting && (
-        <Panel>
-          <PanelHeading
-            title={`Set a new password for ${resetting.displayName}`}
-            description="Their open sessions end immediately, and they are asked to change it at next sign-in."
-          />
-          <form className="grid gap-4" onSubmit={reset}>
-            <Field label="New password" hint="At least 12 characters. Shown once, here.">
-              <Input required minLength={12} value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
+      {showEditor && canManagePeople ? (
+        <Panel className="shrink-0">
+          <form id="add-person-form" className="grid gap-5" onSubmit={submit}>
+          <div>
+            <h2 className="m-0 font-display text-[17px] font-semibold tracking-[-0.02em] text-text">Add a person</h2>
+            <p className="mb-0 mt-1.5 max-w-[62ch] text-body text-muted">
+              They sign in with this username and password, and are asked to change it.
+            </p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Name">
+              <Input required minLength={2} value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
             </Field>
-            <div className="flex justify-end gap-2">
-              <Button onClick={() => { setResetting(null); setNewPassword(""); }}>Cancel</Button>
-              <Button type="submit" variant="primary" disabled={busy}>Set password</Button>
+            <Field label="Username" hint="Lowercase. This is what they type to sign in.">
+              <Input
+                required
+                pattern="[a-z0-9]+([._-][a-z0-9]+)*"
+                value={username}
+                onChange={(event) => setUsername(event.target.value.toLowerCase())}
+              />
+            </Field>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Temporary password" hint="At least 12 characters. Shown once, here.">
+              <Input required minLength={12} value={password} onChange={(event) => setPassword(event.target.value)} />
+            </Field>
+            <div className="grid content-start gap-1.5">
+              <Field label="Division" hint="Leave empty and they see only deployment-wide agents.">
+                <Select value={divisionId} onChange={(event) => setDivisionId(event.target.value)}>
+                  <option value="">No division</option>
+                  {assignable.map((item) => (
+                    <option key={item.id} value={item.id}>{item.displayName}</option>
+                  ))}
+                </Select>
+              </Field>
+              {/*
+                * The control this whole consolidation exists for. The division
+                * the administrator needs is very often the one that does not
+                * exist yet -- on a fresh deployment it always is, because the
+                * first person is created before any division -- and before
+                * this button the only way to make it was to leave, which threw
+                * the typed name, username and temporary password away.
+                */}
+              {canManageDivisions ? (
+                <Button size="sm" className="justify-self-start" onClick={() => openDivisionDialog("person-form")}>
+                  New division
+                </Button>
+              ) : null}
             </div>
+          </div>
+          <div className="flex justify-end">
+            <Button type="submit" variant="primary" disabled={busy}>
+              {busy ? "Creating…" : "Create person"}
+            </Button>
+          </div>
           </form>
         </Panel>
-      )}
+      ) : null}
 
-      <Panel>
-        <PanelHeading title="People" description="Everyone this deployment knows about." />
-        {peopleFailure && (
-          <Alert tone={peopleFailure.refused ? "info" : "error"} className="mb-4">{peopleFailure.message}</Alert>
-        )}
-        {people.length === 0 ? (
-          // Suppressed under a failure: "Nobody yet" is a claim about the
-          // deployment, and the panel has just said it does not know.
-          peopleFailure ? null : (
-            <EmptyState title="Nobody yet">
-              Divisions bound what a person can see, so a deployment with no people has a boundary and
-              nobody to apply it to. Add somebody to start.
-            </EmptyState>
-          )
-        ) : (
-          <div className="grid gap-2">
-            {people.map((person) => (
-              <article
-                key={person.id}
-                className={cn(
-                  "flex items-start justify-between gap-4 rounded border border-border p-3",
-                  !person.enabled && "opacity-60",
-                )}
-              >
+      <div className="grid min-h-0 flex-1 gap-3 overflow-hidden lg:grid-cols-2">
+        <Panel className="flex min-h-0 min-w-0 flex-col overflow-hidden p-3" aria-label="People">
+          <div className="mb-2 flex shrink-0 items-start gap-3">
+            <Mark size="sm"><Users className="size-4" aria-hidden="true" /></Mark>
+            <div className="min-w-0">
+              <h2 className="m-0 font-display text-[17px] font-semibold tracking-[-0.02em] text-text">People</h2>
+              <p className="mb-0 mt-1 text-caption text-muted">Everyone this deployment knows about.</p>
+            </div>
+          </div>
+          <div className="grid min-h-0 flex-1 content-start overflow-y-auto">
+          {peopleFailure ? (
+            <Alert tone={peopleFailure.refused ? "info" : "error"}>{peopleFailure.message}</Alert>
+          ) : null}
+          {people.length === 0 ? (
+            peopleFailure ? null : (
+              <div className="grid gap-1.5 border-t border-border py-5">
+                <strong className="text-body font-semibold text-foreground">Nobody yet</strong>
+                <p className="m-0 max-w-[62ch] text-body text-muted">
+                  Divisions bound what a person can see, so a deployment with no people has a boundary and
+                  nobody to apply it to. Add somebody to start.
+                </p>
+              </div>
+            )
+          ) : people.map((person) => (
+            <article
+              key={person.id}
+              className={cn(
+                "grid gap-3 border-t border-border py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center",
+                !person.enabled && "opacity-60",
+              )}
+            >
+              <div className="flex min-w-0 items-start gap-3">
+                <span
+                  aria-hidden="true"
+                  className="grid h-9 w-9 shrink-0 place-items-center border border-border-strong bg-surface font-mono text-[10px] font-bold text-accent"
+                >
+                  {initials(person.displayName)}
+                </span>
                 <div className="min-w-0">
-                  <strong className="block text-label font-semibold text-text">{person.displayName}</strong>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <strong className="text-label font-semibold text-text">{person.displayName}</strong>
+                    {/* The tone directly, not through `toneFor`: its vocabulary
+                        is lower case, so `toneFor("HEALTHY")` matched nothing and
+                        both arms of this came back neutral -- an enabled and a
+                        disabled account were the same grey. There is no readiness
+                        string behind a boolean to translate, so translating one
+                        through a case-sensitive lookup was only ever a way to
+                        lose the colour. */}
+                    <StatusText tone={person.enabled ? "good" : "warn"}>
+                      {person.enabled ? "Active" : "Disabled"}
+                    </StatusText>
+                  </div>
                   <p className="mb-0 mt-0.5 text-caption text-muted">
                     {person.credential === "LOCAL" ? person.username : "Signs in through your identity provider"}
                   </p>
@@ -551,165 +568,155 @@ export function PeopleView({ session, onOpenSettings, onSessionExpired }: People
                     {person.passwordChangeRequired && person.credential === "LOCAL" ? " · must change password" : ""}
                   </MicroLabel>
                 </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  {/* The tone directly, not through `toneFor`: its vocabulary
-                      is lower case, so `toneFor("HEALTHY")` matched nothing and
-                      both arms of this came back neutral -- an enabled and a
-                      disabled account were the same grey. There is no readiness
-                      string behind a boolean to translate, so translating one
-                      through a case-sensitive lookup was only ever a way to
-                      lose the colour. */}
-                  <StatusText tone={person.enabled ? "good" : "warn"}>
-                    {person.enabled ? "Active" : "Disabled"}
-                  </StatusText>
-                  {canManagePeople && (
-                    <>
-                      <Select
-                        className="h-8 w-[190px] text-caption"
-                        aria-label={`Division for ${person.displayName}`}
-                        value={person.divisionId ?? ""}
-                        disabled={busy}
-                        onChange={(event) => void move(person, event.target.value)}
-                      >
-                        <option value="">No division</option>
-                        {optionsFor(person).map((item) => (
-                          <option key={item.id} value={item.id}>
-                            {item.status === "ACTIVE" ? item.displayName : `${item.displayName} (suspended)`}
-                          </option>
-                        ))}
-                      </Select>
-                      {/* Absent, not disabled, for a federated person: this
-                          product holds no password for them to reset. */}
-                      {person.credential === "LOCAL" && (
-                        <Button variant="ghost" disabled={busy} onClick={() => setResetting(person)}>
-                          Reset password
-                        </Button>
-                      )}
-                      <Button variant="ghost" disabled={busy} onClick={() => void setEnabled(person, !person.enabled)}>
-                        {person.enabled ? "Disable" : "Enable"}
-                      </Button>
-                    </>
-                  )}
+              </div>
+              {canManagePeople ? (
+                <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                  <Select
+                    className="h-8 w-[190px] text-caption"
+                    aria-label={`Division for ${person.displayName}`}
+                    value={person.divisionId ?? ""}
+                    disabled={busy}
+                    onChange={(event) => void move(person, event.target.value)}
+                  >
+                    <option value="">No division</option>
+                    {optionsFor(person).map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.status === "ACTIVE" ? item.displayName : `${item.displayName} (suspended)`}
+                      </option>
+                    ))}
+                  </Select>
+                  {person.credential === "LOCAL" ? (
+                    <Button variant="ghost" size="sm" disabled={busy} onClick={() => setResetting(person)}>
+                      Reset password
+                    </Button>
+                  ) : null}
+                  <Button variant="ghost" size="sm" disabled={busy} onClick={() => void setEnabled(person, !person.enabled)}>
+                    {person.enabled ? "Disable" : "Enable"}
+                  </Button>
                 </div>
-              </article>
-            ))}
+              ) : null}
+            </article>
+          ))}
           </div>
-        )}
-      </Panel>
+        </Panel>
 
-      <Panel>
-        <PanelHeading
-          title="Divisions"
-          description="A profile with no division stays visible to everyone."
-          actions={canManageDivisions ? (
-            <Button onClick={() => openDivisionDialog("divisions")}>New division</Button>
+        <Panel className="flex min-h-0 min-w-0 flex-col overflow-hidden p-3" aria-label="Divisions">
+          <div className="mb-2 flex shrink-0 items-start gap-3">
+            <Mark size="sm"><Layers className="size-4" aria-hidden="true" /></Mark>
+            <div className="min-w-0">
+              <h2 className="m-0 font-display text-[17px] font-semibold tracking-[-0.02em] text-text">Divisions</h2>
+              <p className="mb-0 mt-1 text-caption text-muted">A profile with no division stays visible to everyone.</p>
+            </div>
+          </div>
+          <div className="grid min-h-0 flex-1 content-start overflow-y-auto">
+          {divisionsFailure ? (
+            <Alert tone={divisionsFailure.refused ? "info" : "error"}>{divisionsFailure.message}</Alert>
           ) : null}
-        />
-        {divisionsFailure && (
-          <Alert tone={divisionsFailure.refused ? "info" : "error"} className="mb-4">{divisionsFailure.message}</Alert>
-        )}
-        {divisions.length === 0 ? (
-          divisionsFailure ? null : (
-            <EmptyState title="No divisions yet">
-              Every agent profile is visible to every signed-in user until a division is created and
-              assigned.
-            </EmptyState>
-          )
-        ) : (
-          <ul className="grid gap-3">
-            {divisions.map((item) => (
-              <li key={item.id} className={cn("flex items-start justify-between gap-6 rounded-card border border-border p-4", item.status !== "ACTIVE" && "opacity-60")}>
-                <div className="min-w-0">
-                  <h3>{item.displayName}</h3>
-                  <p>{item.description || "No description."}</p>
-                  <MicroLabel>
-                    {item.profileCount} profile{item.profileCount === 1 ? "" : "s"} ·{" "}
-                    {item.userCount} {item.userCount === 1 ? "person" : "people"} · updated {when(item.updatedAt)}
-                  </MicroLabel>
-                </div>
-                <div className="flex shrink-0 flex-col items-end gap-2">
-                  <StatusText tone={item.status === "ACTIVE" ? "good" : "warn"}>
-                    {item.status === "ACTIVE" ? "Active" : "Suspended"}
-                  </StatusText>
-                  {canManageDivisions && (
-                    <div className="flex gap-1">
+          {divisions.length === 0 ? (
+            divisionsFailure ? null : (
+              <div className="grid gap-1.5 border-t border-border py-5">
+                <strong className="text-body font-semibold text-foreground">No divisions yet</strong>
+                <p className="m-0 max-w-[62ch] text-body text-muted">
+                  Every agent profile is visible to every signed-in user until a division is created and
+                  assigned.
+                </p>
+              </div>
+            )
+          ) : (
+            <ul className="m-0 grid list-none gap-0 p-0">
+              {divisions.map((item) => (
+                <li
+                  key={item.id}
+                  className={cn(
+                    "grid gap-3 border-t border-border py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center",
+                    item.status !== "ACTIVE" && "opacity-60",
+                  )}
+                >
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="m-0 font-display text-[15px] font-semibold tracking-[-0.01em] text-text">
+                        {item.displayName}
+                      </h3>
+                      <StatusText tone={item.status === "ACTIVE" ? "good" : "warn"}>
+                        {item.status === "ACTIVE" ? "Active" : "Suspended"}
+                      </StatusText>
+                    </div>
+                    <p className="mb-0 mt-1 text-caption text-muted">{item.description || "No description."}</p>
+                    <MicroLabel className="mt-1 block">
+                      {item.profileCount} profile{item.profileCount === 1 ? "" : "s"} ·{" "}
+                      {item.userCount} {item.userCount === 1 ? "person" : "people"} · updated {when(item.updatedAt)}
+                    </MicroLabel>
+                  </div>
+                  {canManageDivisions ? (
+                    <div className="flex flex-wrap gap-1 sm:justify-end">
                       <Button
                         variant="ghost"
+                        size="sm"
                         disabled={busy}
                         onClick={() => void setStatus(item, item.status === "ACTIVE" ? "SUSPENDED" : "ACTIVE")}
                       >
                         {item.status === "ACTIVE" ? "Suspend" : "Reactivate"}
                       </Button>
-                      <Button variant="ghost" disabled={busy} onClick={() => setConfirmDelete(item)}>
+                      <Button variant="ghost" size="sm" disabled={busy} onClick={() => setConfirmDelete(item)}>
                         Delete
                       </Button>
                     </div>
-                  )}
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Panel>
-
-      {confirmDelete && (
-        <Panel>
-          <PanelHeading title={`Delete ${confirmDelete.displayName}?`} />
-          <p>
-            {confirmDelete.profileCount > 0 || confirmDelete.userCount > 0
-              ? "This division still holds work, so it cannot be deleted. Move its profiles and people elsewhere, or suspend it instead."
-              : "This division holds nothing. Deleting it cannot affect any profile or person."}
-          </p>
-          <div className="mt-4 flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => setConfirmDelete(null)}>Keep it</Button>
-            <Button disabled={busy} onClick={() => void remove(confirmDelete)}>Delete division</Button>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          )}
           </div>
         </Panel>
-      )}
+      </div>
 
-      <Panel>
-        <PanelHeading title="What a division does, and what it does not" />
-        {/*
-          * What is *absent* first, then why, because the reader of a screen
-          * called People is looking for their own administrator account and not
-          * finding it. This is a decision rather than an omission and nothing on
-          * screen used to say so: `LocalAdministrator` has no `divisionId`
-          * column at all, `profileVisibleTo` returns true for an administrator
-          * before it reads any division, and administrators are provisioned by
-          * a CLI the installer runs rather than from any dashboard.
-          *
-          * The Divisions screen carried one sentence of this and it answered a
-          * different question -- "can I scope an administrator?" rather than
-          * "where is my administrator account?" -- which is the question this
-          * screen's name invites.
-          *
-          * The non-isolation sentence below is the old screen's, word for word.
-          * It is load-bearing: this product makes no tenant-isolation claim
-          * anywhere, and rewriting the one place that says so out loud is how
-          * that claim gets softened by accident.
-          */}
-        {/*
-          * Spaced, because the reset zeroes `p` margins and the two paragraphs
-          * abutted at exactly the same pixel -- measured, not guessed. That was
-          * survivable on the old Divisions screen, where the note was a
-          * footnote nobody was sent to; it is not here, where the first
-          * paragraph is the answer somebody arrived looking for.
-          */}
-        <div className="grid gap-3">
-          <p>
-            <strong>Administrators are not on this list.</strong> An administrator is deployment-wide
-            by design: they see every division and every screen, so there is no division to put one in
-            and no administrator account on this page. Administrators are created by the installer on
-            the OrcaSynapse host, not from here.
-          </p>
-          <p>
-            A division bounds one thing — which agent profiles a person can see and run when they sign
-            in. A profile with no division is visible to everyone, which is what every profile is until
-            you assign one. It is not an isolation boundary. Agents that run on the same Agentic System
-            node share their memory and their Skills, whichever division their profile belongs to.
-          </p>
-        </div>
-      </Panel>
+      {resetting ? (
+        <Dialog
+          open
+          icon={KeyRound}
+          title={`Set a new password for ${resetting.displayName}`}
+          description="Their open sessions end immediately, and they are asked to change it at next sign-in."
+          onClose={() => { setResetting(null); setNewPassword(""); }}
+          footer={
+            <>
+              <Button onClick={() => { setResetting(null); setNewPassword(""); }}>Cancel</Button>
+              <Button variant="primary" type="submit" form="reset-person-password" disabled={busy}>
+                Set password
+              </Button>
+            </>
+          }
+        >
+          <form id="reset-person-password" className="grid gap-5" onSubmit={reset}>
+            <Field label="New password" hint="At least 12 characters. Shown once, here.">
+              <Input required minLength={12} value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
+            </Field>
+          </form>
+        </Dialog>
+      ) : null}
+
+      {confirmDelete ? (
+        <Dialog
+          open
+          icon={Trash2}
+          title={`Delete ${confirmDelete.displayName}?`}
+          description={
+            confirmDelete.profileCount > 0 || confirmDelete.userCount > 0
+              ? "This division still holds work, so it cannot be deleted. Move its profiles and people elsewhere, or suspend it instead."
+              : "This division holds nothing. Deleting it cannot affect any profile or person."
+          }
+          onClose={() => { if (!busy) setConfirmDelete(null); }}
+          footer={
+            <>
+              <Button onClick={() => setConfirmDelete(null)}>Keep it</Button>
+              <Button variant="danger" disabled={busy} onClick={() => void remove(confirmDelete)}>
+                Delete division
+              </Button>
+            </>
+          }
+        >
+          {null}
+        </Dialog>
+      ) : null}
 
       {/*
         * A centred `Dialog`, never the right-hand `Drawer`: Setup's panels moved
@@ -727,22 +734,29 @@ export function PeopleView({ session, onOpenSettings, onSessionExpired }: People
       <Dialog
         open={divisionDialogFor !== null}
         onClose={() => { if (!divisionBusy) setDivisionDialogFor(null); }}
-        kicker="Access control"
+        icon={Layers}
         title="New division"
         description="Any name you like. Nothing in the product enumerates them."
+        footer={
+          <>
+            <Button disabled={divisionBusy} onClick={() => setDivisionDialogFor(null)}>Cancel</Button>
+            <Button type="submit" form="new-division-form" variant="primary" disabled={divisionBusy}>
+              {divisionBusy ? "Creating…" : "Create division"}
+            </Button>
+          </>
+        }
       >
-        <form className="grid gap-4" onSubmit={submitDivision}>
+        <form id="new-division-form" className="grid gap-5" onSubmit={submitDivision}>
+          {divisionError ? <Alert tone="error">{divisionError}</Alert> : null}
           <Field label="Name" hint="What operators will call it.">
             <Input
               value={divisionDraft.displayName}
               onChange={(event) => {
-                const displayName = event.target.value;
+                const nextName = event.target.value;
                 setDivisionDraft((current) => ({
                   ...current,
-                  displayName,
-                  // Follows the name until somebody edits the slug themselves,
-                  // the same way the other create forms behave.
-                  slug: current.slug === slugify(current.displayName) ? slugify(displayName) : current.slug,
+                  displayName: nextName,
+                  slug: current.slug === slugify(current.displayName) ? slugify(nextName) : current.slug,
                 }));
               }}
               required
@@ -761,13 +775,6 @@ export function PeopleView({ session, onOpenSettings, onSessionExpired }: People
               onChange={(event) => setDivisionDraft((current) => ({ ...current, description: event.target.value }))}
             />
           </Field>
-          {divisionError && <Alert tone="error">{divisionError}</Alert>}
-          <div className="flex justify-end gap-2">
-            <Button variant="ghost" disabled={divisionBusy} onClick={() => setDivisionDialogFor(null)}>Cancel</Button>
-            <Button type="submit" variant="primary" disabled={divisionBusy}>
-              {divisionBusy ? "Creating…" : "Create division"}
-            </Button>
-          </div>
         </form>
       </Dialog>
     </div>

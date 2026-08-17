@@ -594,6 +594,10 @@ describe("runtime node pure helpers", () => {
     expect(seedableInferenceModelAlias([{ baseUrl: null, configuration: { modelAlias: "x" } }])).toBeNull();
     expect(seedableInferenceModelAlias([{ baseUrl: "https://a", configuration: {} }])).toBeNull();
     expect(seedableInferenceModelAlias([{ baseUrl: "https://a", configuration: { modelAlias: " x " } }])).toBe("x");
+    expect(seedableInferenceModelAlias([{
+      baseUrl: "https://openrouter.ai",
+      configuration: { modelAlias: "anthropic/claude-sonnet-4" },
+    }])).toBe("anthropic/claude-sonnet-4");
   });
 
   it("points the runtime at the control plane's internal gateway path", () => {

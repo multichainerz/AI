@@ -6,6 +6,7 @@ import type {
   HermesCorpusRevision,
   HermesCorpusStatus,
 } from "@orcasynapse/contracts";
+import { Brain, FilePen, History, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   OrcaSynapseApiError,
@@ -20,8 +21,8 @@ import { ConfigurationSetsPanel } from "./configuration-sets-panel.js";
 import { ScopedMemoryPanel } from "./scoped-memory-panel.js";
 import { SnapshotIcon, StorageIcon, SyncIcon, TerminalIcon } from "./ui/relay-icons.js";
 import {
-  Alert, Button, Dialog, EmptyState, Field, Input, LockedScreen, MicroLabel, PageHeader,
-  Panel, PanelHeading, Select, StatusText, Textarea, Tile, cn,
+  Alert, Button, Dialog, EmptyState, Field, Input, LockedScreen, MicroLabel,
+  Panel, PanelHeading, Select, StatusText, Textarea, Tile, WorkspaceDock, WorkspaceIntro, cn,
 } from "./ui/index.js";
 
 /**
@@ -65,9 +66,7 @@ const skillKinds: Array<{ value: HermesCorpusEntry["kind"] | ""; label: string }
 
 const scopes: Record<CorpusScope, {
   title: string;
-  kicker: string;
   mark: string;
-  description: string;
   lockedReason: string;
   deniedReason: string;
   countLabel: string;
@@ -78,9 +77,7 @@ const scopes: Record<CorpusScope, {
 }> = {
   SKILLS: {
     title: "Hermes Skills",
-    kicker: "Hermes native skills",
     mark: "HS",
-    description: "The Skill files Hermes actually loads, with their support files, bundles and provenance. VM2 remains canonical; this control plane mirrors, searches, versions, and audits signed changes.",
     lockedReason: "An administrator session is required to inspect the native Hermes Skill repository.",
     deniedReason: "Your role cannot observe the Hermes repository mirror.",
     countLabel: "Mirrored Skill files",
@@ -91,9 +88,7 @@ const scopes: Record<CorpusScope, {
   },
   MEMORY: {
     title: "Hermes Memory",
-    kicker: "Hermes native memory",
     mark: "HM",
-    description: "MEMORY.md and USER.md as Hermes actually holds them. VM2 remains canonical; this control plane mirrors, versions, and audits signed changes. Memory is never used as model context from here.",
     lockedReason: "An administrator session is required to inspect native Hermes memory.",
     deniedReason: "Your role cannot observe the Hermes repository mirror.",
     countLabel: "Mirrored memory files",
@@ -316,16 +311,43 @@ export function CorpusView({ session, scope, onConfigure, onSessionExpired }: Co
   );
 
   return (
-    <div className="mx-auto w-full max-w-[1540px]">
-      <PageHeader kicker={copy.kicker} title={copy.title}
-        description={copy.description}
-        actions={<Button onClick={() => void refresh().catch(fail)} disabled={loading}><SyncIcon size={16} />Refresh</Button>} />
+    <div className="workspace-stack corpus-workspace flex h-full min-h-0 flex-col gap-3 pb-3">
+      {error ? <Alert className="shrink-0" onDismiss={() => setError(null)}>{error}</Alert> : null}
+      {notice ? <Alert className="shrink-0" tone="good" onDismiss={() => setNotice(null)}>{notice}</Alert> : null}
+      {!canReadContent ? <Alert className="shrink-0" tone="warn">Your role has metadata-only access. Paths, hashes, sizes, synchronization state, and revision events are visible; mirrored file contents and mutation requests remain concealed.</Alert> : null}
+      {node && !node.available ? (
+        <Alert className="shrink-0" tone="warn">This VM2 predates corpus-sync-v1. Run its generated installer with <span className="font-mono">--repair</span> to add signed corpus synchronization; no clean VM rebuild is required.</Alert>
+      ) : null}
 
-      {error ? <Alert className="mb-4" onDismiss={() => setError(null)}>{error}</Alert> : null}
-      {notice ? <Alert className="mb-4" tone="good" onDismiss={() => setNotice(null)}>{notice}</Alert> : null}
-      {!canReadContent ? <Alert className="mb-4" tone="warn">Your role has metadata-only access. Paths, hashes, sizes, synchronization state, and revision events are visible; mirrored file contents and mutation requests remain concealed.</Alert> : null}
+      {/*
+        * Change control, revisions, and the set/memory panel used to stack in
+        * a third work column — three short cards that stole height from the
+        * file list. They sit beside the title and search dock now, so the
+        * mirror and its detail take the full remaining row.
+        */}
+      <div className="corpus-chrome grid shrink-0 gap-3 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.4fr)] lg:items-stretch">
+        <div className="grid min-w-0 content-start gap-3">
+      <WorkspaceIntro
+        icon={memoryScope ? <Brain className="size-4" aria-hidden="true" /> : <Sparkles className="size-4" aria-hidden="true" />}
+        title={copy.title}
+        actions={<Button className="shrink-0" onClick={() => void refresh().catch(fail)} disabled={loading}><SyncIcon size={16} />Refresh</Button>}
+      >
+        {node ? (
+          <p className="mb-0 flex flex-wrap items-center gap-x-3 gap-y-1 text-caption text-muted">
+            <StatusText dot tone={!node.available ? "bad" : node.stale ? "warn" : "good"}>
+              {!node.available ? "Unavailable" : node.stale ? "Stale" : "Current"}
+            </StatusText>
+            {/* The node-level total would be a different, larger number than
+                the list beneath it, so this counts what the tab actually shows. */}
+            <span>{entries.length} {copy.countLabel.toLowerCase()}</span>
+            <span>{bytes(node.totalBytes)}</span>
+            <span>{time(node.lastSyncedAt)}</span>
+            <span className="font-mono text-micro text-faint">{shortHash(node.rootHash)}</span>
+          </p>
+        ) : null}
+      </WorkspaceIntro>
 
-      <Panel className="mb-4 grid gap-4 p-4 md:grid-cols-[minmax(220px,0.8fr)_minmax(0,1.2fr)_auto] md:items-end">
+      <WorkspaceDock className="grid gap-2 sm:grid-cols-[minmax(180px,0.7fr)_minmax(0,1.3fr)_auto] sm:items-end">
         <Field label="Hermes node">
           <Select value={nodeId} onChange={(event) => setNodeId(event.target.value)}>
             {nodes.map((item) => <option key={item.nodeId} value={item.nodeId}>{item.nodeDisplayName}</option>)}
@@ -346,107 +368,13 @@ export function CorpusView({ session, scope, onConfigure, onSessionExpired }: Co
             Deleted
           </Button>
         </div>
-      </Panel>
-
-      {node ? (
-        <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <Tile><MicroLabel className="block">Synchronization</MicroLabel><StatusText className="mt-2" dot tone={!node.available ? "bad" : node.stale ? "warn" : "good"}>{!node.available ? "Unavailable" : node.stale ? "Stale" : "Current"}</StatusText></Tile>
-          {/* The node-level total would be a different, larger number than the
-              list beneath it, so this tile counts what the tab actually shows. */}
-          <Tile><MicroLabel className="block">{copy.countLabel}</MicroLabel><strong className="mt-2 block font-display text-figure text-text">{entries.length}</strong></Tile>
-          <Tile><MicroLabel className="block">Observed corpus</MicroLabel><strong className="mt-2 block font-display text-figure text-text">{bytes(node.totalBytes)}</strong></Tile>
-          <Tile><MicroLabel className="block">Last signed snapshot</MicroLabel><strong className="mt-2 block text-label text-text">{time(node.lastSyncedAt)}</strong><span className="mt-1 block font-mono text-micro text-faint">{shortHash(node.rootHash)}</span></Tile>
+      </WorkspaceDock>
         </div>
-      ) : null}
 
-      {node && !node.available ? (
-        <Alert className="mb-4" tone="warn">This VM2 predates corpus-sync-v1. Run its generated installer with <span className="font-mono">--repair</span> to add signed corpus synchronization; no clean VM rebuild is required.</Alert>
-      ) : null}
-
-      <div className="grid min-h-[590px] gap-4 xl:grid-cols-[300px_minmax(0,1fr)_340px]">
-        <Panel className="min-w-0 p-3">
-          {/* `node?.writable`, like every other write on this screen: it means
-              the node advertised the corpus capability and is neither REVOKED
-              nor SUSPENDED, and `createMutation` answers those two with a 409.
-              Without it the operator authors a whole SKILL.md on a
-              pre-corpus-sync-v1 node and the draft is discarded on submit. */}
-          <PanelHeading className="px-1 pt-1" kicker="Repository" title={memoryScope ? "Memory files" : "Skill files"}
-            actions={canWrite && !memoryScope && node?.writable ? <Button size="sm" onClick={() => { setSelectedId(""); setDraft(initialDraft("SKILL_CREATE")); }}>New skill</Button> : undefined} />
-          {/* The two native memory files can be created before Hermes has ever
-              written them, which is the one write this tab offers up front. */}
-          {memoryScope && canWrite && node?.writable ? <div className="mb-3 grid grid-cols-2 gap-2">
-            <Button size="sm" onClick={() => setDraft({ ...initialDraft("MEMORY_ADD"), path: "memories/MEMORY.md" })}>Add agent memory</Button>
-            <Button size="sm" onClick={() => setDraft({ ...initialDraft("MEMORY_ADD"), path: "memories/USER.md" })}>Add user profile</Button>
-          </div> : null}
-          <div className="grid max-h-[520px] gap-1.5 overflow-y-auto pr-1">
-            {/*
-              * `size="auto"` and an explicit single column, for the reason
-              * `agent-run-ledger.tsx` and `agents-view.tsx` already carry: a
-              * row is three stacked lines, every other size is a fixed
-              * single-line height, and the Button base is
-              * `inline-flex items-center justify-center` -- so the default
-              * drew filename, path and kind side by side inside 36px. jsdom
-              * sees none of it.
-              */}
-            {entries.map((entry) => (
-              <Button key={entry.id} variant="ghost" size="auto" onClick={() => setSelectedId(entry.id)}
-                className={cn("grid w-full grid-cols-1 rounded border p-3 text-left transition-colors", selected?.id === entry.id ? "border-accent/50 bg-soft" : "border-transparent hover:border-border hover:bg-raised", entry.deletedAt && "opacity-55")}>
-                <span className="flex items-center gap-2 text-label font-semibold text-text"><StorageIcon size={14} /><span className="truncate">{entry.path.split("/").at(-1)}</span></span>
-                <span className="mt-1 block truncate font-mono text-micro text-faint">{entry.path}</span>
-                <span className="mt-2 flex items-center justify-between"><MicroLabel>{entry.kind.replaceAll("_", " ")}</MicroLabel><span className="text-micro text-muted">r{entry.revision}</span></span>
-              </Button>
-            ))}
-            {!loading && entries.length === 0 ? <EmptyState title={copy.emptyTitle}>{copy.emptyBody}</EmptyState> : null}
-            {loading ? <p className="px-2 text-body text-muted">Reading the signed mirror…</p> : null}
-          </div>
-        </Panel>
-
-        <Panel className="min-w-0">
-          {selected ? (
-            <>
-              <PanelHeading kicker={selected.kind.replaceAll("_", " ")} title={selected.path}
-                description={`${bytes(selected.sizeBytes)} · revision ${selected.revision} · observed ${time(selected.observedAt)}`}
-                actions={operationForEntry(selected) && canWrite && node?.writable ? <Button size="sm" variant="primary" onClick={() => openOperation(operationForEntry(selected)!)}>{selected.kind === "MEMORY" ? "Add memory" : "Edit"}</Button> : undefined} />
-              <div className="mb-4 flex flex-wrap gap-2">
-                <StatusText tone={selected.readOnly ? "warn" : "good"}>{selected.readOnly ? "Mirror only" : "Governed writes"}</StatusText>
-                <span className="font-mono text-micro text-faint">sha256:{shortHash(selected.sha256)}</span>
-              </div>
-              {!canReadContent ? (
-                <EmptyState title="Metadata-only access">Your role can inspect file identity and revision metadata, but not mirrored Hermes content.</EmptyState>
-              ) : selected.kind === "MEMORY" && selected.structuredEntries?.length ? (
-                <div className="mb-4 grid gap-2">
-                  {selected.structuredEntries.map((memory, index) => (
-                    <Tile key={`${selected.id}-${index}`}>
-                      <p className="m-0 whitespace-pre-wrap text-body leading-relaxed text-text">{memory}</p>
-                      {canWrite && node?.writable ? <div className="mt-3 flex justify-end gap-2">
-                        <Button size="sm" onClick={() => openOperation("MEMORY_REPLACE", memory)}>Replace</Button>
-                        {canDelete ? <Button size="sm" variant="danger" onClick={() => openOperation("MEMORY_REMOVE", memory)}>Remove</Button> : null}
-                      </div> : null}
-                    </Tile>
-                  ))}
-                </div>
-              ) : selected.content !== null ? (
-                <pre className="m-0 max-h-[430px] overflow-auto whitespace-pre-wrap rounded border border-border bg-bg p-4 font-mono text-[11.5px] leading-relaxed text-text">{selected.content}</pre>
-              ) : (
-                <EmptyState title="Content is not mirrored">This file is binary, oversized, sensitive, or intentionally metadata-only.</EmptyState>
-              )}
-              {!selected.readOnly && canWrite && node?.writable && selected.kind === "SKILL" ? <div className="mt-4 flex justify-end gap-2">
-                <Button onClick={() => setDraft({ ...initialDraft("SKILL_WRITE_FILE"), path: `${selected.path.slice(0, -"SKILL.md".length)}references/notes.md` })}>New support file</Button>
-                {canDelete ? <>
-                <Button variant="danger" onClick={() => openOperation("SKILL_DELETE")}>Delete skill</Button>
-                </> : null}
-              </div> : null}
-              {!selected.readOnly && canDelete && node?.writable && selected.kind === "SKILL_FILE" ? <div className="mt-4 flex justify-end">
-                <Button variant="danger" onClick={() => openOperation("SKILL_REMOVE_FILE")}>Delete file</Button>
-              </div> : null}
-            </>
-          ) : <EmptyState title={copy.selectTitle}>{copy.selectBody}</EmptyState>}
-        </Panel>
-
-        <div className="grid min-w-0 content-start gap-4">
-          <Panel className="p-4">
-            <PanelHeading kicker="Change control" title="Recent requests" />
-            <div className="grid max-h-[300px] gap-2 overflow-y-auto">
+        <div className="grid min-h-0 min-w-0 gap-3 sm:grid-cols-3 lg:h-0 lg:min-h-full">
+          <Panel className="flex min-h-0 flex-col overflow-hidden p-3">
+            <PanelHeading className="mb-2 shrink-0" kicker="Change control" title="Recent requests" />
+            <div className="grid min-h-0 flex-1 content-start gap-2 overflow-y-auto">
               {mutations.slice(0, RECENT_MUTATIONS).map((mutation) => (
                 <Tile key={mutation.id} pad="sm">
                   <div className="flex items-start justify-between gap-3"><strong className="text-label text-text">{mutation.operation.replaceAll("_", " ")}</strong><StatusText tone={mutationTone(mutation.status)}>{mutation.status.replaceAll("_", " ")}</StatusText></div>
@@ -464,7 +392,7 @@ export function CorpusView({ session, scope, onConfigure, onSessionExpired }: Co
                   </div> : null}
                 </Tile>
               ))}
-              {mutations.length === 0 ? <EmptyState title="No change requests">Changes made here will be signed, dispatched, and audited.</EmptyState> : null}
+              {mutations.length === 0 ? <EmptyState className="w-full px-3 py-4" title="No change requests">Changes made here will be signed, dispatched, and audited.</EmptyState> : null}
               {/* The slice, stated. Twenty rows out of a longer list under a
                   heading that says only "Recent requests" reads as the whole
                   history, and the twenty-first is a pending approval nobody can
@@ -478,21 +406,118 @@ export function CorpusView({ session, scope, onConfigure, onSessionExpired }: Co
               ) : null}
             </div>
           </Panel>
-          <Panel className="p-4">
-            <PanelHeading kicker="Immutable mirror history" title="Revisions" />
-            <div className="grid max-h-[250px] gap-2 overflow-y-auto">
+          <Panel className="flex min-h-0 flex-col overflow-hidden p-3">
+            <PanelHeading className="mb-2 shrink-0" kicker="Immutable mirror history" title="Revisions" />
+            <div className="grid min-h-0 flex-1 content-start gap-2 overflow-y-auto">
               {revisions.map((revision) => <Tile key={revision.id} pad="sm">
                 <div className="flex items-center justify-between"><span className="flex items-center gap-2 text-label font-semibold text-text"><SnapshotIcon size={14} />Revision {revision.revision}</span><StatusText tone={revision.changeKind === "DELETED" ? "bad" : "neutral"}>{revision.changeKind}</StatusText></div>
                 <span className="mt-1 block text-caption text-muted">{time(revision.createdAt)}</span>
                 <div className="mt-1 flex items-center justify-between gap-2"><span className="font-mono text-micro text-faint">{shortHash(revision.beforeHash)} → {shortHash(revision.afterHash)}</span><Button size="sm" variant="ghost" onClick={() => setRevisionFocus(revision)}>Inspect</Button></div>
               </Tile>)}
-              {selected && revisions.length === 0 ? <EmptyState title="No revisions yet">History appears after the first signed snapshot.</EmptyState> : null}
+              {selected && revisions.length === 0 ? <EmptyState className="w-full px-3 py-4" title="No revisions yet">History appears after the first signed snapshot.</EmptyState> : null}
             </div>
           </Panel>
+          {/*
+            * Skills only for sets: a set names a reusable selection, and there
+            * are exactly two memory files per node with nothing to select
+            * between. Memory instead shows the store the `recall` tool reads.
+            */}
+          {!memoryScope ? (
+            <ConfigurationSetsPanel embedded kind="skills" canManage={canWrite} onSessionExpired={onSessionExpired} />
+          ) : (
+            <ScopedMemoryPanel embedded canWrite={canWrite} canDelete={canDelete} onSessionExpired={onSessionExpired} />
+          )}
         </div>
       </div>
 
+      <div className="corpus-work grid min-h-0 flex-1 gap-3 lg:grid-cols-[260px_minmax(0,1fr)]">
+        <Panel className="flex min-h-0 min-w-0 flex-col overflow-hidden p-3">
+          {/* `node?.writable`, like every other write on this screen: it means
+              the node advertised the corpus capability and is neither REVOKED
+              nor SUSPENDED, and `createMutation` answers those two with a 409.
+              Without it the operator authors a whole SKILL.md on a
+              pre-corpus-sync-v1 node and the draft is discarded on submit. */}
+          {/* The two native memory files can be created before Hermes has ever
+              written them, which is the one write this tab offers up front.
+              They sit in the heading, the same place Skills puts New skill,
+              so they do not add a second toolbar row. */}
+          <PanelHeading className="mb-2 shrink-0 px-1 pt-0.5" kicker="Repository" title={memoryScope ? "Memory files" : "Skill files"}
+            actions={canWrite && node?.writable
+              ? memoryScope
+                ? <div className="flex gap-1.5">
+                    <Button size="sm" onClick={() => setDraft({ ...initialDraft("MEMORY_ADD"), path: "memories/MEMORY.md" })}>Add agent memory</Button>
+                    <Button size="sm" onClick={() => setDraft({ ...initialDraft("MEMORY_ADD"), path: "memories/USER.md" })}>Add user profile</Button>
+                  </div>
+                : <Button size="sm" onClick={() => { setSelectedId(""); setDraft(initialDraft("SKILL_CREATE")); }}>New skill</Button>
+              : undefined} />
+          <div className="grid min-h-0 flex-1 content-start gap-1.5 overflow-y-auto pr-1">
+            {/*
+              * `size="auto"` and an explicit single column, for the reason
+              * `agent-run-ledger.tsx` and `agents-view.tsx` already carry: a
+              * row is three stacked lines, every other size is a fixed
+              * single-line height, and the Button base is
+              * `inline-flex items-center justify-center` -- so the default
+              * drew filename, path and kind side by side inside 36px. jsdom
+              * sees none of it.
+              */}
+            {entries.map((entry) => (
+              <Button key={entry.id} variant="ghost" size="auto" onClick={() => setSelectedId(entry.id)}
+                className={cn("grid w-full grid-cols-1 rounded border p-2.5 text-left transition-colors", selected?.id === entry.id ? "border-accent/50 bg-soft" : "border-transparent hover:border-border hover:bg-raised", entry.deletedAt && "opacity-55")}>
+                <span className="flex items-center gap-2 text-label font-semibold text-text"><StorageIcon size={14} /><span className="truncate">{entry.path.split("/").at(-1)}</span></span>
+                <span className="mt-1 block truncate font-mono text-micro text-faint">{entry.path}</span>
+                <span className="mt-1.5 flex items-center justify-between"><MicroLabel>{entry.kind.replaceAll("_", " ")}</MicroLabel><span className="text-micro text-muted">r{entry.revision}</span></span>
+              </Button>
+            ))}
+            {!loading && entries.length === 0 ? <EmptyState className="w-full px-3 py-5" title={copy.emptyTitle}>{copy.emptyBody}</EmptyState> : null}
+            {loading ? <p className="px-2 text-body text-muted">Reading the signed mirror…</p> : null}
+          </div>
+        </Panel>
+
+        <Panel className="flex min-h-0 min-w-0 flex-col overflow-hidden p-3">
+          {selected ? (
+            <>
+              <PanelHeading className="mb-2 shrink-0" kicker={selected.kind.replaceAll("_", " ")} title={selected.path}
+                description={`${bytes(selected.sizeBytes)} · revision ${selected.revision} · observed ${time(selected.observedAt)}`}
+                actions={operationForEntry(selected) && canWrite && node?.writable ? <Button size="sm" variant="primary" onClick={() => openOperation(operationForEntry(selected)!)}>{selected.kind === "MEMORY" ? "Add memory" : "Edit"}</Button> : undefined} />
+              <div className="mb-2 flex shrink-0 flex-wrap items-center gap-2">
+                <StatusText tone={selected.readOnly ? "warn" : "good"}>{selected.readOnly ? "Mirror only" : "Governed writes"}</StatusText>
+                <span className="font-mono text-micro text-faint">sha256:{shortHash(selected.sha256)}</span>
+              </div>
+              <div className="grid min-h-0 flex-1 content-start gap-2 overflow-y-auto">
+              {!canReadContent ? (
+                <EmptyState className="w-full px-3 py-5" title="Metadata-only access">Your role can inspect file identity and revision metadata, but not mirrored Hermes content.</EmptyState>
+              ) : selected.kind === "MEMORY" && selected.structuredEntries?.length ? (
+                selected.structuredEntries.map((memory, index) => (
+                  <Tile key={`${selected.id}-${index}`}>
+                    <p className="m-0 whitespace-pre-wrap text-body leading-relaxed text-text">{memory}</p>
+                    {canWrite && node?.writable ? <div className="mt-3 flex justify-end gap-2">
+                      <Button size="sm" onClick={() => openOperation("MEMORY_REPLACE", memory)}>Replace</Button>
+                      {canDelete ? <Button size="sm" variant="danger" onClick={() => openOperation("MEMORY_REMOVE", memory)}>Remove</Button> : null}
+                    </div> : null}
+                  </Tile>
+                ))
+              ) : selected.content !== null ? (
+                <pre className="m-0 min-h-0 flex-1 overflow-auto whitespace-pre-wrap rounded border border-border bg-bg p-3 font-mono text-[11.5px] leading-relaxed text-text">{selected.content}</pre>
+              ) : (
+                <EmptyState className="w-full px-3 py-5" title="Content is not mirrored">This file is binary, oversized, sensitive, or intentionally metadata-only.</EmptyState>
+              )}
+              </div>
+              {!selected.readOnly && canWrite && node?.writable && selected.kind === "SKILL" ? <div className="mt-2 flex shrink-0 justify-end gap-2">
+                <Button size="sm" onClick={() => setDraft({ ...initialDraft("SKILL_WRITE_FILE"), path: `${selected.path.slice(0, -"SKILL.md".length)}references/notes.md` })}>New support file</Button>
+                {canDelete ? <>
+                <Button size="sm" variant="danger" onClick={() => openOperation("SKILL_DELETE")}>Delete skill</Button>
+                </> : null}
+              </div> : null}
+              {!selected.readOnly && canDelete && node?.writable && selected.kind === "SKILL_FILE" ? <div className="mt-2 flex shrink-0 justify-end">
+                <Button size="sm" variant="danger" onClick={() => openOperation("SKILL_REMOVE_FILE")}>Delete file</Button>
+              </div> : null}
+            </>
+          ) : <EmptyState className="m-auto w-full max-w-[36ch] px-3 py-5" title={copy.selectTitle}>{copy.selectBody}</EmptyState>}
+        </Panel>
+      </div>
+
       <Dialog open={draft !== null} onClose={() => !busy && setDraft(null)}
+        icon={FilePen}
         kicker="Governed Hermes mutation" title={draft?.operation.replaceAll("_", " ") ?? "Corpus change"}
         description={draft && destructive.has(draft.operation) ? "This destructive request requires approval by another administrator." : "The expected content hash prevents overwriting a newer Hermes file."}
         footer={<><Button onClick={() => setDraft(null)} disabled={busy}>Cancel</Button><Button variant={draft && destructive.has(draft.operation) ? "danger" : "primary"} type="submit" form="corpus-mutation-form" disabled={busy}>{busy ? "Submitting…" : "Submit change"}</Button></>}>
@@ -505,6 +530,7 @@ export function CorpusView({ session, scope, onConfigure, onSessionExpired }: Co
         </form> : null}
       </Dialog>
       <Dialog open={revisionFocus !== null} onClose={() => setRevisionFocus(null)}
+        icon={History}
         kicker="Immutable corpus revision" title={revisionFocus ? `Revision ${revisionFocus.revision}` : "Revision"}
         description={revisionFocus ? `${revisionFocus.changeKind.toLowerCase()} · ${time(revisionFocus.createdAt)} · ${revisionFocus.path}` : undefined}
         footer={<Button onClick={() => setRevisionFocus(null)}>Close</Button>}>
@@ -514,24 +540,6 @@ export function CorpusView({ session, scope, onConfigure, onSessionExpired }: Co
           {revisionFocus.mutationId ? <span className="font-mono text-micro text-faint">Mutation {revisionFocus.mutationId}</span> : null}
         </div> : null}
       </Dialog>
-
-      {/*
-        * Skills only. Memory has no set concept and never will: a set names a
-        * reusable selection, and there are exactly two memory files per node
-        * with nothing to select between.
-        */}
-      {!memoryScope && (
-        <ConfigurationSetsPanel kind="skills" canManage={canWrite} onSessionExpired={onSessionExpired} />
-      )}
-
-      {/*
-        * Memory only. These rows are the same store the `recall` tool reads --
-        * not a mirror of it -- which is what lets this screen be complete rather
-        * than merely plausible about what an agent knows.
-        */}
-      {memoryScope && (
-        <ScopedMemoryPanel canWrite={canWrite} canDelete={canDelete} onSessionExpired={onSessionExpired} />
-      )}
     </div>
   );
 }

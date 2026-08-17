@@ -1,81 +1,14 @@
 import type { InferenceBackend, ServiceConnectionConfiguration, ServiceKind } from "@orcasynapse/contracts";
 
-export interface InferenceEndpointPreset {
-  backend: InferenceBackend;
-  label: string;
-  description: string;
-  defaultPort: number | null;
-  endpointPlaceholder: string;
-  endpointOptions: ReadonlyArray<{ label: string; value: string }>;
-}
-
-export const inferenceEndpointPresets: readonly InferenceEndpointPreset[] = [
-  {
-    backend: "VLLM",
-    label: "vLLM",
-    description: "High-throughput GPU inference for Hugging Face model deployments.",
-    defaultPort: 8000,
-    endpointPlaceholder: "http://gpu-server.internal:8000",
-    endpointOptions: [
-      { label: "Docker service · vllm:8000", value: "http://vllm:8000" },
-      { label: "Docker Desktop host · port 8000", value: "http://host.docker.internal:8000" },
-    ],
-  },
-  {
-    backend: "LLAMA_CPP",
-    label: "llama.cpp",
-    description: "GGUF inference with flexible CPU and GPU offload.",
-    defaultPort: 8080,
-    endpointPlaceholder: "http://gpu-server.internal:8080",
-    endpointOptions: [
-      { label: "Docker service · llama-cpp:8080", value: "http://llama-cpp:8080" },
-      { label: "Docker Desktop host · port 8080", value: "http://host.docker.internal:8080" },
-    ],
-  },
-  {
-    backend: "SGLANG",
-    label: "SGLang",
-    description: "GPU serving optimized for structured and agentic workloads.",
-    defaultPort: 30_000,
-    endpointPlaceholder: "http://gpu-server.internal:30000",
-    endpointOptions: [
-      { label: "Docker service · sglang:30000", value: "http://sglang:30000" },
-      { label: "Docker Desktop host · port 30000", value: "http://host.docker.internal:30000" },
-    ],
-  },
-  {
-    backend: "OLLAMA",
-    label: "Ollama",
-    description: "Simple local model lifecycle with an OpenAI-compatible API.",
-    defaultPort: 11_434,
-    endpointPlaceholder: "http://inference-server.internal:11434",
-    endpointOptions: [
-      { label: "Docker service · ollama:11434", value: "http://ollama:11434" },
-      { label: "Docker Desktop host · port 11434", value: "http://host.docker.internal:11434" },
-    ],
-  },
-  {
-    backend: "TGI",
-    label: "Hugging Face TGI",
-    description: "Hugging Face Text Generation Inference serving.",
-    defaultPort: 80,
-    endpointPlaceholder: "http://gpu-server.internal:80",
-    endpointOptions: [
-      { label: "Docker service · tgi:80", value: "http://tgi:80" },
-      { label: "Docker Desktop host · port 80", value: "http://host.docker.internal:80" },
-    ],
-  },
-  {
-    backend: "CUSTOM_OPENAI_COMPATIBLE",
-    label: "Other OpenAI-compatible server",
-    description: "A custom backend exposing model discovery and chat completions.",
-    defaultPort: null,
-    endpointPlaceholder: "https://inference.internal",
-    endpointOptions: [
-      { label: "Private DNS example", value: "https://inference.internal" },
-    ],
-  },
-] as const;
+/** Friendly names for a backend discovery already identified. Not a form. */
+export const inferenceEndpointPresets: ReadonlyArray<{ backend: InferenceBackend; label: string }> = [
+  { backend: "VLLM", label: "vLLM" },
+  { backend: "LLAMA_CPP", label: "llama.cpp" },
+  { backend: "SGLANG", label: "SGLang" },
+  { backend: "OLLAMA", label: "Ollama" },
+  { backend: "TGI", label: "Hugging Face TGI" },
+  { backend: "CUSTOM_OPENAI_COMPATIBLE", label: "OpenAI compatible" },
+];
 
 export interface ConfigurationField {
   name: keyof ServiceConnectionConfiguration;
@@ -108,25 +41,7 @@ export const connectionDefinitions: ConnectionDefinition[] = [
     role: "Enterprise OpenAI-compatible model serving",
     tone: "blue",
     secretFields: [{ name: "apiKey", label: "API key", required: false }],
-    configurationFields: [
-      {
-        name: "inferenceBackend",
-        label: "Inference backend",
-        type: "select",
-        defaultValue: "CUSTOM_OPENAI_COMPATIBLE",
-        options: inferenceEndpointPresets.map(({ label, backend }) => ({ label, value: backend })),
-        help: "Identifies the serving engine for operations and compatibility evidence; routing uses the OpenAI-compatible API contract.",
-      },
-      { name: "modelAlias", label: "Served model name", type: "text", placeholder: "hermes-primary", help: "Expected model ID exposed by the inference server." },
-      { name: "healthPath", label: "Health path", type: "text", help: "Optional relative health endpoint discovered by OrcaSynapse or supplied by the server operator." },
-      { name: "modelsPath", label: "Models path", type: "text", defaultValue: "/v1/models", help: "OpenAI-compatible model discovery endpoint." },
-      { name: "chatPath", label: "Chat completions path", type: "text", defaultValue: "/v1/chat/completions", help: "OpenAI-compatible streaming chat endpoint." },
-      { name: "maxOutputTokens", label: "Maximum output tokens", type: "number", defaultValue: 2048, min: 64, max: 32768, step: 64, help: "Hard output limit OrcaSynapse applies to direct diagnostic chat." },
-      { name: "temperature", label: "Temperature", type: "number", defaultValue: 0.2, min: 0, max: 2, step: 0.1, help: "Sampling temperature for direct diagnostic chat." },
-      { name: "inferenceTimeoutMs", label: "Inference timeout (ms)", type: "number", defaultValue: 120000, min: 5000, max: 600000, step: 5000, help: "Maximum duration for a streamed model response." },
-      { name: "requestsPerMinute", label: "Requests per user / minute", type: "number", defaultValue: 12, min: 1, max: 120, step: 1, help: "PostgreSQL-enforced limit across the employee's conversations." },
-      { name: "timeoutMs", label: "Diagnostic timeout (ms)", type: "number", defaultValue: 8000, help: "Allowed range: 1,000–30,000 milliseconds." },
-    ],
+    configurationFields: [],
   },
   {
     kind: "OIDC",

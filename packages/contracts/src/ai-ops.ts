@@ -30,10 +30,17 @@ export const aiOpsComponentSchema = z.object({
   affectedWorkflows: z.array(aiOpsWorkflowSchema),
 });
 
+/*
+ * Five layers, not six. `RETRIEVAL` was declared here and emitted by nothing --
+ * `guardrailControls` in the AI-ops manager returns the other five and always
+ * has -- because this product has no retrieval plane: there is no vector store,
+ * no embedding model and no document library, by design. A layer the schema
+ * admits and the deployment can never report is a claim about coverage that
+ * nothing behind it can meet.
+ */
 export const guardrailLayerSchema = z.enum([
   "INPUT",
   "OUTPUT",
-  "RETRIEVAL",
   "MODEL_ACCESS",
   "TOOL_USE",
   "DATA_EGRESS",

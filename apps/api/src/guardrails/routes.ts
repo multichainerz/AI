@@ -6,13 +6,30 @@ import {
   guardrailPolicySchema,
   updateGuardrailPolicySchema,
 } from "@orcasynapse/contracts";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
 import { requireAdmin, type AdminSessionManager } from "../auth/admin-session.js";
+import { GuardrailPatternError } from "./rule-compiler.js";
 import { GuardrailConflictError, GuardrailNotFoundError, type GuardrailManager } from "./guardrail-manager.js";
 
 interface GuardrailRouteDependencies {
   sessionManager?: AdminSessionManager;
   manager?: GuardrailManager;
+}
+
+/**
+ * A refused pattern, reported as what was wrong with it.
+ *
+ * `refusal` travels beside the message so the screen can be specific without
+ * parsing prose: "nested quantifier" and "lookahead" call for different edits,
+ * and an operator told only "invalid pattern" has nothing to act on.
+ */
+async function sendPatternRefusal(error: unknown, reply: FastifyReply): Promise<FastifyReply | null> {
+  if (!(error instanceof GuardrailPatternError)) return null;
+  return reply.code(400).send({
+    error: "INVALID_GUARDRAIL_RULE",
+    refusal: error.refusal,
+    message: error.message,
+  });
 }
 
 export async function registerGuardrailRoutes(app: FastifyInstance, dependencies: GuardrailRouteDependencies): Promise<void> {
@@ -35,6 +52,8 @@ export async function registerGuardrailRoutes(app: FastifyInstance, dependencies
     try {
       return reply.code(201).send(guardrailPolicySchema.parse(await dependencies.manager!.create(principal, input.data)));
     } catch (error) {
+      const refused = await sendPatternRefusal(error, reply);
+      if (refused) return refused;
       if (error instanceof GuardrailConflictError) return reply.code(409).send({ error: "GUARDRAIL_CONFLICT", message: error.message });
       throw error;
     }
@@ -51,6 +70,8 @@ export async function registerGuardrailRoutes(app: FastifyInstance, dependencies
     try {
       return guardrailPolicySchema.parse(await dependencies.manager!.update(principal, request.params.id, input.data));
     } catch (error) {
+      const refused = await sendPatternRefusal(error, reply);
+      if (refused) return refused;
       if (error instanceof GuardrailNotFoundError) return reply.code(404).send({ error: "NOT_FOUND", message: error.message });
       if (error instanceof GuardrailConflictError) return reply.code(409).send({ error: "GUARDRAIL_CONFLICT", message: error.message });
       throw error;

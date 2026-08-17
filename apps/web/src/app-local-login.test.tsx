@@ -1,7 +1,7 @@
 /**
  * @vitest-environment jsdom
  *
- * Local sign-in has two stores. A person created under Settings → People is
+ * Local sign-in has two stores. A person created under Settings → Access is
  * not a LocalAdministrator, and treating their 401 as an expired admin
  * session is what this file exists to stop.
  */

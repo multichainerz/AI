@@ -1,3 +1,4 @@
+import { isOpenRouterEndpoint, OPENROUTER_INFERENCE } from "@orcasynapse/contracts";
 import {
   boundedJsonResponse,
   failedHttpOutcome,
@@ -18,7 +19,7 @@ interface OpenAICompatibleAdapterOptions {
 
 const MAX_MODEL_DISCOVERY_BYTES = 1_000_000;
 
-function discoveredModelIds(payload: Record<string, unknown>): string[] {
+function catalogModelIds(payload: Record<string, unknown>): string[] {
   const candidates = [
     ...(Array.isArray(payload.data) ? payload.data : []),
     ...(Array.isArray(payload.models) ? payload.models : []),
@@ -28,7 +29,7 @@ function discoveredModelIds(payload: Record<string, unknown>): string[] {
     const record = candidate as Record<string, unknown>;
     const id = [record.id, record.model, record.name].find((value) => typeof value === "string");
     return typeof id === "string" ? [id] : [];
-  }))].slice(0, 50);
+  }))];
 }
 
 export class OpenAICompatibleAdapter implements ConnectionDiagnosticAdapter {
@@ -37,6 +38,7 @@ export class OpenAICompatibleAdapter implements ConnectionDiagnosticAdapter {
   async test(connection: ResolvedConnection, signal: AbortSignal): Promise<AdapterOutcome> {
     const healthPath = stringConfiguration(connection, "healthPath") ?? this.options.defaultHealthPath;
     const modelsPath = stringConfiguration(connection, "modelsPath") ?? "/v1/models";
+    const openRouter = isOpenRouterEndpoint(connection.baseUrl);
 
     const models = await healthFetch(connection, modelsPath, signal);
     if (!models.ok) return failedHttpOutcome(this.options.serviceName, models);
@@ -60,15 +62,16 @@ export class OpenAICompatibleAdapter implements ConnectionDiagnosticAdapter {
         details: { failure: "invalid_models_response" },
       };
     }
-    const modelIds = discoveredModelIds(payload);
+    const modelIds = catalogModelIds(payload);
     const modelAlias = stringConfiguration(connection, "modelAlias");
     const inferenceBackend = stringConfiguration(connection, "inferenceBackend");
+    const backendDetail = inferenceBackend ? { inferenceBackend } : {};
 
     if (modelIds.length === 0) {
       return {
         status: "DEGRADED",
         message: `${this.options.serviceName} is reachable but reported no available models.`,
-        details: { modelCount: 0, ...(inferenceBackend ? { inferenceBackend } : {}) },
+        details: { modelCount: 0, ...backendDetail },
       };
     }
 
@@ -76,8 +79,21 @@ export class OpenAICompatibleAdapter implements ConnectionDiagnosticAdapter {
       return {
         status: "DEGRADED",
         message: `${this.options.serviceName} is reachable but the configured model alias is unavailable.`,
-        details: { modelAlias, modelCount: modelIds.length, modelIds, ...(inferenceBackend ? { inferenceBackend } : {}) },
+        details: { modelAlias, modelCount: modelIds.length, ...backendDetail },
       };
+    }
+
+    if (openRouter) {
+      const apiKey = connection.secrets.apiKey ?? connection.secrets.bearerToken;
+      if (!apiKey) {
+        return {
+          status: "DEGRADED",
+          message: `${this.options.serviceName} requires an OpenRouter API key. Model discovery is public and does not prove the credential.`,
+          details: { failure: "openrouter_key_required", modelCount: modelIds.length, ...backendDetail },
+        };
+      }
+      const keyProbe = await healthFetch(connection, OPENROUTER_INFERENCE.keyPath, signal);
+      if (!keyProbe.ok) return failedHttpOutcome(this.options.serviceName, keyProbe);
     }
 
     const health = healthPath ? await healthFetch(connection, healthPath, signal) : null;
@@ -87,14 +103,16 @@ export class OpenAICompatibleAdapter implements ConnectionDiagnosticAdapter {
 
     return {
       status: "HEALTHY",
-      message: `${this.options.serviceName} model discovery is reachable and authenticated.${healthWarning}`,
+      message: openRouter
+        ? `${this.options.serviceName} key is valid and the served model is available.${healthWarning}`
+        : `${this.options.serviceName} model discovery is reachable and authenticated.${healthWarning}`,
       details: {
         modelCount: modelIds.length,
-        modelIds,
         modelsPath,
         ...(healthPath ? { healthPath, healthHttpStatus: health?.status ?? null } : {}),
-        ...(inferenceBackend ? { inferenceBackend } : {}),
+        ...backendDetail,
         ...(modelAlias ? { modelAlias } : {}),
+        ...(openRouter ? { credential: "verified" } : {}),
       },
     };
   }

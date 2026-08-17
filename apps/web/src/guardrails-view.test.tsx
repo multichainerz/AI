@@ -26,6 +26,7 @@ const draftPolicy: GuardrailPolicy = {
   description: "Approved input and output controls for internal OrcaSynapse chat.",
   version: "1.0.0",
   status: "DRAFT",
+  rules: [],
   maxInputCharacters: 12_000,
   maxOutputCharacters: 200_000,
   blockControlCharacters: true,

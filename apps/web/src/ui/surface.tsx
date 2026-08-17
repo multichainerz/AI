@@ -1,5 +1,5 @@
 import { cva, type VariantProps } from "class-variance-authority";
-import type { HTMLAttributes, ReactNode } from "react";
+import { Children, type HTMLAttributes, type ReactNode } from "react";
 import { Card } from "../components/ui/card.js";
 import { cn } from "./cn.js";
 import type { Tone } from "./feedback.js";
@@ -83,6 +83,58 @@ export function PanelHeading(props: {
   );
 }
 
+/**
+ * The compact title on a viewport-locked workspace.
+ *
+ * `PageHeader` is ink on the page. Under a section strip that reads as leftover
+ * copy in the gap — no surface, no edge, actions floating in the void. This is
+ * that title as a card, so the work columns below have something to sit under.
+ * Status strips (execution, forwarding, “right now”) belong inside it, not as
+ * a second unboxed band. The title is the title; it does not carry a caption.
+ */
+export function WorkspaceIntro({
+  icon,
+  title,
+  actions,
+  children,
+  className,
+}: {
+  icon: ReactNode;
+  title: ReactNode;
+  actions?: ReactNode;
+  children?: ReactNode;
+  className?: string;
+}) {
+  const extras = Children.toArray(children).filter(Boolean);
+  return (
+    <Card className={cn("shrink-0", className)}>
+      <header className="flex items-center justify-between gap-4 p-4">
+        <div className="flex min-w-0 items-center gap-3">
+          <Mark>{icon}</Mark>
+          <h1 className="m-0 font-display text-[22px] font-semibold leading-tight tracking-[-0.03em] text-text">{title}</h1>
+        </div>
+        {actions ? (
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">{actions}</div>
+        ) : null}
+      </header>
+      {extras.length > 0 ? (
+        <div className="grid gap-3 border-t border-border px-4 py-3">{extras}</div>
+      ) : null}
+    </Card>
+  );
+}
+
+/**
+ * The filter/search dock on a viewport-locked workspace.
+ *
+ * Same card as `WorkspaceIntro`. These controls sat on the page canvas — no
+ * edge, no fill — so a row of fields read as leftover chrome between the
+ * title and the work columns. A dock is a tool surface, not a second heading.
+ */
+export function WorkspaceDock({ className, ...rest }: HTMLAttributes<HTMLDivElement>) {
+  return <Card className={cn("shrink-0 p-3", className)} {...rest} />;
+}
+
 /*
  * Space Grotesk for every figure, per the design: the display face is what
  * makes the number read as a stat rather than as large body text.
@@ -114,6 +166,12 @@ export interface MetricProps extends VariantProps<typeof figure> {
   label: string;
   value: ReactNode;
   caption?: ReactNode;
+  /**
+   * Optional Lucide (or other) glyph in a `Mark`. Peer KPI columns — the
+   * operations summary — need a handle besides the number; a Metric standing
+   * alone in a row does not.
+   */
+  icon?: ReactNode;
   className?: string;
 }
 
@@ -122,13 +180,31 @@ export interface MetricProps extends VariantProps<typeof figure> {
  *
  * Tabular numerals are not cosmetic here: without them a column of values
  * aligns on nothing and a figure that updates shifts its neighbours sideways.
+ *
+ * The label sits at `text-label`, not `text-micro`: a 10px kicker next to a
+ * 19px figure reads as two type systems, and the caption (already caption-sized)
+ * then looks *larger* than the name of the stat. One step up keeps the
+ * uppercase track and restores the hierarchy.
  */
-export function Metric({ label, value, caption, tone, className }: MetricProps) {
+export function Metric({ label, value, caption, tone, icon, className }: MetricProps) {
+  const stack = (
+    <div className="min-w-0">
+      <MicroLabel className="block text-label tracking-[0.1em] text-muted">{label}</MicroLabel>
+      <strong className={cn(figure({ tone }), "mt-1")}>{value}</strong>
+      {caption ? <small className="mt-1.5 block text-caption leading-relaxed text-muted">{caption}</small> : null}
+    </div>
+  );
+
   return (
     <article className={cn("min-w-0", className)}>
-      <MicroLabel className="block">{label}</MicroLabel>
-      <strong className={cn(figure({ tone }), "mt-1.5")}>{value}</strong>
-      {caption ? <small className="mt-1 block text-caption text-muted">{caption}</small> : null}
+      {icon ? (
+        <div className="flex items-start gap-3">
+          <Mark size="sm">{icon}</Mark>
+          {stack}
+        </div>
+      ) : (
+        stack
+      )}
     </article>
   );
 }
@@ -221,15 +297,22 @@ export function MetricRow({ className, ...rest }: HTMLAttributes<HTMLDivElement>
 export interface HeroBannerProps extends HTMLAttributes<HTMLElement> {
   /**
    * The screen's one number. `accent` draws it on the violet block with the
-   * soft circle decorations; `plain` sets it large on the card itself — the
+   * soft circle decorations; `plain` is a row of equal Metric columns — the
    * design uses the block where the figure is an achievement and the plain
-   * form where it is simply a count.
+   * form where every count is a peer (Health: attention, incidents, queue).
    *
    * `fill` (0–1) draws the bar beneath it. A figure with a denominator is the
    * only kind that earns one, and omitting it here is how the readiness bar
    * left the product in v1.7.0 without a single test noticing.
    */
-  highlight: { label: string; value: ReactNode; caption?: ReactNode; fill?: number | undefined; tone?: Tone | undefined };
+  highlight: {
+    label: string;
+    value: ReactNode;
+    caption?: ReactNode;
+    fill?: number | undefined;
+    tone?: Tone | undefined;
+    icon?: ReactNode;
+  };
   tone?: "accent" | "plain";
   metrics: MetricProps[];
 }
@@ -277,35 +360,65 @@ function HighlightBar({
  * design's choice in both themes — the block, unlike the primary button, sets
  * display-sized type that carries the lighter dark-mode violet.
  *
+ * `plain` drops that hierarchy. Peer counts at mixed sizes (40px beside 19px,
+ * 10px kickers beside 11px captions) read as unfinished, not as emphasis, so
+ * every column is a Metric.
+ *
  * Rest props reach the Panel: several screens name this region with an
  * aria-label their tests address it by.
  */
 export function HeroBanner({ highlight, tone = "accent", metrics, className, ...rest }: HeroBannerProps) {
+  if (tone === "plain") {
+    const columns: MetricProps[] = [
+      {
+        label: highlight.label,
+        value: highlight.value,
+        ...(highlight.caption !== undefined ? { caption: highlight.caption } : {}),
+        ...(highlight.tone !== undefined ? { tone: highlight.tone } : {}),
+        ...(highlight.icon !== undefined ? { icon: highlight.icon } : {}),
+      },
+      ...metrics,
+    ];
+    return (
+      <Panel
+        className={cn(
+          "grid grid-cols-1 gap-y-5 p-5 sm:grid-cols-[repeat(auto-fit,minmax(0,1fr))] sm:gap-y-0 sm:p-6",
+          className,
+        )}
+        {...rest}
+      >
+        {columns.map((metric, index) => (
+          <div
+            key={metric.label}
+            className={cn(
+              "min-w-0 sm:px-6",
+              index > 0 && "border-t border-border pt-5 sm:border-l sm:border-t-0 sm:pt-0",
+              index === 0 && "sm:pl-0",
+              index === columns.length - 1 && "sm:pr-0",
+            )}
+          >
+            <Metric {...metric} />
+            {index === 0 ? <HighlightBar fill={highlight.fill} tone={highlight.tone} /> : null}
+          </div>
+        ))}
+      </Panel>
+    );
+  }
+
   return (
     <Panel className={cn("flex flex-wrap items-stretch gap-y-5 p-5 sm:p-6", className)} {...rest}>
-      {tone === "accent" ? (
-        <div className="relative -my-1.5 mr-6 min-w-[240px] overflow-hidden rounded-lg bg-accent-fill px-5 py-4 text-white">
-          <span aria-hidden="true" className="absolute -right-8 -top-8 h-28 w-28 rounded-full bg-white/10" />
-          <span aria-hidden="true" className="absolute -bottom-10 right-1.5 h-24 w-24 rounded-full bg-white/[0.07]" />
-          <div className="relative">
-            <MicroLabel className="block text-white/85">{highlight.label}</MicroLabel>
-            <strong className="mt-2 block font-display text-display font-semibold">{highlight.value}</strong>
-            {highlight.caption ? (
-              <small className="mt-2 block text-caption text-white/90">{highlight.caption}</small>
-            ) : null}
-            <HighlightBar fill={highlight.fill} tone={highlight.tone} onAccent />
-          </div>
-        </div>
-      ) : (
-        <div className="mr-8 min-w-[220px]">
-          <MicroLabel className="block">{highlight.label}</MicroLabel>
-          <strong className="mt-2 block font-display text-display font-semibold text-text">{highlight.value}</strong>
+      <div className="relative -my-1.5 mr-6 min-w-[240px] overflow-hidden rounded-lg bg-accent-fill px-5 py-4 text-white">
+        <span aria-hidden="true" className="absolute -right-8 -top-8 h-28 w-28 rounded-full bg-white/10" />
+        <span aria-hidden="true" className="absolute -bottom-10 right-1.5 h-24 w-24 rounded-full bg-white/[0.07]" />
+        <div className="relative">
+          <MicroLabel className="block text-white/85">{highlight.label}</MicroLabel>
+          <strong className="mt-2 block font-display text-display font-semibold">{highlight.value}</strong>
           {highlight.caption ? (
-            <small className="mt-2 block text-caption text-muted">{highlight.caption}</small>
+            <small className="mt-2 block text-caption text-white/90">{highlight.caption}</small>
           ) : null}
-          <HighlightBar fill={highlight.fill} tone={highlight.tone} />
+          <HighlightBar fill={highlight.fill} tone={highlight.tone} onAccent />
         </div>
-      )}
+      </div>
       <div className="flex min-w-[280px] flex-1 flex-wrap items-stretch gap-y-4 border-border sm:border-l">
         {metrics.map((metric) => (
           <Metric

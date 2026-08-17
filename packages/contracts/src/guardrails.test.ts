@@ -16,6 +16,7 @@ const draft = {
   maxOutputCharacters: 200_000,
   blockControlCharacters: true,
   blockCredentialPatterns: true,
+  rules: [],
   firstActivatedAt: null,
   revision: 1,
   createdBy: null,
@@ -41,6 +42,51 @@ describe("guardrail policy contracts", () => {
   it("rejects unsafe response ceilings", () => {
     expect(createGuardrailPolicySchema.safeParse({ ...draft, maxOutputCharacters: 512 }).success).toBe(false);
     expect(createGuardrailPolicySchema.safeParse({ ...draft, maxOutputCharacters: 1_000_001 }).success).toBe(false);
+  });
+
+  it("refuses to write an output ceiling the runtime would discard, while still reading one", () => {
+    /*
+     * `submitRun` clamps with Math.min(200_000, …), so 500,000 was accepted by
+     * the contract, stored, shown on the screen, and never honoured. The write
+     * bound now refuses it -- and the read bound deliberately does not, because
+     * it validates rows on the way *out* and an existing deployment holding a
+     * larger value must not turn into a 500 on a working screen.
+     */
+    expect(createGuardrailPolicySchema.safeParse({ ...draft, maxOutputCharacters: 500_000 }).success).toBe(false);
+    expect(updateGuardrailPolicySchema.safeParse({ expectedRevision: 1, maxOutputCharacters: 500_000 }).success).toBe(false);
+    expect(guardrailPolicySchema.safeParse({ ...draft, maxOutputCharacters: 500_000 }).success).toBe(true);
+  });
+
+  it("carries a rule list, and bounds it", () => {
+    const rule = {
+      id: "0f9c1d2e-3a4b-4c5d-8e6f-7a8b9c0d1e2f",
+      label: "Internal codename",
+      type: "WORD",
+      pattern: "seahorse",
+      action: "BLOCK",
+      caseSensitive: false,
+      enabled: true,
+    } as const;
+
+    expect(guardrailPolicySchema.parse({ ...draft, rules: [rule] }).rules[0]?.label).toBe("Internal codename");
+    // Absent on create is an empty list, so an operator who adds no rules gets
+    // exactly the policy they get today.
+    expect(createGuardrailPolicySchema.parse({
+      slug: draft.slug,
+      displayName: draft.displayName,
+      description: draft.description,
+      version: draft.version,
+      maxInputCharacters: draft.maxInputCharacters,
+      maxOutputCharacters: draft.maxOutputCharacters,
+      blockControlCharacters: draft.blockControlCharacters,
+      blockCredentialPatterns: draft.blockCredentialPatterns,
+    }).rules).toEqual([]);
+    // Every enabled rule costs an evaluation on every inspected message.
+    expect(guardrailPolicySchema.safeParse({
+      ...draft,
+      rules: Array.from({ length: 101 }, (_, index) => ({ ...rule, id: `0f9c1d2e-3a4b-4c5d-8e6f-7a8b9c0d1e${String(index).padStart(2, "0")}` })),
+    }).success).toBe(false);
+    expect(guardrailPolicySchema.safeParse({ ...draft, rules: [{ ...rule, type: "GLOB" }] }).success).toBe(false);
   });
 
   it("requires an activation timestamp for active policy output", () => {

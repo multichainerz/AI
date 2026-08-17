@@ -5,8 +5,8 @@ import type {
   MutateHermesRuntimeNode,
   OnboardingTargetEnvironment,
 } from "@orcasynapse/contracts";
-import { ChevronDown } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { ChevronDown, Server, Trash2 } from "lucide-react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   OrcaSynapseApiError,
   createHermesNodeInvitation,
@@ -14,7 +14,7 @@ import {
   mutateHermesRuntimeNode,
   removeHermesRuntimeNode,
 } from "./api.js";
-import { Alert, Button, Dialog, EmptyState, Field, Input, MicroLabel, StatusText, Tile, cn } from "./ui/index.js";
+import { Alert, Button, Dialog, Field, Input, MicroLabel, StatusText, Tile, cn } from "./ui/index.js";
 import { Switch } from "@/components/ui/switch";
 
 /**
@@ -283,11 +283,6 @@ export function RuntimeNodesPanel({
     return () => window.clearInterval(timer);
   }, [awaitingNode]);
 
-  const statusCounts = useMemo(() => ({
-    online: nodes.filter((node) => node.status === "ONLINE").length,
-    attention: nodes.filter((node) => ["DEGRADED", "OFFLINE", "SUSPENDED"].includes(node.status)).length,
-  }), [nodes]);
-
   const issueInvitation = async (event: FormEvent) => {
     event.preventDefault();
     if (busy || !inferenceReady || !targetKnown) return;
@@ -362,20 +357,47 @@ export function RuntimeNodesPanel({
     }
   };
 
+  const canGenerate = inferenceReady && targetKnown && !activeRuntimeExists;
+  const generateTitle = !inferenceReady
+    ? "Connect and test AI Inference before enrolling the agent runtime."
+    : !targetKnown
+      ? "The architecture decision has not loaded, so the production artefact requirements cannot be applied."
+      : activeRuntimeExists
+        ? "Revoke the active execution boundary before enrolling its replacement."
+        : undefined;
+
   return <div className="runtime-nodes-layout">
-    <section className="panel runtime-nodes-overview">
-      <div className="runtime-section-heading">
-        <div><p className="text-micro font-semibold uppercase tabular-nums text-faint">Isolated VM2</p><h2>Agentic System</h2></div>
-        <div className="runtime-node-heading-actions"><Button disabled={busy !== null} onClick={() => void load()}>Refresh</Button><Button variant="primary" disabled={activeRuntimeExists || !inferenceReady || !targetKnown} title={!inferenceReady ? "Configure and test AI Inference before enrolling the Agentic System." : !targetKnown ? "The architecture decision has not loaded, so the production artifact requirements cannot be applied." : activeRuntimeExists ? "Revoke the active execution boundary before enrolling its replacement." : undefined} onClick={() => { setInvitation(null); setEditorOpen(true); }}>Generate installer</Button></div>
+    <section className="grid gap-3" aria-label="Agent runtime">
+      {error ? <Alert onDismiss={() => setError(null)}>{error}</Alert> : null}
+
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="m-0 max-w-[62ch] text-caption leading-relaxed text-muted">
+          {!inferenceReady
+            ? "Finish connecting inference first. The installer is seeded with that route."
+            : !targetKnown
+              ? "The architecture decision has not loaded, so production artefact requirements cannot be applied yet."
+              : awaitingNode
+                ? "The claim is live. Run the command on VM2; this step updates when the node heartbeats."
+                : nodes.length === 0
+                  ? "Generate a one-time command, run it on the Ubuntu VM, and paste the claim when the installer asks."
+                  : "This installation holds one Hermes execution boundary. Revoke it before enrolling a replacement."}
+        </p>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <Button disabled={busy !== null} onClick={() => void load()}>Refresh</Button>
+          {!inferenceReady ? (
+            <Button variant="primary" onClick={onConfigureInference}>Configure AI Inference</Button>
+          ) : (
+            <Button
+              variant="primary"
+              disabled={busy !== null || !canGenerate}
+              title={generateTitle}
+              onClick={() => { setInvitation(null); setEditorOpen(true); }}
+            >
+              Generate installer
+            </Button>
+          )}
+        </div>
       </div>
-      <div className="runtime-node-principles">
-        <article><strong>{nodes.length}</strong><span>Registered nodes</span></article>
-        <article><strong>{statusCounts.online}</strong><span>Online now</span></article>
-        <article><strong>{statusCounts.attention}</strong><span>Need attention</span></article>
-        <div><strong>No standing SSH trust</strong><span>Enrollment is single-use. Agent Profiles remain versioned in OrcaSynapse and are injected per governed Run.</span></div>
-        <div><strong>One runtime at a time</strong><span>{nodes.length === 0 ? "An installation holds exactly one Hermes execution boundary. Enrolling a second is refused." : "This installation already holds its Hermes execution boundary. Revoke and remove this node before enrolling a replacement."}</span></div>
-      </div>
-      {error && <div className="runtime-alert" role="alert"><span>{error}</span><Button variant="ghost" size="sm" onClick={() => setError(null)}>Dismiss</Button></div>}
 
       {/*
         * The hand-off, kept on the screen rather than inside the drawer that
@@ -440,7 +462,9 @@ export function RuntimeNodesPanel({
         </p>
       </Tile>}
 
-      {nodes.length === 0 && !inferenceReady ? <EmptyState title="AI Inference must be ready first" action={<Button onClick={onConfigureInference}>Configure AI Inference</Button>}>Connect and activate one served model. OrcaSynapse will then prepare the VM2 installer with the approved route.</EmptyState> : nodes.length === 0 && !targetKnown ? <EmptyState title="The architecture decision has not loaded">Enrolment inputs depend on the target environment: Production requires a commit-pinned Hermes runtime and an HTTPS OrcaSynapse origin. OrcaSynapse will not offer an installer it cannot hold to the right standard.</EmptyState> : nodes.length === 0 ? <EmptyState title="Install the Agentic System on VM2" action={<Button variant="primary" onClick={() => setEditorOpen(true)}>Generate VM2 installer</Button>}>Generate one secure command, run it on the isolated VM, and paste the one-time claim when prompted. Hermes is installed, registered, and bound to the approved inference route.</EmptyState> : <div className="runtime-node-list">{nodes.map((node) => <article key={node.id}>
+      {nodes.length > 0 ? (
+        <div className="runtime-node-list overflow-hidden rounded-lg border border-border">
+          {nodes.map((node) => <article key={node.id}>
         <div className={`runtime-node-state ${nodeTone(node.status)}`}><span /></div>
         {/*
           * Drift is drawn beside the status, not instead of it. A node that
@@ -465,14 +489,10 @@ export function RuntimeNodesPanel({
           {node.status !== "REVOKED" && <Button variant="danger" size="sm" disabled={busy !== null} onClick={() => { if (window.confirm(`Permanently revoke ${node.displayName}? The node must be re-enrolled to reconnect.`)) void act(node, "REVOKE"); }}>Revoke</Button>}
           {node.status === "REVOKED" && <Button variant="danger" size="sm" disabled={busy !== null} onClick={() => openRemoval(node)}>Remove</Button>}
         </div>
-      </article>)}</div>}
+      </article>)}
+        </div>
+      ) : null}
     </section>
-
-    <aside className="panel runtime-network-contract">
-      <p className="text-micro font-semibold uppercase tabular-nums text-faint">Network contract</p><h2>Required paths</h2>
-      <ol><li><span>1</span><div><strong>OrcaSynapse → Hermes</strong><small>TCP 8642, health and governed agent API only.</small></div></li><li><span>2</span><div><strong>Runtime → OrcaSynapse</strong><small>HTTPS enrollment, heartbeat, and node-scoped inference gateway.</small></div></li></ol>
-      <div className="runtime-network-note"><strong>The installer does not manage your firewall.</strong><p>Apply customer network policy before Production activation. Do not expose port 8642 to user or internet networks.</p></div>
-    </aside>
 
     {/*
       * A centred dialog, matching step 1's connection form and the removal
@@ -486,6 +506,7 @@ export function RuntimeNodesPanel({
       */}
     {editorOpen && inferenceReady && targetKnown && <Dialog
       open
+      icon={Server}
       title={invitation ? "Run this on VM2" : "Generate the VM2 installer"}
       description={invitation
         ? `The enrollment claim expires ${new Date(invitation.bundle.expiresAt).toLocaleString()} and can be used only once.`
@@ -583,6 +604,7 @@ export function RuntimeNodesPanel({
 
     {removalNode && <Dialog
       open
+      icon={Trash2}
       kicker="Permanent decommission"
       title={`Remove ${removalNode.displayName}`}
       onClose={() => { if (busy === null) setRemovalNode(null); }}

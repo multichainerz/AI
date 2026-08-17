@@ -60,6 +60,37 @@ describe("the border reset", () => {
   });
 });
 
+describe("the sticky band's inset", () => {
+  /**
+   * The band's inset and the page's content inset are separate tokens, and they
+   * have to stay separate.
+   *
+   * They were one. `.workspace-page` lowers `--workspace-inline` to 12px so a
+   * dock's gutter matches the gap between docks — a decision about page content
+   * — and the header read the same token, so the area title sat 12px from the
+   * rail on the nine areas that have a section strip and up to 24px on Dashboard
+   * and Session. Moving between areas nudged the heading sideways, which is
+   * exactly the kind of thing nothing here could have caught: the class was in
+   * the DOM and the declaration was present, it just resolved to two values.
+   */
+  it("gives the header one inset that the page's content inset cannot move", () => {
+    expect(styles).toContain("--workspace-band-inline:");
+
+    // The page token is still overridden per page — that part is deliberate.
+    expect(styles).toMatch(/\.workspace-page\s*\{[^}]*--workspace-inline:\s*12px/);
+
+    // ...and the band must not read it. Every padding on `.workspace-header`
+    // uses the band token; only its bleed margin may cancel the page's.
+    const header = /\.workspace-header\s*\{([^}]*)\}/.exec(styles)?.[1] ?? "";
+    expect(header, "the .workspace-header rule is missing").not.toBe("");
+    expect(header).toMatch(/padding:\s*0\s+var\(--workspace-band-inline\)/);
+    expect(header).toMatch(/margin:\s*0\s+calc\(-1 \* var\(--workspace-inline\)\)/);
+
+    // Session opts out of the bleed margin but keeps the same inset.
+    expect(styles).toMatch(/\.chat-page > \.workspace-header \{[^}]*padding: 0 var\(--workspace-band-inline\)/);
+  });
+});
+
 describe("component radius", () => {
   it("resolves every non-circular radius alias to one sharp token", () => {
     expect(styles).toContain("--radius-component: 0;");

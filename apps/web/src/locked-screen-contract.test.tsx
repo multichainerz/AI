@@ -1,14 +1,14 @@
 /**
  * @vitest-environment jsdom
  *
- * Five governance screens tell a signed-out operator the same thing — sign in
+ * Four governance screens tell a signed-out operator the same thing — sign in
  * as an administrator — and the button underneath has to be the one that
  * offers it.
  *
  * Copy and wiring drifted apart independently three times during the design
  * system move, because each screen's own test covers its populated state and
  * nothing paired the promise with the control. This file is that pair, and it
- * is deliberately one table rather than five tests: the point is that the
+ * is deliberately one table rather than four tests: the point is that the
  * screens agree with each other, which no per-screen test can see.
  *
  * `openConnectionSettings` in `app.tsx` is what makes the promise true — it
@@ -24,7 +24,7 @@ import { ApplicationView } from "./application-view.js";
 import { GuardrailsView } from "./guardrails-view.js";
 import { ModelsView } from "./models-view.js";
 import { PeopleView } from "./people-view.js";
-import { PromptsView } from "./prompts-view.js";
+import { UsageView } from "./usage-view.js";
 
 afterEach(cleanup);
 
@@ -43,17 +43,6 @@ interface LockedCase {
 }
 
 const cases: LockedCase[] = [
-  {
-    name: "Prompts",
-    render: ({ elevate, navigate }) => {
-      render(<PromptsView
-        session={signedOut}
-        onOpenOperations={navigate}
-        onOpenSettings={elevate}
-        onSessionExpired={vi.fn()}
-      />);
-    },
-  },
   {
     name: "Guardrails",
     render: ({ elevate, navigate }) => {
@@ -90,7 +79,6 @@ const cases: LockedCase[] = [
         session={signedOut}
         currentVersion="3.19.0"
         onConfigure={elevate}
-        onOpenOperations={navigate}
       />);
     },
   },
@@ -109,11 +97,29 @@ const cases: LockedCase[] = [
    * a second destination in later, it is already covered.
    */
   {
-    name: "People",
+    name: "Access",
     render: ({ elevate }) => {
       render(<PeopleView
         session={signedOut}
         onOpenSettings={elevate}
+        onSessionExpired={vi.fn()}
+      />);
+    },
+  },
+  /*
+   * Usage, the third Gateway tab, joining on the day it arrives -- which is the
+   * discipline the comment four entries up asks for and that Divisions and
+   * People did not keep for three releases.
+   *
+   * `navigate` has nowhere to go here for the same reason it has nowhere to go
+   * on Access: the screen takes one callback and it is the elevation one.
+   */
+  {
+    name: "Usage",
+    render: ({ elevate }) => {
+      render(<UsageView
+        session={signedOut}
+        onConfigure={elevate}
         onSessionExpired={vi.fn()}
       />);
     },
@@ -127,8 +133,10 @@ describe("locked governance screens", () => {
     const user = userEvent.setup();
     renderLocked({ elevate, navigate });
 
-    // Every one of the four makes the same promise, in the same words, so an
+    // Every one of them makes the same promise, in the same words, so an
     // operator who moves between them is not relearning the rule each time.
+    // Deliberately not "the four": that count was wrong the moment a fifth was
+    // added, and a number in a comment is the thing nothing checks.
     expect(screen.getByText(/Sign in as an administrator/)).toBeTruthy();
 
     await user.click(screen.getByRole("button", { name: "Open platform settings" }));

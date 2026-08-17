@@ -1334,8 +1334,29 @@ export const guardrailPolicy = pgTable("GuardrailPolicy", {
 	maxOutputCharacters: integer().default(200000).notNull(),
 	blockControlCharacters: boolean().default(true).notNull(),
 	blockCredentialPatterns: boolean().default(true).notNull(),
+	/**
+	 * The operator's own rules, as a jsonb array rather than a child table.
+	 *
+	 * A policy is already versioned and near-immutable: an ACTIVE one cannot be
+	 * edited, and changing any enforceable setting demands a new `version` and
+	 * resets it to DRAFT. That is what makes "the rules a run enforced are
+	 * attributable to a named version" true -- and it is exactly what a child
+	 * table would quietly break, because a child row can be edited without
+	 * touching its parent's revision. A column is atomic with the version by
+	 * construction.
+	 *
+	 * Nothing queries by rule; the policy is read whole on every inspection
+	 * already. Shape is validated by `guardrailRuleSchema` on write and cast on
+	 * read, the same contract `SkillSet.skills` and `AgentProfileVersion.skills`
+	 * are held to.
+	 *
+	 * `default([])` is what makes this additive: every row that existed before
+	 * becomes a policy with no custom rules, which is precisely what it was.
+	 */
+	rules: jsonb().default([]).notNull(),
 }, (table) => [
 	uniqueIndex("GuardrailPolicy_single_active_key").using("btree", sql`(true)`).where(sql`(status = 'ACTIVE'::"GuardrailPolicyStatus")`),
+	check("GuardrailPolicy_rules_array_check", sql`jsonb_typeof(rules) = 'array'::text`),
 	uniqueIndex("GuardrailPolicy_slug_key").using("btree", table.slug.asc().nullsLast()),
 	index("GuardrailPolicy_status_updatedAt_idx").using("btree", table.status.asc().nullsLast(), table.updatedAt.asc().nullsLast()),
 	check("GuardrailPolicy_activation_check", sql`(status <> 'ACTIVE'::"GuardrailPolicyStatus") OR ("firstActivatedAt" IS NOT NULL)`),
@@ -1506,6 +1527,28 @@ export const agentRun = pgTable("AgentRun", {
 }, (table) => [
 	index("AgentRun_ownerSubject_createdAt_idx").using("btree", table.ownerSubject.asc().nullsLast(), table.createdAt.asc().nullsLast()),
 	index("AgentRun_profileId_status_createdAt_idx").using("btree", table.profileId.asc().nullsLast(), table.status.asc().nullsLast(), table.createdAt.asc().nullsLast()),
+	/*
+	 * The only index here that leads with a time.
+	 *
+	 * Every other one on this table is (something, time) -- ownerSubject,
+	 * profileId, status -- which serves a query that already knows the
+	 * *something*. A usage aggregate does not: it asks what every run in a
+	 * window cost, across all statuses and all owners, and none of the four
+	 * could answer it. That was a sequential scan of the whole table on every
+	 * load of Gateway -> Usage, at every window size, growing with the
+	 * installation's entire history.
+	 *
+	 * `completedAt`, not `createdAt` or `queuedAt`, because that is the column
+	 * the aggregate windows on: tokens and cost exist only once a run is
+	 * terminal, and a run still queued has nothing to sum. Its nulls are the
+	 * in-flight runs, which such a query never wants.
+	 *
+	 * `nullsLast()` is spelled out for the reason divisionMemory() records in
+	 * the worker: drizzle's bare `asc()`/`desc()` and an index declared with
+	 * the other null ordering are different orderings to the planner, and it
+	 * declines the index silently rather than reporting a mismatch.
+	 */
+	index("AgentRun_completedAt_idx").using("btree", table.completedAt.asc().nullsLast()),
 	index("AgentRun_status_processorLeaseExpiresAt_idx").using("btree", table.status.asc().nullsLast(), table.processorLeaseExpiresAt.asc().nullsLast()),
 	index("AgentRun_status_queuedAt_idx").using("btree", table.status.asc().nullsLast(), table.queuedAt.asc().nullsLast()),
 	foreignKey({

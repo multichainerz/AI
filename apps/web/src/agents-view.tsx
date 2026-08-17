@@ -3,7 +3,7 @@ import type {
   AdminScope, AdministratorSession, AgentMetrics, AgentProfile, AgentRun, AgentRunEvent,
   AgentRuntimeControl, AgentSkillReference, CreateAgentProfile, Division, SkillSet, ToolSet,
 } from "@orcasynapse/contracts";
-import { ChevronDown } from "lucide-react";
+import { Bot, ChevronDown } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { adminAccess } from "./admin-access.js";
 import { ExecutionBoundary, RunDetail, RunLedger } from "./agent-run-ledger.js";
@@ -28,8 +28,8 @@ import {
   updateAgentRuntime,
 } from "./api.js";
 import {
-  Alert, Button, Dialog, EmptyState, Field, Input, LockedScreen, PageHeader,
-  Panel, PanelHeading, Select, StatusText, Textarea, cn, toneFor,
+  Alert, Button, Dialog, EmptyState, Field, Input, LockedScreen, MicroLabel,
+  Panel, PanelHeading, Select, StatusText, Textarea, WorkspaceIntro, cn, toneFor,
 } from "./ui/index.js";
 
 interface AgentsViewProps {
@@ -461,16 +461,10 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
   const chatLabel = chatAvailable ? "Open Session" : executionEnabled === false ? "Execution is off" : "Session not ready";
 
   return (
-    <div className="grid gap-5">
-      <PageHeader
-        kicker="Immutable configuration"
+    <div className="workspace-stack agents-workspace flex h-full min-h-0 flex-col gap-3 pb-3">
+      <WorkspaceIntro
+        icon={<Bot className="size-4" aria-hidden="true" />}
         title="Hermes Profiles"
-        /* The boundary clause only where the boundary panel is: it is drawn for
-           administrators, and describing a control the reader will not find is
-           the same failure as pointing at one on another tab. */
-        description={administrator
-          ? "Immutable Profile Distributions and their verified activation, the runs each one has produced, and the global boundary deciding whether any of it may execute."
-          : "Immutable Profile Distributions and their verified activation, and the runs you have produced against them."}
         actions={<>
           <Button disabled={!chatAvailable} onClick={onOpenChat}>{chatLabel}</Button>
           {/* `.catch(fail)` like every other call site here: without it an
@@ -479,55 +473,64 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
           <Button onClick={() => void load().catch(fail)}>Refresh</Button>
           {canManage && <Button variant="primary" onClick={() => void openNewProfile()}>{activationReady === false ? "Create draft" : "Create agent"}</Button>}
         </>}
-      />
+      >
+        {/* "Profiles can be drafted now" is a claim about the reader, so it is
+            addressed to the role that can actually draft one. */}
+        {canManage && activationReady === false ? (
+          <section className="flex items-center gap-4 border-l-2 border-l-warn px-1 py-0.5" role="status">
+            <div className="min-w-0 flex-1">
+              <strong className="block text-label font-semibold text-text">Profiles can be drafted now</strong>
+              <span className="mt-1 block text-caption text-muted">
+                {activationMessage ?? "Connect AI Inference and finish VM2 enrollment before activating a Profile for Chat."}
+              </span>
+            </div>
+            <Button className="shrink-0" onClick={onOpenReadiness}>Review platform setup</Button>
+          </section>
+        ) : null}
+        {/*
+          * The screen reads in one direction: what may execute at all, what is
+          * defined, and what each definition has actually done. The boundary
+          * lives in this card because it frames the columns under it — and
+          * because an operator switching it off is not browsing.
+          */}
+        {administrator ? (
+          <ExecutionBoundary
+            runtime={runtime}
+            metrics={metrics}
+            runs={runs}
+            busy={busy}
+            onToggle={(enabled, reason, extraction) => void action("runtime", () => updateAgentRuntime(enabled, reason, extraction))}
+            canControl={canControl}
+          />
+        ) : null}
+      </WorkspaceIntro>
 
-      {error && <Alert onDismiss={() => { setError(null); setReadinessRequired(false); }}>
+      {error && <Alert className="shrink-0" onDismiss={() => { setError(null); setReadinessRequired(false); }}>
         {error}
         {readinessRequired && (
           <Button variant="ghost" size="sm" className="ml-3" onClick={onOpenReadiness}>Open Hermes readiness</Button>
         )}
       </Alert>}
-      {notice && <Alert tone="good" onDismiss={() => setNotice(null)}>
+      {notice && <Alert className="shrink-0" tone="good" onDismiss={() => setNotice(null)}>
         {notice}
         {chatAvailable && <Button variant="ghost" size="sm" className="ml-3" onClick={onOpenChat}>Open Session</Button>}
       </Alert>}
-      {/* "Profiles can be drafted now" is a claim about the reader, so it is
-          addressed to the role that can actually draft one. */}
-      {canManage && activationReady === false && <Panel className="flex items-center gap-4 border-l-2 border-l-warn" role="status">
-        <div className="min-w-0 flex-1">
-          <strong className="block text-label font-semibold text-text">Profiles can be drafted now</strong>
-          <span className="mt-1 block text-body text-muted">
-            {activationMessage ?? "Connect AI Inference and finish VM2 enrollment before activating a Profile for Chat."}
-          </span>
-        </div>
-        <Button className="shrink-0" onClick={onOpenReadiness}>Review platform setup</Button>
-      </Panel>}
 
-      {/*
-        * The screen reads in one direction: what may execute at all, what is
-        * defined, and what each definition has actually done. The boundary
-        * leads because it frames everything under it rather than following from
-        * it -- and because an operator switching it off is not browsing.
-        */}
-      {administrator && <ExecutionBoundary
-        runtime={runtime}
-        metrics={metrics}
-        runs={runs}
-        busy={busy}
-        onToggle={(enabled, reason, extraction) => void action("runtime", () => updateAgentRuntime(enabled, reason, extraction))}
-        hasProfiles={profiles.length > 0}
-        canControl={canControl}
-        canManage={canManage}
-      />}
-
-      <Panel>
+      <div className={cn(
+        "grid min-h-0 flex-1 gap-3",
+        runs.length > 0
+          ? "lg:grid-cols-[minmax(300px,0.9fr)_minmax(260px,0.8fr)_minmax(0,1.2fr)]"
+          : "lg:grid-cols-[minmax(300px,0.9fr)_minmax(0,1.1fr)]",
+      )}>
+      <Panel className="flex min-h-0 min-w-0 flex-col overflow-hidden p-3">
         <PanelHeading
+          className="mb-2 shrink-0"
           kicker="Immutable configuration"
           title="Profiles"
-          description="Selecting one scopes the execution ledger below to the runs it produced."
+          description="Selecting one scopes the execution ledger beside it to the runs it produced."
           actions={<StatusText>{profiles.length} profile{profiles.length === 1 ? "" : "s"}</StatusText>}
         />
-        <div className="grid gap-2">
+        <div className="grid min-h-0 flex-1 content-start gap-2 overflow-y-auto">
           {profiles.length === 0 && (
             <EmptyState
               title="Create your first agent"
@@ -654,12 +657,11 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
       </Panel>
 
       {/*
-        * The ledger, scoped to the Profile selected above, beside the one run
+        * The ledger, scoped to the Profile selected beside it, and the one run
         * being read. This pairing was the whole of the Runtime tab; what it
         * lacked was the sentence joining it to a Profile, which it could not
         * state because the Profile list was on another screen.
         */}
-      <div className={cn("grid items-start gap-4", runs.length > 0 && "lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]")}>
         <RunLedger
           runs={scopedRuns}
           total={runs.length}
@@ -695,10 +697,12 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
       <Dialog
         open={editorOpen && canManage}
         onClose={() => setEditorOpen(false)}
+        className="max-w-[840px]"
+        icon={Bot}
         title={editingId ? "Create a new profile version" : "Create agent profile"}
         description={editingId
           ? "Saving writes a new immutable revision. The current version stays in the ledger."
-          : "Personality and instructions become the first immutable revision. Skills and tool sets are recorded here; admission still decides what a run may use."}
+          : "Name it, then write how it should think and act."}
         footer={<>
           <Button onClick={() => setEditorOpen(false)}>Cancel</Button>
           <Button variant="primary" disabled={busy !== null} type="submit" form="agent-profile-editor">
@@ -706,29 +710,60 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
           </Button>
         </>}
       >
-        <form className="grid gap-5" id="agent-profile-editor" onSubmit={(event) => void saveProfile(event)}>
+        <form className="grid gap-8" id="agent-profile-editor" onSubmit={(event) => void saveProfile(event)}>
           {error ? <Alert onDismiss={() => { setError(null); setReadinessRequired(false); }}>{error}</Alert> : null}
 
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Slug">
-              <Input required disabled={editingId !== null} pattern="[a-z0-9]+(?:-[a-z0-9]+)*" value={profileDraft.slug} onChange={(event) => setProfileDraft({ ...profileDraft, slug: event.target.value })} />
+          <section className="grid gap-4">
+            <div>
+              <MicroLabel className="block">Identity</MicroLabel>
+              <p className="mb-0 mt-1 text-caption text-muted">How this profile is named, and which model it uses.</p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Slug">
+                <Input required disabled={editingId !== null} pattern="[a-z0-9]+(?:-[a-z0-9]+)*" value={profileDraft.slug} onChange={(event) => setProfileDraft({ ...profileDraft, slug: event.target.value })} />
+              </Field>
+              <Field label="Display name">
+                <Input required minLength={2} maxLength={120} value={profileDraft.displayName} onChange={(event) => setProfileDraft({ ...profileDraft, displayName: event.target.value })} />
+              </Field>
+            </div>
+            <Field label="Purpose">
+              <Textarea className="min-h-[64px]" rows={2} required minLength={3} maxLength={500} value={profileDraft.purpose} onChange={(event) => setProfileDraft({ ...profileDraft, purpose: event.target.value })} />
             </Field>
-            <Field label="Display name">
-              <Input required minLength={2} maxLength={120} value={profileDraft.displayName} onChange={(event) => setProfileDraft({ ...profileDraft, displayName: event.target.value })} />
+            <Field label="Inference model" hint="Filled from the healthy AI Inference connection.">
+              <Input required value={profileDraft.modelAlias} onChange={(event) => setProfileDraft({ ...profileDraft, modelAlias: event.target.value })} />
             </Field>
-          </div>
-          <Field label="Purpose">
-            <Textarea required minLength={3} maxLength={500} value={profileDraft.purpose} onChange={(event) => setProfileDraft({ ...profileDraft, purpose: event.target.value })} />
-          </Field>
-          <Field label="Personality and operating principles">
-            <Textarea required minLength={10} maxLength={32_000} value={profileDraft.soulMd} onChange={(event) => setProfileDraft({ ...profileDraft, soulMd: event.target.value })} />
-          </Field>
-          <Field label="System instructions">
-            <Textarea required minLength={10} maxLength={32_000} value={profileDraft.instructions} onChange={(event) => setProfileDraft({ ...profileDraft, instructions: event.target.value })} />
-          </Field>
-          <Field label="Inference model" hint="Filled from the healthy AI Inference connection.">
-            <Input required value={profileDraft.modelAlias} onChange={(event) => setProfileDraft({ ...profileDraft, modelAlias: event.target.value })} />
-          </Field>
+          </section>
+
+          <section className="grid gap-4">
+            <div>
+              <MicroLabel className="block">Behaviour</MicroLabel>
+              <p className="mb-0 mt-1 text-caption text-muted">Personality is who it is. Instructions are what it must do. Both become the immutable revision.</p>
+            </div>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <Field label="Personality and operating principles">
+                <Textarea
+                  className="min-h-[280px]"
+                  rows={16}
+                  required
+                  minLength={10}
+                  maxLength={32_000}
+                  value={profileDraft.soulMd}
+                  onChange={(event) => setProfileDraft({ ...profileDraft, soulMd: event.target.value })}
+                />
+              </Field>
+              <Field label="System instructions">
+                <Textarea
+                  className="min-h-[280px]"
+                  rows={16}
+                  required
+                  minLength={10}
+                  maxLength={32_000}
+                  value={profileDraft.instructions}
+                  onChange={(event) => setProfileDraft({ ...profileDraft, instructions: event.target.value })}
+                />
+              </Field>
+            </div>
+          </section>
 
           <details className="group border-t border-border pt-4">
             <summary className="flex cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
@@ -818,16 +853,18 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
             </div>
           </details>
 
-          <Alert tone={activationReady === false ? "warn" : "info"}>
-            <span className="block font-semibold">
-              {activationReady === false ? "Draft until infrastructure is ready" : "Automatic activation"}
-            </span>
-            <span className="mt-1 block text-caption leading-relaxed">
-              {activationReady === false
-                ? "This Profile will be saved safely without attempting a runtime activation. Finish Settings setup, then verify and activate it from the Profile list."
-                : "OrcaSynapse will verify Hermes, activate this immutable Profile, and enable Chat. Personality and Skills describe behavior, never authority."}
-            </span>
-          </Alert>
+          {activationReady === false ? (
+            <Alert tone="warn">
+              <span className="block font-semibold">Draft until infrastructure is ready</span>
+              <span className="mt-1 block text-caption leading-relaxed">
+                This Profile will be saved safely without attempting a runtime activation. Finish Settings setup, then verify and activate it from the Profile list.
+              </span>
+            </Alert>
+          ) : (
+            <p className="m-0 text-caption leading-relaxed text-muted">
+              OrcaSynapse will verify Hermes, activate this immutable Profile, and enable Chat. Personality and Skills describe behavior, never authority.
+            </p>
+          )}
         </form>
       </Dialog>
     </div>

@@ -35,7 +35,9 @@ import {
   Monitor as MonitorIcon,
   Network as NodeIcon,
   Plus,
+  Sparkles,
   SquareTerminal as TerminalIcon,
+  Trash2,
 } from "lucide-react";
 import {
   OrcaSynapseApiError,
@@ -84,34 +86,15 @@ interface ChatViewProps {
   onSessionExpired: () => void;
 }
 
-interface ClientCrypto {
-  randomUUID?: () => string;
-  getRandomValues?: (array: Uint8Array) => Uint8Array;
-}
-
-let fallbackMessageSequence = 0;
-
-export function createClientMessageId(
-  cryptoApi: ClientCrypto | null | undefined = globalThis.crypto as ClientCrypto | undefined,
-): string {
-  if (typeof cryptoApi?.randomUUID === "function") return cryptoApi.randomUUID();
-
-  const bytes = new Uint8Array(16);
-  if (typeof cryptoApi?.getRandomValues === "function") {
-    cryptoApi.getRandomValues(bytes);
-  } else {
-    // This identifier exists only until the server-supplied message replaces
-    // the optimistic row. It is never used as an authentication token.
-    const seed = `${Date.now()}-${fallbackMessageSequence += 1}-${Math.random()}`;
-    for (let index = 0; index < bytes.length; index += 1) {
-      bytes[index] = seed.charCodeAt(index % seed.length) ^ ((index * 31) & 0xff);
-    }
-  }
-  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
-  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
-  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
+/*
+ * Moved to `client-uuid.ts` and re-exported here.
+ *
+ * The views are code split per route, so leaving it in this module meant any
+ * other route wanting a UUID pulled the chat view's 200 kB chunk with it. The
+ * re-export keeps this file's existing importers -- including its own two test
+ * suites -- working unchanged.
+ */
+export { createClientMessageId } from "./client-uuid.js";
 
 function formatConversationTime(value: string | null): string {
   if (!value) return "No messages";
@@ -2044,6 +2027,7 @@ export function ChatView({
       <Dialog
         open={skillsOpen}
         onClose={() => setSkillsOpen(false)}
+        icon={Sparkles}
         kicker="Runtime capability"
         title="What this runtime can do"
         description="Read from Hermes on the enrolled node. Nothing here is enabled by viewing it."
@@ -2093,6 +2077,7 @@ export function ChatView({
       <Dialog
         open={confirmDelete && active !== null}
         onClose={() => setConfirmDelete(false)}
+        icon={Trash2}
         title="Delete this conversation?"
         footer={
           <>

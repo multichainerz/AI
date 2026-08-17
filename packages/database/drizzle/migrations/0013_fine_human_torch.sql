@@ -1,0 +1,1 @@
+CREATE INDEX "AgentRun_completedAt_idx" ON "AgentRun" USING btree ("completedAt");

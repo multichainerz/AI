@@ -1,16 +1,16 @@
 import type { ReactNode } from "react";
 import {
+  Activity,
   Boxes,
   Brain,
-  FileText,
   HeartPulse,
   ListChecks,
+  LockKeyhole,
   ScrollText,
   Server,
   Shield,
   Sparkles,
   UserRound,
-  Users,
   Wrench,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -23,7 +23,7 @@ export type ActiveView =
   | "Application"
   | "Chat"
   | "Models"
-  | "Prompts"
+  | "Usage"
   | "Agents"
   | "Skills"
   | "Memory"
@@ -85,9 +85,9 @@ export const primaryNavigationGroups: ReadonlyArray<{
        * area -- workspace-navigation.test.ts asserts exactly that, which is what
        * stops a tooltip drifting away from the tabs it summarises.
        */
-      { area: "Gateway", icon: "gateway", target: "Models", description: "Models, prompts and guardrails for the governed inference path" },
+      { area: "Gateway", icon: "gateway", target: "Models", description: "Models, guardrails and usage for the governed inference path" },
       { area: "Operations", icon: "operations", target: "Operations", description: "Health, incidents and the audit trail" },
-      { area: "Settings", icon: "settings", target: "Deployment", description: "Setup, divisions, people and system updates" },
+      { area: "Settings", icon: "settings", target: "Deployment", description: "Setup, access and system updates" },
     ],
   },
 ];
@@ -163,9 +163,9 @@ const sectionNavigation: Partial<Record<ProductArea, ReadonlyArray<SectionNaviga
    * upgrade as it happens on VM1 -- which is a machine, not an application.
    */
   /*
-   * The three governed-inference tabs moved out to Gateway. What is left is what
+   * The governed-inference tabs moved out to Gateway. What is left is what
    * Settings has always actually been about: bringing the deployment up, and
-   * keeping the machine it runs on current. Models, prompts and guardrails are
+   * keeping the machine it runs on current. Models and guardrails are
    * not setup steps -- they are the running configuration of the inference path,
    * and grouping them under the same roof as "install this" made Settings read
    * as a drawer rather than a place.
@@ -186,13 +186,24 @@ const sectionNavigation: Partial<Record<ProductArea, ReadonlyArray<SectionNaviga
    */
   Settings: [
     { label: "Setup", view: "Deployment", icon: "setup" },
-    { label: "People", view: "People", icon: "people" },
+    { label: "Access", view: "People", icon: "access" },
     { label: "System", view: "Application", icon: "system" },
   ],
+  /*
+   * Configure the route, state the policy, then read what it cost. Usage is
+   * last because it is the only one of the three that changes nothing: Models
+   * and Guardrails are settings an operator edits, and this is the evidence
+   * they produced.
+   *
+   * It is in Gateway rather than Operations on purpose. Health answers "is
+   * something degraded right now" and the audit trail answers "what happened";
+   * neither is "what did the inference path consume", which is a property of
+   * the path itself and belongs beside the routes that define it.
+   */
   Gateway: [
     { label: "Models", view: "Models", icon: "models" },
-    { label: "Prompts", view: "Prompts", icon: "prompts" },
     { label: "Guardrails", view: "Guardrails", icon: "guardrails" },
+    { label: "Usage", view: "Usage", icon: "usage" },
   ],
 };
 
@@ -207,8 +218,8 @@ const areaByView: Record<ActiveView, ProductArea> = {
   People: "Settings",
   Application: "Settings",
   Models: "Gateway",
-  Prompts: "Gateway",
   Guardrails: "Gateway",
+  Usage: "Gateway",
   Operations: "Operations",
   Audit: "Operations",
 };
@@ -221,11 +232,11 @@ const pathByView: Record<ActiveView, string> = {
   Memory: "#agents/memory",
   Integrations: "#agents/tools",
   Deployment: "#settings/setup",
-  People: "#settings/people",
+  People: "#settings/access",
   Application: "#settings/system",
   Models: "#gateway/models",
-  Prompts: "#gateway/prompts",
   Guardrails: "#gateway/guardrails",
+  Usage: "#gateway/usage",
   Operations: "#operations/health",
   Audit: "#operations/audit",
 };
@@ -344,13 +355,16 @@ export function viewFromHash(hash: string): ActiveView {
     case "#settings/setup/profile":
       return "Deployment";
     /*
-     * `#settings/divisions` and `#divisions` addressed a Settings tab that
-     * People now contains outright -- the divisions list, its status and delete
-     * controls, and the create form -- so an existing bookmark has a correct
-     * destination rather than falling through to the Dashboard and dropping the
-     * operator out of the area.
+     * The tab is "Access"; the routing token stays `People` and the hash
+     * follows the label the way `Deployment` is `#settings/setup`.
      *
-     * This is the strongest of the five aliases in this switch, and the only
+     * `#settings/people`, `#people`, `#settings/divisions` and `#divisions`
+     * addressed earlier names of this screen -- People as its own tab, then
+     * Divisions as a sibling that this page now contains outright -- so an
+     * existing bookmark has a correct destination rather than falling through
+     * to the Dashboard and dropping the operator out of the area.
+     *
+     * This is the strongest of the aliases in this switch, and the only
      * one where the old screen is not merely *absorbed*: `#agents/corpus` lands
      * on the tab that took most of a split screen, `#agents/runtime` and
      * `#operations/releases` on tabs that took what still exists of a deleted
@@ -363,6 +377,8 @@ export function viewFromHash(hash: string): ActiveView {
      * reload has to return to it. A scroll offset does not earn the same
      * machinery.
      */
+    case "#settings/access":
+    case "#access":
     case "#settings/people":
     case "#people":
     case "#settings/divisions":
@@ -399,16 +415,30 @@ export function viewFromHash(hash: string): ActiveView {
     case "#platform/models":
     case "#models":
       return "Models";
+    /*
+     * Prompts was a Gateway tab whose activate/suspend recorded a decision
+     * nothing at runtime reads. System text comes from the agent profile
+     * (`soulMd` / `instructions`). Bookmarks land on Models, the remaining
+     * sibling, rather than falling through to the Dashboard.
+     */
     case "#gateway/prompts":
     case "#settings/prompts":
     case "#platform/prompts":
     case "#prompts":
-      return "Prompts";
+      return "Models";
     case "#gateway/guardrails":
     case "#settings/guardrails":
     case "#platform/guardrails":
     case "#guardrails":
       return "Guardrails";
+    /*
+     * New at v8.9.0, so there is no retired spelling to keep alive -- only the
+     * short alias every other view in this switch also carries, so a typed
+     * `#usage` lands somewhere rather than falling through to the Dashboard.
+     */
+    case "#gateway/usage":
+    case "#usage":
+      return "Usage";
     /*
      * `#operations` was the whole area when it was one screen with four
      * sub-tabs, so a bookmark to it means "Health" now — that is where the
@@ -445,12 +475,12 @@ function SectionGlyph({ name }: { name: string }) {
     memory: <Brain size={15} strokeWidth={1.8} />,
     tools: <Wrench size={15} strokeWidth={1.8} />,
     models: <Boxes size={15} strokeWidth={1.8} />,
-    prompts: <FileText size={15} strokeWidth={1.8} />,
     guardrails: <Shield size={15} strokeWidth={1.8} />,
+    usage: <Activity size={15} strokeWidth={1.8} />,
     health: <HeartPulse size={15} strokeWidth={1.8} />,
     audit: <ScrollText size={15} strokeWidth={1.8} />,
     setup: <ListChecks size={15} strokeWidth={1.8} />,
-    people: <Users size={15} strokeWidth={1.8} />,
+    access: <LockKeyhole size={15} strokeWidth={1.8} />,
     system: <Server size={15} strokeWidth={1.8} />,
   };
   return glyphs[name] ?? null;
@@ -473,10 +503,16 @@ export function WorkspaceContextBar({ area, activeView, onSelect, trailing }: Wo
      *
      * Nested in `.workspace-header` so it sticks with the title. The row
      * restores the page text ramp -- without that it would inherit the band's
-     * white-on-violet remap and stay dark in both appearances. The negative
-     * inline margin lines it up with the band's edges.
+     * white-on-violet remap and stay dark in both appearances.
+     *
+     * The negative inline margin lines it up with the band's edges -- the
+     * *band's*, so it cancels `--workspace-band-inline` rather than the page's
+     * content inset. Those were one token until the area title ended up in a
+     * different place on Dashboard and Session than on every area that has a
+     * strip; reading the page token here would put these tabs back out of line
+     * with the title directly above them.
      */
-    <div className="workspace-header__sections -mx-[var(--workspace-inline)] flex items-stretch justify-between gap-4 px-[var(--workspace-inline)]">
+    <div className="workspace-header__sections -mx-[var(--workspace-band-inline)] flex items-stretch justify-between gap-4 px-[var(--workspace-band-inline)]">
       <nav aria-label={`${area} sections`} className="flex min-w-0 items-stretch overflow-x-auto">
         {items.map((item) => {
           const current = item.view === activeView;

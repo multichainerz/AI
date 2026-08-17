@@ -227,6 +227,28 @@
 }
 
 * { box-sizing: border-box; }
+/*
+ * Thin, token-coloured scrollbars. The platform default is a 15–17px trough
+ * with arrow buttons — the one thing in a locked column that still looked
+ * like the browser, not the product. Firefox understands `scrollbar-width`;
+ * Chromium still needs the webkit pseudo-elements. The rail keeps its own
+ * white-on-violet pair below; this is the page and every overflow panel.
+ */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(var(--faint-rgb) / 0.45) transparent;
+}
+*::-webkit-scrollbar { width: 6px; height: 6px; }
+*::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background-color: rgb(var(--faint-rgb) / 0.4);
+  border: 1px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover { background-color: rgb(var(--faint-rgb) / 0.65); }
+*::-webkit-scrollbar-corner { background: transparent; }
+
 html { min-width: 320px; min-height: 100%; background: var(--bg); }
 body { min-width: 320px; min-height: 100vh; margin: 0; background: var(--bg); }
 button, input, select, textarea { font: inherit; }
@@ -343,6 +365,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    `.nav-group--bottom` reaches the foot of the menu with an auto margin, which
    a grid with `align-content: start` would have swallowed silently. */
 .sidebar nav { min-height: 0; flex: 1; display: flex; flex-direction: column; gap: 17px; padding: 1px 2px 10px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.28) transparent; }
+.sidebar nav::-webkit-scrollbar { width: 6px; }
+.sidebar nav::-webkit-scrollbar-thumb { background-color: rgba(255, 255, 255, 0.28); }
+.sidebar nav::-webkit-scrollbar-thumb:hover { background-color: rgba(255, 255, 255, 0.42); }
 .nav-group { display: grid; gap: 3px; }
 /* Settings, last in the same menu. The auto margin is the whole of "at the
    bottom" -- and it is also what keeps the row reachable when the rail is too
@@ -372,6 +397,23 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
  */
 main {
   --workspace-inline: clamp(16px, 3vw, 24px);
+  /*
+   * The sticky band's own inset, deliberately not the page's.
+   *
+   * These were one token, and that is what put the area title in a different
+   * place on Dashboard and Session than on every other area. `.workspace-page`
+   * lowers `--workspace-inline` to 12px so a dock's gutter matches the 12px gap
+   * between docks -- a decision about *page content* -- and the header read the
+   * same token, so the title slid 4-12px left on nine screens and stayed put on
+   * two. Moving between areas visibly nudged the heading.
+   *
+   * The band is chrome: it bleeds edge to edge on every screen and carries the
+   * same title, glyph and account chip wherever you are, so it gets one inset
+   * everywhere. The negative margin below still uses `--workspace-inline`,
+   * because that is the padding it has to cancel to reach the page edge -- the
+   * two tokens answer different questions and are no longer forced to agree.
+   */
+  --workspace-band-inline: clamp(16px, 3vw, 24px);
   min-width: 0;
   padding: 0 var(--workspace-inline) 32px;
   background: var(--bg);
@@ -876,8 +918,9 @@ main {
   z-index: 40;
   width: auto;
   max-width: none;
+  /* Cancels the page's inset to reach the edge, then applies the band's own. */
   margin: 0 calc(-1 * var(--workspace-inline));
-  padding: 0 var(--workspace-inline);
+  padding: 0 var(--workspace-band-inline);
   border-bottom: 1px solid var(--border);
   /*
    * Opaque, and the blur is gone with it.
@@ -1078,7 +1121,44 @@ button:disabled { opacity: .48; cursor: not-allowed; }.panel { border: 1px solid
 /* The band's negative clamp margins exist to bleed its border to the edge of a
    padded page. This page has no padding, so they are cancelled rather than the
    header being hidden. */
-.chat-page > .workspace-header { margin: 0; padding: 0 var(--workspace-inline); }
+.chat-page > .workspace-header { margin: 0; padding: 0 var(--workspace-band-inline); }
+/*
+ * Every section-strip view shares one workspace. Dashboard's lock waits for
+ * 1280px, which the preview pane and a number of laptops miss, so the page
+ * kept growing. Chat's lock is the model: the band takes its row, the
+ * workspace takes the rest. Below the rail's 760px breakpoint the shell is
+ * already a scrolling column, so this stays off there.
+ *
+ * The strip's default 24px under the header, and the page's 16–24px inset,
+ * left a gutter around every dock that was larger than the gap between the
+ * docks. These pages use one 12px step for submenu, sides, bottom, and the
+ * stack — the same as `gap-3` on the workspace.
+ */
+@media (min-width: 761px) {
+  .workspace-page {
+    --workspace-inline: 12px;
+    display: grid;
+    height: 100vh;
+    height: 100dvh;
+    min-height: 0;
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: hidden;
+    padding-bottom: 0;
+  }
+  .workspace-page > .workspace-header {
+    margin-bottom: 12px;
+  }
+  .workspace-page > .workspace-stack {
+    min-height: 0;
+    height: 100%;
+    overflow: hidden;
+  }
+  .workspace-stack header h1 {
+    font-size: 22px;
+    font-weight: 600;
+    line-height: 1.15;
+  }
+}
 /*
  * The one part of the transcript that stays a stylesheet rule rather than
  * utility classes, and the reason is structural: ReactMarkdown emits the
@@ -1132,9 +1212,6 @@ button:disabled { opacity: .48; cursor: not-allowed; }.panel { border: 1px solid
 
 .runtime-alert { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 11px 13px; color: var(--bad); border: 1px solid rgb(var(--bad-rgb) / 0.4); border-radius: var(--radius-component); background: rgb(var(--bad-rgb) / 0.12); font-size: 10px; }
 .runtime-alert button { color: inherit; border: 0; background: transparent; cursor: pointer; font-size: 9px; font-weight: 650; }
-.runtime-section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 15px; padding: 17px 18px; border-bottom: 1px solid var(--border); }
-.runtime-section-heading h2 { overflow-wrap: anywhere; font-size: 16px; }
-.runtime-section-heading > button { min-height: 31px; padding: 6px 9px; color: var(--muted); border: 1px solid var(--border); border-radius: var(--radius-component); background: var(--bg); cursor: pointer; font-size: 9px; }
 .runtime-status { display: inline-flex; align-items: center; padding: 0; color: var(--faint); border: 0; border-radius: 0; background: none; font: 9px/1.5 var(--mono); font-weight: 500; letter-spacing: .09em; text-transform: uppercase; white-space: nowrap; }
 .runtime-status.ready { color: var(--good); }
 .runtime-status.failed { color: var(--bad); }
@@ -1193,7 +1270,6 @@ button:disabled { opacity: .48; cursor: not-allowed; }.panel { border: 1px solid
   .chat-page { height: calc(100dvh - 72px); padding: 0; }
 }@media (max-width: 560px) {
   .panel { padding: 17px; }
-  .runtime-section-heading { padding: 15px; }
 }
 
 /* Production setup */
@@ -1222,16 +1298,9 @@ button:disabled { opacity: .48; cursor: not-allowed; }.panel { border: 1px solid
  * changed.
  */
 .runtime-nodes-layout { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 13px; }
-.runtime-nodes-overview { min-width: 0; overflow: hidden; }
-.runtime-node-heading-actions { display: flex; gap: 8px; }
-.runtime-node-principles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; padding: 1px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); background: var(--border); }
-.runtime-node-principles > div { grid-column: 1 / -1; min-height: auto; }
-.runtime-node-principles > * { min-height: 76px; display: flex; flex-direction: column; justify-content: center; padding: 13px 16px; background: var(--bg); }
-.runtime-node-principles strong { font-size: 16px; font-weight: 650; }
-.runtime-node-principles span { margin-top: 5px; color: var(--faint); font-size: 8px; line-height: 1.45; }
-.runtime-node-principles > div strong { font-size: 10px; }
 .runtime-node-list { display: grid; }
 .runtime-node-list > article { display: grid; grid-template-columns: auto minmax(160px, 1.2fr) minmax(190px, 1fr) minmax(74px, auto); align-items: center; gap: 10px; padding: 16px 14px; border-top: 1px solid var(--border); }
+.runtime-node-list > article:first-child { border-top: 0; }
 .runtime-node-state { width: 12px; height: 12px; display: grid; place-items: center; border-radius: 50%; background: rgb(var(--muted-rgb) / 0.14); }
 .runtime-node-state span { width: 6px; height: 6px; border-radius: inherit; background: var(--border-strong); }
 .runtime-node-state.ready { background: rgb(var(--good-rgb) / 0.13); }.runtime-node-state.ready span { background: var(--good); }
@@ -1248,16 +1317,6 @@ button:disabled { opacity: .48; cursor: not-allowed; }.panel { border: 1px solid
 .runtime-node-list dd { overflow: hidden; margin: 5px 0 0; color: var(--muted); font-family: var(--mono); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 .runtime-node-actions { display: flex; justify-content: flex-end; gap: 9px; white-space: nowrap; }
 .runtime-node-actions .danger { color: var(--bad); }
-.runtime-network-contract { padding: 18px; }
-.runtime-network-contract h2 { margin: 4px 0 16px; font-size: 15px; }
-.runtime-network-contract ol { display: grid; gap: 12px; padding: 0; margin: 0; list-style: none; }
-.runtime-network-contract li { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 10px; }
-.runtime-network-contract li > span { width: 22px; height: 22px; display: grid; place-items: center; color: var(--text); border: 1px solid var(--border-strong); border-radius: 50%; background: var(--raised); font-size: 8px; font-weight: 700; }
-.runtime-network-contract li strong { display: block; font-size: 9px; }
-.runtime-network-contract li small { display: block; margin-top: 4px; color: var(--faint); font-size: 8px; line-height: 1.5; }
-.runtime-network-note { padding: 12px; margin-top: 17px; border: 1px solid var(--border-strong); border-radius: var(--radius-component); background: var(--raised); }
-.runtime-network-note strong { color: var(--text); font-size: 9px; }
-.runtime-network-note p { margin: 5px 0 0; color: var(--muted); font-size: 8px; line-height: 1.55; }
 .runtime-development-note { padding: 9px 11px; color: var(--faint); border: 1px solid var(--border); border-radius: var(--radius-component); background: var(--raised); font-size: 8px; line-height: 1.5; }
 .runtime-removal-warning { padding: 13px; border: 1px solid rgb(var(--bad-rgb) / 0.4); border-radius: var(--radius-component); background: rgb(var(--bad-rgb) / 0.12); }
 .runtime-removal-warning strong { color: var(--bad); font-size: 10px; }
@@ -1273,17 +1332,10 @@ button:disabled { opacity: .48; cursor: not-allowed; }.panel { border: 1px solid
 .runtime-removal-attestation { grid-template-columns: auto minmax(0, 1fr) !important; align-items: start; gap: 8px !important; padding: 10px; margin-top: 8px; border: 1px solid var(--border-strong); border-radius: var(--radius-component); background: var(--raised); cursor: pointer; }
 .runtime-removal-attestation span { color: var(--muted); font-size: 8px; font-weight: 500; line-height: 1.45; }@media (max-width: 980px) {
   .runtime-nodes-layout { grid-template-columns: 1fr; }
-  .runtime-node-principles { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .runtime-node-principles > div { grid-column: 1 / -1; min-height: auto; }
   .runtime-node-list > article { grid-template-columns: auto minmax(0, 1fr) auto; }
   .runtime-node-list dl { grid-column: 2; }
   .runtime-node-actions { grid-column: 3; grid-row: 1 / span 2; }
 }@media (max-width: 560px) {
-  .runtime-nodes-overview .runtime-section-heading { align-items: stretch; flex-direction: column; }
-  .runtime-node-heading-actions { width: 100%; }
-  .runtime-node-heading-actions button { flex: 1; }
-  .runtime-node-principles > * { min-height: 68px; padding: 10px; }
-  .runtime-node-principles strong { font-size: 13px; }
   .runtime-node-list > article { grid-template-columns: auto minmax(0, 1fr); align-items: start; padding-inline: 13px; }
   .runtime-node-list dl { grid-column: 2; grid-template-columns: 1fr; gap: 8px; }
   .runtime-node-actions { grid-column: 2; grid-row: auto; }

@@ -12,7 +12,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConnectionDrawer, type ConnectionDraft } from "./connection-drawer.js";
 
 describe("ConnectionDrawer inference endpoint", () => {
-  it("renders a guided discovery flow and keeps manual fields behind an advanced control", () => {
+  it("renders a guided discovery flow without manual path overrides", () => {
     const html = renderToStaticMarkup(<ConnectionDrawer
       busy={false}
       connections={[]}
@@ -28,21 +28,43 @@ describe("ConnectionDrawer inference endpoint", () => {
       onSave={vi.fn(async () => undefined)}
       onTest={vi.fn(async () => undefined)}
       onDiscoverInference={vi.fn(async () => null)}
+      onLoadInferenceCatalogue={vi.fn(async () => null)}
       onUpdateMonitoring={vi.fn(async () => undefined)}
       onLoadRevisions={vi.fn(async () => undefined)}
       onRollback={vi.fn(async () => undefined)}
     />);
 
     expect(html).toContain("Connect a model server");
+    expect(html).toContain("Local server");
+    expect(html).toContain("OpenRouter");
+    expect(html).toContain("Public endpoint");
+    expect(html).toContain("role=\"radiogroup\"");
     expect(html).toContain("AI Inference address");
     expect(html).toContain("Discover server");
     expect(html).not.toContain("Enable after saving");
-    expect(html).toContain("Advanced configuration");
+    expect(html).not.toContain("Advanced configuration");
     expect(html).not.toContain("Endpoint suggestion");
     expect(html).not.toContain("Serving implementation");
+    expect(html).not.toContain("Health path");
+    expect(html).not.toContain("Models path");
     expect(html).toContain("Agentic System");
     expect(html).not.toContain(">Hermes<");
     expect(html).not.toContain("Configuration history");
+  });
+
+  it("renders the inference editor in place when Setup embeds it", () => {
+    const html = renderToStaticMarkup(<ConnectionDrawer
+      {...props}
+      initialKind="INFERENCE"
+      embedded
+    />);
+
+    expect(html).toContain("AI Inference address");
+    expect(html).toContain("Discover server");
+    expect(html).toContain("id=\"connection-form\"");
+    expect(html).not.toContain("role=\"dialog\"");
+    expect(html).not.toContain("Agentic System");
+    expect(html).not.toContain("Connect a model server");
   });
 });
 
@@ -60,6 +82,7 @@ const props: Omit<ComponentProps<typeof ConnectionDrawer>, "initialKind"> = {
   onSave: vi.fn(async () => undefined),
   onTest: vi.fn(async () => undefined),
   onDiscoverInference: vi.fn(async () => null),
+  onLoadInferenceCatalogue: vi.fn(async () => null),
   onUpdateMonitoring: vi.fn(async () => undefined),
   onLoadRevisions: vi.fn(async () => undefined),
   onRollback: vi.fn(async () => undefined),
@@ -212,5 +235,115 @@ describe("naming a connection", () => {
     expect(props.onSave).toHaveBeenCalledWith(expect.objectContaining({
       slug: "enterpriseaccess-primary",
     }));
+  });
+});
+
+describe("OpenRouter endpoint mode", () => {
+  it("hides local discovery and requires a key", () => {
+    render(<ConnectionDrawer {...props} initialKind="INFERENCE" />);
+    fireEvent.click(screen.getByRole("radio", { name: /Public endpoint/ }));
+
+    expect(screen.queryByLabelText(/AI Inference address/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Discover server" })).toBeNull();
+    expect(screen.getByLabelText(/OpenRouter API key/)).toBeTruthy();
+    expect(screen.getByText(/leave this environment/i)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Verify key and load models" })).toHaveProperty("disabled", true);
+    expect(screen.queryByText("Advanced configuration")).toBeNull();
+    expect(screen.queryByText("Serving implementation")).toBeNull();
+  });
+
+  it("pins the OpenRouter origin and paths on save", async () => {
+    const onSave = vi.fn<(draft: ConnectionDraft) => Promise<void>>(async () => undefined);
+    render(<ConnectionDrawer
+      {...props}
+      initialKind="INFERENCE"
+      onSave={onSave}
+      onLoadInferenceCatalogue={vi.fn(async () => ({
+        provider: "openrouter" as const,
+        models: [
+          { id: "anthropic/claude-sonnet-4", name: "Claude Sonnet 4" },
+          { id: "openai/gpt-5.6-sol" },
+        ],
+        key: { label: "pilot" },
+      }))}
+    />);
+
+    fireEvent.click(screen.getByRole("radio", { name: /Public endpoint/ }));
+    fireEvent.change(screen.getByLabelText(/OpenRouter API key/), { target: { value: "sk-or-v1-test" } });
+    fireEvent.click(screen.getByRole("button", { name: "Verify key and load models" }));
+    await screen.findByText(/models available/);
+    fireEvent.click(screen.getByRole("button", { name: "Activate AI Inference" }));
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+    expect(onSave.mock.calls[0]![0]).toMatchObject({
+      baseUrl: "https://openrouter.ai",
+      enabled: true,
+      configuration: {
+        inferenceBackend: "CUSTOM_OPENAI_COMPATIBLE",
+        modelsPath: "/api/v1/models",
+        healthPath: "/api/v1/models",
+        chatPath: "/api/v1/chat/completions",
+        modelAlias: "anthropic/claude-sonnet-4",
+      },
+      secrets: { apiKey: "sk-or-v1-test" },
+    });
+  });
+
+  it("updates the existing inference row rather than creating a second connection", async () => {
+    const onSave = vi.fn<(draft: ConnectionDraft) => Promise<void>>(async () => undefined);
+    render(<ConnectionDrawer
+      {...props}
+      initialKind="INFERENCE"
+      connections={[liveInference]}
+      onSave={onSave}
+    />);
+
+    fireEvent.click(screen.getByRole("radio", { name: /Public endpoint/ }));
+    fireEvent.change(screen.getByLabelText(/OpenRouter API key/), { target: { value: "sk-or-v1-test" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+    expect(onSave.mock.calls[0]![0]).toMatchObject({
+      existingId: liveInference.id,
+      baseUrl: "https://openrouter.ai",
+    });
+  });
+});
+
+describe("local inference auto-configuration", () => {
+  it("refuses to save a new local connection until discovery has read the server", async () => {
+    const onSave = vi.fn<(draft: ConnectionDraft) => Promise<void>>(async () => undefined);
+    render(<ConnectionDrawer {...props} initialKind="INFERENCE" onSave={onSave} />);
+
+    fireEvent.change(screen.getByLabelText(/AI Inference address/), {
+      target: { value: "http://gpu-server.internal:8000" },
+    });
+    expect(screen.getByRole("button", { name: "Create connection" })).toHaveProperty("disabled", true);
+    fireEvent.click(screen.getByRole("button", { name: "Create connection" }));
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it("writes discovered backend and paths on save instead of the form defaults", async () => {
+    const onSave = vi.fn<(draft: ConnectionDraft) => Promise<void>>(async () => undefined);
+    render(<ConnectionDrawer
+      {...props}
+      initialKind="INFERENCE"
+      onSave={onSave}
+      onDiscoverInference={vi.fn(async () => ({ ...partialDiscovery, status: "READY" as const }))}
+    />);
+
+    fireEvent.change(screen.getByLabelText(/AI Inference address/), {
+      target: { value: "http://gpu-server.internal:8000" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Discover server" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Activate AI Inference" }));
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+    expect(onSave.mock.calls[0]![0]).toMatchObject({
+      baseUrl: "http://gpu-server.internal:8000/v1",
+      configuration: {
+        inferenceBackend: "VLLM",
+        modelsPath: "/models",
+        chatPath: "/chat/completions",
+        modelAlias: "hermes-agent",
+      },
+    });
   });
 });

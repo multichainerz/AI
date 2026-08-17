@@ -119,7 +119,10 @@ async function enableRuntime() {
  * additionally demands a healthy inference route -- irrelevant to what a run
  * does with the number, and a second deployment to keep in step with here.
  */
-async function activeGuardrailPolicy(maxOutputCharacters: number) {
+async function activeGuardrailPolicy(
+  maxOutputCharacters: number,
+  overrides: Partial<typeof guardrailPolicy.$inferInsert> = {},
+) {
   await context.database.insert(guardrailPolicy).values({
     slug: `policy-${randomUUID().slice(0, 8)}`,
     displayName: "Pilot guardrails",
@@ -129,7 +132,21 @@ async function activeGuardrailPolicy(maxOutputCharacters: number) {
     maxInputCharacters: 32_000,
     maxOutputCharacters,
     firstActivatedAt: new Date(),
+    ...overrides,
   });
+}
+
+function inputRule(overrides: Record<string, unknown> = {}) {
+  return {
+    id: randomUUID(),
+    label: "Internal codename",
+    type: "WORD",
+    pattern: "seahorse",
+    action: "BLOCK",
+    caseSensitive: false,
+    enabled: true,
+    ...overrides,
+  };
 }
 
 /** Creates a profile and takes it all the way to ACTIVE. */
@@ -306,7 +323,98 @@ describe("DrizzleAgentManager runs", () => {
     expect(stored?.outputCharacterLimit).toBe(4_096);
   });
 
-  it("falls back to the platform ceiling when no policy is active", async () => {
+  /*
+   * The gap this closed. `inspectInputText` had exactly two callers -- chat and
+   * the inference gateway -- so a run submitted straight to
+   * `POST /api/v1/agents/runs` was bounded only by the contract's flat 32,000
+   * characters: no policy limit, no control-character check, no credential
+   * check, no operator rule. A direct run was the way around every guardrail on
+   * the deployment, and the dashboard said otherwise.
+   */
+  it("refuses a directly submitted run whose input trips a rule", async () => {
+    const active = await activeProfile();
+    await enableRuntime();
+    await enrolHealthyRuntime();
+    await activeGuardrailPolicy(200_000, { rules: [inputRule()] });
+
+    await expect(
+      manager().submitRun(principal, { profileId: active.id, input: "about the seahorse programme" } as never),
+    ).rejects.toThrow(/Internal codename/);
+
+    // Refused before anything was written, not compensated afterwards.
+    expect(await context.database.select().from(agentRun)).toHaveLength(0);
+  });
+
+  it("records the refusal by rule label and never by the input that tripped it", async () => {
+    // A credential-shaped rule fires because the input looked like a key;
+    // quoting it to explain the event would put the key in a trail that is
+    // retained and forwarded to a SIEM.
+    const active = await activeProfile();
+    await enableRuntime();
+    await enrolHealthyRuntime();
+    await activeGuardrailPolicy(200_000, { rules: [inputRule({ label: "Secret token" })] });
+
+    await expect(
+      manager().submitRun(principal, { profileId: active.id, input: "seahorse" } as never),
+    ).rejects.toThrow();
+
+    const [event] = await context.database
+      .select({ action: auditEvent.action, metadata: auditEvent.metadata })
+      .from(auditEvent)
+      .where(eq(auditEvent.action, "guardrail.request_blocked"));
+    expect(JSON.stringify(event?.metadata)).toContain("Secret token");
+    expect(JSON.stringify(event?.metadata)).not.toContain("seahorse");
+  });
+
+  it("stores the redacted input, so what runs is what the policy allowed", async () => {
+    const active = await activeProfile();
+    await enableRuntime();
+    await enrolHealthyRuntime();
+    await activeGuardrailPolicy(200_000, { rules: [inputRule({ action: "REDACT" })] });
+
+    const run = await manager().submitRun(
+      principal,
+      { profileId: active.id, input: "about the seahorse programme" } as never,
+    );
+
+    const [stored] = await context.database
+      .select({ input: agentRun.input })
+      .from(agentRun)
+      .where(eq(agentRun.id, run.id));
+    expect(stored?.input).toBe("about the [redacted] programme");
+  });
+
+  it("applies the built-in detectors to a direct run, which had none", async () => {
+    const active = await activeProfile();
+    await enableRuntime();
+    await enrolHealthyRuntime();
+    await activeGuardrailPolicy(200_000);
+
+    await expect(manager().submitRun(
+      principal,
+      { profileId: active.id, input: "-----BEGIN PRIVATE KEY-----\nsecret" } as never,
+    )).rejects.toThrow(/CREDENTIAL_PATTERN/);
+  });
+
+  it("fails closed when a previously activated policy is suspended", async () => {
+    /*
+     * Chat and the inference gateway both latch on `firstActivatedAt` and
+     * refuse once a deployment has activated a policy and none is active.
+     * `activeOutputCharacterLimit` did not, so suspending a policy tightened
+     * two paths and silently loosened the third back to the platform ceiling --
+     * the opposite of what suspending is asking for.
+     */
+    const active = await activeProfile();
+    await enableRuntime();
+    await enrolHealthyRuntime();
+    await activeGuardrailPolicy(4_096, { status: "SUSPENDED" });
+
+    await expect(
+      manager().submitRun(principal, { profileId: active.id, input: "hello" } as never),
+    ).rejects.toThrow(/Activate one guardrail policy/);
+  });
+
+  it("falls back to the platform ceiling when no policy has ever been activated", async () => {
     const active = await activeProfile();
     await enableRuntime();
     await enrolHealthyRuntime();

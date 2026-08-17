@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { Alert, Button, EmptyState, Field, Input, LockedScreen, HeroBanner, Metric, PageHeader, Panel, PanelHeading, Select, StatusText } from "./index.js";
+import { Alert, Button, EmptyState, Field, Input, LockedScreen, HeroBanner, Metric, PageHeader, Panel, PanelHeading, Select, StatusText, WorkspaceDock, WorkspaceIntro } from "./index.js";
 
 /**
  * The primitives, and the one property that cannot be allowed to regress.
@@ -18,6 +18,8 @@ describe("CSP safety", () => {
     const html = markup(
       <div>
         <Button variant="primary">Go</Button>
+        <WorkspaceIntro icon="HP" title="Hermes Profiles" />
+        <WorkspaceDock>Filters</WorkspaceDock>
         <Panel>
           <PanelHeading kicker="Kicker" title="Title" description="Description" />
           <Metric label="Queue" value="7" caption="runs" tone="warn" />
@@ -87,10 +89,10 @@ describe("Button", () => {
 describe("LockedScreen", () => {
   it("names the area so governance screens stay distinguishable", () => {
     const html = markup(
-      <LockedScreen title="Prompts" mark="P" actionLabel="Open platform settings" onAction={vi.fn()} />,
+      <LockedScreen title="Models" mark="M" actionLabel="Open platform settings" onAction={vi.fn()} />,
     );
     expect(html).toContain("<h1");
-    expect(html).toContain("Prompts");
+    expect(html).toContain("Models");
     expect(html).toContain("Administrator session required");
     expect(html).toContain("Open platform settings");
   });
@@ -149,9 +151,9 @@ describe("LockedScreen", () => {
       // `]`, which is not a word character, so there is no boundary to match.
       /\btext-(\[[^\]]+\]|xs|sm|base|lg|[2-9]?xl)(?![\w-])/.exec(/<h1[^>]*class="([^"]*)"/.exec(html)?.[1] ?? "")?.[1];
 
-    const locked = markup(<LockedScreen title="Prompts" mark="P" actionLabel="Open" onAction={vi.fn()} />);
+    const locked = markup(<LockedScreen title="Models" mark="M" actionLabel="Open" onAction={vi.fn()} />);
     expect(titleSize(locked)).toBeDefined();
-    expect(titleSize(locked)).toBe(titleSize(markup(<PageHeader title="Prompts" />)));
+    expect(titleSize(locked)).toBe(titleSize(markup(<PageHeader title="Models" />)));
   });
 });
 
@@ -160,10 +162,11 @@ describe("Metric", () => {
     /*
      * `size` was a two-branch variant whose `lg` half no call site in the repo
      * ever reached, so every figure in the product rendered at the `md`
-     * default. It is gone rather than wired: a KPI column set at the hero's
-     * own step would flatten the banner's hierarchy against the 40px
-     * highlight beside it, and a per-call size knob is exactly how the same
-     * stat tile arrived at nine spellings before the revamp collapsed them.
+     * default. It is gone rather than wired: a per-call size knob is exactly
+     * how the same stat tile arrived at nine spellings before the revamp
+     * collapsed them. Accent banners still own the 40px highlight; a plain
+     * banner is a row of Metrics, so the highlight is the same size as its
+     * neighbours on purpose.
      */
     const figureClass = (html: string) =>
       [...html.matchAll(/<strong class="([^"]*)"/g)].map(([, cls]) => cls).at(-1) ?? "";
@@ -176,12 +179,29 @@ describe("Metric", () => {
     expect(sizeOf(alone)).toBeDefined();
     expect(sizeOf(inBanner)).toBe(sizeOf(alone));
 
+    const plainFigures = [
+      ...markup(
+        <HeroBanner
+          tone="plain"
+          highlight={{ label: "Attention", value: "3" }}
+          metrics={[{ label: "Incidents", value: "1" }, { label: "Queue", value: "0" }]}
+        />,
+      ).matchAll(/<strong class="([^"]*)"/g),
+    ].map(([, cls]) => sizeOf(cls ?? ""));
+    expect(plainFigures).toEqual([sizeOf(alone), sizeOf(alone), sizeOf(alone)]);
+
     // The knob is gone from the type as well as from the class list, so no
     // screen can step one column up on its own. With `size` still on the
     // component this directive is unused and the typecheck fails on it —
     // which is the half of this test that has teeth.
     // @ts-expect-error - Metric takes no `size`.
     markup(<Metric label="Queue" value="7" size="lg" />);
+  });
+
+  it("draws an icon inside a Mark rather than as a loose glyph beside the number", () => {
+    const html = markup(<Metric label="Queue" value="7" icon={<span data-icon="queue" />} />);
+    expect(html).toContain('data-icon="queue"');
+    expect(html).toContain("h-8 w-8");
   });
 });
 

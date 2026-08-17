@@ -32,6 +32,7 @@ import { registerInferenceGatewayRoutes } from "./inference/routes.js";
 import { registerAdminCorpusRoutes, registerRuntimeCorpusRoutes } from "./corpus/routes.js";
 import { checkForPlatformUpdate } from "./platform-updates.js";
 import { registerAdminUpdateRoutes } from "./updates/routes.js";
+import { registerUsageRoutes } from "./usage/routes.js";
 
 export interface AppOptions {
   logger?: boolean;
@@ -260,6 +261,22 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
     { prefix: "/api/v1/admin/audit" },
   );
 
+  /*
+   * The Gateway area's own prefix, and its first resident.
+   *
+   * Models and guardrails are still served from `/api/v1/admin/models` and
+   * `/api/v1/admin/guardrails`: those routes predate the area and moving them
+   * would break a URL for a rename. This is a new surface, so it is addressed
+   * where it belongs rather than hung off a neighbour.
+   */
+  await app.register(
+    async (usage) => registerUsageRoutes(usage, {
+      ...(runtime.sessionManager ? { sessionManager: runtime.sessionManager } : {}),
+      ...(runtime.usageManager ? { manager: runtime.usageManager } : {}),
+    }),
+    { prefix: "/api/v1/admin/gateway" },
+  );
+
   await app.register(
     async (chat) =>
       registerChatRoutes(chat, {
@@ -361,6 +378,7 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
         ...(runtime.connectionManager ? { manager: runtime.connectionManager } : {}),
         ...(runtime.connectionTestService ? { tester: runtime.connectionTestService } : {}),
         ...(runtime.inferenceDiscoveryService ? { discoverer: runtime.inferenceDiscoveryService } : {}),
+        ...(runtime.inferenceCatalogueService ? { cataloguer: runtime.inferenceCatalogueService } : {}),
         ...(runtime.connectionMonitor ? { monitor: runtime.connectionMonitor } : {}),
       }),
     { prefix: "/api/v1/admin/connections" },

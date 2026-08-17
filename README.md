@@ -54,9 +54,9 @@ VM2 installs vanilla Hermes at the approved commit, applies the managed native-m
 - **Dashboard:** one-screen readiness and operations command center.
 - **Session:** durable conversations over Hermes’ native session API, with streaming, cancellation, telemetry, feedback, archive, export, and audit projections.
 - **Agents:** immutable Profile Distributions and run history (Profiles), a repository-style view of Hermes-native Skills and memory, and runtime toolset admissions (Tools).
-- **Gateway:** everything on the governed inference path — the routes a deployment may serve (Models), the system prompts it sends (Prompts), and the guardrail baseline it enforces (Guardrails).
+- **Gateway:** everything on the governed inference path — the routes a deployment may serve (Models), the input rules it enforces (Guardrails), and what it consumed (Usage). System text for a run comes from the active Agent Profile, not a separate prompt catalogue.
 - **Operations:** health and incidents, the audit trail, and optional SIEM forwarding.
-- **Settings:** bring-up and Hermes enrollment (Setup), administrators and the divisions they belong to (People), enterprise identity, encrypted connections, and application updates (System).
+- **Settings:** bring-up and Hermes enrollment (Setup), administrators and the divisions they belong to (Access), enterprise identity, encrypted connections, and application updates (System).
 
 ## Memory and audit
 
@@ -92,8 +92,8 @@ Use `pnpm dev` for the API and workspace and `pnpm dev:worker` for durable Herme
 | [Agentic System enrollment](docs/AGENTIC_SYSTEM_ENROLLMENT_RUNBOOK.md) | VM2 enrollment, native state, toolset allowlist, and decommission |
 | [Audit trail and SIEM forwarding](docs/AUDIT_TRAIL_RUNBOOK.md) | Reading, forwarding, health, and replay behavior |
 | [Model controls](docs/MODEL_CONTROL_RUNBOOK.md) | Model registration, versioning, and activation |
-| [Prompt controls](docs/PROMPT_CONTROL_RUNBOOK.md) | Versioned prompts and promotion |
-| [Guardrail controls](docs/GUARDRAIL_CONTROL_RUNBOOK.md) | Runtime policy versioning and activation |
+| [Prompt controls](docs/PROMPT_CONTROL_RUNBOOK.md) | Why the Prompts surface was removed, and what still reads `PromptTemplate` |
+| [Guardrail controls](docs/GUARDRAIL_CONTROL_RUNBOOK.md) | Input rules, redaction, the regex safety gate, versioning and activation |
 | [Product requirements](docs/ORCASYNAPSE_PRD.md) | Current scope, roles, and acceptance boundaries |
 | [Web design system](apps/web/DESIGN_SYSTEM.md) | shadcn/Tailwind source boundaries, tokens, CSP, and accessibility |
 | [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [License](LICENSE) | Project meta |

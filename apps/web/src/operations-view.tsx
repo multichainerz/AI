@@ -6,6 +6,7 @@ import {
   type OperationalIncident,
   type RuntimeExecutorSnapshot,
 } from "@orcasynapse/contracts";
+import { Activity, Flag, HeartPulse, Timer } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -19,7 +20,7 @@ import {
 import { adminAccess } from "./admin-access.js";
 import {
   Alert, Button, EmptyState, HeroBanner, Input, LockedScreen, Metric, MetricRow, MicroLabel,
-  PageHeader, Panel, PanelHeading, Select, StatusText, Textarea, Tile, cn, toneFor,
+  Panel, PanelHeading, Select, StatusText, Textarea, Tile, WorkspaceDock, WorkspaceIntro, cn, toneFor,
 } from "./ui/index.js";
 
 /**
@@ -32,7 +33,7 @@ import {
  * - **Release gates** was removed with the whole evaluation subsystem. It was
  *   the only client of `POST /evaluations`, and the evidence it produced was
  *   the only way to satisfy an activation gate that applied even in
- *   development — so the gate went with it, and models, prompts, guardrails
+ *   development — so the gate went with it, and models, guardrails
  *   and agent profiles now activate on their own merits.
  * - **Pilot readiness** was deleted outright, not moved. Nothing in the
  *   repository can create a `ProductionReadinessControl`: the API exposes
@@ -126,8 +127,8 @@ function humanLabel(value: string): string {
  * indistinguishable from a running one. The rule these four keep is that
  * severity survives the mapping, which is the whole reason the mapping exists.
  *
- * Private and per-vocabulary, in the shape `models-view`, `guardrails-view`,
- * `prompts-view` and `audit-view` already use: widening the shared `toneFor`
+ * Private and per-vocabulary, in the shape `models-view`, `guardrails-view`
+ * and `audit-view` already use: widening the shared `toneFor`
  * would mean one function owning six enums that happen not to collide today.
  */
 function componentStatusTone(status: AiOpsComponent["status"]): string {
@@ -316,11 +317,10 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
   const metrics = overview?.metrics;
   const stale = snapshotIsStale(overview?.generatedAt);
   return (
-    <>
-      <PageHeader
-        kicker="AI operations"
+    <div className="workspace-stack operations-workspace flex h-full min-h-0 flex-col gap-3 pb-3">
+      <WorkspaceIntro
+        icon={<HeartPulse className="size-4" aria-hidden="true" />}
         title="Service health"
-        description="What is degraded, which AI workflows it reaches, and what has been raised about it."
         actions={<>
           <StatusText
             dot
@@ -333,12 +333,12 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
         </>}
       />
 
-      <div aria-live="polite">
-        {error && <Alert className="mb-4">{error}</Alert>}
-        {message && <Alert tone="good" className="mb-4">{message}</Alert>}
+      <div className="shrink-0" aria-live="polite">
+        {error && <Alert>{error}</Alert>}
+        {message && <Alert tone="good">{message}</Alert>}
       </div>
 
-      <div className="grid gap-5">
+      <div className="grid min-h-0 flex-1 content-start gap-3 overflow-y-auto">
         <HeroBanner
           tone="plain"
           aria-label="AI operations summary"
@@ -346,6 +346,7 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
             label: "Services needing attention",
             value: overview?.components.filter(({ status }) => status !== "HEALTHY").length ?? "--",
             caption: `of ${overview?.components.length ?? 0} checked`,
+            icon: <Activity className="size-4" aria-hidden="true" />,
           }}
           metrics={[
             {
@@ -356,11 +357,13 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
               // two figures can describe one event. Saying so beats leaving a
               // reader to count two problems where there is one.
               caption: `${overview?.incidents.critical ?? 0} critical · may describe a service above`,
+              icon: <Flag className="size-4" aria-hidden="true" />,
             },
             {
               label: "Runs waiting to start",
               value: numberFormatter.format(pendingWork),
               caption: `${runningWork} running now · ${failedWork} failed, all time`,
+              icon: <Timer className="size-4" aria-hidden="true" />,
             },
             /*
               "Release evidence" used to be the fourth figure here. It is a
@@ -415,17 +418,19 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
 
       <section className="grid gap-4">
         {/*
-          The ledger's own heading, which was a bare `<h2>` and `<p>`: with
-          preflight on, that renders at body size and reads as another
-          paragraph rather than as the section title above the cards.
+          The ledger's own heading sat on the canvas — ink, no edge — the same
+          leftover-chrome problem WorkspaceDock exists to solve. The cards
+          below are the work; this is the tool strip that names them.
         */}
-        <PanelHeading
-          className="mb-0"
-          kicker="Needs a decision"
-          title="Incidents"
-          description="Raised automatically by OrcaSynapse or by an operator. These are the items on this screen that someone has to act on."
-          actions={canOperate ? <Button onClick={() => setShowIncidentForm((shown) => !shown)}>{showIncidentForm ? "Cancel" : "Create incident"}</Button> : undefined}
-        />
+        <WorkspaceDock>
+          <PanelHeading
+            className="mb-0"
+            kicker="Needs a decision"
+            title="Incidents"
+            description="Raised automatically by OrcaSynapse or by an operator. These are the items on this screen that someone has to act on."
+            actions={canOperate ? <Button onClick={() => setShowIncidentForm((shown) => !shown)}>{showIncidentForm ? "Cancel" : "Create incident"}</Button> : undefined}
+          />
+        </WorkspaceDock>
         {showIncidentForm && <form className="ops-form grid gap-3 rounded-card border border-border bg-surface p-5 shadow-card sm:grid-cols-2" onSubmit={(event) => void createIncident(event)}>
           <label><span>Title</span><Input name="title" minLength={3} maxLength={160} required /></label>
           <label><span>Severity</span><Select name="severity"><option value="WARNING">Warning</option><option value="CRITICAL">Critical</option></Select></label>
@@ -458,7 +463,7 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
             <p className="mb-0 mt-1 max-w-[76ch] text-body leading-relaxed text-muted">{item.summary}</p>
           </div>
           {/* Hairlines out of the 1px gap over a border-coloured backing — the
-              same metadata run models, prompts and guardrails already draw, so
+              same metadata run models and guardrails already draw, so
               no cell needs a border and none doubles against the card edge. */}
           <dl className="m-0 grid grid-cols-2 gap-px rounded border border-border bg-border sm:grid-cols-4">
             {[
@@ -580,6 +585,6 @@ export function OperationsView({ session, onConfigure, onSessionExpired }: Opera
           </Tile>)}</div>
         </Panel>
       </div>
-    </>
+    </div>
   );
 }

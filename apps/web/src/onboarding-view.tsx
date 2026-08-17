@@ -1,25 +1,23 @@
 import type {
   AdministratorSession,
   AgentProfile,
-  DeploymentTopologyMode,
-  OnboardingTargetEnvironment,
   AgentRuntimeControl,
   HermesRuntimeNode,
   OnboardingSnapshot,
   ServiceConnectionSummary,
   ServiceKind,
 } from "@orcasynapse/contracts";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { ListChecks } from "lucide-react";
+import { useEffect, useRef, useState, type ComponentProps } from "react";
+import { ConnectionDrawer } from "./connection-drawer.js";
 import { adminAccess } from "./admin-access.js";
 import {
   OrcaSynapseApiError,
   getOnboardingSnapshot,
   runOnboardingValidation,
-  updateArchitectureDecision,
 } from "./api.js";
 import { connectionReadiness } from "./connection-readiness.js";
 import { connectionFor, deriveWorkspaceReadiness } from "./platform-readiness.js";
-import { RecoveryKitDialog } from "./recovery-kit-dialog.js";
 import {
   DEFAULT_HERMES_COMMIT,
   RuntimeNodesPanel,
@@ -27,8 +25,8 @@ import {
 } from "./runtime-nodes-panel.js";
 import { deriveSetupSteps, type SetupStep, type SetupStepKey } from "./setup-steps.js";
 import {
-  Alert, Button, Dialog, Field, Input, LockedScreen, MicroLabel,
-  PageHeader, Panel, PanelHeading, Select, StatusText, StepList, Tile, cn,
+  Alert, Button, LockedScreen, MicroLabel,
+  Panel, PanelHeading, StatusText, StepList, Tile, WorkspaceIntro, cn,
 } from "./ui/index.js";
 
 interface OnboardingViewProps {
@@ -49,8 +47,27 @@ interface OnboardingViewProps {
    */
   onSelectStep?: (step: SetupStepKey) => void;
   onConfigure: (kind?: ServiceKind) => void;
+  /**
+   * The inference editor, in the step that owns it. The same callbacks the
+   * connection dialog uses everywhere else — only the chrome is different.
+   */
+  connectionEditor: Pick<
+    ComponentProps<typeof ConnectionDrawer>,
+    | "busy"
+    | "monitoring"
+    | "error"
+    | "diagnostic"
+    | "revisionConnectionId"
+    | "revisionHistory"
+    | "onSave"
+    | "onTest"
+    | "onDiscoverInference"
+    | "onLoadInferenceCatalogue"
+    | "onUpdateMonitoring"
+    | "onLoadRevisions"
+    | "onRollback"
+  >;
   onOpenWorkspace: (workspace: "Chat" | "Agents") => void;
-  onOpenOperations: () => void;
   onRuntimeNodesChange: (nodes: HermesRuntimeNode[]) => void;
   onSignIn: () => void;
   onSessionExpired: () => void;
@@ -79,8 +96,8 @@ const stepStatusLabel = { done: "Done", current: "In progress", blocked: "Waitin
  * 2. **Nothing that is not one of the three steps stays.** The update check
  *    moved to Settings → System, the activation record to Operations, the
  *    Governed Chat promo was deleted (it duplicated step 3 and its only button
- *    was a disabled instruction), and recovery became a footer action, which is
- *    what it always was.
+ *    was a disabled instruction), and the footer that pointed at Operations
+ *    and recovery is gone with them — those surfaces have their own tabs.
  */
 export function OnboardingView({
   session,
@@ -92,8 +109,8 @@ export function OnboardingView({
   initialStep = null,
   onSelectStep,
   onConfigure,
+  connectionEditor,
   onOpenWorkspace,
-  onOpenOperations,
   onRuntimeNodesChange,
   onSignIn,
   onSessionExpired,
@@ -101,11 +118,6 @@ export function OnboardingView({
   const { unlocked } = adminAccess(session);
   const [snapshot, setSnapshot] = useState<OnboardingSnapshot | null>(null);
   const [openStep, setOpenStep] = useState<SetupStepKey | null>(initialStep);
-  const [recoveryOpen, setRecoveryOpen] = useState(false);
-  const [architectureOpen, setArchitectureOpen] = useState(false);
-  const [topologyMode, setTopologyMode] = useState<DeploymentTopologyMode>("COMPACT");
-  const [targetEnvironment, setTargetEnvironment] = useState<OnboardingTargetEnvironment>("DEVELOPMENT");
-  const [architectureReason, setArchitectureReason] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -142,37 +154,6 @@ export function OnboardingView({
     });
     return () => { active = false; };
   }, [unlocked]);
-
-  useEffect(() => {
-    if (!snapshot) return;
-    setTopologyMode(snapshot.architecture.topologyMode);
-    setTargetEnvironment(snapshot.architecture.targetEnvironment);
-    setArchitectureReason(snapshot.architecture.reason ?? "");
-  }, [snapshot?.architecture.revision]);
-
-  const saveArchitecture = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!snapshot) return;
-    setBusy("architecture");
-    try {
-      await updateArchitectureDecision({
-        topologyMode,
-        targetEnvironment,
-        reason: architectureReason.trim(),
-        expectedRevision: snapshot.architecture.revision,
-      });
-      // Changing topology or target invalidates every contract, so reload the
-      // whole snapshot rather than patching the decision in place.
-      setSnapshot(await getOnboardingSnapshot());
-      setArchitectureOpen(false);
-      setError(null);
-    } catch (cause) {
-      if (cause instanceof OrcaSynapseApiError && cause.status === 401) onSessionExpired();
-      else setError(cause instanceof Error ? cause.message : "Unable to save the architecture decision.");
-    } finally {
-      setBusy(null);
-    }
-  };
 
   /**
    * The 2 → 3 hand-off.
@@ -256,13 +237,10 @@ export function OnboardingView({
   const active = steps.find((step) => step.key === openStep)
     ?? steps.find((step) => step.status === "current")
     ?? steps[steps.length - 1];
-  const productionBlocked = architecture?.targetEnvironment === "PRODUCTION";
-
-  return <div className="grid gap-5">
-    <PageHeader
-      kicker="Application settings"
+  return <div className="workspace-stack onboarding-workspace flex h-full min-h-0 flex-col gap-3 pb-3">
+    <WorkspaceIntro
+      icon={<ListChecks className="size-4" aria-hidden="true" />}
       title="Bring this installation up"
-      description="Three steps between a fresh install and a governed session. Each is finished when OrcaSynapse can prove it, not when it has been opened."
       actions={
         <div className="min-w-[150px] text-right">
           <strong className={cn("block text-figure font-semibold tabular-nums", allDone ? "text-good" : "text-warn")}>
@@ -284,12 +262,12 @@ export function OnboardingView({
       }
     />
 
-    {error && <Alert onDismiss={() => setError(null)}>{error}</Alert>}
+    {error && <Alert className="shrink-0" onDismiss={() => setError(null)}>{error}</Alert>}
 
-    <div className="grid gap-5 lg:grid-cols-[264px_minmax(0,1fr)] lg:items-start">
+    <div className="grid min-h-0 flex-1 gap-3 overflow-hidden lg:grid-cols-[264px_minmax(0,1fr)]">
+      <Panel className="min-h-0 overflow-y-auto p-3">
       <StepList
         label="Setup steps"
-        className="lg:sticky lg:top-4"
         activeKey={active?.key ?? ""}
         items={steps.map((step) => ({
           key: step.key,
@@ -306,7 +284,9 @@ export function OnboardingView({
           onSelectStep?.(key as SetupStepKey);
         }}
       />
+      </Panel>
 
+      <div className="grid min-h-0 content-start gap-3 overflow-y-auto">
       {active && <section className="grid gap-4" aria-label={`Step ${active.ordinal}: ${active.title}`}>
         <Panel>
           <PanelHeading
@@ -341,53 +321,50 @@ export function OnboardingView({
               <div className="min-w-0">
                 <MicroLabel className="block">Endpoint</MicroLabel>
                 <span className="mt-1 block truncate text-body text-text">
-                  {inference?.baseUrl ?? "vLLM, llama.cpp, SGLang, Ollama, TGI, or another OpenAI-compatible server."}
+                  {inference?.baseUrl ?? "Choose a local server or a public OpenRouter endpoint."}
                 </span>
               </div>
               <StatusText dot tone={connectionReadiness(inference).tone === "ready" ? "good" : inference ? "warn" : "neutral"}>
                 {connectionReadiness(inference).label}
               </StatusText>
             </Tile>
-            {/*
-              * The two traps, stated where they can still be avoided. Neither
-              * appears anywhere in the product today, and both are silent: the
-              * enrolment seed takes the single healthy inference connection and
-              * reads a served model off it, so a second healthy endpoint and a
-              * healthy endpoint with no model alias both end the same way — a
-              * VM2 installer that cannot be generated, for a reason the screen
-              * never named.
-              */}
-            <p className="m-0 text-caption leading-relaxed text-faint">
-              OrcaSynapse seeds VM2 from <strong className="font-semibold text-muted">exactly one</strong> healthy
-              inference connection, and reads the served model off it. A second healthy endpoint removes the ability to
-              enrol rather than adding redundancy, and a connection that tests healthy without a selected model cannot
-              seed anything.
-            </p>
-            <Button className="justify-self-start" variant={active.status === "done" ? "ghost" : "primary"} onClick={() => onConfigure("INFERENCE")}>
-              {inference ? "Manage inference server" : "Connect inference server"}
-            </Button>
+            <ConnectionDrawer
+              embedded
+              open
+              initialKind="INFERENCE"
+              connections={connections}
+              busy={connectionEditor.busy}
+              monitoring={connectionEditor.monitoring}
+              error={connectionEditor.error}
+              diagnostic={connectionEditor.diagnostic}
+              revisionConnectionId={connectionEditor.revisionConnectionId}
+              revisionHistory={connectionEditor.revisionHistory}
+              onClose={() => undefined}
+              onOpenAgenticSystem={() => undefined}
+              onSave={connectionEditor.onSave}
+              onTest={connectionEditor.onTest}
+              onDiscoverInference={connectionEditor.onDiscoverInference}
+              onLoadInferenceCatalogue={connectionEditor.onLoadInferenceCatalogue}
+              onUpdateMonitoring={connectionEditor.onUpdateMonitoring}
+              onLoadRevisions={connectionEditor.onLoadRevisions}
+              onRollback={connectionEditor.onRollback}
+            />
           </div>}
 
-          {active.key === "runtime" && <div className="mt-4 grid gap-3">
-            {/*
-              * The architecture decision belongs to this step: the target
-              * environment is what decides whether enrolment demands a
-              * commit-pinned runtime and an HTTPS origin.
-              */}
-            <Tile className="flex flex-wrap items-center justify-between gap-3">
-              <div className="min-w-0">
-                <MicroLabel className="block">Architecture decision</MicroLabel>
-                <span className="mt-1 block text-body text-text">
-                  {architecture
-                    ? `${architecture.topologyMode.toLowerCase().replaceAll("_", " ")} topology · ${architecture.targetEnvironment.toLowerCase()}`
-                    : "Not loaded"}
-                </span>
-              </div>
-              <Button disabled={!snapshot} onClick={() => setArchitectureOpen(true)}>
-                {architecture?.reason ? "Change decision" : "Record decision"}
-              </Button>
-            </Tile>
-          </div>}
+          {active.key === "runtime" && (
+            <div className="mt-4">
+              <RuntimeNodesPanel
+                targetEnvironment={architecture?.targetEnvironment ?? null}
+                inferenceReady={readiness.inferenceReady}
+                onConfigureInference={() => {
+                  setOpenStep("inference");
+                  onSelectStep?.("inference");
+                }}
+                onNodesChange={onRuntimeNodesChange}
+                onSessionExpired={onSessionExpired}
+              />
+            </div>
+          )}
 
           {active.key === "profile" && <div className="mt-4 grid gap-3">
             <p className="m-0 text-caption leading-relaxed text-faint">
@@ -404,16 +381,7 @@ export function OnboardingView({
             </Button>
           </div>}
         </Panel>
-
-        {active.key === "runtime" && <RuntimeNodesPanel
-          targetEnvironment={architecture?.targetEnvironment ?? null}
-          inferenceReady={readiness.inferenceReady}
-          onConfigureInference={() => onConfigure("INFERENCE")}
-          onNodesChange={onRuntimeNodesChange}
-          onSessionExpired={onSessionExpired}
-        />}
       </section>}
-    </div>
 
     {allDone && <Panel>
       <PanelHeading
@@ -424,93 +392,7 @@ export function OnboardingView({
         actions={<Button variant="primary" onClick={() => onOpenWorkspace("Chat")}>Open Session</Button>}
       />
     </Panel>}
-
-    <Panel className="grid gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div className="min-w-0">
-          <strong className="block text-label font-semibold text-text">Production controls stay out of the setup path.</strong>
-          {/*
-            Names only what an operator will actually find. The line used to
-            list five destinations, three of which were wrong after this
-            restructure: pilot readiness was deleted outright (nothing can
-            create a readiness control), the activation record has no screen
-            anywhere yet, and recovery is the button to the right of this
-            sentence rather than something in Operations.
-          */}
-          <span className="mt-1 block text-body text-muted">
-            Incidents and the audit trail live in Operations. Recovery is here.
-          </span>
-        </div>
-        <div className="flex shrink-0 gap-2">
-          <Button variant="ghost" onClick={onOpenOperations}>Open Operations</Button>
-          <Button variant="ghost" onClick={() => setRecoveryOpen(true)}>Installation recovery</Button>
-        </div>
       </div>
-      {/*
-        * Stated at the point it matters — directly beneath the sentence that
-        * sends an operator to Operations to record activation — rather than
-        * left to look like their mistake once they get there.
-        *
-        * A PRODUCTION-target installation cannot record activation today, by
-        * two independent server-side mechanisms, and nothing on this screen
-        * changes either one. Deliberately not gated on the three steps being
-        * finished: the deadlock is a property of the target, and an operator
-        * blocked at step 2 for a related reason deserves to know it now.
-        */}
-      {productionBlocked && <Tile className="grid gap-1.5">
-        <strong className="text-label font-semibold text-text">Recording activation needs backend work on a Production target.</strong>
-        <span className="text-body leading-relaxed text-muted">
-          Every passing automated check is downgraded to a warning when the target is Production, which leaves its
-          component short of passed; and the gate adds a Production blocker until a readiness control is accepted, which
-          nothing can create yet. The three steps above are unaffected — the attestation record is what is blocked.
-        </span>
-      </Tile>}
-    </Panel>
-
-    <Dialog
-      open={architectureOpen}
-      onClose={() => setArchitectureOpen(false)}
-      kicker="Architecture decision"
-      title="Topology and target environment"
-      description="Saving this resets every recorded component to not-tested and every stage to not-started, because that evidence was proven against the previous architecture. Nothing is deleted, but everything has to be re-run."
-      footer={
-        <Button variant="primary" type="submit" form="architecture-form" disabled={busy !== null || architectureReason.trim().length < 3}>
-          {busy === "architecture" ? "Saving…" : "Save decision"}
-        </Button>
-      }
-    >
-      <form className="grid gap-3" id="architecture-form" onSubmit={(event) => void saveArchitecture(event)}>
-        <Field label="Topology">
-          <Select value={topologyMode} onChange={(event) => setTopologyMode(event.target.value as DeploymentTopologyMode)}>
-            <option value="COMPACT">Compact — one host</option>
-            <option value="CONTROL_PLANE">Control plane only</option>
-            <option value="SEGMENTED_PRODUCTION">Segmented production</option>
-          </Select>
-        </Field>
-        <Field label="Target environment">
-          <Select value={targetEnvironment} onChange={(event) => setTargetEnvironment(event.target.value as OnboardingTargetEnvironment)}>
-            <option value="DEVELOPMENT">Development</option>
-            <option value="PILOT">Pilot</option>
-            <option value="PRODUCTION">Production</option>
-          </Select>
-        </Field>
-        <Field label="Rationale">
-          <Input value={architectureReason} minLength={3} maxLength={1000} placeholder="Hermes isolated from the control plane for pilot" onChange={(event) => setArchitectureReason(event.target.value)} />
-        </Field>
-        {targetEnvironment === "PRODUCTION" && (
-          <StatusText tone="warn" className="normal-case">
-            Production enrolment additionally requires a 40-character Hermes commit and an HTTPS OrcaSynapse origin.
-          </StatusText>
-        )}
-      </form>
-    </Dialog>
-
-    <RecoveryKitDialog
-      open={recoveryOpen}
-      snapshot={snapshot}
-      onClose={() => setRecoveryOpen(false)}
-      onSnapshot={setSnapshot}
-      onSessionExpired={onSessionExpired}
-    />
+    </div>
   </div>;
 }

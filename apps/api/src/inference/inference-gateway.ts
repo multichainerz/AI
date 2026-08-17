@@ -1,5 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
-import type { InferenceBackend, InferenceGatewayChatRequest } from "@orcasynapse/contracts";
+import type { GuardrailRule, InferenceBackend, InferenceGatewayChatRequest } from "@orcasynapse/contracts";
 import { and, eq, gte, isNotNull, lt, notInArray, sql } from "drizzle-orm";
 import {
   auditEvent,
@@ -13,13 +13,30 @@ import {
 import type { ConnectionDiagnosticStore, ResolvedConnection } from "../connections/diagnostics/types.js";
 import { endpointUrl } from "../connections/diagnostics/http.js";
 import { advisoryLock } from "../database-support.js";
-import { inspectInputText, type RuntimeTextPolicy } from "../guardrails/runtime-policy.js";
+import {
+  inspectInput,
+  type GuardrailRuleMatch,
+  type RuntimePolicyViolation,
+  type RuntimeTextPolicy,
+} from "../guardrails/runtime-policy.js";
 
-const DEFAULT_POLICY: RuntimeTextPolicy = {
+/**
+ * The policy a deployment runs under before any has ever been activated, plus
+ * the rules that policy carries.
+ *
+ * `rules` is on the resolved policy rather than beside it because a rule list
+ * and the thresholds it runs after are one configuration: resolving them
+ * separately is how one caller ends up enforcing thresholds from the active
+ * policy and rules from nowhere.
+ */
+type ResolvedPolicy = RuntimeTextPolicy & { rules: GuardrailRule[] };
+
+const DEFAULT_POLICY: ResolvedPolicy = {
   maxInputCharacters: 32_000,
   maxOutputCharacters: 200_000,
   blockControlCharacters: true,
   blockCredentialPatterns: true,
+  rules: [],
 };
 
 export class InferenceGatewayError extends Error {
@@ -213,7 +230,7 @@ export class DrizzleInferenceGateway {
     return runtime.id;
   }
 
-  private async resolvePolicy(): Promise<RuntimeTextPolicy> {
+  private async resolvePolicy(): Promise<ResolvedPolicy> {
     const [enforced] = await this.database
       .select({ total: sql<number>`count(*)::int` })
       .from(guardrailPolicy)
@@ -226,6 +243,7 @@ export class DrizzleInferenceGateway {
         maxOutputCharacters: guardrailPolicy.maxOutputCharacters,
         blockControlCharacters: guardrailPolicy.blockControlCharacters,
         blockCredentialPatterns: guardrailPolicy.blockCredentialPatterns,
+        rules: guardrailPolicy.rules,
       })
       .from(guardrailPolicy)
       .where(eq(guardrailPolicy.status, "ACTIVE"))
@@ -233,7 +251,8 @@ export class DrizzleInferenceGateway {
     if (active.length !== 1) {
       throw new InferenceGatewayError("NOT_CONFIGURED", "Exactly one evaluated OrcaSynapse guardrail policy must be active.");
     }
-    return active[0]!;
+    const policy = active[0]!;
+    return { ...policy, rules: policy.rules as GuardrailRule[] };
   }
 
   private async resolveInference(): Promise<{ connection: ResolvedConnection; modelAlias: string; maxOutputTokens: number; requestsPerMinute: number }> {
@@ -292,7 +311,81 @@ export class DrizzleInferenceGateway {
     };
   }
 
+  /**
+   * The record that a request was refused, which nothing used to keep.
+   *
+   * Every accepted request writes `inference.gateway_requested` from inside
+   * `consumeRateLimit`'s transaction. A refused one wrote nothing at all, and
+   * the two refusals reached that state by different routes: `POLICY_REJECTED`
+   * is thrown in `chat`'s message loop *before* `consumeRateLimit` is called,
+   * and `RATE_LIMITED` is thrown *inside* that transaction, so a row written
+   * beside it is rolled back with it. Guardrails could therefore block every
+   * request in a deployment while the audit trail showed nothing happening,
+   * and the only signal was an HTTP status on a machine-to-machine call.
+   *
+   * Written outside any transaction for exactly that second reason, and
+   * best-effort for the first: the refusal is the outcome that matters, and an
+   * audit insert that fails must not turn a clean 429 into a 500. Same
+   * treatment the worker gives its own non-critical audit writes.
+   */
+  /** A redaction the gateway applied before forwarding. Counts and labels only. */
+  private async recordRedaction(
+    runtimeConnectionId: string,
+    modelAlias: string,
+    rules: readonly GuardrailRuleMatch[],
+  ): Promise<void> {
+    await this.database.insert(auditEvent).values({
+      actorType: "SERVICE",
+      actorId: runtimeConnectionId,
+      action: "inference.gateway_redacted",
+      resourceType: "ServiceConnection",
+      resourceId: runtimeConnectionId,
+      outcome: "SUCCESS",
+      metadata: {
+        modelAlias,
+        enforcementPlane: "ORCASYNAPSE",
+        rules: rules.map(({ ruleId, label, action, count }) => ({ ruleId, label, action, count })),
+      },
+    }).catch(() => undefined);
+  }
+
+  private async recordRejection(
+    runtimeConnectionId: string,
+    modelAlias: string,
+    metadata:
+      | {
+        reason: "POLICY";
+        violation: RuntimePolicyViolation;
+        rules: Array<Pick<GuardrailRuleMatch, "ruleId" | "label" | "action" | "count">>;
+      }
+      | { reason: "RATE_LIMIT" },
+  ): Promise<void> {
+    await this.database.insert(auditEvent).values({
+      actorType: "SERVICE",
+      actorId: runtimeConnectionId,
+      action: "inference.gateway_rejected",
+      resourceType: "ServiceConnection",
+      resourceId: runtimeConnectionId,
+      outcome: "FAILURE",
+      metadata: { ...metadata, modelAlias, enforcementPlane: "ORCASYNAPSE" },
+    }).catch(() => undefined);
+  }
+
   private async consumeRateLimit(runtimeConnectionId: string, requestsPerMinute: number, modelAlias: string): Promise<void> {
+    try {
+      await this.rateLimitTransaction(runtimeConnectionId, requestsPerMinute, modelAlias);
+    } catch (error) {
+      // Only after the transaction has unwound. Recording the refusal inside it
+      // would enlist the row in the rollback that the refusal itself causes,
+      // which is the reason there was no record of a rate limit to begin with.
+      if (error instanceof InferenceGatewayError && error.code === "RATE_LIMITED") {
+        await this.recordRejection(runtimeConnectionId, modelAlias, { reason: "RATE_LIMIT" });
+      }
+      throw error;
+    }
+  }
+
+  private async rateLimitTransaction(runtimeConnectionId: string, requestsPerMinute: number, modelAlias: string): Promise<void> {
     await this.database.transaction(async (transaction) => {
       // Serialises counting and recording for this runtime, so two concurrent
       // requests cannot both observe a count below the limit and pass.
@@ -348,19 +441,51 @@ export class DrizzleInferenceGateway {
   ): Promise<InferenceGatewayResult> {
     const runtimeConnectionId = await this.authenticate(token);
     const [runtime, policy] = await Promise.all([this.resolveInference(), this.resolvePolicy()]);
+    /*
+     * Inspected message by message, and rebuilt from what inspection returned.
+     *
+     * The rebuilt array is what gets forwarded: a REDACT rule that rewrote a
+     * message here has to be the version the model sees, or the redaction is
+     * decoration. `messages` is reassigned rather than mutated in place because
+     * `input` is the parsed request body and the caller's copy of it should not
+     * change under them.
+     */
+    const inspected: InferenceGatewayChatRequest["messages"] = [];
+    const redactions: GuardrailRuleMatch[] = [];
     for (const message of input.messages) {
       const text = messageText(message);
-      if (!text) continue;
-      const violation = inspectInputText(text, policy);
-      if (violation) {
-        throw new InferenceGatewayError("POLICY_REJECTED", `OrcaSynapse rejected the runtime request (${violation}).`);
+      if (!text) {
+        inspected.push(message);
+        continue;
       }
+      const inspection = inspectInput(text, policy, policy.rules);
+      if (inspection.decision === "BLOCK") {
+        // The violation name and the rule labels, never the text that carried
+        // them. A CREDENTIAL_PATTERN rejection exists because the message
+        // contained something that looked like a key; copying the message into
+        // the audit trail to explain that would store the key.
+        await this.recordRejection(runtimeConnectionId, runtime.modelAlias, {
+          reason: "POLICY",
+          violation: inspection.reason!,
+          rules: inspection.matches.map(({ ruleId, label, action, count }) => ({ ruleId, label, action, count })),
+        });
+        throw new InferenceGatewayError("POLICY_REJECTED", `OrcaSynapse rejected the runtime request (${inspection.reason}).`);
+      }
+      redactions.push(...inspection.matches.filter(({ action }) => action !== "FLAG"));
+      inspected.push(inspection.text === text ? message : { ...message, content: inspection.text });
+    }
+    const guarded: InferenceGatewayChatRequest = { ...input, messages: inspected };
+    if (redactions.length > 0) {
+      await this.recordRedaction(runtimeConnectionId, runtime.modelAlias, redactions);
     }
     await this.consumeRateLimit(runtimeConnectionId, runtime.requestsPerMinute, runtime.modelAlias);
     const endpoint = endpointFor(runtime.connection);
     const timeoutMs = Math.trunc(numbers(runtime.connection.configuration.inferenceTimeoutMs, 300_000, 5_000, 900_000));
     const timeoutSignal = AbortSignal.timeout(timeoutMs);
-    const forwardedInput: Record<string, unknown> = { ...input };
+    // `guarded`, not `input` — this spread is what actually reaches the model,
+    // so spreading the pre-inspection body here is how a redaction becomes
+    // decoration that only the audit trail believes in.
+    const forwardedInput: Record<string, unknown> = { ...guarded };
     delete forwardedInput.max_completion_tokens;
     forwardedInput.max_tokens = Math.min(
       input.max_completion_tokens ?? input.max_tokens ?? runtime.maxOutputTokens,

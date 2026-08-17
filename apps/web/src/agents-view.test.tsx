@@ -175,6 +175,15 @@ function ledger(): HTMLElement {
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
 describe("agents", () => {
+  it("fills the workspace instead of growing the page past the viewport", async () => {
+    setupApi();
+    await view();
+    const workspace = document.querySelector(".agents-workspace");
+    expect(workspace?.className).toMatch(/\bflex\b/);
+    expect(workspace?.className).toMatch(/\bh-full\b/);
+    expect(workspace?.className).toMatch(/\bmin-h-0\b/);
+  });
+
   it("carries the kill switch, stated as a word rather than only a colour", async () => {
     // An operator reaching for this is already dealing with a problem, and it
     // is on the Profiles screen because nothing in the list below can run while
@@ -184,7 +193,6 @@ describe("agents", () => {
     expect(within(boundary()).getByText("ON")).toBeTruthy();
     expect(within(boundary()).getByText("Hermes execution")).toBeTruthy();
     expect(within(boundary()).getByText("Ready for Chat")).toBeTruthy();
-    expect(within(boundary()).getByText("Verified against Hermes on node vm2-a.")).toBeTruthy();
   });
 
   it("keeps the disabled boundary's fix on this screen instead of another tab", async () => {
@@ -192,13 +200,14 @@ describe("agents", () => {
      * The boundary turns itself on with the first verified Profile, so a
      * disabled one is a Profiles problem -- which is exactly why splitting the
      * two stranded the operator: the sentence naming the fix was on one tab and
-     * the fix on another, joined by an "Open Profiles" button. Both are here.
+     * the fix on another, joined by an "Open Profiles" button. The control is
+     * on this screen; the boundary no longer repeats the instruction.
      */
     setupApi({ enabled: false });
     await view();
     const panel = boundary();
     expect(within(panel).getByText("OFF")).toBeTruthy();
-    expect(within(panel).getByText(/Verify & activate on a Profile below/)).toBeTruthy();
+    expect(within(panel).queryByText(/Verify & activate on a Profile below/)).toBeNull();
     // The cross-tab jump has nowhere left to go, and the control it pointed at
     // is on screen. Asserted in that order: the panel above is what makes the
     // absence below a real absence rather than a missing element.
@@ -206,24 +215,23 @@ describe("agents", () => {
     expect(screen.getByRole("button", { name: "Verify & activate" })).toBeTruthy();
   });
 
-  it("names the fix for an off boundary without repeating the button under it", async () => {
+  it("does not repeat Create or Verify on the boundary", async () => {
     /*
-     * Both wordings point down the same screen, and neither carries a control:
-     * with no Profiles the empty state below already offers creation and the
-     * header offers it again, so a third identical button on the boundary was
-     * three calls to action for one job. Naming the right one is the boundary's
-     * whole contribution.
+     * With no Profiles the empty state already offers creation and the header
+     * offers it again, so a third identical button on the boundary was three
+     * calls to action for one job. The title states the condition; the buttons
+     * stay where they act.
      */
     setupApi({ enabled: false, profiles: [], runs: [] });
     await view();
-    expect(within(boundary()).getByText(/Create a Profile below/)).toBeTruthy();
+    expect(within(boundary()).queryByText(/Create a Profile below/)).toBeNull();
     expect(within(boundary()).queryByRole("button", { name: /Create/ })).toBeNull();
     expect(screen.getByRole("button", { name: "Create starter agent" })).toBeTruthy();
 
     cleanup();
     setupApi({ enabled: false });
     await view();
-    expect(within(boundary()).getByText(/Verify & activate on a Profile below/)).toBeTruthy();
+    expect(within(boundary()).queryByText(/Verify & activate on a Profile below/)).toBeNull();
     expect(within(boundary()).queryByRole("button", { name: /Create|Verify/ })).toBeNull();
     expect(screen.getByRole("button", { name: "Verify & activate" })).toBeTruthy();
   });
@@ -256,7 +264,7 @@ describe("agents", () => {
     const panel = boundary();
     expect(within(panel).getByText("Hermes execution")).toBeTruthy();
     expect(within(panel).queryByLabelText("Hermes run summary")).toBeNull();
-    expect(within(panel).getByText(/No runs yet/)).toBeTruthy();
+    expect(within(panel).queryByText(/No runs yet/)).toBeNull();
   });
 
   it("scopes the ledger to the Profile selected in the list", async () => {
@@ -483,9 +491,7 @@ describe("agents", () => {
     expect(screen.queryByRole("button", { name: "New version" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Suspend" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Verify & activate" })).toBeNull();
-    // Inside a closed `<details>`, so it is in the tree if it is rendered at
-    // all -- the disclosure hides nothing from this query.
-    expect(screen.queryByRole("button", { name: /Disable execution|Enable manually/ })).toBeNull();
+    expect(screen.queryByRole("switch", { name: /Disable execution|Enable execution/ })).toBeNull();
     expect(screen.queryByRole("button", { name: "Cancel run" })).toBeNull();
   });
 
@@ -494,7 +500,7 @@ describe("agents", () => {
     // theirs, and the API refuses every profile write.
     setupApi({ runs: [runningRun] });
     await view({ session: operations });
-    expect(screen.getByRole("button", { name: "Disable execution" })).toBeTruthy();
+    expect(screen.getByRole("switch", { name: "Disable execution" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Cancel run" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Create agent" })).toBeNull();
     expect(screen.queryByRole("button", { name: "New version" })).toBeNull();
@@ -512,7 +518,7 @@ describe("agents", () => {
     expect(screen.getAllByRole("button", { name: "New version" })).toHaveLength(2);
     expect(screen.getByRole("button", { name: "Suspend" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Verify & activate" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Disable execution" })).toBeTruthy();
+    expect(screen.getByRole("switch", { name: "Disable execution" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Cancel run" })).toBeTruthy();
   });
 
@@ -536,8 +542,9 @@ describe("agents", () => {
   });
 
   it("does not promise a boundary a non-administrator never sees", async () => {
-    // The header described "the global boundary deciding whether any of it may
-    // execute" on a screen whose boundary panel is administrator-only.
+    // The boundary strip is administrator-only. The heading no longer describes
+    // it either, so a non-administrator is not told about a control they cannot
+    // find.
     setupApi();
     await view({ administrator: false });
     expect(screen.getByRole("heading", { name: "Hermes Profiles" })).toBeTruthy();
@@ -548,7 +555,6 @@ describe("agents", () => {
     setupApi();
     await view();
     expect(screen.getByLabelText("Hermes execution boundary")).toBeTruthy();
-    expect(screen.getByText(/boundary deciding whether any of it may execute/)).toBeTruthy();
   });
 
   it("says whose runs the per-profile counter counted", async () => {

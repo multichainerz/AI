@@ -31,6 +31,7 @@ const draft = {
   maxOutputCharacters: 200_000,
   blockControlCharacters: true,
   blockCredentialPatterns: true,
+  rules: [],
 };
 
 async function healthyInference(status: "HEALTHY" | "DEGRADED" = "HEALTHY") {
@@ -162,5 +163,109 @@ describe("DrizzleGuardrailManager", () => {
       reason: "Rollback",
     });
     expect(suspended.status).toBe("SUSPENDED");
+  });
+
+  it("round-trips a rule list through the jsonb column", async () => {
+    const created = await manager().create(principal, {
+      ...draft,
+      rules: [{
+        id: "6f1c1d2e-3a4b-4c5d-8e6f-7a8b9c0d1e01",
+        label: "Internal codename",
+        type: "WORD",
+        pattern: "seahorse",
+        action: "BLOCK",
+        caseSensitive: false,
+        enabled: true,
+      }],
+    });
+
+    expect(created.rules).toHaveLength(1);
+    expect(created.rules[0]).toMatchObject({ label: "Internal codename", type: "WORD", action: "BLOCK" });
+    // Read back through a second call, so this covers the column and the dto
+    // rather than the object the create happened to return.
+    const [listed] = (await manager().list()).items;
+    expect(listed?.rules[0]?.pattern).toBe("seahorse");
+  });
+
+  it("defaults an existing policy to no rules rather than to undefined", async () => {
+    // What the additive migration produces for every row that predates rules.
+    const created = await manager().create(principal, draft);
+    expect(created.rules).toEqual([]);
+  });
+
+  it("treats a rule edit as a material change, exactly like a threshold", async () => {
+    /*
+     * The guarantee the whole policy model rests on: the rules a run enforced
+     * are attributable to a named version. If a rule could be edited without a
+     * new version, that sentence would be false for precisely the part an
+     * operator edits most.
+     */
+    const created = await manager().create(principal, draft);
+    const rules = [{
+      id: "6f1c1d2e-3a4b-4c5d-8e6f-7a8b9c0d1e02",
+      label: "Added later",
+      type: "PHRASE" as const,
+      pattern: "not for release",
+      action: "FLAG" as const,
+      caseSensitive: false,
+      enabled: true,
+    }];
+
+    await expect(
+      manager().update(principal, created.id, { expectedRevision: created.revision, rules }),
+    ).rejects.toThrow(/require a new policy version/);
+
+    const updated = await manager().update(principal, created.id, {
+      expectedRevision: created.revision,
+      version: "2.0.0",
+      rules,
+    });
+    expect(updated.status).toBe("DRAFT");
+    expect(updated.rules).toHaveLength(1);
+  });
+
+  it("does not call an unchanged rule list a change", async () => {
+    // Compared canonically, so re-sending the same rules with keys in another
+    // order is not mistaken for an edit and does not demand a version bump.
+    const rules = [{
+      id: "6f1c1d2e-3a4b-4c5d-8e6f-7a8b9c0d1e03",
+      label: "Stable",
+      type: "WORD" as const,
+      pattern: "seahorse",
+      action: "BLOCK" as const,
+      caseSensitive: false,
+      enabled: true,
+    }];
+    const created = await manager().create(principal, { ...draft, rules });
+
+    const updated = await manager().update(principal, created.id, {
+      expectedRevision: created.revision,
+      displayName: "Renamed only",
+      rules: [{ ...rules[0]! }],
+    });
+    expect(updated.displayName).toBe("Renamed only");
+  });
+
+  it("refuses an unsafe pattern before it can ever reach an inspection path", async () => {
+    /*
+     * Vetting at save is what lets the hot path compile without re-probing. A
+     * catastrophic pattern that reached the column would be evaluated against
+     * every message until somebody noticed the API had stopped answering.
+     */
+    await expect(manager().create(principal, {
+      ...draft,
+      rules: [{
+        id: "6f1c1d2e-3a4b-4c5d-8e6f-7a8b9c0d1e04",
+        label: "Catastrophic",
+        type: "REGEX",
+        pattern: "(a+)+b",
+        action: "BLOCK",
+        caseSensitive: false,
+        enabled: true,
+      }],
+    })).rejects.toThrow(/backtracks exponentially/);
+
+    // And nothing was written on the way out.
+    expect(await context.database.select().from(guardrailPolicy)).toHaveLength(0);
   });
 });

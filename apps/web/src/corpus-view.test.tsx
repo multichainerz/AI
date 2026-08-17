@@ -91,6 +91,33 @@ function setupApi(over: { node?: Partial<HermesCorpusStatus> } = {}) {
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
 describe("CorpusView", () => {
+  it("fills the workspace instead of growing the page past the viewport", async () => {
+    /*
+     * The previous layout stacked a page header, four metric tiles, a filter
+     * card, a 590px work grid, and then skill-sets or division-memory under
+     * that — so a desktop that already had room for the work still scrolled
+     * the document. The workspace is now a column that takes the remaining
+     * viewport; change control sits beside the title and search dock; the
+     * file list and detail fill what is left. jsdom cannot measure that, so
+     * this locks the classes the CSS lock and the flex fill both depend on.
+     */
+    for (const scope of ["SKILLS", "MEMORY"] as const) {
+      setupApi();
+      const { container } = render(<CorpusView scope={scope} session={session} onConfigure={vi.fn()} onSessionExpired={vi.fn()} />);
+      await screen.findByRole("heading", { name: scope === "SKILLS" ? "Hermes Skills" : "Hermes Memory" });
+      const workspace = container.querySelector(".corpus-workspace");
+      expect(workspace?.className).toMatch(/\bflex\b/);
+      expect(workspace?.className).toMatch(/\bh-full\b/);
+      expect(workspace?.className).toMatch(/\bmin-h-0\b/);
+      expect(workspace?.className).not.toMatch(/min-h-\[590px\]/);
+      expect(workspace?.querySelector(".corpus-chrome")?.className).toContain("lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.4fr)]");
+      expect(workspace?.querySelector(".corpus-work")?.className).toContain("lg:grid-cols-[260px_minmax(0,1fr)]");
+      expect(workspace?.querySelector(".corpus-work")?.className).not.toContain("300px");
+      cleanup();
+      vi.clearAllMocks();
+    }
+  });
+
   it("keeps corpus content behind administrator access on both tabs", () => {
     render(<CorpusView scope="MEMORY" session={null} onConfigure={vi.fn()} onSessionExpired={vi.fn()} />);
     expect(screen.getByRole("heading", { name: "Hermes Memory" })).toBeTruthy();
@@ -296,7 +323,7 @@ describe("CorpusView", () => {
   });
 
   /*
-   * The division-memory panel below the mirror, which is the same store the
+   * The division-memory panel beside the title, which is the same store the
    * `recall` tool reads. Its two controls answer to `corpus:write` and
    * `corpus:delete`; the panel took neither scope and drew both unconditionally
    * while the sibling panel eight lines above it in `corpus-view.tsx` is gated

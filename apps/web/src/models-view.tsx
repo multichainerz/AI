@@ -5,6 +5,7 @@ import type {
   ModelWorkload,
   ServiceConnectionSummary,
 } from "@orcasynapse/contracts";
+import { Boxes } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -26,10 +27,11 @@ import {
   Metric,
   MetricRow,
   MicroLabel,
-  PageHeader,
   Panel,
   Select,
   StatusText,
+  WorkspaceDock,
+  WorkspaceIntro,
   cn,
   toneFor,
 } from "./ui/index.js";
@@ -250,48 +252,59 @@ export function ModelsView({
   const defaultCount = models.filter(({ isDefault }) => isDefault).length;
   const workloadCount = new Set(models.map(({ workload }) => workload)).size;
 
-  return <div className="grid gap-5">
-    <PageHeader
-      kicker="AI Inference control"
+  return <div className="workspace-stack models-workspace flex h-full min-h-0 flex-col gap-3 pb-3">
+    <WorkspaceIntro
+      icon={<Boxes className="size-4" aria-hidden="true" />}
       title="Models"
-      description="Approve Chat and Hermes aliases on healthy model-serving connections."
       actions={<>
         <Button onClick={onOpenOperations}>Open Operations</Button>
         {canManage && <Button variant="primary" onClick={startCreate}>New model route</Button>}
       </>}
-    />
+    >
+      <section className="flex items-center gap-4 border-l-2 border-l-accent px-1 py-0.5">
+        <div className="min-w-0 flex-1">
+          <MicroLabel className="block">Control boundary</MicroLabel>
+          <strong className="mt-1.5 block text-label font-semibold text-text">
+            OrcaSynapse approves routes; AI Inference remains the serving plane.
+          </strong>
+          <p className="mb-0 mt-1 text-caption leading-relaxed text-muted">
+            Activation never modifies upstream configuration. The alias must already exist at the selected endpoint on an
+            enabled, healthy serving connection.
+          </p>
+        </div>
+        <Button className="shrink-0" onClick={onConfigureConnections}>Manage serving connections</Button>
+      </section>
+    </WorkspaceIntro>
 
-    <MetricRow className="lg:grid-cols-4" aria-label="Model catalogue summary">
-      <Metric
-        label="Catalogue routes"
-        value={models.length >= CATALOGUE_WINDOW ? `${CATALOGUE_WINDOW}+` : models.length}
-        caption={models.length >= CATALOGUE_WINDOW ? `Newest ${CATALOGUE_WINDOW} loaded` : "Versioned records"}
-      />
-      <Metric label="Active routes" value={activeCount} tone={activeCount > 0 ? "good" : "neutral"} caption="Serving now" />
-      <Metric label="Defaults" value={defaultCount} caption="Per workload" />
-      <Metric label="Workloads" value={workloadCount} caption="Chat and agent" />
-    </MetricRow>
+    <WorkspaceDock>
+      <MetricRow className="border-b-0 pb-0 lg:grid-cols-4" aria-label="Model catalogue summary">
+        <Metric
+          label="Catalogue routes"
+          value={models.length >= CATALOGUE_WINDOW ? `${CATALOGUE_WINDOW}+` : models.length}
+          caption={models.length >= CATALOGUE_WINDOW ? `Newest ${CATALOGUE_WINDOW} loaded` : "Versioned records"}
+        />
+        <Metric label="Active routes" value={activeCount} tone={activeCount > 0 ? "good" : "neutral"} caption="Serving now" />
+        <Metric label="Defaults" value={defaultCount} caption="Per workload" />
+        <Metric label="Workloads" value={workloadCount} caption="Chat and agent" />
+      </MetricRow>
+    </WorkspaceDock>
 
-    <Panel className="flex items-center gap-4 border-l-2 border-l-accent">
-      <div className="min-w-0 flex-1">
-        <MicroLabel className="block">Control boundary</MicroLabel>
-        <strong className="mt-1.5 block text-label font-semibold text-text">
-          OrcaSynapse approves routes; AI Inference remains the serving plane.
-        </strong>
-        <p className="mb-0 mt-1 text-body text-muted">
-          Activation never modifies upstream configuration. The alias must already exist at the selected endpoint on an
-          enabled, healthy serving connection.
-        </p>
-      </div>
-      <Button className="shrink-0" onClick={onConfigureConnections}>Manage serving connections</Button>
-    </Panel>
+    {error && <Alert className="shrink-0" onDismiss={() => setError(null)}>{error}</Alert>}
+    {message && <Alert className="shrink-0" tone="good" onDismiss={() => setMessage(null)}>{message}</Alert>}
 
-    {error && <Alert onDismiss={() => setError(null)}>{error}</Alert>}
-    {message && <Alert tone="good" onDismiss={() => setMessage(null)}>{message}</Alert>}
-
-    {showEditor && <Panel>
-      <form onSubmit={(event) => void save(event)}>
-        <header className="mb-4 flex items-start justify-between gap-6">
+    {/*
+      * The same flex column the guardrail editor uses, and for the same reason.
+      *
+      * This panel was `shrink-0` with no overflow inside a `.workspace-page`
+      * that is `height: 100dvh; overflow: hidden`, so a form taller than the
+      * space available had its bottom -- Save included -- clipped with nothing
+      * to scroll. Ten fields in a three-column grid survives a tall window and
+      * does not survive a short one; it is the same defect the guardrail form
+      * hit outright once its rules editor made it taller.
+      */}
+    {showEditor && <Panel className="flex min-h-0 flex-col">
+      <form className="flex min-h-0 flex-col" onSubmit={(event) => void save(event)}>
+        <header className="mb-4 flex shrink-0 items-start justify-between gap-6">
           <div className="min-w-0">
             <h2 className="m-0 font-display text-[15px] font-semibold tracking-[-0.01em] text-text">
               {editing ? `Edit ${editing.displayName}` : "New model route"}
@@ -304,6 +317,7 @@ export function ModelsView({
           </div>
           <Button variant="ghost" size="sm" onClick={() => setShowEditor(false)}>Cancel</Button>
         </header>
+        <div className="min-h-0 flex-1 overflow-y-auto" data-testid="route-editor-body">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <Field label="Display name"><Input value={draft.displayName} minLength={2} maxLength={120} required onChange={(event) => setDraft({ ...draft, displayName: event.target.value })} /></Field>
           <Field label="Slug"><Input value={draft.slug} required disabled={Boolean(editing)} onChange={(event) => setDraft({ ...draft, slug: slugAsTyped(event.target.value) })} onBlur={() => setDraft((current) => ({ ...current, slug: slugify(current.slug) }))} /></Field>
@@ -316,13 +330,15 @@ export function ModelsView({
           <Field label="Concurrency limit"><Input type="number" min={1} max={1024} value={draft.maxConcurrentRequests} required onChange={(event) => setDraft({ ...draft, maxConcurrentRequests: Number(event.target.value) })} /></Field>
           <Field label="License / approval"><Input value={draft.license ?? ""} placeholder="Optional approved license reference" onChange={(event) => setDraft({ ...draft, license: event.target.value.trim() || null })} /></Field>
         </div>
-        <Button variant="primary" type="submit" className="mt-4" disabled={busy || editing?.status === "ACTIVE" || eligibleConnections.length === 0}>
+        </div>
+        {/* Outside the scroll container, so the action stays on screen. */}
+        <Button variant="primary" type="submit" className="mt-4 shrink-0" disabled={busy || editing?.status === "ACTIVE" || eligibleConnections.length === 0}>
           {busy ? "Saving..." : editing ? "Save new revision" : "Create draft route"}
         </Button>
       </form>
     </Panel>}
 
-    <section className="grid items-start gap-3 lg:grid-cols-2" aria-label="Configured model routes">
+    <section className="grid min-h-0 flex-1 content-start items-start gap-3 overflow-y-auto lg:grid-cols-2" aria-label="Configured model routes">
       {models.length === 0 && (
         <EmptyState
           className="lg:col-span-2"

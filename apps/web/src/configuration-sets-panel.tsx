@@ -33,6 +33,12 @@ interface ConfigurationSetsPanelProps {
   canManage: boolean;
   /** What the runtime currently reports, offered as checkboxes for a tool set. */
   availableToolsets?: string[];
+  /**
+   * Skills, Memory, and Tools embed this in a viewport-locked workspace. The
+   * full-page heading and description stay off so the card can scroll its
+   * own list.
+   */
+  embedded?: boolean;
   onSessionExpired: () => void;
 }
 
@@ -43,7 +49,7 @@ function tracks(item: AnySet): boolean {
 }
 
 export function ConfigurationSetsPanel({
-  kind, canManage, availableToolsets = [], onSessionExpired,
+  kind, canManage, availableToolsets = [], embedded = false, onSessionExpired,
 }: ConfigurationSetsPanelProps) {
   const [sets, setSets] = useState<AnySet[]>([]);
   const [showEditor, setShowEditor] = useState(false);
@@ -129,20 +135,24 @@ export function ConfigurationSetsPanel({
   const noun = isTools ? "tool set" : "skill set";
 
   return (
-    <Panel>
+    <Panel {...(embedded ? { className: "flex h-full min-h-0 flex-col overflow-hidden p-3" } : {})}>
       <PanelHeading
-        kicker="Reusable selection"
+        {...(embedded ? { className: "mb-2 shrink-0" } : {})}
+        {...(embedded ? {} : { kicker: "Reusable selection" })}
         title={isTools ? "Tool sets" : "Skill sets"}
-        description={isTools
-          ? "A named selection of admitted Hermes toolsets, so a profile can declare one instead of repeating a list."
-          : "A named selection of Skills, so a profile can declare one instead of repeating a list."}
+        {...(embedded ? {} : {
+          description: isTools
+            ? "A named selection of admitted Hermes toolsets, so a profile can declare one instead of repeating a list."
+            : "A named selection of Skills, so a profile can declare one instead of repeating a list.",
+        })}
         actions={canManage ? (
-          <Button onClick={() => setShowEditor((open) => !open)}>
+          <Button size={embedded ? "sm" : "default"} onClick={() => setShowEditor((open) => !open)}>
             {showEditor ? "Cancel" : `New ${noun}`}
           </Button>
         ) : null}
       />
 
+      <div {...(embedded ? { className: "grid min-h-0 flex-1 content-start gap-3 overflow-y-auto" } : {})}>
       {error && <Alert tone="error">{error}</Alert>}
       {message && <Alert tone="info">{message}</Alert>}
 
@@ -263,6 +273,7 @@ export function ConfigurationSetsPanel({
           ))}
         </div>
       )}
+      </div>
     </Panel>
   );
 }

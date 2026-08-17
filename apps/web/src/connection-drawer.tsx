@@ -1,20 +1,24 @@
-import type {
-  CreateServiceConnection,
-  ConnectionMonitoringControl,
-  ConnectionTestResult,
-  ConfigurationRevisionList,
-  Environment,
-  InferenceDiscoveryRequest,
-  InferenceDiscoveryResult,
-  ServiceConnectionConfiguration,
-  ServiceConnectionSummary,
-  ServiceKind,
+import {
+  isOpenRouterEndpoint,
+  OPENROUTER_INFERENCE,
+  type CreateServiceConnection,
+  type ConnectionMonitoringControl,
+  type ConnectionTestResult,
+  type ConfigurationRevisionList,
+  type Environment,
+  type InferenceCatalogueRequest,
+  type InferenceCatalogueResult,
+  type InferenceDiscoveryRequest,
+  type InferenceDiscoveryResult,
+  type ServiceConnectionConfiguration,
+  type ServiceConnectionSummary,
+  type ServiceKind,
 } from "@orcasynapse/contracts";
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Cpu, Globe, Server, Shield } from "lucide-react";
 import { slugAsTyped, slugify } from "./slug.js";
 import { connectionDefinitions, inferenceEndpointPresets } from "./connection-definitions.js";
-import { Alert, Button, Dialog, Field, Input, Select, StatusText, toneFor } from "./ui/index.js";
+import { Alert, Button, Dialog, Field, Input, Mark, MicroLabel, Select, StatusText, toneFor } from "./ui/index.js";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "./ui/cn.js";
@@ -45,6 +49,7 @@ interface ConnectionDrawerProps {
   onSave: (draft: ConnectionDraft) => Promise<void>;
   onTest: (id: string) => Promise<void>;
   onDiscoverInference: (input: InferenceDiscoveryRequest) => Promise<InferenceDiscoveryResult | null>;
+  onLoadInferenceCatalogue: (input: InferenceCatalogueRequest) => Promise<InferenceCatalogueResult | null>;
   onUpdateMonitoring: (input: { enabled: boolean; intervalSeconds: number; reason: string }) => Promise<void>;
   onLoadRevisions: (connectionId: string) => Promise<void>;
   onRollback: (
@@ -52,6 +57,12 @@ interface ConnectionDrawerProps {
     targetRevision: number,
     expectedActiveRevision: number,
   ) => Promise<void>;
+  /**
+   * Setup step 1 owns this form. The dialog is the same editor for every other
+   * surface; embedding it here is what keeps "connect inference" on the step
+   * instead of in a popup over it.
+   */
+  embedded?: boolean;
 }
 
 function endpointOrigin(value: string | null | undefined): string | null {
@@ -70,6 +81,20 @@ function configurationDefaults(
       .filter(({ defaultValue }) => defaultValue !== undefined)
       .map(({ name, defaultValue }) => [name, defaultValue]),
   ) as ServiceConnectionConfiguration;
+}
+
+type InferenceEndpointMode = "local" | "openrouter";
+
+function openRouterConfiguration(
+  current: ServiceConnectionConfiguration,
+): ServiceConnectionConfiguration {
+  return {
+    ...current,
+    inferenceBackend: "CUSTOM_OPENAI_COMPATIBLE",
+    modelsPath: OPENROUTER_INFERENCE.modelsPath,
+    healthPath: OPENROUTER_INFERENCE.modelsPath,
+    chatPath: OPENROUTER_INFERENCE.chatPath,
+  };
 }
 
 function discoveryTone(status: InferenceDiscoveryResult["status"]) {
@@ -118,6 +143,50 @@ function TabButton(props: {
   );
 }
 
+function EndpointOption(props: {
+  selected: boolean;
+  icon: ReactNode;
+  kicker: string;
+  title: string;
+  caption: string;
+  onSelect: () => void;
+}) {
+  return (
+    <Button
+      type="button"
+      role="radio"
+      aria-checked={props.selected}
+      variant="outline"
+      size="auto"
+      className={cn(
+        "h-full min-h-[10.5rem] w-full flex-col items-start justify-start gap-3 whitespace-normal rounded-lg p-4 text-left font-normal shadow-none",
+        props.selected
+          ? "border-accent bg-soft text-foreground hover:bg-soft hover:text-foreground"
+          : "border-border bg-raised text-muted-foreground hover:border-border-strong hover:bg-raised hover:text-foreground",
+      )}
+      onClick={props.onSelect}
+    >
+      <span className="flex w-full items-start justify-between gap-3">
+        <Mark className={props.selected ? undefined : "bg-secondary text-muted-foreground"}>
+          {props.icon}
+        </Mark>
+        <span
+          aria-hidden="true"
+          className={cn(
+            "mt-0.5 h-3.5 w-3.5 shrink-0 rounded-full border",
+            props.selected ? "border-accent bg-accent" : "border-border-strong bg-transparent",
+          )}
+        />
+      </span>
+      <span className="grid min-w-0 gap-1">
+        <MicroLabel className={props.selected ? "text-accent" : undefined}>{props.kicker}</MicroLabel>
+        <span className="block font-display text-[16px] font-semibold tracking-[-0.02em] text-text">{props.title}</span>
+        <span className="block text-caption font-medium leading-snug text-muted">{props.caption}</span>
+      </span>
+    </Button>
+  );
+}
+
 export function ConnectionDrawer(props: ConnectionDrawerProps) {
   const [selectedKind, setSelectedKind] = useState<ServiceKind>(props.initialKind);
   const [displayName, setDisplayName] = useState("");
@@ -132,7 +201,9 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
   const [monitoringInterval, setMonitoringInterval] = useState(300);
   const [monitoringReason, setMonitoringReason] = useState("Enable scheduled credential-aware checks.");
   const [inferenceDiscovery, setInferenceDiscovery] = useState<InferenceDiscoveryResult | null>(null);
-  const [inferenceAdvancedOpen, setInferenceAdvancedOpen] = useState(false);
+  const [inferenceEndpointMode, setInferenceEndpointMode] = useState<InferenceEndpointMode>("local");
+  const [openRouterCatalogue, setOpenRouterCatalogue] = useState<InferenceCatalogueResult | null>(null);
+  const [openRouterFilter, setOpenRouterFilter] = useState("");
 
   const definition = useMemo(
     () => connectionDefinitions.find(({ kind }) => kind === selectedKind) ?? connectionDefinitions[0]!,
@@ -141,21 +212,19 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
   const existing = props.connections.find(({ kind }) => kind === selectedKind);
   const diagnostic =
     existing && props.diagnostic?.connectionId === existing.id ? props.diagnostic : null;
-  const inferenceBackend = configuration.inferenceBackend ?? "CUSTOM_OPENAI_COMPATIBLE";
-  const inferencePreset = inferenceEndpointPresets.find(({ backend }) => backend === inferenceBackend)
-    ?? inferenceEndpointPresets.at(-1)!;
   const storedInferenceKeyReusable = Boolean(
-    existing?.secretFieldNames.includes("apiKey") &&
+    existing?.secretFieldNames?.includes("apiKey") &&
     endpointOrigin(existing.baseUrl) === endpointOrigin(baseUrl),
   );
-  const operationalFields = definition.configurationFields.filter(
-    ({ name }) => selectedKind !== "INFERENCE" || name !== "inferenceBackend",
-  );
+  const openRouterMode = selectedKind === "INFERENCE" && inferenceEndpointMode === "openrouter";
   const copy = kindCopy(selectedKind, Boolean(existing));
-  const showAdvanced = selectedKind !== "INFERENCE" || inferenceAdvancedOpen;
+  const localNeedsDiscovery = selectedKind === "INFERENCE" && !openRouterMode && (
+    !existing || (existing.baseUrl ?? "") !== baseUrl.trim()
+  );
+  const submitDisabled = props.busy || (localNeedsDiscovery && inferenceDiscovery?.status !== "READY");
   const submitLabel = props.busy
     ? selectedKind === "INFERENCE" && enabled ? "Saving and verifying…" : "Saving…"
-    : selectedKind === "INFERENCE" && inferenceDiscovery?.status === "READY"
+    : selectedKind === "INFERENCE" && (inferenceDiscovery?.status === "READY" || openRouterCatalogue !== null)
       ? "Activate AI Inference"
       : existing ? "Save changes" : "Create connection";
 
@@ -179,14 +248,17 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
     });
     setSecrets({});
     setInferenceDiscovery(null);
-    setInferenceAdvancedOpen(false);
+    setInferenceEndpointMode(isOpenRouterEndpoint(existing?.baseUrl) ? "openrouter" : "local");
+    setOpenRouterCatalogue(null);
+    setOpenRouterFilter("");
     setRollbackCandidate(null);
   }, [definition, existing]);
 
-  if (!props.open) return null;
+  if (!props.embedded && !props.open) return null;
 
   const submitConnection = (event: FormEvent) => {
     event.preventDefault();
+    if (submitDisabled) return;
     const suppliedSecrets = Object.fromEntries(
       Object.entries(secrets).filter(([, value]) => value.trim().length > 0),
     );
@@ -196,10 +268,49 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
       displayName,
       kind: selectedKind,
       environment,
-      baseUrl: baseUrl.trim() || null,
+      baseUrl: openRouterMode ? OPENROUTER_INFERENCE.origin : baseUrl.trim() || null,
       enabled,
-      configuration,
+      configuration: openRouterMode ? openRouterConfiguration(configuration) : configuration,
       secrets: suppliedSecrets,
+    });
+  };
+
+  const selectInferenceMode = (mode: InferenceEndpointMode) => {
+    if (mode === inferenceEndpointMode) return;
+    setInferenceEndpointMode(mode);
+    setInferenceDiscovery(null);
+    setOpenRouterCatalogue(null);
+    setOpenRouterFilter("");
+    if (mode === "openrouter") {
+      setBaseUrl(OPENROUTER_INFERENCE.origin);
+      setConfiguration((current) => {
+        const next = openRouterConfiguration(current);
+        delete next.modelAlias;
+        return next;
+      });
+      return;
+    }
+    setBaseUrl("");
+    setConfiguration(configurationDefaults(definition.configurationFields));
+  };
+
+  const loadOpenRouterCatalogue = async () => {
+    const apiKey = secrets.apiKey?.trim();
+    if (!apiKey) return;
+    const result = await props.onLoadInferenceCatalogue({
+      provider: "openrouter",
+      apiKey,
+      timeoutMs: typeof configuration.timeoutMs === "number" ? configuration.timeoutMs : 8000,
+    });
+    if (!result) return;
+    setOpenRouterCatalogue(result);
+    setEnabled((current) => current || result.models.length > 0);
+    setConfiguration((current) => {
+      const pinned = openRouterConfiguration(current);
+      const selected = current.modelAlias && result.models.some(({ id }) => id === current.modelAlias)
+        ? current.modelAlias
+        : result.models[0]?.id;
+      return selected ? { ...pinned, modelAlias: selected } : pinned;
     });
   };
 
@@ -272,16 +383,14 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
           disabled={Boolean(existing)}
         />
       </Field>
-      {selectedKind !== "INFERENCE" ? (
-        <Field className="sm:col-span-2" label={definition.endpointLabel ?? "Endpoint URL"}>
-          <Input
-            type="url"
-            value={baseUrl}
-            onChange={(event) => setBaseUrl(event.target.value)}
-            placeholder={selectedKind === "OIDC" ? "https://identity.orcasynapse.internal" : "https://service.orcasynapse.internal"}
-          />
-        </Field>
-      ) : null}
+      <Field className="sm:col-span-2" label={definition.endpointLabel ?? "Endpoint URL"}>
+        <Input
+          type="url"
+          value={baseUrl}
+          onChange={(event) => setBaseUrl(event.target.value)}
+          placeholder={selectedKind === "OIDC" ? "https://identity.orcasynapse.internal" : "https://service.orcasynapse.internal"}
+        />
+      </Field>
       <Field label="Environment">
         <Select value={environment} onChange={(event) => setEnvironment(event.target.value as Environment)}>
           <option value="DEVELOPMENT">Development</option>
@@ -289,30 +398,16 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
           <option value="PRODUCTION">Production</option>
         </Select>
       </Field>
-      {selectedKind !== "INFERENCE" ? (
-        <div className="flex items-center gap-3 sm:self-end sm:pb-1">
-          <Switch checked={enabled} onCheckedChange={setEnabled} aria-label="Enable after saving" />
-          <span className="text-body text-foreground">Enable after saving</span>
-        </div>
-      ) : null}
+      <div className="flex items-center gap-3 sm:self-end sm:pb-1">
+        <Switch checked={enabled} onCheckedChange={setEnabled} aria-label="Enable after saving" />
+        <span className="text-body text-foreground">Enable after saving</span>
+      </div>
     </div>
   );
 
   const configurationFields = (
     <div className="grid gap-3 sm:grid-cols-2">
-      {selectedKind === "INFERENCE" ? (
-        <Field className="sm:col-span-2" label="Serving implementation" hint={inferencePreset.description}>
-          <Select
-            value={inferenceBackend}
-            onChange={(event) => setConfigValue("inferenceBackend", event.target.value)}
-          >
-            {inferenceEndpointPresets.map((preset) => (
-              <option key={preset.backend} value={preset.backend}>{preset.label}</option>
-            ))}
-          </Select>
-        </Field>
-      ) : null}
-      {operationalFields.map((field) => {
+      {definition.configurationFields.map((field) => {
         const value = configuration[field.name];
         if (field.type === "checkbox") {
           return (
@@ -378,23 +473,9 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
     </div>
   );
 
-  return (
-    <Dialog
-      open={props.open}
-      onClose={props.onClose}
-      title={copy.title}
-      description={copy.description}
-      className="max-w-[560px]"
-      footer={
-        <>
-          <Button type="button" onClick={props.onClose}>Cancel</Button>
-          <Button variant="primary" type="submit" form="connection-form" disabled={props.busy}>
-            {submitLabel}
-          </Button>
-        </>
-      }
-    >
+  const form = (
       <form id="connection-form" className="grid gap-5" onSubmit={submitConnection}>
+        {props.embedded ? null : (
         <div className="-mx-1 flex gap-1 border-b border-border" role="tablist" aria-label="Connection type">
           {connectionDefinitions.filter(({ kind }) => kind === "INFERENCE").map((item) => (
             <TabButton key={item.kind} selected={selectedKind === item.kind} onClick={() => setSelectedKind(item.kind)}>
@@ -408,6 +489,7 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
             </TabButton>
           ))}
         </div>
+        )}
 
         {props.error ? <Alert>{props.error}</Alert> : null}
 
@@ -434,130 +516,226 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
 
         {selectedKind === "INFERENCE" ? (
           <div className="grid gap-3">
-            <div className="grid gap-1.5">
-              <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-                <Field label="AI Inference address" htmlFor="inference-address">
+            <div className="grid gap-2">
+              <MicroLabel>Choose an endpoint</MicroLabel>
+              <div role="radiogroup" aria-label="Endpoint type" className="grid gap-3 sm:grid-cols-2">
+                <EndpointOption
+                  selected={!openRouterMode}
+                  icon={<Server className="size-4" />}
+                  kicker="On your network"
+                  title="Local server"
+                  caption="vLLM, llama.cpp, SGLang, Ollama, or TGI. Discovery stays on this host."
+                  onSelect={() => selectInferenceMode("local")}
+                />
+                <EndpointOption
+                  selected={openRouterMode}
+                  icon={<Globe className="size-4" />}
+                  kicker="Public endpoint"
+                  title="OpenRouter"
+                  caption="Hosted models. Verify a key, then pick from the catalogue."
+                  onSelect={() => selectInferenceMode("openrouter")}
+                />
+              </div>
+            </div>
+
+            {openRouterMode ? (
+              <>
+                <Alert tone="warn">
+                  Prompts and completions leave this environment. OpenRouter and its downstream providers receive every
+                  message sent through this connection.
+                </Alert>
+                <Field
+                  label="OpenRouter API key"
+                  hint={storedInferenceKeyReusable ? "Stored key will be used if this is left blank." : "Required. OrcaSynapse stores it on VM1 and never sends it to Hermes."}
+                >
                   <Input
-                    id="inference-address"
-                    type="text"
-                    inputMode="url"
-                    value={baseUrl}
+                    type="password"
+                    value={secrets.apiKey ?? ""}
                     onChange={(event) => {
-                      setBaseUrl(event.target.value);
-                      setInferenceDiscovery(null);
+                      setSecrets((current) => ({ ...current, apiKey: event.target.value }));
+                      setOpenRouterCatalogue(null);
                     }}
-                    placeholder="http://gpu-server.internal:8000 or .../v1"
-                    required
+                    required={!storedInferenceKeyReusable}
+                    autoComplete="new-password"
+                    placeholder={storedInferenceKeyReusable ? "Leave blank to use stored key" : "sk-or-v1-…"}
                   />
                 </Field>
-                <Button
-                  variant="primary"
-                  disabled={props.busy || baseUrl.trim().length === 0}
-                  onClick={() => void discoverInference()}
-                >
-                  {props.busy ? "Discovering…" : "Discover server"}
-                </Button>
-              </div>
-              <p className="text-caption leading-relaxed text-muted">
-                Paste the address you already use. OrcaSynapse safely normalizes `/v1`, `/v1/models`, and similar paths.
-              </p>
-            </div>
-            <Field
-              label="API key"
-              hint={storedInferenceKeyReusable ? "Stored key will be used if this is left blank." : "Optional. Enter only if the server requires one."}
-            >
-              <Input
-                type="password"
-                value={secrets.apiKey ?? ""}
-                onChange={(event) => {
-                  setSecrets((current) => ({ ...current, apiKey: event.target.value }));
-                  setInferenceDiscovery(null);
-                }}
-                autoComplete="new-password"
-                placeholder={storedInferenceKeyReusable ? "Leave blank to use stored key" : "Enter only if the server requires one"}
-              />
-            </Field>
-
-            {inferenceDiscovery ? (
-              <div className="grid gap-3">
-                <Alert tone={discoveryTone(inferenceDiscovery.status)}>
-                  <span className="block font-semibold">{inferenceDiscovery.message}</span>
-                  <span className="mt-1 block text-caption opacity-80">
-                    {inferenceDiscovery.status.replaceAll("_", " ")}
-                    {" · "}
-                    {inferenceEndpointPresets.find(({ backend }) => backend === inferenceDiscovery.backend)?.label ?? "OpenAI compatible"}
-                    {" · "}
-                    {inferenceDiscovery.models.length} model{inferenceDiscovery.models.length === 1 ? "" : "s"}
-                    {" · normalized to "}
-                    {inferenceDiscovery.normalizedBaseUrl}
-                  </span>
-                </Alert>
-                {inferenceDiscovery.models.length > 0 ? (
-                  <Field label="Model OrcaSynapse should use" hint="Loaded from the server; nothing needs to be typed.">
+                <div>
+                  <Button
+                    variant="primary"
+                    disabled={props.busy || (secrets.apiKey?.trim().length ?? 0) === 0}
+                    onClick={() => void loadOpenRouterCatalogue()}
+                  >
+                    {props.busy ? "Loading models…" : "Verify key and load models"}
+                  </Button>
+                </div>
+                {openRouterCatalogue ? (
+                  <div className="grid gap-3">
+                    <Alert tone="good">
+                      <span className="block font-semibold">
+                        {openRouterCatalogue.models.length} models available
+                        {openRouterCatalogue.key.label ? ` · ${openRouterCatalogue.key.label}` : ""}
+                      </span>
+                      {openRouterCatalogue.key.limitRemaining !== undefined && openRouterCatalogue.key.limitRemaining !== null ? (
+                        <span className="mt-1 block text-caption opacity-80">
+                          {openRouterCatalogue.key.limitRemaining} credits remaining on this key
+                        </span>
+                      ) : null}
+                    </Alert>
+                    <Field label="Filter models">
+                      <Input
+                        value={openRouterFilter}
+                        onChange={(event) => setOpenRouterFilter(event.target.value)}
+                        placeholder="vendor/model"
+                      />
+                    </Field>
+                    <Field label="Model" hint="Slugs from OpenRouter. Floating ~latest aliases are omitted because they cannot be stored.">
+                      <Select
+                        value={configuration.modelAlias ?? ""}
+                        required
+                        onChange={(event) => setConfigValue("modelAlias", event.target.value)}
+                      >
+                        {(openRouterFilter.trim().length === 0
+                          ? openRouterCatalogue.models
+                          : openRouterCatalogue.models.filter((model) => {
+                            const query = openRouterFilter.trim().toLowerCase();
+                            return model.id.toLowerCase().includes(query)
+                              || (model.name?.toLowerCase().includes(query) ?? false);
+                          })
+                        ).map((model) => (
+                          <option key={model.id} value={model.id}>
+                            {model.name ? `${model.name} · ${model.id}` : model.id}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+                  </div>
+                ) : configuration.modelAlias ? (
+                  <Field label="Model" hint="Loaded from the saved connection. Verify the key to refresh the catalogue.">
                     <Select
-                      value={configuration.modelAlias ?? inferenceDiscovery.models[0]?.id ?? ""}
+                      value={configuration.modelAlias}
                       onChange={(event) => setConfigValue("modelAlias", event.target.value)}
                     >
-                      {inferenceDiscovery.models.map(({ id }) => <option key={id} value={id}>{id}</option>)}
+                      <option value={configuration.modelAlias}>{configuration.modelAlias}</option>
                     </Select>
                   </Field>
                 ) : null}
-                <details className="text-caption text-muted">
-                  <summary className="cursor-pointer font-semibold text-foreground">View discovery evidence</summary>
-                  <div className="mt-2 grid gap-1.5">
-                    {inferenceDiscovery.backendEvidence.map((item) => <p key={item} className="m-0">{item}</p>)}
-                    {inferenceDiscovery.probes.map((probe) => (
-                      <p key={probe.key} className="m-0">
-                        {probe.status === "PASSED" ? "Passed" : probe.status === "WARNING" ? "Warning" : "Failed"}
-                        {": "}
-                        {probe.label}
-                        {" · "}
-                        {probe.path}
-                        {" · "}
-                        {probe.httpStatus ?? "No response"}
-                        {" · "}
-                        {probe.latencyMs}
-                        {" ms"}
-                      </p>
-                    ))}
+              </>
+            ) : (
+              <>
+                <div className="grid gap-1.5">
+                  <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+                    <Field label="AI Inference address" htmlFor="inference-address">
+                      <Input
+                        id="inference-address"
+                        type="text"
+                        inputMode="url"
+                        value={baseUrl}
+                        onChange={(event) => {
+                          setBaseUrl(event.target.value);
+                          setInferenceDiscovery(null);
+                        }}
+                        placeholder="http://gpu-server.internal:8000 or .../v1"
+                        required
+                      />
+                    </Field>
+                    <Button
+                      variant="primary"
+                      disabled={props.busy || baseUrl.trim().length === 0}
+                      onClick={() => void discoverInference()}
+                    >
+                      {props.busy ? "Discovering…" : "Discover server"}
+                    </Button>
                   </div>
-                </details>
-              </div>
-            ) : null}
+                  <p className="text-caption leading-relaxed text-muted">
+                    Paste the address you already use. Discover reads the backend and API paths from the server — they are not typed here.
+                  </p>
+                  {localNeedsDiscovery && inferenceDiscovery?.status !== "READY" ? (
+                    <p className="text-caption leading-relaxed text-warn">
+                      Discover the server before saving. A guessed `/v1` path will not match every engine.
+                    </p>
+                  ) : null}
+                </div>
+                <Field
+                  label="API key"
+                  hint={storedInferenceKeyReusable ? "Stored key will be used if this is left blank." : "Optional. Enter only if the server requires one."}
+                >
+                  <Input
+                    type="password"
+                    value={secrets.apiKey ?? ""}
+                    onChange={(event) => {
+                      setSecrets((current) => ({ ...current, apiKey: event.target.value }));
+                      setInferenceDiscovery(null);
+                    }}
+                    autoComplete="new-password"
+                    placeholder={storedInferenceKeyReusable ? "Leave blank to use stored key" : "Enter only if the server requires one"}
+                  />
+                </Field>
+
+                {inferenceDiscovery ? (
+                  <div className="grid gap-3">
+                    <Alert tone={discoveryTone(inferenceDiscovery.status)}>
+                      <span className="block font-semibold">{inferenceDiscovery.message}</span>
+                      <span className="mt-1 block text-caption opacity-80">
+                        {inferenceDiscovery.status.replaceAll("_", " ")}
+                        {" · "}
+                        {inferenceEndpointPresets.find(({ backend }) => backend === inferenceDiscovery.backend)?.label ?? "OpenAI compatible"}
+                        {" · "}
+                        {inferenceDiscovery.models.length} model{inferenceDiscovery.models.length === 1 ? "" : "s"}
+                        {" · normalized to "}
+                        {inferenceDiscovery.normalizedBaseUrl}
+                      </span>
+                    </Alert>
+                    {inferenceDiscovery.models.length > 0 ? (
+                      <Field label="Model OrcaSynapse should use" hint="Loaded from the server; nothing needs to be typed.">
+                        <Select
+                          value={configuration.modelAlias ?? inferenceDiscovery.models[0]?.id ?? ""}
+                          onChange={(event) => setConfigValue("modelAlias", event.target.value)}
+                        >
+                          {inferenceDiscovery.models.map(({ id }) => <option key={id} value={id}>{id}</option>)}
+                        </Select>
+                      </Field>
+                    ) : null}
+                    <details className="text-caption text-muted">
+                      <summary className="cursor-pointer font-semibold text-foreground">View discovery evidence</summary>
+                      <div className="mt-2 grid gap-1.5">
+                        {inferenceDiscovery.backendEvidence.map((item) => <p key={item} className="m-0">{item}</p>)}
+                        {inferenceDiscovery.probes.map((probe) => (
+                          <p key={probe.key} className="m-0">
+                            {probe.status === "PASSED" ? "Passed" : probe.status === "WARNING" ? "Warning" : "Failed"}
+                            {": "}
+                            {probe.label}
+                            {" · "}
+                            {probe.path}
+                            {" · "}
+                            {probe.httpStatus ?? "No response"}
+                            {" · "}
+                            {probe.latencyMs}
+                            {" ms"}
+                          </p>
+                        ))}
+                      </div>
+                    </details>
+                  </div>
+                ) : null}
+              </>
+            )}
           </div>
         ) : identityFields}
 
-        {selectedKind === "INFERENCE" ? (
-          <Button
-            variant="ghost"
-            className="h-auto justify-between px-0 text-left"
-            aria-expanded={inferenceAdvancedOpen}
-            onClick={() => setInferenceAdvancedOpen((current) => !current)}
-          >
-            <span>
-              <span className="block text-label font-semibold text-foreground">Advanced configuration</span>
-              <span className="block text-caption font-normal text-muted">Manual backend, paths, limits, and timeouts</span>
-            </span>
-            <ChevronDown className={cn("size-4 text-muted-foreground transition-transform", inferenceAdvancedOpen && "rotate-180")} />
-          </Button>
-        ) : null}
-
-        {showAdvanced ? (
+        {selectedKind === "OIDC" ? (
           <div className="grid gap-4">
-            {selectedKind === "INFERENCE" ? identityFields : null}
-            {selectedKind !== "INFERENCE" ? <Separator /> : null}
-            {selectedKind !== "INFERENCE" ? (
-              <p className="text-micro font-semibold uppercase tabular-nums text-faint">Operational settings</p>
-            ) : null}
+            <Separator />
+            <p className="text-micro font-semibold uppercase tabular-nums text-faint">Operational settings</p>
             {configurationFields}
           </div>
         ) : null}
 
-        {selectedKind !== "INFERENCE" ? (
+        {selectedKind === "OIDC" ? (
           <div className="grid gap-3">
             <p className="text-micro font-semibold uppercase tabular-nums text-faint">Credentials</p>
             {definition.secretFields.map((field) => {
-              const stored = existing?.secretFieldNames.includes(field.name) ?? false;
+              const stored = existing?.secretFieldNames?.includes(field.name) ?? false;
               return (
                 <Field
                   key={field.name}
@@ -578,7 +756,7 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
           </div>
         ) : null}
 
-        {existing && showAdvanced ? (
+        {existing && selectedKind === "OIDC" ? (
           <section className="grid gap-3" aria-labelledby="revision-history-title">
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -703,7 +881,38 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
             </div>
           </div>
         </details>
+        {props.embedded ? (
+          <div className="flex justify-end">
+            <Button variant="primary" type="submit" disabled={submitDisabled}>
+              {submitLabel}
+            </Button>
+          </div>
+        ) : null}
       </form>
+  );
+
+  if (props.embedded) {
+    return form;
+  }
+
+  return (
+    <Dialog
+      open={props.open}
+      onClose={props.onClose}
+      icon={selectedKind === "INFERENCE" ? Cpu : Shield}
+      title={copy.title}
+      description={copy.description}
+      className="max-w-[560px]"
+      footer={
+        <>
+          <Button type="button" onClick={props.onClose}>Cancel</Button>
+          <Button variant="primary" type="submit" form="connection-form" disabled={submitDisabled}>
+            {submitLabel}
+          </Button>
+        </>
+      }
+    >
+      {form}
     </Dialog>
   );
 }

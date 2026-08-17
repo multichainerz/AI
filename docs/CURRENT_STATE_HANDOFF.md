@@ -11,7 +11,7 @@ wrong number in the first place, so the number is gone rather than corrected.
 
 ## Product state
 
-This release is the greenfield Hermes-native baseline. OrcaSynapse controls identity, profiles, inference routes, prompts, guardrails, native toolset admission, corpus observability, incidents, operational projections, and audit. Hermes alone owns session context and the canonical built-in memory and Skill files on VM2.
+This release is the greenfield Hermes-native baseline. OrcaSynapse controls identity, profiles, inference routes, guardrails, native toolset admission, corpus observability, incidents, operational projections, and audit. Hermes alone owns session context and the canonical built-in memory and Skill files on VM2.
 
 `v4.9.0` also establishes the workspace presentation baseline. Shared
 controls use source-owned shadcn conventions over Tailwind and the existing
@@ -34,8 +34,8 @@ readiness was deleted outright (below); `#operations/releases`,
 `#operations/evaluations` and `#releases` redirect to Health.
 
 The six areas and their tabs, in menu order, are: Dashboard; Session; Agents
-(Profiles, Skills, Memory, Tools); Gateway (Models, Prompts, Guardrails);
-Operations (Health, Audit trail); Settings (Setup, People, System).
+(Profiles, Skills, Memory, Tools); Gateway (Models, Guardrails, Usage);
+Operations (Health, Audit trail); Settings (Setup, Access, System).
 `apps/web/src/workspace-navigation.tsx` is the source of truth, and
 `workspace-navigation.test.ts` pins every one of those strips literally —
 this paragraph said "Agents is five (Profiles, Runtime, Skills, Memory, Agent
@@ -48,8 +48,9 @@ against them. **Divisions is not a tab.** At v8.8.3 it and People became one
 screen: the people list, the divisions list, and a division-create dialog
 reachable from inside the person form, because the two were always one job and
 the split made an administrator retype a half-finished person to go and create
-the division it needed. `#settings/divisions` and `#divisions` resolve to
-People. The two panels are gated separately — people read on `sessions:manage`,
+the division it needed. The tab is now **Access** (`People` is the routing
+token; `#settings/access` is generated). `#settings/people`, `#people`,
+`#settings/divisions` and `#divisions` still resolve there. The two panels are gated separately — people read on `sessions:manage`,
 divisions on `agents:read` — so a role holding one and not the other draws the
 panel it may see and a refusal in place of the other.
 
@@ -58,6 +59,11 @@ no create route and no seed, so that screen could never display a row; the
 tables remain untouched. `POST /onboarding/complete` consequently has no client
 surface, which changes nothing operationally — it already required a gate that
 automated validation cannot satisfy on a PRODUCTION target.
+
+Gateway Prompts is gone for the same class of reason: `PromptTemplate` CRUD
+still exists, but nothing at runtime reads the active row. System text comes
+from the agent profile. `#gateway/prompts` and the older `#settings/prompts`
+and `#platform/prompts` hashes land on Models.
 
 Settings includes release awareness, not unattended self-update. VM1 checks
 official stable tags through its API and can present a pinned installer command
@@ -104,7 +110,7 @@ The earlier product generation is preserved on the `backup/pgvector` branch. Do 
 ## Install and recovery
 
 - Any VM1 installation carrying the `hermes-native-v1` schema epoch updates in place, whichever release installed it. `install.sh` reads the literal marker at `.local/state/schema-epoch` and compares it to that string — no version is parsed or compared anywhere in the decision, so "v4.6.0 and v4.7.x" was an inaccurate proxy for the real gate. Rerun the current generated VM2 installer with `--repair` to install or replace the corpus companion. A pre-v4.6.0 database carries no marker and still requires a clean host.
-- **Settings → System** can check official release tags and copy the version-pinned VM1 installer command. (`Application` is the routing token behind that tab, not its label; this line said "Settings → Application" while the tab row was Setup, People, System.) Running that command remains an explicit host-administrator action; it does not update VM2.
+- **Settings → System** can check official release tags and copy the version-pinned VM1 installer command. (`Application` is the routing token behind that tab, not its label; this line said "Settings → Application" while the tab row was Setup, People, System — the middle tab is now Access.) Running that command remains an explicit host-administrator action; it does not update VM2.
 - Re-running an interrupted installer is supported when its protected completion or enrollment state is intact.
 - Do not point this release at an older OrcaSynapse database; the migrator refuses it before mutation.
 - Back up VM1 PostgreSQL for control/audit state and VM2's Hermes state root for native sessions and memory.

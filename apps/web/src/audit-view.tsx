@@ -1,9 +1,10 @@
 import type { AdministratorSession, AuditEvent, AuditEventQuery, AuditForwardingState } from "@orcasynapse/contracts";
+import { ScrollText } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 import { OrcaSynapseApiError, getAuditEvents, getAuditForwarding } from "./api.js";
 import { adminAccess } from "./admin-access.js";
 import {
-  Alert, Button, EmptyState, Field, Input, Panel, PanelHeading, Select, StatusText, cn, toneFor,
+  Alert, Button, EmptyState, Field, Input, MicroLabel, Panel, PanelHeading, Select, StatusText, WorkspaceDock, WorkspaceIntro, cn, toneFor,
 } from "./ui/index.js";
 
 interface AuditViewProps {
@@ -15,6 +16,7 @@ type Filters = Pick<AuditEventQuery, "action" | "actorType" | "resourceType" | "
 
 const EMPTY: Filters = {};
 const PAGE_SIZE = 50;
+const ROW = "grid min-w-[920px] grid-cols-[minmax(108px,0.75fr)_minmax(0,1.8fr)_minmax(0,1.15fr)_minmax(0,1.35fr)_minmax(110px,0.85fr)_104px] gap-3";
 
 function relativeTime(value: string): string {
   const elapsed = Date.now() - new Date(value).getTime();
@@ -26,10 +28,36 @@ function relativeTime(value: string): string {
   return `${Math.round(hours / 24)}d ago`;
 }
 
+function clock(value: string): string {
+  return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(value));
+}
+
+function actionTitle(action: string): string {
+  const leaf = action.split(".").at(-1) ?? action;
+  return leaf.replaceAll("_", " ");
+}
+
+function shortId(value: string | null, length = 12): string | null {
+  if (!value) return null;
+  return value.length > length ? value.slice(0, length) : value;
+}
+
 function outcomeTone(outcome: string): string {
   if (outcome === "SUCCESS") return "ready";
   if (outcome === "FAILED" || outcome === "FAILURE") return "failed";
   return "quarantined";
+}
+
+function metadataPreview(metadata: AuditEvent["metadata"]): string | null {
+  const keys = Object.keys(metadata);
+  if (keys.length === 0) return null;
+  const first = keys[0]!;
+  const value = metadata[first];
+  if (typeof value === "string" && value.length > 0) {
+    return `${first}: ${value.length > 48 ? `${value.slice(0, 48)}…` : value}`;
+  }
+  if (typeof value === "number" || typeof value === "boolean") return `${first}: ${String(value)}`;
+  return `${keys.length} ${keys.length === 1 ? "field" : "fields"}`;
 }
 
 export function AuditView({ session, onSessionExpired }: AuditViewProps) {
@@ -102,54 +130,57 @@ export function AuditView({ session, onSessionExpired }: AuditViewProps) {
   }
 
   return (
-    <Panel>
-      <PanelHeading
-        kicker="Operations"
+    <div className="workspace-stack audit-workspace flex h-full min-h-0 flex-col gap-3 pb-3">
+      <WorkspaceIntro
+        icon={<ScrollText className="size-4" aria-hidden="true" />}
         title="Audit trail"
-        description="Every governed action OrcaSynapse records, newest first. The trail is append-only: nothing in the product can edit or delete an entry."
-        actions={<Button size="sm" onClick={() => void load(applied, false)} disabled={busy}>Refresh</Button>}
-      />
-
-      {forwarding && (
-        /* The left rule is the state. An audit trail that is silently behind
-           or failing to reach the SIEM is the one thing this panel exists to
-           surface, and it must not read the same as a healthy one. */
-        <div className={cn(
-          "mb-4 flex flex-wrap items-start justify-between gap-4 rounded border border-l-2 border-border p-3.5",
-          forwarding.status === "FAILING" ? "border-l-bad"
-            : forwarding.status === "BEHIND" ? "border-l-warn"
-              : forwarding.status === "NOT_CONFIGURED" ? "border-l-border-strong" : "border-l-good",
-        )}>
-          <div className="min-w-0">
-            <strong className="block text-label font-semibold text-text">
-              {forwarding.status === "NOT_CONFIGURED" ? "Retained locally"
-                : forwarding.status === "FAILING" ? "Forwarding is failing"
-                  : forwarding.status === "BEHIND" ? "Forwarding is behind"
-                    : "Forwarding to SIEM"}
-            </strong>
-            <span className="mt-1 block text-body text-muted">{forwarding.summary}</span>
-            {forwarding.lastError && (
-              <code className="mt-1.5 block rounded border border-bad/40 bg-bad/10 px-2 py-1 font-mono text-micro text-bad">
-                {forwarding.lastError}
-              </code>
-            )}
+        actions={<Button className="shrink-0" size="sm" onClick={() => void load(applied, false)} disabled={busy}>Refresh</Button>}
+      >
+        {forwarding ? (
+          /* The left rule is the state. An audit trail that is silently behind
+             or failing to reach the SIEM is the one thing this strip exists to
+             surface, and it must not read the same as a healthy one. */
+          <div className={cn(
+            "flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-l-2 px-1 py-0.5",
+            forwarding.status === "FAILING" ? "border-l-bad"
+              : forwarding.status === "BEHIND" ? "border-l-warn"
+                : forwarding.status === "NOT_CONFIGURED" ? "border-l-border-strong" : "border-l-good",
+          )}>
+            <div className="min-w-0">
+              <strong className="text-label font-semibold text-text">
+                {forwarding.status === "NOT_CONFIGURED" ? "Retained locally"
+                  : forwarding.status === "FAILING" ? "Forwarding is failing"
+                    : forwarding.status === "BEHIND" ? "Forwarding is behind"
+                      : "Forwarding to SIEM"}
+              </strong>
+              <span className="ml-2 text-caption text-muted">{forwarding.summary}</span>
+              {forwarding.lastError && (
+                <code className="mt-1 block rounded border border-bad/40 bg-bad/10 px-2 py-1 font-mono text-micro text-bad">
+                  {forwarding.lastError}
+                </code>
+              )}
+            </div>
+            <dl className="m-0 flex shrink-0 gap-4">
+              {[
+                { label: "Undelivered", value: forwarding.pendingCount.toLocaleString() },
+                { label: "Delivered", value: forwarding.deliveredCount.toLocaleString() },
+                { label: "Last accepted", value: forwarding.lastForwardedAt ? relativeTime(forwarding.lastForwardedAt) : "never" },
+              ].map((fact) => (
+                <div className="flex items-baseline gap-1.5" key={fact.label}>
+                  <dt className="text-micro font-semibold uppercase tabular-nums text-faint">{fact.label}</dt>
+                  <dd className="m-0 font-mono text-caption tabular-nums text-muted">{fact.value}</dd>
+                </div>
+              ))}
+            </dl>
           </div>
-          <dl className="m-0 flex shrink-0 gap-5">
-            {[
-              { label: "Undelivered", value: forwarding.pendingCount.toLocaleString() },
-              { label: "Delivered", value: forwarding.deliveredCount.toLocaleString() },
-              { label: "Last accepted", value: forwarding.lastForwardedAt ? relativeTime(forwarding.lastForwardedAt) : "never" },
-            ].map((fact) => (
-              <div key={fact.label}>
-                <dt className="text-micro font-semibold uppercase tabular-nums text-faint">{fact.label}</dt>
-                <dd className="m-0 mt-1 font-mono text-caption tabular-nums text-muted">{fact.value}</dd>
-              </div>
-            ))}
-          </dl>
-        </div>
-      )}
+        ) : null}
+      </WorkspaceIntro>
 
-      <form className="mb-4 grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-3" onSubmit={search}>
+      <WorkspaceDock>
+      <form
+        className="grid items-end gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(0,1.2fr)_minmax(132px,0.7fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(132px,0.7fr)_auto]"
+        onSubmit={search}
+      >
         <Field label="Action">
           <Input
             value={filters.action ?? ""}
@@ -197,46 +228,65 @@ export function AuditView({ session, onSessionExpired }: AuditViewProps) {
           <Button variant="ghost" onClick={clear} disabled={busy || activeFilterCount === 0}>Clear</Button>
         </div>
       </form>
+      </WorkspaceDock>
 
-      {error && <Alert className="mb-4">{error}</Alert>}
+      {error && <Alert className="shrink-0">{error}</Alert>}
 
       {/* A table that scrolls inside itself rather than widening the page: an
-          audit row carries five columns and two of them are identifiers. */}
-      <div className="overflow-x-auto rounded border border-border">
-        <div className="grid min-w-[720px] grid-cols-[110px_minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1.2fr)_90px] gap-3 border-b border-border bg-raised px-3 py-2">
-          {["When", "Action", "Actor", "Resource", "Outcome"].map((head) => (
+          audit row carries six columns and three of them are identifiers. */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded border border-border">
+        <div className={cn(ROW, "shrink-0 border-b border-border bg-raised px-3 py-2")}>
+          {["When", "Action", "Actor", "Resource", "Source", "Outcome"].map((head) => (
             <span className="text-micro font-semibold uppercase tabular-nums text-faint" key={head}>{head}</span>
           ))}
         </div>
+        <div className="min-h-0 flex-1 overflow-auto">
         {events.length === 0 && !busy ? (
           <EmptyState className="m-3 border-0" title={activeFilterCount > 0 ? "No matching events" : "No audit events recorded"}>
             {activeFilterCount > 0
               ? "Filters are exact matches, not prefixes. Clear them to see the whole trail."
-              : "Governed actions are recorded here as soon as they happen."}
+              : "Governed actions are recorded here as soon as they happen. The trail is append-only: nothing in the product can edit or delete an entry."}
           </EmptyState>
         ) : (
-          events.map((event) => (
+          events.map((event) => {
+            const preview = metadataPreview(event.metadata);
+            return (
             <article
               key={event.id}
               className={cn(
-                "grid min-w-[720px] cursor-pointer grid-cols-[110px_minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1.2fr)_90px] items-center gap-3 border-b border-border px-3 py-2 text-body last:border-b-0",
+                ROW,
+                "cursor-pointer items-start border-b border-border px-3 py-2.5 text-body last:border-b-0",
                 expanded === event.id ? "bg-raised" : "hover:bg-raised",
               )}
               onClick={() => setExpanded(expanded === event.id ? null : event.id)}
             >
-              <span className="truncate font-mono text-micro text-faint" title={event.occurredAt}>
-                {relativeTime(event.occurredAt)}
+              <span className="grid gap-0.5" title={event.occurredAt}>
+                <span className="font-mono text-caption tabular-nums text-text">{relativeTime(event.occurredAt)}</span>
+                <span className="font-mono text-micro tabular-nums text-faint">{clock(event.occurredAt)}</span>
               </span>
-              <strong className="truncate font-mono text-caption font-medium text-text">{event.action}</strong>
-              <span className="truncate font-mono text-caption text-muted">
-                {event.actorType.toLowerCase()}{event.actorId ? ` · ${event.actorId.slice(0, 8)}` : ""}
+              <span className="grid min-w-0 gap-0.5">
+                <strong className="truncate text-caption font-semibold capitalize text-text">{actionTitle(event.action)}</strong>
+                <span className="truncate font-mono text-micro text-faint">{event.action}</span>
+                {preview ? <span className="truncate text-micro text-muted">{preview}</span> : null}
               </span>
-              <span className="truncate font-mono text-caption text-muted">
-                {event.resourceType}{event.resourceId ? ` · ${event.resourceId.slice(0, 8)}` : ""}
+              <span className="grid min-w-0 gap-0.5">
+                <MicroLabel>{event.actorType.toLowerCase()}</MicroLabel>
+                <span className="truncate font-mono text-caption text-muted" title={event.actorId ?? undefined}>
+                  {shortId(event.actorId) ?? "—"}
+                </span>
               </span>
-              <StatusText dot tone={toneFor(outcomeTone(event.outcome))}>{event.outcome.toLowerCase()}</StatusText>
+              <span className="grid min-w-0 gap-0.5">
+                <span className="truncate text-caption text-text">{event.resourceType}</span>
+                <span className="truncate font-mono text-micro text-faint" title={event.resourceId ?? undefined}>
+                  {shortId(event.resourceId) ?? "—"}
+                </span>
+              </span>
+              <span className="truncate font-mono text-caption text-muted" title={event.sourceIp ?? undefined}>
+                {event.sourceIp ?? "—"}
+              </span>
+              <StatusText className="mt-0.5" dot tone={toneFor(outcomeTone(event.outcome))}>{event.outcome.toLowerCase()}</StatusText>
               {expanded === event.id && (
-                <div className="col-span-5 grid gap-3 border-t border-border pt-3">
+                <div className="col-span-6 grid gap-3 border-t border-border pt-3">
                   <dl className="m-0 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                     {[
                       { label: "Recorded", value: event.occurredAt },
@@ -258,15 +308,17 @@ export function AuditView({ session, onSessionExpired }: AuditViewProps) {
                 </div>
               )}
             </article>
-          ))
+            );
+          })
         )}
+        </div>
       </div>
 
       {cursor && (
-        <Button className="mt-3" onClick={() => void load(applied, cursor)} disabled={busy}>
+        <Button className="shrink-0 self-start" onClick={() => void load(applied, cursor)} disabled={busy}>
           {busy ? "Loading…" : "Load older events"}
         </Button>
       )}
-    </Panel>
+    </div>
   );
 }

@@ -3,6 +3,7 @@ import type {
   CreateGuardrailPolicy,
   GuardrailPolicy,
   GuardrailPolicyList,
+  GuardrailRule,
   UpdateGuardrailPolicy,
 } from "@orcasynapse/contracts";
 import { and, asc, desc, eq, isNotNull, ne, sql } from "drizzle-orm";
@@ -14,7 +15,9 @@ import {
   type OrcaSynapseDatabase,
 } from "@orcasynapse/database";
 import type { AdminPrincipal } from "../auth/admin-session.js";
+import { canonicalize } from "../canonical-json.js";
 import { advisoryLock, increment, isUniqueViolation } from "../database-support.js";
+import { assertPatternIsSafe } from "./rule-compiler.js";
 import {
   GuardrailConflictError,
   GuardrailNotFoundError,
@@ -22,6 +25,21 @@ import {
 } from "./guardrail-manager.js";
 
 type StoredPolicy = typeof guardrailPolicy.$inferSelect;
+
+/**
+ * Refuses a rule list this deployment is not willing to evaluate.
+ *
+ * At save time, and only at save time. A pattern that reaches the database has
+ * already been through this, so the inspection path can compile without paying
+ * the probe budget on every message — and, more importantly, cannot be handed a
+ * pattern that was never vetted. `GuardrailPatternError` carries which refusal
+ * it was so the screen can say "nested quantifier" rather than "invalid".
+ */
+function assertRulesAreSafe(rules: readonly GuardrailRule[]): void {
+  for (const rule of rules) {
+    if (rule.type === "REGEX") assertPatternIsSafe(rule.pattern);
+  }
+}
 
 function dto(policy: StoredPolicy): GuardrailPolicy {
   return {
@@ -35,6 +53,10 @@ function dto(policy: StoredPolicy): GuardrailPolicy {
     maxOutputCharacters: policy.maxOutputCharacters,
     blockControlCharacters: policy.blockControlCharacters,
     blockCredentialPatterns: policy.blockCredentialPatterns,
+    // Cast rather than re-parsed, the convention every jsonb column here
+    // follows: the write path validated the shape and the column refuses
+    // anything that is not an array.
+    rules: policy.rules as GuardrailRule[],
     firstActivatedAt: policy.firstActivatedAt?.toISOString() ?? null,
     revision: policy.revision,
     createdBy: policy.createdBy,
@@ -57,6 +79,7 @@ export class DrizzleGuardrailManager implements GuardrailManager {
   }
 
   async create(principal: AdminPrincipal, input: CreateGuardrailPolicy): Promise<GuardrailPolicy> {
+    assertRulesAreSafe(input.rules);
     try {
       const created = await this.database.transaction(async (transaction) => {
         const [policy] = await transaction
@@ -85,6 +108,7 @@ export class DrizzleGuardrailManager implements GuardrailManager {
   }
 
   async update(principal: AdminPrincipal, id: string, input: UpdateGuardrailPolicy): Promise<GuardrailPolicy> {
+    if (input.rules) assertRulesAreSafe(input.rules);
     return this.database.transaction(async (transaction) => {
       const { expectedRevision, ...changes } = input;
       await transaction.execute(advisoryLock(`orcasynapse-guardrail:${id}`));
@@ -99,7 +123,18 @@ export class DrizzleGuardrailManager implements GuardrailManager {
         || (changes.maxInputCharacters !== undefined && changes.maxInputCharacters !== current.maxInputCharacters)
         || (changes.maxOutputCharacters !== undefined && changes.maxOutputCharacters !== current.maxOutputCharacters)
         || (changes.blockControlCharacters !== undefined && changes.blockControlCharacters !== current.blockControlCharacters)
-        || (changes.blockCredentialPatterns !== undefined && changes.blockCredentialPatterns !== current.blockCredentialPatterns);
+        || (changes.blockCredentialPatterns !== undefined && changes.blockCredentialPatterns !== current.blockCredentialPatterns)
+        /*
+         * Rules are enforceable settings, so a rule edit is as material as
+         * changing the input ceiling and has to demand a new version the same
+         * way. Leaving this out is the one omission that would make the model's
+         * central promise false -- "the rules a run enforced are attributable
+         * to a named version" -- for exactly the part an operator edits most.
+         *
+         * Compared through the canonical serialization the signed VM2 bodies
+         * already use, so key order cannot make an unchanged list look edited.
+         */
+        || (changes.rules !== undefined && canonicalize(changes.rules) !== canonicalize(current.rules));
       if (materialChange && (!changes.version || changes.version === current.version)) {
         throw new GuardrailConflictError("Runtime guardrail changes require a new policy version.");
       }
@@ -114,6 +149,7 @@ export class DrizzleGuardrailManager implements GuardrailManager {
           ...(changes.maxOutputCharacters === undefined ? {} : { maxOutputCharacters: changes.maxOutputCharacters }),
           ...(changes.blockControlCharacters === undefined ? {} : { blockControlCharacters: changes.blockControlCharacters }),
           ...(changes.blockCredentialPatterns === undefined ? {} : { blockCredentialPatterns: changes.blockCredentialPatterns }),
+          ...(changes.rules === undefined ? {} : { rules: changes.rules }),
           status: materialChange ? "DRAFT" : current.status,
           revision: increment(guardrailPolicy.revision),
           updatedBy: principal.id,

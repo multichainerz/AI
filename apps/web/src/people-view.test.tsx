@@ -9,9 +9,8 @@
  * is asserted here is therefore not "the screen renders" but the specific
  * things a careless rewrite would lose: the once-only password sentence, the
  * reset control that is *absent* rather than disabled for a federated person,
- * the suspended division that may be reactivated but not assigned to, the note
- * saying where the administrator accounts are, and the draft that survives
- * creating a division mid-form.
+ * the suspended division that may be reactivated but not assigned to, and the
+ * draft that survives creating a division mid-form.
  *
  * The first test is the one that could not have been written by looking at the
  * screen. People reads on `sessions:manage` and divisions on `agents:read`, and
@@ -260,30 +259,6 @@ describe("people and divisions on one screen", () => {
     // The wider question, asked once. The people form narrows it to the active
     // divisions itself rather than spending a second round trip on the answer.
     expect(api.getDivisions).toHaveBeenCalledWith(true);
-  });
-
-  it("says where the administrator accounts are", async () => {
-    /*
-     * The question a screen called People invites and nothing used to answer.
-     * The Divisions screen said administrators are never bounded by a division,
-     * which answers "can I scope one?" and not "why is my own account missing
-     * from this list?".
-     *
-     * Asserted so that deleting it fails the build: it is the answer to a
-     * design decision -- `LocalAdministrator` has no division column, and
-     * administrators are provisioned by a CLI the installer runs -- that no
-     * reader can reconstruct from the screen.
-     */
-    view();
-    await screen.findByText("Ana Ruiz");
-
-    expect(screen.getByText("Administrators are not on this list.")).toBeTruthy();
-    expect(screen.getByText(/no administrator account on this page/)).toBeTruthy();
-    expect(screen.getByText(/created by the installer on the OrcaSynapse host/)).toBeTruthy();
-    // The non-isolation sentence, kept word for word from the screen this one
-    // absorbed. The product claims no tenant isolation anywhere, and this is
-    // the one place that says so out loud.
-    expect(screen.getByText(/It is not an isolation boundary\. Agents that run on the same Agentic System node share their memory and their Skills/)).toBeTruthy();
   });
 
   it("shows a new password once and says that is what it is doing", async () => {

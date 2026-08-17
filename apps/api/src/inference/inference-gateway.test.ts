@@ -4,6 +4,7 @@ import type { InferenceGatewayChatRequest } from "@orcasynapse/contracts";
 import {
   auditEvent,
   createTestDatabase,
+  guardrailPolicy,
   hermesRuntimeNode,
   inferenceGatewayRequest,
   serviceConnection,
@@ -207,6 +208,35 @@ describe("DrizzleInferenceGateway", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
+  it("records a rate-limited request, outside the transaction that refuses it", async () => {
+    /*
+     * The reason this was invisible. `RATE_LIMITED` is thrown from inside
+     * `this.database.transaction(...)`, so a row written beside it is rolled
+     * back with the refusal that caused it -- which is why nothing about a
+     * rate limit ever reached the audit trail. This asserts the row survives,
+     * not merely that the code was reached.
+     */
+    const { gateway, hermesConnectionId } = await harness();
+    await context.database.insert(inferenceGatewayRequest).values(
+      Array.from({ length: 30 }, () => ({ connectionId: hermesConnectionId })),
+    );
+
+    await expect(gateway.chat("runtime-key", request, new AbortController().signal))
+      .rejects.toMatchObject({ code: "RATE_LIMITED" });
+
+    const [recorded] = await context.database
+      .select()
+      .from(auditEvent)
+      .where(eq(auditEvent.action, "inference.gateway_rejected"));
+    expect(recorded?.outcome).toBe("FAILURE");
+    expect(recorded?.resourceId).toBe(hermesConnectionId);
+    expect(recorded?.metadata).toMatchObject({
+      reason: "RATE_LIMIT",
+      modelAlias: "approved-agent",
+      enforcementPlane: "ORCASYNAPSE",
+    });
+  });
+
   it("normalizes max_completion_tokens to the backend's bounded max_tokens field", async () => {
     const { gateway, fetcher } = await harness();
 
@@ -305,6 +335,95 @@ describe("DrizzleInferenceGateway", () => {
       ),
     ).rejects.toMatchObject({ code: "POLICY_REJECTED" });
     expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("forwards the redacted message rather than the one it was sent", async () => {
+    /*
+     * The assertion that makes redaction real. The forwarded body is built by
+     * spreading the request, so spreading the pre-inspection copy would leave
+     * the rewrite visible only in the audit trail while the model received the
+     * original -- a redaction nobody could tell was not working.
+     */
+    const { gateway, fetcher, hermesConnectionId } = await harness();
+    await context.database.insert(guardrailPolicy).values({
+      slug: `policy-${randomUUID().slice(0, 8)}`,
+      displayName: "Redacting policy",
+      description: "Removes an internal codename before it reaches the model.",
+      version: "1",
+      status: "ACTIVE",
+      maxInputCharacters: 32_000,
+      maxOutputCharacters: 200_000,
+      firstActivatedAt: new Date(),
+      rules: [{
+        id: randomUUID(),
+        label: "Internal codename",
+        type: "WORD",
+        pattern: "seahorse",
+        action: "REDACT",
+        caseSensitive: false,
+        enabled: true,
+      }],
+    });
+
+    await gateway.chat(
+      "runtime-key",
+      { ...request, messages: [{ role: "user", content: "tell me about seahorse" }] },
+      new AbortController().signal,
+    );
+
+    const [, init] = (fetcher as unknown as { mock: { calls: Array<[URL, RequestInit]> } }).mock.calls[0]!;
+    const forwarded = JSON.parse(String(init.body)) as { messages: Array<{ content: string }> };
+    expect(forwarded.messages[0]?.content).toBe("tell me about [redacted]");
+    expect(String(init.body)).not.toContain("seahorse");
+
+    const [event] = await context.database
+      .select({ metadata: auditEvent.metadata })
+      .from(auditEvent)
+      .where(eq(auditEvent.action, "inference.gateway_redacted"));
+    expect(JSON.stringify(event?.metadata)).toContain("Internal codename");
+    // Counts and labels only; the text it removed is exactly what must not be
+    // copied into the trail to explain the removal.
+    expect(JSON.stringify(event?.metadata)).not.toContain("seahorse");
+    expect(hermesConnectionId).toBeTruthy();
+  });
+
+  it("records a guardrail refusal without recording what triggered it", async () => {
+    /*
+     * A policy rejection throws before `consumeRateLimit`, which was the only
+     * thing writing to the trail -- so guardrails could block every request in
+     * a deployment and leave no evidence that anything had happened.
+     *
+     * The metadata names the violation and nothing else. A
+     * CREDENTIAL_PATTERN rejection exists precisely because the message looked
+     * like a key; copying the message in to explain the refusal would store the
+     * key in the audit trail.
+     */
+    const { gateway, hermesConnectionId } = await harness();
+
+    await expect(
+      gateway.chat(
+        "runtime-key",
+        { ...request, messages: [{ role: "user", content: "-----BEGIN PRIVATE KEY-----\nsecret" }] },
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({ code: "POLICY_REJECTED" });
+
+    const [recorded] = await context.database
+      .select()
+      .from(auditEvent)
+      .where(eq(auditEvent.action, "inference.gateway_rejected"));
+    expect(recorded?.outcome).toBe("FAILURE");
+    expect(recorded?.resourceId).toBe(hermesConnectionId);
+    expect(recorded?.metadata).toMatchObject({ reason: "POLICY", violation: "CREDENTIAL_PATTERN" });
+    expect(JSON.stringify(recorded?.metadata)).not.toContain("PRIVATE KEY");
+
+    // And the accepted-request row is not written for a refused request: the
+    // rate-limit counter is never reached, so the two must not both appear.
+    const accepted = await context.database
+      .select()
+      .from(auditEvent)
+      .where(eq(auditEvent.action, "inference.gateway_requested"));
+    expect(accepted).toHaveLength(0);
   });
 
   it("budgets a streamed response in wire bytes rather than in output characters", async () => {

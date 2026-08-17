@@ -19,6 +19,7 @@ import { enterpriseSessionToken, type EnterpriseIdentityManager } from "../ident
 import {
   AgentConflictError,
   AgentNotFoundError,
+  AgentPolicyViolationError,
   AgentRuntimeDisabledError,
   type AgentManager,
   type AgentPrincipal,
@@ -93,6 +94,12 @@ async function sendAgentError(reply: FastifyReply, error: unknown): Promise<void
   }
   if (error instanceof AgentRuntimeDisabledError) {
     await reply.code(423).send({ error: "AGENT_RUNTIME_DISABLED", message: error.message });
+    return;
+  }
+  // The same status and the same code chat returns for the same decision, so a
+  // client does not have to learn two spellings of "the policy refused this".
+  if (error instanceof AgentPolicyViolationError) {
+    await reply.code(422).send({ error: "GUARDRAIL_BLOCKED", message: error.message });
     return;
   }
   throw error;

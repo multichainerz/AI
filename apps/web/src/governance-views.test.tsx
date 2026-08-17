@@ -1,23 +1,18 @@
 /**
  * @vitest-environment jsdom
  *
- * Prompts and Guardrails, populated. The two screens look like siblings and are
- * not: **Guardrails releases an artefact into the chat path and fails closed
- * when a previously-active policy is suspended; Prompts does neither.** Nothing
- * under `apps/api/src/chat` or `apps/worker/src` reads `PromptTemplate` -- its
- * only non-CRUD consumer is one status tile in the Operations overview -- so a
- * prompt release is a recorded decision and nothing more, and the screen now
- * says so. See `docs/PROMPT_CONTROL_RUNBOOK.md`.
- *
- * The cases below are about whether each screen states its own state honestly,
- * which is why the prompts ones assert the absence of the chat-binding language
- * as well as the presence of the release language.
+ * Guardrails, populated. This file used to pair Prompts with Guardrails as
+ * sibling screens; Prompts is gone from Gateway because nothing under
+ * `apps/api/src/chat` or `apps/worker/src` reads `PromptTemplate`. Guardrails
+ * still release an artefact into the chat path and fail closed when a
+ * previously-active policy is suspended.
  *
  * As with `models-view.test.tsx`, `VIEW_PREVIEW_OUT` writes the rendered markup
  * to a file so the screen can be looked at without a session.
  */
-import { ADMIN_SCOPES, type AdministratorSession, type GuardrailPolicy, type PromptTemplate } from "@orcasynapse/contracts";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { ADMIN_SCOPES, type AdministratorSession, type GuardrailPolicy } from "@orcasynapse/contracts";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { writeFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -40,21 +35,6 @@ const shared = {
   revision: 4,
 };
 
-const prompts = [
-  {
-    ...shared,
-    id: "3e5f7a91-2c4d-4e6f-8a0b-1c2d3e4f5a6b",
-    slug: "chat-system",
-    displayName: "Governed chat instruction",
-    description: "Owned by the platform team; reviewed each release.",
-    purpose: "CHAT_SYSTEM",
-    version: "4.2",
-    content: "You are a careful OrcaSynapse analyst.\nBe precise, evidence-led, and candid about uncertainty.",
-    contentChecksum: "9f2c4a1b7e5d3086f4a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0",
-    status: "ACTIVE",
-  },
-] as unknown as PromptTemplate[];
-
 const policies = [
   {
     ...shared,
@@ -67,6 +47,17 @@ const policies = [
     maxOutputCharacters: 120_000,
     blockControlCharacters: true,
     blockCredentialPatterns: true,
+    /*
+     * Two enabled and one not, so the "Active checks" figure has something to
+     * be wrong about: it counts the two built-in detectors plus enabled rules,
+     * and a fixture with an empty list would pass whether or not the rules were
+     * counted at all.
+     */
+    rules: [
+      { id: "6f1c1d2e-3a4b-4c5d-8e6f-7a8b9c0d1e01", label: "Internal codename", type: "WORD", pattern: "seahorse", action: "BLOCK", caseSensitive: false, enabled: true },
+      { id: "6f1c1d2e-3a4b-4c5d-8e6f-7a8b9c0d1e02", label: "Ticket reference", type: "REGEX", pattern: "[A-Z]{2}\\d{6}", action: "REDACT", caseSensitive: true, enabled: true },
+      { id: "6f1c1d2e-3a4b-4c5d-8e6f-7a8b9c0d1e03", label: "Draft wording", type: "PHRASE", pattern: "not for release", action: "FLAG", caseSensitive: false, enabled: false },
+    ],
     status: "ACTIVE",
   },
 ] as unknown as GuardrailPolicy[];
@@ -75,24 +66,16 @@ vi.mock("./api.js", async () => {
   const actual = await vi.importActual<typeof import("./api.js")>("./api.js");
   return {
     ...actual,
-    getPromptTemplates: vi.fn(async () => ({ items: prompts })),
     getGuardrailPolicies: vi.fn(async () => ({ items: policies })),
   };
 });
 
-const { PromptsView } = await import("./prompts-view.js");
 const { GuardrailsView } = await import("./guardrails-view.js");
 
 const dump = (name: string) => {
   const out = process.env.VIEW_PREVIEW_OUT;
   if (out) writeFileSync(out.replace("VIEW", name), document.body.innerHTML, "utf8");
 };
-
-async function promptsView() {
-  render(<main><PromptsView session={session} onOpenOperations={vi.fn()} onOpenSettings={vi.fn()} onSessionExpired={vi.fn()} /></main>);
-  await waitFor(() => screen.getByRole("heading", { name: "Governed chat instruction" }));
-  dump("prompts");
-}
 
 async function guardrailsView() {
   render(<main><GuardrailsView session={session} onConfigureInference={vi.fn()} onOpenOperations={vi.fn()} onSessionExpired={vi.fn()} /></main>);
@@ -102,72 +85,6 @@ async function guardrailsView() {
 
 afterEach(cleanup);
 
-describe("prompts", () => {
-  it("names the exact released version, and does not claim chat is using it", async () => {
-    await promptsView();
-    expect(screen.getByText("Governed chat instruction v4.2 is the released version.")).toBeTruthy();
-
-    /*
-     * The screen said "…is bound to chat", offered "Fail closed" as the state
-     * with no active prompt, and headed the panel "Runtime assignment" -- three
-     * claims about a runtime that has never read this table. An operator acting
-     * on the second one would have gone looking for a chat outage that is not
-     * there. Asserted as absences because the failure mode is the sentence
-     * coming back, not this one going away.
-     */
-    const body = document.body.textContent ?? "";
-    for (const claim of ["bound to chat", "fails closed", "Fail closed", "Legacy mode", "Runtime assignment"]) {
-      expect(body, `the prompts screen still claims "${claim}"`).not.toContain(claim);
-    }
-  });
-
-  it("shows the instruction verbatim, because that is the artefact under review", async () => {
-    await promptsView();
-    expect(screen.getByText(/Be precise, evidence-led, and candid/)).toBeTruthy();
-    // The checksum is what audit retains in place of the body.
-    expect(screen.getAllByText(/9f2c4a1b7e5d3086…/).length).toBeGreaterThan(0);
-  });
-
-  it("does not dress a suspension as a runtime kill switch", async () => {
-    /*
-     * Suspending the released prompt changes nothing about a conversation:
-     * nothing under `apps/api/src/chat/` or `apps/worker/` reads a template's
-     * content, which this screen states three times over elsewhere. The
-     * decision form said so in hedged future tense -- "after prompt governance
-     * has been adopted" -- while everything around it said the opposite: a
-     * heading calling the record "runtime", a red-bordered panel, a danger
-     * submit. Under a mismatch like that the styling is the half a reader
-     * believes, and this one sends an operator hunting an outage that is not
-     * there.
-     */
-    await promptsView();
-    fireEvent.click(screen.getByRole("button", { name: "Suspend" }));
-
-    const heading = await screen.findByText("Suspend the released prompt");
-    const form = heading.closest("form");
-    // Asserted before anything is read off it: `null?.className` is a silent
-    // pass, and every check below reads one.
-    expect(form).toBeTruthy();
-    expect(form!.className).not.toMatch(/bg-bad|border-bad/);
-    expect(within(form!).getByText(/no runtime component reads the active prompt/i)).toBeTruthy();
-    // `danger` is the only variant that paints its label with the destructive
-    // ink, so its absence is the absence of the variant.
-    expect(within(form!).getByRole("button", { name: "Confirm" }).className).not.toContain("text-destructive");
-
-    const body = document.body.textContent ?? "";
-    for (const claim of ["fail closed", "Suspend runtime prompt"]) {
-      expect(body, `the suspend form still claims "${claim}"`).not.toContain(claim);
-    }
-  });
-
-  it("counts the drafts waiting behind the bound release", async () => {
-    await promptsView();
-    const summary = screen.getByLabelText("Prompt governance summary");
-    expect(within(summary).getByText("Draft records")).toBeTruthy();
-    expect(within(summary).getByText("0")).toBeTruthy();
-  });
-});
-
 describe("guardrails", () => {
   it("names the policy enforcing chat and the checks it turns on", async () => {
     await guardrailsView();
@@ -176,11 +93,21 @@ describe("guardrails", () => {
     expect(screen.getByText("credentials")).toBeTruthy();
   });
 
-  it("counts only the detectors actually switched on", async () => {
+  it("counts the detectors and the rules that are actually switched on", async () => {
+    /*
+     * Two built-in detectors plus two enabled rules. The fixture's third rule
+     * is disabled and must not be counted, for the same reason a switched-off
+     * detector is not: a disabled rule enforces nothing.
+     *
+     * This asserted `2` while rules existed and were not counted, which meant a
+     * policy carrying forty rules reported the same figure as one carrying
+     * none — the metric measured configuration rather than enforcement.
+     */
     await guardrailsView();
     const summary = screen.getByLabelText("Guardrail policy summary");
     expect(within(summary).getByText("Active checks")).toBeTruthy();
-    expect(within(summary).getByText("2")).toBeTruthy();
+    expect(within(summary).getByText("4")).toBeTruthy();
+    expect(within(summary).getByText("2 built-in · 2 rules")).toBeTruthy();
   });
 
   it("offers Suspend on the active policy, which is the fail-closed decision", async () => {
@@ -188,13 +115,75 @@ describe("guardrails", () => {
     expect(screen.getByRole("button", { name: "Suspend" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
   });
-});
 
-describe("both", () => {
-  it("render no inline style, which the CSP would refuse in the built container", async () => {
-    await promptsView();
-    expect(document.body.innerHTML).not.toMatch(/\sstyle="/);
-    cleanup();
+  it("says that guardrails inspect what is sent, and makes no claim about responses", async () => {
+    /*
+     * The scope claim, pinned. This screen is the deployment's statement of
+     * what it filters, and an operator reading "guardrails" reasonably assumes
+     * both directions. Nothing inspects response content — only its length is
+     * capped — so the screen has to say so in words rather than leave it to be
+     * inferred from an absence.
+     */
+    await guardrailsView();
+    expect(screen.getByText(/what is sent to the model/)).toBeTruthy();
+    expect(screen.getByText(/Responses are capped in length but their content is not inspected/)).toBeTruthy();
+  });
+
+  it("warns that editing a rule returns the policy to Draft", async () => {
+    // Rules are a material change like any threshold, so an operator who edits
+    // one and lands back in Draft has to have been told that is the design.
+    await guardrailsView();
+    await userEvent.click(screen.getByRole("button", { name: "New policy" }));
+    expect(screen.getByText(/Changing a limit, a detector or a rule requires a new version number/)).toBeTruthy();
+  });
+
+  it("keeps Save reachable when the form grows past the viewport", async () => {
+    /*
+     * The regression the rules editor caused. At >=761px `.workspace-page` is
+     * `height: 100dvh; overflow: hidden`, so a form taller than the space
+     * available is simply cut off -- and the editor panel was `shrink-0` with
+     * no overflow of its own, which made the bottom of the form, Save
+     * included, unreachable with nothing to scroll.
+     *
+     * jsdom has no layout, so this asserts the structure that makes scrolling
+     * possible rather than the scrolling itself: one scroll container holding
+     * everything that grows, and the submit button outside it.
+     */
+    await guardrailsView();
+    await userEvent.click(screen.getByRole("button", { name: "New policy" }));
+
+    const body = screen.getByTestId("policy-editor-body");
+    expect(body.className).toContain("overflow-y-auto");
+    // Without min-h-0 a flex item refuses to shrink below its content, and the
+    // overflow above never engages.
+    expect(body.className).toContain("min-h-0");
+
+    // The rules live inside the scroll region, because they are what grows.
+    expect(within(body).getByLabelText("Guardrail rules")).toBeTruthy();
+
+    // Save does not, because it is the thing being reached for.
+    const save = screen.getByRole("button", { name: "Create draft policy" });
+    expect(body.contains(save)).toBe(false);
+  });
+
+  it("adds and removes a rule row", async () => {
+    await guardrailsView();
+    await userEvent.click(screen.getByRole("button", { name: "New policy" }));
+
+    const rules = screen.getByLabelText("Guardrail rules");
+    expect(within(rules).getByText("No rules. The two checks above still apply.")).toBeTruthy();
+
+    await userEvent.click(within(rules).getByRole("button", { name: "Add rule" }));
+    expect(within(rules).getByLabelText("Name")).toBeTruthy();
+    // The type selector explains what it will do, rather than making an
+    // operator guess whether "word" means substring.
+    expect(within(rules).getByText(/does not match/)).toBeTruthy();
+
+    await userEvent.click(within(rules).getByRole("button", { name: "Remove" }));
+    expect(within(rules).getByText("No rules. The two checks above still apply.")).toBeTruthy();
+  });
+
+  it("renders no inline style, which the CSP would refuse in the built container", async () => {
     await guardrailsView();
     expect(document.body.innerHTML).not.toMatch(/\sstyle="/);
   });

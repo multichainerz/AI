@@ -1,3 +1,4 @@
+import { Shield } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 import { Alert, Button, Dialog, Field, Input } from "./ui/index.js";
 
@@ -56,6 +57,7 @@ export function AdminSignInDialog(props: {
     <Dialog
       open={props.open}
       onClose={props.onClose}
+      icon={Shield}
       kicker="Administration"
       title="Sign in as administrator"
       description="Your workspace session stays active. Administrator credentials establish a separate protected session for the governed areas."

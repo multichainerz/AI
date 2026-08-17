@@ -76,6 +76,22 @@ export class AgentConflictError extends Error {
   }
 }
 
+/**
+ * The active guardrail policy refused this run's input.
+ *
+ * Its own error rather than an `AgentConflictError`, because the two mean
+ * different things to a caller: a conflict is a state problem they can retry
+ * past, and this is a policy decision that will refuse the same input every
+ * time. It maps to the same 422 `GUARDRAIL_BLOCKED` chat already returns, so
+ * one refusal does not get two spellings across two routes.
+ */
+export class AgentPolicyViolationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AgentPolicyViolationError";
+  }
+}
+
 export class AgentRuntimeDisabledError extends Error {
   constructor(message = "Hermes agent execution is disabled by the global runtime control.") {
     super(message);

@@ -2,9 +2,15 @@ import type {
   AdministratorSession,
   CreateGuardrailPolicy,
   GuardrailPolicy,
+  GuardrailRule,
+  GuardrailRuleAction,
+  GuardrailRuleType,
 } from "@orcasynapse/contracts";
+import { GUARDRAIL_RULE_ACTIONS, GUARDRAIL_RULE_TYPES } from "@orcasynapse/contracts";
+import { Shield } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 import { Switch } from "@/components/ui/switch";
+import { createClientMessageId } from "./client-uuid.js";
 import {
   OrcaSynapseApiError,
   changeGuardrailPolicyState,
@@ -16,7 +22,7 @@ import { adminAccess } from "./admin-access.js";
 import { slugAsTyped, slugify } from "./slug.js";
 import {
   Alert, Button, EmptyState, Field, Input, LockedScreen, Metric, MetricRow, MicroLabel,
-  PageHeader, Panel, StatusText, Textarea, cn, toneFor,
+  Panel, Select, StatusText, Textarea, WorkspaceDock, WorkspaceIntro, cn, toneFor,
 } from "./ui/index.js";
 
 interface GuardrailsViewProps {
@@ -37,6 +43,21 @@ const initialDraft: PolicyDraft = {
   maxOutputCharacters: 200_000,
   blockControlCharacters: true,
   blockCredentialPatterns: true,
+  rules: [],
+};
+
+/** What each rule type means, in the words an operator needs to choose between them. */
+const RULE_TYPE_HELP: Readonly<Record<GuardrailRuleType, string>> = {
+  WORD: "Whole word only — “cat” does not match “concatenate”.",
+  PHRASE: "Exact text, tolerating a line break where you typed a space.",
+  PREFIX: "The start of a word — “sk-” matches “sk-abc” but not “risk-averse”.",
+  REGEX: "A regular expression. Checked for patterns that would stall the server.",
+};
+
+const RULE_ACTION_HELP: Readonly<Record<GuardrailRuleAction, string>> = {
+  BLOCK: "Refuse the message.",
+  REDACT: "Replace the match and send the rest.",
+  FLAG: "Allow it through and record it — use this to measure a new rule before trusting it.",
 };
 
 /**
@@ -105,6 +126,35 @@ export function GuardrailsView({
     setEditing((current) => (current ? items.find(({ id }) => id === current.id) ?? current : null));
   };
 
+  /*
+   * Rule identity is generated here rather than server-side because a rule is a
+   * member of a jsonb array, not a row — there is no insert to return an id
+   * from. `createClientMessageId` rather than `crypto.randomUUID` because this
+   * product is routinely served over plain HTTP, where `randomUUID` is absent.
+   */
+  const addRule = () => setDraft((current) => ({
+    ...current,
+    rules: [...current.rules, {
+      id: createClientMessageId(),
+      label: "",
+      type: "WORD",
+      pattern: "",
+      action: "BLOCK",
+      caseSensitive: false,
+      enabled: true,
+    }],
+  }));
+
+  const updateRule = (index: number, changes: Partial<GuardrailRule>) => setDraft((current) => ({
+    ...current,
+    rules: current.rules.map((rule, position) => (position === index ? { ...rule, ...changes } : rule)),
+  }));
+
+  const removeRule = (index: number) => setDraft((current) => ({
+    ...current,
+    rules: current.rules.filter((_, position) => position !== index),
+  }));
+
   const startCreate = () => {
     setEditing(null);
     setDraft(initialDraft);
@@ -124,6 +174,7 @@ export function GuardrailsView({
       maxOutputCharacters: policy.maxOutputCharacters,
       blockControlCharacters: policy.blockControlCharacters,
       blockCredentialPatterns: policy.blockCredentialPatterns,
+      rules: policy.rules,
     });
     setShowEditor(true);
     setError(null);
@@ -145,6 +196,7 @@ export function GuardrailsView({
           maxOutputCharacters: draft.maxOutputCharacters,
           blockControlCharacters: draft.blockControlCharacters,
           blockCredentialPatterns: draft.blockCredentialPatterns,
+          rules: draft.rules,
           expectedRevision: editing.revision,
         });
         // What the server actually does with a material change: it demands a
@@ -152,7 +204,10 @@ export function GuardrailsView({
         // evidence check in `DrizzleGuardrailManager` and there has not been
         // one since the evaluation subsystem was removed, so the old wording
         // promised operators a gate that would never appear.
-        setMessage("Policy updated. A material change resets it to Draft under its new version, so activate that version to enforce it.");
+        // Rules count as a material change, so the sentence has to name them:
+        // an operator who edited only a rule and got a Draft reset would
+        // otherwise read it as a bug rather than as the versioning working.
+        setMessage("Policy updated. Changing a limit, a detector or a rule resets it to Draft under its new version, so activate that version to enforce it.");
       } else {
         await createGuardrailPolicy({ ...draft, slug: slugify(draft.slug) });
         setMessage("Draft guardrail policy created.");
@@ -213,78 +268,119 @@ export function GuardrailsView({
 
   const active = policies.find(({ status }) => status === "ACTIVE");
   const activatedBefore = policies.some(({ firstActivatedAt }) => firstActivatedAt !== null);
+  /*
+   * The two built-in detectors plus the operator's enabled rules. Counting only
+   * the booleans understated the boundary the moment rules existed: a policy
+   * carrying forty rules reported "2".
+   */
+  const enabledRules = active ? active.rules.filter(({ enabled }) => enabled).length : 0;
   const enabledControls = active
-    ? Number(active.blockControlCharacters) + Number(active.blockCredentialPatterns)
+    ? Number(active.blockControlCharacters) + Number(active.blockCredentialPatterns) + enabledRules
     : 0;
 
-  return <div className="grid gap-5">
-    <PageHeader
-      kicker="Policy control"
+  return <div className="workspace-stack guardrails-workspace flex h-full min-h-0 flex-col gap-3 pb-3">
+    <WorkspaceIntro
+      icon={<Shield className="size-4" aria-hidden="true" />}
       title="Guardrails"
-      description="Release the limits and deterministic safety checks enforced inside OrcaSynapse."
       actions={<>
         <Button onClick={onOpenOperations}>Open Operations</Button>
         {canManage && <Button variant="primary" onClick={startCreate}>New policy</Button>}
       </>}
-    />
+    >
+      <section className={cn(
+        "flex items-center gap-4 border-l-2 px-1 py-0.5",
+        active ? "border-l-good" : activatedBefore ? "border-l-bad" : "border-l-border-strong",
+      )}>
+        <div className="min-w-0 flex-1">
+          <MicroLabel className="block">Runtime boundary</MicroLabel>
+          <strong className="mt-1.5 block text-label font-semibold text-text">
+            {active
+              ? `${active.displayName} v${active.version} is enforcing chat.`
+              : activatedBefore
+                ? "Chat policy enforcement is paused and fails closed."
+                : "Drafts do not change current chat behavior."}
+          </strong>
+          {/*
+            * The scope claim, stated rather than implied.
+            *
+            * Guardrails inspect what is *sent*. Nothing examines what comes
+            * back beyond the response-size ceiling, and a screen that left that
+            * ambiguous would be read as promising output filtering it does not
+            * have — which is the failure this codebase keeps recording about
+            * surfaces that imply a control nothing behind them implements.
+            */}
+          <p className="mb-0 mt-1 text-caption leading-relaxed text-muted">
+            OrcaSynapse checks <strong className="font-semibold text-text">what is sent to the model</strong> — chat
+            messages, agent run inputs and runtime gateway requests — against the size limits, the two built-in
+            detectors, and your rules. Responses are capped in length but their content is not inspected.
+          </p>
+        </div>
+        <Button className="shrink-0" onClick={onConfigureInference}>Manage AI Inference</Button>
+      </section>
+    </WorkspaceIntro>
 
-    <MetricRow className="lg:grid-cols-4" aria-label="Guardrail policy summary">
-      <Metric
-        label="Policy records"
-        value={policies.length >= POLICY_WINDOW ? `${POLICY_WINDOW}+` : policies.length}
-        caption={policies.length >= POLICY_WINDOW ? `Newest ${POLICY_WINDOW} loaded` : "Version controlled"}
-      />
-      <Metric
-        label="Active boundary"
-        value={active ? "1" : "0"}
-        tone={active ? "good" : activatedBefore ? "bad" : "neutral"}
-        caption={active ? active.displayName : activatedBefore ? "Fail closed" : "Legacy mode"}
-      />
-      <Metric label="Active checks" value={enabledControls} caption="OrcaSynapse-native detectors" />
-      <Metric
-        label="Input ceiling"
-        value={active ? new Intl.NumberFormat("en", { notation: "compact" }).format(active.maxInputCharacters) : "—"}
-        caption="Characters per message"
-      />
-    </MetricRow>
+    <WorkspaceDock>
+      <MetricRow className="border-b-0 pb-0 lg:grid-cols-4" aria-label="Guardrail policy summary">
+        <Metric
+          label="Policy records"
+          value={policies.length >= POLICY_WINDOW ? `${POLICY_WINDOW}+` : policies.length}
+          caption={policies.length >= POLICY_WINDOW ? `Newest ${POLICY_WINDOW} loaded` : "Version controlled"}
+        />
+        <Metric
+          label="Active boundary"
+          value={active ? "1" : "0"}
+          tone={active ? "good" : activatedBefore ? "bad" : "neutral"}
+          caption={active ? active.displayName : activatedBefore ? "Fail closed" : "Legacy mode"}
+        />
+        <Metric
+          label="Active checks"
+          value={enabledControls}
+          caption={active ? `${enabledControls - enabledRules} built-in · ${enabledRules} rule${enabledRules === 1 ? "" : "s"}` : "No active policy"}
+        />
+        <Metric
+          label="Input ceiling"
+          value={active ? new Intl.NumberFormat("en", { notation: "compact" }).format(active.maxInputCharacters) : "—"}
+          caption="Characters per message"
+        />
+      </MetricRow>
+    </WorkspaceDock>
 
-    <Panel className={cn(
-      "flex items-center gap-4 border-l-2",
-      active ? "border-l-good" : activatedBefore ? "border-l-bad" : "border-l-border-strong",
-    )}>
-      <div className="min-w-0 flex-1">
-        <MicroLabel className="block">Runtime boundary</MicroLabel>
-        <strong className="mt-1.5 block text-label font-semibold text-text">
-          {active
-            ? `${active.displayName} v${active.version} is enforcing chat.`
-            : activatedBefore
-              ? "Chat policy enforcement is paused and fails closed."
-              : "Drafts do not change current chat behavior."}
-        </strong>
-        <p className="mb-0 mt-1 text-body text-muted">
-          OrcaSynapse applies request size, response size, control-character, and credential-pattern checks before
-          traffic reaches the approved inference route.
-        </p>
-      </div>
-      <Button className="shrink-0" onClick={onConfigureInference}>Manage AI Inference</Button>
-    </Panel>
+    {error && <Alert className="shrink-0" onDismiss={() => setError(null)}>{error}</Alert>}
+    {message && <Alert className="shrink-0" tone="good" onDismiss={() => setMessage(null)}>{message}</Alert>}
 
-    {error && <Alert onDismiss={() => setError(null)}>{error}</Alert>}
-    {message && <Alert tone="good" onDismiss={() => setMessage(null)}>{message}</Alert>}
-
-    {showEditor && <Panel>
-      <form onSubmit={(event) => void save(event)}>
-        <header className="mb-4 flex items-start justify-between gap-6">
+    {/*
+      * A flex column with a scrolling body, not a `shrink-0` block.
+      *
+      * At >=761px `.workspace-page` is `height: 100dvh; overflow: hidden` and
+      * `.workspace-stack` inherits `overflow: hidden`, so nothing in this
+      * column may exceed the viewport. This panel was `shrink-0` with no
+      * overflow of its own, which was survivable only while the form was six
+      * fields tall: the rules editor made it taller than the space available,
+      * and the bottom of the form -- including Save -- became unreachable with
+      * no way to scroll to it.
+      *
+      * Same shape the overlay chrome was given at v8.8.8 for the same reason:
+      * the body scrolls and the actions stay on screen. `min-h-0` is the part
+      * that does the work -- a flex item will not shrink below its content
+      * without it, so the inner `overflow-y-auto` would never engage.
+      */}
+    {showEditor && <Panel className="flex min-h-0 flex-col">
+      <form className="flex min-h-0 flex-col" onSubmit={(event) => void save(event)}>
+        <header className="mb-4 flex shrink-0 items-start justify-between gap-6">
           <div className="min-w-0">
             <h2 className="m-0 font-display text-[15px] font-semibold tracking-[-0.01em] text-text">
               {editing ? `Edit ${editing.displayName}` : "New chat policy"}
             </h2>
             <p className="mb-0 mt-1.5 text-body text-muted">
               These controls run locally in OrcaSynapse and are pinned to an immutable policy version.
+              Changing a limit, a detector or a rule requires a new version number and returns the policy to Draft.
             </p>
           </div>
           <Button variant="ghost" size="sm" onClick={() => setShowEditor(false)}>Cancel</Button>
         </header>
+        {/* The one scrolling region. Everything that grows with the policy --
+            the fields and the rule rows -- lives inside it. */}
+        <div className="min-h-0 flex-1 overflow-y-auto" data-testid="policy-editor-body">
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Display name"><Input value={draft.displayName} minLength={2} maxLength={120} required onChange={(event) => setDraft({ ...draft, displayName: event.target.value })} /></Field>
           <Field label="Policy slug"><Input value={draft.slug} disabled={Boolean(editing)} required onChange={(event) => setDraft({ ...draft, slug: slugAsTyped(event.target.value) })} onBlur={() => setDraft((current) => ({ ...current, slug: slugify(current.slug) }))} /></Field>
@@ -303,13 +399,68 @@ export function GuardrailsView({
             <span className="text-body text-text">Block recognizable credential patterns</span>
           </label>
         </div>
-        <Button variant="primary" type="submit" className="mt-4" disabled={busy || editing?.status === "ACTIVE"}>
+
+        <section className="mt-5 border-t border-border pt-4" aria-label="Guardrail rules">
+          <header className="mb-3 flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <h3 className="m-0 font-display text-[14px] font-semibold tracking-[-0.01em] text-text">Rules</h3>
+              <p className="mb-0 mt-1 text-caption leading-relaxed text-muted">
+                Words, phrases and patterns this deployment refuses, redacts or records. Checked against
+                what is sent to the model — chat messages, agent run inputs and runtime gateway requests.
+              </p>
+            </div>
+            <Button size="sm" type="button" onClick={addRule}>Add rule</Button>
+          </header>
+
+          {draft.rules.length === 0 ? (
+            <p className="mb-0 text-caption text-muted">
+              No rules. The two checks above still apply.
+            </p>
+          ) : (
+            <div className="grid gap-2">
+              {draft.rules.map((rule, index) => (
+                <div className="grid gap-2 rounded border border-border bg-raised p-3 sm:grid-cols-2" key={rule.id}>
+                  <Field label="Name"><Input value={rule.label} maxLength={120} required onChange={(event) => updateRule(index, { label: event.target.value })} /></Field>
+                  <Field label="Match" hint={RULE_TYPE_HELP[rule.type]}>
+                    <Select value={rule.type} onChange={(event) => updateRule(index, { type: event.target.value as GuardrailRuleType })}>
+                      {GUARDRAIL_RULE_TYPES.map((type) => <option key={type} value={type}>{type.toLowerCase()}</option>)}
+                    </Select>
+                  </Field>
+                  <Field label={rule.type === "REGEX" ? "Pattern" : "Text"} className="sm:col-span-2">
+                    <Input value={rule.pattern} maxLength={200} required onChange={(event) => updateRule(index, { pattern: event.target.value })} />
+                  </Field>
+                  <Field label="Then" hint={RULE_ACTION_HELP[rule.action]}>
+                    <Select value={rule.action} onChange={(event) => updateRule(index, { action: event.target.value as GuardrailRuleAction })}>
+                      {GUARDRAIL_RULE_ACTIONS.map((action) => <option key={action} value={action}>{action.toLowerCase()}</option>)}
+                    </Select>
+                  </Field>
+                  <div className="flex items-end justify-between gap-2">
+                    <label className="flex cursor-pointer items-center gap-2 text-body text-text">
+                      <Switch checked={rule.caseSensitive} onCheckedChange={(checked) => updateRule(index, { caseSensitive: checked })} />
+                      Match case
+                    </label>
+                    <label className="flex cursor-pointer items-center gap-2 text-body text-text">
+                      <Switch checked={rule.enabled} onCheckedChange={(checked) => updateRule(index, { enabled: checked })} />
+                      Enabled
+                    </label>
+                    <Button size="sm" variant="ghost" type="button" onClick={() => removeRule(index)}>Remove</Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+        </div>
+
+        {/* Outside the scroll container on purpose: the action an operator is
+            reaching for must not be the thing they have to scroll to find. */}
+        <Button variant="primary" type="submit" className="mt-4 shrink-0" disabled={busy || editing?.status === "ACTIVE"}>
           {busy ? "Saving…" : editing ? "Save policy revision" : "Create draft policy"}
         </Button>
       </form>
     </Panel>}
 
-    <section className="grid items-start gap-3 lg:grid-cols-2" aria-label="Configured guardrail policies">
+    <section className="grid min-h-0 flex-1 content-start items-start gap-3 overflow-y-auto lg:grid-cols-2" aria-label="Configured guardrail policies">
       {policies.length === 0 && (
         <EmptyState
           className="lg:col-span-2"

@@ -20,7 +20,7 @@ VM2 Bearer `inferenceGatewayKey` → `/internal/v1`. Gateway pins AGENT default 
 ## Governance gaps (do not “fix” by assuming runbooks)
 
 - Chat model comes from **active Agent Profile `modelAlias`**, not the default CHAT `ModelDeployment`.
-- `PromptTemplate` CRUD and activate exist; **nothing at runtime reads the active prompt**. Its only non-CRUD consumer is one read-only tile in the Operations overview. Worker `hardenedInstructions()` builds the system text from profile `soulMd`/`instructions`. There is no evaluation subsystem left to promote evidence through — it was removed outright, along with every activation gate that depended on it.
+- System text comes from profile `soulMd`/`instructions` via worker `hardenedInstructions()`. The Gateway Prompts tab is gone; `PromptTemplate` CRUD remains on the admin API and the table is untouched, the same way `ProductionReadinessControl` survived without a screen. Nothing at runtime reads the active prompt. There is no evaluation subsystem left to promote evidence through — it was removed outright, along with every activation gate that depended on it.
 - Native Hermes interactive approval is denied (`NATIVE_APPROVAL_UNSUPPORTED`). Chat `decideApproval` updates PostgreSQL only.
 
 ## Corpus / enrollment

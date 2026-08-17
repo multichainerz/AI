@@ -133,6 +133,16 @@ const catalogue = (
 
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
+describe("the workspace", () => {
+  it("fills the remaining viewport instead of stacking past it", async () => {
+    await view();
+    const workspace = document.querySelector(".tools-workspace");
+    expect(workspace?.className).toMatch(/\bflex\b/);
+    expect(workspace?.className).toMatch(/\bh-full\b/);
+    expect(workspace?.className).toMatch(/\bmin-h-0\b/);
+  });
+});
+
 describe("browsing what exists", () => {
   it("lists every tool the runtime reports, and how many calls each one holds", async () => {
     await view({ catalogue: catalogue(

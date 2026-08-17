@@ -30,6 +30,7 @@ const RETIRED_SURFACES = [
   "corpus",
   "runtime",
   "platform",
+  "prompts",
 ] as const;
 
 describe("workspace navigation", () => {
@@ -88,9 +89,9 @@ describe("workspace navigation", () => {
       Dashboard: "Activity, readiness and next actions",
       Session: "Governed conversations",
       Agents: "Profiles and runs, skills, memory and tools",
-      Gateway: "Models, prompts and guardrails for the governed inference path",
+      Gateway: "Models, guardrails and usage for the governed inference path",
       Operations: "Health, incidents and the audit trail",
-      Settings: "Setup, divisions, people and system updates",
+      Settings: "Setup, access and system updates",
     });
 
     for (const [area, description] of Object.entries(described) as Array<[ProductArea, string]>) {
@@ -157,19 +158,36 @@ describe("workspace navigation", () => {
     // Generated paths follow the navigation, so the address bar cannot
     // contradict the rail.
     expect(pathForView("Models")).toBe("#gateway/models");
-    expect(pathForView("Prompts")).toBe("#gateway/prompts");
     expect(pathForView("Guardrails")).toBe("#gateway/guardrails");
 
-    // Two moves have now passed over these three screens. A bookmark from
-    // either era still resolves -- the Platform spelling, the Settings
-    // spelling, and the short alias.
+    // Two moves have now passed over these screens. A bookmark from either
+    // era still resolves -- the Platform spelling, the Settings spelling, and
+    // the short alias. Prompts hashes land on Models: that tab is gone, and
+    // falling through to the Dashboard would drop the operator out of Gateway.
     expect(viewFromHash("#settings/models")).toBe("Models");
     expect(viewFromHash("#platform/models")).toBe("Models");
+    expect(viewFromHash("#gateway/prompts")).toBe("Models");
+    expect(viewFromHash("#settings/prompts")).toBe("Models");
+    expect(viewFromHash("#prompts")).toBe("Models");
     expect(viewFromHash("#settings/guardrails")).toBe("Guardrails");
     expect(viewFromHash("#guardrails")).toBe("Guardrails");
 
     // The bare area lands on its first tab, as `#settings` lands on Setup.
     expect(viewFromHash("#gateway")).toBe("Models");
+  });
+
+  it("addresses the usage tab and keeps it inside Gateway", () => {
+    /*
+     * Added at v8.9.0, so there is no retired spelling to preserve -- what this
+     * pins is that the generated path, the router and the area map agree. The
+     * three are edited in three separate places in one file, and the failure
+     * mode of getting one wrong is a tab that draws but whose address bar
+     * disagrees with it, or a bookmark that silently lands on the Dashboard.
+     */
+    expect(pathForView("Usage")).toBe("#gateway/usage");
+    expect(viewFromHash("#gateway/usage")).toBe("Usage");
+    expect(viewFromHash("#usage")).toBe("Usage");
+    expect(productAreaForView("Usage")).toBe("Gateway");
   });
 
   it("names the areas the way the product does", () => {
@@ -266,15 +284,15 @@ describe("workspace navigation", () => {
   it("gives the update check its own tab rather than a slot inside setup", () => {
     expect(sectionNavigationFor("Settings")).toEqual([
       { label: "Setup", view: "Deployment", icon: "setup" },
-      { label: "People", view: "People", icon: "people" },
+      { label: "Access", view: "People", icon: "access" },
       { label: "System", view: "Application", icon: "system" },
     ]);
     // What Settings is left holding is what it was always really about:
     // bringing the deployment up, and keeping the machine it runs on current.
     expect(sectionNavigationFor("Gateway")).toEqual([
       { label: "Models", view: "Models", icon: "models" },
-      { label: "Prompts", view: "Prompts", icon: "prompts" },
       { label: "Guardrails", view: "Guardrails", icon: "guardrails" },
+      { label: "Usage", view: "Usage", icon: "usage" },
     ]);
     // The hash follows the label and the routing token does not, the same way
     // `Deployment` is addressed as `#settings/setup` two lines above.
@@ -352,7 +370,7 @@ describe("workspace navigation", () => {
     expect(viewFromHash("#platform")).toBe("Deployment");
     expect(viewFromHash("#platform/setup")).toBe("Deployment");
     expect(viewFromHash("#platform/models")).toBe("Models");
-    expect(viewFromHash("#platform/prompts")).toBe("Prompts");
+    expect(viewFromHash("#platform/prompts")).toBe("Models");
     expect(viewFromHash("#platform/guardrails")).toBe("Guardrails");
   });
 
@@ -372,10 +390,12 @@ describe("workspace navigation", () => {
     expect(viewFromHash("#settings/divisions")).toBe("People");
     expect(viewFromHash("#divisions")).toBe("People");
 
-    // The generated addresses, so the alias cannot quietly become the one the
-    // rail produces: People still generates its own path, and there is no
-    // `Divisions` view left for `pathForView` to be called with.
-    expect(pathForView("People")).toBe("#settings/people");
+    // The hash follows the label the way Setup and System already do; the
+    // routing token stays `People`. Old People and Divisions spellings stay
+    // as aliases so a bookmark cannot silently redirect to the Dashboard.
+    expect(pathForView("People")).toBe("#settings/access");
+    expect(viewFromHash("#settings/access")).toBe("People");
+    expect(viewFromHash("#access")).toBe("People");
     expect(viewFromHash("#settings/people")).toBe("People");
     expect(viewFromHash("#people")).toBe("People");
     expect(productAreaForView("People")).toBe("Settings");

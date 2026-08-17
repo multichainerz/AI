@@ -543,6 +543,18 @@ describe("operations control room", () => {
     expect(within(activity).queryByText("Hermes runs")).toBeNull();
   });
 
+  it("gives each summary figure the same size and an icon", async () => {
+    await view();
+
+    const summary = screen.getByRole("region", { name: "AI operations summary" });
+    expect(summary.querySelectorAll("svg")).toHaveLength(3);
+    const figures = [...summary.querySelectorAll("strong")].map((node) => node.className);
+    expect(figures).toHaveLength(3);
+    // Tone may colour one figure (critical incidents) without stepping its size.
+    expect(figures.every((cls) => cls.includes("text-[19px]"))).toBe(true);
+    expect(figures.some((cls) => cls.includes("text-display"))).toBe(false);
+  });
+
   /*
    * `totalCount` is every run of every status still in the database. It was
    * shown as "Retained", which reads as a retention policy or a backlog and is

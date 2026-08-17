@@ -63,6 +63,7 @@ function connection(kind: ServiceKind, baseUrl: string): ServiceConnectionSummar
     enabled: true,
     status: "HEALTHY",
     configuration: kind === "INFERENCE" ? { modelAlias: "laguna-s" } : {},
+    secretFieldNames: kind === "INFERENCE" ? ["apiKey"] : [],
   } as ServiceConnectionSummary;
 }
 
@@ -81,10 +82,25 @@ const onlineNode = {
 const activeProfile = { status: "ACTIVE" } as unknown as AgentProfile;
 const enabledRuntime = { enabled: true } as unknown as AgentRuntimeControl;
 
+const connectionEditor = {
+  busy: false,
+  monitoring: null,
+  error: null,
+  diagnostic: null,
+  revisionConnectionId: null,
+  revisionHistory: null,
+  onSave: vi.fn(async () => undefined),
+  onTest: vi.fn(async () => undefined),
+  onDiscoverInference: vi.fn(async () => null),
+  onLoadInferenceCatalogue: vi.fn(async () => null),
+  onUpdateMonitoring: vi.fn(async () => undefined),
+  onLoadRevisions: vi.fn(async () => undefined),
+  onRollback: vi.fn(async () => undefined),
+};
+
 const callbacks = {
   onConfigure: vi.fn(),
   onOpenWorkspace: vi.fn(),
-  onOpenOperations: vi.fn(),
   onRuntimeNodesChange: vi.fn(),
   onSignIn: vi.fn(),
   onSessionExpired: vi.fn(),
@@ -100,6 +116,7 @@ function props(overrides: Overrides = {}) {
     agentRuntime: null,
     profiles: [] as AgentProfile[],
     runtimeNodes: [] as HermesRuntimeNode[],
+    connectionEditor,
     ...callbacks,
     ...overrides,
   };
@@ -244,13 +261,19 @@ describe("the setup wizard", () => {
     expect(screen.queryByText(/blockers remain/)).toBeNull();
   });
 
-  it("names the two inference traps nothing in the product states today", async () => {
-    await open(inferenceDone);
-    await userEvent.setup().click(rail().getByRole("button", { name: /Connect an inference server/ }));
+  it("connects inference on the step itself, not in a dialog over it", async () => {
+    await open();
 
     const step = within(screen.getByRole("region", { name: "Step 1: Connect an inference server" }));
-    expect(step.getByText(/exactly one/i)).toBeTruthy();
-    expect(step.getByText(/without a selected model cannot\s+seed anything/i)).toBeTruthy();
+    expect(step.getByRole("radiogroup", { name: "Endpoint type" })).toBeTruthy();
+    expect(step.getByRole("radio", { name: /Local server/ })).toBeTruthy();
+    expect(step.getByRole("radio", { name: /Public endpoint/ })).toBeTruthy();
+    expect(step.getByLabelText(/AI Inference address/)).toBeTruthy();
+    expect(step.getByRole("button", { name: "Discover server" })).toBeTruthy();
+    expect(step.getByRole("button", { name: /Create connection|Activate AI Inference/ })).toBeTruthy();
+    expect(document.getElementById("connection-form")).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Connect inference server/i })).toBeNull();
   });
 
   it("hands the nodes panel no target environment until the snapshot says so", async () => {
@@ -270,7 +293,7 @@ describe("the setup wizard", () => {
     // Said twice on purpose: once as a reason this step is waiting, and once by
     // the panel that would otherwise be offering the installer.
     expect(screen.getAllByText(/The architecture decision has not loaded/).length).toBeGreaterThan(0);
-    expect(screen.queryByRole("button", { name: "Generate VM2 installer" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Generate installer" })).toHaveProperty("disabled", true);
 
     // And once it does arrive, the enrolment path opens normally — without
     // which the assertions above would pass against a panel that is simply
@@ -279,7 +302,7 @@ describe("the setup wizard", () => {
       resolveSnapshot(snapshot);
       await Promise.resolve();
     });
-    await waitFor(() => expect(screen.getByRole("button", { name: "Generate VM2 installer" })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Generate installer" })).toHaveProperty("disabled", false));
   });
 
   it("re-runs the AI-services check at the hand-off into step 3", async () => {
@@ -300,18 +323,7 @@ describe("the setup wizard", () => {
     await waitFor(() => expect(callbacks.onOpenWorkspace).toHaveBeenCalledWith("Agents"));
   });
 
-  it("states the Production activation deadlock instead of leaving it as operator error", async () => {
-    api.getOnboardingSnapshot.mockResolvedValue({
-      ...snapshot,
-      architecture: { ...snapshot.architecture, targetEnvironment: "PRODUCTION" },
-    } as OnboardingSnapshot);
-    await open(everythingDone);
-
-    expect(screen.getByText(/Recording activation needs backend work on a Production target/)).toBeTruthy();
-    expect(screen.getByText(/downgraded to a warning when the target is Production/)).toBeTruthy();
-  });
-
-  it("keeps the three blocks that are not setup steps off the setup screen", async () => {
+  it("keeps the blocks that are not setup steps off the setup screen", async () => {
     await open(everythingDone);
     const markup = document.body.innerHTML;
 
@@ -323,30 +335,13 @@ describe("the setup wizard", () => {
     // The Governed Chat promo is gone: it duplicated step 3 and its only
     // button was a disabled instruction that opened Chat anyway.
     expect(markup).not.toContain("Governed Chat");
-    // Recovery stays, as the footer action it always was.
-    expect(screen.getByRole("button", { name: "Installation recovery" })).toBeTruthy();
-  });
-
-  it("keeps the recovery owner an operator is typing when the parent re-renders", async () => {
-    /*
-     * App polls and passes a fresh `onSessionExpired` arrow every few seconds.
-     * With that identity in the snapshot effect's dependencies the effect
-     * re-runs and writes the stored owner back over the field, so a name being
-     * typed into the recovery kit form vanishes mid-entry.
-     */
-    const user = userEvent.setup();
-    const stable = props(inferenceDone);
-    const { rerender } = render(<OnboardingView {...stable} onSessionExpired={() => undefined} />);
-
-    await user.click(await screen.findByRole("button", { name: "Installation recovery" }));
-    const owner = await screen.findByLabelText("Recovery owner");
-    await user.clear(owner);
-    await user.type(owner, "Infrastructure recovery team");
-
-    rerender(<OnboardingView {...stable} onSessionExpired={() => undefined} />);
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
-
-    expect((owner as HTMLInputElement).value).toBe("Infrastructure recovery team");
+    // The footer that pointed at Operations and recovery is gone with them.
+    expect(markup).not.toContain("Production controls stay out of the setup path");
+    expect(screen.queryByRole("button", { name: "Installation recovery" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Open Operations" })).toBeNull();
+    // Topology/target is an install-time decision, not a Setup step-2 form.
+    expect(screen.queryByRole("button", { name: /Record decision|Change decision/ })).toBeNull();
+    expect(markup).not.toContain("Architecture decision");
   });
 
   it("renders no inline style, which the CSP would refuse in the built container", async () => {

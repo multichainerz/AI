@@ -3,6 +3,8 @@ import {
   connectionMonitoringControlSchema,
   configurationRevisionListSchema,
   createServiceConnectionSchema,
+  inferenceCatalogueRequestSchema,
+  inferenceCatalogueResultSchema,
   inferenceDiscoveryRequestSchema,
   inferenceDiscoveryResultSchema,
   rollbackConfigurationRequestSchema,
@@ -26,12 +28,14 @@ import {
 import type { ConnectionTestService } from "./diagnostics/connection-test-service.js";
 import type { ConnectionMonitoringManager } from "./connection-monitor.js";
 import type { InferenceDiscoveryService } from "./diagnostics/inference-discovery-service.js";
+import { InferenceCatalogueError, type InferenceCatalogueService } from "./diagnostics/inference-catalogue-service.js";
 
 interface ConnectionRouteDependencies {
   sessionManager?: AdminSessionManager;
   manager?: ConnectionManager;
   tester?: ConnectionTestService;
   discoverer?: InferenceDiscoveryService;
+  cataloguer?: InferenceCatalogueService;
   monitor?: ConnectionMonitoringManager;
 }
 
@@ -109,6 +113,36 @@ export async function registerConnectionRoutes(
     } catch (error) {
       if (error instanceof ConnectionNotFoundError) {
         return reply.code(404).send({ error: "NOT_FOUND", message: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.post("/inference/catalogue", async (request, reply) => {
+    if (!(await requireAdmin(request, reply, dependencies.sessionManager, "connections:test"))) return reply;
+    if (!dependencies.cataloguer) {
+      return reply.code(503).send({
+        error: "CATALOGUE_UNAVAILABLE",
+        message: "Inference catalogue lookup is not available.",
+      });
+    }
+    const input = inferenceCatalogueRequestSchema.safeParse(request.body);
+    if (!input.success) {
+      return reply.code(400).send({
+        error: "INVALID_CATALOGUE_REQUEST",
+        message: "An OpenRouter API key is required.",
+        issues: input.error.issues,
+      });
+    }
+    try {
+      return inferenceCatalogueResultSchema.parse(await dependencies.cataloguer.list(input.data));
+    } catch (error) {
+      if (error instanceof InferenceCatalogueError && error.code === "AUTH_REJECTED") {
+        // 400, not 401: a 401 here is read as a dead administrator session.
+        return reply.code(400).send({ error: "CATALOGUE_KEY_REJECTED", message: error.message });
+      }
+      if (error instanceof InferenceCatalogueError) {
+        return reply.code(502).send({ error: "CATALOGUE_UPSTREAM_FAILED", message: error.message });
       }
       throw error;
     }

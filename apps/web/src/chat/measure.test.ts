@@ -110,4 +110,10 @@ describe("thread measure", () => {
     expect(stylesheet).not.toContain("1380px");
     expect(stylesheet).not.toContain("clamp(24px, 4vw, 64px)");
   });
+
+  it("thins the dashboard scrollbar instead of keeping the platform trough", () => {
+    expect(stylesheet).toContain("*::-webkit-scrollbar { width: 6px; height: 6px; }");
+    expect(stylesheet).toContain("*::-webkit-scrollbar-button { display: none;");
+    expect(stylesheet).toContain("scrollbar-width: thin");
+  });
 });

@@ -56,11 +56,31 @@ const relativeHealthPathSchema = z
   .max(240)
   .regex(/^\/(?!\/)[^\s?#]*$/, "Path must be a relative service path beginning with one slash.");
 
-const modelAliasSchema = z
+export const modelAliasSchema = z
   .string()
   .min(1)
   .max(200)
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/, "Model alias contains unsupported characters.");
+
+/**
+ * Pinned OpenRouter write. `endpointUrl` joins with `base.origin`, so the
+ * `/api/v1` prefix has to live on the paths — not on the base URL.
+ */
+export const OPENROUTER_INFERENCE = {
+  origin: "https://openrouter.ai",
+  modelsPath: "/api/v1/models",
+  chatPath: "/api/v1/chat/completions",
+  keyPath: "/api/v1/key",
+} as const;
+
+export function isOpenRouterEndpoint(baseUrl: string | null | undefined): boolean {
+  if (!baseUrl) return false;
+  const match = /^https?:\/\/([^/?#]+)/i.exec(baseUrl);
+  const host = match?.[1]?.toLowerCase();
+  if (!host) return false;
+  const hostname = host.replace(/:\d+$/, "");
+  return hostname === "openrouter.ai" || hostname.endsWith(".openrouter.ai");
+}
 
 const oidcClaimNameSchema = z
   .string()
@@ -266,6 +286,24 @@ export const inferenceDiscoveryProbeSchema = z.object({
   message: z.string().min(1).max(500),
 });
 
+export const inferenceCatalogueRequestSchema = z.object({
+  provider: z.literal("openrouter"),
+  apiKey: z.string().min(1).max(16_384),
+  timeoutMs: z.number().int().min(1_000).max(30_000).default(8_000),
+}).strict();
+
+export const inferenceCatalogueResultSchema = z.object({
+  provider: z.literal("openrouter"),
+  models: z.array(z.object({
+    id: modelAliasSchema,
+    name: z.string().min(1).max(300).optional(),
+  })).max(2_000),
+  key: z.object({
+    label: z.string().min(1).max(200).optional(),
+    limitRemaining: z.number().nullable().optional(),
+  }),
+}).strict();
+
 export const inferenceDiscoveryResultSchema = z.object({
   status: z.enum(["READY", "PARTIAL", "AUTH_REQUIRED", "UNREACHABLE"]),
   message: z.string().min(1).max(500),
@@ -348,6 +386,8 @@ export type ConnectionTestResult = z.infer<typeof connectionTestResultSchema>;
 export type InferenceDiscoveryRequest = z.infer<typeof inferenceDiscoveryRequestSchema>;
 export type InferenceDiscoveryProbe = z.infer<typeof inferenceDiscoveryProbeSchema>;
 export type InferenceDiscoveryResult = z.infer<typeof inferenceDiscoveryResultSchema>;
+export type InferenceCatalogueRequest = z.infer<typeof inferenceCatalogueRequestSchema>;
+export type InferenceCatalogueResult = z.infer<typeof inferenceCatalogueResultSchema>;
 export type ConnectionMonitoringControl = z.infer<typeof connectionMonitoringControlSchema>;
 export type UpdateConnectionMonitoringControl = z.infer<typeof updateConnectionMonitoringControlSchema>;
 export type ConfigurationRevisionSummary = z.infer<

@@ -124,7 +124,7 @@ Preferred host-loss procedure:
 Do not use an invitation as a generic remote administrator. Upgrade with pinned artifacts under customer change control: an upgrade is a new invitation naming a new Hermes commit, followed by a re-enrollment. Before promotion, test the exact Hermes commit, API contracts, state migration, backup, rollback, and agent cancellation in a non-production environment.
 
 The **Settings → System** release check concerns the OrcaSynapse VM1 release
-only. (The tabs are Setup, People and System. This paragraph said "Settings →
+only. (The tabs are Setup, Access and System. This paragraph said "Settings →
 Application" for several releases; `Application` is the routing token the System
 tab still uses internally, and has never been a name on screen.) It compares
 official stable tags and gives the administrator a

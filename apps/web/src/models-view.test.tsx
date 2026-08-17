@@ -195,6 +195,36 @@ describe("naming a new route", () => {
     fireEvent.blur(slug);
     expect(slug).toHaveProperty("value", "chat-frontline");
   });
+
+  it("keeps Save reachable when the form grows past the viewport", async () => {
+    /*
+     * The same structure `governance-views.test.tsx` pins on the guardrail
+     * editor, asserted here because this form is the other one that can outgrow
+     * its page. At >=761px `.workspace-page` is `height: 100dvh; overflow:
+     * hidden`, so a panel that is `shrink-0` with no overflow of its own has
+     * its bottom -- Save included -- cut off with nothing to scroll. Ten fields
+     * in a three-column grid survives a tall window and does not survive a
+     * short one.
+     *
+     * jsdom has no layout, so this asserts the structure that makes scrolling
+     * possible rather than the scrolling itself.
+     */
+    await view();
+    fireEvent.click(screen.getByRole("button", { name: "New model route" }));
+
+    const body = screen.getByTestId("route-editor-body");
+    expect(body.className).toContain("overflow-y-auto");
+    // Without min-h-0 a flex item refuses to shrink below its content, and the
+    // overflow above never engages.
+    expect(body.className).toContain("min-h-0");
+
+    // The fields live inside the scroll region, because they are what grows.
+    expect(within(body).getByLabelText(/^Slug/)).toBeTruthy();
+
+    // Save does not, because it is the thing being reached for.
+    const save = screen.getByRole("button", { name: "Create draft route" });
+    expect(body.contains(save)).toBe(false);
+  });
 });
 
 describe("models catalogue", () => {

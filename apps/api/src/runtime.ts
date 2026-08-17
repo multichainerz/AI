@@ -16,6 +16,7 @@ import type { ConnectionManager } from "./connections/connection-manager.js";
 import { DrizzleConnectionManager } from "./connections/drizzle-connection-manager.js";
 import { ConnectionTestService } from "./connections/diagnostics/connection-test-service.js";
 import { InferenceDiscoveryService } from "./connections/diagnostics/inference-discovery-service.js";
+import { InferenceCatalogueService } from "./connections/diagnostics/inference-catalogue-service.js";
 import { ConnectionMonitorRuntime, type ConnectionMonitorService } from "./connections/connection-monitor.js";
 import type { OperationsManager } from "./operations/operations-manager.js";
 import { DrizzleOperationsManager } from "./operations/drizzle-operations-manager.js";
@@ -54,6 +55,8 @@ import type { HermesCorpusManager } from "./corpus/corpus-manager.js";
 import { DrizzleHermesCorpusManager } from "./corpus/drizzle-corpus-manager.js";
 import type { PlatformReleaseTargetManager } from "./updates/release-target-manager.js";
 import { DrizzlePlatformReleaseTargetManager } from "./updates/drizzle-release-target-manager.js";
+import type { UsageManager } from "./usage/usage-manager.js";
+import { DrizzleUsageManager } from "./usage/drizzle-usage-manager.js";
 
 export type BootstrapState = "REQUIRED" | "READY" | "LOCKED";
 
@@ -63,6 +66,7 @@ export interface RuntimeServices {
   connectionManager?: ConnectionManager;
   connectionTestService?: ConnectionTestService;
   inferenceDiscoveryService?: InferenceDiscoveryService;
+  inferenceCatalogueService?: InferenceCatalogueService;
   connectionMonitor?: ConnectionMonitorService;
   operationsManager?: OperationsManager;
   chatManager?: ChatManager;
@@ -74,6 +78,7 @@ export interface RuntimeServices {
   divisionManager?: DivisionManager;
   personManager?: DrizzlePersonManager;
   auditManager?: AuditManager;
+  usageManager?: UsageManager;
   siemForwarder?: SiemForwarder;
   agentManager?: AgentManager;
   toolingManager?: ToolingManager;
@@ -128,6 +133,7 @@ export function createRuntimeServices(): RuntimeServices {
     const connectionManager = new DrizzleConnectionManager(database, encryption);
     const connectionTestService = new ConnectionTestService(connectionManager);
     const inferenceDiscoveryService = new InferenceDiscoveryService(connectionManager);
+    const inferenceCatalogueService = new InferenceCatalogueService();
     const connectionMonitor = new ConnectionMonitorRuntime(
       database,
       connectionTestService,
@@ -143,6 +149,7 @@ export function createRuntimeServices(): RuntimeServices {
     const divisionManager = new DrizzleDivisionManager(database);
     const personManager = new DrizzlePersonManager(database);
     const auditManager = new DrizzleAuditManager(database);
+    const usageManager = new DrizzleUsageManager(database);
     const siemForwarder = new SiemForwarder(database, connectionManager, {
       error: (message, error) => console.error(message, error),
     });
@@ -190,6 +197,7 @@ export function createRuntimeServices(): RuntimeServices {
       connectionManager,
       connectionTestService,
       inferenceDiscoveryService,
+      inferenceCatalogueService,
       connectionMonitor,
       operationsManager,
       chatManager,
@@ -207,6 +215,7 @@ export function createRuntimeServices(): RuntimeServices {
       divisionManager,
       personManager,
       auditManager,
+      usageManager,
       siemForwarder,
       agentManager,
       toolingManager,

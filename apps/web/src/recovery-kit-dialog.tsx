@@ -1,4 +1,5 @@
 import type { OnboardingSnapshot } from "@orcasynapse/contracts";
+import { KeyRound } from "lucide-react";
 import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 import {
   OrcaSynapseApiError,
@@ -139,6 +140,7 @@ export function RecoveryKitDialog({
     <Dialog
       open={open}
       onClose={onClose}
+      icon={KeyRound}
       kicker="Offline recovery"
       title="Protect connector encryption"
       description="Export an encrypted recovery kit and store it outside the OrcaSynapse host. The passphrase and kit are never retained by the dashboard."

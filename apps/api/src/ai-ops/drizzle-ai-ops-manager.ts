@@ -4,6 +4,7 @@ import {
   type AiOpsWorkflow,
   type CreateOperationalIncident,
   type GuardrailControl,
+  type GuardrailRule,
   type IncidentDecision,
   type OperationalIncident,
   type OperationalIncidentList,
@@ -23,7 +24,6 @@ import {
   operationalIncident,
   productionReadinessApproval,
   productionReadinessControl,
-  promptTemplate,
   type OrcaSynapseDatabase,
 } from "@orcasynapse/database";
 import { and, asc, count, desc, eq, inArray } from "drizzle-orm";
@@ -116,21 +116,24 @@ interface ActiveGuardrailPolicy {
   maxOutputCharacters: number;
   blockControlCharacters: boolean;
   blockCredentialPatterns: boolean;
-  updatedAt: Date;
-}
-
-interface ActivePromptTemplate {
-  id: string;
-  displayName: string;
-  purpose: "CHAT_SYSTEM";
-  version: string;
-  contentChecksum: string;
+  rules: unknown;
   updatedAt: Date;
 }
 
 function guardrailPosture(active: ActiveGuardrailPolicy | null): GuardrailControl[] {
+  /*
+   * The two shipped detectors plus however many rules the operator enabled.
+   *
+   * Counting only the booleans understated the boundary from the moment rules
+   * existed: a policy carrying forty enabled rules reported "2 content checks".
+   * Disabled rules are excluded because a disabled rule enforces nothing, which
+   * is the same reason a switched-off detector is not counted.
+   */
+  const enabledRules = active
+    ? (active.rules as GuardrailRule[]).filter(({ enabled }) => enabled).length
+    : 0;
   const enabledChecks = active
-    ? Number(active.blockControlCharacters) + Number(active.blockCredentialPatterns)
+    ? Number(active.blockControlCharacters) + Number(active.blockCredentialPatterns) + enabledRules
     : 0;
   return [
   {
@@ -377,7 +380,7 @@ export class DrizzleAiOpsManager implements AiOpsManager {
 
   async overview(): Promise<AiOpsOverview> {
     const generatedAt = new Date();
-    const [connections, monitoring, models, runtime, chat, agents, tools, forwarding, activeGuardrail, activePrompt] = await Promise.all([
+    const [connections, monitoring, models, runtime, chat, agents, tools, forwarding, activeGuardrail] = await Promise.all([
       settled(this.dependencies.connections.list()),
       this.dependencies.connectionMonitoring ? settled(this.dependencies.connectionMonitoring.getControl()) : Promise.resolve(null),
       this.dependencies.models ? settled(this.dependencies.models.list()) : Promise.resolve(null),
@@ -395,23 +398,11 @@ export class DrizzleAiOpsManager implements AiOpsManager {
           maxOutputCharacters: guardrailPolicy.maxOutputCharacters,
           blockControlCharacters: guardrailPolicy.blockControlCharacters,
           blockCredentialPatterns: guardrailPolicy.blockCredentialPatterns,
+          rules: guardrailPolicy.rules,
           updatedAt: guardrailPolicy.updatedAt,
         })
         .from(guardrailPolicy)
         .where(eq(guardrailPolicy.status, "ACTIVE"))
-        .limit(1)
-        .then(([row]) => row ?? null)),
-      settled(this.database
-        .select({
-          id: promptTemplate.id,
-          displayName: promptTemplate.displayName,
-          purpose: promptTemplate.purpose,
-          version: promptTemplate.version,
-          contentChecksum: promptTemplate.contentChecksum,
-          updatedAt: promptTemplate.updatedAt,
-        })
-        .from(promptTemplate)
-        .where(and(eq(promptTemplate.purpose, "CHAT_SYSTEM"), eq(promptTemplate.status, "ACTIVE")))
         .limit(1)
         .then(([row]) => row ?? null)),
     ]);
@@ -482,21 +473,6 @@ export class DrizzleAiOpsManager implements AiOpsManager {
         summary: `OrcaSynapse-native runtime limits and ${Number(activeGuardrail.blockControlCharacters) + Number(activeGuardrail.blockCredentialPatterns)} content checks are active at version ${activeGuardrail.version}.`,
         source: "CONFIGURATION",
         observedAt: activeGuardrail.updatedAt.toISOString(),
-        latencyMs: null,
-        affectedWorkflows: ["CHAT"],
-      });
-    }
-    if (activePrompt) {
-      const prompt = activePrompt as ActivePromptTemplate;
-      components.push({
-        id: `prompt:${prompt.id}`,
-        label: prompt.displayName,
-        status: "HEALTHY",
-        // Says "released", not "active in chat": no runtime component reads a
-        // prompt template — the worker builds system text from the Profile.
-        summary: `Chat-system prompt v${prompt.version} is the released version; checksum ${prompt.contentChecksum.slice(0, 12)}.`,
-        source: "CONFIGURATION",
-        observedAt: prompt.updatedAt.toISOString(),
         latencyMs: null,
         affectedWorkflows: ["CHAT"],
       });

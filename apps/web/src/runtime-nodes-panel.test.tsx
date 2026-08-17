@@ -72,9 +72,7 @@ async function panel(
       />
     </main>,
   );
-  await waitFor(() => screen.getByText(
-    /Install the Agentic System on VM2|AI Inference must be ready first|architecture decision has not loaded/,
-  ));
+  await waitFor(() => screen.getByRole("region", { name: "Agent runtime" }));
   if (process.env.VIEW_PREVIEW_OUT) {
     writeFileSync(process.env.VIEW_PREVIEW_OUT, document.body.innerHTML, "utf8");
   }
@@ -85,20 +83,22 @@ afterEach(cleanup);
 describe("the fresh-install state", () => {
   it("offers the installer once inference is ready", async () => {
     await panel();
-    expect(screen.getByRole("button", { name: "Generate VM2 installer" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Generate installer" })).toBeTruthy();
+    expect(screen.queryByText("Required paths")).toBeNull();
+    expect(screen.queryByText("Network contract")).toBeNull();
   });
 
   it("sends the operator to inference first when it is not", async () => {
     await panel(false);
     expect(screen.getByRole("button", { name: "Configure AI Inference" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Generate VM2 installer" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Generate installer" })).toBeNull();
   });
 });
 
 describe("the installer generator", () => {
   async function open() {
     await panel();
-    fireEvent.click(screen.getByRole("button", { name: "Generate VM2 installer" }));
+    fireEvent.click(screen.getByRole("button", { name: "Generate installer" }));
     const dialog = await screen.findByRole("dialog");
     if (process.env.VIEW_PREVIEW_DIALOG_OUT) {
       writeFileSync(process.env.VIEW_PREVIEW_DIALOG_OUT, document.body.innerHTML, "utf8");
@@ -152,7 +152,7 @@ describe("typing in a dialog", () => {
     // first focusable. Only the first character of any value could be typed,
     // which made every dialog form unusable — VM2 enrollment included.
     await panel();
-    fireEvent.click(screen.getByRole("button", { name: "Generate VM2 installer" }));
+    fireEvent.click(screen.getByRole("button", { name: "Generate installer" }));
     const dialog = await screen.findByRole("dialog");
     // Let the dialog's own opening focus land first. Measuring before that
     // frame runs conflates "the overlay focused itself on open", which is
@@ -177,7 +177,7 @@ describe("the production artifact pin", () => {
   // enrollment too, but by then the operator has already left this form.
   async function openProduction() {
     await panel(true, "PRODUCTION");
-    fireEvent.click(screen.getByRole("button", { name: "Generate VM2 installer" }));
+    fireEvent.click(screen.getByRole("button", { name: "Generate installer" }));
     return screen.findByRole("dialog");
   }
 
@@ -228,9 +228,9 @@ describe("an unknown target environment", () => {
 
     // Positive first: a `queryByText(...)` that is null because the whole
     // screen failed to render would pass this vacuously.
-    expect(screen.getByText("Agentic System")).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Agent runtime" })).toBeTruthy();
     expect(screen.queryByText(/Development release defaults are selected/)).toBeNull();
-    expect(screen.queryByRole("button", { name: "Generate VM2 installer" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Generate installer" })).toHaveProperty("disabled", true);
   });
 });
 

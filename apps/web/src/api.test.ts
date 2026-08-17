@@ -26,10 +26,9 @@ import {
   changeModelDeploymentState,
   getGuardrailPolicies,
   changeGuardrailPolicyState,
-  getPromptTemplates,
-  changePromptTemplateState,
   testConnection,
   discoverInferenceServer,
+  loadInferenceCatalogue,
 } from "./api.js";
 
 afterEach(() => vi.restoreAllMocks());
@@ -224,6 +223,27 @@ describe("OrcaSynapse browser API", () => {
     expect(JSON.parse(String(options?.body))).toMatchObject({ apiKey: "temporary-key" });
   });
 
+  it("loads an OpenRouter catalogue through the admin catalogue route", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({
+      provider: "openrouter",
+      models: [{ id: "anthropic/claude-sonnet-4", name: "Claude Sonnet 4" }],
+      key: { label: "pilot" },
+    }));
+
+    await loadInferenceCatalogue({
+      provider: "openrouter",
+      apiKey: "sk-or-v1-test",
+      timeoutMs: 8000,
+    });
+
+    const [url, options] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("/api/v1/admin/connections/inference/catalogue");
+    expect(JSON.parse(String(options?.body))).toMatchObject({
+      provider: "openrouter",
+      apiKey: "sk-or-v1-test",
+    });
+  });
+
   it("reads and updates the dashboard-owned connection monitoring control", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(jsonResponse({
@@ -346,6 +366,7 @@ describe("OrcaSynapse browser API", () => {
       maxOutputCharacters: 200000,
       blockControlCharacters: true,
       blockCredentialPatterns: true,
+      rules: [],
       firstActivatedAt: "2026-07-30T00:00:00.000Z",
       revision: 2,
       createdBy: null,
@@ -363,36 +384,6 @@ describe("OrcaSynapse browser API", () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/admin/guardrails");
     expect(fetchMock.mock.calls[1]?.[0]).toBe(`/api/v1/admin/guardrails/${policy.id}/activate`);
     expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({ expectedRevision: 1, reason: "Promoted safety evidence" });
-  });
-
-  it("reads prompts and sends an evidence-bound prompt activation", async () => {
-    const prompt = {
-      id: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d",
-      slug: "orcasynapse-chat-system",
-      displayName: "OrcaSynapse chat system",
-      description: "Approved employee chat behavior.",
-      purpose: "CHAT_SYSTEM",
-      version: "1.0.0",
-      status: "ACTIVE",
-      content: "You are the approved OrcaSynapse assistant. State uncertainty and protect private data.",
-      contentChecksum: "a".repeat(64),
-      firstActivatedAt: "2026-07-30T00:00:00.000Z",
-      revision: 2,
-      createdBy: null,
-      updatedBy: null,
-      createdAt: "2026-07-30T00:00:00.000Z",
-      updatedAt: "2026-07-30T00:00:00.000Z",
-    };
-    const fetchMock = vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(jsonResponse({ items: [prompt] }))
-      .mockResolvedValueOnce(jsonResponse(prompt));
-
-    await getPromptTemplates();
-    await changePromptTemplateState(prompt.id, "activate", { expectedRevision: 1, reason: "Promoted prompt evidence" });
-
-    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/admin/prompts");
-    expect(fetchMock.mock.calls[1]?.[0]).toBe(`/api/v1/admin/prompts/${prompt.id}/activate`);
-    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({ expectedRevision: 1, reason: "Promoted prompt evidence" });
   });
 
   it("restores the opaque enterprise session without exposing an OIDC token", async () => {

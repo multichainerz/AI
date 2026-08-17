@@ -51,5 +51,10 @@ describe("WorkspaceContextBar", () => {
     expect(stylesheet).not.toContain("background: rgb(20 20 24)");
     expect(stylesheet).toContain(".workspace-header:has(.workspace-header__sections)");
     expect(stylesheet).toContain("margin-bottom: 24px");
+    // Locked workspaces match the 12px dock stack rather than the 24px
+    // default or a 32px title gutter.
+    expect(stylesheet).toContain(".workspace-page");
+    expect(stylesheet).toContain("--workspace-inline: 12px");
+    expect(stylesheet).toContain("margin-bottom: 12px");
   });
 });

@@ -295,6 +295,64 @@ describe("DrizzleChatManager message submission", () => {
     expect(await context.database.select().from(chatMessage)).toHaveLength(0);
   });
 
+  it("blocks on an operator rule and names it without quoting the message", async () => {
+    await seedActiveGuardrail({
+      rules: [{
+        id: randomUUID(), label: "Internal codename", type: "WORD", pattern: "seahorse",
+        action: "BLOCK", caseSensitive: false, enabled: true,
+      }],
+    });
+    const conversationId = await conversation();
+
+    await expect(manager().submitMessage(principal, conversationId, "about the seahorse programme"))
+      .rejects.toThrow(/Internal codename/);
+
+    const [block] = (await context.database.select().from(auditEvent))
+      .filter(({ action }) => action === "guardrail.request_blocked");
+    expect(JSON.stringify(block?.metadata)).toContain("Internal codename");
+    expect(JSON.stringify(block?.metadata)).not.toContain("seahorse");
+    expect(await context.database.select().from(chatMessage)).toHaveLength(0);
+  });
+
+  it("keeps a redaction out of the conversation title, not only out of the message", async () => {
+    /*
+     * The leak this nearly shipped with. `submitMessage` reads `content` three
+     * times -- `safeTitle` when the conversation is still unnamed, the stored
+     * USER row, and the input handed to `submitRun`. Redacting only the row
+     * would leave the matched text sitting in the conversation title, on the
+     * sidebar of every screen that lists conversations, which is a more visible
+     * place than the message it was removed from.
+     */
+    await seedActiveGuardrail({
+      rules: [{
+        id: randomUUID(), label: "Internal codename", type: "WORD", pattern: "seahorse",
+        action: "REDACT", caseSensitive: false, enabled: true,
+      }],
+    });
+    const conversationId = await conversation();
+
+    const agentManager = agents();
+    await manager(agentManager).submitMessage(principal, conversationId, "about the seahorse programme");
+
+    const [user] = (await context.database.select().from(chatMessage)).filter(({ role }) => role === "USER");
+    expect(user?.content).toBe("about the [redacted] programme");
+
+    const [stored] = await context.database
+      .select({ title: chatConversation.title })
+      .from(chatConversation)
+      .where(eq(chatConversation.id, conversationId));
+    expect(stored?.title).toBe("about the [redacted] programme");
+    expect(stored?.title).not.toContain("seahorse");
+
+    // And the text handed on for execution is the redacted one, so the model
+    // never sees what the row and the title no longer show.
+    expect(agentManager.submitRun).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ input: "about the [redacted] programme" }),
+      expect.anything(),
+    );
+  });
+
   it("refuses chat when the catalogue is enforced but no policy is active", async () => {
     await seedActiveGuardrail({ status: "DRAFT" });
     const conversationId = await conversation();

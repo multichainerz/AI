@@ -1,4 +1,6 @@
 import type { ReactNode } from "react";
+import type { LucideIcon } from "lucide-react";
+import { X } from "lucide-react";
 import {
   Dialog as DialogRoot,
   DialogContent,
@@ -8,7 +10,7 @@ import {
 } from "../components/ui/dialog.js";
 import { Button } from "./button.js";
 import { cn } from "./cn.js";
-import { MicroLabel } from "./surface.js";
+import { Mark, MicroLabel } from "./surface.js";
 
 /**
  * Compatibility composition for existing feature screens. Its behavior comes
@@ -19,6 +21,7 @@ interface OverlayProps {
   open: boolean;
   onClose: () => void;
   title: string;
+  icon?: LucideIcon;
   kicker?: string;
   description?: ReactNode;
   footer?: ReactNode;
@@ -27,6 +30,7 @@ interface OverlayProps {
 }
 
 function OverlayChrome(props: OverlayProps & { drawer?: boolean }) {
+  const Icon = props.icon;
   return (
     <DialogRoot open={props.open} onOpenChange={(open) => { if (!open) props.onClose(); }}>
       <DialogContent
@@ -40,13 +44,26 @@ function OverlayChrome(props: OverlayProps & { drawer?: boolean }) {
           props.className,
         )}
       >
-        <DialogHeader className="shrink-0 flex-row items-start justify-between gap-6 border-b border-border px-5 py-4 pr-5">
-          <div className="min-w-0">
-            {props.kicker ? <MicroLabel className="mb-1.5 block text-primary">{props.kicker}</MicroLabel> : null}
-            <DialogTitle>{props.title}</DialogTitle>
-            {props.description ? <DialogDescription className="mb-0 mt-1.5 max-w-[62ch]">{props.description}</DialogDescription> : null}
+        <DialogHeader className="shrink-0 flex-row items-start justify-between gap-4 border-b border-border px-5 py-3.5 pr-5">
+          <div className="flex min-w-0 items-start gap-3">
+            {Icon ? (
+              <Mark className="mt-0.5">
+                <Icon className="size-4" aria-hidden="true" />
+              </Mark>
+            ) : null}
+            <div className="min-w-0">
+              {props.kicker ? <MicroLabel className="mb-1 block text-primary">{props.kicker}</MicroLabel> : null}
+              <DialogTitle>{props.title}</DialogTitle>
+              {props.description ? (
+                <DialogDescription className="mb-0 mt-1 max-w-[56ch] text-caption leading-relaxed">
+                  {props.description}
+                </DialogDescription>
+              ) : null}
+            </div>
           </div>
-          <Button variant="ghost" size="sm" onClick={props.onClose} aria-label="Close">Close</Button>
+          <Button variant="ghost" size="icon" className="size-8 shrink-0" onClick={props.onClose} aria-label="Close">
+            <X className="size-4" />
+          </Button>
         </DialogHeader>
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{props.children}</div>
         {props.footer ? <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-border px-5 py-3.5">{props.footer}</footer> : null}

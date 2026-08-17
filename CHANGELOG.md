@@ -5,6 +5,107 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v8.9.0 — 2026-08-17
+
+Makes guardrails something an operator writes rather than four switches, gives
+Gateway a usage surface, and finishes removing the Prompts tab.
+
+**Guardrails are configurable.** A policy carries up to 100 rules beside its
+four settings. A rule matches a `WORD` (whole word only), a `PHRASE` (tolerating
+a line break where you typed a space), a `PREFIX`, or a `REGEX`, and then
+blocks, redacts or flags. `FLAG` allows the message through and records the
+match, so a rule can be measured against live traffic before it is trusted to
+refuse anything.
+
+The three structured types escape the operator's text, so a catastrophic pattern
+is impossible by construction. Raw regex passes a gate at save time: static
+rejection of backreferences, lookarounds and nested quantifiers, then
+compilation, then a timing probe. `(a+)+b` is refused as backtracking
+exponentially — and the guarding test asserts the refusal returns promptly,
+which is the evidence that nothing executed it. The residual risk, and the
+worker-thread pool that was considered and declined, are recorded on
+`assertPatternIsSafe` rather than lost.
+
+Rules live in a `rules` jsonb column rather than a child table, because a child
+row can be edited without touching its parent's revision — and a policy's whole
+promise is that the rules a run enforced are attributable to a named version.
+Editing one is a material change like any threshold: it demands a new version
+and returns the policy to Draft.
+
+**Three defects the guardrail work uncovered, all closed.**
+
+- `POST /api/v1/agents/runs` was not inspected at all. `inspectInputText` had
+  exactly two callers, so a direct agent run was bounded only by the contract's
+  flat 32,000 characters — no policy limit, no control-character check, no
+  credential check. It was the way around every guardrail on the deployment.
+- Agent runs did not fail closed. Chat and the inference gateway latch on
+  `firstActivatedAt`; `activeOutputCharacterLimit` did not, so suspending the
+  active policy tightened two paths and silently loosened the third back to the
+  platform ceiling.
+- `maxOutputCharacters` above 200,000 was silently discarded by `submitRun`'s
+  clamp. The write bound now refuses it. The read bound deliberately does not:
+  `guardrailPolicySchema` validates on the way *out*, and tightening it there
+  would turn any deployment holding a larger value into a 500 on a working
+  screen.
+
+Redaction rewrites the text everywhere it is read, not only where it is stored.
+In chat that is three places — the conversation title, the stored message and
+the input handed to the run — and redacting only the message would have left the
+match sitting in the title, on the sidebar of every screen that lists
+conversations. The gateway forwards the rewritten message array rather than the
+body it was sent. Audit events carry rule labels and counts and never the text
+that matched: a credential rule fires because the input looked like a key, and
+quoting it to explain the refusal would put the key in a retained, forwarded
+trail.
+
+**Gateway → Usage** reports what the governed inference path consumed over a
+24h, 7d or 30d window: tokens, cost, latency and failures, broken down by model
+route, agent, division and person. Aggregated live from rows that already exist
+— `AgentRun` as the spine, since every chat turn is one — with no rollup table.
+Cost is what the route reported and nothing else; there is no price book, so an
+on-premises route that reports none shows a dash rather than a zero, and the
+count of unpriced runs is shown beside it. The per-person breakdown needs
+`audit:read` rather than the `operations:read` the rest of the screen uses, and
+is `null` rather than empty for a caller without it.
+
+`AgentRun` carried four indexes and not one led with a temporal column, so the
+windowed aggregate was a sequential scan of the installation's entire run
+history. Measured at 200,000 runs over ~139 days, taking the 30d window: 61.05ms
+and 5,715 buffers on a parallel sequential scan, against 25.16ms and 1,450 on an
+index scan. The ratio is the smaller half — without the index the plan reads the
+whole table, so its cost tracks lifetime history rather than the window asked
+for.
+
+Gateway refusals were recorded nowhere. `POLICY_REJECTED` threw before the audit
+write and `RATE_LIMITED` threw inside the transaction that would have carried
+it, so guardrails could block every request in a deployment and leave no trace.
+Both are now recorded, the rate-limit one from outside the transaction that
+refuses it.
+
+**Prompts is gone from the tree, not only from the tab strip.**
+`prompts-view.tsx` and its test are deleted; the table and admin routes remain,
+the way `ProductionReadinessControl` survived without a console surface.
+`RETRIEVAL` is dropped from `guardrailLayerSchema` — it was declared and emitted
+by nothing, because this product has no retrieval plane by design.
+
+The area title sits in the same place on every screen. The sticky band's inset
+and the page's content inset were one token, and `.workspace-page` lowers that
+token to 12px so a dock's gutter matches the gap between docks — so the heading
+sat 12px from the rail on the nine areas with a section strip and up to 24px on
+Dashboard and Session, and moving between areas nudged it sideways. The band is
+chrome and now carries its own inset; the page keeps its own.
+
+The policy and model-route editors scroll. Both were `shrink-0` panels with no
+overflow inside a `.workspace-page` that is `height: 100dvh; overflow: hidden`,
+so a form taller than the space available had its bottom — Save included — cut
+off with nothing to scroll. Survivable while the guardrail form was six fields;
+not survivable once it carried a rule list. Both are now flex columns whose body
+scrolls and whose action row stays on screen, the same shape the overlay chrome
+was given at v8.8.8.
+
+An OpenRouter model catalogue can be fetched from a key, and the workspace gets
+a pass over surfaces, overlays and step lists.
+
 ## v8.8.8 — 2026-08-17
 
 Enforces the password change People already promised, and remakes the setup

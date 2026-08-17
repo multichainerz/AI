@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   createServiceConnectionSchema,
+  inferenceCatalogueRequestSchema,
+  inferenceCatalogueResultSchema,
   inferenceDiscoveryRequestSchema,
   inferenceDiscoveryResultSchema,
+  isOpenRouterEndpoint,
+  modelAliasSchema,
   parseServiceConnectionConfiguration,
   updateConnectionMonitoringControlSchema,
   serviceConnectionSummarySchema,
@@ -23,6 +27,28 @@ describe("service connection configuration", () => {
       baseUrl: "gpu.internal:8000/v1",
       connectionId: "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d",
     })).toMatchObject({ baseUrl: "http://gpu.internal:8000/v1", timeoutMs: 8000 });
+
+    expect(isOpenRouterEndpoint("https://openrouter.ai")).toBe(true);
+    expect(isOpenRouterEndpoint("https://eu.openrouter.ai/api/v1")).toBe(true);
+    expect(isOpenRouterEndpoint("https://vllm.internal:8000")).toBe(false);
+    expect(modelAliasSchema.safeParse("anthropic/claude-sonnet-4").success).toBe(true);
+    expect(modelAliasSchema.safeParse("~openai/gpt-latest").success).toBe(false);
+
+    expect(inferenceCatalogueRequestSchema.parse({
+      provider: "openrouter",
+      apiKey: "sk-or-v1-test",
+    })).toMatchObject({ provider: "openrouter", timeoutMs: 8000 });
+
+    expect(inferenceCatalogueResultSchema.parse({
+      provider: "openrouter",
+      models: [{ id: "anthropic/claude-sonnet-4", name: "Claude Sonnet" }],
+      key: { label: "pilot", limitRemaining: 12.5 },
+    })).toMatchObject({ provider: "openrouter" });
+    expect(inferenceCatalogueResultSchema.safeParse({
+      provider: "openrouter",
+      models: [{ id: "~openai/gpt-latest" }],
+      key: {},
+    }).success).toBe(false);
 
     expect(inferenceDiscoveryResultSchema.parse({
       status: "READY",

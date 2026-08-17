@@ -11,6 +11,8 @@ import type {
   ChatMetrics,
   AgentMetrics,
   ToolMetrics,
+  InferenceCatalogueRequest,
+  InferenceCatalogueResult,
   InferenceDiscoveryRequest,
   InferenceDiscoveryResult,
   AgentProfile,
@@ -39,6 +41,7 @@ import {
   createLocalPersonSession,
   createConnection,
   discoverInferenceServer,
+  loadInferenceCatalogue,
   getAdministratorSession,
   getEnterpriseSession,
   getOidcStatus,
@@ -102,7 +105,7 @@ const ToolingView = lazy(() => import("./tooling-view.js").then((module) => ({ d
 const ModelsView = lazy(() => import("./models-view.js").then((module) => ({ default: module.ModelsView })));
 const PeopleView = lazy(() => import("./people-view.js").then((module) => ({ default: module.PeopleView })));
 const GuardrailsView = lazy(() => import("./guardrails-view.js").then((module) => ({ default: module.GuardrailsView })));
-const PromptsView = lazy(() => import("./prompts-view.js").then((module) => ({ default: module.PromptsView })));
+const UsageView = lazy(() => import("./usage-view.js").then((module) => ({ default: module.UsageView })));
 const OnboardingView = lazy(() => import("./onboarding-view.js").then((module) => ({ default: module.OnboardingView })));
 const ApplicationView = lazy(() => import("./application-view.js").then((module) => ({ default: module.ApplicationView })));
 const AuditView = lazy(() => import("./audit-view.js").then((module) => ({ default: module.AuditView })));
@@ -121,8 +124,8 @@ const AuditView = lazy(() => import("./audit-view.js").then((module) => ({ defau
  * for Dashboard, a terminal window for Session, a robot for Agents, joined
  * waypoints for Gateway, a gear for Settings, and a node graph for Operations.
  *
- * Waypoints rather than a shield or a route marker: Gateway holds models,
- * prompts and guardrails, and a shield would overweight one of the three.
+ * Waypoints rather than a shield or a route marker: Gateway holds models
+ * and guardrails, and a shield would overweight one of the two.
  */
 function Glyph({ name }: { name: string }) {
   const glyphs: Record<string, ReactNode> = {
@@ -916,7 +919,7 @@ function App() {
 
   /*
    * One field, two stores. The card used to speak only to LocalAdministrator,
-   * so a person created under Settings → People was answered as an expired
+   * so a person created under Settings → Access was answered as an expired
    * admin session. Ask that store first; only a refused credential falls
    * through to People. Elevation stays on `loginAdministrator` — that dialog
    * is asking for an administrator, not a person.
@@ -1091,6 +1094,22 @@ function App() {
       return await discoverInferenceServer(input);
     } catch (error) {
       setSettingsError(handleAdminError(error, "Unable to discover the AI Inference endpoint."));
+      return null;
+    } finally {
+      setSettingsBusy(false);
+    }
+  };
+
+  const loadCatalogue = async (
+    input: InferenceCatalogueRequest,
+  ): Promise<InferenceCatalogueResult | null> => {
+    if (!adminSession) return null;
+    setSettingsBusy(true);
+    setSettingsError(null);
+    try {
+      return await loadInferenceCatalogue(input);
+    } catch (error) {
+      setSettingsError(handleAdminError(error, "Unable to load the OpenRouter catalogue."));
       return null;
     } finally {
       setSettingsBusy(false);
@@ -1395,6 +1414,7 @@ function App() {
         className={cn(
           activeView === "Chat" && "chat-page",
           activeView === "Overview" && "dashboard-page",
+          activeView !== "Chat" && activeView !== "Overview" && "workspace-page",
         )}
       >
         <div className="mobile-brand"><BrandMark size={26} /><strong>OrcaSynapse</strong></div>
@@ -1437,14 +1457,6 @@ function App() {
               connections={managedConnections}
               onConfigureConnections={() => openConnectionSettings("INFERENCE")}
               onOpenOperations={() => selectView("Operations")}
-              onSessionExpired={forgetAdminSession}
-            />
-          ),
-          Prompts: () => (
-            <PromptsView
-              session={adminSession}
-              onOpenOperations={() => selectView("Operations")}
-              onOpenSettings={() => openConnectionSettings("INFERENCE")}
               onSessionExpired={forgetAdminSession}
             />
           ),
@@ -1519,6 +1531,13 @@ function App() {
               onSessionExpired={forgetAdminSession}
             />
           ),
+          Usage: () => (
+            <UsageView
+              session={adminSession}
+              onConfigure={() => openConnectionSettings()}
+              onSessionExpired={forgetAdminSession}
+            />
+          ),
           /*
            * One entry where there were two. Divisions was its own Settings tab
            * and its own view module until v8.9.0; `PeopleView` holds both
@@ -1545,9 +1564,23 @@ function App() {
               initialStep={setupStep}
               onSelectStep={(step) => selectView("Deployment", step)}
               onConfigure={(kind) => openConnectionSettings(kind)}
+              connectionEditor={{
+                busy: settingsBusy,
+                monitoring: connectionMonitoring,
+                error: settingsError,
+                diagnostic,
+                revisionConnectionId,
+                revisionHistory,
+                onSave: saveConnection,
+                onTest: runConnectionTest,
+                onDiscoverInference: discoverInference,
+                onLoadInferenceCatalogue: loadCatalogue,
+                onUpdateMonitoring: saveConnectionMonitoring,
+                onLoadRevisions: loadRevisions,
+                onRollback: restoreRevision,
+              }}
               onOpenWorkspace={(workspace) => selectView(workspace)}
               onRuntimeNodesChange={setRuntimeNodes}
-              onOpenOperations={() => selectView("Operations")}
               onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23settings%2Fsetup")}
               onSessionExpired={forgetAdminSession}
             />
@@ -1557,7 +1590,6 @@ function App() {
               session={adminSession}
               currentVersion={platform?.version ?? "unknown"}
               onConfigure={() => openConnectionSettings()}
-              onOpenOperations={() => selectView("Operations")}
             />
           ),
           Audit: () => (
@@ -1608,6 +1640,7 @@ function App() {
         onSave={saveConnection}
         onTest={runConnectionTest}
         onDiscoverInference={discoverInference}
+        onLoadInferenceCatalogue={loadCatalogue}
         onUpdateMonitoring={saveConnectionMonitoring}
         onLoadRevisions={loadRevisions}
         onRollback={restoreRevision}

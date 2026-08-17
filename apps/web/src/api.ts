@@ -2,8 +2,12 @@ import {
   architectureDecisionSchema,
   auditEventListSchema,
   auditForwardingStateSchema,
+  usageReportSchema,
+  type UsageReport,
+  type UsageWindow,
   connectionTestResultSchema,
   connectionMonitoringControlSchema,
+  inferenceCatalogueResultSchema,
   inferenceDiscoveryResultSchema,
   administratorSessionSchema,
   configurationRevisionListSchema,
@@ -34,6 +38,8 @@ import {
   type CreateServiceConnection,
   type ConnectionTestResult,
   type ConnectionMonitoringControl,
+  type InferenceCatalogueRequest,
+  type InferenceCatalogueResult,
   type InferenceDiscoveryRequest,
   type InferenceDiscoveryResult,
   type UpdateConnectionMonitoringControl,
@@ -133,15 +139,8 @@ import {
   type CreateGuardrailPolicy,
   type UpdateGuardrailPolicy,
   type ChangeGuardrailPolicyState,
-  promptTemplateListSchema,
   hermesRuntimeCatalogueSchema,
-  promptTemplateSchema,
-  type PromptTemplate,
-  type PromptTemplateList,
   type HermesRuntimeCatalogue,
-  type CreatePromptTemplate,
-  type UpdatePromptTemplate,
-  type ChangePromptTemplateState,
   onboardingSnapshotSchema,
   recoveryKitExportSchema,
   type OnboardingSnapshot,
@@ -255,7 +254,7 @@ export async function createLocalAdministratorSession(username: string, password
 }
 
 /**
- * Sign in a person created under Settings → People.
+ * Sign in a person created under Settings → Access.
  *
  * The login route only returns a display name; the cookie it sets is what
  * `GET /api/v1/session` reads. Two calls, one identity — the same shape the
@@ -476,6 +475,18 @@ export async function discoverInferenceServer(
     body: JSON.stringify(input),
   });
   return inferenceDiscoveryResultSchema.parse(await parsedResponse(response));
+}
+
+export async function loadInferenceCatalogue(
+  input: InferenceCatalogueRequest,
+): Promise<InferenceCatalogueResult> {
+  const response = await fetch("/api/v1/admin/connections/inference/catalogue", {
+    method: "POST",
+    headers: adminHeaders(),
+    credentials: "same-origin",
+    body: JSON.stringify(input),
+  });
+  return inferenceCatalogueResultSchema.parse(await parsedResponse(response));
 }
 
 export async function getConfigurationRevisions(
@@ -851,36 +862,6 @@ export async function changeGuardrailPolicyState(
   return guardrailPolicySchema.parse(await parsedResponse(response));
 }
 
-export async function getPromptTemplates(): Promise<PromptTemplateList> {
-  const response = await fetch("/api/v1/admin/prompts", { credentials: "same-origin" });
-  return promptTemplateListSchema.parse(await parsedResponse(response));
-}
-
-export async function createPromptTemplate(input: CreatePromptTemplate): Promise<PromptTemplate> {
-  const response = await fetch("/api/v1/admin/prompts", {
-    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
-  });
-  return promptTemplateSchema.parse(await parsedResponse(response));
-}
-
-export async function updatePromptTemplate(id: string, input: UpdatePromptTemplate): Promise<PromptTemplate> {
-  const response = await fetch(`/api/v1/admin/prompts/${encodeURIComponent(id)}`, {
-    method: "PATCH", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
-  });
-  return promptTemplateSchema.parse(await parsedResponse(response));
-}
-
-export async function changePromptTemplateState(
-  id: string,
-  action: "activate" | "suspend",
-  input: ChangePromptTemplateState,
-): Promise<PromptTemplate> {
-  const response = await fetch(`/api/v1/admin/prompts/${encodeURIComponent(id)}/${action}`, {
-    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
-  });
-  return promptTemplateSchema.parse(await parsedResponse(response));
-}
-
 export async function getGovernedTools(): Promise<GovernedToolList> {
   const response = await fetch("/api/v1/admin/tooling/tools", { credentials: "same-origin" });
   return governedToolListSchema.parse(await parsedResponse(response));
@@ -1045,6 +1026,22 @@ export async function runOnboardingValidation(input: RunOnboardingValidation = {
 export async function getAuditForwarding(): Promise<AuditForwardingState> {
   const response = await fetch("/api/v1/admin/audit/forwarding", { credentials: "same-origin" });
   return auditForwardingStateSchema.parse(await parsedResponse(response));
+}
+
+/**
+ * What the governed inference path consumed over one window.
+ *
+ * `byUser` comes back null rather than empty when the session lacks
+ * `audit:read`; the view draws a refusal in that panel rather than an empty
+ * table, because "you may not see this" and "nobody used it" are different
+ * answers.
+ */
+export async function getGatewayUsage(window: UsageWindow): Promise<UsageReport> {
+  const search = new URLSearchParams({ window });
+  const response = await fetch(`/api/v1/admin/gateway/usage?${search.toString()}`, {
+    credentials: "same-origin",
+  });
+  return usageReportSchema.parse(await parsedResponse(response));
 }
 
 export async function updateArchitectureDecision(

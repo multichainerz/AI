@@ -32,8 +32,9 @@ describe("OpenAI-compatible connection diagnostics", () => {
 
     expect(result).toMatchObject({
       status: "HEALTHY",
-      details: { modelCount: 2, modelIds: ["hermes-primary", "embed-primary"], inferenceBackend: "LLAMA_CPP" },
+      details: { modelCount: 2, inferenceBackend: "LLAMA_CPP" },
     });
+    expect(result.details).not.toHaveProperty("modelIds");
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
       redirect: "error",
@@ -105,7 +106,95 @@ describe("OpenAI-compatible connection diagnostics", () => {
 
     await expect(adapter.test(connection, new AbortController().signal)).resolves.toMatchObject({
       status: "HEALTHY",
-      details: { modelIds: ["gemma-4-e4b"], healthHttpStatus: 404 },
+      details: { modelCount: 1, healthHttpStatus: 404 },
     });
+  });
+
+  it("does not call OpenRouter's key probe against a local server", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ data: [{ id: "hermes-primary" }] }))
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await adapter.test(connection, new AbortController().signal);
+
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+      "https://vllm.orcasynapse.internal/v1/models",
+      "https://vllm.orcasynapse.internal/health",
+    ]);
+  });
+
+  it("refuses OpenRouter when the models list is public and no key is stored", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValueOnce(Response.json({
+        data: Array.from({ length: 60 }, (_, index) => ({ id: `vendor/model-${index}` })),
+      })),
+    );
+
+    await expect(adapter.test({
+      ...connection,
+      baseUrl: "https://openrouter.ai",
+      configuration: {
+        inferenceBackend: "CUSTOM_OPENAI_COMPATIBLE",
+        modelsPath: "/api/v1/models",
+        modelAlias: "vendor/model-51",
+      },
+      secrets: {},
+    }, new AbortController().signal)).resolves.toMatchObject({
+      status: "DEGRADED",
+      details: { failure: "openrouter_key_required", modelCount: 60 },
+    });
+  });
+
+  it("refuses OpenRouter when the key is rejected", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ data: [{ id: "anthropic/claude-sonnet-4" }] }))
+      .mockResolvedValueOnce(new Response(null, { status: 401 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(adapter.test({
+      ...connection,
+      baseUrl: "https://openrouter.ai",
+      configuration: {
+        inferenceBackend: "CUSTOM_OPENAI_COMPATIBLE",
+        modelsPath: "/api/v1/models",
+        chatPath: "/api/v1/chat/completions",
+        modelAlias: "anthropic/claude-sonnet-4",
+      },
+      secrets: { apiKey: "sk-or-bad" },
+    }, new AbortController().signal)).resolves.toMatchObject({
+      status: "DEGRADED",
+      details: { authentication: "rejected", httpStatus: 401 },
+    });
+  });
+
+  it("accepts an OpenRouter alias past the old fifty-model slice once the key is proven", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({
+        data: Array.from({ length: 60 }, (_, index) => ({ id: `vendor/model-${index}` })),
+      }))
+      .mockResolvedValueOnce(Response.json({ data: { label: "pilot" } }))
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(adapter.test({
+      ...connection,
+      baseUrl: "https://openrouter.ai",
+      configuration: {
+        inferenceBackend: "CUSTOM_OPENAI_COMPATIBLE",
+        modelsPath: "/api/v1/models",
+        healthPath: "/api/v1/models",
+        modelAlias: "vendor/model-51",
+      },
+      secrets: { apiKey: "sk-or-v1-test" },
+    }, new AbortController().signal)).resolves.toMatchObject({
+      status: "HEALTHY",
+      details: { modelCount: 60, modelAlias: "vendor/model-51", credential: "verified" },
+    });
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe("https://openrouter.ai/api/v1/key");
   });
 });

@@ -22,7 +22,6 @@ function view(overrides: Partial<Parameters<typeof ApplicationView>[0]> = {}) {
     session,
     currentVersion: "3.19.0",
     onConfigure: vi.fn(),
-    onOpenOperations: vi.fn(),
     ...overrides,
   };
 }
@@ -31,7 +30,7 @@ describe("the System tab", () => {
   it("hosts the update check that used to interrupt setup", () => {
     render(<ApplicationView {...view()} />);
 
-    expect(screen.getByRole("heading", { name: "This installation" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "System" })).toBeTruthy();
     expect(screen.getByText("OrcaSynapse 3.19.0")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Check for updates" })).toBeTruthy();
   });
@@ -53,7 +52,7 @@ describe("the System tab", () => {
 
   it("renders no inline style, which the CSP would refuse in the built container", () => {
     render(<ApplicationView {...view()} />);
-    expect(screen.getByRole("heading", { name: "This installation" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "System" })).toBeTruthy();
     expect(document.body.innerHTML).not.toMatch(/\sstyle="/);
   });
 });

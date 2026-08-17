@@ -18,7 +18,7 @@ const DEPLOYMENT_WIDE = "";
  * assuming the other is how somebody concludes memory is isolated when it is
  * only partly so.
  */
-export function ScopedMemoryPanel({ canWrite, canDelete, onSessionExpired }: {
+export function ScopedMemoryPanel({ canWrite, canDelete, embedded = false, onSessionExpired }: {
   /**
    * `corpus:write`, which `POST /tooling/scoped-memory` requires.
    *
@@ -32,6 +32,8 @@ export function ScopedMemoryPanel({ canWrite, canDelete, onSessionExpired }: {
   canWrite: boolean;
   /** `corpus:delete`, which `DELETE /tooling/scoped-memory/:entryId` requires. */
   canDelete: boolean;
+  /** Memory embeds this beside the title and search dock. */
+  embedded?: boolean;
   onSessionExpired: () => void;
 }) {
   const [entries, setEntries] = useState<ScopedMemoryEntry[]>([]);
@@ -117,16 +119,20 @@ export function ScopedMemoryPanel({ canWrite, canDelete, onSessionExpired }: {
   };
 
   return (
-    <Panel>
+    <Panel {...(embedded ? { className: "flex h-full min-h-0 flex-col overflow-hidden p-3" } : {})}>
       <PanelHeading
-        kicker="Per division"
+        {...(embedded ? { className: "mb-2 shrink-0" } : {})}
+        {...(embedded ? {} : { kicker: "Per division" })}
         title="Division memory"
-        description="Curated here or remembered by a run. A run is handed only its own division's notes, selected before its prompt is built."
+        {...(embedded ? {} : {
+          description: "Curated here or remembered by a run. A run is handed only its own division's notes, selected before its prompt is built.",
+        })}
         // Withheld rather than shown as zero when the read did not land: a
         // count is the same kind of claim as the empty state below.
         actions={loadFailed ? null : <StatusText>{total} {total === 1 ? "entry" : "entries"}</StatusText>}
       />
 
+      <div {...(embedded ? { className: "grid min-h-0 flex-1 content-start gap-3 overflow-y-auto" } : {})}>
       {error && <Alert tone="error">{error}</Alert>}
 
       {/*
@@ -139,9 +145,9 @@ export function ScopedMemoryPanel({ canWrite, canDelete, onSessionExpired }: {
         * Offering the form to a role that cannot save is an invitation to
         * compose a standing fact about a division and lose it to a 403.
         */}
-      {canWrite && <div className="mb-4 grid gap-3 rounded border border-border p-3">
+      {canWrite && <div className={embedded ? "grid gap-2" : "mb-4 grid gap-3 rounded border border-border p-3"}>
         <Field label="Division" htmlFor="memory-division"
-          hint="Deployment-wide notes are read only by profiles with no division — they are not shared with every division.">
+          {...(embedded ? {} : { hint: "Deployment-wide notes are read only by profiles with no division — they are not shared with every division." })}>
           <Select id="memory-division" value={divisionId} onChange={(event) => setDivisionId(event.target.value)}>
             <option value={DEPLOYMENT_WIDE}>Deployment-wide</option>
             {divisions.map((option) => (
@@ -150,17 +156,17 @@ export function ScopedMemoryPanel({ canWrite, canDelete, onSessionExpired }: {
           </Select>
         </Field>
         <Field label="What this division knows" htmlFor="memory-content"
-          hint="A standing fact, written to be read months from now by someone who was not there.">
+          {...(embedded ? {} : { hint: "A standing fact, written to be read months from now by someone who was not there." })}>
           <Textarea
             id="memory-content"
-            rows={3}
+            rows={embedded ? 2 : 3}
             value={content}
             placeholder="Finance closes the books on the fifth working day."
             onChange={(event) => setContent(event.target.value)}
           />
         </Field>
         <div>
-          <Button onClick={() => void save()} disabled={saving || content.trim().length < 3}>
+          <Button size={embedded ? "sm" : "default"} onClick={() => void save()} disabled={saving || content.trim().length < 3}>
             {saving ? "Saving…" : "Add note"}
           </Button>
         </div>
@@ -229,6 +235,7 @@ export function ScopedMemoryPanel({ canWrite, canDelete, onSessionExpired }: {
           )}
         </div>
       )}
+      </div>
     </Panel>
   );
 }

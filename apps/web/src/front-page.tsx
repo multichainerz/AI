@@ -30,7 +30,7 @@ import { ThemeToggle } from "./ui/theme-toggle.js";
  * its palette is the brand one, cyan #22D3EE included.
  *
  * The four states of the card are the four ways in: local sign-in (an
- * administrator or a person created under Settings → People), offline
+ * administrator or a person created under Settings → Access), offline
  * recovery with the Installation Key, the forced password change a temporary
  * password lands in, and the recovery reset. Enterprise SSO is a redirect the
  * API owns, shown only when the deployment has OIDC configured.

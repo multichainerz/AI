@@ -4,7 +4,6 @@ import { describe, expect, it, vi } from "vitest";
 import { adminAccess } from "./admin-access.js";
 import { GuardrailsView } from "./guardrails-view.js";
 import { ModelsView } from "./models-view.js";
-import { PromptsView } from "./prompts-view.js";
 
 const session: AdministratorSession = {
   id: "ac369dab-cad5-4fd9-83ed-b4fbf528028a",
@@ -44,7 +43,6 @@ describe("adminAccess", () => {
 describe("platform governance views", () => {
   const views = [
     ["Models", (s: AdministratorSession) => <ModelsView session={s} connections={[]} onConfigureConnections={vi.fn()} onOpenOperations={vi.fn()} onSessionExpired={vi.fn()} />],
-    ["Prompts", (s: AdministratorSession) => <PromptsView session={s} onOpenOperations={vi.fn()} onOpenSettings={vi.fn()} onSessionExpired={vi.fn()} />],
     ["Guardrails", (s: AdministratorSession) => <GuardrailsView session={s} onConfigureInference={vi.fn()} onOpenOperations={vi.fn()} onSessionExpired={vi.fn()} />],
   ] as const;
 
@@ -56,16 +54,16 @@ describe("platform governance views", () => {
 
     it(`${name} presents the same shell as every other governance screen`, () => {
       // One area, one shape: a titled workspace and a lock panel with the same
-      // recovery action, so Platform does not read as four unrelated screens.
+      // recovery action, so Gateway does not read as unrelated screens.
       //
       // Asserted on what the operator sees rather than on the class attribute.
       // The previous form anchored the closing quote — /class="[a-z]+-workspace"/ —
-      // so a single added utility class failed it across all four views while
+      // so a single added utility class failed it across both Gateway views while
       // the shell it describes was unchanged.
       const html = renderToStaticMarkup(render(pendingPasswordChange));
       expect(html).toContain("Administrator session required");
       expect(html).toContain("Open platform settings");
-      // A heading names the area, so the four screens are distinguishable.
+      // A heading names the area, so the two screens are distinguishable.
       expect(html).toMatch(new RegExp(`<h1[^>]*>${name}</h1>`));
     });
   }

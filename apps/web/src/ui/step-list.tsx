@@ -79,8 +79,11 @@ export function StepList({
               type="button"
               aria-current={active ? "step" : undefined}
               className={cn(
-                "w-full items-start justify-start gap-3 rounded-md px-3 py-3 text-left",
-                active ? "bg-soft text-foreground" : null,
+                "w-full items-start justify-start gap-3 rounded-md px-3 py-3 text-left hover:bg-raised hover:text-foreground",
+                // Raised, not `bg-soft`. Soft is accent at 10–18%, so the open
+                // row went lavender in light and purple in dark. Ghost hover
+                // is the same token — override it or the rail flashes purple.
+                active ? "border-border-strong bg-raised text-foreground" : null,
               )}
               onClick={() => onSelect(item.key)}
             >
@@ -93,7 +96,7 @@ export function StepList({
                   item.status === "done"
                     ? "border-good/40 bg-good/10 text-good"
                     : item.status === "current"
-                      ? "border-accent/40 bg-soft text-accent"
+                      ? "border-accent/50 bg-raised text-accent"
                       : "border-border-strong bg-raised text-faint",
                 )}
               >
@@ -103,18 +106,10 @@ export function StepList({
                 <span className={cn("block truncate text-body font-semibold", active ? "text-text" : "text-muted")}>
                   {item.title}
                 </span>
-                {/*
-                  The open row's status word takes the full text colour.
-                  Measured rather than guessed: `faint` reads 5.25:1 on the
-                  plain panel behind a closed row but only 3.88:1 on the
-                  accent-soft fill an open row takes — under AA at 10px — and
-                  `muted` only recovers it to 4.1:1. The fill is what moved, so
-                  the ink moves with it.
-                */}
                 <span
                   className={cn(
                     "mt-0.5 block text-micro font-semibold uppercase tabular-nums",
-                    active ? "text-text" : "text-faint",
+                    active ? "text-muted" : "text-faint",
                   )}
                 >
                   {/*

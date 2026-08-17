@@ -8,7 +8,7 @@
  */
 export { cn } from "./cn.js";
 export { Button, type ButtonProps } from "./button.js";
-export { HeroBanner, Mark, Metric, MetricRow, MicroLabel, PageHeader, Panel, PanelHeading, Tile, type HeroBannerProps, type MetricProps } from "./surface.js";
+export { HeroBanner, Mark, Metric, MetricRow, MicroLabel, PageHeader, Panel, PanelHeading, Tile, WorkspaceDock, WorkspaceIntro, type HeroBannerProps, type MetricProps } from "./surface.js";
 export { Alert, EmptyState, LockedScreen, StatusText, toneFor, type Tone } from "./feedback.js";
 export { Dialog, Drawer } from "./overlay.js";
 export { StepList, type StepListItem, type StepListStatus } from "./step-list.js";

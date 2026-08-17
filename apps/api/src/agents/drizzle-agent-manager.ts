@@ -9,6 +9,7 @@ import type {
   AgentRunList,
   AgentRuntimeControl,
   CreateAgentProfile,
+  GuardrailRule,
   SubmitAgentRun,
   UpdateAgentProfile,
   UpdateAgentRuntimeControl,
@@ -38,9 +39,11 @@ import {
 import { and, count, desc, eq, inArray, isNotNull, ne, sql } from "drizzle-orm";
 import { createHash, randomUUID } from "node:crypto";
 import { advisoryLock, isUniqueViolation } from "../database-support.js";
+import { inspectInput } from "../guardrails/runtime-policy.js";
 import {
   AgentConflictError,
   AgentNotFoundError,
+  AgentPolicyViolationError,
   AgentRuntimeDisabledError,
   type AgentBoundaryVerifier,
   type AgentManager,
@@ -627,10 +630,49 @@ export class DrizzleAgentManager implements AgentManager {
      * either way: the policy may lower the bound, never raise it past what the
      * worker's own accounting is built for.
      */
+    const policy = await this.activePolicy();
     const outputCharacterLimit = Math.min(
       200_000,
-      Math.max(1_000, options.outputCharacterLimit ?? await this.activeOutputCharacterLimit()),
+      Math.max(1_000, options.outputCharacterLimit ?? policy.maxOutputCharacters),
     );
+    /*
+     * Input inspection, which this path had none of until now.
+     *
+     * `inspectInputText` had exactly two callers -- chat and the inference
+     * gateway -- so `POST /api/v1/agents/runs` was bounded only by the
+     * contract's flat 32,000 characters: no policy limit, no control-character
+     * check, no credential check, no operator rule. A direct run was the way
+     * around every guardrail on the deployment.
+     *
+     * Chat has already inspected by the time it reaches here, and inspecting
+     * again is deliberate rather than wasteful. The alternative is an
+     * `alreadyInspected` option, which is exactly the shape the comment above
+     * rejects: a guardrail one of two callers obeys. The second pass is
+     * idempotent -- redacted text matches nothing -- so it costs a scan and
+     * removes a hole a future caller could reopen by forgetting a flag.
+     */
+    const inspection = inspectInput(input.input, policy, policy.rules);
+    if (inspection.decision === "BLOCK") {
+      const blocking = inspection.matches.filter(({ action }) => action === "BLOCK").map(({ label }) => label);
+      await this.database.insert(auditEvent).values({
+        actorType: "USER", actorId: principal.id, action: "guardrail.request_blocked",
+        resourceType: "AgentRun", resourceId: runId, outcome: "FAILURE",
+        // Labels and counts. Never the input -- a credential rule fires because
+        // the input looked like a key, and explaining that by quoting it would
+        // put the key in a trail that is retained and forwarded.
+        metadata: {
+          reason: inspection.reason,
+          profileId: input.profileId,
+          rules: inspection.matches.map(({ ruleId, label, action, count }) => ({ ruleId, label, action, count })),
+        },
+      }).catch(() => undefined);
+      throw new AgentPolicyViolationError(blocking.length > 0
+        ? `The active guardrail policy blocks this input (${blocking.join(", ")}).`
+        : `The active guardrail policy blocks this input (${inspection.reason}).`);
+    }
+    // The redacted text is what runs, for the same reason it is what chat
+    // stores: a redaction the model never sees is not a redaction.
+    const guardedInput = inspection.text;
     const run = await this.database.transaction(async (transaction) => {
       await transaction.execute(advisoryLock(`orcasynapse-agent-submit:${input.profileId}`));
       const [control] = await transaction
@@ -721,7 +763,9 @@ export class DrizzleAgentManager implements AgentManager {
           ownerSubject: principal.subject,
           requestedBy: principal.id,
           sessionId: options.sessionId ?? runId,
-          input: input.input,
+          // The inspected text, not the submitted text. This row is what the
+          // worker hands to Hermes.
+          input: guardedInput,
           outputCharacterLimit,
           modelAlias: version.modelAlias,
           jobId: randomUUID(),
@@ -748,20 +792,59 @@ export class DrizzleAgentManager implements AgentManager {
   }
 
   /**
-   * The output ceiling the active guardrail policy sets, or the platform's.
+   * The whole active guardrail policy, and the fail-closed latch that goes with it.
    *
-   * At most one policy may be ACTIVE -- a partial unique index enforces it --
-   * so this is a single indexed read with no ambiguity to resolve. Absent a
-   * policy the platform ceiling stands, which is what a deployment that has
-   * activated no guardrails has always run under.
+   * This replaced `activeOutputCharacterLimit`, which read one column and did
+   * not latch. That asymmetry was a real hole: chat and the inference gateway
+   * both refuse once *any* policy has been activated and none is currently
+   * ACTIVE, while a direct agent run silently fell back to the platform
+   * ceiling. So suspending the active policy tightened two paths and quietly
+   * loosened the third — the opposite of what an operator suspending a policy
+   * is asking for.
+   *
+   * `firstActivatedAt` is the latch, exactly as it is in `resolvePolicy` on the
+   * chat manager: before a deployment has ever activated a policy the defaults
+   * stand, and afterwards the absence of an active one is a refusal rather than
+   * a default.
    */
-  private async activeOutputCharacterLimit(): Promise<number> {
-    const [policy] = await this.database
-      .select({ maxOutputCharacters: guardrailPolicy.maxOutputCharacters })
+  private async activePolicy(): Promise<{
+    maxInputCharacters: number;
+    maxOutputCharacters: number;
+    blockControlCharacters: boolean;
+    blockCredentialPatterns: boolean;
+    rules: GuardrailRule[];
+  }> {
+    const [enforced] = await this.database
+      .select({ total: sql<number>`count(*)::int` })
+      .from(guardrailPolicy)
+      .where(isNotNull(guardrailPolicy.firstActivatedAt));
+    const catalogueEnforced = (enforced?.total ?? 0) > 0;
+
+    const active = !catalogueEnforced ? [] : await this.database
+      .select({
+        maxInputCharacters: guardrailPolicy.maxInputCharacters,
+        maxOutputCharacters: guardrailPolicy.maxOutputCharacters,
+        blockControlCharacters: guardrailPolicy.blockControlCharacters,
+        blockCredentialPatterns: guardrailPolicy.blockCredentialPatterns,
+        rules: guardrailPolicy.rules,
+      })
       .from(guardrailPolicy)
       .where(eq(guardrailPolicy.status, "ACTIVE"))
-      .limit(1);
-    return policy?.maxOutputCharacters ?? 200_000;
+      .limit(2);
+
+    if (catalogueEnforced && active.length !== 1) {
+      throw new AgentConflictError(active.length === 0
+        ? "Activate one guardrail policy before submitting agent runs."
+        : "More than one guardrail policy is active.");
+    }
+    const policy = active[0];
+    return {
+      maxInputCharacters: policy?.maxInputCharacters ?? 32_000,
+      maxOutputCharacters: policy?.maxOutputCharacters ?? 200_000,
+      blockControlCharacters: policy?.blockControlCharacters ?? true,
+      blockCredentialPatterns: policy?.blockCredentialPatterns ?? true,
+      rules: (policy?.rules ?? []) as GuardrailRule[],
+    };
   }
 
   async cancelRun(principal: AgentPrincipal, runId: string, includeAll: boolean): Promise<AgentRun> {
