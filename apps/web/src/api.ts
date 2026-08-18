@@ -1,7 +1,5 @@
 import {
-  architectureDecisionSchema,
   auditEventListSchema,
-  auditForwardingStateSchema,
   usageReportSchema,
   type UsageReport,
   type UsageWindow,
@@ -23,18 +21,14 @@ import {
   chatConversationSummarySchema,
   chatMessageSubmissionSchema,
   chatStreamEventSchema,
+  chatScheduleSchema,
+  chatScheduleListSchema,
   agentRunApprovalSchema,
-  chatFeedbackSchema,
   chatMetricsSchema,
   enterpriseSessionSchema,
-  oidcStatusSchema,
   type AdministratorSession,
   type AuditEventList,
   type AuditEventQuery,
-  type AuditForwardingState,
-  type ArchitectureDecision,
-  type CompleteOnboarding,
-  type UpdateArchitectureDecision,
   type CreateServiceConnection,
   type ConnectionTestResult,
   type ConnectionMonitoringControl,
@@ -56,17 +50,18 @@ import {
   type ChatConversationList,
   type ChatConversationSummary,
   type ChatStreamEvent,
-  type ChatFeedback,
-  type ChatFeedbackRating,
   type ChatMetrics,
   type ChatMessageSubmission,
   type AgentRunApproval,
   type DecideAgentRunApproval,
   type ForkChatConversation,
   type EnterpriseSession,
-  type OidcStatus,
   type CreateChatConversation,
   type UpdateChatConversation,
+  type ChatSchedule,
+  type ChatScheduleList,
+  type CreateChatSchedule,
+  type UpdateChatSchedule,
   type UpdateServiceConnection,
   agentProfileListSchema,
   agentProfileSchema,
@@ -85,34 +80,19 @@ import {
   type CreateAgentProfile,
   type UpdateAgentProfile,
   governedToolListSchema,
-  toolGrantListSchema,
-  toolGrantSchema,
-  gatewayCredentialListSchema,
-  issuedGatewayCredentialSchema,
-  toolApprovalListSchema,
   toolsetAdmissionListSchema,
   toolsetAdmissionSchema,
-  toolCallListSchema,
   toolRuntimeControlSchema,
   toolMetricsSchema,
   type GovernedToolList,
-  type ToolGrant,
-  type ToolGrantList,
-  type GatewayCredentialList,
-  type IssuedGatewayCredential,
-  type ToolApprovalList,
   type ToolsetAdmission,
   type ToolsetAdmissionList,
-  type ToolCallList,
   type ToolRuntimeControl,
   type ToolMetrics,
-  type UpsertToolGrant,
-  type ToolStatus,
   type UpdateToolRuntimeControl,
   aiOpsOverviewSchema,
   operationalIncidentListSchema,
   operationalIncidentSchema,
-  productionReadinessSchema,
   productionReadinessControlSchema,
   productionReadinessApprovalSchema,
   type AiOpsOverview,
@@ -120,7 +100,6 @@ import {
   type OperationalIncidentList,
   type CreateOperationalIncident,
   type IncidentDecision,
-  type ProductionReadiness,
   type ProductionReadinessControl,
   type ProductionReadinessApproval,
   type UpdateProductionReadinessControl,
@@ -257,8 +236,7 @@ export async function createLocalAdministratorSession(username: string, password
  * Sign in a person created under Settings → Access.
  *
  * The login route only returns a display name; the cookie it sets is what
- * `GET /api/v1/session` reads. Two calls, one identity — the same shape the
- * OIDC callback leaves behind after the redirect.
+ * `GET /api/v1/session` reads. Two calls, one identity.
  */
 export async function createLocalPersonSession(username: string, password: string): Promise<EnterpriseSession> {
   const response = await fetch("/api/v1/auth/local/login", {
@@ -330,12 +308,6 @@ export async function revokeAdministratorSession(): Promise<void> {
   if (!response.ok) await parsedResponse(response);
 }
 
-export async function getOidcStatus(): Promise<OidcStatus> {
-  const response = await fetch("/api/v1/auth/oidc/status", {
-    credentials: "same-origin",
-  });
-  return oidcStatusSchema.parse(await parsedResponse(response));
-}
 
 export async function getEnterpriseSession(): Promise<EnterpriseSession> {
   const response = await fetch("/api/v1/session", { credentials: "same-origin" });
@@ -687,6 +659,51 @@ export async function forkChatConversation(
   return chatConversationSummarySchema.parse(await parsedResponse(response));
 }
 
+export async function getChatSchedules(conversationId: string): Promise<ChatScheduleList> {
+  const response = await fetch(
+    `/api/v1/chat/conversations/${encodeURIComponent(conversationId)}/schedules`,
+    { credentials: "same-origin" },
+  );
+  return chatScheduleListSchema.parse(await parsedResponse(response));
+}
+
+export async function createChatSchedule(
+  conversationId: string,
+  input: CreateChatSchedule,
+): Promise<ChatSchedule> {
+  const response = await fetch(
+    `/api/v1/chat/conversations/${encodeURIComponent(conversationId)}/schedules`,
+    {
+      method: "POST",
+      headers: adminHeaders(),
+      credentials: "same-origin",
+      body: JSON.stringify(input),
+    },
+  );
+  return chatScheduleSchema.parse(await parsedResponse(response));
+}
+
+export async function updateChatSchedule(
+  scheduleId: string,
+  input: UpdateChatSchedule,
+): Promise<ChatSchedule> {
+  const response = await fetch(`/api/v1/chat/schedules/${encodeURIComponent(scheduleId)}`, {
+    method: "PATCH",
+    headers: adminHeaders(),
+    credentials: "same-origin",
+    body: JSON.stringify(input),
+  });
+  return chatScheduleSchema.parse(await parsedResponse(response));
+}
+
+export async function deleteChatSchedule(scheduleId: string): Promise<void> {
+  const response = await fetch(`/api/v1/chat/schedules/${encodeURIComponent(scheduleId)}`, {
+    method: "DELETE",
+    credentials: "same-origin",
+  });
+  if (!response.ok) await parsedResponse(response);
+}
+
 export async function deleteChatConversation(conversationId: string): Promise<void> {
   const response = await fetch(`/api/v1/chat/conversations/${encodeURIComponent(conversationId)}`, {
     method: "DELETE",
@@ -706,22 +723,6 @@ export async function decideChatApproval(
     body: JSON.stringify(input),
   });
   return agentRunApprovalSchema.parse(await parsedResponse(response));
-}
-
-export async function setChatFeedback(
-  messageId: string,
-  rating: ChatFeedbackRating,
-): Promise<ChatFeedback> {
-  const response = await fetch(
-    `/api/v1/chat/messages/${encodeURIComponent(messageId)}/feedback`,
-    {
-      method: "PUT",
-      headers: adminHeaders(),
-      credentials: "same-origin",
-      body: JSON.stringify({ rating }),
-    },
-  );
-  return chatFeedbackSchema.parse(await parsedResponse(response));
 }
 
 export async function getChatMetrics(): Promise<ChatMetrics> {
@@ -867,72 +868,6 @@ export async function getGovernedTools(): Promise<GovernedToolList> {
   return governedToolListSchema.parse(await parsedResponse(response));
 }
 
-export async function setGovernedToolStatus(toolId: string, status: ToolStatus): Promise<void> {
-  const response = await fetch(`/api/v1/admin/tooling/tools/${encodeURIComponent(toolId)}`, {
-    method: "PATCH", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify({ status }),
-  });
-  if (!response.ok) await parsedResponse(response);
-}
-
-export async function getToolGrants(): Promise<ToolGrantList> {
-  const response = await fetch("/api/v1/admin/tooling/grants", { credentials: "same-origin" });
-  return toolGrantListSchema.parse(await parsedResponse(response));
-}
-
-export async function upsertToolGrant(input: UpsertToolGrant): Promise<ToolGrant> {
-  const response = await fetch("/api/v1/admin/tooling/grants", {
-    method: "PUT", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
-  });
-  return toolGrantSchema.parse(await parsedResponse(response));
-}
-
-export async function getGatewayCredentials(): Promise<GatewayCredentialList> {
-  const response = await fetch("/api/v1/admin/tooling/credentials", { credentials: "same-origin" });
-  return gatewayCredentialListSchema.parse(await parsedResponse(response));
-}
-
-export async function issueGatewayCredential(name: string): Promise<IssuedGatewayCredential> {
-  const response = await fetch("/api/v1/admin/tooling/credentials", {
-    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify({ name }),
-  });
-  return issuedGatewayCredentialSchema.parse(await parsedResponse(response));
-}
-
-export async function revokeGatewayCredential(id: string): Promise<void> {
-  const response = await fetch(`/api/v1/admin/tooling/credentials/${encodeURIComponent(id)}`, {
-    method: "DELETE", credentials: "same-origin",
-  });
-  if (!response.ok) await parsedResponse(response);
-}
-
-/** Consequential tool calls waiting on a human. Polled, so never cached. */
-export async function getPendingToolApprovals(): Promise<ToolApprovalList> {
-  const response = await fetch("/api/v1/admin/tooling/approvals", { credentials: "same-origin" });
-  return toolApprovalListSchema.parse(await parsedResponse(response));
-}
-
-export async function decideToolApproval(
-  approvalId: string,
-  decision: "APPROVE" | "REJECT",
-  reason: string,
-): Promise<void> {
-  const response = await fetch(
-    `/api/v1/admin/tooling/approvals/${encodeURIComponent(approvalId)}/decision`,
-    {
-      method: "POST",
-      headers: adminHeaders(),
-      credentials: "same-origin",
-      body: JSON.stringify({ decision, reason }),
-    },
-  );
-  if (!response.ok) await parsedResponse(response);
-}
-
-export async function getToolCalls(): Promise<ToolCallList> {
-  const response = await fetch("/api/v1/admin/tooling/calls", { credentials: "same-origin" });
-  return toolCallListSchema.parse(await parsedResponse(response));
-}
-
 export async function getToolRuntime(): Promise<ToolRuntimeControl> {
   const response = await fetch("/api/v1/admin/tooling/runtime", { credentials: "same-origin" });
   return toolRuntimeControlSchema.parse(await parsedResponse(response));
@@ -978,11 +913,6 @@ export async function decideOperationalIncident(
   return operationalIncidentSchema.parse(await parsedResponse(response));
 }
 
-export async function getProductionReadiness(): Promise<ProductionReadiness> {
-  const response = await fetch("/api/v1/admin/operations/readiness", { credentials: "same-origin" });
-  return productionReadinessSchema.parse(await parsedResponse(response));
-}
-
 export async function updateProductionReadinessControl(
   key: string,
   input: UpdateProductionReadinessControl,
@@ -1023,10 +953,6 @@ export async function runOnboardingValidation(input: RunOnboardingValidation = {
   return onboardingSnapshotSchema.parse(await parsedResponse(response));
 }
 
-export async function getAuditForwarding(): Promise<AuditForwardingState> {
-  const response = await fetch("/api/v1/admin/audit/forwarding", { credentials: "same-origin" });
-  return auditForwardingStateSchema.parse(await parsedResponse(response));
-}
 
 /**
  * What the governed inference path consumed over one window.
@@ -1042,22 +968,6 @@ export async function getGatewayUsage(window: UsageWindow): Promise<UsageReport>
     credentials: "same-origin",
   });
   return usageReportSchema.parse(await parsedResponse(response));
-}
-
-export async function updateArchitectureDecision(
-  input: UpdateArchitectureDecision,
-): Promise<ArchitectureDecision> {
-  const response = await fetch("/api/v1/admin/onboarding/architecture", {
-    method: "PATCH", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
-  });
-  return architectureDecisionSchema.parse(await parsedResponse(response));
-}
-
-export async function completeOnboarding(input: CompleteOnboarding): Promise<OnboardingSnapshot> {
-  const response = await fetch("/api/v1/admin/onboarding/complete", {
-    method: "POST", headers: adminHeaders(), credentials: "same-origin", body: JSON.stringify(input),
-  });
-  return onboardingSnapshotSchema.parse(await parsedResponse(response));
 }
 
 export async function exportCredentialRecoveryKit(input: ExportRecoveryKit): Promise<RecoveryKitExport> {

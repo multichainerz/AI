@@ -82,7 +82,7 @@ The earlier product generation is preserved on the `backup/pgvector` branch. Do 
 | `apps/web/DESIGN_SYSTEM.md` | web token, component, CSP, and accessibility contract |
 | `apps/api` | authenticated control-plane API, enrollment, inference gateway, audit |
 | `apps/api/src/platform-updates.ts` | stable release-tag comparison and pinned VM1 update guidance |
-| `apps/worker` | run claiming, Hermes-native execution, lifecycle projection, SIEM forwarding |
+| `apps/worker` | run claiming, Hermes-native execution, lifecycle projection |
 | `packages/contracts` | shared API and runtime schemas |
 | `packages/database` | Drizzle schema, greenfield migration, test database helpers |
 | `packages/runtime-clients` | inference and Hermes-native session clients |

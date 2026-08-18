@@ -22,6 +22,7 @@ import type { OperationsManager } from "./operations/operations-manager.js";
 import { DrizzleOperationsManager } from "./operations/drizzle-operations-manager.js";
 import type { ChatManager } from "./chat/chat-manager.js";
 import { DrizzleChatManager } from "./chat/drizzle-chat-manager.js";
+import { ScheduleRuntime } from "./chat/schedule-runtime.js";
 import {
   DrizzleEnterpriseIdentityManager,
   type EnterpriseIdentityManager,
@@ -38,7 +39,6 @@ import { DrizzleModelManager } from "./models/drizzle-model-manager.js";
 import type { GuardrailManager } from "./guardrails/guardrail-manager.js";
 import { DrizzleGuardrailManager } from "./guardrails/drizzle-guardrail-manager.js";
 import { DrizzleAuditManager, type AuditManager } from "./audit/audit-manager.js";
-import { SiemForwarder } from "./audit/siem-forwarder.js";
 import { DrizzlePersonManager } from "./people/drizzle-person-manager.js";
 import type { DivisionManager } from "./divisions/division-manager.js";
 import { DrizzleDivisionManager } from "./divisions/drizzle-division-manager.js";
@@ -70,6 +70,7 @@ export interface RuntimeServices {
   connectionMonitor?: ConnectionMonitorService;
   operationsManager?: OperationsManager;
   chatManager?: ChatManager;
+  scheduleRuntime?: ScheduleRuntime;
   identityManager?: EnterpriseIdentityManager;
   modelManager?: ModelManager;
   guardrailManager?: GuardrailManager;
@@ -79,7 +80,6 @@ export interface RuntimeServices {
   personManager?: DrizzlePersonManager;
   auditManager?: AuditManager;
   usageManager?: UsageManager;
-  siemForwarder?: SiemForwarder;
   agentManager?: AgentManager;
   toolingManager?: ToolingManager;
   aiOpsManager?: AiOpsManager;
@@ -150,9 +150,6 @@ export function createRuntimeServices(): RuntimeServices {
     const personManager = new DrizzlePersonManager(database);
     const auditManager = new DrizzleAuditManager(database);
     const usageManager = new DrizzleUsageManager(database);
-    const siemForwarder = new SiemForwarder(database, connectionManager, {
-      error: (message, error) => console.error(message, error),
-    });
     const hermesClient = new HermesClient(connectionResolver);
     const agentManager = new DrizzleAgentManager(database, hermesClient);
     /*
@@ -167,6 +164,10 @@ export function createRuntimeServices(): RuntimeServices {
     chatWake = createChatRunWakeHub(databaseUrl, (error) =>
       console.error("OrcaSynapse chat wake channel error.", error));
     const chatManager = new DrizzleChatManager(database, agentManager, chatWake, hermesClient);
+    const scheduleRuntime = new ScheduleRuntime(database, chatManager, {
+      info: (message) => console.info(message),
+      error: (message, error) => console.error(message, error),
+    });
     const toolingManager = new DrizzleToolingManager(database, hermesClient);
     const aiOpsManager = new DrizzleAiOpsManager(database, {
       connections: connectionManager,
@@ -176,9 +177,11 @@ export function createRuntimeServices(): RuntimeServices {
       chat: chatManager,
       agents: agentManager,
       tools: toolingManager,
-      audit: auditManager,
     });
     const onboardingManager = new DrizzleOnboardingManager(database, masterKey, aiOpsManager);
+    // The Hermes client doubles as the catalogue reader: enrolment admits the
+    // toolsets the node reports, so a fresh install is usable without an
+    // operator admitting each one by hand.
     const runtimeNodeManager = new DrizzleHermesRuntimeNodeManager(database, encryption, connectionTestService);
     const corpusManager = new DrizzleHermesCorpusManager(database, runtimeNodeManager);
     const releaseTargetManager = new DrizzlePlatformReleaseTargetManager(database);
@@ -201,13 +204,8 @@ export function createRuntimeServices(): RuntimeServices {
       connectionMonitor,
       operationsManager,
       chatManager,
-      identityManager: new DrizzleEnterpriseIdentityManager(
-        database,
-        connectionManager,
-        encryption,
-        fetch,
-        sessionManager,
-      ),
+      scheduleRuntime,
+      identityManager: new DrizzleEnterpriseIdentityManager(database),
       modelManager,
       guardrailManager,
       promptManager,
@@ -216,7 +214,6 @@ export function createRuntimeServices(): RuntimeServices {
       personManager,
       auditManager,
       usageManager,
-      siemForwarder,
       agentManager,
       toolingManager,
       aiOpsManager,

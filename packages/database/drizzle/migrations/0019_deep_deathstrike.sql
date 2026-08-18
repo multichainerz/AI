@@ -1,0 +1,2 @@
+CREATE INDEX "AuditEvent_action_occurredAt_idx" ON "AuditEvent" USING btree ("action","occurredAt" DESC NULLS LAST);--> statement-breakpoint
+CREATE INDEX "AuditEvent_outcome_occurredAt_idx" ON "AuditEvent" USING btree ("outcome","occurredAt" DESC NULLS LAST);

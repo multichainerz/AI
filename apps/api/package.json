@@ -1,6 +1,6 @@
 {
   "name": "@orcasynapse/api",
-  "version": "8.9.0",
+  "version": "9.0.0",
   "description": "OrcaSynapse control-plane API: identity, policy, orchestration, and audit",
   "license": "BUSL-1.1",
   "private": true,
@@ -20,8 +20,7 @@
     "@orcasynapse/runtime-clients": "workspace:*",
     "@orcasynapse/security": "workspace:*",
     "drizzle-orm": "0.45.2",
-    "fastify": "5.10.0",
-    "jose": "6.2.4"
+    "fastify": "5.10.0"
   },
   "devDependencies": {
     "tsx": "4.23.1"

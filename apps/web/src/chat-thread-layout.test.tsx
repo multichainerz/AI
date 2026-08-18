@@ -66,10 +66,8 @@ const { ChatView } = await import("./chat-view.js");
 
 const props = {
   unlocked: true,
-  identityMode: "ADMINISTRATOR_PREVIEW" as const,
   displayName: "Operator",
   administratorReadiness: null,
-  oidcConfigured: false,
   onSignIn: vi.fn(),
   onConfigure: vi.fn(),
   onOpenAgents: vi.fn(),

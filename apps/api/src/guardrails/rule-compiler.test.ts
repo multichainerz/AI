@@ -101,4 +101,39 @@ describe("guardrail rule compiler", () => {
     expect(refusalFor("(a+)+$")).toBe("NESTED_QUANTIFIER");
     expect(performance.now() - startedAt).toBeLessThan(1_000);
   });
+
+  it("refuses the catastrophic shapes the original gate let through", () => {
+    /*
+     * Every one of these passed `/\([^)]*[+*}]\)[\s]*[+*{]/` and went on to be
+     * executed against a 256-character probe on the request thread. Measured
+     * before the fix: `(a|a)*$` took 12ms at 18 characters, 48ms at 20, 195ms at
+     * 22 -- and the real 256-character probe had not returned after 25 seconds.
+     *
+     * `((a+))+$` is the module doc's own example with one bracket added, which
+     * `[^)]*` could not see past. `^(\w+\s?)*$` is the one that matters: an
+     * ordinary human-written validation regex, not a pathological construct, so
+     * this was reachable by an administrator doing nothing unusual.
+     *
+     * As with the case above, that this returns promptly is the evidence that
+     * nothing executed any of them.
+     */
+    const startedAt = performance.now();
+    expect(refusalFor("(a|a)*$")).toBe("NESTED_QUANTIFIER");
+    expect(refusalFor("(a+|b)+$")).toBe("NESTED_QUANTIFIER");
+    expect(refusalFor("^(\\w+\\s?)*$")).toBe("NESTED_QUANTIFIER");
+    expect(refusalFor("((a+))+$")).toBe("NESTED_QUANTIFIER");
+    expect(performance.now() - startedAt).toBeLessThan(1_000);
+  });
+
+  it("still admits the ordinary patterns an operator actually writes", () => {
+    // The refusal is deliberately over-broad, so this is the half that keeps it
+    // honest: alternation and quantifiers are only refused *under a repeat*.
+    // `[(]+` is here because the scan must not mistake a bracketed literal
+    // parenthesis for a group.
+    for (const pattern of [
+      "^[a-z]+$", "\\d{3}-\\d{4}", "(cat|dog)", "^(foo)$", "a|b", "^\\w+@\\w+\\.\\w+$", "[(]+",
+    ]) {
+      expect(refusalFor(pattern)).toBe("ACCEPTED");
+    }
+  });
 });

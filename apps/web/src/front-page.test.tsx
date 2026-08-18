@@ -25,7 +25,6 @@ const base = {
   bootstrapState: "READY" as const,
   busy: false,
   error: null,
-  oidcConfigured: false,
   session: null,
 };
 
@@ -177,13 +176,16 @@ describe("the recovery path", () => {
 });
 
 describe("enterprise SSO", () => {
-  it("is offered only when the deployment has OIDC configured", () => {
-    const { unmount } = render(<FrontPage {...base} {...handlers()} />);
-    expect(screen.queryByRole("button", { name: /enterprise sso/i })).toBeNull();
-    unmount();
+  /*
+   * Federated sign-in was removed at v8.10.0. The assertion is kept and
+   * inverted rather than deleted: the front page is the one surface a
+   * reintroduced SSO button would appear on by accident, and "no such button"
+   * is the claim worth holding.
+   */
+  it("is not offered at all", () => {
+    render(<FrontPage {...base} {...handlers()} />);
 
-    render(<FrontPage {...base} {...handlers()} oidcConfigured />);
-    expect(screen.getByRole("button", { name: /enterprise sso/i })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /enterprise sso/i })).toBeNull();
   });
 });
 

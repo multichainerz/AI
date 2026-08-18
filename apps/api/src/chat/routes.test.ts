@@ -1,7 +1,7 @@
 import { once } from "node:events";
 import { connect, type AddressInfo, type Socket } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
-import { ADMIN_SCOPES, type ChatMessage } from "@orcasynapse/contracts";
+import { ADMIN_SCOPES, type ChatMessage, type ChatSchedule } from "@orcasynapse/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.js";
 import { ADMIN_SESSION_COOKIE, type AdminPrincipal, type AdminSessionManager } from "../auth/admin-session.js";
@@ -19,6 +19,7 @@ const SESSION_TOKEN = "s".repeat(43);
 const SESSION_ID = "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb";
 const CONVERSATION_ID = "8aa8e0fd-bebe-4de3-ab0a-f5e1170cf10d";
 const MESSAGE_ID = "78e3b103-3c63-41d8-a6c9-13b02369ee07";
+const SCHEDULE_ID = "c4f6f1f6-2a2f-4a71-9a1e-3b6d5c8e4a11";
 const ENTERPRISE_TOKEN = "u".repeat(43);
 const principal: AdminPrincipal = {
   id: SESSION_ID,
@@ -74,9 +75,6 @@ class SessionManager implements AdminSessionManager {
 }
 
 const enterpriseIdentity: EnterpriseIdentityManager = {
-  async status() { return { configured: true, message: "Configured" }; },
-  async startLogin() { throw new Error("Not used"); },
-  async completeLogin() { throw new Error("Not used"); },
   async signInWithPassword() { throw new Error("Not used"); },
   async changeLocalPassword() { throw new Error("Not used"); },
   async authenticate(token) {
@@ -135,6 +133,21 @@ function memoryChatManager(): ChatManager {
     finishReason: null,
     completedAt: null,
   };
+  const schedule: ChatSchedule = {
+    id: SCHEDULE_ID,
+    conversationId: CONVERSATION_ID,
+    prompt: "Summarise overnight incidents.",
+    intervalSeconds: 86_400,
+    nextRunAt: "2026-07-31T06:00:00.000Z",
+    lastRunAt: null,
+    lastOutcome: null,
+    lastDetail: null,
+    enabled: true,
+    createdBySubject: "local-admin:operator",
+    revision: 0,
+    createdAt: "2026-07-30T00:00:00.000Z",
+    updatedAt: "2026-07-30T00:00:00.000Z",
+  };
   return {
     list: vi.fn(async () => ({ items: [summary] })),
     create: vi.fn(async () => summary),
@@ -158,6 +171,13 @@ function memoryChatManager(): ChatManager {
     })),
     fork: vi.fn(async () => ({ ...summary, id: "190039a6-f9dc-49ef-ab09-b94fc483e3c7", title: "Pilot chat (fork)" })),
     delete: vi.fn(async () => undefined),
+    listSchedules: vi.fn(async () => ({ items: [schedule] })),
+    createSchedule: vi.fn(async () => schedule),
+    updateSchedule: vi.fn(async (_principal, _scheduleId, input) => ({
+      ...schedule,
+      ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
+    })),
+    deleteSchedule: vi.fn(async () => undefined),
     setFeedback: vi.fn(async (_principal, _messageId, input) => ({
       rating: input.rating,
       comment: input.comment ?? null,

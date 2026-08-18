@@ -6,7 +6,6 @@ describe("workspace readiness UI", () => {
   it("does not claim Hermes is ready before the administrator completes the next required step", () => {
     const html = renderToStaticMarkup(<ChatView
       unlocked
-      identityMode="ADMINISTRATOR_PREVIEW"
       displayName="System administrator"
       administratorReadiness={{
         ready: false,
@@ -14,7 +13,6 @@ describe("workspace readiness UI", () => {
         detail: "Create and activate one Profile.",
         target: "Agents",
       }}
-      oidcConfigured={false}
       onSignIn={vi.fn()}
       onConfigure={vi.fn()}
       onOpenAgents={vi.fn()}

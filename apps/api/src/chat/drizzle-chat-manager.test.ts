@@ -12,6 +12,7 @@ import {
   chatConversation,
   chatFeedback,
   chatMessage,
+  chatSchedule,
   createTestDatabase,
   guardrailPolicy,
   chatRunWakeStatement,
@@ -41,10 +42,25 @@ beforeAll(async () => { context = await createTestDatabase(); }, 120_000);
 afterAll(async () => { await context?.drop(); }, 120_000);
 beforeEach(async () => { await context.reset(); });
 
+/*
+ * Built the way `requireChatPrincipal` builds one, which the earlier fixture was
+ * not: `id` is a *session* row id and the account uuid lives only in `subject`,
+ * so a fixture whose subject was the literal "local-admin:operator" could not
+ * catch a write path that stored `id` where an account id belonged. The mode is
+ * the real enum value for the same reason -- "ADMIN" is not one.
+ */
+const administratorId = randomUUID();
 const principal = {
-  id: randomUUID(), subject: "local-admin:operator", identityMode: "ADMIN", scopes: [],
+  id: randomUUID(),
+  subject: `local-admin:${administratorId}`,
+  identityMode: "ADMINISTRATOR_PREVIEW",
+  scopes: [],
 } as unknown as ChatPrincipal;
-const otherPrincipal = { ...principal, subject: "local-admin:someone-else" } as ChatPrincipal;
+const otherPrincipal = {
+  ...principal,
+  id: randomUUID(),
+  subject: `local-admin:${randomUUID()}`,
+} as ChatPrincipal;
 
 /** Writes the AgentRun row a real submission would, so the message FK resolves. */
 async function createRun(status: "QUEUED" | "WAITING_FOR_APPROVAL" = "QUEUED") {
@@ -434,6 +450,45 @@ describe("DrizzleChatManager run control", () => {
     await expect(manager().decideApproval(otherPrincipal, approval!.id, { decision: "DENY" } as never))
       .rejects.toBeInstanceOf(ChatMessageNotFoundError);
   });
+
+  it("bounds the activity trail per run, so an older run cannot crowd out a newer one", async () => {
+    /*
+     * The bound means "the last 500 events of this run", which is what the
+     * Prisma include's nested limit meant. Applied once across every run in the
+     * conversation and ordered ascending it became "the first 500 events of the
+     * conversation" -- so a long-running thread spent its whole allowance on its
+     * oldest run and returned nothing for the turn the operator was watching.
+     *
+     * Two runs, the older one alone over the bound. Before the fix the newer
+     * run's events came back empty and the older one's were its first 500; both
+     * halves of that are asserted here.
+     */
+    const { conversationId: id, runId: older } = await conversationWithRun();
+    await context.database.update(agentRun).set({ status: "COMPLETED" }).where(eq(agentRun.id, older));
+    await context.database
+      .update(chatMessage).set({ status: "COMPLETED", completedAt: new Date() })
+      .where(eq(chatMessage.agentRunId, older));
+    const second = await manager(agents()).submitMessage(principal, id, "And again");
+    const newer = second.assistantMessage.agentRunId!;
+
+    const noise = (runId: string, total: number, label: string) =>
+      Array.from({ length: total }, (_value, index) => ({
+        runId, type: "TOOL_CALL", toolName: `${label}-${index}`,
+      }));
+    await context.database.insert(agentRunEvent).values(noise(older, 520, "old"));
+    await context.database.insert(agentRunEvent).values(noise(newer, 3, "new"));
+
+    const conversation = await manager().get(principal, id);
+    const trail = (runId: string) => conversation.messages
+      .find((message) => message.agentRunId === runId)!.runtimeEvents;
+
+    // The newest run keeps all three: its own bound, not the conversation's.
+    expect(trail(newer).map(({ toolName }) => toolName)).toEqual(["new-0", "new-1", "new-2"]);
+    // The older run is bounded to the newest 500 of its own, not the oldest.
+    expect(trail(older)).toHaveLength(500);
+    expect(trail(older).at(-1)!.toolName).toBe("old-519");
+    expect(trail(older).at(0)!.toolName).toBe("old-20");
+  });
 });
 
 describe("DrizzleChatManager forking, deletion and feedback", () => {
@@ -580,6 +635,232 @@ describe("DrizzleChatManager forking, deletion and feedback", () => {
       .rejects.toBeInstanceOf(ChatMessageNotFoundError);
     await expect(manager().setFeedback(principal, randomUUID(), { rating: "HELPFUL" } as never))
       .rejects.toBeInstanceOf(ChatMessageNotFoundError);
+  });
+});
+
+describe("DrizzleChatManager schedules", () => {
+  async function conversationId() {
+    const profileId = await seedActiveProfile();
+    return (await manager().create(principal, { profileId } as never)).id;
+  }
+
+  const hourly = { prompt: "Summarise overnight incidents.", intervalSeconds: 3_600 };
+
+  it("arms the first run one interval out rather than immediately", async () => {
+    /*
+     * A schedule made due the moment it is created fires while the operator is
+     * still looking at the form they submitted. That reads as a bug even though
+     * it is what "every hour" literally asks for.
+     */
+    const id = await conversationId();
+    const before = Date.now();
+
+    const schedule = await manager().createSchedule(principal, id, hourly as never);
+
+    expect(schedule.enabled).toBe(true);
+    expect(schedule.lastRunAt).toBeNull();
+    expect(schedule.lastOutcome).toBeNull();
+    expect(new Date(schedule.nextRunAt).getTime()).toBeGreaterThanOrEqual(before + 3_600_000);
+  });
+
+  it("honours an explicit first run so a report can land at a stated hour", async () => {
+    const id = await conversationId();
+    const startAt = new Date(Date.now() + 120_000).toISOString();
+
+    const schedule = await manager().createSchedule(principal, id, { ...hourly, startAt } as never);
+
+    expect(schedule.nextRunAt).toBe(startAt);
+  });
+
+  it("refuses a schedule on a conversation owned by somebody else", async () => {
+    // The same test `submitMessage` makes. A schedule is a stored intent to
+    // call that method later, so it must not be creatable where it could not be
+    // called now -- and ownership and existence must produce one error, because
+    // reporting them apart discloses that the conversation exists.
+    const id = await conversationId();
+
+    await expect(manager().createSchedule(otherPrincipal, id, hourly as never))
+      .rejects.toThrow(ChatConversationNotFoundError);
+    await expect(manager().listSchedules(otherPrincipal, id))
+      .rejects.toThrow(ChatConversationNotFoundError);
+  });
+
+  it("refuses to update or delete a schedule owned by somebody else", async () => {
+    /*
+     * `createSchedule` and `listSchedules` are addressed by conversation and go
+     * through `ownedConversation`, which had the only cross-owner case in this
+     * file. `updateSchedule` and `deleteSchedule` are addressed by a bare
+     * schedule id and are guarded by `ownedSchedule` instead -- and nothing
+     * exercised it, so removing its owner predicate left the whole suite green.
+     *
+     * The blast radius if that regressed is total rather than partial: an update
+     * never rewrites `createdBy`, so the dispatcher would go on re-reading the
+     * victim's authority and would run an attacker's prompt with the victim's
+     * scopes and division, into the victim's own thread.
+     */
+    const id = await conversationId();
+    const schedule = await manager().createSchedule(principal, id, hourly as never);
+
+    await expect(manager().updateSchedule(otherPrincipal, schedule.id, { prompt: "Exfiltrate." } as never))
+      .rejects.toThrow(ChatConversationNotFoundError);
+    await expect(manager().deleteSchedule(otherPrincipal, schedule.id))
+      .rejects.toThrow(ChatConversationNotFoundError);
+
+    // Refused, not merely reported as refused.
+    const [row] = await context.database
+      .select({ prompt: chatSchedule.prompt })
+      .from(chatSchedule)
+      .where(eq(chatSchedule.id, schedule.id));
+    expect(row!.prompt).toBe(hourly.prompt);
+  });
+
+  it("refuses an update that names a revision the schedule has moved past", async () => {
+    /*
+     * `revision` was stored and returned from the beginning and compared by
+     * nothing, so the field advertised a conflict check the product did not
+     * perform: two operators editing one schedule took turns overwriting each
+     * other with no sign either way.
+     */
+    const id = await conversationId();
+    const schedule = await manager().createSchedule(principal, id, hourly as never);
+
+    const first = await manager().updateSchedule(
+      principal, schedule.id, { prompt: "First edit.", expectedRevision: schedule.revision } as never,
+    );
+    expect(first.revision).toBeGreaterThan(schedule.revision);
+
+    // The second caller still holds the revision it loaded, which has moved.
+    await expect(manager().updateSchedule(
+      principal, schedule.id, { prompt: "Second edit.", expectedRevision: schedule.revision } as never,
+    )).rejects.toThrow(/changed since it was loaded/);
+
+    const [row] = await context.database
+      .select({ prompt: chatSchedule.prompt }).from(chatSchedule).where(eq(chatSchedule.id, schedule.id));
+    expect(row!.prompt).toBe("First edit.");
+  });
+
+  it("still applies an update that names no revision at all", async () => {
+    // Optional, so a client that never learned about the field keeps working;
+    // this is the half that keeps the addition backward-compatible.
+    const id = await conversationId();
+    const schedule = await manager().createSchedule(principal, id, hourly as never);
+
+    const updated = await manager().updateSchedule(principal, schedule.id, { prompt: "No revision." } as never);
+
+    expect(updated.prompt).toBe("No revision.");
+  });
+
+  it("stores the creator's account id, not the id of the session that created it", async () => {
+    /*
+     * The column the dispatcher re-reads against `LocalAdministrator` on every
+     * fire. `principal.id` is a session row id and matches no account, and no
+     * foreign key spans the two -- so writing the wrong one here is invisible
+     * until the schedule silently disables itself on its first fire. That is
+     * what happened, and this is the assertion that was missing: every other
+     * schedule case went through `createSchedule` without ever reading the
+     * column back, while the dispatcher's own suite seeded it by hand from a
+     * real administrator id, so each half tested a different assumption.
+     */
+    const id = await conversationId();
+
+    const schedule = await manager().createSchedule(principal, id, hourly as never);
+
+    const [row] = await context.database
+      .select({ createdBy: chatSchedule.createdBy, mode: chatSchedule.createdByMode })
+      .from(chatSchedule)
+      .where(eq(chatSchedule.id, schedule.id));
+    expect(row!.createdBy).toBe(administratorId);
+    expect(row!.createdBy).not.toBe(principal.id);
+    expect(row!.mode).toBe("ADMINISTRATOR_PREVIEW");
+  });
+
+  it("refuses a schedule from a sign-in with no account behind it", async () => {
+    /*
+     * The installation-key recovery session, whose subject is the literal
+     * `installation-key-administrator` rather than `local-admin:<uuid>`. It
+     * cannot reach this route today -- it carries only `sessions:manage` -- but
+     * a schedule whose creator can never be resolved is one that would disable
+     * itself on its first fire, so it is refused where the operator can still
+     * see why.
+     *
+     * The conversation is created by that same principal on purpose: ownership
+     * is checked before this, and correctly so, which is why a recovery session
+     * scheduling on somebody else's conversation is refused for being somebody
+     * else's rather than for having no account.
+     */
+    const recovery = {
+      ...principal, subject: "installation-key-administrator",
+    } as ChatPrincipal;
+    const profileId = await seedActiveProfile();
+    const own = await manager().create(recovery, { profileId } as never);
+
+    await expect(manager().createSchedule(recovery, own.id, hourly as never))
+      .rejects.toThrow(/not tied to an account/);
+  });
+
+  it("refuses a prompt the active policy would block on every fire", async () => {
+    // Caught at write time as well as at fire time: this is the one refusal an
+    // operator can fix immediately, by shortening what they just typed.
+    await seedActiveGuardrail();
+    const id = await conversationId();
+
+    await expect(manager().createSchedule(principal, id, { ...hourly, prompt: "x".repeat(101) } as never))
+      .rejects.toThrow(/101 characters; the active guardrail policy allows 100/);
+  });
+
+  it("re-arms the cadence when a disabled schedule is switched back on", async () => {
+    /*
+     * `nextRunAt` left in the past would make a schedule disabled for a week
+     * fire the instant it returned, which is not what "enable" means to the
+     * person clicking it. The stored reason goes with it.
+     */
+    const id = await conversationId();
+    const created = await manager().createSchedule(principal, id, hourly as never);
+    await context.database
+      .update(chatSchedule)
+      .set({ enabled: false, nextRunAt: new Date(Date.now() - 86_400_000), lastOutcome: "DISABLED", lastDetail: "Conversation archived." })
+      .where(eq(chatSchedule.id, created.id));
+
+    const resumed = await manager().updateSchedule(principal, created.id, { enabled: true } as never);
+
+    expect(resumed.enabled).toBe(true);
+    expect(resumed.lastOutcome).toBeNull();
+    expect(resumed.lastDetail).toBeNull();
+    expect(new Date(resumed.nextRunAt).getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it("leaves the armed time alone when an enabled schedule is edited", async () => {
+    const id = await conversationId();
+    const created = await manager().createSchedule(principal, id, hourly as never);
+
+    const edited = await manager().updateSchedule(principal, created.id, { prompt: "Different prompt." } as never);
+
+    expect(edited.prompt).toBe("Different prompt.");
+    expect(edited.nextRunAt).toBe(created.nextRunAt);
+    expect(edited.revision).toBe(created.revision + 1);
+  });
+
+  it("deletes a conversation's schedules with it", async () => {
+    // The foreign key cascades. Without it a deleted conversation would leave
+    // rows the dispatcher still reads and can never satisfy.
+    const id = await conversationId();
+    await manager().createSchedule(principal, id, hourly as never);
+
+    await manager().delete(principal, id);
+
+    const remaining = await context.database.select().from(chatSchedule);
+    expect(remaining).toHaveLength(0);
+  });
+
+  it("refuses an interval the database would refuse anyway", async () => {
+    // The contract bound and `ChatSchedule_intervalSeconds_check` state the same
+    // range. This asserts the database half, so a caller that reaches the
+    // manager without the contract cannot write a row the dispatcher would then
+    // fire every second.
+    const id = await conversationId();
+
+    await expect(manager().createSchedule(principal, id, { ...hourly, intervalSeconds: 30 } as never))
+      .rejects.toThrow();
   });
 });
 

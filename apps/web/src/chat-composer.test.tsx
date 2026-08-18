@@ -117,10 +117,8 @@ const styles = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
 
 const props = {
   unlocked: true,
-  identityMode: "ADMINISTRATOR_PREVIEW" as const,
   displayName: "Operator",
   administratorReadiness: null,
-  oidcConfigured: false,
   onSignIn: vi.fn(),
   onConfigure: vi.fn(),
   onOpenAgents: vi.fn(),
@@ -366,7 +364,7 @@ describe("the chat composer", () => {
      */
     mocks.getChatConversation.mockResolvedValue(measured(902));
     mocks.getModelDeployments.mockRejectedValue(new OrcaSynapseApiError(401, "Administrator scope models:read is required."));
-    render(<ChatView {...props} identityMode="ENTERPRISE" />);
+    render(<ChatView {...props} />);
 
     const readout = await screen.findByLabelText(/^Context usage 902 tokens; the context window size needs administrator access$/);
     expect(readout.getAttribute("title")).toMatch(/administrator/i);

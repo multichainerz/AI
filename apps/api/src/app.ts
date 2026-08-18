@@ -31,8 +31,19 @@ import {
 import { registerInferenceGatewayRoutes } from "./inference/routes.js";
 import { registerAdminCorpusRoutes, registerRuntimeCorpusRoutes } from "./corpus/routes.js";
 import { checkForPlatformUpdate } from "./platform-updates.js";
+import type { PlatformUpdate } from "@orcasynapse/contracts";
 import { registerAdminUpdateRoutes } from "./updates/routes.js";
 import { registerUsageRoutes } from "./usage/routes.js";
+
+/**
+ * How long one upstream release check answers for every caller.
+ *
+ * Five minutes puts the worst case at twelve GitHub calls an hour against a
+ * sixty-call unauthenticated budget, leaving headroom for the authenticated
+ * administrator path that shares the same egress address. Shorter buys nothing:
+ * releases are cut by hand, not by the minute.
+ */
+const PLATFORM_UPDATE_CACHE_MS = 5 * 60 * 1_000;
 
 export interface AppOptions {
   logger?: boolean;
@@ -81,7 +92,13 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
       request.url.startsWith("/api/v1/admin/") ||
       request.url.startsWith("/api/v1/chat/") ||
       request.url.startsWith("/api/v1/session") ||
-      request.url.startsWith("/api/v1/auth/oidc/") ||
+      /*
+       * The local sign-in routes, which the OIDC prefix this replaced did not
+       * cover. `/auth/oidc/` stopped being registered when federated login was
+       * removed, while `/auth/local/*` -- one of which returns the full session
+       * body -- was matched by nothing here and so carried no `no-store`.
+       */
+      request.url.startsWith("/api/v1/auth/local/") ||
       request.url.startsWith("/api/v1/agents")
       || request.url.startsWith("/api/v1/mcp")
       || request.url.startsWith("/api/v1/runtime-nodes")
@@ -93,10 +110,10 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
     return payload;
   });
 
-  if (runtime.database || runtime.operationsManager || runtime.connectionMonitor) {
+  if (runtime.database || runtime.operationsManager || runtime.connectionMonitor || runtime.scheduleRuntime) {
     app.addHook("onClose", async () => {
       try {
-        await runtime.siemForwarder?.stop();
+        await runtime.scheduleRuntime?.stop();
         await runtime.connectionMonitor?.stop();
       } finally {
         try {
@@ -124,8 +141,13 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
     await runtime.connectionMonitor.start();
   }
 
-  if (runtime.siemForwarder) {
-    await runtime.siemForwarder.start();
+  /*
+   * Started after the managers it calls into, and stopped before them: a cycle
+   * that began during shutdown would otherwise reach a chat manager whose
+   * database connection is already closing.
+   */
+  if (runtime.scheduleRuntime) {
+    await runtime.scheduleRuntime.start();
   }
 
   app.get("/healthz", async (_request, reply) => {
@@ -201,10 +223,35 @@ export async function createApp(options: AppOptions = {}): Promise<FastifyInstan
    * approved it. `/api/v1/admin/updates` answers the same question with the
    * target attached, for a caller that has proved who it is.
    */
+  /*
+   * One upstream call per window, however many callers ask.
+   *
+   * This route needs no session, and it reached the GitHub tags API on every
+   * request. GitHub allows sixty unauthenticated calls an hour per source
+   * address, so sixty anonymous requests exhausted the quota for the whole
+   * deployment's egress -- and the next thing to need it is
+   * `resolveReleaseTarget`, the administrator path for pinning a security
+   * release. An unauthenticated route could therefore disable an administrator
+   * function, without authenticating and without any error that named the cause.
+   *
+   * The promise in flight is shared rather than only the settled value, so a
+   * burst of concurrent callers collapses into one upstream call instead of
+   * racing to fill an empty cache. Failures are not cached: a transient GitHub
+   * outage must not pin a 503 for the whole window.
+   */
+  let updateCheck: { at: number; inFlight: Promise<PlatformUpdate> } | null = null;
   app.get("/api/v1/platform/update", async (_request, reply) => {
     void reply.header("cache-control", "no-store");
     try {
-      return await checkForPlatformUpdate(ORCASYNAPSE_VERSION);
+      const now = Date.now();
+      if (!updateCheck || now - updateCheck.at > PLATFORM_UPDATE_CACHE_MS) {
+        const inFlight = checkForPlatformUpdate(ORCASYNAPSE_VERSION);
+        updateCheck = { at: now, inFlight };
+        inFlight.catch(() => {
+          if (updateCheck?.inFlight === inFlight) updateCheck = null;
+        });
+      }
+      return await updateCheck.inFlight;
     } catch (error) {
       const detail = error instanceof Error ? error.message : "The release service returned an unknown error.";
       return reply.code(503).send({

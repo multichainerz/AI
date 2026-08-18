@@ -112,6 +112,17 @@ export function inspectInput(
   value: string,
   policy: Pick<RuntimeTextPolicy, "maxInputCharacters" | "blockControlCharacters" | "blockCredentialPatterns">,
   rules: readonly GuardrailRule[] = [],
+  /*
+   * Overridable only so the refusal below can be reached deterministically.
+   *
+   * It is the one decision here that is not the operator's, and no test executed
+   * it: whether the budget check fails open or closed could have been inverted
+   * without the suite noticing, and inverting it refuses every message that
+   * carries an enabled rule. Timing cannot be provoked reliably from outside, so
+   * the ceiling is a parameter with the real value as its default rather than a
+   * constant a test has to race.
+   */
+  budgetMs: number = RULE_BUDGET_MS,
 ): GuardrailInspection {
   const builtIn = inspectInputText(value, policy);
   if (builtIn) return block(builtIn, value);
@@ -123,7 +134,7 @@ export function inspectInput(
 
   for (const rule of rules) {
     if (!rule.enabled) continue;
-    if (performance.now() - startedAt > RULE_BUDGET_MS) {
+    if (performance.now() - startedAt > budgetMs) {
       return block("RULE_BUDGET_EXCEEDED", value, [
         ...matches,
         { ruleId: rule.id, label: rule.label, action: rule.action, count: 0 },

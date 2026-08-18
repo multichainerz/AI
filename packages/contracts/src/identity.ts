@@ -22,18 +22,32 @@ export const enterpriseSessionSchema = z.object({
   passwordChangeRequired: z.boolean().optional(),
 });
 
+/**
+ * The person sign-in body, bounded.
+ *
+ * This route parsed its body by hand -- `typeof body.username === "string"`
+ * with a trim and no ceiling -- while the administrator route next door went
+ * through `localAdministratorLoginRequestSchema`. The asymmetry was not
+ * cosmetic: a failed sign-in writes `metadata: { username }` into `AuditEvent`,
+ * which nothing prunes, so an unauthenticated caller could store a megabyte per
+ * attempt in the audit trail.
+ *
+ * The bounds are the administrator route's, for the columns they land in.
+ * `password` takes no minimum here because this route only *checks* a password;
+ * refusing a short one before the hash would tell an attacker the length policy,
+ * and the password itself is never stored or audited.
+ */
+export const localPersonLoginRequestSchema = z.object({
+  username: z.string().trim().min(1).max(64),
+  password: z.string().min(1).max(1_024),
+}).strict();
+
 export const localPersonPasswordChangeRequestSchema = z.object({
   currentPassword: z.string().min(12).max(1_024),
   newPassword: z.string().min(12).max(1_024),
 }).strict();
 
-export const oidcStatusSchema = z.object({
-  configured: z.boolean(),
-  administratorSignIn: z.boolean().optional(),
-  message: z.string(),
-});
-
 export type EnterpriseUser = z.infer<typeof enterpriseUserSchema>;
 export type EnterpriseSession = z.infer<typeof enterpriseSessionSchema>;
+export type LocalPersonLoginRequest = z.infer<typeof localPersonLoginRequestSchema>;
 export type LocalPersonPasswordChangeRequest = z.infer<typeof localPersonPasswordChangeRequestSchema>;
-export type OidcStatus = z.infer<typeof oidcStatusSchema>;

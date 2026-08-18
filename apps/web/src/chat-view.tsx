@@ -8,6 +8,7 @@ import type {
   ChatStreamEvent,
   ModelDeployment,
 } from "@orcasynapse/contracts";
+import { ChatSchedules } from "./chat-schedules.js";
 import { applyStreamEventToConversation } from "./chat-stream-reducer.js";
 import { LoadingState } from "./components/ui/loading-state.js";
 import { interleaveByOffset } from "./chat/interleave.js";
@@ -30,6 +31,7 @@ import {
   ArrowUpRight,
   Bot as RobotIcon,
   BrainCircuit,
+  CalendarClock,
   Copy as CopyIcon,
   Layers3 as LayersIcon,
   Monitor as MonitorIcon,
@@ -70,7 +72,6 @@ import {
 
 interface ChatViewProps {
   unlocked: boolean;
-  identityMode: "ENTERPRISE" | "ADMINISTRATOR_PREVIEW" | null;
   displayName: string | null;
   administratorReadiness: {
     ready: boolean;
@@ -78,7 +79,6 @@ interface ChatViewProps {
     detail: string;
     target: "Deployment" | "Agents";
   } | null;
-  oidcConfigured: boolean;
   onSignIn: () => void;
   onConfigure: () => void;
   onOpenAgents: () => void;
@@ -146,6 +146,15 @@ const COMPOSER_COUNTER_WARN = Math.round(COMPOSER_LIMIT * 0.05);
  * genuinely transient trouble is absorbed, and anything past that is reported
  * rather than retried.
  */
+/**
+ * How often an idle open conversation asks whether it moved without this tab.
+ *
+ * The same cadence as the workspace reconciler in `app.tsx`, for the same
+ * reason: both are background questions nobody is waiting on, and one number is
+ * easier to reason about than two.
+ */
+const OUT_OF_BAND_POLL_MS = 15_000;
+
 export const STREAM_RECONNECT_LIMIT = 6;
 
 function formatLatency(value: number | null): string {
@@ -474,7 +483,6 @@ export function ChatView({
   unlocked,
   displayName,
   administratorReadiness,
-  oidcConfigured,
   onSignIn,
   onConfigure,
   onOpenAgents,
@@ -485,6 +493,7 @@ export function ChatView({
   // indexed". Collapsing the two let a failed load render as an empty library.
   const [moreOpen, setMoreOpen] = useState(false);
   const [skillsOpen, setSkillsOpen] = useState(false);
+  const [schedulesOpen, setSchedulesOpen] = useState(false);
   const [catalogue, setCatalogue] = useState<HermesRuntimeCatalogue | null>(null);
   const [conversations, setConversations] = useState<ChatConversationSummary[]>([]);
   const [active, setActive] = useState<ChatConversation | null>(null);
@@ -688,6 +697,51 @@ export function ChatView({
     setPinned(true);
   };
 
+  /*
+   * Picks up a turn this tab did not start.
+   *
+   * Every other path into a conversation begins here -- somebody types, the
+   * stream opens, the transcript follows it -- so nothing ever asked the server
+   * whether a conversation had moved on its own. A scheduled turn does exactly
+   * that: the dispatcher submits it in the API process, and an operator watching
+   * the thread saw nothing at all. Worse than nothing, in fact: their next
+   * message was answered with the scheduled exchange in the model's context and
+   * absent from the transcript in front of them, so the reply did not follow
+   * from what they could see.
+   *
+   * The conversation list is the cheap question -- it carries `messageCount`
+   * without any message bodies -- and only a real divergence pays for a full
+   * refetch. Suspended while a stream is running, because the stream is already
+   * the more precise answer to the same question, and it re-runs on `busy`
+   * clearing so a turn that landed during one is picked up immediately after.
+   *
+   * Fifteen seconds matches the workspace poll in `app.tsx` deliberately: this
+   * is the same kind of background reconciliation, and two different cadences
+   * would be two things to reason about.
+   */
+  useEffect(() => {
+    if (!unlocked || !active || busy) return;
+    const conversationId = active.id;
+    let cancelled = false;
+    const check = async () => {
+      try {
+        const items = await getChatConversations();
+        if (cancelled) return;
+        setConversations(items.items);
+        const summary = items.items.find(({ id }) => id === conversationId);
+        if (!summary || summary.messageCount === active.messages.length) return;
+        const refreshed = await getChatConversation(conversationId);
+        if (cancelled) return;
+        setActive((current) => current?.id === conversationId ? refreshed : current);
+      } catch {
+        // A background reconciler must never surface an error over a
+        // conversation the operator is reading; the next tick tries again.
+      }
+    };
+    const timer = window.setInterval(() => void check(), OUT_OF_BAND_POLL_MS);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [unlocked, active, busy]);
+
   useEffect(() => {
     if (streamStartedAt === null) return;
     const updateElapsed = () => setStreamElapsedMs(Date.now() - streamStartedAt);
@@ -734,6 +788,21 @@ export function ChatView({
           const refreshed = await getChatConversation(conversationId);
           setActive((current) => current?.id === conversationId ? refreshed : current);
           await refreshList();
+          /*
+           * A stream that closed cleanly with the run still PENDING is the same
+           * stuck state the catch below guards against, reached by the other
+           * door: the subscription ends, nothing retries, and the transcript
+           * shows "reconnecting" for a run that is still going. Rejoining is the
+           * only correct reading -- the run did not finish, so neither should
+           * following it. Bounded by the same retry counter, so a server that
+           * closes immediately every time still gives up and says so.
+           */
+          const settled = refreshed.messages.find(({ id }) => id === messageId);
+          if (settled?.status === "PENDING" && retry < STREAM_RECONNECT_LIMIT) {
+            retry += 1;
+            cursor = settled.lastEventCursor;
+            continue;
+          }
           return;
         } catch (cause) {
           // Same reason, one step earlier: the reconnect below re-reads the
@@ -750,14 +819,34 @@ export function ChatView({
           const refreshed = await getChatConversation(conversationId).catch(() => null);
           const pending = refreshed?.messages.find(({ id }) => id === messageId);
           if (refreshed) setActive((current) => current?.id === conversationId ? refreshed : current);
-          if (!pending || pending.status !== "PENDING") {
+          /*
+           * Only a refetch that *succeeded* may end the loop.
+           *
+           * This used to test `!pending`, which is also what a failed refetch
+           * produces -- so the two calls failing together, which is the ordinary
+           * shape of a brief network drop since both are same-origin fetches
+           * issued back to back, was read as "the run finished" on the very
+           * first attempt. The loop returned, `busy` cleared, and no dependency
+           * changed, so nothing retried: the transcript sat on "reconnecting"
+           * for a live run, Stop unmounted because `working` was false, and a
+           * new message was refused 409 until the pending row went stale an hour
+           * later. Reopening the conversation did not help either, because the
+           * effect's deps turn on the pending message's id, which had not
+           * changed.
+           *
+           * A null refetch now falls through to the bounded backoff, which is
+           * what it always should have done: the server is unreachable, which is
+           * the condition this loop exists to survive.
+           */
+          if (refreshed && (!pending || pending.status !== "PENDING")) {
             await refreshList().catch(() => undefined);
             return;
           }
           if (retry >= STREAM_RECONNECT_LIMIT) {
-            // The message is still PENDING and the transport still will not
-            // hold, which after this many rounds is a condition that does not
-            // clear itself. Whatever the server said is the useful half.
+            // The message is still PENDING -- or could not be read at all -- and
+            // the transport still will not hold, which after this many rounds is
+            // a condition that does not clear itself. Whatever the server said
+            // is the useful half.
             setCurrentActivity(null);
             setError(`Lost contact with this Hermes run after ${STREAM_RECONNECT_LIMIT} attempts. ${
               cause instanceof Error ? cause.message : "The event stream could not be re-opened."
@@ -765,7 +854,10 @@ export function ChatView({
             await refreshList().catch(() => undefined);
             return;
           }
-          cursor = pending.lastEventCursor;
+          // Unchanged when the refetch failed: resuming from the last cursor the
+          // server confirmed replays at worst, where resuming from null would
+          // re-send the whole run.
+          if (pending) cursor = pending.lastEventCursor;
           await new Promise((resolve) => window.setTimeout(resolve, Math.min(5_000, 500 * 2 ** Math.min(retry, 4))));
         }
       }
@@ -1060,15 +1152,12 @@ export function ChatView({
           title="Session"
           kicker="Workspace"
           mark="AI"
-          headline={oidcConfigured ? "Sign in to OrcaSynapse" : "Enterprise access is not configured"}
-          reason={
-            oidcConfigured
-              ? "Use your approved OrcaSynapse identity. OrcaSynapse checks the configured group allowlist before creating a local session."
-              : "An administrator must configure and successfully test the enterprise OIDC connection before employees can enter Chat."
-          }
-          actionLabel={oidcConfigured ? "Sign in with OrcaSynapse" : "Administrator setup"}
-          onAction={oidcConfigured ? onSignIn : onConfigure}
-          {...(oidcConfigured ? { secondaryLabel: "Administrator setup", onSecondary: onConfigure } : {})}
+          headline="Sign in to OrcaSynapse"
+          reason="Sign in with the account an administrator created for you, or ask them to create one."
+          actionLabel="Sign in"
+          onAction={onSignIn}
+          secondaryLabel="Administrator setup"
+          onSecondary={onConfigure}
         />
       </div>
     );
@@ -1162,7 +1251,12 @@ export function ChatView({
    * "open" while the dialog was not would hide the jump control
    * for no reason a reader could see.
    */
+  // Every modal, so the floating "Jump to latest" control stays behind the
+  // backdrop rather than over it. The Schedules dialog was added without being
+  // added here, which is the failure this shape invites -- a list that has to be
+  // extended by hand each time a dialog is introduced.
   const dialogOpen = skillsOpen
+    || (schedulesOpen && active !== null)
     || (confirmDelete && active !== null);
 
   return (
@@ -1456,6 +1550,7 @@ export function ChatView({
                 >
                   {[
                     { label: "Rename", run: () => { setTitleDraft(active.title); setRenaming(true); } },
+                    { label: "Schedule", run: () => setSchedulesOpen(true) },
                     { label: "Fork", run: () => void forkConversation() },
                     { label: "Export", run: () => exportConversation() },
                     {
@@ -2072,6 +2167,17 @@ export function ChatView({
             </div>
           </div>
         )}
+      </Dialog>
+
+      <Dialog
+        open={schedulesOpen && active !== null}
+        onClose={() => setSchedulesOpen(false)}
+        icon={CalendarClock}
+        kicker="Unattended turns"
+        title="Run this conversation on a schedule"
+        description="OrcaSynapse posts the prompt and the agent answers in this thread."
+      >
+        {active && <ChatSchedules conversationId={active.id} />}
       </Dialog>
 
       <Dialog

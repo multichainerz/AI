@@ -774,6 +774,44 @@ describe("division-scoped memory", () => {
     expect(rows[0]?.divisionId).toBe(alpha!.id);
   });
 
+  it("resumes a retry whose arguments postgres reordered on the way in", async () => {
+    /*
+     * jsonb sorts an object's keys by length then bytewise, so a call stored
+     * with `{text, divisionId, division}` reads back as a different key order
+     * than the caller sent. Comparing the two with `JSON.stringify` therefore
+     * compared a retry against a reordering of itself and denied it as "already
+     * used for a different tool invocation" -- a denial that is permanent,
+     * because the retry's arguments never change.
+     *
+     * Three keys of differing length, sent in an order jsonb will not preserve,
+     * is the whole test: with a canonical comparison the second call is the same
+     * call and returns the recorded result.
+     */
+    await enableGateway();
+    const [alpha] = await context.database.insert(division)
+      .values({ slug: "alpha", displayName: "Alpha" }).returning();
+    const tools = await memoryTools();
+    const run = await runIn(alpha!.id);
+    await grantTool(run.version.id, tools.remember.id);
+    const requestId = randomUUID();
+    const arguments_ = { divisionId: alpha!.id, division: "Alpha", text: "remembered once" };
+
+    const first = await manager().invoke(tools.remember.slug, {
+      authorization: run.authorization, requestId, arguments: arguments_,
+    });
+    const retry = await manager().invoke(tools.remember.slug, {
+      authorization: run.authorization, requestId, arguments: arguments_,
+    });
+
+    // Replayed rather than refused: same call id, same terminal status.
+    expect(retry.callId).toBe(first.callId);
+    expect(retry.status).toBe(first.status);
+    expect(retry.isError).toBe(false);
+    // Replayed, not run twice.
+    const rows = await context.database.select().from(scopedMemoryEntry);
+    expect(rows).toHaveLength(1);
+  });
+
   /*
    * A deployment-wide run reads deployment-wide rows and no others. Null is a
    * scope, so it must not behave as "match anything" -- that single misreading

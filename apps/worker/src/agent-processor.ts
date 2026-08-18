@@ -287,6 +287,30 @@ const MEMORY_MATCH_LIMIT = 20;
 /** How many recent notes a question matching nothing still sees. */
 const MEMORY_RECENCY_FLOOR = 5;
 /** How many runs one sweep claims. */
+/**
+ * How long a finished run keeps its token-by-token replay.
+ *
+ * `MESSAGE_DELTA` is one row per streamed chunk. Nothing prunes `AgentRunEvent`
+ * -- there is no retention job, no migration and no delete anywhere -- which was
+ * survivable while every run began with somebody typing, and stopped being so
+ * when an unattended dispatcher could start one on a five-minute cadence.
+ *
+ * Only the deltas, and only for a run that has reached a terminal status. Once
+ * it has, `ChatMessage.content` holds the coalesced text and the transcript
+ * reads it from there: `loadMessages` filters `MESSAGE_DELTA` out entirely, and
+ * the live stream resumes by cursor on a run that is still going. The one
+ * reader that sees them is the run ledger's event list, so a run older than this
+ * window shows its tool calls and status changes without the token replay --
+ * which is a deliberate trade, and the reason the window is a week rather than a
+ * day.
+ *
+ * The non-delta events -- tool calls, approvals, status transitions -- are the
+ * activity trail and are never pruned.
+ */
+const RUN_EVENT_DELTA_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
+/** Bounded so one sweep cannot hold a long transaction over a large table. */
+const RUN_EVENT_PRUNE_BATCH = 5_000;
+
 const MEMORY_EXTRACTION_BATCH = 10;
 /** How far back a sweep will reach for work it has never done. */
 const MEMORY_EXTRACTION_LOOKBACK_MS = 6 * 60 * 60 * 1_000;
@@ -909,6 +933,33 @@ export class DrizzleAgentProcessor {
    * - **The write is idempotent** (v8.6.0's dedup), so a run claimed and then
    *   half-written does not duplicate what it already stored.
    */
+  /**
+   * Discards the streamed token chunks of runs that finished long ago.
+   *
+   * See `RUN_EVENT_DELTA_RETENTION_MS` for what is kept and why. Bounded per
+   * sweep and driven by the run's terminal state rather than the event's own
+   * age, so an event belonging to a run that is still going is never a
+   * candidate however old it is.
+   */
+  async pruneRunEvents(limit = RUN_EVENT_PRUNE_BATCH): Promise<number> {
+    const cutoff = new Date(Date.now() - RUN_EVENT_DELTA_RETENTION_MS);
+    const removed = await this.database.execute<{ id: string }>(sql`
+      DELETE FROM "AgentRunEvent"
+      WHERE "id" IN (
+        SELECT e."id" FROM "AgentRunEvent" e
+        JOIN "AgentRun" r ON r."id" = e."runId"
+        WHERE e."type" = 'MESSAGE_DELTA'
+          AND r."status" IN ('COMPLETED', 'FAILED', 'CANCELLED', 'TIMED_OUT', 'DENIED')
+          AND r."completedAt" IS NOT NULL
+          AND r."completedAt" < ${cutoff}
+        LIMIT ${limit}
+      )
+      RETURNING "id"
+    `);
+    const rows = (Array.isArray(removed) ? removed : removed.rows) as Array<{ id: string }>;
+    return rows.length;
+  }
+
   async drainMemoryExtraction(limit = MEMORY_EXTRACTION_BATCH): Promise<number> {
     if (!this.extractor) return 0;
     /*

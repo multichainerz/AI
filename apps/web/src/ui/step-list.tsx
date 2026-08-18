@@ -7,7 +7,7 @@ import { Mark } from "./surface.js";
  * each row is both a progress readout and the way back into that step.
  *
  * Lifted from the governed-path column on the Dashboard
- * (`dashboard-hero.tsx:777-819`), which is the only place in the product that
+ * (`dashboard-hero.tsx`, `PipelineRow`), which is the only place in the product that
  * had already solved "these are in order, and a message travels through them":
  * an `<ol>` with an absolutely-positioned 1px `bg-border-strong` rule running
  * between the markers rather than three cards of equal weight separated by a

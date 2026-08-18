@@ -89,6 +89,24 @@ describe("DrizzleOnboardingManager architecture", () => {
     } as never)).rejects.toBeInstanceOf(OnboardingConflictError);
   });
 
+  it("completes the topology stage on a deployment nobody wrote a rationale for", async () => {
+    /*
+     * The stage gated PASSED on `reason`, a nullable column whose only writer is
+     * `updateArchitecture` -- and the web client that called it was removed, so
+     * on every install created at v8.9.0 or later it is null forever. One FAILED
+     * check makes `applyValidation` write the step BLOCKED, so `system-topology`
+     * could never complete on any deployment, for a reason no operator could act
+     * on. Nothing is touched here before validating: this is a fresh install.
+     */
+    await provisionAdministrator();
+
+    await manager().runValidation(principal, { stageKey: "system-topology" } as never);
+
+    const snapshot = await manager().snapshot();
+    expect(snapshot.steps.find(({ key }) => key === "system-topology")?.status).toBe("COMPLETED");
+    expect(snapshot.architecture.reason).toBeNull();
+  });
+
   it("invalidates every contract and stage when the architecture changes", async () => {
     await provisionAdministrator();
     await manager().runValidation(principal, { stageKey: "activate-installation" } as never);

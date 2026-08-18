@@ -11,11 +11,16 @@ import {
   type ChatMessageSubmission,
   type ChatStreamEvent,
   type CreateChatConversation,
+  type ChatSchedule,
+  type ChatScheduleList,
+  type ChatScheduleOutcome,
+  type CreateChatSchedule,
   type SetChatFeedback,
   type DecideAgentRunApproval,
   type ForkChatConversation,
   type GuardrailRule,
   type UpdateChatConversation,
+  type UpdateChatSchedule,
 } from "@orcasynapse/contracts";
 import {
   agentProfile,
@@ -27,12 +32,13 @@ import {
   chatConversation,
   chatFeedback,
   chatMessage,
+  chatSchedule,
   guardrailPolicy,
   type ChatRunWakeHub,
   type ChatRunWatch,
   type OrcaSynapseDatabase,
 } from "@orcasynapse/database";
-import { and, asc, count, desc, eq, gt, gte, inArray, isNotNull, ne, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, getTableColumns, gt, gte, inArray, isNotNull, lte, ne, sql, type SQL } from "drizzle-orm";
 import type { AgentManager, AgentPrincipal } from "../agents/agent-manager.js";
 import { profileVisibleTo } from "../agents/profile-visibility.js";
 import {
@@ -42,11 +48,13 @@ import {
 } from "../guardrails/runtime-policy.js";
 import {
   ChatConfigurationError,
+  ChatConversationArchivedError,
   ChatConversationConflictError,
   ChatConversationNotFoundError,
   ChatMessageNotFoundError,
   ChatPolicyViolationError,
   ChatRateLimitError,
+  principalAccountId,
   type ChatManager,
   type ChatPrincipal,
 } from "./chat-manager.js";
@@ -74,6 +82,14 @@ const RUN_STATUS_INTERVAL_MS = 350;
 const RUN_WAKE_MIN_INTERVAL_MS = 25;
 /** The statuses from which a run never leaves. */
 const TERMINAL_RUN_STATUSES = new Set(["COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT", "DENIED"]);
+
+/*
+ * Per run, not per conversation. The numbers are the ones the Prisma include
+ * carried; what changed is that they are applied where that include applied
+ * them, which a flat LIMIT over every run in the conversation did not.
+ */
+const EVENTS_PER_RUN = 500;
+const APPROVALS_PER_RUN = 20;
 
 interface StoredRunEvent {
   id: string;
@@ -271,6 +287,35 @@ function messageDto(message: StoredMessage): ChatMessage {
   };
 }
 
+/*
+ * `lastOutcome` is a varchar in the database and a union on the wire, so it is
+ * narrowed here rather than asserted. A value this release does not recognise
+ * reads as "never run" instead of failing the parse: this is the field an
+ * operator opens when a schedule has stopped working, and it must not be the
+ * second thing that breaks.
+ */
+function scheduleOutcome(value: string | null): ChatScheduleOutcome | null {
+  return value === "OK" || value === "SKIPPED" || value === "DISABLED" ? value : null;
+}
+
+function scheduleDto(row: typeof chatSchedule.$inferSelect): ChatSchedule {
+  return {
+    id: row.id,
+    conversationId: row.conversationId,
+    prompt: row.prompt,
+    intervalSeconds: row.intervalSeconds,
+    nextRunAt: row.nextRunAt.toISOString(),
+    lastRunAt: row.lastRunAt?.toISOString() ?? null,
+    lastOutcome: scheduleOutcome(row.lastOutcome),
+    lastDetail: row.lastDetail,
+    enabled: row.enabled,
+    createdBySubject: row.createdBySubject,
+    revision: row.revision,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
 function summaryDto(conversation: StoredConversation): ChatConversationSummary {
   const lastMessage = conversation.messages?.at(0);
   return {
@@ -369,6 +414,15 @@ export class DrizzleChatManager implements ChatManager {
    * Replaces the Prisma message include. The run's events and approvals are
    * fetched per run rather than as a nested relation, because the event set is
    * filtered and bounded independently of the message row.
+   *
+   * "Per run" is the whole point and it is what the first Drizzle version of
+   * this method lost. Prisma applied these limits as *nested* relation limits,
+   * which it partitions per parent record; a flat `.limit(500)` over an
+   * `inArray` of every run in the conversation applies them once across the
+   * lot. Ordered ascending, that keeps the oldest events in the conversation
+   * and discards the newest -- so the run the operator is actually watching is
+   * the one whose activity trail goes missing, and it gets worse the longer the
+   * conversation is useful. The window function restores the original meaning.
    */
   private async loadMessages(where: SQL<unknown>): Promise<StoredMessage[]> {
     const rows = await this.database
@@ -385,18 +439,39 @@ export class DrizzleChatManager implements ChatManager {
       .orderBy(asc(chatMessage.ordinal));
 
     const runIds = rows.flatMap(({ message }) => message.agentRunId ? [message.agentRunId] : []);
+    /*
+     * Ranked newest-first inside each run, then re-ordered ascending for the
+     * DTO. Taking the newest is what makes a bound safe to have at all: an
+     * older event that falls outside it is history the transcript can lose,
+     * where a newer one is the turn in progress.
+     */
+    const rankedEvents = this.database
+      .select({
+        ...getTableColumns(agentRunEvent),
+        rank: sql<number>`row_number() over (partition by ${agentRunEvent.runId} order by ${agentRunEvent.cursor} desc)`.as("rank"),
+      })
+      .from(agentRunEvent)
+      .where(and(inArray(agentRunEvent.runId, runIds.length === 0 ? [""] : runIds), ne(agentRunEvent.type, "MESSAGE_DELTA")))
+      .as("ranked_events");
     const events = runIds.length === 0 ? [] : await this.database
       .select()
-      .from(agentRunEvent)
-      .where(and(inArray(agentRunEvent.runId, runIds), ne(agentRunEvent.type, "MESSAGE_DELTA")))
-      .orderBy(asc(agentRunEvent.cursor))
-      .limit(500);
+      .from(rankedEvents)
+      .where(lte(rankedEvents.rank, EVENTS_PER_RUN))
+      .orderBy(asc(rankedEvents.cursor));
+
+    const rankedApprovals = this.database
+      .select({
+        ...getTableColumns(agentRunApproval),
+        rank: sql<number>`row_number() over (partition by ${agentRunApproval.runId} order by ${agentRunApproval.requestedAt} desc)`.as("rank"),
+      })
+      .from(agentRunApproval)
+      .where(inArray(agentRunApproval.runId, runIds.length === 0 ? [""] : runIds))
+      .as("ranked_approvals");
     const approvals = runIds.length === 0 ? [] : await this.database
       .select()
-      .from(agentRunApproval)
-      .where(inArray(agentRunApproval.runId, runIds))
-      .orderBy(asc(agentRunApproval.requestedAt))
-      .limit(20);
+      .from(rankedApprovals)
+      .where(lte(rankedApprovals.rank, APPROVALS_PER_RUN))
+      .orderBy(asc(rankedApprovals.requestedAt));
 
     return rows.map(({ message, feedback, runStatus, lastEventCursor }) => ({
       ...message,
@@ -624,7 +699,7 @@ export class DrizzleChatManager implements ChatManager {
         ))
         .limit(1);
       if (!stored) throw new ChatConversationNotFoundError();
-      if (stored.status !== "ACTIVE") throw new ChatConversationConflictError("Archived conversations cannot accept new messages.");
+      if (stored.status !== "ACTIVE") throw new ChatConversationArchivedError("Archived conversations cannot accept new messages.");
       if (!stored.profileId || !stored.profileName) {
         throw new ChatConfigurationError("This legacy conversation has no Agent Profile. Start a new conversation.");
       }
@@ -1179,6 +1254,230 @@ export class DrizzleChatManager implements ChatManager {
       });
       await transaction.delete(chatConversation).where(eq(chatConversation.id, conversationId));
     });
+  }
+
+  /*
+   * ---------------------------------------------------------------------------
+   * Schedules
+   * ---------------------------------------------------------------------------
+   * Stored intent only. Nothing here starts a run; a schedule is a record that
+   * `submitMessage` should be called later, and every rule that method enforces
+   * is enforced by it then rather than duplicated here. The two checks that do
+   * happen at write time -- conversation ownership and the policy's input
+   * ceiling -- are here because an operator filling in a form should learn about
+   * a refusal now instead of silently on every fire.
+   */
+
+  async listSchedules(principal: ChatPrincipal, conversationId: string): Promise<ChatScheduleList> {
+    await this.ownedConversation(principal, conversationId);
+    const rows = await this.database
+      .select()
+      .from(chatSchedule)
+      .where(eq(chatSchedule.conversationId, conversationId))
+      .orderBy(asc(chatSchedule.createdAt), asc(chatSchedule.id));
+    return { items: rows.map(scheduleDto) };
+  }
+
+  async createSchedule(
+    principal: ChatPrincipal,
+    conversationId: string,
+    input: CreateChatSchedule,
+  ): Promise<ChatSchedule> {
+    await this.ownedConversation(principal, conversationId);
+    await this.assertPromptWithinPolicy(input.prompt);
+    /*
+     * The account id, not `principal.id`. The dispatcher re-reads this column
+     * against `LocalAdministrator` / `EnterpriseUser` on every fire, and a
+     * session row id matches neither -- with no foreign key to say so, which is
+     * why writing the wrong one here made every schedule disable itself on its
+     * first fire instead of failing at creation.
+     */
+    const createdBy = principalAccountId(principal);
+    if (!createdBy) {
+      throw new ChatConfigurationError(
+        "This sign-in cannot own a schedule, because it is not tied to an account the dispatcher can re-read.",
+      );
+    }
+    /*
+     * An absent `startAt` means one interval from now rather than "now". A
+     * schedule created without a start time and made immediately due would fire
+     * while the operator is still looking at the form they just submitted,
+     * which reads as a bug even though it is what "every 5 minutes" literally
+     * asks for.
+     */
+    const nextRunAt = input.startAt
+      ? new Date(input.startAt)
+      : new Date(Date.now() + input.intervalSeconds * 1_000);
+    const created = await this.database.transaction(async (transaction) => {
+      const [row] = await transaction
+        .insert(chatSchedule)
+        .values({
+          conversationId,
+          prompt: input.prompt,
+          intervalSeconds: input.intervalSeconds,
+          nextRunAt,
+          createdBy,
+          createdBySubject: principal.subject,
+          createdByMode: principal.identityMode,
+        })
+        .returning();
+      if (!row) throw new ChatConfigurationError("The schedule could not be created.");
+      await transaction.insert(auditEvent).values({
+        actorType: "USER",
+        actorId: principal.id,
+        action: "chat.schedule_created",
+        resourceType: "ChatSchedule",
+        resourceId: row.id,
+        outcome: "SUCCESS",
+        metadata: {
+          conversationId,
+          intervalSeconds: input.intervalSeconds,
+          nextRunAt: nextRunAt.toISOString(),
+          identityMode: principal.identityMode,
+        },
+      });
+      return row;
+    });
+    return scheduleDto(created);
+  }
+
+  async updateSchedule(
+    principal: ChatPrincipal,
+    scheduleId: string,
+    input: UpdateChatSchedule,
+  ): Promise<ChatSchedule> {
+    const updated = await this.database.transaction(async (transaction) => {
+      /*
+       * Ownership first, as `createSchedule` does it.
+       *
+       * The policy check used to run before this, so a caller who did not own
+       * the schedule still learned whether their text fit the deployment's
+       * `maxInputCharacters` and whether it tripped a rule -- answers about a
+       * resource they were about to be told does not exist.
+       */
+      const existing = await this.ownedSchedule(transaction, principal, scheduleId);
+      /*
+       * Enforced inside the transaction that writes, so the row cannot move
+       * between the check and the update. Refused as a conflict rather than
+       * silently applied: the column existed and was returned to clients from
+       * the beginning, and comparing nothing meant two operators editing one
+       * schedule took turns overwriting each other with no sign either way.
+       */
+      if (input.expectedRevision !== undefined && input.expectedRevision !== existing.revision) {
+        throw new ChatConversationConflictError(
+          "This schedule changed since it was loaded. Reopen it and apply the change again.",
+        );
+      }
+      if (input.prompt !== undefined) await this.assertPromptWithinPolicy(input.prompt);
+      /*
+       * Re-enabling clears the stored reason and re-arms the cadence from now.
+       * Leaving `nextRunAt` in the past would make a schedule that had been
+       * disabled for a week fire the moment it came back, which is not what
+       * "enable" means to the person clicking it.
+       */
+      const reArm = input.enabled === true && !existing.enabled;
+      const interval = input.intervalSeconds ?? existing.intervalSeconds;
+      const [row] = await transaction
+        .update(chatSchedule)
+        .set({
+          ...(input.prompt !== undefined ? { prompt: input.prompt } : {}),
+          ...(input.intervalSeconds !== undefined ? { intervalSeconds: input.intervalSeconds } : {}),
+          ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
+          ...(reArm
+            ? { nextRunAt: new Date(Date.now() + interval * 1_000), lastOutcome: null, lastDetail: null }
+            : {}),
+          revision: sql`${chatSchedule.revision} + 1`,
+        })
+        .where(eq(chatSchedule.id, scheduleId))
+        .returning();
+      if (!row) throw new ChatConversationNotFoundError();
+      await transaction.insert(auditEvent).values({
+        actorType: "USER",
+        actorId: principal.id,
+        action: "chat.schedule_updated",
+        resourceType: "ChatSchedule",
+        resourceId: scheduleId,
+        outcome: "SUCCESS",
+        metadata: { fields: Object.keys(input), enabled: row.enabled },
+      });
+      return row;
+    });
+    return scheduleDto(updated);
+  }
+
+  async deleteSchedule(principal: ChatPrincipal, scheduleId: string): Promise<void> {
+    await this.database.transaction(async (transaction) => {
+      await this.ownedSchedule(transaction, principal, scheduleId);
+      await transaction.insert(auditEvent).values({
+        actorType: "USER",
+        actorId: principal.id,
+        action: "chat.schedule_deleted",
+        resourceType: "ChatSchedule",
+        resourceId: scheduleId,
+        outcome: "SUCCESS",
+      });
+      await transaction.delete(chatSchedule).where(eq(chatSchedule.id, scheduleId));
+    });
+  }
+
+  /**
+   * The conversation, or the same not-found every other owner-scoped read
+   * raises. Ownership and existence deliberately produce one error: telling a
+   * caller that a conversation exists but belongs to somebody else is itself a
+   * disclosure.
+   */
+  private async ownedConversation(principal: ChatPrincipal, conversationId: string): Promise<void> {
+    const [conversation] = await this.database
+      .select({ id: chatConversation.id })
+      .from(chatConversation)
+      .where(and(
+        eq(chatConversation.id, conversationId),
+        eq(chatConversation.ownerSubject, principal.subject),
+      ))
+      .limit(1);
+    if (!conversation) throw new ChatConversationNotFoundError();
+  }
+
+  /** The same test, reached through the schedule's conversation. */
+  private async ownedSchedule(
+    transaction: OrcaSynapseDatabase,
+    principal: ChatPrincipal,
+    scheduleId: string,
+  ): Promise<{ enabled: boolean; intervalSeconds: number; revision: number }> {
+    const [row] = await transaction
+      .select({
+        enabled: chatSchedule.enabled,
+        intervalSeconds: chatSchedule.intervalSeconds,
+        revision: chatSchedule.revision,
+      })
+      .from(chatSchedule)
+      .innerJoin(chatConversation, eq(chatSchedule.conversationId, chatConversation.id))
+      .where(and(
+        eq(chatSchedule.id, scheduleId),
+        eq(chatConversation.ownerSubject, principal.subject),
+      ))
+      .limit(1);
+    if (!row) throw new ChatConversationNotFoundError();
+    return row;
+  }
+
+  /**
+   * The policy's input ceiling, checked while the operator is still on the form.
+   *
+   * Only the length. The rule and detector checks stay where they run today --
+   * inside `submitMessage`, against the policy active at the moment of the fire
+   * -- because a policy activated after this schedule was written must still
+   * govern it. Checking the ceiling here is worth the duplication because it is
+   * the one refusal an operator can fix immediately by shortening what they
+   * typed.
+   */
+  private async assertPromptWithinPolicy(prompt: string): Promise<void> {
+    const policy = await this.resolvePolicy();
+    if (prompt.length > policy.maxInputCharacters) {
+      throw new ChatPolicyViolationError(
+        `The scheduled prompt is ${prompt.length} characters; the active guardrail policy allows ${policy.maxInputCharacters}.`,
+      );
+    }
   }
 
   async setFeedback(principal: ChatPrincipal, messageId: string, input: SetChatFeedback): Promise<ChatFeedback> {

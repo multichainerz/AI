@@ -7,12 +7,16 @@ import {
   chatStreamEventSchema,
   chatFeedbackSchema,
   chatMetricsSchema,
+  chatScheduleSchema,
+  chatScheduleListSchema,
   createChatConversationSchema,
+  createChatScheduleSchema,
   decideAgentRunApprovalSchema,
   forkChatConversationSchema,
   sendChatMessageSchema,
   setChatFeedbackSchema,
   updateChatConversationSchema,
+  updateChatScheduleSchema,
 } from "@orcasynapse/contracts";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import {
@@ -373,6 +377,66 @@ export async function registerChatRoutes(
     if (!id) return reply.code(400).send({ error: "INVALID_REQUEST", message: "Conversation ID is invalid." });
     try {
       await options.manager.delete(principal, id);
+      return reply.code(204).send();
+    } catch (error) {
+      await sendChatError(reply, error);
+    }
+  });
+
+  /*
+   * Schedules. Owner-scoped like every other conversation route -- the manager
+   * makes the same ownership test `submitMessage` makes, because a schedule is
+   * a stored intent to call that method later.
+   */
+  app.get("/conversations/:conversationId/schedules", async (request, reply) => {
+    const principal = await requireChatPrincipal(request, reply, options);
+    if (!principal) return;
+    if (!options.manager) return reply.code(423).send({ error: "PLATFORM_LOCKED", message: "Chat services are not ready." });
+    const id = uuidParam((request.params as Record<string, unknown>).conversationId);
+    if (!id) return reply.code(400).send({ error: "INVALID_REQUEST", message: "Conversation ID is invalid." });
+    try {
+      return chatScheduleListSchema.parse(await options.manager.listSchedules(principal, id));
+    } catch (error) {
+      await sendChatError(reply, error);
+    }
+  });
+
+  app.post("/conversations/:conversationId/schedules", async (request, reply) => {
+    const principal = await requireChatPrincipal(request, reply, options);
+    if (!principal) return;
+    if (!options.manager) return reply.code(423).send({ error: "PLATFORM_LOCKED", message: "Chat services are not ready." });
+    const id = uuidParam((request.params as Record<string, unknown>).conversationId);
+    const input = createChatScheduleSchema.safeParse(request.body);
+    if (!id || !input.success) return reply.code(400).send({ error: "INVALID_REQUEST", message: id ? input.error?.issues[0]?.message : "Conversation ID is invalid." });
+    try {
+      return reply.code(201).send(chatScheduleSchema.parse(await options.manager.createSchedule(principal, id, input.data)));
+    } catch (error) {
+      await sendChatError(reply, error);
+    }
+  });
+
+  app.patch("/schedules/:scheduleId", async (request, reply) => {
+    const principal = await requireChatPrincipal(request, reply, options);
+    if (!principal) return;
+    if (!options.manager) return reply.code(423).send({ error: "PLATFORM_LOCKED", message: "Chat services are not ready." });
+    const id = uuidParam((request.params as Record<string, unknown>).scheduleId);
+    const input = updateChatScheduleSchema.safeParse(request.body);
+    if (!id || !input.success) return reply.code(400).send({ error: "INVALID_REQUEST", message: id ? input.error?.issues[0]?.message : "Schedule ID is invalid." });
+    try {
+      return chatScheduleSchema.parse(await options.manager.updateSchedule(principal, id, input.data));
+    } catch (error) {
+      await sendChatError(reply, error);
+    }
+  });
+
+  app.delete("/schedules/:scheduleId", async (request, reply) => {
+    const principal = await requireChatPrincipal(request, reply, options);
+    if (!principal) return;
+    if (!options.manager) return reply.code(423).send({ error: "PLATFORM_LOCKED", message: "Chat services are not ready." });
+    const id = uuidParam((request.params as Record<string, unknown>).scheduleId);
+    if (!id) return reply.code(400).send({ error: "INVALID_REQUEST", message: "Schedule ID is invalid." });
+    try {
+      await options.manager.deleteSchedule(principal, id);
       return reply.code(204).send();
     } catch (error) {
       await sendChatError(reply, error);

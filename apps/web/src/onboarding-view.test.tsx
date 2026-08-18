@@ -111,7 +111,6 @@ type Overrides = Partial<Parameters<typeof OnboardingView>[0]>;
 function props(overrides: Overrides = {}) {
   return {
     session,
-    oidcConfigured: false,
     connections: [],
     agentRuntime: null,
     profiles: [] as AgentProfile[],

@@ -1,18 +1,12 @@
-import type { AuditEventList, AuditEventQuery, AuditForwardingState } from "@orcasynapse/contracts";
+import type { AuditEventList, AuditEventQuery } from "@orcasynapse/contracts";
 import {
   auditEvent,
-  auditForwardingState,
-  serviceConnection,
   type OrcaSynapseDatabase,
 } from "@orcasynapse/database";
-import { and, count, desc, eq, gt, gte, lte, lt, or, type SQL } from "drizzle-orm";
-
-/** A backlog past this is worth an operator's attention rather than a shrug. */
-const BEHIND_THRESHOLD = 500;
+import { and, desc, eq, gte, lte, lt, or, type SQL } from "drizzle-orm";
 
 export interface AuditManager {
   list(query: AuditEventQuery): Promise<AuditEventList>;
-  forwarding(): Promise<AuditForwardingState>;
 }
 
 /**
@@ -77,69 +71,6 @@ export class DrizzleAuditManager implements AuditManager {
       nextCursor: rows.length > query.limit && last
         ? { beforeOccurredAt: last.occurredAt.toISOString(), beforeId: last.id }
         : null,
-    };
-  }
-
-  /**
-   * Whether the trail is reaching its destination.
-   *
-   * The forwarder records its own position and last failure; what it cannot know
-   * is how far behind that leaves it, because the backlog is a property of the
-   * trail rather than of the last attempt.
-   */
-  async forwarding(): Promise<AuditForwardingState> {
-    const [configured] = await this.database
-      .select({ total: count() })
-      .from(serviceConnection)
-      .where(and(eq(serviceConnection.kind, "SIEM"), eq(serviceConnection.enabled, true)));
-    const [state] = await this.database
-      .select()
-      .from(auditForwardingState)
-      .where(eq(auditForwardingState.id, "global"))
-      .limit(1);
-
-    // The backlog is everything past the forwarder's position, counted the same
-    // way the forwarder advances it. Counting by timestamp instead would agree
-    // with the forwarder even where both are wrong: an event whose transaction
-    // committed late carries a timestamp the cursor has already passed, so it
-    // would be reported as delivered while never having been sent.
-    const [pending] = await this.database
-      .select({ total: count() })
-      .from(auditEvent)
-      .where(gt(auditEvent.cursor, state?.lastForwardedCursor ?? 0n));
-    const pendingCount = pending?.total ?? 0;
-
-    if ((configured?.total ?? 0) === 0) {
-      return {
-        status: "NOT_CONFIGURED",
-        pendingCount,
-        deliveredCount: state?.deliveredCount ?? 0,
-        lastForwardedAt: state?.lastForwardedAt?.toISOString() ?? null,
-        lastAttemptAt: state?.lastAttemptAt?.toISOString() ?? null,
-        lastError: state?.lastError ?? null,
-        summary: "No SIEM connection is enabled, so the trail is retained locally only.",
-      };
-    }
-
-    const status = state?.lastError
-      ? "FAILING" as const
-      : pendingCount > BEHIND_THRESHOLD
-        ? "BEHIND" as const
-        : "HEALTHY" as const;
-    return {
-      status,
-      pendingCount,
-      deliveredCount: state?.deliveredCount ?? 0,
-      lastForwardedAt: state?.lastForwardedAt?.toISOString() ?? null,
-      lastAttemptAt: state?.lastAttemptAt?.toISOString() ?? null,
-      lastError: state?.lastError ?? null,
-      summary: status === "FAILING"
-        ? `The SIEM endpoint is rejecting batches; ${pendingCount} event${pendingCount === 1 ? "" : "s"} are undelivered.`
-        : status === "BEHIND"
-          ? `Forwarding is accepting batches but ${pendingCount} events are still queued.`
-          : pendingCount === 0
-            ? "Every recorded event has been accepted by the SIEM."
-            : `${pendingCount} event${pendingCount === 1 ? "" : "s"} await the next forwarding pass.`,
     };
   }
 }

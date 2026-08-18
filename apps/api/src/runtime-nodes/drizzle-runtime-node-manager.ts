@@ -43,6 +43,7 @@ import { encryptedSecretData, sealedColumns, storedEnvelope } from "../secret-en
 import { advisoryLock, increment, isUniqueViolation } from "../database-support.js";
 import type { AdminPrincipal } from "../auth/admin-session.js";
 import type { ConnectionTestService } from "../connections/diagnostics/connection-test-service.js";
+
 import {
   RuntimeNodeAuthenticationError,
   RuntimeNodeConflictError,
@@ -52,6 +53,26 @@ import {
   type HermesRuntimeNodeManager,
   type NodeSignatureHeaders,
 } from "./runtime-node-manager.js";
+
+/**
+ * What a newly enrolled node is allowed to run before an operator says anything.
+ *
+ * The same two names the installer writes into managed scope
+ * (`platform_toolsets: api_server: [no_mcp, memory]`), stated here because the
+ * dashboard and the node have to agree on the starting position: the reconciler
+ * computes what to suppress as everything-minus-admitted, so an admission set
+ * wider than this one silently empties that suppression list.
+ *
+ * `memory` is the built-in the runbook names. `no_mcp` is not a capability but
+ * the marker that suppresses dynamic MCP discovery, and it is admitted for the
+ * same reason it appears in the installer's allowlist -- it has to survive the
+ * intersection or discovery comes back.
+ *
+ * Widening this is a product decision, not a deployment one. An operator widens
+ * their own deployment through the admission screen, which is the recorded,
+ * audited path this seeding deliberately does not replace.
+ */
+const BASELINE_ADMITTED_TOOLSETS = ["no_mcp", "memory"] as const;
 
 const SIGNATURE_CLOCK_SKEW_MS = 5 * 60 * 1_000;
 const NONCE_RETENTION_MS = 24 * 60 * 60 * 1_000;
@@ -337,6 +358,71 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
     private readonly encryption: EnvelopeEncryption,
     private readonly connectionTester?: ConnectionTestService,
   ) {}
+
+  /**
+   * Seeds the approved baseline into `RuntimeToolsetAdmission` at enrolment.
+   *
+   * A fresh deployment had an empty table, and the seeded default tool set
+   * tracks admission rather than listing members -- so "every toolset this
+   * deployment admits" resolved to none, and an operator had to admit something
+   * by hand before the agent could do anything at all. Enrolment is the first
+   * moment there is anything to say.
+   *
+   * **The baseline, not the catalogue.** This used to admit every name the
+   * newly enrolled runtime reported, which inverted the product's stated
+   * posture: `docs/CURRENT_STATE_HANDOFF.md` invariant 7 is "native toolsets are
+   * default-deny except built-in memory and explicit operator admissions", and
+   * step 7 of the enrolment runbook promises "admitting only the built-in
+   * `memory` tool and disabling default MCP discovery and every other unapproved
+   * native toolset". Reading the catalogue could not deliver that on two counts.
+   *
+   * The first is ordering: enrolment happens before the installer writes the
+   * managed policy, so the catalogue read is of *stock* Hermes with its broad
+   * default preset. The second is worse and independent of ordering --
+   * `/v1/toolsets` is the complete registry with a per-toolset `enabled` flag,
+   * and the reader interface typed that flag away, so the insert admitted on
+   * name alone. Enrolment therefore allowlisted every toolset the runtime merely
+   * *knew about*. Those admissions then flowed back out through `desiredState`
+   * into the node reconciler, which computes `disabled_toolsets` as everything
+   * minus admitted -- empty -- and so wrote no suppression block at all, one step
+   * after the restrictive policy had been written. The install ended wide open
+   * and reported success.
+   *
+   * Seeding a constant removes the ordering question rather than answering it,
+   * and cannot be widened by what a node happens to report.
+   *
+   * **Existing decisions are never overwritten.** `onConflictDoNothing` is the
+   * whole safety of this: re-enrolling a node -- which is how an upgrade is
+   * performed -- must not silently re-admit a toolset an operator deliberately
+   * revoked, nor re-deny one they admitted. Only names with no row yet are
+   * written.
+   *
+   * Drift detection survives unchanged. Admission stays a recorded decision per
+   * toolset, so a toolset that appears on the node after enrolment still has no
+   * row, is still unadmitted, and still fails the boundary assertion.
+   */
+  private async admitBaselineToolsets(nodeId: string): Promise<void> {
+    await this.database.transaction(async (transaction) => {
+      const admitted = await transaction
+        .insert(runtimeToolsetAdmission)
+        .values(BASELINE_ADMITTED_TOOLSETS.map((toolsetName) => ({
+          toolsetName,
+          admitted: true,
+          reason: "The approved baseline, admitted when the Agentic System node enrolled.",
+        })))
+        .onConflictDoNothing({ target: runtimeToolsetAdmission.toolsetName })
+        .returning({ toolsetName: runtimeToolsetAdmission.toolsetName });
+      if (admitted.length === 0) return;
+      await transaction.insert(auditEvent).values({
+        actorType: "SERVICE",
+        action: "tool.toolset_admitted_on_enrollment",
+        resourceType: "HermesRuntimeNode",
+        resourceId: nodeId,
+        outcome: "SUCCESS",
+        metadata: { toolsets: admitted.map(({ toolsetName }) => toolsetName) },
+      });
+    });
+  }
 
   async list(): Promise<HermesRuntimeNode[]> {
     // A node that stopped reporting must not keep presenting as available.
@@ -764,6 +850,15 @@ export class DrizzleHermesRuntimeNodeManager implements HermesRuntimeNodeManager
     if (enrolled.node.serviceConnectionId && this.connectionTester) {
       await this.connectionTester.test(enrolled.node.serviceConnectionId).catch(() => undefined);
     }
+    /*
+     * Swallowed like the connection test above, and for the same reason: the
+     * node is enrolled by this point, and failing the response would leave the
+     * installer reporting a failure for a node that is actually registered.
+     * A seed that did not land leaves the admissions empty, which is the
+     * restrictive answer -- an operator admits by hand -- rather than a broken
+     * enrolment.
+     */
+    await this.admitBaselineToolsets(enrolled.node.id).catch(() => undefined);
     const { publicKeyPem } = await this.controlPlanePublicKey();
     return {
       node: summarize(enrolled.node as StoredNode, enrolled.hermesCommit),

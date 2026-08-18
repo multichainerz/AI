@@ -106,6 +106,41 @@
       "when": 1786940337463,
       "tag": "0014_brown_carmella_unuscione",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1786954333489,
+      "tag": "0015_nasty_namor",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1786963941664,
+      "tag": "0016_unique_jack_flag",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1786965911596,
+      "tag": "0017_sticky_blackheart",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1786983458515,
+      "tag": "0018_fixed_misty_knight",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1787014580693,
+      "tag": "0019_deep_deathstrike",
+      "breakpoints": true
     }
   ]
 }

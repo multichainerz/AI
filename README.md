@@ -21,7 +21,7 @@
 ## Architecture
 
 <p align="center">
-  <img src="docs/assets/orcasynapse-architecture.svg" alt="VM1 runs the OrcaSynapse control plane and PostgreSQL; VM2 runs the isolated Hermes runtime and owns native sessions and memory; an OpenAI-compatible endpoint provides inference; audit batches can be forwarded to a SIEM" width="100%" />
+  <img src="docs/assets/orcasynapse-architecture.svg" alt="VM1 runs the OrcaSynapse control plane and PostgreSQL; VM2 runs the isolated Hermes runtime and owns native sessions and memory; an OpenAI-compatible endpoint provides inference" width="100%" />
 </p>
 
 The baseline uses two VMs and an existing OpenAI-compatible inference endpoint:
@@ -29,7 +29,6 @@ The baseline uses two VMs and an existing OpenAI-compatible inference endpoint:
 - **VM1 — control plane:** web workspace, API, worker, stock PostgreSQL 17, encrypted configuration, a searchable revision mirror of the allowlisted Hermes corpus, sanitized run projections, incidents, and the append-only audit trail.
 - **VM2 — Hermes runtime:** native sessions, Skills, toolsets, `MEMORY.md`, `USER.md`, and runtime execution under a hardened systemd service.
 - **Inference:** a dashboard-approved model route. Credentials remain on VM1; VM2 receives a scoped gateway credential.
-- **SIEM (optional):** at-least-once forwarding of the retained audit trail.
 
 There is no control-plane vector store, embedding model, document library, external memory service, Redis, queue broker, object store, or LiteLLM tier.
 
@@ -55,8 +54,8 @@ VM2 installs vanilla Hermes at the approved commit, applies the managed native-m
 - **Session:** durable conversations over Hermes’ native session API, with streaming, cancellation, telemetry, feedback, archive, export, and audit projections.
 - **Agents:** immutable Profile Distributions and run history (Profiles), a repository-style view of Hermes-native Skills and memory, and runtime toolset admissions (Tools).
 - **Gateway:** everything on the governed inference path — the routes a deployment may serve (Models), the input rules it enforces (Guardrails), and what it consumed (Usage). System text for a run comes from the active Agent Profile, not a separate prompt catalogue.
-- **Operations:** health and incidents, the audit trail, and optional SIEM forwarding.
-- **Settings:** bring-up and Hermes enrollment (Setup), administrators and the divisions they belong to (Access), enterprise identity, encrypted connections, and application updates (System).
+- **Operations:** health and incidents, and the audit trail.
+- **Settings:** bring-up and Hermes enrollment (Setup), administrators and the divisions they belong to (Access), encrypted connections and application updates (System).
 
 ## Memory and audit
 
@@ -90,7 +89,7 @@ Use `pnpm dev` for the API and workspace and `pnpm dev:worker` for durable Herme
 | [Architecture](docs/ARCHITECTURE.md) | Ownership, data flow, network boundaries, and recovery |
 | [Installation and recovery](deploy/BOOTSTRAP.md) | VM1 bootstrap, clean-install requirement, secrets, backup, and erase |
 | [Agentic System enrollment](docs/AGENTIC_SYSTEM_ENROLLMENT_RUNBOOK.md) | VM2 enrollment, native state, toolset allowlist, and decommission |
-| [Audit trail and SIEM forwarding](docs/AUDIT_TRAIL_RUNBOOK.md) | Reading, forwarding, health, and replay behavior |
+| [Audit trail](docs/AUDIT_TRAIL_RUNBOOK.md) | Reading the trail, its filters, and what it retains |
 | [Model controls](docs/MODEL_CONTROL_RUNBOOK.md) | Model registration, versioning, and activation |
 | [Prompt controls](docs/PROMPT_CONTROL_RUNBOOK.md) | Why the Prompts surface was removed, and what still reads `PromptTemplate` |
 | [Guardrail controls](docs/GUARDRAIL_CONTROL_RUNBOOK.md) | Input rules, redaction, the regex safety gate, versioning and activation |

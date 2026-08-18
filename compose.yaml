@@ -181,9 +181,18 @@ services:
       # operator who follows BOOTSTRAP.md and restricts this port on the host
       # finds the rule has no effect and believes the dashboard is protected.
       # The default stays open, since the installer prints a LAN URL and VM2
-      # reaches this port to enrol; set ORCASYNAPSE_HTTP_BIND=127.0.0.1 when a
-      # reverse proxy terminates TLS on the same host, which is the posture
-      # BOOTSTRAP.md asks for outside a protected deployment network.
+      # reaches this port to enrol; bind to 127.0.0.1 when a reverse proxy
+      # terminates TLS on the same host, which is the posture BOOTSTRAP.md asks
+      # for outside a protected deployment network.
+      #
+      # Declare it with `--http-bind 127.0.0.1` on the installer rather than by
+      # exporting ORCASYNAPSE_HTTP_BIND. The variable alone is not enough and
+      # this comment used to say it was: sudo's env_reset drops it, and nothing
+      # recorded it, so every path that recreated this container re-derived the
+      # default below -- including the unattended update, which rebuilds the
+      # staging tree and discards a project .env on the way. The flag is
+      # recorded under .local/state/http-bind and read back by every later run,
+      # the same way the public scheme is.
       - "${ORCASYNAPSE_HTTP_BIND:-0.0.0.0}:${ORCASYNAPSE_HTTP_PORT:-8080}:8080"
     networks:
       - application

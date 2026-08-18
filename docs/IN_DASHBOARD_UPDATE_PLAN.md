@@ -29,7 +29,11 @@ inventing one.
 | Database backup before migrate | built (increment 1) |
 | **Down migrations / schema rollback** | **absent by design (forward-only)** |
 | VM1 host-side systemd units | built (increment 4) |
-| Approved-target record | built (increment 2) |
+| Approved-target record (VM1) | built (increment 2) |
+| VM2 commit reconcile, health gate, and rollback | built (increment 3) |
+| VM1 update agent, run history, and activity surface | built (increment 4) |
+| **Approved-target record for the *Hermes* runtime** | **absent (increment 5)** |
+| **VM2 reconcile outcome readable in the dashboard** | **absent (increment 5)** |
 
 ## The failure that shaped everything
 
@@ -116,8 +120,10 @@ Records intent. Nothing acts on it, so it is safe to ship on its own.
   resolves the tag to a commit through the existing GitHub lookup, refuses a tag
   that is not a release, refuses a downgrade, writes the row with an audit event.
   `DELETE` clears it.
-- **Dashboard:** Settings → Application gains "Approve <version>" beside the
+- **Dashboard:** Settings → System gains "Approve <version>" beside the
   existing check, and shows the approved target with who approved it and when.
+  (`Application` is the routing token that tab still uses internally, and has
+  never been a name on screen.)
   While a target is set and not yet applied, the panel says which machines have
   taken it up.
 
@@ -144,6 +150,38 @@ re-enrolled.
 **Done when:** changing the target moves a real VM2 to the new commit in the WSL
 bed, a bad commit leaves the node on its previous pin, and the heartbeat reports
 which commit is actually running.
+
+### What shipped, and the one thing this increment got wrong
+
+The **channel is built** — everything above except the second bullet.
+`hermesCommit` is a required field on the signed document, and
+`hermes-desired-state.sh` verifies the signature, checks the document is
+addressed to this node, validates the SHA is 40 hex characters *before* handing
+it to a root install script, stops the runtime, installs with `--force-commit`,
+reads the commit back off disk rather than trusting what it asked for, waits
+90 × 2s for `/health`, and on any failure reinstalls the previous commit and
+re-pins to whatever is actually on disk.
+`scripts/test-agentic-desired-state-commit.sh` runs the real extracted script
+against stubbed `curl`, `systemctl`, `git` and `sleep` and covers the install,
+failure and rollback paths. The heartbeat reports the running commit — it sends
+`commit-pin` verbatim, and that file is written only from a commit read back off
+disk.
+
+**The second bullet is a category error, and the implementation was right to
+refuse it.** "The approved commit" here means `PlatformReleaseTarget`, which is
+a commit *of OrcaSynapse*. Wiring it into the desired-state document would tell
+VM2 to install this repository as though it were Hermes. The contract says so at
+the field itself. So `desiredState()` resolves the enrolment pin, then the
+node's last reported commit, then `DEFAULT_HERMES_COMMIT` — and there is no
+approved-target source at all for the Hermes runtime.
+
+That leaves exactly one gap between here and an operator who never opens a
+shell. `hermesNodeEnrollment.hermesCommit` is **write-once**: it is set on the
+`INSERT` in `createInvitation` and no `UPDATE` anywhere touches it. Node actions
+are `DRAIN | RESUME | SUSPEND | REVOKE`, and `createInvitation` refuses a second
+claim once `identityPublicKeyPem` or `enrolledAt` is set. So moving VM2 today
+means revoke → new invitation → re-run the installer on VM2 by hand. Increment 5
+closes it.
 
 ## Increment 4 — VM1 updates itself
 
@@ -201,8 +239,90 @@ assertions, 11 scenarios), both in the `install` job.
 nothing here says the product boots on the new schema. The releases are staged
 fixtures, not real tarballs. Nothing has run this against a real full
 installation end to end — the first real unattended upgrade will be the first
-one anybody has seen. And the record the agent writes is a host file: no API
-route reads it yet, so the dashboard still cannot show what the agent did.
+one anybody has seen.
+
+*The last item on this list has since closed.* The agent's record is no longer
+only a host file: it writes `PlatformUpdateAgent` (singleton liveness) and
+`PlatformUpdateRun` (one row per attempt, with `phase`, `detail`, `targetCommit`,
+`installedCommit`, `rollback`, a truncated log and `apiUnavailableUntil`).
+`GET /api/v1/admin/updates/activity` reads both under `readiness:read`, and
+`platform-update-activity.tsx` renders them. `updateAgentPresence` reports the
+agent missing or stale after an hour, so "installed and idle" no longer looks
+like "not installed at all".
+
+## Increment 5 — an approved Hermes target, so VM2 needs no shell either
+
+The channel from increment 3 already carries and applies a commit. All that is
+missing is something an administrator can write into it, and a way to watch the
+result. VM1 reached that state at increment 2 + increment 4; this is the same
+two halves for VM2.
+
+**Schema: `HermesNodeReleaseTarget`, keyed by `nodeId`.** Not a mirror of
+`PlatformReleaseTarget`, which is a `'global'` singleton — a deployment has one
+VM1 and may have several VM2s, and each is pinned separately. The approval
+columns do carry over: `desiredCommit` (40-hex, CHECK-constrained the way the
+platform table constrains its own), `approvedBy`, `approvedBySubject`,
+`approvedAt`, `revision`. `approvedBySubject` sits beside `approvedBy` for the
+reason the platform table states: a federated approver has no `LocalAdministrator`
+row, so the uuid alone cannot be resolved back to a name afterwards.
+
+**Resolution: extend `recordedHermesCommits`, never bypass it.** The new target
+goes in front of the enrolment pin, ahead of the reported commit and
+`DEFAULT_HERMES_COMMIT`. The comment on that method is the requirement —
+`desiredState` tells the node what to run and `list` tells the dashboard what to
+expect, and if they read the pin differently the screen reports drift the node
+was never asked to close, or hides drift it was. One implementation, two callers.
+
+**Clearing a target is not neutral, and must not be labelled as though it were.**
+Clearing re-resolves to the enrolment pin, so a node that has already moved
+rolls *backward* to the commit it was enrolled at. That is a useful revert and a
+poor "Clear". Name the control for what it does.
+
+**API.** `POST /api/v1/admin/runtime-nodes/:nodeId/release-target` taking
+`{ desiredCommit, expectedRevision }` — the same optimistic-concurrency shape as
+`approveReleaseTargetSchema` — under `readiness:approve`, which is the scope VM1
+approvals use rather than the `readiness:manage` the drain/suspend actions use.
+Refused while the node is `SUSPENDED` or `REVOKED`. `DELETE` reverts. Audited as
+`hermes.node.release-target.approved` and `.cleared`, following the dotted
+lowercase convention (`hermes.node.invitation-issued`,
+`platform.release-target.approved`).
+
+**Reporting, and why VM1's shortcut is unavailable here.** The update agent
+reads and writes PostgreSQL directly, through `psql` inside the postgres
+container against `/run/secrets/postgres_password`, and increment 4 chose that
+precisely to avoid a new authenticated surface. VM2 cannot do this: it is a
+different machine, and the enrolment runbook's network allowlist denies it
+PostgreSQL outright. So the reconciler's outcome has to travel on the signed
+node channel — a `HermesNodeUpdateRun` row per attempt, reusing
+`platformUpdatePhaseSchema` verbatim including `unknown`, which exists so a row
+written by a differently-versioned agent renders as an unrecognised phase rather
+than failing to parse. This is the screen an operator opens when an upgrade has
+gone wrong; it must not be the second thing that breaks. The reconciler already
+computes every field it would send — `COMMIT_RECONCILE_STATUS`, and the
+`moving… / is now at… / restoring…` messages — and currently discards them.
+
+**This one ships across two releases, and the ordering is forced.**
+`hermesNodeHeartbeatSchema` is `.strict()`. A node that sends a field to a
+control plane too old to know it is refused on every beat, goes stale, and is
+marked OFFLINE. So VM1 accepts the new field in release *N* and the installer
+teaches VM2 to send it in *N+1* — the same rule `units` was added under, stated
+in the contract as a requirement rather than a preference.
+
+**The open decision, which blocks the schema rather than the polish.** VM1
+approvals take a *tag* and resolve the commit server-side, so a caller cannot
+name a version and pin it to a commit of its own. Hermes has no equivalent tag
+service, so this endpoint must accept a raw 40-hex SHA — and whoever holds
+`readiness:approve` can then name any commit in the Hermes repository, which
+goes to a root install script on VM2. VM1 is structurally incapable of that.
+Three ways to answer it: an operator-maintained allowlist of approved commits,
+typed confirmation of the node slug (the pattern the two-stage Remove flow
+already uses), or accept it as an audit-attributed act. Settle this before the
+migration is generated.
+
+**Done when:** approving a commit moves an enrolled VM2 with no shell on it, a
+bad commit leaves the node on its previous pin and says so in the dashboard,
+clearing the target returns it to the enrolled commit, and `desiredState` and
+`list` never disagree about what the node was told to run.
 
 ## Ordering and skew
 

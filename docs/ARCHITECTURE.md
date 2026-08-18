@@ -25,13 +25,11 @@ flowchart LR
   API -->|signed conflict-safe mutations| Corpus
   API --> Inference[OpenAI-compatible inference]
   Hermes --> API
-  API -. audit batches .-> SIEM[Customer SIEM]
 ```
 
 - **VM1** runs the browser workspace, API, worker, Nginx, and stock PostgreSQL 17.
 - **VM2** runs Hermes natively under a hardened systemd unit. Hermes owns its session transcripts and file-backed memory.
 - **Inference** is an operator-approved OpenAI-compatible endpoint reached through VM1's scoped gateway.
-- **SIEM** forwarding is optional and exports retained audit events at least once.
 
 ### Operator workspace
 

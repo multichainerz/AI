@@ -1,4 +1,4 @@
-import { auditEventListSchema, auditEventQuerySchema, auditForwardingStateSchema } from "@orcasynapse/contracts";
+import { auditEventListSchema, auditEventQuerySchema } from "@orcasynapse/contracts";
 import type { FastifyInstance } from "fastify";
 import { requireAdmin, type AdminSessionManager } from "../auth/admin-session.js";
 import type { AuditManager } from "./audit-manager.js";
@@ -29,11 +29,5 @@ export async function registerAuditRoutes(app: FastifyInstance, dependencies: Au
     }
     void reply.header("cache-control", "no-store");
     return auditEventListSchema.parse(await dependencies.manager!.list(query.data));
-  });
-
-  app.get("/forwarding", async (request, reply) => {
-    if (!(await requireAdmin(request, reply, dependencies.sessionManager, "audit:read"))) return;
-    void reply.header("cache-control", "no-store");
-    return auditForwardingStateSchema.parse(await dependencies.manager!.forwarding());
   });
 }

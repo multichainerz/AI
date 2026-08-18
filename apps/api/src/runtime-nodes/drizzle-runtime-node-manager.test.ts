@@ -44,7 +44,7 @@ const principal = { id: randomUUID() } as AdminPrincipal;
 const CONTROL_PLANE = "https://orcasynapse.example";
 
 function manager() {
-  return new DrizzleHermesRuntimeNodeManager(context.database, encryption);
+  return new DrizzleHermesRuntimeNodeManager(context.database, encryption, undefined);
 }
 
 /** Signs a request the way an enrolled VM2 node would. */
@@ -321,6 +321,106 @@ describe("DrizzleHermesRuntimeNodeManager enrollment", () => {
 
     await expect(manager().createInvitation(principal, invitationInput()))
       .rejects.toThrow(/already enrolled/);
+  });
+});
+
+describe("DrizzleHermesRuntimeNodeManager toolset admission at enrollment", () => {
+  /*
+   * A fresh deployment had an empty admission table, and the seeded default
+   * tool set tracks admission rather than listing members -- so the profile
+   * every install starts with was permitted nothing at all until an operator
+   * admitted something by hand. Enrolment is the first moment there is anything
+   * to say, which is why the approved baseline is seeded here.
+   */
+  async function admissions() {
+    return context.database
+      .select({ name: runtimeToolsetAdmission.toolsetName, admitted: runtimeToolsetAdmission.admitted })
+      .from(runtimeToolsetAdmission)
+      .orderBy(runtimeToolsetAdmission.toolsetName);
+  }
+
+  it("admits the approved baseline and nothing the node happens to report", async () => {
+    /*
+     * The assertion that inverted. This admitted every name the runtime
+     * reported, which is not what the product promises: invariant 7 of
+     * CURRENT_STATE_HANDOFF.md is "native toolsets are default-deny except
+     * built-in memory and explicit operator admissions", and step 7 of the
+     * enrolment runbook says the install admits "only the built-in `memory`
+     * tool" while disabling "every other unapproved native toolset".
+     *
+     * Two things made the old behaviour worse than it reads. Enrolment happens
+     * before the installer writes the managed policy, so the catalogue was stock
+     * Hermes with its broad default preset; and `/v1/toolsets` is the complete
+     * registry with an `enabled` flag that the reader typed away, so even a
+     * disabled toolset was admitted on name alone. Those admissions then went
+     * back out through `desiredState` to the node reconciler, which computes
+     * suppression as everything-minus-admitted -- and so suppressed nothing.
+     */
+    await enrolledNode();
+
+    expect(await admissions()).toEqual([
+      { name: "memory", admitted: true },
+      { name: "no_mcp", admitted: true },
+    ]);
+  });
+
+  it("records one audit event naming what it admitted", async () => {
+    const { node } = await enrolledNode();
+
+    const [event] = await context.database
+      .select()
+      .from(auditEvent)
+      .where(eq(auditEvent.action, "tool.toolset_admitted_on_enrollment"));
+    expect(event).toMatchObject({ actorType: "SERVICE", resourceId: node.id, outcome: "SUCCESS" });
+    expect((event!.metadata as { toolsets: string[] }).toolsets.sort()).toEqual(["memory", "no_mcp"]);
+  });
+
+  it("never re-admits a toolset an operator revoked", async () => {
+    /*
+     * The whole safety of doing this at enrolment. Re-enrolling is how a node
+     * is upgraded, and an upgrade that silently restored a capability somebody
+     * deliberately withdrew would be a governance failure, not a convenience.
+     * A revoked baseline entry is the sharpest form of that.
+     */
+    await context.database.insert(runtimeToolsetAdmission).values({
+      toolsetName: "memory", admitted: false, reason: "Refused by the security review.",
+    });
+
+    await enrolledNode();
+
+    expect(await admissions()).toEqual([
+      { name: "memory", admitted: false },
+      { name: "no_mcp", admitted: true },
+    ]);
+  });
+
+  it("seeds the baseline without needing to read the runtime at all", async () => {
+    /*
+     * The point of seeding a constant rather than a catalogue: it does not
+     * depend on when the node is asked, or on what state the node is in when it
+     * answers. There is no catalogue reader wired here.
+     */
+    await enrolledNode();
+
+    expect(await admissions()).toEqual([
+      { name: "memory", admitted: true },
+      { name: "no_mcp", admitted: true },
+    ]);
+  });
+
+  it("leaves everything outside the baseline unadmitted, so drift is still detectable", async () => {
+    /*
+     * Admission stays a decision per toolset: anything the node reports, at
+     * enrolment or afterwards, has no row, is not admitted, and still fails the
+     * boundary assertion on the run path. An operator widens the deployment
+     * through the admission screen, which is the recorded and audited path.
+     */
+    await enrolledNode();
+
+    const admitted = (await admissions()).map(({ name }) => name);
+    expect(admitted).not.toContain("clarify");
+    expect(admitted).not.toContain("web_search");
+    expect(admitted).not.toContain("something_added_later");
   });
 });
 
@@ -664,17 +764,26 @@ describe("runtime node pure helpers", () => {
       expect(JSON.parse(bytes.toString("utf8"))).toMatchObject({
         format: "orcasynapse-runtime-desired-state/v1",
         nodeId: node.id,
-        admittedToolsets: ["clarify"],
+        // The enrolment baseline is always present; `clarify` is this test's
+        // own operator admission on top of it.
+        admittedToolsets: ["clarify", "memory", "no_mcp"],
       });
     });
 
-    it("states an empty admission set rather than omitting it", async () => {
-      // "Enable nothing" is an instruction. A node that received no list must
-      // not be free to keep whatever it already had running.
+    it("states the admission set explicitly rather than omitting it", async () => {
+      /*
+       * The list is an instruction, so it is always stated: a node that received
+       * no list must not be free to keep whatever it already had running. On a
+       * fresh enrolment that instruction is the approved baseline and nothing
+       * else -- which is also the assertion that the node is told to suppress
+       * everything outside it, since the reconciler computes suppression as
+       * everything minus this.
+       */
       const { node, identity } = await enrolledNode();
       const state = await manager().desiredState(node.id, signedHeaders(identity.privateKey, null, desiredStateOf(node.id)));
       const document = JSON.parse(Buffer.from(state.documentBase64, "base64").toString("utf8"));
-      expect(document.admittedToolsets).toEqual([]);
+      expect(Object.hasOwn(document, "admittedToolsets")).toBe(true);
+      expect(document.admittedToolsets).toEqual(["memory", "no_mcp"]);
     });
 
     it("omits a toolset whose admission was revoked", async () => {
@@ -685,7 +794,8 @@ describe("runtime node pure helpers", () => {
       ]);
       const state = await manager().desiredState(node.id, signedHeaders(identity.privateKey, null, desiredStateOf(node.id)));
       const document = JSON.parse(Buffer.from(state.documentBase64, "base64").toString("utf8"));
-      expect(document.admittedToolsets).toEqual(["clarify"]);
+      expect(document.admittedToolsets).toEqual(["clarify", "memory", "no_mcp"]);
+      expect(document.admittedToolsets).not.toContain("code_execution");
     });
 
     /*

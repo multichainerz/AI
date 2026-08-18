@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import {
+  agentProfile,
   auditEvent,
+  chatConversation,
+  chatSchedule,
   createTestDatabase,
   operationalIncident,
   productionReadinessApproval,
@@ -43,13 +46,6 @@ const principal = { id: randomUUID(), subject: "local-admin:operator" } as Admin
  */
 const GOVERNANCE_SIGN_OFFS = ["SECURITY", "INFRASTRUCTURE", "PRODUCT", "BUSINESS"] as const;
 
-function forwarding(status: "NOT_CONFIGURED" | "HEALTHY" | "BEHIND" | "FAILING", summary = "state") {
-  return {
-    status, pendingCount: 0, deliveredCount: 0,
-    lastForwardedAt: null, lastAttemptAt: null, lastError: null, summary,
-  };
-}
-
 /** Every collaborator is a separate, already-converted manager. */
 function dependencies(overrides: Partial<AiOpsDependencies> = {}): AiOpsDependencies {
   return {
@@ -60,7 +56,6 @@ function dependencies(overrides: Partial<AiOpsDependencies> = {}): AiOpsDependen
     chat: { metrics: vi.fn(async () => null) },
     agents: { metrics: vi.fn(async () => null) },
     tools: { metrics: vi.fn(async () => null) },
-    audit: { forwarding: vi.fn(async () => forwarding("HEALTHY")) },
     ...overrides,
   } as unknown as AiOpsDependencies;
 }
@@ -91,7 +86,10 @@ describe("DrizzleAiOpsManager overview", () => {
     expect(overview.components.map(({ id }) => id)).toEqual(
       expect.arrayContaining(["postgresql", "hermes-run-reconciler", "service:inference", "service:hermes"]),
     );
-    expect(overview.components.filter(({ status }) => status === "NOT_CONFIGURED")).toHaveLength(2);
+    // The two *service* placeholders specifically. Counting every
+    // NOT_CONFIGURED component coupled this to any unrelated component that is
+    // legitimately unconfigured on a fresh deployment.
+    expect(overview.components.filter(({ id, status }) => id.startsWith("service:") && status === "NOT_CONFIGURED")).toHaveLength(2);
     expect(overview.incidents).toMatchObject({ open: 0, critical: 0, items: [] });
   });
 
@@ -126,6 +124,86 @@ describe("DrizzleAiOpsManager overview", () => {
 
     expect(overview.status).toBe("CRITICAL");
     expect(overview.incidents.critical).toBe(1);
+  });
+});
+
+describe("DrizzleAiOpsManager scheduled turns", () => {
+  /*
+   * The one failure in this product that is silent by construction: a schedule
+   * that stops itself is legible on its own conversation and to nobody who does
+   * not open it. These pin that it reaches the surface an operator reads.
+   */
+  async function seedSchedule(overrides: Record<string, unknown> = {}) {
+    const [profile] = await context.database
+      .insert(agentProfile)
+      .values({ slug: `agent-${randomUUID().slice(0, 8)}`, status: "ACTIVE", currentVersion: 1, activeVersion: 1 })
+      .returning({ id: agentProfile.id });
+    const [conversation] = await context.database
+      .insert(chatConversation)
+      .values({
+        ownerSubject: "local-admin:operator", title: "Morning report",
+        modelAlias: "hermes-agent", profileId: profile!.id, profileName: "Support agent",
+      })
+      .returning({ id: chatConversation.id });
+    await context.database.insert(chatSchedule).values({
+      conversationId: conversation!.id,
+      prompt: "Summarise overnight incidents.",
+      intervalSeconds: 86_400,
+      nextRunAt: new Date(),
+      createdBySubject: "local-admin:operator",
+      createdByMode: "ADMINISTRATOR_PREVIEW",
+      ...overrides,
+    });
+  }
+
+  function component(overview: Awaited<ReturnType<ReturnType<typeof manager>["overview"]>>) {
+    return overview.components.find(({ id }) => id === "scheduled-turns")!;
+  }
+
+  it("says nothing is scheduled rather than claiming schedules are healthy", async () => {
+    expect(component(await manager().overview())).toMatchObject({
+      status: "NOT_CONFIGURED",
+      summary: expect.stringContaining("No conversation is scheduled"),
+    });
+  });
+
+  it("reports armed schedules as healthy", async () => {
+    await seedSchedule();
+
+    expect(component(await manager().overview())).toMatchObject({ status: "HEALTHY" });
+  });
+
+  it("degrades and opens an incident when a schedule stops itself", async () => {
+    await seedSchedule({ enabled: false, lastOutcome: "DISABLED", lastDetail: "Blocked by rule." });
+
+    const overview = await manager().overview();
+
+    expect(component(overview)).toMatchObject({
+      status: "DEGRADED",
+      summary: expect.stringContaining("1 of 1 scheduled turn has stopped"),
+    });
+    expect(overview.incidents.items.some(({ component: id }) => id === "scheduled-turns")).toBe(true);
+  });
+
+  it("stays healthy for a schedule an operator paused on purpose", async () => {
+    /*
+     * `enabled = false` alone is not the signal. Raising an incident for a
+     * deliberate pause would train an operator to ignore this component, which
+     * costs more than the case it was meant to catch.
+     */
+    await seedSchedule({ enabled: false, lastOutcome: "OK" });
+
+    const overview = await manager().overview();
+
+    expect(component(overview)).toMatchObject({ status: "HEALTHY" });
+    expect(overview.incidents.items.some(({ component: id }) => id === "scheduled-turns")).toBe(false);
+  });
+
+  it("counts the stopped ones against the total", async () => {
+    await seedSchedule();
+    await seedSchedule({ enabled: false, lastOutcome: "DISABLED", lastDetail: "Creator disabled." });
+
+    expect(component(await manager().overview()).summary).toContain("1 of 2");
   });
 });
 
@@ -309,49 +387,3 @@ describe("DrizzleAiOpsManager production readiness", () => {
   });
 });
 
-describe("DrizzleAiOpsManager audit forwarding", () => {
-  it("reports a rejecting SIEM as degraded and opens an incident for it", async () => {
-    const failing = manager({
-      audit: { forwarding: vi.fn(async () => forwarding("FAILING", "The SIEM endpoint is rejecting batches.")) } as never,
-    });
-
-    const overview = await failing.overview();
-
-    const component = overview.components.find(({ id }) => id === "audit-forwarding");
-    expect(component).toMatchObject({ status: "DEGRADED", label: "Audit forwarding" });
-    expect(component?.summary).toContain("rejecting batches");
-    // The existing automated reconciler turns a degraded component into an incident.
-    expect(overview.incidents.items.some(({ component: name }) => name === "audit-forwarding")).toBe(true);
-  });
-
-  it("treats a backlog behind a healthy destination as degraded too", async () => {
-    const behind = manager({
-      audit: { forwarding: vi.fn(async () => forwarding("BEHIND", "900 events are still queued.")) } as never,
-    });
-
-    const component = (await behind.overview()).components.find(({ id }) => id === "audit-forwarding");
-
-    expect(component?.status).toBe("DEGRADED");
-  });
-
-  it("raises no incident when forwarding is healthy or unconfigured", async () => {
-    const healthy = await manager().overview();
-    expect(healthy.components.find(({ id }) => id === "audit-forwarding")?.status).toBe("HEALTHY");
-    expect(healthy.incidents.items.some(({ component }) => component === "audit-forwarding")).toBe(false);
-
-    const unconfigured = await manager({
-      audit: { forwarding: vi.fn(async () => forwarding("NOT_CONFIGURED", "Retained locally.")) } as never,
-    }).overview();
-    expect(unconfigured.components.find(({ id }) => id === "audit-forwarding")?.status).toBe("NOT_CONFIGURED");
-    expect(unconfigured.incidents.items.some(({ component }) => component === "audit-forwarding")).toBe(false);
-  });
-
-  it("omits the component entirely when no audit manager is wired", async () => {
-    // The dependency is optional, so the overview must not assume it exists.
-    const { audit, ...withoutAudit } = dependencies();
-    const overview = await new DrizzleAiOpsManager(context.database, withoutAudit).overview();
-
-    expect(audit).toBeDefined();
-    expect(overview.components.find(({ id }) => id === "audit-forwarding")).toBeUndefined();
-  });
-});

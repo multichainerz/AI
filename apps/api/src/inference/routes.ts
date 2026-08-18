@@ -108,7 +108,29 @@ export async function registerInferenceGatewayRoutes(
     if (!gateway) return reply;
     const parsed = inferenceGatewayChatRequestSchema.safeParse(request.body);
     if (!parsed.success) {
-      return reply.code(400).send({ error: { type: "invalid_request_error", message: parsed.error.issues[0]?.message ?? "Invalid request." } });
+      /*
+       * An unrecognised field is named, and named as version skew.
+       *
+       * The request schema is a strict allowlist, which is deliberate -- this
+       * gateway is the one path an enrolled node has to a model, and it should
+       * carry what the product understands and nothing else. But the allowlist
+       * is pinned in this repository while the node's runtime is pinned by a
+       * commit an administrator can now change from the dashboard, and the two
+       * are not tied together. A Hermes build that begins sending one new field
+       * therefore fails *every* model call, while the node keeps reporting
+       * ONLINE because its heartbeat is a different route entirely.
+       *
+       * Zod's default message for that case is "Unrecognized key(s) in object",
+       * which sends an operator looking at their prompt. Naming the key and the
+       * cause turns a silent, total outage into a one-line diagnosis.
+       */
+      const unrecognized = parsed.error.issues.find((issue) => issue.code === "unrecognized_keys");
+      const keys = unrecognized && "keys" in unrecognized ? (unrecognized.keys as string[]).join(", ") : "";
+      const message = keys
+        ? `This OrcaSynapse release does not accept the request field(s): ${keys}. `
+          + "This usually means the Agentic System runtime is pinned to a commit newer than the control plane."
+        : parsed.error.issues[0]?.message ?? "Invalid request.";
+      return reply.code(400).send({ error: { type: "invalid_request_error", message } });
     }
     const abort = new AbortController();
     const abortOnDisconnect = () => { if (!reply.raw.writableEnded) abort.abort(); };

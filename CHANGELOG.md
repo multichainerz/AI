@@ -5,6 +5,119 @@ tagged with the same name. Entries below are newest first. The `v0.x` and
 `v1.x` entries each cover a phase of the early development line rather than a
 single change.
 
+## v9.0.0 — 2026-08-18
+
+Removes SIEM forwarding and OIDC federation, adds scheduled conversation turns,
+and closes a long list of defects an audit of the whole codebase turned up —
+several of which change what an operator sees, so read the upgrade notes.
+
+### Upgrade notes
+
+**Read before applying.** Seven changes alter behaviour an operator can observe.
+
+- **Federated OIDC sign-in is gone, and with it an administrator access path.**
+  A deployment whose administrators arrived through Entra ID group mapping has
+  no way in after this release. Administrators sign in with a local password,
+  and people are created under Settings → Access. The `OIDC` service kind and
+  `AdministratorAuthenticationMethod.OIDC` are retained as enum values so
+  existing rows still parse; a stored OIDC connection becomes an inert row that
+  nothing reads.
+- **Agentic System enrolment now admits only the approved baseline** — `no_mcp`
+  and `memory`. It previously admitted every toolset the newly enrolled runtime
+  reported, which was read before the restrictive policy was written and so
+  allowlisted the stock preset. A node re-enrolled after upgrading may find
+  toolsets it had been using are no longer admitted; admit them under
+  Settings → Tooling, where the decision is recorded and audited.
+- **Both local sign-in routes are rate-limited** at six a minute with a burst of
+  three, in the bundled proxy. A scripted client that signs in repeatedly will
+  see 429s.
+- **The run ledger keeps a run's token-by-token replay for seven days.** After
+  that a finished run shows its tool calls, approvals and status changes without
+  the streamed chunks. Nothing else is pruned, and the transcript is unaffected.
+- **`--confirm-revoke-local-sessions` is no longer accepted** by
+  `rotate-installation-key.sh`. It was accepted, branched on nothing, and
+  contradicted the script's own closing message. Use
+  `--confirm-revoke-recovery-sessions`.
+- **`--http-bind` now exists and is remembered.** Declare it once and every
+  later run — including an unattended update — reads it back. Before this, the
+  bind was read only by `compose.yaml` and recorded nowhere, so an update
+  silently re-published a loopback-bound dashboard on every interface. The
+  published port is remembered the same way.
+- **An open Chat conversation refreshes itself every fifteen seconds** when it is
+  idle, so a scheduled turn appears without reopening the thread.
+
+### Scheduled conversation turns
+
+An operator can ask a conversation to run a prompt on a cadence, and the reply
+lands in the thread as an ordinary turn — streamed, guardrailed, audited and
+counted in Usage. Every rule a typed message passes through is the one the
+dispatcher applies, at the moment of the fire, against the policy active then.
+
+A schedule stops when its creator's authority does, says why where the panel
+reads it, and reports itself to Operations as a `scheduled-turns` component that
+degrades and opens an incident when one has stopped on its own. A deliberate
+pause is not a fault and does not.
+
+### Removed
+
+- **SIEM forwarding.** The outbound integration and nothing else: every audit
+  event the product records, the Audit trail screen, its filters and its export
+  are unchanged. What disappears is the status strip reporting delivery to an
+  external SIEM, the `AuditForwardingState` table, and the `audit-forwarding`
+  Operations component.
+- **OIDC federation.** The federated half of `enterprise-session.ts`, the PKCE
+  state table, the federated administrator path and its group→role mapping,
+  three identity routes, and the Enterprise Access connection form. Local person
+  sign-in, `EnterpriseUser`, Divisions and division-scoped memory are untouched.
+- **~425 lines of dead code** found by audit: an unreachable `ScheduleRuntime`
+  helper, thirteen unused web API client functions and the parsers they
+  stranded, a retired dashboard graphic and its stylesheet, a `ChatView` prop
+  dead since v4.9.0, and three `onSignIn` props that were never invoked.
+
+### Defects closed
+
+**Scheduled turns were inert.** `ChatSchedule.createdBy` stored a session-row id
+while the dispatcher resolved it against the account tables, so every schedule
+created through the API disabled itself on its first fire. No foreign key, type
+or test caught it, because the fixtures and the dispatcher's own suite each
+assumed a different thing. It failed closed — no turn ran with the wrong
+authority.
+
+**A schedule stopped itself over a race.** Three of the four conditions raising a
+conversation conflict are transient — a run still going, a person typing, a
+response cancelled mid-submission — and all three disabled the schedule
+permanently. Only the archived case is permanent now, and it has its own error
+class to say so.
+
+**A conversation lost its newest activity trail.** The 500-event and
+20-approval caps were applied once across the whole conversation, oldest-first,
+where the Prisma include they replaced applied them per run. Restored with a
+window function.
+
+**The guardrail regex gate missed alternation.** `(a|a)*$`, `(a+|b)+$`,
+`^(\w+\s?)*$` and `((a+))+$` all passed the static check and were then executed
+against a 256-character probe on the request thread. The check is now a scanner
+that handles nested groups, escapes and character classes, and the probe grows
+from 16 characters so a catastrophic pattern trips the budget at a length it can
+still finish.
+
+**Enrolment undid default-deny.** See the upgrade note above.
+
+**Other closures.** A connection form that discarded typed secrets every fifteen
+seconds; a chat stream that abandoned a live run when its recovery refetch failed
+alongside it, and a second route into the same state; a worker that hung on a
+failed start instead of exiting for its restart policy; an unattended memory
+sweep that was never drained on shutdown, losing the notes of runs it had already
+marked done; an unauthenticated sign-in body with no length bound writing into
+the audit trail; an unauthenticated update check that could exhaust the
+deployment's GitHub quota and disable release pinning; a `system-topology`
+validation stage that could never pass; both password hashes moved out of the
+transactions that held a pool client for their duration; missing indexes on
+`AgentRun.createdAt` and on the two filters the Audit trail screen exposes; a
+tool-call retry denied because PostgreSQL reorders jsonb keys; an optimistic
+concurrency check a schedule advertised but never performed; and a break-glass
+rotation that ran an unguarded command inside its own damage window.
+
 ## v8.9.0 — 2026-08-17
 
 Makes guardrails something an operator writes rather than four switches, gives

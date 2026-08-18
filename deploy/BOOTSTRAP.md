@@ -62,6 +62,18 @@ The declaration is recorded in the root-only `.local/state/public-scheme` — an
 
 Nothing a client sends can substitute for that declaration: OrcaSynapse's bundled Nginx discards inbound forwarding chains, overwriting `X-Forwarded-Proto` with the declared scheme and `X-Forwarded-For` with its own direct peer, so the upstream proxy's forwarding headers are neither required nor honoured. Direct access to the OrcaSynapse HTTP port must remain restricted.
 
+### Bind address
+
+`--http-bind 127.0.0.1` restricts the published dashboard port to loopback, which is the posture to use when a reverse proxy terminates TLS on the same host. Omitted, it stays `0.0.0.0` — every interface — because the installer prints a LAN address and an Agentic System node reaches this port to enrol.
+
+**A host firewall rule on this port does not restrict it.** Docker publishes through its own NAT path, which is evaluated before ufw's `INPUT` chain, so a rule written against the published port has no effect and an operator who wrote one is left believing the dashboard is protected. This flag is the only control that actually narrows it.
+
+It is a flag for the same reason `--public-scheme` is, and it is recorded the same way, in the root-only `.local/state/http-bind`. That recording is what makes it hold: the value was previously read only by `compose.yaml` and persisted nowhere, so every path that recreated the web container re-derived `0.0.0.0` — including the unattended update, which rebuilds a staging tree and discards a project `.env` on the way. A deployment bound to loopback was silently re-published on every interface by a dashboard-approved update, with nothing printed and the run reported healthy. The installer and `rotate-installation-key.sh` now both read the recording back and both report the address they are binding to.
+
+The published port is recorded alongside it. `rotate-installation-key.sh` used to re-default to `8080`, which relocated a deployment that had been installed on another port and then passed its own readiness check, because that check probed the port the rotation had just moved to.
+
+An installation created before either was recorded has nothing to read back: declare them once more on the next install or rotation, and they are remembered from then on.
+
 The installer refuses to overwrite any partial secret set. A complete existing set is preserved for idempotent restarts. It does not take an SSH password, mount the Docker socket into OrcaSynapse, or grant the dashboard host-level command execution.
 
 ## Enroll an isolated Agentic System VM

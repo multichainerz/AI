@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="560" viewBox="0 0 1200 560" role="img" aria-labelledby="title description" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif">
   <title id="title">OrcaSynapse production baseline</title>
-  <desc id="description">Two virtual machines plus an inference server. VM1 runs the OrcaSynapse control plane with PostgreSQL holding control-plane state, sanitized run projections, incidents, and the append-only audit trail. VM2 runs the isolated Hermes agent runtime and owns native sessions, MEMORY.md, and USER.md. VM1 calls an OpenAI-compatible inference server and can optionally forward audit batches to a customer SIEM.</desc>
+  <desc id="description">Two virtual machines plus an inference server. VM1 runs the OrcaSynapse control plane with PostgreSQL holding control-plane state, sanitized run projections, incidents, and the append-only audit trail. VM2 runs the isolated Hermes agent runtime and owns native sessions, MEMORY.md, and USER.md. VM1 calls an OpenAI-compatible inference server. The audit trail is retained in PostgreSQL and read from the dashboard; nothing is forwarded off the deployment.</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#0b1016"/>
@@ -12,9 +12,6 @@
     </linearGradient>
     <marker id="head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M0 0 L10 5 L0 10 Z" fill="#7f9cff"/>
-    </marker>
-    <marker id="headMuted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M0 0 L10 5 L0 10 Z" fill="#6b7a8f"/>
     </marker>
   </defs>
 
@@ -61,11 +58,6 @@
   <text x="724" y="362" fill="#f2f5fb" font-size="17" font-weight="600">Any OpenAI-compatible server</text>
   <text x="724" y="384" fill="#9aa9bc" font-size="13">vLLM · llama.cpp · SGLang · Ollama · TGI</text>
 
-  <!-- SIEM -->
-  <rect x="700" y="424" width="460" height="66" rx="18" fill="#10161f" stroke="#2b3646" stroke-dasharray="6 5"/>
-  <text x="724" y="453" fill="#f2f5fb" font-size="16" font-weight="600">Customer SIEM</text>
-  <text x="724" y="475" fill="#9aa9bc" font-size="13">forwarded audit batches · optional</text>
-
   <!-- VM1 <-> VM2 -->
   <line x1="582" y1="152" x2="696" y2="152" stroke="#7f9cff" stroke-width="2" marker-end="url(#head)"/>
   <text x="639" y="142" fill="#9aa9bc" font-size="12.5" text-anchor="middle">native sessions</text>
@@ -76,9 +68,6 @@
   <!-- VM1 -> inference -->
   <line x1="582" y1="349" x2="696" y2="349" stroke="#7f9cff" stroke-width="2" marker-end="url(#head)"/>
   <text x="639" y="339" fill="#9aa9bc" font-size="12.5" text-anchor="middle">approved alias</text>
-
-  <!-- VM1 -.-> SIEM -->
-  <line x1="582" y1="457" x2="696" y2="457" stroke="#6b7a8f" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#headMuted)"/>
 
   <text x="600" y="524" fill="#6b7a8f" font-size="13" text-anchor="middle">Inference credentials never leave VM1 · Hermes never reaches PostgreSQL, host service control, or the open network</text>
 </svg>

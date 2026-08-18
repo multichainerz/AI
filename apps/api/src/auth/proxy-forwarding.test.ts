@@ -1,18 +1,13 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import type { AdministratorSession, OidcStatus } from "@orcasynapse/contracts";
+import type { AdministratorSession } from "@orcasynapse/contracts";
 import Fastify from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
 import { createApp } from "../app.js";
 import {
-  ENTERPRISE_SESSION_COOKIE,
-  OIDC_STATE_COOKIE,
   type EnterpriseIdentityManager,
-  type IssuedEnterpriseSession,
-  type OidcLoginStart,
 } from "../identity/enterprise-session.js";
 import {
-  ADMIN_SESSION_COOKIE,
   type AdminSessionManager,
   type IssuedAdminSession,
 } from "./admin-session.js";
@@ -88,8 +83,6 @@ function imageDefaultScheme(): string {
 }
 
 const SESSION_TOKEN = "s".repeat(43);
-const STATE_TOKEN = "t".repeat(43);
-const ENTERPRISE_TOKEN = "e".repeat(43);
 const principal: AdministratorSession = {
   id: "6cf6ce1b-a8c6-49d7-b6aa-019d35888acb",
   subject: "local-admin:6cf6ce1b-a8c6-49d7-b6aa-019d35888acb",
@@ -118,44 +111,11 @@ const sessionManager: AdminSessionManager = {
 };
 
 const identityManager: EnterpriseIdentityManager = {
-  async status(): Promise<OidcStatus> {
-    return { configured: true, administratorSignIn: false, message: "Enterprise sign-in is configured." };
-  },
-  async startLogin(): Promise<OidcLoginStart> {
-    return { authorizationUrl: "https://idp.example.internal/authorize", stateToken: STATE_TOKEN };
-  },
   async signInWithPassword(): Promise<never> {
     throw new Error("Not used");
   },
   async changeLocalPassword(): Promise<never> {
     throw new Error("Not used");
-  },
-  async completeLogin(): Promise<IssuedEnterpriseSession> {
-    // The callback emits three cookies at once -- the expired OIDC state, the
-    // enterprise session, and a federated administrator session -- and all three
-    // take the same secure flag, so the group is worth asserting together.
-    return {
-      token: ENTERPRISE_TOKEN,
-      returnTo: "/",
-      principal: {
-        id: "0f0a0a4e-0a3d-4a3c-9d3f-7d1b6f4e2c11",
-        subject: "user:0f0a0a4e-0a3d-4a3c-9d3f-7d1b6f4e2c11",
-        identityMode: "ENTERPRISE",
-        displayName: "Enterprise user",
-        email: null,
-        scopes: ["chat:use", "agents:use"], divisionId: null,
-        session: {
-          id: "0f0a0a4e-0a3d-4a3c-9d3f-7d1b6f4e2c11",
-          identityMode: "ENTERPRISE",
-          user: { id: "0f0a0a4e-0a3d-4a3c-9d3f-7d1b6f4e2c11", displayName: "Enterprise user", email: null },
-          scopes: ["chat:use", "agents:use"],
-          createdAt: "2026-08-07T00:00:00.000Z",
-          idleExpiresAt: "2026-08-07T08:00:00.000Z",
-          absoluteExpiresAt: "2026-08-07T12:00:00.000Z",
-        },
-      },
-      administratorSession: { token: SESSION_TOKEN, principal },
-    };
   },
   async authenticate() {
     return null;
@@ -190,9 +150,6 @@ function cookies(setCookie: string | string[] | undefined): string[] {
   return typeof setCookie === "string" ? [setCookie] : setCookie ?? [];
 }
 
-function cookieName(setCookie: string): string {
-  return setCookie.slice(0, setCookie.indexOf("="));
-}
 
 describe("bundled reverse proxy forwarding headers", () => {
   it("lets the forwarded header decide request.protocol, which is why the proxy must own it", async () => {
@@ -267,33 +224,12 @@ describe("bundled reverse proxy forwarding headers", () => {
     expect(cookies(unconfigured.headers["set-cookie"]).join("\n")).not.toContain("Secure");
   });
 
-  it("gives every enterprise sign-in cookie the same decision", async () => {
-    const started = await inject("/api/v1/auth/oidc/start?returnTo=/", forwardedProtoFor("https"));
-    expect(started.statusCode).toBe(302);
-    expect(cookies(started.headers["set-cookie"]).join("\n")).toContain("Secure");
-
-    const startedPlain = await inject(
-      "/api/v1/auth/oidc/start?returnTo=/",
-      forwardedProtoFor(imageDefaultScheme()),
-    );
-    expect(startedPlain.statusCode).toBe(302);
-    expect(cookies(startedPlain.headers["set-cookie"]).join("\n")).not.toContain("Secure");
-
-    // The callback is where enterprise-session.ts issues the session cookies the
-    // browser keeps, so each one is checked rather than the batch as a string.
-    const callback = `/api/v1/auth/oidc/callback?code=authorization-code&state=${STATE_TOKEN}`;
-    const expectedNames = [ENTERPRISE_SESSION_COOKIE, ADMIN_SESSION_COOKIE, OIDC_STATE_COOKIE];
-
-    const completed = await inject(callback, forwardedProtoFor("https"));
-    const completedCookies = cookies(completed.headers["set-cookie"]);
-    expect(completed.statusCode).toBe(302);
-    expect(completedCookies.map(cookieName)).toEqual(expect.arrayContaining(expectedNames));
-    expect(completedCookies.filter((cookie) => cookie.includes("Secure"))).toEqual(completedCookies);
-
-    const completedPlain = await inject(callback, forwardedProtoFor(imageDefaultScheme()));
-    const plainCookies = cookies(completedPlain.headers["set-cookie"]);
-    expect(completedPlain.statusCode).toBe(302);
-    expect(plainCookies.map(cookieName)).toEqual(expect.arrayContaining(expectedNames));
-    expect(plainCookies.filter((cookie) => cookie.includes("Secure"))).toEqual([]);
-  });
+  /*
+   * The enterprise half of this case exercised the OIDC start and callback
+   * routes, removed at v8.10.0. What it protected -- the forwarded scheme
+   * deciding the Secure flag -- is still pinned by the administrator cookie
+   * case above: `enterpriseSessionCookie` and `sessionCookie` take the same
+   * `secure` boolean from the same `secureRequest(request)` call, so one
+   * assertion covers the decision for both.
+   */
 });

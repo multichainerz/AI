@@ -48,10 +48,8 @@ const { ChatView } = await import("./chat-view.js");
 
 const props = {
   unlocked: true,
-  identityMode: "ADMINISTRATOR_PREVIEW" as const,
   displayName: "Operator",
   administratorReadiness: null,
-  oidcConfigured: false,
   onSignIn: vi.fn(),
   onConfigure: vi.fn(),
   onOpenAgents: vi.fn(),
@@ -143,17 +141,19 @@ describe("conversation menu", () => {
 });
 
 describe("chat locked screen", () => {
-  it("offers sign-in only once enterprise access actually works", async () => {
-    const { unmount } = render(<ChatView {...props} unlocked={false} oidcConfigured={false} />);
-    expect(screen.getByText(/An administrator must configure/)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /Sign in with OrcaSynapse/ })).toBeNull();
-    unmount();
-
+  /*
+   * The two-state version of this case is gone with federated sign-in: there is
+   * no longer a deployment in which Chat is locked *and* signing in is
+   * impossible, because a person an administrator created can always sign in.
+   * What remains worth pinning is that the locked screen offers both doors --
+   * the one the visitor can use and the one that leads to whoever can help.
+   */
+  it("offers sign-in and a route to the administrator", async () => {
     const onSignIn = vi.fn();
     const user = userEvent.setup();
-    render(<ChatView {...props} unlocked={false} oidcConfigured onSignIn={onSignIn} />);
+    render(<ChatView {...props} unlocked={false} onSignIn={onSignIn} />);
 
-    await user.click(screen.getByRole("button", { name: "Sign in with OrcaSynapse" }));
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
     expect(onSignIn).toHaveBeenCalled();
     // The person who cannot sign in is usually not the person who can fix it.
     expect(screen.getByRole("button", { name: "Administrator setup" })).toBeTruthy();

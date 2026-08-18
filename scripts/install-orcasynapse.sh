@@ -28,6 +28,10 @@ export ORCASYNAPSE_HTTP_PORT
 # Sourced after the UI library because it reports through fail/warning/info.
 # shellcheck source=lib/public-scheme.sh
 . "${ORCASYNAPSE_ROOT}/scripts/lib/public-scheme.sh"
+# The host address the proxy publishes on -- declared, recorded and reported the
+# same way and for the same reason. compose.yaml is the only other reader.
+# shellcheck source=lib/http-bind.sh
+. "${ORCASYNAPSE_ROOT}/scripts/lib/http-bind.sh"
 
 UI_BANNER_TAGLINE="PRIVATE AI CONTROL PLANE  /  VM1 PROVISIONING"
 UI_BANNER_ACTIVITY="Establishing secure installation context"
@@ -425,8 +429,9 @@ main() {
   # sudo's env_reset drops an exported ORCASYNAPSE_PUBLIC_SCHEME on the way in,
   # so the command line is the only channel every documented invocation has.
   orcasynapse_take_public_scheme_flag "$@"
+  orcasynapse_take_http_bind_flag "${ORCASYNAPSE_REMAINING_ARGS[@]+"${ORCASYNAPSE_REMAINING_ARGS[@]}"}"
   if (( ${#ORCASYNAPSE_REMAINING_ARGS[@]} > 0 )); then
-    fail "unrecognised argument '${ORCASYNAPSE_REMAINING_ARGS[0]}'; this installer takes only --public-scheme http|https"
+    fail "unrecognised argument '${ORCASYNAPSE_REMAINING_ARGS[0]}'; this installer takes only --public-scheme http|https and --http-bind ADDRESS"
   fi
 
   local release_version source_commit=""
@@ -459,6 +464,11 @@ main() {
   # fall back to the default, which is why resolution consults the recording.
   orcasynapse_resolve_public_scheme
   orcasynapse_persist_public_scheme
+  orcasynapse_resolve_http_bind
+  orcasynapse_persist_http_bind
+  # The port too, so the break-glass rotation reads it back instead of
+  # re-defaulting to 8080 and relocating a deployment that had been moved.
+  orcasynapse_persist_http_port
   # Before install_host_dependencies, not after: this is the last point at which
   # an undersized host can be turned away without an apt transaction and an
   # enabled Docker service behind it. The log file above is opened first so the
@@ -514,6 +524,7 @@ main() {
   ui_panel_kv 'Direct address' "http://${host_ip}:${ORCASYNAPSE_HTTP_PORT}/"
   ui_panel_kv 'Release' "${release_version}${source_commit:+ (${source_commit:0:12})}"
   ui_panel_kv 'Public scheme' "${ORCASYNAPSE_PUBLIC_SCHEME}"
+  ui_panel_kv 'Bound to' "${ORCASYNAPSE_HTTP_BIND}"
   # Printed, never logged: ui_panel_line does not write to UI_LOG_FILE, which
   # is the only reason the key may appear through a UI helper at all.
   ui_panel_line ''
@@ -527,6 +538,7 @@ main() {
   # identical to a correct one from here, and that silence is exactly how a
   # deployment reached production with session cookies that were not Secure.
   orcasynapse_report_public_scheme
+  orcasynapse_report_http_bind
   write_completion_marker "${release_version}" "${source_commit:-unknown}"
   ui_next "Open the dashboard, change the temporary password, then connect AI Inference."
 }

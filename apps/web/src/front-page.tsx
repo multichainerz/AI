@@ -1,7 +1,7 @@
 import type { AdministratorSession } from "@orcasynapse/contracts";
 import { ORCASYNAPSE_VERSION } from "@orcasynapse/contracts";
 import { useState, type FormEvent, type InputHTMLAttributes, type ReactNode } from "react";
-import { ArrowRight, KeyRound as KeyIcon, LockKeyhole as LockIcon, LogIn as GatewayIcon, UserRound as IdentityIcon } from "lucide-react";
+import { ArrowRight, KeyRound as KeyIcon, LockKeyhole as LockIcon, UserRound as IdentityIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DotGridField } from "./dot-grid-field.js";
@@ -32,8 +32,7 @@ import { ThemeToggle } from "./ui/theme-toggle.js";
  * The four states of the card are the four ways in: local sign-in (an
  * administrator or a person created under Settings → Access), offline
  * recovery with the Installation Key, the forced password change a temporary
- * password lands in, and the recovery reset. Enterprise SSO is a redirect the
- * API owns, shown only when the deployment has OIDC configured.
+ * password lands in, and the recovery reset.
  */
 
 type FrontPageMode = "LOGIN" | "RECOVERY";
@@ -42,7 +41,6 @@ interface FrontPageProps {
   bootstrapState: "REQUIRED" | "READY" | "LOCKED";
   busy: boolean;
   error: string | null;
-  oidcConfigured: boolean;
   /** Present only when a session exists but must change its password first. */
   session: AdministratorSession | null;
   /** A locally created person whose temporary password has not been replaced. */
@@ -234,20 +232,6 @@ export function FrontPage(props: FrontPageProps) {
                     <ArrowRight aria-hidden="true" className="h-[17px] w-[17px]" />
                   </Button>
 
-                  {props.oidcConfigured ? (
-                    <div className="mt-5 border-t border-black/[0.08] pt-4">
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#93949C]">Or continue with</div>
-                      <Button
-                        variant="outline"
-                        className="mt-2.5 flex w-full items-center gap-2.5 rounded-input border border-black/[0.12] bg-transparent px-3.5 py-2.5 text-[12.5px] font-semibold text-[#191A1C] transition-colors hover:border-[#703DEF] hover:text-[#703DEF]"
-                        onClick={() => window.location.assign(`/api/v1/auth/oidc/start?returnTo=${encodeURIComponent("/#chat")}`)}
-                      >
-                        <GatewayIcon size={17} />
-                        <span className="flex-1 text-left">Enterprise SSO</span>
-                        <ArrowRight aria-hidden="true" className="h-[17px] w-[17px]" />
-                      </Button>
-                    </div>
-                  ) : null}
                 </form>
               ) : (
                 <form

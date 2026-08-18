@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   createHermesNodeInvitationSchema,
   enrollHermesNodeSchema,
@@ -153,6 +154,30 @@ export async function registerRuntimeNodeInstallerRoutes(
       .header("content-disposition", "inline; filename=hermes-corpus-reconciler.py")
       .type("text/x-python; charset=utf-8")
       .send(reconciler);
+  });
+
+  /*
+   * The digest of the file above, so the node can check it received all of it.
+   *
+   * **This is an integrity check, not an authentication boundary, and the
+   * difference matters enough to write down.** It travels the same unauthenticated
+   * `/install` channel as the file it describes, so anyone who could substitute
+   * the reconciler could substitute this too. It is worth serving anyway because
+   * the check it replaces was `grep -Fq` for a magic string, which a truncated
+   * download passes as long as the string landed in the bytes that arrived --
+   * and the result is then installed 0755 and run as root by systemd.
+   *
+   * What actually authenticates this channel is that the node already trusts it
+   * completely: `install-agentic-node.sh` is fetched the same way and piped into
+   * `sudo bash`. Adding signing here without signing that would move the problem,
+   * not solve it.
+   */
+  app.get("/hermes-corpus-reconciler.py.sha256", async (_request, reply) => {
+    const reconciler = await readFile(HERMES_CORPUS_RECONCILER_PATH);
+    return reply
+      .header("cache-control", "no-store")
+      .type("text/plain; charset=utf-8")
+      .send(`${createHash("sha256").update(reconciler).digest("hex")}\n`);
   });
 }
 

@@ -306,6 +306,66 @@ describe("OpenRouter endpoint mode", () => {
       baseUrl: "https://openrouter.ai",
     });
   });
+
+  it("keeps what the operator typed when the background poll re-delivers the same connection", () => {
+    /*
+     * The workspace re-reads connections every 15 seconds and hands down a
+     * freshly parsed array, so the `.find()` that locates this connection
+     * returned a new object every tick even when the row had not changed.
+     * The seeding effect depended on that object, `Object.is` failed, and it
+     * re-seeded twelve pieces of state under whoever was typing — blanking the
+     * API key field, greying out "Verify key and load models" because it is
+     * disabled on empty, and dropping any typed configuration back to defaults.
+     * A rotated secret pasted in and not yet saved was simply gone.
+     *
+     * Re-rendering with an equal-but-not-identical array is exactly what the
+     * poll does; the typed value has to survive it.
+     */
+    const { rerender } = render(<ConnectionDrawer
+      {...props}
+      initialKind="INFERENCE"
+      connections={[liveInference]}
+    />);
+    fireEvent.click(screen.getByRole("radio", { name: /Public endpoint/ }));
+    fireEvent.change(screen.getByLabelText(/OpenRouter API key/), { target: { value: "sk-or-v1-rotated" } });
+
+    // One poll tick: same row, new array and new object identity.
+    rerender(<ConnectionDrawer
+      {...props}
+      initialKind="INFERENCE"
+      connections={[{ ...liveInference }]}
+    />);
+
+    // The secret survives, and so does the endpoint mode the operator chose --
+    // the effect reset both.
+    expect((screen.getByLabelText(/OpenRouter API key/) as HTMLInputElement).value).toBe("sk-or-v1-rotated");
+  });
+
+  it("re-seeds the form when the connection itself actually changed", () => {
+    // The other half of the same behaviour: the effect must still fire when the
+    // server reports the row changed, or the drawer would show a stale endpoint
+    // after somebody else saved one.
+    const { rerender } = render(<ConnectionDrawer
+      {...props}
+      initialKind="INFERENCE"
+      connections={[liveInference]}
+    />);
+    expect((screen.getByLabelText(/AI Inference address/) as HTMLInputElement).value)
+      .toBe(liveInference.baseUrl);
+
+    rerender(<ConnectionDrawer
+      {...props}
+      initialKind="INFERENCE"
+      connections={[{
+        ...liveInference,
+        baseUrl: "http://gpu-two.internal:8000/v1",
+        updatedAt: "2026-08-15T00:00:00.000Z",
+      }]}
+    />);
+
+    expect((screen.getByLabelText(/AI Inference address/) as HTMLInputElement).value)
+      .toBe("http://gpu-two.internal:8000/v1");
+  });
 });
 
 describe("local inference auto-configuration", () => {

@@ -14,7 +14,6 @@ import { OrcaSynapseApiError } from "./api.js";
 const api = vi.hoisted(() => ({
   getPlatformMeta: vi.fn(),
   getAdministratorSession: vi.fn(),
-  getOidcStatus: vi.fn(),
   getEnterpriseSession: vi.fn(),
   getConnections: vi.fn(),
   getConnectionMonitoring: vi.fn(),
@@ -56,7 +55,6 @@ beforeEach(() => {
   for (const mock of Object.values(api)) mock.mockReset();
   api.getPlatformMeta.mockResolvedValue({ bootstrapState: "READY", version: "8.8.7" } as PlatformMeta);
   api.getAdministratorSession.mockRejectedValue(new Error("no session"));
-  api.getOidcStatus.mockResolvedValue({ configured: false, administratorSignIn: false, message: "not configured" });
   api.getEnterpriseSession.mockRejectedValue(new Error("no enterprise session"));
   api.getConnections.mockResolvedValue({ items: [] });
   api.getConnectionMonitoring.mockResolvedValue({

@@ -36,8 +36,7 @@ OrcaSynapse is a private control plane for operating Hermes-based agentic workfl
 - Record run state, sanitized events, usage, failures, and incidents.
 - Separate the two operational questions into their own surfaces: Health (what is degraded now) and the Audit trail (what happened). The production-readiness register remains in the schema but has no console surface: nothing in the product can create a control, so a screen for it would always be empty. Release gates was removed with the evaluation subsystem behind it: it was the only producer of the promoted evidence that models, prompts, guardrails and agent profiles then demanded before activation, and that gate applied even in development. Governed records are versioned, audited, and activated on their own merits.
 - Preserve an append-only audit trail for administrative and execution lifecycle actions.
-- Forward audit batches to an optional SIEM with retry-safe cursor state.
-- Enforce local administrator, recovery, and OIDC role/scope boundaries.
+- Enforce local administrator, recovery, and role/scope boundaries.
 
 ## Memory contract
 

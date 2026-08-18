@@ -59,7 +59,7 @@ After the first governed policy is activated, missing or suspended policy state 
 
 Before inference, OrcaSynapse applies the active policy to user/developer/tool text that can enter the model request, on all three submission paths. The internal runtime gateway also ignores caller-selected model IDs, caps output tokens, applies PostgreSQL-backed request limits, and keeps upstream inference credentials server-side.
 
-Blocks, redactions and flags are audited by rule label and count. The matched text is never recorded: a credential rule fires precisely because the input looked like a key, and quoting it to explain the refusal would place that key in a retained, SIEM-forwarded trail.
+Blocks, redactions and flags are audited by rule label and count. The matched text is never recorded: a credential rule fires precisely because the input looked like a key, and quoting it to explain the refusal would place that key in a retained trail.
 
 `tools`, `tool_calls`, `response_format` and `chat_template_kwargs` on a runtime gateway request are free-form objects bounded only by the 1 MiB body limit and are **not** inspected. They remain the one uninspected channel into the model.
 

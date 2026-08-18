@@ -74,7 +74,6 @@ const props = {
   identityMode: "ADMINISTRATOR_PREVIEW" as const,
   displayName: "Operator",
   administratorReadiness: null,
-  oidcConfigured: false,
   onSignIn: vi.fn(),
   onConfigure: vi.fn(),
   onOpenAgents: vi.fn(),
@@ -103,8 +102,16 @@ describe("chat composer", () => {
     expect(header?.classList.contains("bg-surface")).toBe(false);
     expect(header?.classList.contains("border-b")).toBe(false);
     expect(runtime.classList.contains("rounded-card")).toBe(true);
-    expect(within(runtime).getByRole("button", { name: "Skills" })).toBeTruthy();
-    expect(within(runtime).getByRole("button", { name: "More conversation actions" })).toBeTruthy();
+    /*
+     * Awaited rather than queried synchronously. The container carrying this
+     * label renders before the controls inside it do -- those wait on the
+     * conversation and profile loads -- so a single `findBy` on the container
+     * followed by `getBy` on its contents passed or failed depending on how the
+     * two settled against each other. Observed failing once on "Skills" and
+     * passing on the next two runs.
+     */
+    expect(await within(runtime).findByRole("button", { name: "Skills" })).toBeTruthy();
+    expect(await within(runtime).findByRole("button", { name: "More conversation actions" })).toBeTruthy();
   });
 
   it("identifies the agent picker and turns missing setup into an action", async () => {

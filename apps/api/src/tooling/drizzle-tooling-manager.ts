@@ -1,4 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { canonicalize } from "../canonical-json.js";
 import type {
   CreateScopedMemory,
   DecideToolsetAdmission,
@@ -1253,7 +1254,23 @@ export class DrizzleToolingManager implements ToolingManager {
       .limit(1);
     if (!existing) return null;
     const storedArguments = jsonObject(existing.arguments);
-    if (existing.toolSlug !== toolSlug || JSON.stringify(storedArguments) !== JSON.stringify(arguments_)) {
+    /*
+     * Canonical on both sides, because only one side round-tripped through jsonb.
+     *
+     * PostgreSQL stores a jsonb object with its keys reordered by length then
+     * bytewise, while `arguments_` still carries the caller's wire order -- so
+     * `JSON.stringify` compared a retry against a reordering of itself and
+     * denied it. `{"query":1,"limit":2,"text":3}` comes back as
+     * `{"text":3,"limit":2,"query":1}`, which is the same object and a different
+     * string. The guardrail manager reached for `canonicalize` for exactly this
+     * reason, "so key order cannot make an unchanged list look edited"; this is
+     * the same problem one table over.
+     *
+     * It matters most where it is least visible: `findExistingResult` is what
+     * makes the documented promise that presenting the same request id again
+     * resumes a CONSEQUENTIAL tool's approval wait. A denial there is permanent.
+     */
+    if (existing.toolSlug !== toolSlug || canonicalize(storedArguments) !== canonicalize(arguments_)) {
       throw new ToolingDeniedError("The request ID was already used for a different tool invocation.");
     }
     return this.existingResult(existing);

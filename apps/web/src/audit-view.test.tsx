@@ -23,7 +23,6 @@ vi.mock("./api.js", async () => {
     getAuditEvents: (...args: unknown[]) => queried(...args as [AuditEventQuery]),
     // Never settles: the forwarding banner is not what these tests are about,
     // and a resolution landing outside `act` is only noise.
-    getAuditForwarding: vi.fn(() => new Promise<never>(() => {})),
   };
 });
 

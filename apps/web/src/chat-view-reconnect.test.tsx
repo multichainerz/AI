@@ -72,7 +72,10 @@ const profile = {
   activeVersionConfiguration: { displayName: "Support agent v1" },
 } as unknown as AgentProfile;
 
-const mocks = vi.hoisted(() => ({ streamChatEvents: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  streamChatEvents: vi.fn(),
+  getChatConversation: vi.fn(),
+}));
 
 vi.mock("./api.js", async () => {
   const actual = await vi.importActual<typeof import("./api.js")>("./api.js");
@@ -82,7 +85,7 @@ vi.mock("./api.js", async () => {
     // The message stays PENDING on every refetch, which is what a deleted
     // `AgentRun` looks like from here: the server has no news, and no news is
     // not a reason to stop asking — but a bounded number of reasons is.
-    getChatConversation: vi.fn(async () => conversation),
+    getChatConversation: mocks.getChatConversation,
     getAgentProfiles: vi.fn(async () => ({ items: [profile] })),
     getModelDeployments: vi.fn(async () => ({ items: [] })),
     streamChatEvents: mocks.streamChatEvents,
@@ -108,10 +111,8 @@ const reconnectRound = async () => {
 
 const props = {
   unlocked: true,
-  identityMode: "ADMINISTRATOR_PREVIEW" as const,
   displayName: "Operator",
   administratorReadiness: null,
-  oidcConfigured: false,
   onSignIn: vi.fn(),
   onConfigure: vi.fn(),
   onOpenAgents: vi.fn(),
@@ -122,6 +123,8 @@ const props = {
 beforeEach(() => {
   mocks.streamChatEvents.mockReset();
   mocks.streamChatEvents.mockRejectedValue(new Error("The Hermes run is no longer available."));
+  mocks.getChatConversation.mockReset();
+  mocks.getChatConversation.mockResolvedValue(conversation);
 });
 afterEach(cleanup);
 
@@ -151,6 +154,44 @@ describe("the chat reconnect loop", () => {
       await reconnectRound();
       await reconnectRound();
       expect(mocks.streamChatEvents.mock.calls.length).toBe(STREAM_RECONNECT_LIMIT);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps retrying when the recovery refetch fails alongside the stream", async () => {
+    /*
+     * The two calls are same-origin fetches issued back to back, so a two-second
+     * network drop takes both — the ordinary case, not an exotic one. A failed
+     * refetch yields no conversation and therefore no pending message, and the
+     * loop used to read that as "the run finished" and return, on the very first
+     * attempt: no error, no retry, and no dependency changed, so nothing ever
+     * started it again. The transcript sat on "reconnecting" for a run that was
+     * still going, Stop unmounted because `working` had gone false, and a new
+     * message was refused 409 until the pending row went stale an hour later.
+     * Reopening the conversation did not help, because the effect keys on the
+     * pending message's id and that had not changed.
+     *
+     * The refetch failing must therefore be indistinguishable from the stream
+     * failing: keep going, and give up only through the bound above.
+     */
+    vi.useFakeTimers();
+    try {
+      // Only the *recovery* refetches fail. The initial load has to succeed or
+      // the component never opens a stream and the test proves nothing.
+      mocks.getChatConversation.mockImplementation(async () => {
+        if (mocks.streamChatEvents.mock.calls.length === 0) return conversation;
+        throw new Error("Failed to fetch");
+      });
+      render(<ChatView {...props} />);
+      for (let round = 0; round < STREAM_RECONNECT_LIMIT * 2 + 4; round += 1) {
+        if (screen.queryByText(/Lost contact with this Hermes run/)) break;
+        await reconnectRound();
+      }
+
+      // Retried to the bound rather than abandoning the run on attempt one.
+      expect(mocks.streamChatEvents.mock.calls.length).toBe(STREAM_RECONNECT_LIMIT);
+      expect(screen.getByText(/Lost contact with this Hermes run/)).toBeTruthy();
     } finally {
       vi.useRealTimers();
     }

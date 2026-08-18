@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { enterpriseUser, enterpriseUserSession, serviceConnection, secretRecord, configurationRevision, chatMessage, chatFeedback, agentProfile, agentProfileVersion, chatConversation, agentRun, agentToolGrant, governedTool, oidcAuthorizationRequest, governedToolCall, toolApproval, modelDeployment, agentRunEvent, hermesRuntimeNode, hermesNodeRequestNonce, hermesNodeEnrollment, hermesCorpusSnapshot, hermesCorpusEntry, hermesCorpusMutation, hermesCorpusRevision, agentRunApproval } from "./schema.js";
+import { enterpriseUser, enterpriseUserSession, serviceConnection, secretRecord, configurationRevision, chatMessage, chatFeedback, agentProfile, agentProfileVersion, chatConversation, agentRun, agentToolGrant, governedTool, governedToolCall, toolApproval, modelDeployment, agentRunEvent, hermesRuntimeNode, hermesNodeRequestNonce, hermesNodeEnrollment, hermesCorpusSnapshot, hermesCorpusEntry, hermesCorpusMutation, hermesCorpusRevision, agentRunApproval } from "./schema.js";
 
 export const enterpriseUserSessionRelations = relations(enterpriseUserSession, ({one}) => ({
 	enterpriseUser: one(enterpriseUser, {
@@ -22,7 +22,6 @@ export const secretRecordRelations = relations(secretRecord, ({one}) => ({
 export const serviceConnectionRelations = relations(serviceConnection, ({many}) => ({
 	secretRecords: many(secretRecord),
 	configurationRevisions: many(configurationRevision),
-	oidcAuthorizationRequests: many(oidcAuthorizationRequest),
 	modelDeployments: many(modelDeployment),
 	hermesRuntimeNodes: many(hermesRuntimeNode),
 }));
@@ -104,12 +103,6 @@ export const governedToolRelations = relations(governedTool, ({many}) => ({
 	governedToolCalls: many(governedToolCall),
 }));
 
-export const oidcAuthorizationRequestRelations = relations(oidcAuthorizationRequest, ({one}) => ({
-	serviceConnection: one(serviceConnection, {
-		fields: [oidcAuthorizationRequest.serviceConnectionId],
-		references: [serviceConnection.id]
-	}),
-}));
 
 export const governedToolCallRelations = relations(governedToolCall, ({one, many}) => ({
 	agentRun: one(agentRun, {

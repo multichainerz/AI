@@ -398,8 +398,18 @@ export type CreateAgentProfile = z.infer<typeof createAgentProfileSchema>;
  * policy, orchestration, and the sanitized operational ledger.
  */
 export const DEFAULT_AGENT_PROFILE: CreateAgentProfile = {
+  /*
+   * The slug is deliberately not renamed alongside the display name.
+   *
+   * `seedDefaultAgentProfile` and `upgradeDefaultAgentProfile` both find this
+   * profile by slug. Changing it would not rename anything on an existing
+   * install -- it would seed a *second* profile beside the one already there,
+   * leaving the deployment with two defaults and the operator's chat history
+   * pointing at the old one. The name on screen is the display name, and that
+   * is what this rename changes.
+   */
   slug: "hermes-enterprise",
-  displayName: "Hermes Enterprise Assistant",
+  displayName: "Administrator",
   purpose:
     "Helps operators reason, plan, and act through a private Hermes session with explicit limits and honest uncertainty.",
   instructions: [

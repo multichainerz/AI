@@ -138,6 +138,94 @@ export const forkChatConversationSchema = z.object({
   throughMessageId: z.uuid().optional(),
 }).strict();
 
+/**
+ * The cadence bounds, matched by `ChatSchedule_intervalSeconds_check`.
+ *
+ * Five minutes rather than the thirty seconds `ConnectionMonitoringControl`
+ * allows, because these are not probes: every fire is a model call charged to
+ * the deployment, and a five-minute floor is already 288 runs a day. A week is
+ * the ceiling because past it an operator is describing a calendar rather than
+ * a cadence, and this is not a calendar.
+ */
+export const CHAT_SCHEDULE_MIN_INTERVAL_SECONDS = 300;
+export const CHAT_SCHEDULE_MAX_INTERVAL_SECONDS = 604_800;
+
+/**
+ * What a scheduled turn last did, reported where the operator is looking.
+ *
+ * `SKIPPED` and `DISABLED` are not the same outcome and must not render as one.
+ * A rate-limited fire is skipped and will be retried on the next tick; a
+ * guardrail block or an archived conversation disables the schedule, because
+ * repeating it would refuse identically forever.
+ */
+export const CHAT_SCHEDULE_OUTCOMES = ["OK", "SKIPPED", "DISABLED"] as const;
+export const chatScheduleOutcomeSchema = z.enum(CHAT_SCHEDULE_OUTCOMES);
+
+export const chatScheduleSchema = z.object({
+  id: z.uuid(),
+  conversationId: z.uuid(),
+  prompt: z.string().min(1).max(32_000),
+  intervalSeconds: z.number().int(),
+  nextRunAt: z.iso.datetime(),
+  lastRunAt: z.iso.datetime().nullable(),
+  lastOutcome: chatScheduleOutcomeSchema.nullable(),
+  lastDetail: z.string().max(500).nullable(),
+  enabled: z.boolean(),
+  createdBySubject: z.string().min(1).max(200),
+  revision: z.number().int().nonnegative(),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+});
+
+export const chatScheduleListSchema = z.object({
+  items: z.array(chatScheduleSchema),
+});
+
+/*
+ * The prompt is bounded here by the same 32,000 characters `sendChatMessage`
+ * uses, and again by the active policy's own ceiling when the schedule is
+ * written. Checking the policy at write time as well as at fire time is what
+ * lets an operator learn about a refusal while they are looking at the form,
+ * rather than silently every morning.
+ */
+export const createChatScheduleSchema = z
+  .object({
+    prompt: z.string().trim().min(1).max(32_000),
+    intervalSeconds: z.number().int()
+      .min(CHAT_SCHEDULE_MIN_INTERVAL_SECONDS)
+      .max(CHAT_SCHEDULE_MAX_INTERVAL_SECONDS),
+    // Absent means "one interval from now". An explicit time is what an
+    // operator reaches for when the first run should land at a particular hour.
+    startAt: z.iso.datetime().optional(),
+  })
+  .strict();
+
+export const updateChatScheduleSchema = z
+  .object({
+    prompt: z.string().trim().min(1).max(32_000).optional(),
+    intervalSeconds: z.number().int()
+      .min(CHAT_SCHEDULE_MIN_INTERVAL_SECONDS)
+      .max(CHAT_SCHEDULE_MAX_INTERVAL_SECONDS)
+      .optional(),
+    enabled: z.boolean().optional(),
+    /*
+     * The revision the caller believes it is editing.
+     *
+     * `ChatSchedule.revision` was stored and returned from the moment the table
+     * existed, and nothing ever compared it -- so the field advertised a
+     * conflict check the product did not perform, and two operators editing one
+     * schedule silently took turns overwriting each other. Optional rather than
+     * required so an existing client is not broken by adding it; supplied, it is
+     * enforced, which is the same bargain `approveReleaseTargetSchema` strikes
+     * one package over.
+     */
+    expectedRevision: z.number().int().nonnegative().optional(),
+  })
+  .strict()
+  .refine((value) => Object.keys(value).length > 0, {
+    message: "At least one schedule field must be provided.",
+  });
+
 export const setChatFeedbackSchema = z
   .object({
     rating: chatFeedbackRatingSchema,
@@ -240,3 +328,8 @@ export type ChatMessageSubmission = z.infer<typeof chatMessageSubmissionSchema>;
 export type ForkChatConversation = z.infer<typeof forkChatConversationSchema>;
 export type ChatMetrics = z.infer<typeof chatMetricsSchema>;
 export type ChatStreamEvent = z.infer<typeof chatStreamEventSchema>;
+export type ChatScheduleOutcome = z.infer<typeof chatScheduleOutcomeSchema>;
+export type ChatSchedule = z.infer<typeof chatScheduleSchema>;
+export type ChatScheduleList = z.infer<typeof chatScheduleListSchema>;
+export type CreateChatSchedule = z.infer<typeof createChatScheduleSchema>;
+export type UpdateChatSchedule = z.infer<typeof updateChatScheduleSchema>;

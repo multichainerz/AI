@@ -15,6 +15,13 @@ export interface AgentWorkerHandler {
    * whose absence is silent and total.
    */
   drainMemoryExtraction?(): Promise<number>;
+  /**
+   * Optional: discards the token-chunk rows of runs that finished long ago.
+   *
+   * Rides the memory sweep because it is the same kind of work -- nobody is
+   * waiting for it, and being a minute late costs nothing.
+   */
+  pruneRunEvents?(): Promise<number>;
 }
 
 /** PostgreSQL is the durable queue and audit source for asynchronous Hermes runs. */
@@ -24,6 +31,17 @@ export class WorkerRuntime {
   private reconcileTimer?: NodeJS.Timeout;
   private readonly inFlight = new Map<string, Promise<void>>();
   private dispatching: Promise<void> | undefined;
+  /*
+   * Tracked for the same reason `dispatching` is, and it was not.
+   *
+   * `stop()` awaited `dispatching` and `inFlight`, both of which are populated
+   * only by `dispatchAgents` -- so an in-flight memory sweep was never drained.
+   * That matters because the sweep *claims before it extracts*: the batch is
+   * stamped `memoryExtractedAt` by the claiming UPDATE, and the notes are
+   * written afterwards. A shutdown in between left those runs marked as done
+   * with nothing recorded, and nothing ever revisits them.
+   */
+  private sweeping: Promise<void> | undefined;
   private started = false;
 
   constructor(
@@ -68,6 +86,7 @@ export class WorkerRuntime {
     if (this.memoryTimer) clearInterval(this.memoryTimer);
     this.started = false;
     await this.dispatching?.catch(() => undefined);
+    await this.sweeping?.catch(() => undefined);
     await Promise.allSettled([...this.inFlight.values()]);
     await this.registry.markStopped(this.identity.id);
   }
@@ -93,12 +112,27 @@ export class WorkerRuntime {
    * about answering people depends on this succeeding.
    */
   private async sweepMemory(): Promise<void> {
-    if (!this.agentHandler?.drainMemoryExtraction) return;
-    try {
-      await this.agentHandler.drainMemoryExtraction();
-    } catch (error) {
-      this.logger.error("Memory extraction sweep failed.", error);
-    }
+    // Re-entrancy guard as well as a shutdown handle. A sweep that outlives its
+    // interval would otherwise have a second one started on top of it: the claim
+    // is atomic so they cannot take the same run, but they can run more
+    // concurrent extractions than `memorySweepIntervalMs` was chosen to allow.
+    if (this.sweeping) return this.sweeping;
+    const sweep = (async () => {
+      try {
+        if (this.agentHandler?.drainMemoryExtraction) {
+          await this.agentHandler.drainMemoryExtraction();
+        }
+        if (this.agentHandler?.pruneRunEvents) {
+          await this.agentHandler.pruneRunEvents();
+        }
+      } catch (error) {
+        this.logger.error("Memory extraction sweep failed.", error);
+      } finally {
+        this.sweeping = undefined;
+      }
+    })();
+    this.sweeping = sweep;
+    return sweep;
   }
 
   private async heartbeat(): Promise<void> {

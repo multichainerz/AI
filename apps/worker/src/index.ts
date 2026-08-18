@@ -90,6 +90,22 @@ try {
   await runtime.start();
 } catch (error) {
   console.error("OrcaSynapse worker failed to start.", error);
+  /*
+   * The wake channel is stopped here as well as in `shutdown()`, because
+   * `process.exitCode` is a request to exit and not an exit: node leaves when
+   * nothing is left holding the event loop, and the channel holds a dedicated
+   * client whose socket is ref'd. Closing only the pool left this process alive
+   * indefinitely with no `WorkerNode` row and no heartbeat -- and because the
+   * worker container has `restart: unless-stopped` and no healthcheck, Docker
+   * reported it running while every chat turn stalled, and the restart that
+   * would have cleared a transient fault never came.
+   *
+   * The API's entrypoint has always done the equivalent (`await app.close()`
+   * before setting the code); this brings the worker in line with it.
+   */
+  await wake?.stop().catch((stopError) =>
+    console.error("OrcaSynapse worker wake channel did not close cleanly.", stopError),
+  );
   await closeDatabase().catch((closeError) =>
     console.error("OrcaSynapse worker database pool close failed.", closeError),
   );

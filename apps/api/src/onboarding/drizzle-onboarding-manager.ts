@@ -607,7 +607,32 @@ export class DrizzleOnboardingManager implements OnboardingManager {
         { stageKey, componentKey: "postgresql", outcome: contractOutcome(Boolean(observedPostgres)), code: "postgresql-connectivity", summary: observedPostgres ? "PostgreSQL accepted a live query through the ORM; Production still requires backup, restore, and upgrade evidence." : "PostgreSQL version could not be read.", ...(observedPostgres ? { observedVersion: observedPostgres.slice(0, 240) } : {}) },
         { stageKey, componentKey: "database-orm", outcome: contractOutcome(true), code: "orm-database-path", summary: "Drizzle and the PostgreSQL driver completed the onboarding query path; Production still requires pool, timeout, and drift evidence.", observedVersion: DRIZZLE_VERSION },
         { stageKey, componentKey: "fastify-api", outcome: contractOutcome(true), code: "api-runtime", summary: "The authenticated onboarding API is operational; Production still requires its retained contract and negative-security suite.", observedVersion: ORCASYNAPSE_VERSION },
-        { stageKey, outcome: architecture.reason ? "PASSED" : "FAILED", code: "topology-decision", summary: architecture.reason ? `${architecture.topologyMode.toLowerCase().replaceAll("_", " ")} topology is recorded for ${architecture.targetEnvironment.toLowerCase()}.` : "Save a topology decision and rationale before validation." },
+        /*
+         * The decision, not the prose about it.
+         *
+         * This gated PASSED on `reason`, a nullable free-text column with no
+         * default -- and the only writer of it is `updateArchitecture`, whose
+         * only client was removed from the web app. So on every install created
+         * at v8.9.0 or later the field is null forever, this check reported
+         * FAILED forever, and `applyValidation` turns any FAILED check into a
+         * BLOCKED step: the `system-topology` stage could never complete, on any
+         * deployment, for a reason no operator could act on.
+         *
+         * The decision itself is always recorded. `topologyMode` and
+         * `targetEnvironment` are NOT NULL with defaults, so the row states a
+         * control-plane topology on a development target from the moment it is
+         * created -- which is exactly what the removal commit meant by calling
+         * this "an install-time decision, not a Setup step-2 form". The
+         * rationale is an annotation on that decision, so its absence is worth
+         * saying out loud and is not a blocking result.
+         */
+        {
+          stageKey,
+          outcome: "PASSED",
+          code: "topology-decision",
+          summary: `${architecture.topologyMode.toLowerCase().replaceAll("_", " ")} topology is recorded for ${architecture.targetEnvironment.toLowerCase()}.`
+            + (architecture.reason ? "" : " No rationale was recorded against it."),
+        },
       ];
     }
     if (stageKey === "identity-recovery") {

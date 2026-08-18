@@ -20,13 +20,14 @@ import {
 } from "@orcasynapse/contracts";
 import {
   auditEvent,
+  chatSchedule,
   guardrailPolicy,
   operationalIncident,
   productionReadinessApproval,
   productionReadinessControl,
   type OrcaSynapseDatabase,
 } from "@orcasynapse/database";
-import { and, asc, count, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, sql } from "drizzle-orm";
 import { increment } from "../database-support.js";
 import type { AgentManager } from "../agents/agent-manager.js";
 import type { AdminPrincipal } from "../auth/admin-session.js";
@@ -36,7 +37,6 @@ import type { ConnectionMonitoringManager } from "../connections/connection-moni
 import type { OperationsManager } from "../operations/operations-manager.js";
 import type { ToolingManager } from "../tooling/tooling-manager.js";
 import type { ModelManager } from "../models/model-manager.js";
-import type { AuditManager } from "../audit/audit-manager.js";
 import { AiOpsConflictError, AiOpsNotFoundError, type AiOpsManager } from "./ai-ops-manager.js";
 
 const HEALTH_FRESHNESS_MS = 15 * 60 * 1_000;
@@ -50,7 +50,6 @@ export interface AiOpsDependencies {
   chat: ChatManager;
   agents: AgentManager;
   tools: ToolingManager;
-  audit?: AuditManager;
 }
 
 interface StoredIncident {
@@ -102,7 +101,16 @@ const serviceMetadata: Record<ServiceKind, { label: string; workflows: AiOpsWork
   INFERENCE: { label: "Inference server", workflows: ["CHAT", "AGENTS"] },
   HERMES: { label: "Hermes runtime", workflows: ["AGENTS", "TOOLS"] },
   MCP: { label: "MCP gateway", workflows: ["AGENTS", "TOOLS"] },
-  OIDC: { label: "Enterprise identity", workflows: ["CHAT", "AGENTS", "TOOLS"] },
+  /*
+   * No workflows, for the reason SIEM below has none: nothing in the product
+   * depends on this kind any more. Federated sign-in was removed and the
+   * enum value is retained only because a stored row may still carry it -- but
+   * the mapping was left as it was, so a single inert OIDC connection that an
+   * operator had not deleted reported CHAT, AGENTS and TOOLS as affected, opened
+   * a CRITICAL incident, and turned the whole Operations overview critical for a
+   * capability the deployment no longer has.
+   */
+  OIDC: { label: "Enterprise identity", workflows: [] },
   SIEM: { label: "SIEM forwarding", workflows: [] },
   NOTIFICATION: { label: "Operator notifications", workflows: [] },
   OTHER: { label: "Other service", workflows: [] },
@@ -380,7 +388,7 @@ export class DrizzleAiOpsManager implements AiOpsManager {
 
   async overview(): Promise<AiOpsOverview> {
     const generatedAt = new Date();
-    const [connections, monitoring, models, runtime, chat, agents, tools, forwarding, activeGuardrail] = await Promise.all([
+    const [connections, monitoring, models, runtime, chat, agents, tools, activeGuardrail] = await Promise.all([
       settled(this.dependencies.connections.list()),
       this.dependencies.connectionMonitoring ? settled(this.dependencies.connectionMonitoring.getControl()) : Promise.resolve(null),
       this.dependencies.models ? settled(this.dependencies.models.list()) : Promise.resolve(null),
@@ -388,7 +396,6 @@ export class DrizzleAiOpsManager implements AiOpsManager {
       settled(this.dependencies.chat.metrics()),
       settled(this.dependencies.agents.metrics()),
       settled(this.dependencies.tools.metrics()),
-      this.dependencies.audit ? settled(this.dependencies.audit.forwarding()) : Promise.resolve(null),
       settled(this.database
         .select({
           id: guardrailPolicy.id,
@@ -446,24 +453,7 @@ export class DrizzleAiOpsManager implements AiOpsManager {
         affectedWorkflows: ["CHAT", "AGENTS", "TOOLS"],
       });
     }
-    if (forwarding) {
-      // The SIEM connection's own health check says whether the endpoint is
-      // reachable. It cannot say whether it is accepting the trail, so a
-      // rejecting destination would otherwise read as HEALTHY here while the
-      // audit view reported a failure.
-      components.push({
-        id: "audit-forwarding",
-        label: "Audit forwarding",
-        status: forwarding.status === "HEALTHY"
-          ? "HEALTHY"
-          : forwarding.status === "NOT_CONFIGURED" ? "NOT_CONFIGURED" : "DEGRADED",
-        summary: forwarding.summary,
-        source: "LIVE",
-        observedAt: forwarding.lastAttemptAt ?? generatedAt.toISOString(),
-        latencyMs: null,
-        affectedWorkflows: [],
-      });
-    }
+    components.push(await this.scheduledTurnComponent(generatedAt));
     if (models) components.push(...models.items.map(modelComponent));
     if (activeGuardrail) {
       components.push({
@@ -733,6 +723,58 @@ export class DrizzleAiOpsManager implements AiOpsManager {
       return record;
     });
     return incident(updated as StoredIncident);
+  }
+
+  /**
+   * Whether any scheduled turn has stopped itself.
+   *
+   * This exists because the failure is silent by construction. A schedule that
+   * disables itself -- a disabled creator, a guardrail block, an archived
+   * conversation -- is legible on the conversation it belongs to, and to nobody
+   * who does not open that conversation. A morning report can stop for a week
+   * before anybody notices it is missing. Reported as a component so it becomes
+   * a de-duplicated WARNING incident on the surface an operator already reads.
+   *
+   * `enabled = false` alone is not the signal: an operator who paused a
+   * schedule on purpose has done exactly that, and raising an incident for it
+   * would train them to ignore this one. `lastOutcome = 'DISABLED'` is what the
+   * dispatcher writes when it stops a schedule itself, and resuming clears it,
+   * so the two cases stay distinguishable.
+   *
+   * NOT_CONFIGURED when nothing is scheduled, rather than HEALTHY: a deployment
+   * that does not use the feature should not be told its schedules are fine.
+   */
+  private async scheduledTurnComponent(generatedAt: Date): Promise<AiOpsComponent> {
+    const [totals] = await this.database
+      .select({
+        total: count(),
+        stopped: count(sql`case when ${chatSchedule.enabled} = false and ${chatSchedule.lastOutcome} = 'DISABLED' then 1 end`),
+      })
+      .from(chatSchedule);
+    const total = totals?.total ?? 0;
+    const stopped = Number(totals?.stopped ?? 0);
+    const base = {
+      id: "scheduled-turns",
+      label: "Scheduled turns",
+      source: "LIVE" as const,
+      observedAt: generatedAt.toISOString(),
+      latencyMs: null,
+      affectedWorkflows: ["CHAT" as const],
+    };
+    if (total === 0) {
+      return { ...base, status: "NOT_CONFIGURED", summary: "No conversation is scheduled to run unattended." };
+    }
+    if (stopped === 0) {
+      return { ...base, status: "HEALTHY", summary: `${total} scheduled ${total === 1 ? "turn is" : "turns are"} armed.` };
+    }
+    return {
+      ...base,
+      status: "DEGRADED",
+      // The count and where to look. The reason each one stopped is stored per
+      // schedule and shown there; repeating them here would be a summary that
+      // grows without bound.
+      summary: `${stopped} of ${total} scheduled ${total === 1 ? "turn has" : "turns have"} stopped themselves and will not run until an operator resumes them. The reason is shown on each conversation.`,
+    };
   }
 
   private async reconcileAutomatedIncidents(components: AiOpsComponent[], observedAt: Date): Promise<void> {

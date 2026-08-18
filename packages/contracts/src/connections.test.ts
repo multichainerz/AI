@@ -119,7 +119,7 @@ describe("service connection configuration", () => {
     const result = createServiceConnectionSchema.safeParse({
       ...connectionBase,
       kind: "INFERENCE",
-      configuration: { eventsPath: "/events" },
+      configuration: { platformAdminGroups: ["belongs-to-enterprise-access"] },
     });
 
     expect(result.success).toBe(false);

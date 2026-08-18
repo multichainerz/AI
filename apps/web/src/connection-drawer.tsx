@@ -19,7 +19,6 @@ import { ChevronDown, Cpu, Globe, Server, Shield } from "lucide-react";
 import { slugAsTyped, slugify } from "./slug.js";
 import { connectionDefinitions, inferenceEndpointPresets } from "./connection-definitions.js";
 import { Alert, Button, Dialog, Field, Input, Mark, MicroLabel, Select, StatusText, toneFor } from "./ui/index.js";
-import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "./ui/cn.js";
 
@@ -210,6 +209,24 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
     [selectedKind],
   );
   const existing = props.connections.find(({ kind }) => kind === selectedKind);
+  /*
+   * What the seeding effect below actually depends on, as a value rather than an
+   * object reference.
+   *
+   * `props.connections` is re-parsed from the API every 15 seconds and handed
+   * down as a brand-new array, so `.find()` returns a new object every tick even
+   * when nothing about the connection changed. Depending on that object meant
+   * `Object.is` failed on every poll and the effect re-seeded twelve pieces of
+   * state underneath whoever was typing: the API key field blanked, the
+   * "Verify key and load models" button greyed out because it is disabled on
+   * empty, the loaded model list vanished, and any typed configuration was
+   * replaced by defaults. A rotated secret pasted in and not yet saved was
+   * simply lost.
+   *
+   * `updatedAt` is the server's own marker for "this row changed", which is
+   * exactly the condition that should re-seed the form.
+   */
+  const existingKey = existing ? `${existing.id}:${existing.updatedAt}` : null;
   const diagnostic =
     existing && props.diagnostic?.connectionId === existing.id ? props.diagnostic : null;
   const storedInferenceKeyReusable = Boolean(
@@ -252,7 +269,11 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
     setOpenRouterCatalogue(null);
     setOpenRouterFilter("");
     setRollbackCandidate(null);
-  }, [definition, existing]);
+    // `existingKey`, not `existing` -- see the note where it is derived. The
+    // effect reads `existing`, and may: when the key is unchanged every field it
+    // reads is equal by value, and when it changes the effect re-runs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [definition, existingKey]);
 
   if (!props.embedded && !props.open) return null;
 
@@ -388,7 +409,7 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
           type="url"
           value={baseUrl}
           onChange={(event) => setBaseUrl(event.target.value)}
-          placeholder={selectedKind === "OIDC" ? "https://identity.orcasynapse.internal" : "https://service.orcasynapse.internal"}
+          placeholder="https://service.orcasynapse.internal"
         />
       </Field>
       <Field label="Environment">
@@ -405,73 +426,6 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
     </div>
   );
 
-  const configurationFields = (
-    <div className="grid gap-3 sm:grid-cols-2">
-      {definition.configurationFields.map((field) => {
-        const value = configuration[field.name];
-        if (field.type === "checkbox") {
-          return (
-            <div key={field.name} className="flex items-start gap-3 sm:col-span-2">
-              <Switch
-                className="mt-0.5"
-                checked={value === true}
-                onCheckedChange={(checked) => setConfigValue(field.name, checked)}
-                aria-label={field.label}
-              />
-              <span>
-                <span className="block text-body font-semibold text-foreground">{field.label}</span>
-                <span className="block text-caption text-muted">{field.help}</span>
-              </span>
-            </div>
-          );
-        }
-        if (field.type === "select") {
-          return (
-            <Field key={field.name} label={field.label} hint={field.help}>
-              <Select
-                value={typeof value === "string" ? value : ""}
-                onChange={(event) => setConfigValue(field.name, event.target.value)}
-              >
-                {field.options?.map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </Select>
-            </Field>
-          );
-        }
-        return (
-          <Field key={field.name} label={field.label} hint={field.help}>
-            <Input
-              type={field.type === "text-list" ? "text" : field.type}
-              value={field.type === "text-list" && Array.isArray(value)
-                ? value.join(", ")
-                : typeof value === "string" || typeof value === "number" ? value : ""}
-              placeholder={field.placeholder}
-              required={field.required}
-              min={field.type === "number" ? (field.min ?? 1000) : undefined}
-              max={field.type === "number" ? (field.max ?? 30000) : undefined}
-              step={field.type === "number" ? (field.step ?? 500) : undefined}
-              onChange={(event) => {
-                const nextValue = event.target.value;
-                if (nextValue.length === 0) {
-                  setConfigValue(field.name, undefined);
-                  return;
-                }
-                setConfigValue(
-                  field.name,
-                  field.type === "number"
-                    ? Number(nextValue)
-                    : field.type === "text-list"
-                      ? [...new Set(nextValue.split(",").map((item) => item.trim()).filter(Boolean))]
-                      : nextValue,
-                );
-              }}
-            />
-          </Field>
-        );
-      })}
-    </div>
-  );
 
   const form = (
       <form id="connection-form" className="grid gap-5" onSubmit={submitConnection}>
@@ -483,11 +437,6 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
             </TabButton>
           ))}
           <TabButton selected={false} onClick={props.onOpenAgenticSystem}>Agentic System</TabButton>
-          {connectionDefinitions.filter(({ kind }) => kind === "OIDC").map((item) => (
-            <TabButton key={item.kind} selected={selectedKind === item.kind} onClick={() => setSelectedKind(item.kind)}>
-              {item.name}
-            </TabButton>
-          ))}
         </div>
         )}
 
@@ -723,40 +672,17 @@ export function ConnectionDrawer(props: ConnectionDrawerProps) {
           </div>
         ) : identityFields}
 
-        {selectedKind === "OIDC" ? (
-          <div className="grid gap-4">
-            <Separator />
-            <p className="text-micro font-semibold uppercase tabular-nums text-faint">Operational settings</p>
-            {configurationFields}
-          </div>
-        ) : null}
-
-        {selectedKind === "OIDC" ? (
-          <div className="grid gap-3">
-            <p className="text-micro font-semibold uppercase tabular-nums text-faint">Credentials</p>
-            {definition.secretFields.map((field) => {
-              const stored = existing?.secretFieldNames?.includes(field.name) ?? false;
-              return (
-                <Field
-                  key={field.name}
-                  label={field.label}
-                  {...(stored ? { hint: "Stored — leave blank to keep." } : {})}
-                >
-                  <Input
-                    type="password"
-                    value={secrets[field.name] ?? ""}
-                    onChange={(event) => setSecrets((current) => ({ ...current, [field.name]: event.target.value }))}
-                    required={!existing && field.required}
-                    autoComplete="new-password"
-                    placeholder={stored ? "••••••••••••" : "Enter credential"}
-                  />
-                </Field>
-              );
-            })}
-          </div>
-        ) : null}
-
-        {existing && selectedKind === "OIDC" ? (
+        {/*
+          * Gated on the connection existing, not on its kind.
+          *
+          * This read `existing && selectedKind === "OIDC"`, which was never
+          * about OIDC -- revisions are a property every connection has, and
+          * `onLoadRevisions` takes a connection id. With the federated identity
+          * form removed the kind test could only ever be false, so the choice
+          * was to delete a working feature or to state the condition it always
+          * meant. Configuration history now shows for any saved connection.
+          */}
+        {existing ? (
           <section className="grid gap-3" aria-labelledby="revision-history-title">
             <div className="flex items-start justify-between gap-3">
               <div>

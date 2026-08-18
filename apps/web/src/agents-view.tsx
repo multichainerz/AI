@@ -52,8 +52,6 @@ interface AgentsViewProps {
   administrator: boolean;
   activationReady: boolean | null;
   activationMessage: string | null;
-  oidcConfigured: boolean;
-  onSignIn: () => void;
   onConfigure: () => void;
   onOpenChat: () => void;
   onOpenReadiness: () => void;
@@ -102,7 +100,7 @@ function draftFromProfile(profile: AgentProfile): CreateAgentProfile {
   };
 }
 
-export function AgentsView({ unlocked, session, administrator, activationReady, activationMessage, oidcConfigured, onSignIn, onConfigure, onOpenChat, onOpenReadiness, onSessionExpired }: AgentsViewProps) {
+export function AgentsView({ unlocked, session, administrator, activationReady, activationMessage, onConfigure, onOpenChat, onOpenReadiness, onSessionExpired }: AgentsViewProps) {
   const [profiles, setProfiles] = useState<AgentProfile[]>([]);
   /*
    * The named sets and divisions a profile can be pointed at.
@@ -431,9 +429,8 @@ export function AgentsView({ unlocked, session, administrator, activationReady, 
         mark="HA"
         headline="Authenticated workspace required"
         reason="Sign in to see which profiles are active and what they have run. Administrators can also author immutable versions, verify them against Hermes, and control the global execution boundary."
-        actionLabel={oidcConfigured ? "Enterprise sign in" : "Administrator setup"}
-        onAction={oidcConfigured ? onSignIn : onConfigure}
-        {...(oidcConfigured ? { secondaryLabel: "Administrator setup", onSecondary: onConfigure } : {})}
+        actionLabel="Administrator setup"
+        onAction={onConfigure}
       />
     );
   }

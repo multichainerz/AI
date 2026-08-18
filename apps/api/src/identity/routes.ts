@@ -1,18 +1,14 @@
 import {
   enterpriseSessionSchema,
+  localPersonLoginRequestSchema,
   localPersonPasswordChangeRequestSchema,
-  oidcStatusSchema,
 } from "@orcasynapse/contracts";
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { sessionCookie } from "../auth/admin-session.js";
 import {
   EnterpriseIdentityError,
   enterpriseSessionCookie,
   enterpriseSessionToken,
   expiredEnterpriseSessionCookie,
-  expiredOidcStateCookie,
-  oidcStateCookie,
-  oidcStateToken,
   type EnterpriseIdentityManager,
 } from "./enterprise-session.js";
 
@@ -31,28 +27,7 @@ function secureRequest(request: FastifyRequest): boolean {
   return request.protocol === "https";
 }
 
-function safeReturnTo(value: unknown): string {
-  // The second character must be neither `/` nor `\`. Blocking only `//` is not
-  // enough: browsers treat `/\host` as scheme-relative for special schemes, so
-  // `/\evil.example` resolved to `https://evil.example/` — an off-site redirect
-  // handed to the user at the moment they complete a genuine corporate SSO,
-  // which is the most convincing possible setup for a credential-replay page.
-  //
-  // Every C0 control and DEL is refused rather than CR and LF alone. URL
-  // parsing strips tab as well as CR and LF before resolving, while Node only
-  // refuses CR and LF in a header value, so `/<tab>/evil.example` passed this
-  // check, survived as a Location header, and resolved to the same off-site
-  // target.
-  return typeof value === "string" && value.length <= 500 && /^\/(?![/\\])[^\u0000-\u001f\u007f]*$/.test(value)
-    ? value
-    : "/";
-}
 
-function queryString(value: unknown, maxLength: number): string | null {
-  return typeof value === "string" && value.length > 0 && value.length <= maxLength
-    ? value
-    : null;
-}
 
 function locked() {
   return {
@@ -69,70 +44,6 @@ export async function registerIdentityRoutes(
   app: FastifyInstance,
   options: IdentityRouteOptions,
 ): Promise<void> {
-  app.get("/auth/oidc/status", async (_request, reply) => {
-    if (!options.manager) return reply.code(423).send(locked());
-    return oidcStatusSchema.parse(await options.manager.status());
-  });
-
-  app.get("/auth/oidc/start", async (request, reply) => {
-    if (!options.manager) return reply.code(423).send(locked());
-    const query = request.query as Record<string, unknown>;
-    try {
-      const started = await options.manager.startLogin(
-        safeReturnTo(query.returnTo),
-        requestContext(request),
-      );
-      void reply.header("set-cookie", oidcStateCookie(started.stateToken, secureRequest(request)));
-      return reply.redirect(started.authorizationUrl);
-    } catch (error) {
-      if (error instanceof EnterpriseIdentityError) {
-        return reply.code(error.statusCode).send(publicIdentityError(error));
-      }
-      throw error;
-    }
-  });
-
-  app.get("/auth/oidc/callback", async (request, reply) => {
-    const secure = secureRequest(request);
-    void reply.header("set-cookie", expiredOidcStateCookie(secure));
-    if (!options.manager) return reply.code(423).send(locked());
-    const query = request.query as Record<string, unknown>;
-    const providerError = queryString(query.error, 160);
-    if (providerError) {
-      return reply.code(401).send({
-        error: "OIDC_PROVIDER_ERROR",
-        message: "The identity provider did not complete enterprise sign-in.",
-      });
-    }
-    const code = queryString(query.code, 8_192);
-    const state = queryString(query.state, 128);
-    if (!code || !state) {
-      return reply.code(400).send({
-        error: "OIDC_CALLBACK_INVALID",
-        message: "The enterprise sign-in callback is incomplete.",
-      });
-    }
-    try {
-      const issued = await options.manager.completeLogin(
-        code,
-        state,
-        oidcStateToken(request.headers.cookie),
-        requestContext(request),
-      );
-      void reply.header("set-cookie", [
-        expiredOidcStateCookie(secure),
-        enterpriseSessionCookie(issued.token, secure),
-        ...(issued.administratorSession ? [sessionCookie(issued.administratorSession.token, secure)] : []),
-      ]);
-      return reply.redirect(safeReturnTo(issued.returnTo));
-    } catch (error) {
-      if (error instanceof EnterpriseIdentityError) {
-        return reply.code(error.statusCode).send(publicIdentityError(error));
-      }
-      throw error;
-    }
-  });
-
   /**
    * Local sign-in for a person an administrator created.
    *
@@ -143,12 +54,19 @@ export async function registerIdentityRoutes(
    */
   app.post("/auth/local/login", async (request, reply) => {
     if (!options.manager) return reply.code(423).send(locked());
-    const body = request.body as Record<string, unknown>;
-    const username = typeof body?.username === "string" ? body.username.trim().toLowerCase() : "";
-    const password = typeof body?.password === "string" ? body.password : "";
-    if (!username || !password) {
+    /*
+     * Parsed by contract rather than by hand. The hand-rolled version had no
+     * length ceiling, and a failed sign-in writes the username into
+     * `AuditEvent.metadata` -- a table nothing prunes -- so an unauthenticated
+     * caller could store as much text per attempt as they cared to send. The
+     * administrator route next door had been bounded by its contract all along.
+     */
+    const parsed = localPersonLoginRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
       return reply.code(400).send({ error: "LOGIN_INVALID", message: "Enter a username and a password." });
     }
+    const username = parsed.data.username.toLowerCase();
+    const { password } = parsed.data;
     try {
       const issued = await options.manager.signInWithPassword(username, password, requestContext(request));
       void reply.header("set-cookie", enterpriseSessionCookie(issued.token, secureRequest(request)));

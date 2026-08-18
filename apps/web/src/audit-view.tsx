@@ -1,7 +1,7 @@
-import type { AdministratorSession, AuditEvent, AuditEventQuery, AuditForwardingState } from "@orcasynapse/contracts";
+import type { AdministratorSession, AuditEvent, AuditEventQuery } from "@orcasynapse/contracts";
 import { ScrollText } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
-import { OrcaSynapseApiError, getAuditEvents, getAuditForwarding } from "./api.js";
+import { OrcaSynapseApiError, getAuditEvents } from "./api.js";
 import { adminAccess } from "./admin-access.js";
 import {
   Alert, Button, EmptyState, Field, Input, MicroLabel, Panel, PanelHeading, Select, StatusText, WorkspaceDock, WorkspaceIntro, cn, toneFor,
@@ -66,7 +66,6 @@ export function AuditView({ session, onSessionExpired }: AuditViewProps) {
   const [filters, setFilters] = useState<Filters>(EMPTY);
   const [applied, setApplied] = useState<Filters>(EMPTY);
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [forwarding, setForwarding] = useState<AuditForwardingState | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // The trail is the AUDITOR role's entire reason to exist; without this scope
@@ -95,11 +94,6 @@ export function AuditView({ session, onSessionExpired }: AuditViewProps) {
   };
 
   useEffect(() => { void load(EMPTY, false); }, [session]);
-
-  useEffect(() => {
-    if (!session || !canRead) return;
-    void getAuditForwarding().then(setForwarding).catch(() => setForwarding(null));
-  }, [session]);
 
   const search = (event: FormEvent) => {
     event.preventDefault();
@@ -136,44 +130,6 @@ export function AuditView({ session, onSessionExpired }: AuditViewProps) {
         title="Audit trail"
         actions={<Button className="shrink-0" size="sm" onClick={() => void load(applied, false)} disabled={busy}>Refresh</Button>}
       >
-        {forwarding ? (
-          /* The left rule is the state. An audit trail that is silently behind
-             or failing to reach the SIEM is the one thing this strip exists to
-             surface, and it must not read the same as a healthy one. */
-          <div className={cn(
-            "flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-l-2 px-1 py-0.5",
-            forwarding.status === "FAILING" ? "border-l-bad"
-              : forwarding.status === "BEHIND" ? "border-l-warn"
-                : forwarding.status === "NOT_CONFIGURED" ? "border-l-border-strong" : "border-l-good",
-          )}>
-            <div className="min-w-0">
-              <strong className="text-label font-semibold text-text">
-                {forwarding.status === "NOT_CONFIGURED" ? "Retained locally"
-                  : forwarding.status === "FAILING" ? "Forwarding is failing"
-                    : forwarding.status === "BEHIND" ? "Forwarding is behind"
-                      : "Forwarding to SIEM"}
-              </strong>
-              <span className="ml-2 text-caption text-muted">{forwarding.summary}</span>
-              {forwarding.lastError && (
-                <code className="mt-1 block rounded border border-bad/40 bg-bad/10 px-2 py-1 font-mono text-micro text-bad">
-                  {forwarding.lastError}
-                </code>
-              )}
-            </div>
-            <dl className="m-0 flex shrink-0 gap-4">
-              {[
-                { label: "Undelivered", value: forwarding.pendingCount.toLocaleString() },
-                { label: "Delivered", value: forwarding.deliveredCount.toLocaleString() },
-                { label: "Last accepted", value: forwarding.lastForwardedAt ? relativeTime(forwarding.lastForwardedAt) : "never" },
-              ].map((fact) => (
-                <div className="flex items-baseline gap-1.5" key={fact.label}>
-                  <dt className="text-micro font-semibold uppercase tabular-nums text-faint">{fact.label}</dt>
-                  <dd className="m-0 font-mono text-caption tabular-nums text-muted">{fact.value}</dd>
-                </div>
-              ))}
-            </dl>
-          </div>
-        ) : null}
       </WorkspaceIntro>
 
       <WorkspaceDock>

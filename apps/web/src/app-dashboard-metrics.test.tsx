@@ -31,7 +31,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const api = vi.hoisted(() => ({
   getPlatformMeta: vi.fn(),
   getAdministratorSession: vi.fn(),
-  getOidcStatus: vi.fn(),
   getEnterpriseSession: vi.fn(),
   getConnections: vi.fn(),
   getConnectionMonitoring: vi.fn(),
@@ -100,7 +99,6 @@ function arriveSignedOut() {
 beforeEach(() => {
   for (const mock of Object.values(api)) mock.mockReset();
   api.getPlatformMeta.mockResolvedValue({ bootstrapState: "READY", version: "5.1.0" } as PlatformMeta);
-  api.getOidcStatus.mockResolvedValue({ configured: false });
   api.getEnterpriseSession.mockRejectedValue(new Error("no enterprise session"));
   api.getConnections.mockResolvedValue({ items: [] });
   api.getConnectionMonitoring.mockResolvedValue({

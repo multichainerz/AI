@@ -40,6 +40,19 @@ export const LOCAL_LOGIN_FAILURE_LIMIT = 5;
  */
 export const LOCAL_LOGIN_LOCK_MS = 15 * 60 * 1_000;
 
+/**
+ * The scopes a role carries, for a caller with no session to read them from.
+ *
+ * The scheduled-turn dispatcher rebuilds a schedule creator's principal on every
+ * fire rather than storing one, so it needs the same mapping a live session gets
+ * -- read through this function rather than a second copy of the table, because
+ * two definitions of what a SECURITY_ADMIN may do is exactly the drift
+ * `LOCAL_LOGIN_LOCK_MS` above exists to avoid.
+ */
+export function scopesForAdminRole(role: AdminRole): readonly AdminScope[] {
+  return ROLE_SCOPES[role];
+}
+
 const ROLE_SCOPES: Readonly<Record<AdminRole, readonly AdminScope[]>> = {
   PLATFORM_ADMIN: ADMIN_SCOPES,
   SECURITY_ADMIN: [
@@ -396,6 +409,23 @@ export class DrizzleAdminSessionManager implements AdminSessionManager {
     const token = randomBytes(32).toString("base64url");
     const sourceIp = context.sourceIp && isIP(context.sourceIp) ? context.sourceIp : null;
     const now = new Date();
+    /*
+     * Read and hash before the transaction, for the reason the enterprise path
+     * states: scrypt costs ~800ms and 128 MiB, and holding that inside a
+     * transaction held one of ten pool clients with it. Worse here, because this
+     * path also takes a per-username advisory lock -- so a flood against one
+     * username serialised behind the lock while every waiter still occupied a
+     * pool client.
+     *
+     * The dummy digest keeps an unknown username costing the same as a known one.
+     */
+    const [existing] = await this.database
+      .select()
+      .from(localAdministrator)
+      .where(eq(localAdministrator.username, normalizedUsername))
+      .limit(1);
+    const passwordMatches = await verifyLocalPassword(password, existing?.passwordHash ?? DUMMY_PASSWORD_DIGEST);
+
     return this.database.transaction(async (transaction) => {
       await transaction.execute(advisoryLock(`orcasynapse-local-admin:${normalizedUsername}`));
       const [account] = await transaction
@@ -403,9 +433,15 @@ export class DrizzleAdminSessionManager implements AdminSessionManager {
         .from(localAdministrator)
         .where(eq(localAdministrator.username, normalizedUsername))
         .limit(1);
-      const passwordMatches = await verifyLocalPassword(password, account?.passwordHash ?? DUMMY_PASSWORD_DIGEST);
+      /*
+       * Re-read under the lock, because the hash above took ~800ms. The lockout
+       * state and the failure counter have to come from committed state, and a
+       * password that was rotated while this attempt was hashing must not still
+       * open a session -- which is what comparing the digests catches.
+       */
+      const stale = Boolean(existing && account && account.passwordHash !== existing.passwordHash);
       const lockActive = Boolean(account?.lockedUntil && account.lockedUntil > now);
-      const accepted = Boolean(account && !account.disabledAt && !lockActive && passwordMatches);
+      const accepted = Boolean(account && !account.disabledAt && !lockActive && passwordMatches && !stale);
 
       if (!accepted) {
         if (account && !account.disabledAt && !lockActive) {

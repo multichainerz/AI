@@ -474,6 +474,9 @@ run_detached() {
 run_installer_at() {
   local commit="$1" label="$2" installer status=0
   installer="${AGENT_WORK}/install-${commit:0:12}.sh"
+  # Before the attempt, not after it: whatever this run reports has to be this
+  # run's. See clear_installer_rollback.
+  clear_installer_rollback
   download_installer "${commit}" "${installer}" \
     || return 90
   # `|| status=$?` and not a `set +e` / `set -e` pair around the call. The pair
@@ -503,6 +506,18 @@ run_installer_at() {
 # What install.sh's own rollback recorded, for this agent's record. Read rather
 # than inferred: the installer is the only thing that knows whether the database
 # was restored or deliberately left alone.
+# Removed before an attempt, so a failure can only ever report its own outcome.
+#
+# `install.sh` writes this receipt when it rolls itself back, and nothing ever
+# deleted it. A run that failed *before* reaching that point -- at the download,
+# at the handoff, or on the early return `record_upgrade_rollback` takes when the
+# install directory is absent -- then read the previous run's receipt and
+# reported it as this run's, which is the worst possible lie for a screen an
+# operator opens precisely because an upgrade went wrong.
+clear_installer_rollback() {
+  rm -f -- "${ORCASYNAPSE_INSTALL_DIR}/.local/state/last-upgrade-rollback.json"
+}
+
 read_installer_rollback() {
   local receipt="${ORCASYNAPSE_INSTALL_DIR}/.local/state/last-upgrade-rollback.json"
   local value=""
@@ -642,7 +657,12 @@ main() {
     # install.sh rolled itself back before returning -- that is increment 4's
     # first half and it is asserted by the upgrade harness. What is left here is
     # to say so on disk and to confirm the machine is actually serving again.
-    AGENT_ROLLBACK="install.sh: $(read_installer_rollback)"
+    # Named explicitly when there is none, rather than rendering as an empty
+    # "install.sh: " that reads like a truncated record. With the receipt now
+    # cleared before every attempt, absence means this run never got as far as
+    # rolling back -- which is itself the useful fact.
+    installer_rollback="$(read_installer_rollback)"
+    AGENT_ROLLBACK="install.sh: ${installer_rollback:-no rollback record was written by this attempt}"
     AGENT_INSTALLED_VERSION="$(installed_version)"
     AGENT_INSTALLED_COMMIT="$(installed_commit)"
     block_target

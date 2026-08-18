@@ -103,9 +103,7 @@ export const serviceConnectionConfigurationSchema = z
     inferenceTimeoutMs: z.number().int().min(5_000).max(600_000).optional(),
     requestsPerMinute: z.number().int().min(1).max(120).optional(),
     /** Where forwarded audit batches are POSTed on a SIEM endpoint. */
-    eventsPath: relativeHealthPathSchema.optional(),
     /** How many audit events one forwarded batch may carry. */
-    forwardBatchSize: z.number().int().min(1).max(500).optional(),
     capabilitiesPath: relativeHealthPathSchema.optional(),
     sessionsPath: relativeHealthPathSchema.optional(),
     toolsetsPath: relativeHealthPathSchema.optional(),
@@ -164,7 +162,13 @@ const connectionConfigurationSchemas = {
     tokenAuthMethod: true,
     caseSensitiveGroups: true,
   }),
-  SIEM: serviceConnectionConfigurationSchema.pick({ timeoutMs: true, healthPath: true, eventsPath: true, forwardBatchSize: true }),
+  /*
+   * `eventsPath` and `forwardBatchSize` are gone: their only reader was the
+   * outbound forwarder, and offering an operator fields that configure nothing
+   * is worse than offering none. The kind itself stays for the reason the enum
+   * value does -- a stored connection may still carry it.
+   */
+  SIEM: serviceConnectionConfigurationSchema.pick({ timeoutMs: true, healthPath: true }),
   NOTIFICATION: serviceConnectionConfigurationSchema.pick({
     timeoutMs: true,
     healthPath: true,

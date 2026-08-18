@@ -67,24 +67,94 @@ const MAX_PATTERN_CHARACTERS = 200;
  * gate people route around.
  */
 const PROBE_BUDGET_MS = 20;
-const PROBE_LENGTH = 256;
 
 /**
- * A quantifier applied to a group that already contains one: `(a+)+`, `(a*)*`,
- * `(a+)*`, `(\d+)+`.
+ * Probe sizes, smallest first, doubling to the length a real message reaches.
  *
- * This is the shape that produces exponential backtracking, and catching it
- * statically is the real gate -- the timing probe below cannot be, because a
- * pattern catastrophic enough to matter would hang the probe itself.
- *
- * Deliberately approximate, and deliberately erring towards refusal. It will
- * refuse `(ab+)+`, which is not actually catastrophic. That is the right way to
- * be wrong: the cost is an operator rewriting a pattern, and the cost of the
- * other mistake is an inference path that stops answering.
+ * A pattern that backtracks exponentially roughly doubles its work per added
+ * character, so the sequence matters more than the ceiling: measuring at 16 and
+ * 32 costs microseconds for every pattern this is meant to admit, and gives a
+ * catastrophic one somewhere to be caught before it is asked for 256 characters
+ * and never comes back.
  */
-const NESTED_QUANTIFIER = /\([^)]*[+*}]\)[\s]*[+*{]/;
+const PROBE_LENGTHS = [16, 32, 64, 128, 256];
+
 const BACKREFERENCE = /\\[1-9]/;
 const LOOKAROUND = /\(\?[=!<]/;
+
+/**
+ * What a repeated group contains, ignoring escapes and character classes.
+ *
+ * A scan rather than a regex, because the regex this replaced was
+ * `/\([^)]*[+*}]\)[\s]*[+*{]/` and `[^)]*` cannot see past an inner
+ * parenthesis. It therefore missed `((a+))+` -- the module's own documented
+ * example with one bracket added -- along with every alternation form. A `]`
+ * inside a class and a `\(` in the pattern text are both handled here for the
+ * same reason: a gate that can be stepped around by adding a character is not a
+ * gate.
+ */
+function scanGroupBody(body: string): { quantifier: boolean; alternation: boolean } {
+  let quantifier = false;
+  let alternation = false;
+  for (let index = 0; index < body.length; index += 1) {
+    const character = body[index];
+    if (character === "\\") { index += 1; continue; }
+    if (character === "[") {
+      index += 1;
+      while (index < body.length && body[index] !== "]") {
+        if (body[index] === "\\") index += 1;
+        index += 1;
+      }
+      continue;
+    }
+    if (character === "+" || character === "*" || character === "{") quantifier = true;
+    else if (character === "|") alternation = true;
+  }
+  return { quantifier, alternation };
+}
+
+/**
+ * A group that repeats, whose body can match the same text more than one way.
+ *
+ * Both shapes below make a match position ambiguous, which is what turns a
+ * failed match into exponential retrying:
+ *
+ * - **A quantifier inside a repeated group** -- `(a+)+`, `(a*)*`, `((a+))+`.
+ * - **An alternation inside a repeated group** -- `(a|a)*`, `(a+|b)+`, and
+ *   `^(\w+\s?)*$`. This family was missed entirely, and it is the one that
+ *   matters most in practice: the last of those is an ordinary human-written
+ *   validation regex that anybody might paste in, not a pathological construct.
+ *
+ * Deliberately approximate, and deliberately erring towards refusal. It refuses
+ * `(ab+)+` and `(cat|dog)+`, neither of which is actually catastrophic. That is
+ * the right way to be wrong: the cost is an operator rewriting a pattern, and
+ * the cost of the other mistake is an inference path that stops answering.
+ */
+function repeatedGroupRisk(pattern: string): "NESTED_QUANTIFIER" | "REPEATED_ALTERNATION" | null {
+  const openings: number[] = [];
+  for (let index = 0; index < pattern.length; index += 1) {
+    const character = pattern[index];
+    if (character === "\\") { index += 1; continue; }
+    if (character === "[") {
+      index += 1;
+      while (index < pattern.length && pattern[index] !== "]") {
+        if (pattern[index] === "\\") index += 1;
+        index += 1;
+      }
+      continue;
+    }
+    if (character === "(") { openings.push(index + 1); continue; }
+    if (character !== ")") continue;
+    const contentStart = openings.pop();
+    // Unbalanced. `new RegExp` reports it better than this could.
+    if (contentStart === undefined) continue;
+    if (!/^\s*[+*{]/.test(pattern.slice(index + 1))) continue;
+    const { quantifier, alternation } = scanGroupBody(pattern.slice(contentStart, index));
+    if (quantifier) return "NESTED_QUANTIFIER";
+    if (alternation) return "REPEATED_ALTERNATION";
+  }
+  return null;
+}
 
 /**
  * Refuses a pattern this deployment is not willing to evaluate.
@@ -98,13 +168,19 @@ const LOOKAROUND = /\(\?[=!<]/;
  *
  * ## What it does not
  *
- * **Step three runs on the request thread, so it cannot contain what it is
- * looking for.** A pattern bad enough to hang production would hang this probe
- * and take the save request with it. That is why the static rejections run
- * first and are the load-bearing half: they catch the *shapes* that backtrack
- * exponentially, before anything is executed. The probe is a second net for
- * what a short input can still reveal -- a pattern that is merely slow rather
- * than catastrophic.
+ * **The probe runs on the request thread, so it cannot fully contain what it is
+ * looking for.** A pattern bad enough to hang production could hang this probe
+ * and take the save request with it. Two things reduce that to a risk worth
+ * accepting rather than a certainty:
+ *
+ * - The static rejections run first and carry most of the weight: they catch
+ *   the *shapes* that backtrack exponentially before anything is executed.
+ * - The probe grows from 16 characters to 256 rather than starting at 256, so a
+ *   pattern that doubles its work per character exceeds the budget at a length
+ *   it can still finish. This was the gap that made the first bullet
+ *   load-bearing in a way it could not support: the static gate was one regex
+ *   that missed every alternation form, and the probe's longest input ran
+ *   before any elapsed time was measured.
  *
  * A pattern that passes both and is still slow on production input remains
  * possible. That residual risk is accepted deliberately.
@@ -138,10 +214,18 @@ export function assertPatternIsSafe(pattern: string): void {
       "Lookahead and lookbehind are refused: they can multiply the work each position costs.",
     );
   }
-  if (NESTED_QUANTIFIER.test(pattern)) {
+  const risk = repeatedGroupRisk(pattern);
+  if (risk === "NESTED_QUANTIFIER") {
     throw new GuardrailPatternError(
       "NESTED_QUANTIFIER",
       "A repeated group that already repeats — such as (a+)+ — is refused: it backtracks exponentially.",
+    );
+  }
+  if (risk === "REPEATED_ALTERNATION") {
+    throw new GuardrailPatternError(
+      "NESTED_QUANTIFIER",
+      "A repeated group containing alternation — such as (a|a)* — is refused: "
+      + "two branches that can match the same text make every position ambiguous, which backtracks exponentially.",
     );
   }
 
@@ -160,24 +244,34 @@ export function assertPatternIsSafe(pattern: string): void {
    * of one character that the pattern's own first literal suggests, a long run
    * of a character it does not expect, and an alternating sequence. None of
    * them prove a pattern safe; they only catch one that is visibly not.
+   *
+   * **Short to long, checking the budget between each.** The previous version
+   * ran every probe at the full 256 characters, which meant the one probe most
+   * likely to reveal a catastrophic pattern -- a long run ending in a character
+   * that forces the match to fail -- was also the one guaranteed to hang before
+   * any elapsed time could be measured. Growth is what exposes these patterns:
+   * a doubling per character is invisible at 16 and unmissable at 64, so the
+   * gate now trips there rather than never returning at 256.
    */
   const seed = /[A-Za-z0-9]/.exec(pattern)?.[0] ?? "a";
-  const probes = [
-    seed.repeat(PROBE_LENGTH),
-    "a".repeat(PROBE_LENGTH),
-    "ab".repeat(PROBE_LENGTH / 2),
-    `${seed.repeat(PROBE_LENGTH - 1)}!`,
-  ];
-  for (const probe of probes) {
-    const startedAt = performance.now();
-    expression.test(probe);
-    const elapsed = performance.now() - startedAt;
-    if (elapsed > PROBE_BUDGET_MS) {
-      throw new GuardrailPatternError(
-        "TOO_SLOW",
-        `The pattern took ${Math.round(elapsed)}ms against a ${PROBE_LENGTH}-character probe. `
-        + "A pattern that slow on a short input will be far slower on a real message.",
-      );
+  for (const length of PROBE_LENGTHS) {
+    const probes = [
+      seed.repeat(length),
+      "a".repeat(length),
+      "ab".repeat(length / 2),
+      `${seed.repeat(length - 1)}!`,
+    ];
+    for (const probe of probes) {
+      const startedAt = performance.now();
+      expression.test(probe);
+      const elapsed = performance.now() - startedAt;
+      if (elapsed > PROBE_BUDGET_MS) {
+        throw new GuardrailPatternError(
+          "TOO_SLOW",
+          `The pattern took ${Math.round(elapsed)}ms against a ${length}-character probe. `
+          + "A pattern that slow on a short input will be far slower on a real message.",
+        );
+      }
     }
   }
 }

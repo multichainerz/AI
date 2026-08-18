@@ -138,4 +138,29 @@ describe("OrcaSynapse guardrail rules", () => {
     expect(inspectInput("Seahorse", policy, [rule({ caseSensitive: false })]).decision).toBe("BLOCK");
     expect(inspectInput("seahorses", policy, [rule({ type: "WORD" })]).decision).toBe("ALLOW");
   });
+
+  it("fails closed when the rule list outruns its time budget", () => {
+    /*
+     * The only refusal in this module that is not the operator's decision, and
+     * until now no test executed it -- so inverting the comparison would have
+     * left the suite green while every message carrying an enabled rule was
+     * refused. A budget of zero reaches it on the first rule, deterministically,
+     * which is why the ceiling is a parameter rather than something to race.
+     */
+    const result = inspectInput("nothing objectionable here", policy, [rule({ action: "FLAG" })], 0);
+
+    expect(result.decision).toBe("BLOCK");
+    expect(result.reason).toBe("RULE_BUDGET_EXCEEDED");
+    // The rule it gave up on is named, so an operator can see where it stopped.
+    expect(result.matches).toHaveLength(1);
+  });
+
+  it("evaluates every rule when the budget is not the constraint", () => {
+    // The other direction, so a change that made the check always fire would be
+    // caught too rather than reading as "fails closed, as designed".
+    const result = inspectInput("nothing objectionable here", policy, [rule({ action: "FLAG" })]);
+
+    expect(result.decision).toBe("ALLOW");
+    expect(result.reason).toBeNull();
+  });
 });

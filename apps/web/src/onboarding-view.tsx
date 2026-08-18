@@ -31,7 +31,6 @@ import {
 
 interface OnboardingViewProps {
   session: AdministratorSession | null;
-  oidcConfigured: boolean;
   connections: ServiceConnectionSummary[];
   agentRuntime: AgentRuntimeControl | null;
   profiles: AgentProfile[];
@@ -69,7 +68,6 @@ interface OnboardingViewProps {
   >;
   onOpenWorkspace: (workspace: "Chat" | "Agents") => void;
   onRuntimeNodesChange: (nodes: HermesRuntimeNode[]) => void;
-  onSignIn: () => void;
   onSessionExpired: () => void;
 }
 
@@ -105,14 +103,12 @@ export function OnboardingView({
   agentRuntime,
   profiles,
   runtimeNodes,
-  oidcConfigured,
   initialStep = null,
   onSelectStep,
   onConfigure,
   connectionEditor,
   onOpenWorkspace,
   onRuntimeNodesChange,
-  onSignIn,
   onSessionExpired,
 }: OnboardingViewProps) {
   const { unlocked } = adminAccess(session);
@@ -194,9 +190,8 @@ export function OnboardingView({
       mark="01"
       headline="Sign in to this OrcaSynapse installation"
       reason="Use the local administrator account created by the installer. Keep the separate Installation Key offline for recovery only."
-      actionLabel={oidcConfigured ? "Sign in with enterprise identity" : "Sign in locally"}
-      onAction={oidcConfigured ? onSignIn : () => onConfigure()}
-      {...(oidcConfigured ? { secondaryLabel: "Sign in locally", onSecondary: () => onConfigure() } : {})}
+      actionLabel="Sign in locally"
+      onAction={() => onConfigure()}
     />;
   }
 

@@ -37,7 +37,7 @@ const row = (
   title,
   modelAlias: "hermes-agent",
   profileId: "1b2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e",
-  profileName: "Hermes Enterprise Assistant",
+  profileName: "Administrator",
   status: "ACTIVE",
   messageCount: 4,
   lastMessagePreview,
@@ -72,10 +72,10 @@ const conversations = [
 
 const profile = {
   id: "1b2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e",
-  name: "Hermes Enterprise Assistant",
+  name: "Administrator",
   status: "ACTIVE",
-  version: { displayName: "Hermes Enterprise Assistant v1" },
-  activeVersionConfiguration: { displayName: "Hermes Enterprise Assistant v1" },
+  version: { displayName: "Administrator v1" },
+  activeVersionConfiguration: { displayName: "Administrator v1" },
 } as unknown as AgentProfile;
 
 vi.mock("./api.js", async () => {
@@ -94,10 +94,8 @@ const { ChatView } = await import("./chat-view.js");
 
 const props = {
   unlocked: true,
-  identityMode: "ADMINISTRATOR_PREVIEW" as const,
   displayName: "Operator",
   administratorReadiness: null,
-  oidcConfigured: false,
   onSignIn: vi.fn(),
   onConfigure: vi.fn(),
   onOpenAgents: vi.fn(),
@@ -160,6 +158,6 @@ describe("conversation rail", () => {
     const rail = await renderRail();
     const empty = within(rail).getByRole("button", { name: /rangkuman insiden/ });
 
-    expect(within(empty).getByText("Hermes Enterprise Assistant")).toBeTruthy();
+    expect(within(empty).getByText("Administrator")).toBeTruthy();
   });
 });

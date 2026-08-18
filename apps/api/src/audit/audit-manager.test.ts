@@ -1,9 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   auditEvent,
-  auditForwardingState,
   createTestDatabase,
-  serviceConnection,
   type TestDatabase,
 } from "@orcasynapse/database";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -112,105 +110,3 @@ describe("DrizzleAuditManager", () => {
   });
 });
 
-describe("DrizzleAuditManager forwarding health", () => {
-  async function enableSiem() {
-    await context.database.insert(serviceConnection).values({
-      slug: `siem-${randomUUID().slice(0, 8)}`,
-      displayName: "SIEM",
-      kind: "SIEM",
-      environment: "DEVELOPMENT",
-      enabled: true,
-      status: "HEALTHY",
-      baseUrl: "https://siem.internal",
-      configuration: {},
-    });
-  }
-
-  it("says the trail is local-only when no SIEM is enabled", async () => {
-    await record();
-
-    const state = await manager().forwarding();
-
-    expect(state).toMatchObject({ status: "NOT_CONFIGURED", pendingCount: 1, deliveredCount: 0 });
-    expect(state.summary).toContain("retained locally");
-  });
-
-  it("counts everything as undelivered before the first pass", async () => {
-    await enableSiem();
-    await record();
-    await record();
-
-    expect(await manager().forwarding()).toMatchObject({ status: "HEALTHY", pendingCount: 2 });
-  });
-
-  it("counts only what follows the cursor once forwarding has run", async () => {
-    await enableSiem();
-    const first = await record({ occurredAt: base });
-    await record({ occurredAt: new Date(base.getTime() + 1_000) });
-    await context.database.insert(auditForwardingState).values({
-      id: "global", lastForwardedCursor: first.cursor, lastForwardedAt: base, lastForwardedId: first.id, deliveredCount: 1,
-    });
-
-    const state = await manager().forwarding();
-
-    expect(state).toMatchObject({ status: "HEALTHY", pendingCount: 1, deliveredCount: 1 });
-    expect(state.lastForwardedAt).toBe(base.toISOString());
-  });
-
-  it("counts an event recorded out of timestamp order as still pending", async () => {
-    await enableSiem();
-    // The forwarder has delivered up to `delivered`. The event after it carries
-    // an earlier occurredAt, which is what a transaction that started earlier
-    // and committed later leaves behind - counting the backlog by timestamp
-    // would report it as delivered and the trail as complete.
-    const delivered = await record({ action: "delivered", occurredAt: new Date(base.getTime() + 1_000) });
-    await record({ action: "committed late", occurredAt: base });
-    await context.database.insert(auditForwardingState).values({
-      id: "global",
-      lastForwardedCursor: delivered.cursor,
-      lastForwardedAt: new Date(base.getTime() + 1_000),
-      lastForwardedId: delivered.id,
-      deliveredCount: 1,
-    });
-
-    const state = await manager().forwarding();
-
-    expect(state.pendingCount).toBe(1);
-    expect(state.summary).not.toContain("Every recorded event has been accepted");
-  });
-
-  it("reports a rejecting destination as failing, not merely behind", async () => {
-    await enableSiem();
-    await record();
-    await context.database.insert(auditForwardingState).values({
-      id: "global", lastAttemptAt: new Date(), lastError: "The SIEM endpoint returned 503.",
-    });
-
-    const state = await manager().forwarding();
-
-    expect(state.status).toBe("FAILING");
-    expect(state.lastError).toContain("503");
-    expect(state.summary).toContain("rejecting batches");
-  });
-
-  it("reports a healthy destination with a large backlog as behind", async () => {
-    await enableSiem();
-    // The threshold is 500; seed past it without inserting them one by one.
-    await context.database.insert(auditEvent).values(
-      Array.from({ length: 501 }, () => ({
-        actorType: "SERVICE" as const,
-        action: "inference.gateway_requested",
-        resourceType: "ServiceConnection",
-        outcome: "SUCCESS",
-        occurredAt: base,
-        metadata: {},
-      })),
-    );
-
-    const state = await manager().forwarding();
-
-    expect(state.status).toBe("BEHIND");
-    expect(state.pendingCount).toBe(501);
-    expect(state.lastError).toBeNull();
-  });
-});

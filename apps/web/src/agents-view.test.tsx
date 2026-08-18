@@ -114,7 +114,6 @@ const props = {
   administrator: true,
   activationReady: true as boolean | null,
   activationMessage: null as string | null,
-  oidcConfigured: false,
   onSignIn: vi.fn(),
   onConfigure: vi.fn(),
   onOpenChat: vi.fn(),

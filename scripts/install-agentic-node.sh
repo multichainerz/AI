@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-INSTALLER_VERSION="v8.9.0"
+INSTALLER_VERSION="v9.0.0"
 STATE_ROOT="${ORCASYNAPSE_HERMES_STATE_ROOT:-/var/lib/orcasynapse-hermes}"
 HERMES_HOME_DIR="${STATE_ROOT}/home"
 RUNTIME_SERVICE="orcasynapse-hermes"
@@ -1873,8 +1873,28 @@ write_corpus_reconciler() {
   download_with_progress "Download the governed Hermes corpus reconciler" \
     "${control_plane_url%/}/install/hermes-corpus-reconciler.py" "${staged}" \
     || fail "could not download the Hermes corpus reconciler from OrcaSynapse"
-  grep -Fq 'orcasynapse-hermes-corpus-snapshot/v1' "${staged}" \
-    || fail "the downloaded Hermes corpus reconciler is not a recognized OrcaSynapse artifact"
+  # The digest the control plane states for the file it just served, so a
+  # truncated or mangled download is caught before it is installed 0755 and run
+  # as root by systemd. The grep this replaces tested only that a magic string
+  # appeared *somewhere* in whatever arrived, which a partial download passes.
+  #
+  # Not an authentication boundary: the digest comes over the same channel as the
+  # file, and this installer was itself fetched that way and piped into `sudo
+  # bash`. It catches corruption, which is the failure this download can actually
+  # have. Absence of the digest route is tolerated so a node can still enrol
+  # against an older control plane, and says so rather than passing silently.
+  local expected_digest actual_digest
+  expected_digest="$(curl --fail --silent --show-error --max-time 30 \
+    "${control_plane_url%/}/install/hermes-corpus-reconciler.py.sha256" 2>/dev/null | tr -d '[:space:]')" || expected_digest=""
+  actual_digest="$(sha256sum "${staged}" | cut -d' ' -f1)"
+  if [[ -n "${expected_digest}" ]]; then
+    [[ "${expected_digest}" == "${actual_digest}" ]] \
+      || fail "the downloaded Hermes corpus reconciler does not match the digest OrcaSynapse published (expected ${expected_digest}, got ${actual_digest})"
+  else
+    warning "This control plane publishes no digest for the corpus reconciler; falling back to a format check."
+    grep -Fq 'orcasynapse-hermes-corpus-snapshot/v1' "${staged}" \
+      || fail "the downloaded Hermes corpus reconciler is not a recognized OrcaSynapse artifact"
+  fi
   install -m 0755 -o root -g root "${staged}" /usr/local/lib/orcasynapse/hermes-corpus-reconciler.py
 
   write_file_from_stdin 0644 root root "/etc/systemd/system/${CORPUS_SERVICE}.service" <<EOF

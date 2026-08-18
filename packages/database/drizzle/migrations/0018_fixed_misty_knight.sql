@@ -1,0 +1,1 @@
+CREATE INDEX "AgentRun_createdAt_idx" ON "AgentRun" USING btree ("createdAt" DESC NULLS LAST);

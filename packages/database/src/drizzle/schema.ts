@@ -152,6 +152,28 @@ export const auditEvent = pgTable("AuditEvent", {
 }, (table) => [
 	index("AuditEvent_actorId_occurredAt_idx").using("btree", table.actorId.asc().nullsLast(), table.occurredAt.asc().nullsLast()),
 	index("AuditEvent_correlationId_idx").using("btree", table.correlationId.asc().nullsLast()),
+	/*
+	 * The two filters the Audit trail screen actually exposes.
+	 *
+	 * Every other index here leads with an identifier -- actorId, correlationId,
+	 * resourceType -- which serves a query that already knows *which* thing it is
+	 * asking about. Filtering by action or outcome is the opposite: it knows the
+	 * kind and wants the newest of them. Neither could be served, so the listing
+	 * walked `AuditEvent_occurredAt_idx` backwards discarding rows until it had
+	 * filled a page, and a rare action on a large table walked a long way.
+	 *
+	 * Both are (column, occurredAt DESC) rather than bare, because the query is a
+	 * keyset over `occurredAt DESC, id DESC` and a bare index would order-by
+	 * afterwards. The same reasoning, and the same explicit null ordering, as
+	 * `AgentRun_createdAt_idx`: drizzle's bare asc()/desc() and an index declared
+	 * with the other null ordering are different orderings to the planner, and it
+	 * declines the index silently rather than reporting a mismatch.
+	 *
+	 * `AuditEvent` is the largest table in the product and nothing prunes it, so
+	 * this is the one place where an index that is only sometimes used still pays.
+	 */
+	index("AuditEvent_action_occurredAt_idx").using("btree", table.action.asc().nullsLast(), table.occurredAt.desc().nullsLast()),
+	index("AuditEvent_outcome_occurredAt_idx").using("btree", table.outcome.asc().nullsLast(), table.occurredAt.desc().nullsLast()),
 	uniqueIndex("AuditEvent_cursor_key").using("btree", table.cursor.asc().nullsLast()),
 	index("AuditEvent_occurredAt_idx").using("btree", table.occurredAt.asc().nullsLast()),
 	index("AuditEvent_resourceType_resourceId_idx").using("btree", table.resourceType.asc().nullsLast(), table.resourceId.asc().nullsLast()),
@@ -486,6 +508,82 @@ export const chatMessage = pgTable("ChatMessage", {
 		}).onUpdate("cascade").onDelete("set null"),
 ]);
 
+/**
+ * A standing instruction to post one prompt into one conversation on a timer.
+ *
+ * A schedule fires by calling the same `submitMessage` the HTTP route calls, so
+ * the turn it produces is an ordinary one: inspected by the active guardrail
+ * policy, counted by the per-subject rate limit, stored as a USER message, and
+ * dispatched through the run the worker already knows how to claim. Nothing
+ * here is a second way to start a run.
+ *
+ * `createdBySubject` sits beside `createdBy` for the reason
+ * `PlatformReleaseTarget` states about its own approver: a federated creator has
+ * no `LocalAdministrator` row, so the uuid alone cannot be resolved back to a
+ * name afterwards. It is also the subject the schedule fires *as* -- both the
+ * conversation ownership test and the rate-limit bucket key on it -- which is
+ * why it is NOT NULL while the uuid is nullable.
+ *
+ * `intervalSeconds` rather than a cron expression. Cron syntax invites
+ * `* * * * *`, and every fire is a model call charged to the deployment; a
+ * five-minute floor is already 288 runs a day. The ceiling is a week, past
+ * which an operator is describing a calendar rather than a cadence.
+ */
+export const chatSchedule = pgTable("ChatSchedule", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	conversationId: uuid().notNull(),
+	prompt: text().notNull(),
+	intervalSeconds: integer().notNull(),
+	/*
+	 * The claim key. A due schedule is taken with a conditional UPDATE on this
+	 * column, never by reading it and firing -- the API may run as more than one
+	 * replica, and two replicas that both read "due" would both post a message
+	 * to a person. Duplicate work is survivable for the connection monitor's
+	 * probes; a duplicate turn in somebody's thread is not.
+	 */
+	nextRunAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull(),
+	lastRunAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
+	/*
+	 * Why the last fire ended the way it did, in the operator's words rather
+	 * than an exception's. A schedule that silently stopped is the failure this
+	 * feature will actually be judged on, so the reason is stored where the
+	 * panel reads it instead of only in a log line nobody opens.
+	 */
+	lastOutcome: varchar({ length: 32 }),
+	lastDetail: varchar({ length: 500 }),
+	enabled: boolean().default(true).notNull(),
+	createdBy: uuid(),
+	createdBySubject: varchar({ length: 200 }).notNull(),
+	/*
+	 * Which identity source the creator is re-read from when the schedule fires.
+	 *
+	 * The dispatcher rebuilds the creator's `ChatPrincipal` on every fire rather
+	 * than storing one, because a stored principal is a frozen grant: a schedule
+	 * would go on firing with the scopes and division its creator had on the day
+	 * they made it, for as long as the row existed. Re-reading is what makes
+	 * disabling somebody actually stop their schedules.
+	 *
+	 * The two sources answer differently -- `LocalAdministrator.disabledAt` and
+	 * role-derived scopes, or `EnterpriseUser.enabled` and its division with the
+	 * fixed enterprise scope pair -- so which one to ask is recorded rather than
+	 * guessed from a uuid that could in principle exist in both.
+	 */
+	createdByMode: varchar({ length: 32 }).notNull(),
+	revision: integer().default(0).notNull(),
+	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
+}, (table) => [
+	// The dispatcher's only query: enabled rows that are due, oldest first.
+	index("ChatSchedule_enabled_nextRunAt_idx").using("btree", table.enabled.asc().nullsLast(), table.nextRunAt.asc().nullsLast()),
+	index("ChatSchedule_conversationId_idx").using("btree", table.conversationId.asc().nullsLast()),
+	foreignKey({
+			columns: [table.conversationId],
+			foreignColumns: [chatConversation.id],
+			name: "ChatSchedule_conversationId_fkey"
+		}).onUpdate("cascade").onDelete("cascade"),
+	check("ChatSchedule_intervalSeconds_check", sql`("intervalSeconds" >= 300) AND ("intervalSeconds" <= 604800)`),
+]);
+
 export const agentToolGrant = pgTable("AgentToolGrant", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	profileVersionId: uuid().notNull(),
@@ -531,38 +629,6 @@ export const governedTool = pgTable("GovernedTool", {
 	index("GovernedTool_status_risk_idx").using("btree", table.status.asc().nullsLast(), table.risk.asc().nullsLast()),
 ]);
 
-export const oidcAuthorizationRequest = pgTable("OidcAuthorizationRequest", {
-	id: uuid().defaultRandom().primaryKey().notNull(),
-	serviceConnectionId: uuid().notNull(),
-	stateHash: bytea("stateHash").notNull(),
-	nonce: varchar({ length: 86 }).notNull(),
-	returnTo: varchar({ length: 500 }).notNull(),
-	issuer: varchar({ length: 512 }).notNull(),
-	tokenEndpoint: varchar({ length: 2048 }).notNull(),
-	jwksUri: varchar({ length: 2048 }).notNull(),
-	clientId: varchar({ length: 256 }).notNull(),
-	redirectUri: varchar({ length: 2048 }).notNull(),
-	codeVerifierEncryptedValue: bytea("codeVerifierEncryptedValue").notNull(),
-	codeVerifierValueNonce: bytea("codeVerifierValueNonce").notNull(),
-	codeVerifierValueAuthTag: bytea("codeVerifierValueAuthTag").notNull(),
-	codeVerifierWrappedDataKey: bytea("codeVerifierWrappedDataKey").notNull(),
-	codeVerifierKeyNonce: bytea("codeVerifierKeyNonce").notNull(),
-	codeVerifierKeyAuthTag: bytea("codeVerifierKeyAuthTag").notNull(),
-	encryptionVersion: integer().default(1).notNull(),
-	masterKeyVersion: integer().default(1).notNull(),
-	createdAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-	expiresAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull(),
-	consumedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
-}, (table) => [
-	index("OidcAuthorizationRequest_expiresAt_consumedAt_idx").using("btree", table.expiresAt.asc().nullsLast(), table.consumedAt.asc().nullsLast()),
-	index("OidcAuthorizationRequest_serviceConnectionId_createdAt_idx").using("btree", table.serviceConnectionId.asc().nullsLast(), table.createdAt.asc().nullsLast()),
-	uniqueIndex("OidcAuthorizationRequest_stateHash_key").using("btree", table.stateHash.asc().nullsLast()),
-	foreignKey({
-			columns: [table.serviceConnectionId],
-			foreignColumns: [serviceConnection.id],
-			name: "OidcAuthorizationRequest_serviceConnectionId_fkey"
-		}).onUpdate("cascade").onDelete("cascade"),
-]);
 
 export const mcpGatewayCredential = pgTable("McpGatewayCredential", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
@@ -1549,6 +1615,24 @@ export const agentRun = pgTable("AgentRun", {
 	 * declines the index silently rather than reporting a mismatch.
 	 */
 	index("AgentRun_completedAt_idx").using("btree", table.completedAt.asc().nullsLast()),
+	/*
+	 * The second index that leads with a time, added for the same reason and by
+	 * the same reasoning as the one above -- and it is worth saying why it is a
+	 * separate index rather than a reuse.
+	 *
+	 * The administrator run list asks for the newest 200 runs across every owner
+	 * and every status. `AgentRun_ownerSubject_createdAt_idx` cannot serve it
+	 * because it does not know the owner, and `AgentRun_completedAt_idx` cannot
+	 * because a queued run has no `completedAt` and the list shows queued runs
+	 * first. So the planner sorted the whole table on every load -- confirmed
+	 * rather than assumed, with `enable_seqscan=off` still choosing a sequential
+	 * scan at a disable-cost of 1e10, which is the planner saying no index in
+	 * this schema can answer it.
+	 *
+	 * Descending, because that is the direction the query asks for and the one
+	 * the poll repeats every 2.5 seconds while an operator watches a run.
+	 */
+	index("AgentRun_createdAt_idx").using("btree", table.createdAt.desc().nullsLast()),
 	index("AgentRun_status_processorLeaseExpiresAt_idx").using("btree", table.status.asc().nullsLast(), table.processorLeaseExpiresAt.asc().nullsLast()),
 	index("AgentRun_status_queuedAt_idx").using("btree", table.status.asc().nullsLast(), table.queuedAt.asc().nullsLast()),
 	foreignKey({
@@ -1612,24 +1696,3 @@ export const inferenceGatewayRequest = pgTable("InferenceGatewayRequest", {
 		}).onUpdate("cascade").onDelete("cascade"),
 ]);
 
-/**
- * How far the audit trail has been forwarded to a SIEM.
- *
- * Position is AuditEvent.cursor: everything at or below it has been delivered.
- * Failures leave it untouched, so a batch is retried rather than lost.
- *
- * lastForwardedAt and lastForwardedId describe the last event sent and are
- * shown to operators; they are not the position. A wall-clock cursor orders
- * events by when their transaction began rather than by when they became
- * readable, which permanently skipped events written by slow transactions.
- */
-export const auditForwardingState = pgTable("AuditForwardingState", {
-	id: varchar({ length: 32 }).default('global').primaryKey().notNull(),
-	lastForwardedCursor: bigint({ mode: "bigint" }),
-	lastForwardedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
-	lastForwardedId: uuid(),
-	lastAttemptAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }),
-	lastError: varchar({ length: 500 }),
-	deliveredCount: integer().default(0).notNull(),
-	updatedAt: timestamp({ precision: 6, withTimezone: true, mode: 'date' }).notNull().$defaultFn(() => new Date()).$onUpdate(() => new Date()),
-});

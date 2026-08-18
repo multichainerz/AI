@@ -168,10 +168,8 @@ async function transcript() {
     <main className="chat-page">
       <ChatView
         unlocked
-        identityMode="ADMINISTRATOR_PREVIEW"
         displayName="Operator"
         administratorReadiness={null}
-        oidcConfigured={false}
         onSignIn={vi.fn()}
         onConfigure={vi.fn()}
         onOpenAgents={vi.fn()}

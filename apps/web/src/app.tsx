@@ -7,7 +7,6 @@ import type {
   ServiceConnectionSummary,
   ServiceKind,
   EnterpriseSession,
-  OidcStatus,
   ChatMetrics,
   AgentMetrics,
   ToolMetrics,
@@ -44,7 +43,6 @@ import {
   loadInferenceCatalogue,
   getAdministratorSession,
   getEnterpriseSession,
-  getOidcStatus,
   getChatMetrics,
   getAgentMetrics,
   getAgentProfiles,
@@ -425,7 +423,6 @@ function App() {
   const [apiAvailable, setApiAvailable] = useState(true);
   const [adminSession, setAdminSession] = useState<AdministratorSession | null>(null);
   const [enterpriseSession, setEnterpriseSession] = useState<EnterpriseSession | null>(null);
-  const [oidcStatus, setOidcStatus] = useState<OidcStatus | null>(null);
   const [chatMetrics, setChatMetrics] = useState<ChatMetrics | null>(null);
   // The Dashboard hero reports what the deployment has actually done, so it
   // needs the three counts that live outside chat. Fetched beside the chat
@@ -527,13 +524,6 @@ function App() {
        * the session probe on `status.configured` threw that cookie away on
        * every reload.
        */
-      const oidcRestore = getOidcStatus()
-        .then((status) => {
-          if (active && sessionGeneration.current === generation) setOidcStatus(status);
-        })
-        .catch(() => {
-          if (active && sessionGeneration.current === generation) setOidcStatus(null);
-        });
       const enterpriseRestore = getEnterpriseSession()
         .then((session) => {
           if (active && sessionGeneration.current === generation) setEnterpriseSession(session);
@@ -575,7 +565,7 @@ function App() {
       } catch {
         if (active && sessionGeneration.current === generation) setAdminSession(null);
       } finally {
-        await Promise.all([oidcRestore, enterpriseRestore]);
+        await enterpriseRestore;
         if (active && sessionGeneration.current === generation) setSessionRestored(true);
       }
     };
@@ -749,7 +739,6 @@ function App() {
   const healthyConnections = managedConnections.filter(({ enabled, status }) => enabled && status === "HEALTHY").length;
   const inferenceConnection = connectionFor(managedConnections, "INFERENCE");
   const hermesConnection = connectionFor(managedConnections, "HERMES");
-  const oidcConnection = connectionFor(managedConnections, "OIDC");
   const hermesChatReady = readiness.chatReady;
   const agenticReady = readiness.agenticReady;
   const agenticConfigured = Boolean(hermesConnection);
@@ -782,14 +771,10 @@ function App() {
     {
       key: "access",
       name: "Enterprise Access",
-      role: "OIDC, Microsoft Entra ID and RBAC · owner-scoped access",
+      role: "People an administrator creates, with owner-scoped access",
       mark: "EA",
       state: unlocked
-        ? oidcStatus?.configured
-          ? { label: "Ready", tone: "ready" }
-          : oidcConnection
-            ? connectionState(oidcConnection)
-            : { label: "Optional", tone: "configured" }
+        ? { label: "Ready", tone: "ready" }
         : { label: "Unlock to view", tone: "disabled" },
       components: [],
     },
@@ -1304,7 +1289,6 @@ function App() {
         bootstrapState={bootstrapState}
         busy={settingsBusy}
         error={settingsError}
-        oidcConfigured={oidcStatus?.configured === true}
         session={adminSession}
         mustChangePassword={personPasswordChangePending}
         onLogin={loginWithPassword}
@@ -1435,7 +1419,6 @@ function App() {
           Chat: () => (
             <ChatView
               unlocked={chatUnlocked}
-              identityMode={adminSession ? "ADMINISTRATOR_PREVIEW" : "ENTERPRISE"}
               displayName={operator.name}
               administratorReadiness={unlocked ? {
                 ready: readiness.chatReady,
@@ -1443,9 +1426,17 @@ function App() {
                 detail: readiness.nextChatStep?.detail ?? "The governed Hermes route is ready.",
                 target: readiness.nextChatStep?.target ?? "Agents",
               } : null}
-              oidcConfigured={oidcStatus?.configured === true}
-              onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23chat")}
-              onConfigure={() => openConnectionSettings("OIDC")}
+              /*
+               * The administrator sign-in dialog, not the deleted federated
+               * route. This used to navigate to `/api/v1/auth/oidc/start`,
+               * which stopped being registered when federated login was
+               * removed -- so the one affordance on the locked Chat screen led
+               * to a 404. Elevation is what the screen is actually asking for,
+               * and it is the same thing `openConnectionSettings` falls back to
+               * when nothing is unlocked.
+               */
+              onSignIn={() => showSurface(() => setSignInOpen(true))}
+              onConfigure={() => openConnectionSettings("INFERENCE")}
               onOpenAgents={() => selectView("Agents")}
               onOpenPlatform={() => selectView("Deployment")}
               onSessionExpired={forgetAnySession}
@@ -1474,8 +1465,6 @@ function App() {
               administrator={unlocked}
               activationReady={unlocked ? readiness.agenticInfrastructureReady && readiness.inferenceReady : null}
               activationMessage={readiness.nextChatStep?.detail ?? null}
-              oidcConfigured={oidcStatus?.configured === true}
-              onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23agents%2Fprofiles")}
               onConfigure={() => openConnectionSettings("HERMES")}
               onOpenChat={() => {
                 void refreshWorkspaceState().catch(() => undefined);
@@ -1560,7 +1549,6 @@ function App() {
               agentRuntime={agentRuntime}
               profiles={agentProfiles}
               runtimeNodes={runtimeNodes}
-              oidcConfigured={oidcStatus?.administratorSignIn === true}
               initialStep={setupStep}
               onSelectStep={(step) => selectView("Deployment", step)}
               onConfigure={(kind) => openConnectionSettings(kind)}
@@ -1581,7 +1569,6 @@ function App() {
               }}
               onOpenWorkspace={(workspace) => selectView(workspace)}
               onRuntimeNodesChange={setRuntimeNodes}
-              onSignIn={() => window.location.assign("/api/v1/auth/oidc/start?returnTo=%2F%23settings%2Fsetup")}
               onSessionExpired={forgetAdminSession}
             />
           ),

@@ -658,6 +658,79 @@ describe("DrizzleAgentProcessor division memory", () => {
  * matter are about where a note lands and what happens when extraction fails,
  * not about the quality of what comes back.
  */
+describe("DrizzleAgentProcessor run-event retention", () => {
+  /** Writes events directly, which is what the stream does one chunk at a time. */
+  async function events(runId: string, type: string, count: number) {
+    await context.database.insert(agentRunEvent).values(
+      Array.from({ length: count }, (_value, index) => ({
+        runId, type, ...(type === "MESSAGE_DELTA" ? { delta: `chunk-${index}` } : { toolName: `tool-${index}` }),
+      })),
+    );
+  }
+
+  async function remaining(runId: string) {
+    const rows = await context.database
+      .select({ type: agentRunEvent.type }).from(agentRunEvent).where(eq(agentRunEvent.runId, runId));
+    return {
+      deltas: rows.filter(({ type }) => type === "MESSAGE_DELTA").length,
+      other: rows.filter(({ type }) => type !== "MESSAGE_DELTA").length,
+    };
+  }
+
+  it("discards the token chunks of a long-finished run and keeps its activity trail", async () => {
+    /*
+     * `AgentRunEvent` is one row per streamed chunk and nothing pruned it -- no
+     * job, no migration, no delete anywhere. Survivable while every run began
+     * with somebody typing; not once an unattended dispatcher could start one on
+     * a cadence.
+     *
+     * Only the deltas go, and only for a terminal run past the window: the
+     * transcript reads coalesced text from `ChatMessage.content`, and tool calls
+     * and status changes are the trail an operator actually reads.
+     */
+    const { runId } = await seed();
+    await context.database.update(agentRun)
+      .set({ status: "COMPLETED", completedAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1_000) })
+      .where(eq(agentRun.id, runId));
+    await events(runId, "MESSAGE_DELTA", 40);
+    await events(runId, "TOOL_CALL", 3);
+
+    const removed = await new DrizzleAgentProcessor(
+      context.database, runtime() as never, CAPABILITIES,
+    ).pruneRunEvents();
+
+    expect(removed).toBe(40);
+    expect(await remaining(runId)).toEqual({ deltas: 0, other: 3 });
+  });
+
+  it("leaves a run that is still going entirely alone, however old its events are", async () => {
+    // Driven by the run's terminal state, not the event's own age: an event
+    // belonging to a live run is never a candidate, and a live run is exactly
+    // the one whose stream may still be resuming by cursor.
+    const { runId } = await seed();
+    await events(runId, "MESSAGE_DELTA", 10);
+
+    const removed = await new DrizzleAgentProcessor(
+      context.database, runtime() as never, CAPABILITIES,
+    ).pruneRunEvents();
+
+    expect(removed).toBe(0);
+    expect(await remaining(runId)).toEqual({ deltas: 10, other: 0 });
+  });
+
+  it("keeps a run that finished recently, so the ledger still replays it", async () => {
+    const { runId } = await seed();
+    await context.database.update(agentRun)
+      .set({ status: "COMPLETED", completedAt: new Date() })
+      .where(eq(agentRun.id, runId));
+    await events(runId, "MESSAGE_DELTA", 10);
+
+    expect(await new DrizzleAgentProcessor(
+      context.database, runtime() as never, CAPABILITIES,
+    ).pruneRunEvents()).toBe(0);
+  });
+});
+
 describe("DrizzleAgentProcessor memory extraction", () => {
   function extractor(notes: string[] | (() => never)): MemoryExtractor {
     return { extract: async () => (typeof notes === "function" ? notes() : notes) };
