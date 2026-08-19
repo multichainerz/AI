@@ -198,6 +198,15 @@ export function RuntimeNodesPanel({
 }: RuntimeNodesPanelProps) {
   const [nodes, setNodes] = useState<HermesRuntimeNode[]>([]);
   const [form, setForm] = useState<CreateHermesNodeInvitation>(defaultForm);
+  /*
+   * A tunnel-fronted control plane (Cloudflare Zero Trust and kin) refuses
+   * every machine at the edge: Access wants an identity Hermes and the node
+   * clients cannot hold. This toggle makes the callback address a first-class
+   * question instead of an Advanced field nobody finds — VM2 enrolls against
+   * the private address and never touches the tunnel; the public origin stays
+   * for people.
+   */
+  const [behindTunnel, setBehindTunnel] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
   const [invitation, setInvitation] = useState<HermesNodeInvitation | null>(null);
   const [issuedAt, setIssuedAt] = useState<number | null>(null);
@@ -583,6 +592,41 @@ export function RuntimeNodesPanel({
           <Input required type="url" value={form.baseUrl} onChange={(event) => setForm({ ...form, baseUrl: event.target.value })} />
         </Field>
 
+        <label className="flex cursor-pointer items-start gap-2.5 rounded border border-border bg-raised/50 px-3 py-2.5">
+          <Switch
+            checked={behindTunnel}
+            onCheckedChange={(next) => {
+              setBehindTunnel(next);
+              // The public origin cannot be the callback under a tunnel, so
+              // switching on empties the field rather than pre-filling an
+              // address that is guaranteed wrong.
+              setForm((current) => ({ ...current, controlPlaneUrl: next ? "" : defaultControlPlaneUrl() }));
+            }}
+          />
+          <span className="grid gap-0.5">
+            <span className="text-label font-semibold text-text">The control plane is behind a tunnel or Zero Trust</span>
+            <span className="text-caption leading-relaxed text-muted">
+              An identity check at the edge refuses machines, so VM2 will call OrcaSynapse directly on your private
+              network — enrollment, heartbeats, files and the model gateway. The public address stays for people.
+            </span>
+          </span>
+        </label>
+
+        {behindTunnel && (
+          <Field
+            label="OrcaSynapse private address visible to VM2"
+            hint="The control plane host's LAN address, e.g. http://10.0.0.160:8080 — a literal private IP, not a name. The one-time install command travels this network unencrypted; run it only on a network you trust."
+          >
+            <Input
+              required
+              type="url"
+              placeholder="http://10.0.0.160:8080"
+              value={form.controlPlaneUrl}
+              onChange={(event) => setForm({ ...form, controlPlaneUrl: event.target.value })}
+            />
+          </Field>
+        )}
+
         <details className="group border-t border-border pt-4">
           <summary className="flex cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
             <span>
@@ -601,9 +645,11 @@ export function RuntimeNodesPanel({
             <Field className="sm:col-span-2" label="Expected VM hostname" hint="Optional. When set, enrollment fails if VM2 reports a different hostname.">
               <Input maxLength={253} value={form.expectedHostname ?? ""} placeholder="hermes-01.internal" onChange={(event) => setForm({ ...form, expectedHostname: event.target.value })} />
             </Field>
-            <Field className="sm:col-span-2" label="OrcaSynapse address visible to VM2">
-              <Input required type="url" value={form.controlPlaneUrl} onChange={(event) => setForm({ ...form, controlPlaneUrl: event.target.value })} />
-            </Field>
+            {!behindTunnel && (
+              <Field className="sm:col-span-2" label="OrcaSynapse address visible to VM2">
+                <Input required type="url" value={form.controlPlaneUrl} onChange={(event) => setForm({ ...form, controlPlaneUrl: event.target.value })} />
+              </Field>
+            )}
             <Field className="sm:col-span-2" label="Hermes commit" hint="The 40-character commit VM2 installs. A commit cannot be moved, so this is the runtime pin.">
               <Input required minLength={40} maxLength={40} pattern="[0-9a-fA-F]{40}" value={form.hermesCommit} onChange={(event) => setForm({ ...form, hermesCommit: event.target.value.trim().toLowerCase() })} />
             </Field>

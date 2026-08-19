@@ -121,6 +121,31 @@ describe("the installer generator", () => {
     expect(address).toHaveProperty("required", true);
   });
 
+  it("asks for the private address when the control plane is behind a tunnel", async () => {
+    /*
+     * Zero Trust and its kin refuse machines at the edge, so the callback
+     * address VM2 enrolls against must be the LAN one. The toggle empties the
+     * field rather than pre-filling the public origin, which under a tunnel
+     * is guaranteed wrong.
+     */
+    const dialog = await open();
+
+    fireEvent.click(within(dialog).getByRole("switch"));
+    const address = within(dialog).getByLabelText(/OrcaSynapse private address visible to VM2/);
+    expect(address).toHaveProperty("value", "");
+    fireEvent.change(address, { target: { value: "http://10.0.0.160:8080" } });
+    fireEvent.submit(address.closest("form")!);
+
+    await waitFor(() => expect(api.createHermesNodeInvitation).toHaveBeenCalledWith(
+      expect.objectContaining({ controlPlaneUrl: "http://10.0.0.160:8080" }),
+    ));
+
+    // And switching back hides the field and restores the public default.
+    api.createHermesNodeInvitation.mockClear();
+    fireEvent.click(within(dialog).getByRole("switch"));
+    expect(within(dialog).queryByLabelText(/OrcaSynapse private address/)).toBeNull();
+  });
+
   it("keeps the submit reachable from the dialog footer", async () => {
     // The button moved out of the form into Drawer's footer, so it now needs
     // the form attribute to submit anything at all.

@@ -239,6 +239,26 @@ function isLoopbackOrigin(url: string | null): boolean {
   }
 }
 
+/**
+ * An RFC 1918 address, by literal IP only — never by name, because a private
+ * name is a DNS answer and DNS is exactly what an attacker on the path
+ * controls. The allowance exists for control planes behind a tunnel or
+ * Zero Trust front: the public origin demands an identity no machine has, so
+ * VM2's channel has to run direct over the private network — where the public
+ * scheme cannot follow, because the TLS terminator lives at the edge.
+ */
+function isPrivateNetworkOrigin(url: string | null): boolean {
+  if (!url) return false;
+  try {
+    const { hostname } = new URL(url);
+    return /^10(?:\.\d{1,3}){3}$/.test(hostname)
+      || /^192\.168(?:\.\d{1,3}){2}$/.test(hostname)
+      || /^172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}$/.test(hostname);
+  } catch {
+    return false;
+  }
+}
+
 export function enrollmentArtifactViolation(
   target: "DEVELOPMENT" | "PILOT" | "PRODUCTION" | undefined,
   artifacts: { hermesCommit: string | null; controlPlaneUrl: string | null },
@@ -254,8 +274,23 @@ export function enrollmentArtifactViolation(
    * PRODUCTION was refused; DEVELOPMENT and PILOT were not, which made the
    * weakest deployments the ones handing out root.
    */
-  if (!isLoopbackOrigin(artifacts.controlPlaneUrl) && !artifacts.controlPlaneUrl?.startsWith("https://")) {
-    return "Agentic System enrollment requires an HTTPS OrcaSynapse origin, or a loopback address for a single-machine install.";
+  /*
+   * Private-network HTTP is allowed below PRODUCTION, for control planes
+   * behind a tunnel or Zero Trust front: their public origin refuses every
+   * machine, so the node channel has to run direct on the LAN, and the LAN
+   * has no TLS terminator. The MITM trade is real and stated in the wizard —
+   * whoever can rewrite this LAN's traffic during enrollment can root VM2 —
+   * which is why PRODUCTION still refuses it: production either terminates
+   * TLS somewhere the machines can reach, or does not enroll.
+   */
+  if (
+    !isLoopbackOrigin(artifacts.controlPlaneUrl)
+    && !artifacts.controlPlaneUrl?.startsWith("https://")
+    && !(target !== "PRODUCTION" && isPrivateNetworkOrigin(artifacts.controlPlaneUrl))
+  ) {
+    return target === "PRODUCTION"
+      ? "Agentic System enrollment requires an HTTPS OrcaSynapse origin, or a loopback address for a single-machine install."
+      : "Agentic System enrollment requires an HTTPS OrcaSynapse origin, a loopback address, or a private-network IP address (10.x, 192.168.x, 172.16–31.x) for a tunnel-fronted control plane.";
   }
   if (target !== "PRODUCTION") return null;
   // A 40-character commit SHA, not a container digest: VM2 installs Hermes

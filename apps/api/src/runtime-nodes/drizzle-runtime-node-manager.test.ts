@@ -678,6 +678,34 @@ describe("runtime node pure helpers", () => {
       .toMatch(/requires an HTTPS OrcaSynapse origin/);
   });
 
+  /*
+   * A control plane behind a tunnel or Zero Trust front has a public origin
+   * that refuses every machine — Access wants an identity Hermes cannot hold —
+   * so the node channel runs direct over the private network, where the edge's
+   * TLS cannot follow. The allowance is by literal RFC 1918 IP only: a private
+   * *name* is a DNS answer, and DNS is what an on-path attacker controls.
+   */
+  it("allows a private-network IP below production, for tunnel-fronted control planes", () => {
+    const pinned = { hermesCommit: "a".repeat(40) };
+
+    for (const target of ["DEVELOPMENT", "PILOT"] as const) {
+      expect(enrollmentArtifactViolation(target, { ...pinned, controlPlaneUrl: "http://10.0.0.160:8080" })).toBeNull();
+      expect(enrollmentArtifactViolation(target, { ...pinned, controlPlaneUrl: "http://192.168.1.20:8080" })).toBeNull();
+      expect(enrollmentArtifactViolation(target, { ...pinned, controlPlaneUrl: "http://172.31.4.9:8080" })).toBeNull();
+    }
+    // Production still refuses plain HTTP everywhere: it terminates TLS where
+    // the machines can reach it, or it does not enroll.
+    expect(enrollmentArtifactViolation("PRODUCTION", { ...pinned, controlPlaneUrl: "http://10.0.0.160:8080" }))
+      .toMatch(/requires an HTTPS OrcaSynapse origin/);
+    // Names never qualify, and neither do public IPs or 172.x outside 16-31.
+    expect(enrollmentArtifactViolation("DEVELOPMENT", { ...pinned, controlPlaneUrl: "http://vm1.internal:8080" }))
+      .toMatch(/requires an HTTPS OrcaSynapse origin/);
+    expect(enrollmentArtifactViolation("DEVELOPMENT", { ...pinned, controlPlaneUrl: "http://172.32.0.1:8080" }))
+      .toMatch(/requires an HTTPS OrcaSynapse origin/);
+    expect(enrollmentArtifactViolation("DEVELOPMENT", { ...pinned, controlPlaneUrl: "http://8.8.8.8:8080" }))
+      .toMatch(/requires an HTTPS OrcaSynapse origin/);
+  });
+
   it("keeps the production commit pin on top of the transport rule", () => {
     expect(enrollmentArtifactViolation("PRODUCTION", { hermesCommit: "short", controlPlaneUrl: "https://vm1.internal" }))
       .toMatch(/commit-pinned Hermes runtime/);
